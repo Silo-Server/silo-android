@@ -86,6 +86,7 @@ private val ProfileEditorGridHeight = 154.dp
 private val ProfileEditorGridGap = 6.dp
 private val ProfileStyleChipGap = 4.dp
 private val ProfileEditorSectionGap = 8.dp
+private val ProfileEditorBottomPadding = 48.dp
 private val ProfileAvatarCellHeight = 46.dp
 private val ProfileAvatarImageSize = 42.dp
 private val ProfileTextEntryHeight = 52.dp
@@ -243,10 +244,15 @@ fun TvProfileForm(
 
                 Spacer(modifier = Modifier.width(ProfileEditorColumnGap))
 
+                // One scroll for the whole column: moving down into the child
+                // limits scrolls the avatar grid away instead of squeezing the
+                // rest of the form into the space under it.
                 Column(
                     modifier = Modifier
                         .width(ProfileEditorColumnWidth)
-                        .fillMaxSize(),
+                        .fillMaxSize()
+                        .verticalScroll(formScrollState)
+                        .padding(bottom = ProfileEditorBottomPadding),
                     verticalArrangement = Arrangement.spacedBy(ProfileEditorSectionGap),
                 ) {
                     TvProfileFormSection(title = "Style") {
@@ -319,9 +325,6 @@ fun TvProfileForm(
                     }
 
                     Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .verticalScroll(formScrollState),
                         verticalArrangement = Arrangement.spacedBy(ProfileEditorSectionGap),
                     ) {
                         TvProfileFormSection(title = "Name") {

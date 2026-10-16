@@ -1930,7 +1930,7 @@ private fun LibrarySelectorRow(
     }
 }
 
-private fun libraryIcon(type: String): ImageVector = when (type.lowercase()) {
+internal fun libraryIcon(type: String): ImageVector = when (type.lowercase()) {
     "movies", "movie" -> Icons.Default.LocalMovies
     "series", "tv", "shows" -> Icons.Default.Tv
     "audiobook", "audiobooks" -> Icons.Default.Headphones

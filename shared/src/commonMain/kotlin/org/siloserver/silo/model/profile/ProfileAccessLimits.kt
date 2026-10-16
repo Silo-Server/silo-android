@@ -119,8 +119,23 @@ fun UpdateProfileRequest.withAccessLimits(
 fun contentRatingOptions(known: List<String>, current: String?): List<String> =
     if (current == null || current in known) known else listOf(current) + known
 
-/** Label for a profile with no rating ceiling. */
-const val NO_RATING_LIMIT_LABEL = "No limit"
+/**
+ * Whether [rating] sits under [ceiling] on the [known] scale, so the rating
+ * ladder shows it as allowed too. A rating off the scale (another client's
+ * value) is never under or over anything.
+ */
+fun ratingIsUnderCeiling(rating: String, ceiling: String?, known: List<String>): Boolean {
+    val position = known.indexOf(rating)
+    return position >= 0 && position < known.indexOf(ceiling)
+}
+
+/** The line under the rating ladder that says what the ceiling allows. */
+fun ratingCeilingCaption(ceiling: String?): String =
+    if (ceiling == null) {
+        "No rating limit. Choose one to cap what this profile can watch."
+    } else {
+        "Can watch titles rated $ceiling and below."
+    }
 
 /** The libraries a profile form can assign, as the form shows them. */
 sealed interface AssignableLibraries {
