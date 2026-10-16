@@ -217,6 +217,7 @@ val playerInfraModule = module {
                 get<TokenManager>().snapshotCurrentScope()?.takeIf { !it.profileId.isNullOrBlank() }
             },
             scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            identityChanges = get<org.siloserver.silo.network.IdentityTransitionBarrier>().transitions,
         )
     }
 

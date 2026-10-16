@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.settings
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -213,6 +214,43 @@ class SeriesSubtitleChoiceWriterTest {
 
         assertTrue(writer.pendingSeries("profile-a").isEmpty())
         assertEquals(null, writer.pendingChoice("series-1"), "a landed choice must not keep overriding the server")
+    }
+
+    @Test
+    fun `pending choices follow a profile switch with no queue change`() = runTest {
+        var active: AuthScopeSnapshot = profileA
+        val transitions = kotlinx.coroutines.flow.MutableSharedFlow<org.siloserver.silo.network.IdentityTransition>(
+            extraBufferCapacity = 8,
+        )
+        val recorder = Recorder().apply {
+            repeat(10) { results += ApiResult.NetworkError(IllegalStateException("offline")) }
+        }
+        val writer = DefaultSeriesSubtitleChoiceWriter(
+            put = { key, choice, o -> recorder.calls += Call("PUT", key, choice, o); recorder.next() },
+            delete = { key, o -> recorder.calls += Call("DELETE", key, null, o); recorder.next() },
+            captureOwner = { active },
+            scope = backgroundScope,
+            identityChanges = transitions,
+        )
+        val seen = mutableListOf<Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice>>()
+        backgroundScope.launch { writer.pendingChoices.collect { seen += it } }
+        writer.save("series-1", SeriesSubtitleChoice.Off)
+        runCurrent()
+        assertEquals(setOf("series-1"), seen.last().keys)
+
+        fun transition(phase: org.siloserver.silo.network.IdentityTransitionPhase) =
+            org.siloserver.silo.network.IdentityTransition(
+                phase = phase,
+                kind = org.siloserver.silo.network.IdentityTransitionKind.PROFILE_SWITCH,
+                generation = 1,
+            )
+        transitions.emit(transition(org.siloserver.silo.network.IdentityTransitionPhase.WILL_CHANGE))
+        runCurrent()
+        assertTrue(seen.last().isEmpty(), "profile A's choice is withdrawn while switching")
+        active = profileB
+        transitions.emit(transition(org.siloserver.silo.network.IdentityTransitionPhase.DID_CHANGE))
+        runCurrent()
+        assertTrue(seen.last().isEmpty(), "profile B sees none of profile A's choices")
     }
 
     @Test

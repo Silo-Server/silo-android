@@ -4,8 +4,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.model.catalog.WatchDetail
 import org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice
@@ -21,6 +23,8 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
 import org.siloserver.silo.model.playback.SeriesSubtitleChoice
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.IdentityTransition
+import org.siloserver.silo.network.IdentityTransitionPhase
 
 /**
  * Remembers manual subtitle choices for a whole series on the server
@@ -92,6 +96,12 @@ class DefaultSeriesSubtitleChoiceWriter(
     private val delete: suspend (seriesKey: String, owner: AuthScopeSnapshot) -> ApiResult<Unit>,
     private val captureOwner: suspend () -> AuthScopeSnapshot?,
     private val scope: CoroutineScope,
+    /**
+     * Account, server and profile switches. [pendingChoices] is filtered to
+     * the active profile, so it has to be worked out again when that changes
+     * even if the queue does not.
+     */
+    private val identityChanges: Flow<IdentityTransition> = emptyFlow(),
 ) : SeriesSubtitleChoiceWriter {
 
     private data class Key(val profileId: String, val serverUrl: String, val seriesKey: String)
@@ -145,7 +155,10 @@ class DefaultSeriesSubtitleChoiceWriter(
     }
 
     override val pendingChoices: Flow<Map<String, PendingSeriesSubtitleChoice>> =
-        unsent.map { ops ->
+        combine(unsent, identityChanges.onStart<IdentityTransition?> { emit(null) }) { ops, transition ->
+            // Mid-switch the old profile's choices no longer apply, and the
+            // new one is not readable until the switch has finished.
+            if (transition?.phase == IdentityTransitionPhase.WILL_CHANGE) return@combine emptyMap()
             val owner = captureOwner()
             ops.filterKeys { it.profileId == owner?.profileId && it.serverUrl == owner.serverUrl }
                 .entries.associate { (key, op) -> key.seriesKey to PendingSeriesSubtitleChoice(op.choice) }
