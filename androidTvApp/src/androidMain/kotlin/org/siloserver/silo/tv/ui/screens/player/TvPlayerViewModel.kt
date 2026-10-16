@@ -494,12 +494,22 @@ internal fun resolveTvAutoSubtitleIdentity(
     preferredLanguage: String?,
     subtitleMode: String?,
     showForced: Boolean,
+    /**
+     * Language of the audio this playback is set to play (the planned or
+     * chosen track). Media3's first snapshot still shows the file's default
+     * track selected before the switch lands, so reading the selection alone
+     * judged English audio as the German default and turned on full English
+     * subtitles where only the forced track belonged. Falls back to the
+     * mounted selection when unknown.
+     */
+    intendedAudioLanguage: String? = null,
 ): SubtitleIdentity {
     val context = AutoSubtitleContext(
         preferredLanguage = preferredLanguage,
         mode = subtitleMode,
         showForced = showForced,
-        audioLanguage = audioTracks.firstOrNull { it.isSelected }?.language,
+        audioLanguage = intendedAudioLanguage?.takeIf { it.isNotBlank() }
+            ?: audioTracks.firstOrNull { it.isSelected }?.language,
     )
     if (subtitleRows.isNotEmpty()) {
         val winner = resolveAutoSubtitle(
@@ -5227,6 +5237,9 @@ class TvPlayerViewModel(
             preferredLanguage = state.preferredTextLanguage,
             subtitleMode = state.preferredSubtitleMode,
             showForced = state.showForcedSubtitles,
+            intendedAudioLanguage = state.desiredAudioOrdinal
+                ?.let { catalogAudioTracks(state).getOrNull(it) }
+                ?.language,
         )
         autoTextSubtitleSelectionAttempted = true
         SubDiag.log("AUTO subtitle -> $identity")

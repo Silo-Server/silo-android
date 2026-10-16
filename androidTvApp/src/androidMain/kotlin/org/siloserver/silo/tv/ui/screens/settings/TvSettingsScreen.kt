@@ -1847,79 +1847,70 @@ private fun TvSubtitleSettingsPane(
                     checked = state.subtitleMatchesDevice,
                     onCheckedChange = onSubtitleMatchesDeviceChanged,
                 )
+                // Appearance is a profile preference; this keeps a separate
+                // one (and subtitle timing) for this TV only.
                 SettingsToggleRow(
-                    label = "Custom Subtitle Appearance",
+                    label = "Only on This Device",
                     checked = state.subtitleUsesDeviceOverride,
                     onCheckedChange = onSubtitleDeviceOverrideEnabledChanged,
                 )
-                SettingsNestedGroup(enabled = state.subtitleUsesDeviceOverride) {
+                SettingsNestedGroup(enabled = true) {
                     SettingsValueRow(
                         label = "Font Size",
                         value = TvSubtitleAppearanceOptions.fontSizeLabel(appearance.fontSize),
                         onClick = { activePicker = SubtitlePicker.FontSize },
-                        enabled = state.subtitleUsesDeviceOverride,
                     )
                     SettingsValueRow(
                         label = "Font Family",
                         value = TvSubtitleAppearanceOptions.fontFamilyLabel(appearance.fontFamily),
                         onClick = { activePicker = SubtitlePicker.FontFamily },
-                        enabled = state.subtitleUsesDeviceOverride,
                     )
                     SettingsValueRow(
                         label = "Font Color",
                         value = TvSubtitleAppearanceOptions.fontColorLabel(appearance.fontColor),
                         onClick = { activePicker = SubtitlePicker.FontColor },
-                        enabled = state.subtitleUsesDeviceOverride,
                     )
                     if (state.subtitleTextOpacitySupported) {
                         SettingsValueRow(
                             label = "Text Opacity",
                             value = "${appearance.textOpacity}%",
                             onClick = { activePicker = SubtitlePicker.TextOpacity },
-                            enabled = state.subtitleUsesDeviceOverride,
-                        )
+                            )
                     }
                     SettingsToggleRow(
                         label = "Text Outline",
                         checked = appearance.textOutline,
                         onCheckedChange = onSubtitleTextOutlineChanged,
-                        enabled = state.subtitleUsesDeviceOverride,
                     )
                     SettingsValueRow(
                         label = "Outline Color",
                         value = TvSubtitleAppearanceOptions.outlineColorLabel(appearance.textOutlineColor),
                         onClick = { activePicker = SubtitlePicker.OutlineColor },
-                        enabled = state.subtitleUsesDeviceOverride,
                     )
                     SettingsValueRow(
                         label = "Background Style",
                         value = TvSubtitleAppearanceOptions.backgroundStyleLabel(appearance.backgroundStyle),
                         onClick = { activePicker = SubtitlePicker.BackgroundStyle },
-                        enabled = state.subtitleUsesDeviceOverride,
                     )
                     SettingsValueRow(
                         label = "Background Opacity",
                         value = "${appearance.backgroundOpacity}%",
                         onClick = { activePicker = SubtitlePicker.BackgroundOpacity },
-                        enabled = state.subtitleUsesDeviceOverride,
                     )
                     SettingsValueRow(
                         label = "Background Color",
                         value = TvSubtitleAppearanceOptions.backgroundColorLabel(appearance.backgroundColor),
                         onClick = { activePicker = SubtitlePicker.BackgroundColor },
-                        enabled = state.subtitleUsesDeviceOverride,
                     )
                     SettingsValueRow(
                         label = "Position",
                         value = TvSubtitleAppearanceOptions.positionLabel(appearance.position),
                         onClick = { activePicker = SubtitlePicker.Position },
-                        enabled = state.subtitleUsesDeviceOverride,
                     )
                     SettingsActionRow(
-                        label = "Reset Custom Appearance",
+                        label = "Reset Appearance",
                         onClick = { showResetConfirmation = true },
                         destructive = true,
-                        enabled = state.subtitleUsesDeviceOverride,
                     )
                 }
             }
@@ -1927,9 +1918,9 @@ private fun TvSubtitleSettingsPane(
         item {
             SettingsFooterText(
                 text = if (state.subtitleUsesDeviceOverride) {
-                    "Appearance is saved on the server for this profile on this device."
+                    "Only on this device."
                 } else {
-                    "Appearance is using the server fallback for this profile on this device."
+                    "Saved for this profile on all devices."
                 },
             )
         }
@@ -2069,8 +2060,8 @@ private fun TvSubtitleSettingsPane(
 
     if (showResetConfirmation) {
         TvSettingsConfirmDialog(
-            title = "Reset custom appearance?",
-            message = "This restores all custom subtitle appearance options to their defaults.",
+            title = "Reset subtitle appearance?",
+            message = "This restores every subtitle appearance option to its default.",
             confirmLabel = "Reset",
             onConfirm = {
                 showResetConfirmation = false

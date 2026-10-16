@@ -25,8 +25,13 @@ class PlaybackSettingsKeysContractTest {
             .associateBy { it.getValue("key").jsonPrimitive.content }
     }
 
+    // An entry is a scope name, or `{ "scope": ..., "introduced_in": N }` for
+    // a scope a later manifest revision added.
     private fun scopes(key: String): List<String> =
-        definitions.getValue(key).getValue("allowed_scopes").jsonArray.map { it.jsonPrimitive.content }
+        definitions.getValue(key).getValue("allowed_scopes").jsonArray.map { entry ->
+            (entry as? kotlinx.serialization.json.JsonObject)?.getValue("scope")?.jsonPrimitive?.content
+                ?: entry.jsonPrimitive.content
+        }
 
     @Test
     fun profileLayeredKeysAreExactlyTheDeviceKeysWithAProfileScope() {

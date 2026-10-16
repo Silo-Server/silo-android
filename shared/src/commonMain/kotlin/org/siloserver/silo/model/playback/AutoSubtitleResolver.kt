@@ -86,7 +86,8 @@ fun AutoSubtitleResolution.selectedCandidate(): AutoSubtitleCandidate? =
  * Resolves the track Auto should start with.
  *
  * Cascade (unchanged from the detail page):
- * mode `off` / an explicitly empty preferred language → off; no preferred
+ * mode `off` → off, or the forced track in the audio's language when forced
+ * subs are enabled (web parity); an explicitly empty preferred language → off; no preferred
  * language → only mode `always` picks anything; audio already in the preferred
  * language under mode `auto` → off, or the language's forced track when forced
  * subs are enabled; otherwise the best track in the preferred language, falling
@@ -112,7 +113,17 @@ fun resolveAutoSubtitle(
     if (candidates.isEmpty()) return AutoSubtitleResolution.NoChange
 
     val mode = context.mode?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: "auto"
-    if (mode == "off") return AutoSubtitleResolution.Disable
+    if (mode == "off") {
+        // Off still shows foreign-language dialogue when forced subtitles are
+        // on — what the settings copy promises and the web player does: the
+        // forced track in the language of the audio that plays, else nothing.
+        if (!context.showForced) return AutoSubtitleResolution.Disable
+        val audioLanguage = autoSubtitleLanguageKey(context.audioLanguage)
+            ?: return AutoSubtitleResolution.Disable
+        return bestForcedAutoSubtitleCandidate(candidates, audioLanguage)
+            ?.let(AutoSubtitleResolution::Select)
+            ?: AutoSubtitleResolution.Disable
+    }
 
     val preferred = context.preferredLanguage
     if (preferred != null && preferred.isBlank()) return AutoSubtitleResolution.Disable

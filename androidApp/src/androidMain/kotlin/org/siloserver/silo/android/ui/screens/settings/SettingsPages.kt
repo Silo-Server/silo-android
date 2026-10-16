@@ -237,6 +237,8 @@ fun SettingsSubtitlesScreen(viewModel: SettingsViewModel, onBackClick: () -> Uni
                 previewAppearance = state.effectiveSubtitleAppearance,
                 subtitleMatchesDevice = state.subtitleMatchesDevice,
                 onSubtitleMatchesDeviceChanged = viewModel::setSubtitleMatchesDevice,
+                subtitleUsesDeviceOverride = state.subtitleUsesDeviceOverride,
+                onSubtitleDeviceOverrideChanged = viewModel::setSubtitleDeviceOverrideEnabled,
             )
         }
         item(key = "text") {

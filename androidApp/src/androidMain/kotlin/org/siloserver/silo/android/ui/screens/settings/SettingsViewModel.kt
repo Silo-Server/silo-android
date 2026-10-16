@@ -91,6 +91,8 @@ data class SettingsUiState(
     val dolbyVisionEnabled: Boolean = true,
     val dvProfile7HDR10Fallback: Boolean = false,
     val subtitleMatchesDevice: Boolean = false,
+    /** "Only on This Device": subtitle edits stay on this device instead of the profile. */
+    val subtitleUsesDeviceOverride: Boolean = false,
     val showAudiobooks: Boolean = false,
     val subtitleAppearance: org.siloserver.silo.model.settings.SubtitleAppearance =
         org.siloserver.silo.model.settings.SubtitleAppearance.DEFAULT,
@@ -321,6 +323,9 @@ class SettingsViewModel(
         }.launchIn(viewModelScope)
         playerSettingsStore.subtitleMatchesDeviceFlow.onEach { enabled ->
             _uiState.update { it.copy(subtitleMatchesDevice = enabled) }
+        }.launchIn(viewModelScope)
+        playerSettingsStore.subtitleUsesDeviceOverrideFlow.onEach { enabled ->
+            _uiState.update { it.copy(subtitleUsesDeviceOverride = enabled) }
         }.launchIn(viewModelScope)
         playerSettingsStore.showAudiobooksFlow.onEach { enabled ->
             _uiState.update { it.copy(showAudiobooks = enabled) }
@@ -586,6 +591,10 @@ class SettingsViewModel(
 
     fun setSubtitleMatchesDevice(enabled: Boolean) {
         viewModelScope.launch { playerSettingsStore.setSubtitleMatchesDevice(enabled) }
+    }
+
+    fun setSubtitleDeviceOverrideEnabled(enabled: Boolean) {
+        viewModelScope.launch { playerSettingsStore.setSubtitleDeviceOverrideEnabled(enabled) }
     }
 
     fun setShowAudiobooks(enabled: Boolean) {
