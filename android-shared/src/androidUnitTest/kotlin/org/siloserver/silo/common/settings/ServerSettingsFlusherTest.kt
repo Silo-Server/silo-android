@@ -688,6 +688,36 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
+    fun `a device clear cancelled after the profile save landed retries only the clear`() = runTest {
+        val api = RecordingSettingsApi()
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+        var cancelled = false
+        api.onDelete = {
+            // The caller's flush is torn down while the clear is in flight.
+            if (!cancelled) {
+                cancelled = true
+                throw kotlinx.coroutines.CancellationException("flush cancelled")
+            }
+        }
+
+        flusher.enqueue("p1", objectKey, translucentText, serverUrl, scope = SettingWriteScope.Profile(clearDevice = true))
+        flusher.flushNow()
+        assertEquals(setOf(objectKey), flusher.pendingKeys("p1"))
+        advanceUntilIdle()
+
+        assertTrue(flusher.pendingKeys("p1").isEmpty())
+        assertEquals(
+            listOf(
+                RecordingSettingsApi.Call.Kind.PUT to SettingScopeIdentity.profile(),
+                RecordingSettingsApi.Call.Kind.DELETE to SettingScopeIdentity.profileDevice(),
+                RecordingSettingsApi.Call.Kind.DELETE to SettingScopeIdentity.profileDevice(),
+            ),
+            api.calls.map { it.kind to it.scope },
+            "the landed profile save must not be replayed",
+        )
+    }
+
+    @Test
     fun `a second profile edit inside the debounce keeps the first one's device clear`() = runTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)

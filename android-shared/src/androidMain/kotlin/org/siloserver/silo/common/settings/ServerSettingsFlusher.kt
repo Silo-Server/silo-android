@@ -491,10 +491,17 @@ class DefaultServerSettingsFlusher(
             // a failure in between never leaves this device on the old
             // profile value. A failed clear retries only the clear: replaying
             // the landed PUT could put this value back over a newer one saved
-            // from another device meanwhile.
+            // from another device meanwhile. That holds when the clear throws
+            // too (a cancelled flush), so it is caught here rather than in
+            // flushOne, which would requeue the whole save.
             is ApiResult.Success -> {
+                if (!target.clearDevice) return null
                 val clear = PendingOp.Delete(op.serverUrl, op.authority)
-                clear.takeIf { target.clearDevice && flushDelete(profileId, key, clear) }
+                try {
+                    clear.takeIf { flushDelete(profileId, key, clear) }
+                } catch (t: Throwable) {
+                    clear.takeIf { failed("delete", key, "threw: $t", retry = true) }
+                }
             }
             is ApiResult.Error -> op.takeIf {
                 failed(
