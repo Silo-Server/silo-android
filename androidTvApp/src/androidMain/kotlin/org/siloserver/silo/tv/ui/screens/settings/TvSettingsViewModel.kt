@@ -361,7 +361,8 @@ class TvSettingsViewModel(
                 playerSettingsStore.autoPlayNextFlow,
                 playerSettingsStore.introSkipModeFlow,
                 playerSettingsStore.autoSkipCreditsFlow,
-                playerSettingsStore.savedCustomSubtitleAppearanceFlow,
+                // The appearance in effect: edits start from what is on screen.
+                playerSettingsStore.subtitleAppearanceFlow,
                 playerSettingsStore.audioLanguageFlow,
                 playerSettingsStore.resumeRewindSecondsFlow,
                 playerSettingsStore.passOutThresholdFlow,
@@ -640,7 +641,8 @@ class TvSettingsViewModel(
         editAppearance { it.copy(fontSize = value.toFontSizePreset()) }
 
     /**
-     * Commit a full subtitle-appearance value (device-scoped). The Appearance
+     * Commit a full subtitle-appearance value (the profile's, unless "Only on
+     * This Device" is on). The Appearance
      * picker rows build [next] by copying the current appearance and changing
      * one field, mirroring the tvOS bindings. The store debounces the server
      * write and re-emits on [subtitleAppearanceFlow], which the combine folds
@@ -694,7 +696,7 @@ class TvSettingsViewModel(
         }
     }
 
-    /** Toggle the device-level subtitle-appearance override (Custom Appearance). */
+    /** "Only on This Device": keep this TV's own subtitle appearance and timing. */
     fun setSubtitleDeviceOverrideEnabled(enabled: Boolean) {
         viewModelScope.launch { playerSettingsStore.setSubtitleDeviceOverrideEnabled(enabled) }
     }

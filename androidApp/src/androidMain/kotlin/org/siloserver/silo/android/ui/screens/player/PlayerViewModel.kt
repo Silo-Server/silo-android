@@ -847,6 +847,9 @@ class PlayerViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
     val subtitleDelayMs: StateFlow<Int> = playerSettingsStore.subtitleSyncMsFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    /** Where a subtitle delay set now is saved: the profile (all devices) or this device. */
+    val subtitleDelaySavedToProfile: StateFlow<Boolean> = playerSettingsStore.subtitleSyncSavedToProfileFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     // ---- Sleep timer ------------------------------------------------------------
     /** Live state of the sleep-timer (Idle or Active(remainingSeconds)). */
