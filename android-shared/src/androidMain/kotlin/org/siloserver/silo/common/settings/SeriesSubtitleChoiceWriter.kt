@@ -96,7 +96,11 @@ class DefaultSeriesSubtitleChoiceWriter(
 
     private data class Key(val profileId: String, val serverUrl: String, val seriesKey: String)
 
-    private data class Op(val owner: AuthScopeSnapshot, val choice: SeriesSubtitleChoice?)
+    /**
+     * Compared by reference: [settle] must tell a repeated save of the same
+     * choice from the one it replaced, or the replaced one stays "unsent".
+     */
+    private class Op(val owner: AuthScopeSnapshot, val choice: SeriesSubtitleChoice?)
 
     private val lock = Any()
     private val pending = LinkedHashMap<Key, Op>()

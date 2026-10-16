@@ -201,6 +201,21 @@ class SeriesSubtitleChoiceWriterTest {
     }
 
     @Test
+    fun `saving the same choice again while the first waits still settles once it lands`() = runTest {
+        val recorder = Recorder().apply { results += ApiResult.NetworkError(IllegalStateException("offline")) }
+        val writer = writer(recorder) { profileA }
+
+        writer.save("series-1", SeriesSubtitleChoice.Off)
+        runCurrent()
+        // The first attempt failed; the viewer picks Off again before the retry.
+        writer.save("series-1", SeriesSubtitleChoice.Off)
+        advanceUntilIdle()
+
+        assertTrue(writer.pendingSeries("profile-a").isEmpty())
+        assertEquals(null, writer.pendingChoice("series-1"), "a landed choice must not keep overriding the server")
+    }
+
+    @Test
     fun `nothing is sent without an active profile`() = runTest {
         val recorder = Recorder()
         val writer = writer(recorder) { null }
