@@ -526,6 +526,8 @@ object TvPlaybackFormatting {
         /** Language of the Auto-resolved audio track (see [resolvedAudioLanguage]);
          *  "auto" mode skips subs when it matches [preferredLanguage]. */
         val audioLanguage: String? = null,
+        /** The series' remembered subtitle track; its exact match wins. */
+        val trackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
     )
 
     /**
@@ -611,6 +613,7 @@ object TvPlaybackFormatting {
                 mode = context.mode,
                 showForced = context.showForced,
                 audioLanguage = context.audioLanguage,
+                trackSignature = context.trackSignature,
             ),
         ).selectedCandidate() ?: return null
         return combinedSubtitleSelectionIndexes(tracks)

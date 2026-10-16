@@ -20,10 +20,38 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
+/**
+ * The server scope a queued write addresses. It travels with the op, so a
+ * retry or a late drain sends it to the same scope it was authored for.
+ */
+sealed interface SettingWriteScope {
+    /** `profile_device`: this device only. */
+    data object Device : SettingWriteScope
+
+    /**
+     * `profile`: every device on the profile.
+     *
+     * [clearDevice] also deletes this device's own row once the profile write
+     * has landed, so the value just saved is the one that resolves here — a
+     * stale device row would otherwise keep winning over it.
+     *
+     * [minRevision] is the settings manifest revision that first accepts the
+     * key at profile scope. Below it the server refuses `scope=profile`, so
+     * the write goes to this device instead and clears nothing. The choice is
+     * made at send time, like the text-opacity gate: while the revision is
+     * unknown the write is held and retried rather than guessed.
+     */
+    data class Profile(
+        val clearDevice: Boolean = false,
+        val minRevision: Int = 0,
+    ) : SettingWriteScope
+}
+
 interface ServerSettingsFlusher {
     /**
-     * Queue one device-scoped write. Values arrive as the store's plain
-     * strings and are encoded to the contract's JSON type on the wire.
+     * Queue one write at [scope] (this device unless stated). Values arrive as
+     * the store's plain strings and are encoded to the contract's JSON type on
+     * the wire.
      *
      * Pending work is in memory and retains its captured [authority]. Retries
      * converge the desired value; API v2 does not replay mutation receipts and
@@ -36,10 +64,30 @@ interface ServerSettingsFlusher {
      * (profileId, key). See [ServerSettingsFlusher] implementations for what
      * happens to an op whose origin is no longer active.
      */
-    fun enqueue(profileId: String, key: String, value: String, serverUrl: String, authority: AuthScopeSnapshot? = null)
+    fun enqueue(
+        profileId: String,
+        key: String,
+        value: String,
+        serverUrl: String,
+        authority: AuthScopeSnapshot? = null,
+        scope: SettingWriteScope = SettingWriteScope.Device,
+    )
 
-    /** Queue clearing the device-scoped value, so the setting inherits again. */
-    fun enqueueDelete(profileId: String, key: String, serverUrl: String, authority: AuthScopeSnapshot? = null)
+    /**
+     * Queue clearing the device-scoped value, so the setting inherits again.
+     *
+     * A [minRevision] above zero clears it only where the server stores [key]
+     * per profile from that manifest revision on: below it the device row is
+     * the only value there is, so the clear is dropped. Decided at send time;
+     * while the revision is unknown the clear is held and retried.
+     */
+    fun enqueueDelete(
+        profileId: String,
+        key: String,
+        serverUrl: String,
+        authority: AuthScopeSnapshot? = null,
+        minRevision: Int = 0,
+    )
 
     /**
      * Cancel any in-flight debounce, drain every pending op, and suspend
@@ -75,10 +123,36 @@ private sealed class PendingOp {
         val value: String,
         override val serverUrl: String,
         override val authority: AuthScopeSnapshot?,
+        val scope: SettingWriteScope = SettingWriteScope.Device,
     ) : PendingOp()
 
-    data class Delete(override val serverUrl: String, override val authority: AuthScopeSnapshot?) : PendingOp()
+    /**
+     * Always this device's row: nothing deletes a profile-scoped value.
+     * [minRevision] as in [ServerSettingsFlusher.enqueueDelete].
+     *
+     * [replacedSet] is the unsent device write this revision-gated clear took
+     * the slot of. Below [minRevision] the clear is dropped and the device row
+     * stays the value, so that write is sent instead of being lost.
+     */
+    data class Delete(
+        override val serverUrl: String,
+        override val authority: AuthScopeSnapshot?,
+        val minRevision: Int = 0,
+        val replacedSet: Set? = null,
+    ) : PendingOp()
+
+    /** Whether sending this op deletes the device row for its key. */
+    val clearsDevice: Boolean
+        get() = this is Delete || ((this as? Set)?.scope as? SettingWriteScope.Profile)?.clearDevice == true
 }
+
+/**
+ * One queue slot. A profile write and a device write for the same key are
+ * separate intents (saving to the profile while a device row is being
+ * cleared, say), so the level is part of the identity; the profile id keeps
+ * one profile's writes from ever being sent as another's.
+ */
+private data class PendingKey(val profileId: String, val key: String, val profileLevel: Boolean)
 
 /**
  * Application-scoped, in-memory desired-state queue. Only the latest pending
@@ -106,38 +180,92 @@ class DefaultServerSettingsFlusher(
 ) : ServerSettingsFlusher {
 
     private val lock = Any()
-    private val pending = mutableMapOf<Pair<String, String>, PendingOp>()
+    // Insertion-ordered: the drain sends in the order intents were made.
+    private val pending = LinkedHashMap<PendingKey, PendingOp>()
     private var flushJob: Job? = null
     private var retryJob: Job? = null
     private var retryAttempts: Int = 0
     private val flushMutex = Mutex()
 
-    override fun enqueue(profileId: String, key: String, value: String, serverUrl: String, authority: AuthScopeSnapshot?) {
-        scheduleDebounced(profileId, key) { existing ->
+    override fun enqueue(
+        profileId: String,
+        key: String,
+        value: String,
+        serverUrl: String,
+        authority: AuthScopeSnapshot?,
+        scope: SettingWriteScope,
+    ) {
+        val composite = PendingKey(profileId, key, profileLevel = scope is SettingWriteScope.Profile)
+        scheduleDebounced(composite) { existing ->
+            val next = PendingOp.Set(value, serverUrl, authority, scope).keepingDeviceClearOf(existing)
             // Identical pending intent may coalesce only under the same owner.
             if (existing is PendingOp.Set &&
-                existing.value == value &&
+                existing.value == value && existing.scope == next.scope &&
                 existing.serverUrl == serverUrl && existing.authority == authority
             ) {
                 existing
             } else {
-                PendingOp.Set(value, serverUrl, authority)
+                next
             }
         }
     }
 
-    override fun enqueueDelete(profileId: String, key: String, serverUrl: String, authority: AuthScopeSnapshot?) {
-        scheduleDebounced(profileId, key) { PendingOp.Delete(serverUrl, authority) }
+    override fun enqueueDelete(
+        profileId: String,
+        key: String,
+        serverUrl: String,
+        authority: AuthScopeSnapshot?,
+        minRevision: Int,
+    ) {
+        scheduleDebounced(PendingKey(profileId, key, profileLevel = false)) { existing ->
+            val replaced = (existing as? PendingOp.Delete)?.replacedSet ?: existing as? PendingOp.Set
+            val keep = minRevision > 0 && replaced != null &&
+                replaced.serverUrl == serverUrl && replaced.authority == authority
+            PendingOp.Delete(serverUrl, authority, minRevision, replacedSet = replaced.takeIf { keep })
+        }
+    }
+
+    /**
+     * A profile save that replaces an unsent one from the same owner still
+     * owes that one's device clear. The store drops its local marker when it
+     * queues the first save, so a second edit inside the debounce (or during
+     * a retry) arrives with clearDevice=false; losing the flag would leave
+     * the stale device row outranking the value just saved. A device intent
+     * in between already removed the flag from the queued op, so carrying it
+     * over never undoes one.
+     */
+    private fun PendingOp.Set.keepingDeviceClearOf(previous: PendingOp?): PendingOp.Set {
+        val profile = scope as? SettingWriteScope.Profile ?: return this
+        if (profile.clearDevice || previous == null || !previous.clearsDevice) return this
+        if (previous.serverUrl != serverUrl || previous.authority != authority) return this
+        return copy(scope = profile.copy(clearDevice = true))
     }
 
     private fun scheduleDebounced(
-        profileId: String,
-        key: String,
+        composite: PendingKey,
         op: (PendingOp?) -> PendingOp,
     ) {
         synchronized(lock) {
-            val composite = profileId to key
-            pending[composite] = op(pending[composite])
+            val next = op(pending.remove(composite))
+            if (composite.profileLevel) {
+                // A profile save that clears this device's row supersedes a
+                // device write queued before it: that row is going away.
+                if (next.clearsDevice) pending.remove(composite.copy(profileLevel = false))
+            } else {
+                // A device intent made after a profile save keeps the profile
+                // value but must not be undone by that save's device clear.
+                // A revision-gated clear is not one yet: below its revision it
+                // leaves the device row alone, so it supersedes nothing.
+                val profileKey = composite.copy(profileLevel = true)
+                val gated = next is PendingOp.Delete && next.minRevision > 0
+                if (!gated) pending[profileKey]?.let { queued ->
+                    val kept = queued.supersededByDeviceIntent()
+                    if (kept == null) pending.remove(profileKey) else pending[profileKey] = kept
+                }
+            }
+            // Re-inserted at the end, so the drain sends it after the intents
+            // it superseded or followed.
+            pending[composite] = next
             // Fresh user activity re-arms the retry budget.
             retryAttempts = 0
             retryJob?.cancel()
@@ -152,7 +280,7 @@ class DefaultServerSettingsFlusher(
     }
 
     override fun pendingKeys(profileId: String): Set<String> = synchronized(lock) {
-        pending.keys.filter { it.first == profileId }.map { it.second }.toSet()
+        pending.keys.filter { it.profileId == profileId }.map { it.key }.toSet()
     }
 
     override suspend fun flushNow() {
@@ -180,18 +308,39 @@ class DefaultServerSettingsFlusher(
             // newer one. The post-loop `composite !in pending` guard cannot
             // catch that case: the very pass that sent the newer op already
             // cleared `pending`.
-            val retryable = LinkedHashMap<Pair<String, String>, PendingOp>()
+            val retryable = LinkedHashMap<PendingKey, PendingOp>()
+            // When each retryable op failed, and when a device-level op was
+            // last handled per (profile, key), counted per op rather than per
+            // pass: a device intent handled after a profile save failed is
+            // newer than that save, even later in the same snapshot.
+            val failedAt = HashMap<PendingKey, Int>()
+            val deviceHandledAt = HashMap<PendingKey, Int>()
+            var sequence = 0
+            fun deviceWroteSinceFailure(composite: PendingKey): Boolean =
+                composite.profileLevel &&
+                    (deviceHandledAt[composite.copy(profileLevel = false)] ?: 0) > (failedAt[composite] ?: 0)
             while (true) {
-                val snapshot: Map<Pair<String, String>, PendingOp> = synchronized(lock) {
+                val snapshot: Map<PendingKey, PendingOp> = synchronized(lock) {
                     val copy = pending.toMap()
                     pending.clear()
                     copy
                 }
                 if (snapshot.isEmpty()) break
-                snapshot.forEach { (composite, op) ->
-                    val (profileId, key) = composite
-                    if (flushOne(profileId, key, op)) {
-                        retryable[composite] = op
+                snapshot.forEach { (composite, queued) ->
+                    sequence += 1
+                    if (!composite.profileLevel) deviceHandledAt[composite] = sequence
+                    // A newer op settles the slot, so it also takes over the
+                    // device clear an older failed save there still owed.
+                    val failedEarlier = retryable[composite]
+                    val op = if (failedEarlier != null && queued is PendingOp.Set && !deviceWroteSinceFailure(composite)) {
+                        queued.keepingDeviceClearOf(failedEarlier)
+                    } else {
+                        queued
+                    }
+                    val retry = flushOne(composite.profileId, composite.key, op)
+                    if (retry != null) {
+                        retryable[composite] = retry
+                        failedAt[composite] = sequence
                     } else {
                         retryable.remove(composite)
                     }
@@ -203,9 +352,20 @@ class DefaultServerSettingsFlusher(
             }
             val attempt = synchronized(lock) {
                 for ((composite, op) in retryable) {
-                    // A newer op enqueued during the flush wins over the
-                    // failed one — it is newer content with its own id.
-                    if (composite !in pending) pending[composite] = op
+                    val newerDeviceIntent = deviceWroteSinceFailure(composite) ||
+                        (composite.profileLevel && composite.copy(profileLevel = false) in pending)
+                    val newer = pending[composite]
+                    if (newer != null) {
+                        // A newer op enqueued during the flush wins over the
+                        // failed one — it is newer content with its own id —
+                        // but still owes the failed one's device clear.
+                        if (!newerDeviceIntent && newer is PendingOp.Set) {
+                            pending[composite] = newer.keepingDeviceClearOf(op)
+                        }
+                        continue
+                    }
+                    val kept = if (newerDeviceIntent) op.supersededByDeviceIntent() else op
+                    if (kept != null) pending[composite] = kept
                 }
                 if (retryAttempts >= MAX_AUTO_RETRIES) {
                     // Out of automatic retries: the ops stay queued and the
@@ -220,6 +380,27 @@ class DefaultServerSettingsFlusher(
         }
     }
 
+    /**
+     * What is left of an unsent profile-level op once this device has written
+     * its own value for the key after it (the toggle turned on mid-flight, or
+     * a later edit made once the revision was known): null when nothing is.
+     *
+     * - A profile save keeps its profile write but must not delete the newer
+     *   device value, so it drops its device clear.
+     * - A profile save the server can only take on this device (revision
+     *   known to be below its minimum) targets the very row the newer write
+     *   owns; sending it later would put the older value back, so it goes.
+     * - A clear left over from a landed profile save goes too.
+     */
+    private fun PendingOp.supersededByDeviceIntent(): PendingOp? {
+        if (this is PendingOp.Delete) return null
+        val set = this as? PendingOp.Set ?: return this
+        val profile = set.scope as? SettingWriteScope.Profile ?: return this
+        val known = contractRevision.known.value?.takeIf { it.serverUrl == serverUrl }?.manifestRevision
+        if (profile.minRevision > 0 && known != null && known < profile.minRevision) return null
+        return if (profile.clearDevice) set.copy(scope = profile.copy(clearDevice = false)) else this
+    }
+
     private fun scheduleRetry(attempt: Int) {
         synchronized(lock) {
             retryJob?.cancel()
@@ -232,16 +413,17 @@ class DefaultServerSettingsFlusher(
     }
 
     /**
-     * Sends one op. Returns true when it must stay queued for retry —
-     * under the same captured authority. A retry can increment revision again.
+     * Sends one op. Returns what must stay queued for retry — under the same
+     * captured authority — or null when nothing must. A retry can increment
+     * revision again.
      */
-    private suspend fun flushOne(profileId: String, key: String, op: PendingOp): Boolean {
+    private suspend fun flushOne(profileId: String, key: String, op: PendingOp): PendingOp? {
         if (getAuthScope != null) {
-            val owner = op.authority ?: return false
+            val owner = op.authority ?: return null
             val now = getAuthScope.invoke()
             if (!owner.isSameIdentityAs(now) || owner.profileId != now?.profileId ||
                 owner.profileToken != now?.profileToken || owner.serverUrl != op.serverUrl ||
-                owner.profileId != profileId) return false
+                owner.profileId != profileId) return null
         }
         val active = runCatching { getServerUrl() }.getOrNull()
         if (active != null && active != op.serverUrl) {
@@ -255,52 +437,91 @@ class DefaultServerSettingsFlusher(
                 CATEGORY, TAG,
                 "dropping $key: queued for ${op.serverUrl}, active server is now $active",
             )
-            return false
+            return null
         }
         if (key !in REMOTE_KEYS) {
             // Local-only keys (granular subtitle.* fields, pre-contract
             // strays) have no server row; the canonical API would refuse
             // them as unknown_setting, so they never leave the device.
             SiloLog.w(CATEGORY, TAG, "dropping $key: not a server-stored key in the generated contract")
-            return false
+            return null
         }
         return try {
             when (op) {
                 is PendingOp.Set -> flushSet(profileId, key, op)
-                is PendingOp.Delete -> flushDelete(profileId, key, op)
+                is PendingOp.Delete -> flushDeleteOrReplacedSet(profileId, key, op)
             }
         } catch (t: Throwable) {
             // Includes cancellation of a superseded flush: the op goes back
             // into the queue and the next trigger replays it, so a torn-down
             // flush never loses a write.
-            failed("flush", key, "threw: $t", retry = true)
+            op.takeIf { failed("flush", key, "threw: $t", retry = true) }
         }
     }
 
-    private suspend fun flushSet(profileId: String, key: String, op: PendingOp.Set): Boolean {
+    private suspend fun flushSet(profileId: String, key: String, op: PendingOp.Set): PendingOp? {
         val encoded = encodeSettingWireValue(key, op.value)
         if (encoded == null) {
             SiloLog.w(CATEGORY, TAG, "dropping $key: ${op.value} does not encode as the contract type")
-            return false
+            return null
         }
         val wire = gateForServerRevision(key, encoded, op.serverUrl)
-            ?: return failed("put", key, "settings manifest revision unknown", retry = true)
+            ?: return op.takeIf { failed("put", key, "settings manifest revision unknown", retry = true) }
+        val target = resolveScope(op.scope, op.serverUrl)
+            ?: return op.takeIf { failed("put", key, "settings manifest revision unknown", retry = true) }
         return when (
             val result = settingsApi.putValue(
                 key = key,
-                scope = SettingScopeIdentity.profileDevice(),
+                scope = target.identity,
                 value = wire,
                 profileId = profileId,
                 authority = op.authority,
             )
         ) {
-            is ApiResult.Success -> false
-            is ApiResult.Error -> failed(
-                "put", key, "${result.code} ${result.error}: ${result.message}",
-                retry = isTransientHttp(result.code),
-            )
+            // The device row goes only after the profile value has landed, so
+            // a failure in between never leaves this device on the old
+            // profile value. A failed clear retries only the clear: replaying
+            // the landed PUT could put this value back over a newer one saved
+            // from another device meanwhile. That holds when the clear throws
+            // too (a cancelled flush), so it is caught here rather than in
+            // flushOne, which would requeue the whole save.
+            is ApiResult.Success -> {
+                if (!target.clearDevice) return null
+                val clear = PendingOp.Delete(op.serverUrl, op.authority)
+                try {
+                    clear.takeIf { flushDelete(profileId, key, clear) }
+                } catch (t: Throwable) {
+                    clear.takeIf { failed("delete", key, "threw: $t", retry = true) }
+                }
+            }
+            is ApiResult.Error -> op.takeIf {
+                failed(
+                    "put", key, "${result.code} ${result.error}: ${result.message}",
+                    retry = isTransientHttp(result.code),
+                )
+            }
             is ApiResult.NetworkError ->
-                failed("put", key, "network error: ${result.exception}", retry = true)
+                op.takeIf { failed("put", key, "network error: ${result.exception}", retry = true) }
+        }
+    }
+
+    private class ResolvedScope(val identity: SettingScopeIdentity, val clearDevice: Boolean)
+
+    /**
+     * The scope [scope] means on the server at [serverUrl], or null while that
+     * depends on a manifest revision not known yet. A profile write the server
+     * cannot take at profile scope yet stays on this device, as before.
+     */
+    private suspend fun resolveScope(scope: SettingWriteScope, serverUrl: String): ResolvedScope? = when (scope) {
+        SettingWriteScope.Device -> ResolvedScope(SettingScopeIdentity.profileDevice(), clearDevice = false)
+        is SettingWriteScope.Profile -> {
+            val supported = scope.minRevision <= 0 ||
+                (contractRevision.revisionFor(serverUrl) ?: return null) >= scope.minRevision
+            if (supported) {
+                ResolvedScope(SettingScopeIdentity.profile(), scope.clearDevice)
+            } else {
+                ResolvedScope(SettingScopeIdentity.profileDevice(), clearDevice = false)
+            }
         }
     }
 
@@ -324,7 +545,31 @@ class DefaultServerSettingsFlusher(
         return SubtitleAppearance.wireObjectForRevision(encoded, revision)
     }
 
+    /**
+     * Sends a queued clear, or below its revision the device write it
+     * replaced: there the device row is the only value, so that write still
+     * has to land or the next refresh puts the old server value back.
+     */
+    private suspend fun flushDeleteOrReplacedSet(profileId: String, key: String, op: PendingOp.Delete): PendingOp? {
+        val replaced = op.replacedSet
+        if (replaced != null && op.minRevision > 0) {
+            val revision = contractRevision.revisionFor(op.serverUrl)
+                ?: return op.takeIf { failed("delete", key, "settings manifest revision unknown", retry = true) }
+            if (revision < op.minRevision) return flushSet(profileId, key, replaced)
+        }
+        return op.takeIf { flushDelete(profileId, key, op) }
+    }
+
     private suspend fun flushDelete(profileId: String, key: String, op: PendingOp.Delete): Boolean {
+        if (op.minRevision > 0) {
+            val revision = contractRevision.revisionFor(op.serverUrl)
+                ?: return failed("delete", key, "settings manifest revision unknown", retry = true)
+            if (revision < op.minRevision) {
+                // Below it the server keeps this key per device only: the
+                // device row is the value, so there is nothing to clear.
+                return false
+            }
+        }
         return when (
             val result = settingsApi.deleteValue(
                 key = key,

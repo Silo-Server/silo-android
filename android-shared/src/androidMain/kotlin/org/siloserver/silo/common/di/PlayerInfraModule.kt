@@ -121,6 +121,21 @@ val playerInfraModule = module {
         )
     }
 
+    // Manual subtitle choices remembered per series on the server. App-scoped
+    // so a retry outlives the player that made the choice.
+    single<org.siloserver.silo.common.settings.SeriesSubtitleChoiceWriter> {
+        val v2 = get<org.siloserver.silo.network.apiv2.SettingsV2Api>()
+        org.siloserver.silo.common.settings.DefaultSeriesSubtitleChoiceWriter(
+            put = { key, choice, owner -> v2.putSubtitlePreference(key, choice, owner) },
+            delete = { key, owner -> v2.deleteSubtitlePreference(key, owner) },
+            captureOwner = {
+                get<TokenManager>().snapshotCurrentScope()?.takeIf { !it.profileId.isNullOrBlank() }
+            },
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            identityChanges = get<org.siloserver.silo.network.IdentityTransitionBarrier>().transitions,
+        )
+    }
+
     // Per-profile DataStore-backed settings store with legacy SharedPreferences
     // migration. We resolve the active profile on demand via ProfileRepository,
     // and the current server URL via TokenManager — both of which the auth

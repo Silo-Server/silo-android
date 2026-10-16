@@ -123,12 +123,20 @@ interface PlayerSettingsStore {
         get() = subtitleAppearanceFlow
 
     /**
-     * Whether the user has enabled a device-scoped subtitle-appearance
-     * override (mirrors iOS `subtitleUsesDeviceAppearanceOverride`).
-     * When false, the effective subtitle appearance comes from the
-     * user-level setting; when true, the local override is in effect.
+     * "Only on This Device" for subtitles (mirrors iOS
+     * `subtitleUsesDeviceAppearanceOverride`). When false, subtitle appearance
+     * and timing edits save to the profile and apply on every device; when
+     * true, they are saved for this device only.
      */
     val subtitleUsesDeviceOverrideFlow: Flow<Boolean>
+
+    /**
+     * Whether a subtitle delay set now is saved for the profile on every
+     * device (false: on this device only — the toggle is on, or the server
+     * stores timing per device only).
+     */
+    val subtitleSyncSavedToProfileFlow: Flow<Boolean>
+        get() = subtitleUsesDeviceOverrideFlow.map { !it }
     /** tvOS "Match Device Settings": appearance follows OS captioning prefs. */
     val subtitleMatchesDeviceFlow: Flow<Boolean>
     /** iOS AppNavPreferences.showAudiobooks parity — audiobook surfaces are opt-in. */
@@ -244,11 +252,11 @@ interface PlayerSettingsStore {
     suspend fun refreshFromServer()
 
     /**
-     * Toggle the device-level override for `subtitle_appearance`. When
-     * `enabled` is false, deletes the device override on the server and
-     * refetches the effective appearance from the user-level setting.
-     * When true, pushes the current local appearance up as a device
-     * override.
+     * Toggle "Only on This Device" for subtitles. When `enabled` is false,
+     * deletes this device's subtitle appearance (and, where the server stores
+     * timing per profile, its timing) and refetches the profile's values.
+     * When true, pins the appearance on screen to this device; later edits
+     * stay on this device.
      */
     suspend fun setSubtitleDeviceOverrideEnabled(enabled: Boolean)
     suspend fun setSubtitleMatchesDevice(enabled: Boolean)

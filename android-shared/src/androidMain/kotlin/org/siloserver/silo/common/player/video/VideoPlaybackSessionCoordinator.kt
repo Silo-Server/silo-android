@@ -39,6 +39,7 @@ class VideoPlaybackSessionCoordinator(
                     preferredAudioLanguage = result.preferredAudioLanguage,
                     preferredTextLanguage = result.preferredTextLanguage,
                     preferredSubtitleMode = result.preferredSubtitleMode,
+                    preferredSubtitleTrackSignature = result.preferredSubtitleTrackSignature,
                     showForcedSubtitles = result.showForcedSubtitles,
                     intro = result.intro,
                     credits = result.credits,

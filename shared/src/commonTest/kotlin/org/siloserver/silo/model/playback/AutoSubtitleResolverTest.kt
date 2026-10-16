@@ -304,6 +304,25 @@ class AutoSubtitleResolverTest {
     }
 
     @Test
+    fun modeOffWithForcedOnShowsTheForcedTrackInTheAudioLanguage() {
+        val tracks = listOf(
+            AutoSubtitleCandidate(selectionIndex = 0, language = "eng", title = "English"),
+            AutoSubtitleCandidate(selectionIndex = 1, language = "eng", title = "English Forced", forced = true),
+            AutoSubtitleCandidate(selectionIndex = 2, language = "ger", title = "Deutsch (erzwungen)", forced = true),
+        )
+        fun resolve(audio: String?, forced: Boolean) = resolveAutoSubtitle(
+            tracks,
+            AutoSubtitleContext(preferredLanguage = "en", mode = "off", showForced = forced, audioLanguage = audio),
+        )
+        assertEquals(1, resolve("en", forced = true).selectedCandidate()?.selectionIndex)
+        assertEquals(2, resolve("de", forced = true).selectedCandidate()?.selectionIndex)
+        // No forced track in the audio's language, forced off, or unknown audio: nothing.
+        assertEquals(AutoSubtitleResolution.Disable, resolve("fr", forced = true))
+        assertEquals(AutoSubtitleResolution.Disable, resolve("en", forced = false))
+        assertEquals(AutoSubtitleResolution.Disable, resolve(null, forced = true))
+    }
+
+    @Test
     fun anEmptyPreferredLanguageMeansNoSubtitles() {
         assertNull(
             autoOrdinal(

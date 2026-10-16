@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.settings.reconcile
 import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
@@ -61,6 +62,8 @@ class TvVideoPlaybackStarter(
     private val sessionLifecycle: PlaybackSessionLifecycle,
     private val reachabilityMonitor: ServerReachabilityMonitor,
     private val userItemStatePort: UserItemStatePort,
+    /** Lays a series subtitle choice that has not landed yet over the server's answer. */
+    private val seriesSubtitleChoiceWriter: org.siloserver.silo.common.settings.SeriesSubtitleChoiceWriter? = null,
 ) : VideoPlaybackStarter {
 
     override suspend fun start(request: VideoPlaybackStartRequest): VideoPlaybackStartResult {
@@ -82,7 +85,9 @@ class TvVideoPlaybackStarter(
         var lifecycleAdopted = false
         return try {
             val watchDetail = when (val r = catalogRepository.getWatchDetail(request.contentId, expectedMetadataOwner, request.libraryId)) {
-                is ApiResult.Success -> r.data
+                is ApiResult.Success -> seriesSubtitleChoiceWriter
+                    ?.reconcile(r.data)
+                    ?: r.data
                 is ApiResult.Error -> return failure(
                     request.contentId,
                     "Failed to load content: ${r.message}",
@@ -414,6 +419,7 @@ class TvVideoPlaybackStarter(
                 showForcedSubtitles = watchDetail.effectiveShowForcedSubtitles
                     ?: activeProfile?.showForcedSubtitles
                     ?: true,
+                preferredSubtitleTrackSignature = watchDetail.effectiveSubtitleTrackSignature,
                 intro = effectiveVersion?.intro,
                 credits = effectiveVersion?.credits,
                 recap = effectiveVersion?.recap,

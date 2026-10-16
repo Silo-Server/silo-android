@@ -40,6 +40,13 @@ object PlaybackSettingsKeys {
     const val PlaybackSpeed = "player.playback_speed"
     const val AudioSyncMs = "player.audio_sync_ms"
     const val SubtitleSyncMs = "player.subtitle_sync_ms"
+
+    /**
+     * The settings manifest revision from which [SubtitleSyncMs] is accepted
+     * at profile scope. Older servers store it per device only and refuse
+     * `scope=profile` with a 422.
+     */
+    const val SubtitleSyncProfileMinRevision = 18
     const val VideoGravity = "player.video_gravity"
     const val OrientationMode = "player.orientation_mode"
     // Android shipped this under player.* while Apple and the server used
@@ -215,6 +222,8 @@ object PlaybackSettingsKeys {
         AutoPlayNext,
         NextUpPromptSeconds,
         SubtitleAppearance,
+        // Profile scope from manifest revision 18.
+        SubtitleSyncMs,
     )
 
     /**

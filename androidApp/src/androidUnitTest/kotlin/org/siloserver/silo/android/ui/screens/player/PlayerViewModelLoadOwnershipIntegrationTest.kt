@@ -1322,7 +1322,12 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
         var allocation: MobileVideoSessionAllocation? = null
 
         start(
-            effective = "",
+            // The series choice on the server is this same English track, so
+            // the per-file memory may restore it (see the next test for a
+            // choice the server no longer holds).
+            effective = """
+                "effective_subtitle_track_signature": {"source":"embedded","language":"en","codec":"subrip","label":"English"},
+            """.trimIndent(),
             profile = Profile(id = PROFILE_ID, name = "Profile"),
             versionFields = """
                 "audio_tracks": [
@@ -1341,6 +1346,37 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
 
         assertEquals(1, allocation?.audioTrackIndex)
         assertEquals(1, allocation?.subtitleTrackIndex)
+    }
+
+    @Test
+    fun perFileSubtitleMemoryYieldsToTheServerWhenItHoldsNoSeriesChoice() = runTest(dispatcher) {
+        // "Auto" chosen on another device deleted the series choice: this
+        // device's older per-file pick must not bring it back.
+        val subtitleTracks = listOf(
+            SubtitleTrack(index = 12, codec = "subrip", language = "en", title = "English"),
+        )
+        val persisted = LocalTrackSelection(
+            audioFingerprint = null,
+            subtitleFingerprint = encodeCatalogSubtitlePreference(subtitleTracks, 0),
+        )
+        val localState = object : UserItemStatePort by NoOpUserItemStatePort {
+            override suspend fun localTrackSelection(contentId: String, fileId: Int) = persisted
+        }
+        var allocation: MobileVideoSessionAllocation? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            versionFields = """
+                "subtitle_tracks": [
+                  {"index":12,"codec":"subrip","language":"en","title":"English","external":false}
+                ]
+            """.trimIndent(),
+            userItemStatePort = localState,
+            onAllocation = { allocation = it },
+        )
+
+        assertEquals(null, allocation?.subtitleTrackIndex)
     }
 
     @Test

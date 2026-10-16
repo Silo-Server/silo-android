@@ -44,6 +44,8 @@ sealed interface VideoPlaybackStartResult {
         val preferredTextLanguage: String? = null,
         val preferredSubtitleMode: String? = null,
         val showForcedSubtitles: Boolean = true,
+        /** The series' remembered subtitle track (WatchDetail `effective_subtitle_track_signature`). */
+        val preferredSubtitleTrackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
         val intro: TimeRange? = null,
         val credits: TimeRange? = null,
         val recap: TimeRange? = null,
