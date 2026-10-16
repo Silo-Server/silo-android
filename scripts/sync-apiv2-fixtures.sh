@@ -6,10 +6,11 @@
 #
 # Only the fixtures the Android client consumes are copied (the four pilot
 # operations, the probe's system-info body, the device sign-in and server
-# identity bodies, the external sign-in bodies, and the generic problem bodies)
-# plus fixtures.schema.json and an index.json filtered to the vendored
-# entries. The full OpenAPI document is never vendored. SOURCE records the
-# exact server commit in the repository's key=value convention.
+# identity bodies, the external sign-in bodies, the image capability body, and
+# the generic problem bodies) plus fixtures.schema.json and an index.json
+# filtered to the vendored entries. The full OpenAPI document is never
+# vendored. SOURCE records the exact server commit in the repository's
+# key=value convention.
 set -euo pipefail
 
 SERVER_DIR="${1:?usage: $0 /path/to/silo-server}"
@@ -55,6 +56,7 @@ SELECTED=(
   sign_in_with_network_identity_ok
   sign_in_with_network_identity_off_overlay
   link_account_identity_with_network_ok
+  get_image_capabilities_ok
 )
 
 [ -d "$SRC" ] || { echo "no fixtures at $SRC" >&2; exit 1; }

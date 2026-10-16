@@ -82,6 +82,7 @@ class ApiV2ContractTest {
                     "createAccountIdentityLinkTicket" -> ApiV2Fixtures.decode<LinkTicketV2>(body)
                     "signInWithNetworkIdentity" -> ApiV2Fixtures.decode<TokenPairV2>(body)
                     "linkAccountIdentityWithNetwork" -> ApiV2Fixtures.decode<AccountIdentityV2>(body)
+                    "getImageCapabilities" -> ApiV2Fixtures.decode<org.siloserver.silo.network.api.ImageCapabilities>(body)
                     else -> error("unhandled success fixture ${entry.name} (${entry.operationId})")
                 }
             }

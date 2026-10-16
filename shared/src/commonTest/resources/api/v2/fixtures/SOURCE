@@ -1,8 +1,8 @@
 repository=https://github.com/Silo-Server/silo-server
 path=contracts/api/v2/fixtures
-commit=51953b6c138a45aaca05a81b3234ef12d4bdd9c8
-ref=HEAD
-snapshot=committed
+commit=9cc3091d6ec19996ee4f7149c7b72bfad3a0323f
+ref=feat/episode-image-original-quality
+snapshot=uncommitted
 api_major=2
 
 snapshot=uncommitted means the bodies were copied from a server checkout with
