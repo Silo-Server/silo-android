@@ -158,14 +158,14 @@ internal class TvWatchPartyScreenController(
      * the room's permission decision; Stop and terminate end only this
      * device's engagement. Returns whether the command was accepted.
      */
-    fun onRemoteTransport(action: PlaybackAction, exit: () -> Unit): Boolean = when (action) {
+    fun onRemoteTransport(action: PlaybackAction, exit: (notice: String?) -> Unit): Boolean = when (action) {
         PlaybackAction.Pause -> setPlaying(play = false)
         PlaybackAction.Unpause -> setPlaying(play = true)
         PlaybackAction.TogglePlayPause -> togglePlayPause()
         is PlaybackAction.SeekTo -> seek(action.positionSeconds)
-        PlaybackAction.Stop -> {
+        is PlaybackAction.Stop -> {
             leave()
-            exit()
+            exit(action.notice)
             true
         }
         else -> false

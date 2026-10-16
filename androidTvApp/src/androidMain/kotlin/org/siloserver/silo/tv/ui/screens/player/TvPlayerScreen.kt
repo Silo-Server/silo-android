@@ -590,8 +590,14 @@ fun TvPlayerScreen(
         if (staleCastLaunch) latestOnStaleCastLaunch { exitPlayer(false) {} }
     }
     // A remote "stop"/"terminate" command tears the screen down like a Back press.
+    // An administrator's stop also says why, once: a 410 for the same stop
+    // arriving after the command finds the exit already under way.
     LaunchedEffect(Unit) {
-        viewModel.remoteStopRequests.collect { stopPlaybackAndExit() }
+        viewModel.remoteStopRequests.collect { notice ->
+            if (exitRequested) return@collect
+            notice?.let { Toast.makeText(context.applicationContext, it, Toast.LENGTH_LONG).show() }
+            stopPlaybackAndExit()
+        }
     }
     val latestOnReturnToWatchPartyLobby by rememberUpdatedState(onReturnToWatchPartyLobby)
     val latestOnWatchPartyEnded by rememberUpdatedState(onWatchPartyEnded)

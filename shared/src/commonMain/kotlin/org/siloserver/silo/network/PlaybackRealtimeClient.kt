@@ -58,7 +58,10 @@ fun decodePlaybackFrame(json: Json, raw: String): PlaybackRealtimeEvent? {
         "command" -> {
             val commandId = str("command_id") ?: return null
             val name = str("name") ?: return null
-            PlaybackRealtimeEvent.Command(commandId, sessionId, name, payload)
+            val issuedBy = ((obj["issued_by"] as? JsonObject)?.get("kind") as? JsonPrimitive)
+                ?.takeIf { it.isString }
+                ?.content
+            PlaybackRealtimeEvent.Command(commandId, sessionId, name, payload, issuedBy)
         }
         "event" -> {
             val name = str("name") ?: return null

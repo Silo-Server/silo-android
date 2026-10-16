@@ -78,6 +78,7 @@ import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
+import org.siloserver.silo.playback.ADMIN_ENDED_PLAYBACK_NOTICE
 import org.siloserver.silo.playback.PlaybackMarkersUpdate
 import org.siloserver.silo.playback.PlaybackSubtitleReady
 import org.siloserver.silo.playback.PlaybackSubtitleTimingChanged
@@ -626,13 +627,16 @@ class PlayerViewModel(
     // The control socket can stop the session and display a message; neither has a
     // VM-owned channel today (teardown is screen-local, notice is lifecycle-owned),
     // so expose thin ones here.
-    private val _remoteStopRequests = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(
+    private val _remoteStopRequests = kotlinx.coroutines.flow.MutableSharedFlow<String?>(
         replay = 0,
         extraBufferCapacity = 1,
         onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
     )
-    /** PlayerScreen collects this and tears the screen down (mirrors a back press). */
-    val remoteStopRequests: kotlinx.coroutines.flow.SharedFlow<Unit> = _remoteStopRequests.asSharedFlow()
+    /**
+     * PlayerScreen collects this and tears the screen down (mirrors a back press),
+     * showing the notice when there is one.
+     */
+    val remoteStopRequests: kotlinx.coroutines.flow.SharedFlow<String?> = _remoteStopRequests.asSharedFlow()
 
     private var remoteMessageCounter = 0L
     private val _remoteMessage = MutableStateFlow<RemoteMessage?>(null)
@@ -3687,7 +3691,7 @@ class PlayerViewModel(
     fun remoteUnpause() { _uiState.update { it.copy(isPaused = false) } }
     fun remoteTogglePlayPause() { onPlayPause() }
     fun remoteSeek(positionSeconds: Double) { seekImmediate(positionSeconds) }
-    fun remoteStop() { _remoteStopRequests.tryEmit(Unit) }
+    fun remoteStop(notice: String? = null) { _remoteStopRequests.tryEmit(notice) }
 
     /**
      * The server ended this session for good: an administrator stopped it
@@ -3696,7 +3700,7 @@ class PlayerViewModel(
      */
     private fun leaveServerEndedSession() {
         Log.i(TAG, "The server ended this playback session; leaving playback")
-        remoteStop()
+        remoteStop(ADMIN_ENDED_PLAYBACK_NOTICE)
     }
     // Carry a monotonic id so an identical message repeated within the toast
     // window still re-triggers (StateFlow would dedup equal values otherwise).

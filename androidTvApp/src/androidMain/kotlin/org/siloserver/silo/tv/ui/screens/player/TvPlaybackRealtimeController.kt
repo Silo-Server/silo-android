@@ -104,7 +104,7 @@ class TvPlaybackRealtimeController(
             is PlaybackAction.TogglePlayPause -> viewModel.remoteTogglePlayPause()
             is PlaybackAction.SeekTo -> viewModel.remoteSeek(action.positionSeconds)
             is PlaybackAction.ShowMessage -> viewModel.remoteDisplayMessage(action.message)
-            is PlaybackAction.Stop -> viewModel.remoteStop()
+            is PlaybackAction.Stop -> viewModel.remoteStop(action.notice)
             is PlaybackAction.SetAudioTrack -> viewModel.remoteSelectAudio(action.index)
             is PlaybackAction.SetSubtitleTrack -> viewModel.remoteSelectSubtitle(action.index)
             is PlaybackAction.Ignore, is PlaybackAction.Reject -> Unit

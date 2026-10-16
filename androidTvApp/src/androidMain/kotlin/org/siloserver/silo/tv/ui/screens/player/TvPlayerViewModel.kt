@@ -109,6 +109,7 @@ import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
+import org.siloserver.silo.playback.ADMIN_ENDED_PLAYBACK_NOTICE
 import org.siloserver.silo.playback.PlaybackMarkersUpdate
 import org.siloserver.silo.playback.PlaybackSubtitleReady
 import org.siloserver.silo.playback.PlaybackSubtitleTimingChanged
@@ -1406,9 +1407,9 @@ class TvPlayerViewModel(
      */
     val roomAudioTrackChanges: SharedFlow<Unit> = _roomAudioTrackChanges
 
-    private val _remoteStopRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    /** Screen collects this and runs its teardown/exit. */
-    val remoteStopRequests: SharedFlow<Unit> = _remoteStopRequests
+    private val _remoteStopRequests = MutableSharedFlow<String?>(extraBufferCapacity = 1)
+    /** Screen collects this and runs its teardown/exit, showing the notice when there is one. */
+    val remoteStopRequests: SharedFlow<String?> = _remoteStopRequests
 
     private var remoteMessageCounter = 0L
     private val _remoteMessage = MutableStateFlow<RemoteMessage?>(null)
@@ -4351,7 +4352,7 @@ class TvPlayerViewModel(
     fun remoteUnpause() = setPaused(false)
     fun remoteTogglePlayPause() = onPlayPause()
     fun remoteSeek(positionSeconds: Double) = seekImmediate(positionSeconds)
-    fun remoteStop() { _remoteStopRequests.tryEmit(Unit) }
+    fun remoteStop(notice: String? = null) { _remoteStopRequests.tryEmit(notice) }
 
     /**
      * The server ended this session for good: an administrator stopped it
@@ -4360,7 +4361,7 @@ class TvPlayerViewModel(
      */
     private fun leaveServerEndedSession() {
         Log.i(TAG, "The server ended this playback session; leaving playback")
-        remoteStop()
+        remoteStop(ADMIN_ENDED_PLAYBACK_NOTICE)
     }
     fun remoteDisplayMessage(message: String) {
         _remoteMessage.value = RemoteMessage(++remoteMessageCounter, message)

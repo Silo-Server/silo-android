@@ -10,8 +10,8 @@ import kotlin.test.assertTrue
 
 class PlaybackCommandDispatchTest {
     private val json = Json
-    private fun cmd(name: String, payload: String = "{}") =
-        PlaybackRealtimeEvent.Command("c1", "s1", name, json.parseToJsonElement(payload).jsonObject)
+    private fun cmd(name: String, payload: String = "{}", issuedBy: String? = null) =
+        PlaybackRealtimeEvent.Command("c1", "s1", name, json.parseToJsonElement(payload).jsonObject, issuedBy)
 
     @Test fun pauseMapsToPause() {
         assertEquals(PlaybackAction.Pause, decidePlaybackAction(cmd("pause")))
@@ -34,7 +34,24 @@ class PlaybackCommandDispatchTest {
     }
 
     @Test fun terminateMapsToStop() {
-        assertEquals(PlaybackAction.Stop, decidePlaybackAction(cmd("terminate")))
+        assertEquals(PlaybackAction.Stop(), decidePlaybackAction(cmd("terminate")))
+    }
+
+    @Test fun anAdministratorsStopOrTerminateCarriesItsNotice() {
+        assertEquals(
+            PlaybackAction.Stop(ADMIN_ENDED_PLAYBACK_NOTICE),
+            decidePlaybackAction(cmd("terminate", issuedBy = "admin")),
+        )
+        assertEquals(
+            PlaybackAction.Stop(ADMIN_STOPPED_PLAYBACK_NOTICE),
+            decidePlaybackAction(cmd("stop", issuedBy = "admin")),
+        )
+    }
+
+    @Test fun aStopNotIssuedByAnAdministratorIsSilent() {
+        assertEquals(PlaybackAction.Stop(), decidePlaybackAction(cmd("stop")))
+        assertEquals(PlaybackAction.Stop(), decidePlaybackAction(cmd("stop", issuedBy = "server")))
+        assertEquals(PlaybackAction.Stop(), decidePlaybackAction(cmd("terminate", issuedBy = "Admin")))
     }
 
     @Test fun serverRestartingIsIgnored() {
@@ -106,7 +123,7 @@ class PlaybackCommandDispatchTest {
         assertTrue(PlaybackAction.Unpause.isTransport)
         assertTrue(PlaybackAction.TogglePlayPause.isTransport)
         assertTrue(PlaybackAction.SeekTo(1.0).isTransport)
-        assertTrue(PlaybackAction.Stop.isTransport)
+        assertTrue(PlaybackAction.Stop().isTransport)
         // Informational / no-op actions are NOT transport (allowed during WT).
         assertFalse(PlaybackAction.ShowMessage("hi").isTransport)
         assertFalse(PlaybackAction.Ignore.isTransport)

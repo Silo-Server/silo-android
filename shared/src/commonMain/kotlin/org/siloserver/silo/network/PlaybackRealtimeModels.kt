@@ -75,6 +75,8 @@ sealed interface PlaybackRealtimeEvent {
         val sessionId: String,
         val name: String,
         val payload: JsonObject,
+        /** `issued_by.kind`: "admin" for an administrator's command, "server" for the server's own. */
+        val issuedBy: String? = null,
     ) : PlaybackRealtimeEvent
 
     data class ServerEvent(
