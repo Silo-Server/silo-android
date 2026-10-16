@@ -624,12 +624,12 @@ fun PlayerScreen(
     // press. In a party it ends only this device's engagement; the room goes
     // on (a host's leave starts the two-minute grace). An administrator's stop
     // also says why, once: a 410 for the same stop arriving after the command
-    // finds the exit already under way. The application context keeps the
-    // toast up when the exit finishes the activity.
+    // finds the exit already under way. The screen's context keeps the toast
+    // on the display the player is on; text toasts outlive the activity.
     LaunchedEffect(Unit) {
         viewModel.remoteStopRequests.collect { notice ->
             if (notice != null && !exitRequested) {
-                Toast.makeText(context.applicationContext, notice, Toast.LENGTH_LONG).show()
+                Toast.makeText(context, notice, Toast.LENGTH_LONG).show()
             }
             watchParty?.leave()
             exitPlayer()
