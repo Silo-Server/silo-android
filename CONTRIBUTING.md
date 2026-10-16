@@ -129,7 +129,16 @@ Provide evidence that fits the change:
 - **Changes to a screen:** before-and-after screenshots of the same screen with
   the same data, one pair per affected surface. Add a short recording when
   motion, timing, focus movement, or a multi-step flow matters.
-- Name the surface and the build or commit each capture came from.
+- **Every affected device:** the phone app lays out screens differently on a
+  phone, a tablet, and a foldable, and the TV app has its own interface. For a
+  phone app change, capture an Android phone, an Android tablet, a Galaxy Z
+  Fold8, and a Galaxy Z Fold8 Ultra, with each foldable both folded and open.
+  The two foldables open to different shapes, so one does not stand in for the
+  other. Add Android TV when the change reaches the TV app, which shared code
+  under `android-shared/` usually does. Emulator captures are fine. To skip a
+  device, say why the change cannot reach it.
+- Name the device, the build or commit, and for a foldable whether it was
+  folded or open, for each capture.
 
 Capture against a test library or public-domain media where you can, and keep
 passwords, tokens, and API keys out of every capture. Then put the evidence in
