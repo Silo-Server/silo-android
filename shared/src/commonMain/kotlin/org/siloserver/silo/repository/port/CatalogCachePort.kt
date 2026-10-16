@@ -7,6 +7,7 @@ import org.siloserver.silo.model.catalog.SeasonsResponse
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.repository.ArtworkSurface
 
 /**
  * Ownership captured before a cacheable network request starts. Identity-scoped
@@ -76,7 +77,10 @@ interface CatalogCachePort {
     }
     suspend fun getCachedItemDetail(contentId: String): ItemDetail? = null
 
-    /** Cache a series' season list + a season's episode list (offline series detail). */
+    /**
+     * Cache a series' season list + a season's episode list (offline series
+     * detail). Episodes are kept per [ArtworkSurface] they are drawn on.
+     */
     suspend fun cacheSeasons(seriesId: String, response: SeasonsResponse) {}
     suspend fun cacheSeasons(
         seriesId: String,
@@ -92,10 +96,15 @@ interface CatalogCachePort {
         seasonNumber: Int,
         response: EpisodesResponse,
         lease: CatalogCacheWriteLease,
+        surface: ArtworkSurface = ArtworkSurface.EPISODES,
     ) {
         cacheEpisodes(seriesId, seasonNumber, response)
     }
-    suspend fun getCachedEpisodes(seriesId: String, seasonNumber: Int): EpisodesResponse? = null
+    suspend fun getCachedEpisodes(
+        seriesId: String,
+        seasonNumber: Int,
+        surface: ArtworkSurface = ArtworkSurface.EPISODES,
+    ): EpisodesResponse? = null
 }
 
 /** Network-only default. */

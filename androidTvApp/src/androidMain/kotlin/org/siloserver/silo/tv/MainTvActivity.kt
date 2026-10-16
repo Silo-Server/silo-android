@@ -459,7 +459,7 @@ class MainTvActivity : ComponentActivity() {
                     org.siloserver.silo.network.IdentityTransitionBarrier::class.java,
                 ),
                 serverUrl = get<ServerRegistry>(ServerRegistry::class.java).activeEntry.value?.url,
-                artworkPlan = StartupArtworkPlan.tv(),
+                artworkPlan = StartupArtworkPlan.tv(resources.displayMetrics.density),
                 // What Home will draw right now (cached answer, else logos on);
                 // never waits on the title art request.
                 showTitleArt = { get<TitleArtStore>(TitleArtStore::class.java).state.value.showTitleArt },

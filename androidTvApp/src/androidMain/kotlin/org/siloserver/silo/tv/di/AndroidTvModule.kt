@@ -126,12 +126,17 @@ val androidTvModule = module {
             syncScheduler = get(),
         )
     }
+    single<org.siloserver.silo.repository.ArtworkLayout> {
+        val resources = androidContext().resources
+        org.siloserver.silo.tv.ui.theme.TvArtworkLayout { resources.displayMetrics.density }
+    }
     single<org.siloserver.silo.repository.port.HomeCachePort> {
         val tokenManager: TokenManager = get()
         org.siloserver.silo.common.data.repository.RoomHomeCacheRepository(
             db = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
             identityTransitions = get(),
+            artwork = get(),
         )
     }
     single<org.siloserver.silo.repository.port.CatalogCachePort> {
@@ -140,6 +145,7 @@ val androidTvModule = module {
             db = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
             identityTransitions = get(),
+            artwork = get(),
         )
     }
     single<org.siloserver.silo.repository.port.DownloadDeletionPort> {

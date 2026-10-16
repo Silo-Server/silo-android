@@ -21,6 +21,7 @@ import org.siloserver.silo.viewmodel.hydrateHomeSections
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.supervisorScope
+import kotlin.math.roundToInt
 
 /**
  * How much home artwork a cold-start warmup pulls through the Coil caches, and
@@ -50,20 +51,23 @@ data class StartupArtworkPlan(
 ) {
     companion object {
         /**
-         * Hero sizes mirror TvSkylineSectionFeed's preload constants (backdrop
-         * 1229×756, logo 880×200); posters are RowDimens.PosterWidth/Height
-         * (130×195dp) at the 2× density of a 1080p TV.
+         * Hero sizes mirror TvSkylineSectionFeed's preload (the 614.4×378dp
+         * hero art box and the 440×100dp logo slot); posters are
+         * RowDimens.PosterWidth/Height (130×195dp). [density] is the display's.
          */
-        fun tv() = StartupArtworkPlan(
-            maxUrls = 28,
-            posterWidthPx = 260,
-            posterHeightPx = 390,
-            backdropWidthPx = 1229,
-            backdropHeightPx = 756,
-            logoWidthPx = 880,
-            logoHeightPx = 200,
-            warmFirstRowHeroArt = true,
-        )
+        fun tv(density: Float): StartupArtworkPlan {
+            fun px(dp: Float) = (dp * density).roundToInt()
+            return StartupArtworkPlan(
+                maxUrls = 28,
+                posterWidthPx = px(130f),
+                posterHeightPx = px(195f),
+                backdropWidthPx = px(614.4f),
+                backdropHeightPx = px(378f),
+                logoWidthPx = px(440f),
+                logoHeightPx = px(100f),
+                warmFirstRowHeroArt = true,
+            )
+        }
 
         /** Phone home renders posters and episode stills only — no hero art. */
         fun phone() = StartupArtworkPlan(

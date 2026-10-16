@@ -70,6 +70,7 @@ val repositoryModule = module {
             identityTransitions = get(),
             catalogCache = getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>()
                 ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort,
+            artwork = get(),
         )
     }
     single { CalendarRepository(get()) }
@@ -111,9 +112,10 @@ val repositoryModule = module {
             sectionApi = get(),
             catalogCache = getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>()
                 ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort,
+            artwork = get(),
         )
     }
-    single { RecommendationRepository(get()) }
+    single { RecommendationRepository(get(), get()) }
     single {
         RequestsRepository(
             api = get(),

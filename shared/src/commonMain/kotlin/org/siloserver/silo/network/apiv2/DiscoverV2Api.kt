@@ -17,9 +17,9 @@ import org.siloserver.silo.network.*
 class DiscoverV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
     suspend fun capture(): AuthScopeSnapshot? = tokens.captureProfileScope()
     suspend fun current(owner: AuthScopeSnapshot): Boolean = owner.stillOwns(tokens, OwnerPolicy.FULL)
-    suspend fun read(owner: AuthScopeSnapshot): ApiResult<DiscoverResponse> =
+    suspend fun read(owner: AuthScopeSnapshot, widths: ArtworkWidths? = null): ApiResult<DiscoverResponse> =
         ownedV2Call<DiscoverCollection, DiscoverResponse>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { scope ->
-            client.get("/api/v2/recommendations/discover") { authScope(scope!!); requireSiloAuth() }
+            client.get("/api/v2/recommendations/discover") { authScope(scope!!); requireSiloAuth(); artworkWidths(widths, scope) }
         }) { body ->
             require(body.page == null || (!body.page.hasMore && body.page.nextCursor == null)) { "Discover is not paged." }
             require(body.items.all { row -> row.items.all { it.contentId.isNotBlank() } }) { "Blank card identity." }

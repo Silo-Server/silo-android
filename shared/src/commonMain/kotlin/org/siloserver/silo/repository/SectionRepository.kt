@@ -28,6 +28,7 @@ class SectionRepository(
     private val sectionApi: SectionApi,
     /** Offline read cache for a library's Recommended sections (Track B). No-op by default. */
     private val catalogCache: CatalogCachePort = NoOpCatalogCachePort,
+    private val artwork: ArtworkSizing = ArtworkSizing.None,
 ) {
     suspend fun captureHomeAuthority() = sectionApi.captureHomeAuthority()
     suspend fun isHomeAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionApi.isHomeAuthorityCurrent(owner)
@@ -39,7 +40,7 @@ class SectionRepository(
         val read = CompletableDeferred<ApiResult<SectionsResponse>>()
         homeReadLock.withLock { homeRead = owner to read }
         try {
-            return sectionApi.getHomeSections(owner).also { read.complete(it) }
+            return sectionApi.getHomeSections(owner, artwork.request(ArtworkSurface.HOME)).also { read.complete(it) }
         } catch (e: Throwable) {
             read.completeExceptionally(e)
             throw e
@@ -68,7 +69,8 @@ class SectionRepository(
         return getHomeSections(owner)
     }
 
-    suspend fun getHomeSectionItems(id: String, owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionApi.getHomeSectionItems(id, owner)
+    suspend fun getHomeSectionItems(id: String, owner: org.siloserver.silo.network.AuthScopeSnapshot) =
+        sectionApi.getHomeSectionItems(id, owner, artwork.request(ArtworkSurface.HOME))
 
     suspend fun dismissHomeItem(surface: String, itemId: String, anchor: String, owner: org.siloserver.silo.network.AuthScopeSnapshot) =
         sectionApi.dismissHomeItem(surface, itemId, anchor, owner)
@@ -78,7 +80,7 @@ class SectionRepository(
         stillCurrent: () -> Boolean, publish: (List<org.siloserver.silo.model.section.ResolvedSection>) -> Unit) {
         if (!currentCoroutineContext().isActive || !stillCurrent()) return
         // getHomeSections guards the owner before and after the exchange.
-        val result = sectionApi.getHomeSections(owner)
+        val result = sectionApi.getHomeSections(owner, artwork.request(ArtworkSurface.HOME))
         if (!currentCoroutineContext().isActive || !stillCurrent()) return
         if (result is ApiResult.Success) publish(result.data.sections)
     }
@@ -86,7 +88,7 @@ class SectionRepository(
     /** Fetches a library's resolved sections (offline: last cached sections). */
     suspend fun getLibrarySections(libraryId: Int, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SectionsResponse> {
         // getLibrarySections guards the owner before and after the exchange.
-        val result = sectionApi.getLibrarySections(libraryId, owner)
+        val result = sectionApi.getLibrarySections(libraryId, owner, artwork.request(ArtworkSurface.HOME))
         if (result is ApiResult.Success) {
             catalogCache.cacheLibrarySectionsV2(libraryId, result.data.sections, owner)
             if (!isLibrarySectionAuthorityCurrent(owner)) return identityChanged()
@@ -109,11 +111,13 @@ class SectionRepository(
         sectionId: String,
         owner: org.siloserver.silo.network.AuthScopeSnapshot,
     ): ApiResult<HomeSectionItemsResponse> =
-        sectionApi.getLibrarySectionItems(libraryId, sectionId, owner)
+        sectionApi.getLibrarySectionItems(libraryId, sectionId, owner, artwork.request(ArtworkSurface.HOME))
 
     suspend fun getLibrarySectionCatalogItems(libraryId: Int, sectionId: String,
         owner: org.siloserver.silo.network.AuthScopeSnapshot, continuation: CatalogContinuationV2?) =
-        sectionApi.getLibrarySectionCatalogItems(libraryId, sectionId, owner, continuation)
+        // Refills a section's shelf, so its artwork is sized like the section rows.
+        sectionApi.getLibrarySectionCatalogItems(libraryId, sectionId, owner, continuation,
+            if (continuation == null) artwork.request(ArtworkSurface.HOME) else null)
 
     /** Lists collections within a library as a flat list. Callers that need
      *  the grouped layout should use [getLibraryCollectionsGrouped]. */
@@ -149,5 +153,6 @@ class SectionRepository(
             mediaType = mediaType,
             libraryId = libraryId,
             source = source,
+            widths = if (continuation == null) artwork.request(ArtworkSurface.BROWSE) else null,
         )
 }

@@ -51,17 +51,19 @@ class HomeSectionsV2Api(
         }) { }
     }
 
-    suspend fun list(owner: AuthScopeSnapshot): ApiResult<SectionsResponse> = withContext(decodeDispatcher) {
+    suspend fun list(owner: AuthScopeSnapshot, widths: ArtworkWidths? = null): ApiResult<SectionsResponse> = withContext(decodeDispatcher) {
         ownedV2Call<JsonObject, SectionsResponse>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { scope ->
-            client.get("/api/v2/home/sections") { authScope(scope!!); requireSiloAuth() }
+            client.get("/api/v2/home/sections") { authScope(scope!!); requireSiloAuth(); artworkWidths(widths, scope) }
         }) { decodeSectionsV2(it) }
     }
 
-    suspend fun section(id: String, owner: AuthScopeSnapshot): ApiResult<HomeSectionItemsResponse> {
+    suspend fun section(id: String, owner: AuthScopeSnapshot, widths: ArtworkWidths? = null): ApiResult<HomeSectionItemsResponse> {
         if (id.isBlank()) return ApiResult.Error(422, "validation_failed", "Invalid home section.")
         return withContext(decodeDispatcher) {
             ownedV2Call<JsonObject, HomeSectionItemsResponse>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { scope ->
-                client.get("/api/v2/home/sections/${id.encodeURLPathPart()}/items") { authScope(scope!!); requireSiloAuth() }
+                client.get("/api/v2/home/sections/${id.encodeURLPathPart()}/items") {
+                    authScope(scope!!); requireSiloAuth(); artworkWidths(widths, scope)
+                }
             }) { row ->
                 val section = decodeSectionV2(row)
                 require(section.id == id) { "Wrong section identity." }

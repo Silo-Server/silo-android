@@ -172,12 +172,23 @@ val androidModule = module {
             syncScheduler = get(),
         )
     }
+    single<org.siloserver.silo.repository.ArtworkLayout> {
+        val resources = androidContext().resources
+        org.siloserver.silo.android.ui.util.PhoneArtworkLayout {
+            org.siloserver.silo.android.ui.util.PhoneArtworkLayout.Screen(
+                resources.configuration.screenWidthDp,
+                resources.configuration.screenHeightDp,
+                resources.displayMetrics.density,
+            )
+        }
+    }
     single<org.siloserver.silo.repository.port.HomeCachePort> {
         val tokenManager: TokenManager = get()
         org.siloserver.silo.common.data.repository.RoomHomeCacheRepository(
             db = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
             identityTransitions = get(),
+            artwork = get(),
         )
     }
     single<org.siloserver.silo.repository.port.CatalogCachePort> {
@@ -186,6 +197,7 @@ val androidModule = module {
             db = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
             identityTransitions = get(),
+            artwork = get(),
         )
     }
     single<org.siloserver.silo.repository.port.DownloadDeletionPort> {

@@ -77,6 +77,7 @@ class CatalogRepositoryDetailCacheTest {
         override suspend fun getCachedEpisodes(
             seriesId: String,
             seasonNumber: Int,
+            surface: ArtworkSurface,
         ): EpisodesResponse? = episodesPreset
     }
 

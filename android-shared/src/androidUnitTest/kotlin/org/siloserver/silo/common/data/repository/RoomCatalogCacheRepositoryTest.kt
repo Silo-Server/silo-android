@@ -6,9 +6,13 @@ import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogResponse
 import org.siloserver.silo.model.personal.UserLibrary
+import org.siloserver.silo.network.ArtworkWidths
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionKind
+import org.siloserver.silo.repository.ArtworkLayout
+import org.siloserver.silo.repository.ArtworkSizing
+import org.siloserver.silo.repository.ArtworkSurface
 import org.siloserver.silo.repository.port.CatalogCacheWriteLease
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -50,6 +54,32 @@ class RoomCatalogCacheRepositoryTest {
         assertNull(repo.getCachedLibrarySectionsV2(7, scope!!))
         scope = owner.copy(credentialEpoch = 2)
         assertNull(repo.getCachedLibrarySectionsV2(7, scope!!))
+    }
+
+    @Test
+    fun artworkReadsAreKeyedByTheWidthsTheyAreDrawnAt() = runTest {
+        var widths = ArtworkWidths(backdrop = 1344, still = 360)
+        val layout = ArtworkLayout { surface ->
+            if (surface == ArtworkSurface.SEASON_EPISODES) ArtworkWidths(still = 460) else widths
+        }
+        val sized = RoomCatalogCacheRepository(db = db, snapshotProvider = { scope }, now = { 1000L },
+            artwork = ArtworkSizing(layout, null))
+        val detail = org.siloserver.silo.model.catalog.ItemDetail(contentId = "c1", type = "series", title = "Show")
+        val episodes = org.siloserver.silo.model.catalog.EpisodesResponse()
+        sized.cacheItemDetail("c1", detail)
+        sized.cacheEpisodes("c1", 1, episodes, CatalogCacheWriteLease(0L), ArtworkSurface.EPISODES)
+        assertEquals(detail, sized.getCachedItemDetail("c1"))
+        assertEquals(episodes, sized.getCachedEpisodes("c1", 1, ArtworkSurface.EPISODES))
+        // A season's page draws the stills wider, so it keeps its own copy.
+        assertNull(sized.getCachedEpisodes("c1", 1, ArtworkSurface.SEASON_EPISODES))
+        // Another layout misses rather than serving artwork sized for this one.
+        widths = ArtworkWidths(backdrop = 2560, still = 480)
+        assertNull(sized.getCachedItemDetail("c1"))
+        // The language purge still matches width-keyed rows.
+        widths = ArtworkWidths(backdrop = 1344, still = 360)
+        sized.invalidateDetailMetadata()
+        assertNull(sized.getCachedItemDetail("c1"))
+        assertNull(sized.getCachedEpisodes("c1", 1, ArtworkSurface.EPISODES))
     }
 
     @Test

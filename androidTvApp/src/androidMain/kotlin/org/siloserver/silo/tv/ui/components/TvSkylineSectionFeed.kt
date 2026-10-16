@@ -41,6 +41,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -65,6 +66,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.tv.ui.theme.RowDimens
 import org.siloserver.silo.tv.ui.theme.Spacing
+import org.siloserver.silo.tv.ui.theme.TvArtworkDimens
 import org.siloserver.silo.tv.ui.theme.TvSkyline
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 import kotlinx.coroutines.CancellationException
@@ -434,7 +436,18 @@ fun TvSkylineSectionFeed(
         settledMarqueeId = marquee.content?.id,
     )
     val prefetchLogos = LocalShowTitleArt.current
-    LaunchedEffect(rows, settledFocus, fetchDetail, prefetchLogos) {
+    val density = LocalDensity.current
+    val heroPreload = remember(density) {
+        with(density) {
+            HeroPreloadSizes(
+                backdropWidth = TvArtworkDimens.HeroArtWidth.roundToPx(),
+                backdropHeight = TvArtworkDimens.HeroArtHeight.roundToPx(),
+                logoWidth = TvArtworkDimens.MarqueeLogoWidth.roundToPx(),
+                logoHeight = TvArtworkDimens.MarqueeLogoHeight.roundToPx(),
+            )
+        }
+    }
+    LaunchedEffect(rows, settledFocus, fetchDetail, prefetchLogos, heroPreload) {
         val focus = settledFocus ?: return@LaunchedEffect
         val row = rows.getOrNull(focus.rowIndex) ?: return@LaunchedEffect
         val window = settledPrefetchItems(
@@ -455,7 +468,7 @@ fun TvSkylineSectionFeed(
                                 add(
                                     ImageRequest.Builder(context)
                                         .data(url)
-                                        .size(HeroBackdropPreloadWidthPx, HeroBackdropPreloadHeightPx)
+                                        .size(heroPreload.backdropWidth, heroPreload.backdropHeight)
                                         .build(),
                                 )
                             }
@@ -464,7 +477,7 @@ fun TvSkylineSectionFeed(
                                 add(
                                     ImageRequest.Builder(context)
                                         .data(url)
-                                        .size(HeroLogoPreloadWidthPx, HeroLogoPreloadHeightPx)
+                                        .size(heroPreload.logoWidth, heroPreload.logoHeight)
                                         .build(),
                                 )
                             }
@@ -485,10 +498,7 @@ fun TvSkylineSectionFeed(
                                         loader.execute(
                                             ImageRequest.Builder(context)
                                                 .data(url)
-                                                .size(
-                                                    HeroBackdropPreloadWidthPx,
-                                                    HeroBackdropPreloadHeightPx,
-                                                )
+                                                .size(heroPreload.backdropWidth, heroPreload.backdropHeight)
                                                 .build(),
                                         )
                                     }
@@ -1033,11 +1043,14 @@ private data class TvSkylineMarqueeSeed(
     val rowIdentity: String,
 )
 
-// 0.64 × 1920 by 0.70 × 1080, and the 440×100dp logo cap at 2× density.
-private const val HeroBackdropPreloadWidthPx = 1229
-private const val HeroBackdropPreloadHeightPx = 756
-private const val HeroLogoPreloadWidthPx = 880
-private const val HeroLogoPreloadHeightPx = 200
+/** The hero art box and the marquee logo slot in pixels at the display's density. */
+private data class HeroPreloadSizes(
+    val backdropWidth: Int,
+    val backdropHeight: Int,
+    val logoWidth: Int,
+    val logoHeight: Int,
+)
+
 private const val HeroFocusPrefetchRadius = 2
 
 /** tvOS MediaRow cardSpacing 40pt maps to 20dp. */

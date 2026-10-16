@@ -46,6 +46,7 @@ import org.siloserver.silo.network.isAccessRefusal
 import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionPhase
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.repository.ArtworkSurface
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.ProfileRepository
@@ -383,6 +384,18 @@ class TvItemDetailViewModel(
 
     private var similarGeneration = 0L
 
+    /**
+     * The series page draws episode stills narrower than a season's or an
+     * episode's own page. A season or episode whose hierarchy is complete moves
+     * to its series page, so it reads them at the series page's size.
+     */
+    private val episodeArtwork: ArtworkSurface
+        get() {
+            val detail = _uiState.value.detail
+            val onSeriesPage = detail == null || detail.type.lowercase() == "series" || tvSeriesDetailRedirect(detail) != null
+            return if (onSeriesPage) ArtworkSurface.EPISODES else ArtworkSurface.SEASON_EPISODES
+        }
+
     private val _uiState = MutableStateFlow(TvItemDetailUiState())
     val uiState: StateFlow<TvItemDetailUiState> = kotlinx.coroutines.flow.combine(_uiState, personalDataRepository.memberships.actions) { state, actions ->
         var projected = state
@@ -600,7 +613,8 @@ class TvItemDetailViewModel(
 
     /** Publishes a cached season immediately; the caller still refreshes it. */
     private suspend fun seedCachedEpisodes(seriesContentId: String, seasonNumber: Int): Boolean {
-        val cached = catalogRepository.getCachedEpisodes(seriesContentId, seasonNumber, libraryId = libraryId) ?: return false
+        val cached = catalogRepository.getCachedEpisodes(seriesContentId, seasonNumber, libraryId = libraryId,
+            surface = episodeArtwork) ?: return false
         if (_uiState.value.selectedSeason != seasonNumber) return false
         val episodes = withLocalProgress(cached.episodes.sortedBy { it.episodeNumber })
         if (_uiState.value.selectedSeason != seasonNumber) return false
@@ -1054,7 +1068,8 @@ class TvItemDetailViewModel(
 
     /** Episode ids of a season read fresh from the server; empty if the read fails. */
     private suspend fun seasonEpisodeIds(seriesContentId: String, seasonNumber: Int): List<String> =
-        when (val r = catalogRepository.getEpisodes(seriesContentId, seasonNumber, libraryId = libraryId, fresh = true)) {
+        when (val r = catalogRepository.getEpisodes(seriesContentId, seasonNumber, libraryId = libraryId, fresh = true,
+            surface = episodeArtwork)) {
             is ApiResult.Success -> r.data.episodes.map { it.contentId }
             else -> emptyList()
         }
@@ -1613,6 +1628,7 @@ class TvItemDetailViewModel(
                 seasonNumber,
                 libraryId = libraryId,
                 fresh = freshRead,
+                surface = episodeArtwork,
             )
             if (!ownsRequest()) return@launch
             when (result) {
@@ -2198,7 +2214,8 @@ class TvItemDetailViewModel(
     ): String? {
         val requestGeneration = episodeLoadRequestGeneration
         val listGeneration = episodeListGeneration
-        val result = catalogRepository.getEpisodes(seriesId, seasonNumber, libraryId = libraryId, fresh = true)
+        val result = catalogRepository.getEpisodes(seriesId, seasonNumber, libraryId = libraryId, fresh = true,
+            surface = episodeArtwork)
         if (result !is ApiResult.Success || !metadataAiRepository.isCurrent(owner)) return target
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         if (_uiState.value.selectedSeason != seasonNumber) return result.data.episodes.pendingEpisodeTranslationLanguage()

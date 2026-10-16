@@ -7,6 +7,8 @@ import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
+import org.siloserver.silo.repository.ArtworkSizing
+import org.siloserver.silo.repository.ArtworkSurface
 import org.siloserver.silo.repository.port.HomeCachePort
 import org.siloserver.silo.repository.port.HomeCacheSnapshot
 import org.siloserver.silo.repository.port.HomeCacheWriteLease
@@ -26,6 +28,9 @@ import kotlinx.serialization.json.Json
  * The blob is encoded and decoded on [jsonDispatcher]: callers read the cache
  * from the main thread, and with 100-item Home rows the blob is about 1 MB,
  * which takes hundreds of milliseconds to decode on a low-end TV.
+ *
+ * The v2 key carries the artwork widths Home is drawn at, so a layout change
+ * never serves artwork sized for another.
  */
 class RoomHomeCacheRepository(
     private val db: SiloDatabase,
@@ -33,6 +38,7 @@ class RoomHomeCacheRepository(
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
     private val now: () -> Long = { System.currentTimeMillis() },
     private val jsonDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val artwork: ArtworkSizing = ArtworkSizing.None,
 ) : HomeCachePort {
 
     private val dao = db.homeCacheDao()
@@ -86,7 +92,8 @@ class RoomHomeCacheRepository(
         return sections?.let { HomeCacheSnapshot(it, row.cachedAtMs) }
     }
 
-    private fun scopedKey(owner: AuthScopeSnapshot): String = owner.identityCacheKey("home-sections-v2")
+    private fun scopedKey(owner: AuthScopeSnapshot): String =
+        owner.identityCacheKey(artwork.cacheKey("home-sections-v2", ArtworkSurface.HOME))
 
     override suspend fun cacheHome(sections: List<ResolvedSection>) {
         cacheHome(

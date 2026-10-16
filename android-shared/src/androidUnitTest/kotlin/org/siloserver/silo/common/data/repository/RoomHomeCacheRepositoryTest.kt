@@ -6,9 +6,11 @@ import androidx.test.core.app.ApplicationProvider
 import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.network.ArtworkWidths
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionKind
+import org.siloserver.silo.repository.ArtworkSizing
 import org.siloserver.silo.repository.port.HomeCacheWriteLease
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -51,6 +53,20 @@ class RoomHomeCacheRepositoryTest {
         assertNull(repo.getCachedHomeV2(scope!!))
         scope = owner.copy(credentialEpoch = 2)
         assertNull(repo.getCachedHomeV2(scope!!))
+    }
+
+    @Test
+    fun homeIsKeyedByTheWidthsItIsDrawnAt() = runTest {
+        val owner = scope!!
+        var widths = ArtworkWidths(poster = 176, backdrop = 1344, logo = 880)
+        val sized = RoomHomeCacheRepository(db = db, snapshotProvider = { scope }, now = { 1000L },
+            artwork = ArtworkSizing({ widths }, null))
+        val rows = listOf(section("row", "item"))
+        sized.cacheHomeV2(rows, owner)
+        assertEquals(rows, sized.getCachedHomeV2(owner)?.sections)
+        assertNull(repo.getCachedHomeV2(owner))
+        widths = ArtworkWidths(poster = 117, backdrop = 895, logo = 586)
+        assertNull(sized.getCachedHomeV2(owner))
     }
 
     @Test

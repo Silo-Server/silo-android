@@ -12,11 +12,11 @@ import org.siloserver.silo.network.*
 class SimilarCardsV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
     suspend fun capture(): AuthScopeSnapshot? = tokens.captureProfileScope()
     suspend fun current(owner: AuthScopeSnapshot): Boolean = owner.stillOwns(tokens, OwnerPolicy.FULL)
-    suspend fun list(id: String, limit: Int, owner: AuthScopeSnapshot): ApiResult<List<BrowseItem>> {
+    suspend fun list(id: String, limit: Int, owner: AuthScopeSnapshot, widths: ArtworkWidths? = null): ApiResult<List<BrowseItem>> {
         if (id.isBlank() || limit !in 1..50) return ApiResult.Error(422, "validation_failed", "Invalid similar-card request.")
         return ownedV2Call<SimilarCards, List<BrowseItem>>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { scope ->
             client.get("/api/v2/recommendations/similar/${id.encodeURLPathPart()}") {
-                authScope(scope!!); requireSiloAuth(); parameter("limit", limit)
+                authScope(scope!!); requireSiloAuth(); parameter("limit", limit); artworkWidths(widths, scope)
             }
         }) { body ->
             require((body.page == null || (!body.page.hasMore && body.page.nextCursor == null)) && body.items.size <= limit &&

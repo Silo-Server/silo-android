@@ -4,6 +4,7 @@ import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.recommendation.DiscoverResponse
 import org.siloserver.silo.model.recommendation.TasteProfile
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.ArtworkWidths
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.TokenManagerImpl
 import org.siloserver.silo.network.apiv2.ApiV2Gate
@@ -20,12 +21,13 @@ class RecommendationApi(client: HttpClient,
 
     suspend fun captureDiscoverAuthority() = discover.capture()
     suspend fun isDiscoverAuthorityCurrent(owner: AuthScopeSnapshot) = discover.current(owner)
-    suspend fun getDiscover(owner: AuthScopeSnapshot): ApiResult<DiscoverResponse> = discover.read(owner)
+    suspend fun getDiscover(owner: AuthScopeSnapshot, widths: ArtworkWidths? = null): ApiResult<DiscoverResponse> =
+        discover.read(owner, widths)
 
     suspend fun getTasteProfile(owner: AuthScopeSnapshot): ApiResult<TasteProfile> = taste.read(owner)
 
     suspend fun captureSimilarAuthority() = similar.capture()
     suspend fun isSimilarAuthorityCurrent(owner: AuthScopeSnapshot) = similar.current(owner)
-    suspend fun getSimilar(contentId: String, limit: Int = 12, owner: AuthScopeSnapshot): ApiResult<List<BrowseItem>> =
-        similar.list(contentId, limit, owner)
+    suspend fun getSimilar(contentId: String, limit: Int = 12, owner: AuthScopeSnapshot,
+        widths: ArtworkWidths? = null): ApiResult<List<BrowseItem>> = similar.list(contentId, limit, owner, widths)
 }

@@ -13,6 +13,8 @@ import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
+import org.siloserver.silo.repository.ArtworkSizing
+import org.siloserver.silo.repository.ArtworkSurface
 import org.siloserver.silo.repository.port.CatalogCachePort
 import org.siloserver.silo.repository.port.CatalogCacheWriteLease
 import kotlinx.serialization.json.Json
@@ -21,13 +23,15 @@ import kotlinx.serialization.json.Json
  * Room-backed [CatalogCachePort] (Track B). Stores each catalog read as a JSON
  * blob in the generic `catalog_cache` table, scoped to the active
  * `(serverId, profileId)`. Corrupt/forward-incompatible JSON decodes to null
- * rather than crashing the browse screen.
+ * rather than crashing the browse screen. Reads that carry artwork are keyed by
+ * the widths their screen draws it at.
  */
 class RoomCatalogCacheRepository(
     db: SiloDatabase,
     private val snapshotProvider: suspend () -> AuthScopeSnapshot?,
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
     private val now: () -> Long = { System.currentTimeMillis() },
+    private val artwork: ArtworkSizing = ArtworkSizing.None,
 ) : CatalogCachePort {
 
     private val dao = db.catalogCacheDao()
@@ -98,7 +102,7 @@ class RoomCatalogCacheRepository(
     }
 
     private fun librarySectionsV2Key(libraryId: Int, owner: AuthScopeSnapshot): String =
-        owner.identityCacheKey("library-sections-v2:$libraryId")
+        owner.identityCacheKey(artwork.cacheKey("library-sections-v2:$libraryId", ArtworkSurface.HOME))
 
     override suspend fun cacheItemDetail(contentId: String, detail: ItemDetail) =
         cacheItemDetail(contentId, detail, currentWriteLease())
@@ -132,10 +136,11 @@ class RoomCatalogCacheRepository(
         seasonNumber: Int,
         response: EpisodesResponse,
         lease: CatalogCacheWriteLease,
-    ) = put(episodesKey(seriesId, seasonNumber), json.encodeToString(response), lease)
+        surface: ArtworkSurface,
+    ) = put(episodesKey(seriesId, seasonNumber, surface), json.encodeToString(response), lease)
 
-    override suspend fun getCachedEpisodes(seriesId: String, seasonNumber: Int): EpisodesResponse? =
-        get(episodesKey(seriesId, seasonNumber))?.let { runCatching { json.decodeFromString<EpisodesResponse>(it) }.getOrNull() }
+    override suspend fun getCachedEpisodes(seriesId: String, seasonNumber: Int, surface: ArtworkSurface): EpisodesResponse? =
+        get(episodesKey(seriesId, seasonNumber, surface))?.let { runCatching { json.decodeFromString<EpisodesResponse>(it) }.getOrNull() }
 
     private suspend fun put(
         cacheKey: String,
@@ -179,14 +184,16 @@ class RoomCatalogCacheRepository(
             }?.json
     }
 
+    private fun libraryKey(libraryId: Int) = artwork.cacheKey("library:$libraryId", ArtworkSurface.BROWSE)
+    private fun itemDetailKey(contentId: String) = artwork.cacheKey("item-detail:$contentId", ArtworkSurface.DETAIL)
+    private fun episodesKey(seriesId: String, seasonNumber: Int, surface: ArtworkSurface) =
+        artwork.cacheKey("episodes:$seriesId:$seasonNumber", surface)
+
     private companion object {
         // Stay well under SQLite's ~2MB CursorWindow.
         const val MAX_CACHE_BYTES = 1_500_000
         const val KEY_LIBRARIES = "libraries"
-        fun libraryKey(libraryId: Int) = "library:$libraryId"
         fun librarySectionsKey(libraryId: Int) = "library-sections:$libraryId"
-        fun itemDetailKey(contentId: String) = "item-detail:$contentId"
         fun seasonsKey(seriesId: String) = "seasons:$seriesId"
-        fun episodesKey(seriesId: String, seasonNumber: Int) = "episodes:$seriesId:$seasonNumber"
     }
 }

@@ -3,6 +3,7 @@ package org.siloserver.silo.network.api
 import io.ktor.client.*
 import org.siloserver.silo.model.catalog.*
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.ArtworkWidths
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.TokenManagerImpl
 import org.siloserver.silo.network.map
@@ -21,7 +22,7 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         continuation: CatalogContinuationV2? = null, limit: Int? = null,
         namePrefix: String? = null, yearMin: Int? = null, yearMax: Int? = null,
         queryGroups: List<CatalogQueryGroup> = emptyList(), match: String? = null,
-        skipTotal: Boolean = false,
+        skipTotal: Boolean = false, widths: ArtworkWidths? = null,
     ): ApiResult<CatalogResponse> {
         val groups = queryGroups.toV2Groups().toMutableList()
         val implicit = buildList {
@@ -39,7 +40,7 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         }
         return v2.browse(CatalogQueryV2(source = source ?: "query", q = query, type = mediaType,
             libraryId = libraryId?.toString(), sort = sort, order = order, limit = limit ?: 50,
-            namePrefix = namePrefix, groups = groups, match = match, skipTotal = skipTotal), continuation)
+            namePrefix = namePrefix, groups = groups, match = match, skipTotal = skipTotal), continuation, widths = widths)
             .map { it.toCatalogResponse() }
     }
 
@@ -63,7 +64,8 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
 
     suspend fun searchCapabilities() = v2.searchCapabilities()
 
-    suspend fun getItemDetail(id: String, libraryId: Int? = null): ApiResult<ItemDetail> = v2.itemDetail(id, libraryId)
+    suspend fun getItemDetail(id: String, libraryId: Int? = null, widths: ArtworkWidths? = null): ApiResult<ItemDetail> =
+        v2.itemDetail(id, libraryId, widths)
 
     suspend fun getItemVersions(id: String, libraryId: Int? = null): ApiResult<List<FileVersion>> = v2.itemVersions(id, libraryId)
 
@@ -75,7 +77,8 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         seriesId: String,
         seasonNumber: Int,
         libraryId: Int? = null,
-    ): ApiResult<EpisodesResponse> = v2.seasonEpisodes(seriesId, seasonNumber, libraryId)
+        widths: ArtworkWidths? = null,
+    ): ApiResult<EpisodesResponse> = v2.seasonEpisodes(seriesId, seasonNumber, libraryId, widths)
 
     suspend fun captureWatchAuthority() = watchDetail.capture()
     suspend fun isWatchAuthorityCurrent(owner: AuthScopeSnapshot) = watchDetail.current(owner)
@@ -98,9 +101,9 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
     suspend fun refreshPerson(id: Long, owner: AuthScopeSnapshot): ApiResult<Unit> = personRefresh.refresh(id, owner)
 
     suspend fun getPersonItems(personId: Long, mediaType: String? = null,
-        continuation: CatalogContinuationV2? = null, limit: Int? = null): ApiResult<CatalogResponse> =
+        continuation: CatalogContinuationV2? = null, limit: Int? = null, widths: ArtworkWidths? = null): ApiResult<CatalogResponse> =
         v2.browse(CatalogQueryV2(source = "person", personId = personId.toString(), type = mediaType,
-            sort = "year", order = "desc", limit = limit ?: 50), continuation).map { it.toCatalogResponse() }
+            sort = "year", order = "desc", limit = limit ?: 50), continuation, widths = widths).map { it.toCatalogResponse() }
 }
 
 internal fun List<CatalogQueryGroup>.toV2Groups() = map { group ->

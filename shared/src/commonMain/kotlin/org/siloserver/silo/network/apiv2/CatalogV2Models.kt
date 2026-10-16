@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonElement
 import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogEffectiveSort
+import org.siloserver.silo.network.ArtworkWidths
 import org.siloserver.silo.network.AuthScopeSnapshot
 
 /** The same query is retained for every page; only its opaque cursor changes. */
@@ -69,12 +70,16 @@ internal data class CatalogPageWireV2(
     @SerialName("search_diagnostics") val searchDiagnostics: CatalogSearchDiagnosticsV2? = null,
 )
 
-/** Not persisted: a cursor belongs to the query, operation and viewer that read it. */
+/**
+ * Not persisted: a cursor belongs to the query, operation, viewer and artwork
+ * widths that read it.
+ */
 class CatalogContinuationV2 internal constructor(
     internal val requestKey: String,
     internal val cursor: String,
     internal val scope: AuthScopeSnapshot?,
     internal val seen: Set<String>,
+    internal val widths: ArtworkWidths? = null,
 )
 
 data class CatalogPageV2<T>(

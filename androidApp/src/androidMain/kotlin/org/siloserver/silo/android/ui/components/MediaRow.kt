@@ -36,6 +36,8 @@ import androidx.compose.ui.unit.sp
 import coil3.imageLoader
 import coil3.request.ImageRequest
 import kotlin.math.roundToInt
+import org.koin.compose.koinInject
+import org.siloserver.silo.repository.ImageCapabilitiesSession
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.diagnostics.DiagnosticsKeyAnomalyLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsKeyCollection
@@ -97,6 +99,7 @@ fun MediaRow(
     onCenteredItemChanged: ((SectionItem?) -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val imageCapabilities: ImageCapabilitiesSession = koinInject()
     val heroHandoff = LocalHeroSourceHandoff.current
     val uniqueItems = remember(items) { items.distinctBy { it.contentId } }
     val diagnosticsKeySnapshot = remember(items) {
@@ -229,11 +232,14 @@ fun MediaRow(
                 onItemClick(item.contentId)
                 return
             }
-            // Keep one full-size backdrop request alive across the loading-
-            // skeleton -> detail-content composition swap. Without this, the
-            // skeleton's differently-sized request can be cancelled as soon as
-            // metadata arrives and the real hero then starts from zero again.
-            item.backdropUrl?.takeIf { it.isNotBlank() }?.let { backdropUrl ->
+            // A server that sizes backdrops per screen gives the detail its own
+            // hero URL, so the card's backdrop only stands in while it loads.
+            // Otherwise both use one URL: keep one full-size request alive
+            // across the loading-skeleton -> detail-content composition swap,
+            // or the skeleton's differently-sized request can be cancelled as
+            // soon as metadata arrives and the hero starts from zero again.
+            val sizedBackdrops = "backdrop" in imageCapabilities.capabilities.value?.acceptedWidthSlots.orEmpty()
+            item.backdropUrl?.takeIf { it.isNotBlank() && !sizedBackdrops }?.let { backdropUrl ->
                 val metrics = context.resources.displayMetrics
                 val widthPx = metrics.widthPixels.coerceAtLeast(1)
                 val heightPx = minOf(
