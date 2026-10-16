@@ -47,17 +47,15 @@ visible.
 
 ## Work out which devices it reaches
 
-The devices are an Android phone, an Android tablet, the Galaxy Z Fold8 folded and open, the Galaxy
-Z Fold8 Ultra folded and open, and Android TV. The phone app runs on the first five; the TV app runs
-on Android TV; shared modules reach both apps unless the changed code is only called from one. Then
-trace the layout checks around the changed code:
+The devices are an Android phone, an Android tablet, an Android foldable folded and open (any
+model, such as a Galaxy Z Fold or Pixel Fold), and Android TV. The phone app runs on the first
+three; the TV app runs on Android TV; shared modules reach both apps unless the changed code is only
+called from one. Then trace the layout checks around the changed code:
 
 - `smallestScreenWidthDp`, `widthDp` and `heightDp` thresholds, `isExpandedWindow`, and
-  `isExpandedDetailLayout` decide whether a screen takes its phone or wide layout. A folded Fold
-  behaves like a phone; an open one takes the wide layouts a tablet does.
+  `isExpandedDetailLayout` decide whether a screen takes its phone or wide layout. A folded
+  foldable behaves like a phone; an open one takes the wide layouts a tablet does.
 - `FoldingFeature` and `isTabletopPlayerPosture` reach only a foldable, open or half-folded.
-- The Fold8 opens wider and shorter than the Fold8 Ultra, so a width or aspect-ratio threshold can
-  fall differently on the two; one does not stand in for the other.
 
 List each device the change reaches. When you cannot tell whether a device is reached, count it.
 
@@ -69,8 +67,8 @@ Find the `## Evidence` section of the PR body. For a visible change, it passes w
   https://evidence.siloserver.org/`;
 - evidence that matches the change: a UI change needs screenshots or a recording; a change to which
   items appear or their order needs a before and an after of the same screen with the same data;
-- captures for every device the change reaches, with each Fold both folded and open, or a reason
-  the PR gives for each device it leaves out;
+- captures for every device the change reaches, with the foldable both folded and open, or a
+  reason the PR gives for each device it leaves out;
 - a recording when the change is about motion, timing, focus movement, or a multi-step flow;
 - the device and build or commit the captures came from.
 

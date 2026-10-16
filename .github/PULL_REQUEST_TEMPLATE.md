@@ -43,8 +43,8 @@ Surface and build:
 item details a screen shows, such as search results, home sections, recommendations,
 metadata, artwork, sorting, or filtering. See "Show visible changes" in
 CONTRIBUTING.md. Use before-and-after screenshots of the same screen and data on each
-device the change can reach: Android phone, Android tablet, Galaxy Z Fold8 and Galaxy
-Z Fold8 Ultra (each folded and open), and Android TV. Say why for any device you skip.
+device the change can reach: Android phone, Android tablet, Android foldable (folded
+and open), and Android TV. Say why for any device you skip.
 Add a short recording when motion, timing, or focus matters. Crop or
 blur private details in anything attached here. To keep captures private instead,
 publish them to evidence.siloserver.org, where only you and Silo maintainers can open

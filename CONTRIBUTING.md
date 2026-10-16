@@ -131,11 +131,10 @@ Provide evidence that fits the change:
   motion, timing, focus movement, or a multi-step flow matters.
 - **Every affected device:** the phone app lays out screens differently on a
   phone, a tablet, and a foldable, and the TV app has its own interface. For a
-  phone app change, capture an Android phone, an Android tablet, a Galaxy Z
-  Fold8, and a Galaxy Z Fold8 Ultra, with each foldable both folded and open.
-  The two foldables open to different shapes, so one does not stand in for the
-  other. Add Android TV when the change reaches the TV app, which shared code
-  under `android-shared/` usually does. Emulator captures are fine. To skip a
+  phone app change, capture an Android phone, an Android tablet, and an Android
+  foldable such as a Galaxy Z Fold or Pixel Fold, both folded and open. Add
+  Android TV when the change reaches the TV app, which shared code under
+  `android-shared/` usually does. Emulator captures are fine. To skip a
   device, say why the change cannot reach it.
 - Name the device, the build or commit, and for a foldable whether it was
   folded or open, for each capture.
