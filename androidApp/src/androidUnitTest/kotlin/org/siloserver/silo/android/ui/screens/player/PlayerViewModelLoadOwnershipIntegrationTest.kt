@@ -285,6 +285,60 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
+    fun trackPicksHeldForANetworkMoveKeepTheirRouteIntent() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val sidecar = org.siloserver.silo.model.playback.PlayerSubtitleInfo(
+                index = 3,
+                language = "en",
+                url = "/api/v2/stream/s1/subtitles/3.vtt",
+            )
+            viewModel.mutableUiState().update {
+                it.copy(
+                    contentId = "movie",
+                    subtitleTracks = listOf(sidecar),
+                    audioTracks = listOf(AudioTrack(index = 0), AudioTrack(index = 1)),
+                )
+            }
+            val routeIntent = viewModel.privateField<MobilePlayerRouteIntentState>("routeIntentState")
+            routeIntent.beginLoad(
+                contentId = "movie",
+                fileId = null,
+                quality = null,
+                audioTrackIndex = null,
+                subtitleTrackIndex = null,
+                resumePositionSeconds = null,
+                preserveCurrent = false,
+            )
+            // An earlier pick has set up the track transaction for this title.
+            viewModel.onSelectAudio(0)
+            runCurrent()
+            assertFalse(routeIntent.current!!.subtitleTrackIsExplicit)
+
+            val move = kotlinx.coroutines.CompletableDeferred<Unit>()
+            viewModel.privateField<PicksDuringNetworkMove>("picksDuringNetworkMove")
+                .holdUntilDone(backgroundScope.async { move.await() })
+            viewModel.onSelectSubtitle(0)
+            viewModel.onSelectAudio(1)
+            // The move lands and publishes the tracks it committed, with no
+            // transaction in flight.
+            viewModel.landNetworkMove(org.siloserver.silo.model.playback.SubtitleIdentity.Off)
+            move.complete(Unit)
+            runCurrent()
+
+            val intent = routeIntent.current!!
+            assertTrue(intent.subtitleTrackIsExplicit, "the subtitle pick is the viewer's")
+            assertEquals(1, intent.audioTrackIndex)
+            assertTrue(intent.audioTrackIsExplicit, "the audio pick is the viewer's")
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
     fun staleErrorCannotOverwriteCurrentReady() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
         val fixture = playerViewModel(starter, backgroundScope)
@@ -718,6 +772,23 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             it.isAccessible = true
             it.get(this) as MutableStateFlow<PlayerViewModel.PlayerUiState>
         }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun <T> PlayerViewModel.privateField(name: String): T =
+        PlayerViewModel::class.java.getDeclaredField(name).let {
+            it.isAccessible = true
+            it.get(this) as T
+        }
+
+    /** What a network move's adoption does: resets the track transaction to the tracks it committed. */
+    private fun PlayerViewModel.landNetworkMove(committedSubtitle: org.siloserver.silo.model.playback.SubtitleIdentity) {
+        val context = PlayerViewModel::class.java
+            .getDeclaredMethod("mobileSubtitleContext", PlayerViewModel.PlayerUiState::class.java)
+            .apply { isAccessible = true }
+            .invoke(this, uiState.value) as MobileSubtitlePlaybackContext
+        privateField<MobileSubtitleTransactionAdapter>("mobileSubtitleTransactions")
+            .resetContent(context, committedSubtitle)
+    }
 
     private fun PlayerViewModel.setPickedQuality(quality: String) {
         PlayerViewModel::class.java.getDeclaredField("sessionQualityOverride").let {

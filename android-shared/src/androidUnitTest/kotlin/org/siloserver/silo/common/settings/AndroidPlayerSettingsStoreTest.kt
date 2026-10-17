@@ -21,6 +21,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.SettingsApi
 import org.siloserver.silo.repository.SettingsRepository
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -1205,6 +1206,47 @@ class AndroidPlayerSettingsStoreTest {
         offline.resetDeviceSetting(PlaybackSettingsKeys.CellularPreferredQuality)
         assertEquals("720p", offline.cellularPreferredQualityFlow.first())
         assertEquals(2_000, offline.cellularMaxBitrateKbpsFlow.first())
+    }
+
+    @Test
+    fun `a cellular choice made while a reset waits on the server is kept`() = runTest {
+        val probing = CompletableDeferred<Unit>()
+        val answer = CompletableDeferred<Unit>()
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            settingsRepository = SettingsRepository(FakeSettingsApi()),
+            getDeviceId = { null },
+            contractRevision = SettingsContractRevision(
+                {
+                    probing.complete(Unit)
+                    answer.await()
+                    capabilitiesAt(19)
+                },
+                { serverUrl },
+            ),
+            dataStoreFactory = { id ->
+                PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_cell_race_$id.preferences_pb") })
+            },
+        )
+        store.setCellularQuality("1080p", 6_000)
+
+        val reset = launch { store.resetDeviceSetting(PlaybackSettingsKeys.CellularPreferredQuality) }
+        probing.await()
+        // The user picks again while the server has not answered.
+        store.setCellularQuality("480p", 1_500)
+        answer.complete(Unit)
+        reset.join()
+
+        assertEquals("480p", store.cellularPreferredQualityFlow.first())
+        assertEquals(1_500, store.cellularMaxBitrateKbpsFlow.first())
+        assertTrue(PlaybackSettingsKeys.CellularPreferredQuality in store.deviceOverrideKeysFlow.first())
+        val last = fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.CellularPreferredQuality }
+        assertFalse(last.isDelete, "the newer choice is the last write for the key")
+        assertEquals("480p", last.value)
     }
 
     @Test

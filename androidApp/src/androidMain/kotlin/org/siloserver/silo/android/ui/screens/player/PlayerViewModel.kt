@@ -4157,13 +4157,17 @@ class PlayerViewModel(
             .getOrNull(index)
             ?.let(::mobileSubtitleIdentity)
             ?: SubtitleIdentity.Off
-        routeIntentState.beginSubtitleSelection(
-            contentId = state.contentId,
-            routeOrdinal = catalogSubtitleRouteOrdinal(state, identity),
-            identity = identity,
-        )
+        // The route intent is begun as the pick is staged: a network move in
+        // flight publishes its own tracks when it lands, which would clear an
+        // intent begun before it.
         picksDuringNetworkMove.applyAfterMove {
-            mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(_uiState.value))
+            val current = _uiState.value
+            routeIntentState.beginSubtitleSelection(
+                contentId = current.contentId,
+                routeOrdinal = catalogSubtitleRouteOrdinal(current, identity),
+                identity = identity,
+            )
+            mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(current))
             mobileSubtitleTransactions.select(identity)
         }
     }
@@ -4221,6 +4225,16 @@ class PlayerViewModel(
             return
         }
         picksDuringNetworkMove.applyAfterMove {
+            // The intent begun above serves the local paths. Begin it again as
+            // the pick is staged: a network move it waited for published its
+            // own tracks when it landed, which cleared that one.
+            if (userInitiated) {
+                routeIntentState.beginAudioSelection(
+                    contentId = state.contentId,
+                    routeOrdinal = index,
+                    serverIndex = serverIndex,
+                )
+            }
             mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(_uiState.value))
             mobileSubtitleTransactions.selectAudio(serverIndex)
         }

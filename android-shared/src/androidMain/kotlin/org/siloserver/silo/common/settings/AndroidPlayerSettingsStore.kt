@@ -793,17 +793,20 @@ class AndroidPlayerSettingsStore(
     }
 
     /**
-     * Keys the server at [serverUrl] is not known to store: its revision is
-     * older than the key, or unknown because the probe failed. "Use profile
+     * Keys the server at [serverUrl] is not known to store: the revision last
+     * read for it is older than the key, or none has been read. "Use profile
      * setting" for one of them clears the local value, so the contract
      * default applies, as the setting would on a server that had no rows for
      * it. Kept, the value would outlive the reset: an older server drops the
      * delete, and the refresh never asks for the key. A server that does
      * store it sends the profile's value once the delete lands.
+     *
+     * Read without probing: a reset that waited on the network could land
+     * after a choice the user made meanwhile and undo it.
      */
-    private suspend fun keysUnstoredBy(serverUrl: String): Set<String> {
+    private fun keysUnstoredBy(serverUrl: String): Set<String> {
         val tracker = contractRevision ?: return emptySet()
-        val revision = runCatching { tracker.revisionFor(serverUrl) }.getOrNull()
+        val revision = tracker.known.value?.takeIf { it.serverUrl == serverUrl }?.manifestRevision
         return RemoteDeviceSettings.filterTo(mutableSetOf()) { key ->
             val needed = CellularQuality.minimumRevision(key) ?: return@filterTo false
             revision == null || revision < needed
