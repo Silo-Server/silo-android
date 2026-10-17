@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.theme
 
 import org.siloserver.silo.network.ArtworkWidths
 import org.siloserver.silo.repository.ArtworkSurface
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -25,7 +26,7 @@ class TvArtworkLayoutTest {
     }
 
     @Test
-    fun cardsGrowWithTheCardSizePreference() {
+    fun cardsGrowWithTheCardSizePreference() = runTest {
         // Large posters (1.2×) at a 1080p UI: cards draw wider, heroes and logos don't.
         val large = TvArtworkLayout({ 2f }, { 1.2f })
         assertEquals(1.2f, large.cardScale())

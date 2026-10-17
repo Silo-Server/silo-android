@@ -25,12 +25,12 @@ import org.siloserver.silo.repository.ArtworkSurface
  */
 class PhoneArtworkLayout(
     private val screen: () -> Screen,
-    private val posterScale: () -> Float = { 1f },
+    private val posterScale: suspend () -> Float = { 1f },
 ) : ArtworkLayout {
     /** The screen's size in dp in its current orientation, and its density. */
     data class Screen(val widthDp: Int, val heightDp: Int, val density: Float)
 
-    override fun cardScale(): Float = posterScale()
+    override suspend fun cardScale(): Float = posterScale()
 
     override fun widths(surface: ArtworkSurface, cardScale: Float): ArtworkWidths {
         val (widthDp, heightDp, density) = screen()

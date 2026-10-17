@@ -29,7 +29,7 @@ interface HomeCachePort {
      * Home read and pass it to the write, so the sections are cached under the
      * layout they were sized for.
      */
-    fun artworkFingerprint(): String? = null
+    suspend fun artworkFingerprint(): String? = null
 
     /** Startup may fill an empty scoped cache, never replace a screen result. */
     suspend fun cacheHomeV2IfAbsent(sections: List<ResolvedSection>, owner: org.siloserver.silo.network.AuthScopeSnapshot,

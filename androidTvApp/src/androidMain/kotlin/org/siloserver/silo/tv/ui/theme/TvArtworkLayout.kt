@@ -44,9 +44,9 @@ object TvArtworkDimens {
  */
 class TvArtworkLayout(
     private val displayDensity: () -> Float,
-    private val posterScale: () -> Float = { 1f },
+    private val posterScale: suspend () -> Float = { 1f },
 ) : ArtworkLayout {
-    override fun cardScale(): Float = posterScale()
+    override suspend fun cardScale(): Float = posterScale()
 
     override fun widths(surface: ArtworkSurface, cardScale: Float): ArtworkWidths {
         val density = displayDensity()

@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.util
 
 import org.siloserver.silo.network.ArtworkWidths
 import org.siloserver.silo.repository.ArtworkSurface
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -26,7 +27,7 @@ class PhoneArtworkLayoutTest {
     }
 
     @Test
-    fun cardsAndGridCellsGrowWithTheCardSizePreference() {
+    fun cardsAndGridCellsGrowWithTheCardSizePreference() = runTest {
         val large = layout(411, 914, 3f, posterScale = 1.2f)
         assertEquals(1.2f, large.cardScale())
         assertEquals(ArtworkWidths(poster = 432, backdrop = 1008), large.widths(ArtworkSurface.HOME, large.cardScale()))

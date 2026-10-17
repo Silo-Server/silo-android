@@ -58,7 +58,7 @@ class RoomHomeCacheRepository(
         }
     }
 
-    override fun artworkFingerprint(): String = artwork.cacheFingerprint(ArtworkSurface.HOME)
+    override suspend fun artworkFingerprint(): String = artwork.cacheFingerprint(ArtworkSurface.HOME)
 
     override suspend fun cacheHomeV2(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, artworkFingerprint: String?,
         stillCurrent: () -> Boolean) {
@@ -103,7 +103,7 @@ class RoomHomeCacheRepository(
     }
 
     // A write uses the fingerprint its read captured; a read uses the current one.
-    private fun scopedKey(owner: AuthScopeSnapshot, captured: String? = null): String =
+    private suspend fun scopedKey(owner: AuthScopeSnapshot, captured: String? = null): String =
         owner.identityCacheKey(ArtworkSizing.cacheKey("home-sections-v2", captured ?: artworkFingerprint()))
 
     // Home cached before artwork widths was keyed without them. A read falls

@@ -31,8 +31,11 @@ fun interface ArtworkLayout {
     /** [surface]'s widths with cards scaled by [cardScale], the card-size preference's poster scale. */
     fun widths(surface: ArtworkSurface, cardScale: Float): ArtworkWidths
 
-    /** The active card-size preference's poster scale. */
-    fun cardScale(): Float = 1f
+    /**
+     * The active card-size preference's poster scale. It may load the saved
+     * preference first, so the first reads after launch use it.
+     */
+    suspend fun cardScale(): Float = 1f
 }
 
 /**
@@ -65,17 +68,18 @@ class ArtworkSizing(
         sent != null || layout == null || capabilities == null || capabilities.hasSettled
 
     /**
-     * The cache fingerprint of [surface] on this device: its widths at the
-     * standard card size, whether or not the server takes them. It doesn't
-     * change when the capability probe or the card-size preference hasn't
-     * loaded yet (offline, for one). Capture it before a read and cache the
-     * result under it, so a fold during the read can't file one layout's
-     * artwork under another's key.
+     * The cache fingerprint of [surface] on this device: the widths it is
+     * drawn at, whether or not the server takes them, so it doesn't depend on
+     * the capability probe (which can't answer offline). Changing the card
+     * size or folding gives a new fingerprint. Capture it with the read's
+     * widths and cache the result under it, so a fold during the read can't
+     * file one layout's artwork under another's key.
      */
-    fun cacheFingerprint(surface: ArtworkSurface): String = layout?.widths(surface, 1f)?.key.orEmpty()
+    suspend fun cacheFingerprint(surface: ArtworkSurface): String =
+        layout?.let { it.widths(surface, it.cardScale()).key }.orEmpty()
 
     /** [prefix] bound to [surface]'s current cache fingerprint. */
-    fun cacheKey(prefix: String, surface: ArtworkSurface): String = cacheKey(prefix, cacheFingerprint(surface))
+    suspend fun cacheKey(prefix: String, surface: ArtworkSurface): String = cacheKey(prefix, cacheFingerprint(surface))
 
     companion object {
         /** Sends no widths; for tests and callers outside the apps. */

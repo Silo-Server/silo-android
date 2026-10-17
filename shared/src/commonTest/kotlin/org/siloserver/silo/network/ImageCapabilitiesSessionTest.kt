@@ -74,24 +74,24 @@ class ImageCapabilitiesSessionTest {
         val layout = object : ArtworkLayout {
             override fun widths(surface: ArtworkSurface, cardScale: Float) =
                 ArtworkWidths(poster = (176 * cardScale).toInt(), backdrop = 1344, logo = 880)
-            override fun cardScale() = 1.5f
+            override suspend fun cardScale() = 1.5f
         }
         val sizing = ArtworkSizing(layout, session)
         val job = session.start(backgroundScope)
         try {
             runCurrent()
-            // Requests use the active card size; cache keys stay at the standard size.
+            // Requests and cache keys use the active card size.
             val sized = sizing.request(ArtworkSurface.HOME)
             assertEquals("poster_width=264&backdrop_width=1344", sized?.key)
             assertEquals("a", sized?.serverId)
-            assertEquals("home@poster_width=176&backdrop_width=1344&logo_width=880", sizing.cacheKey("home", ArtworkSurface.HOME))
+            assertEquals("home@poster_width=264&backdrop_width=1344&logo_width=880", sizing.cacheKey("home", ArtworkSurface.HOME))
 
             // An older server keeps today's request, but the cache key still names the layout.
             body = """{"storage_backend":"local","delivery":"server"}"""
             barrier.changing(IdentityTransitionKind.SERVER_SWITCH) { tokens.owner = tokens.owner!!.copy(serverId = "b", serverUrl = "https://b.test", identityGeneration = 1) }
             runCurrent()
             assertNull(sizing.request(ArtworkSurface.HOME))
-            assertEquals("home@poster_width=176&backdrop_width=1344&logo_width=880", sizing.cacheKey("home", ArtworkSurface.HOME))
+            assertEquals("home@poster_width=264&backdrop_width=1344&logo_width=880", sizing.cacheKey("home", ArtworkSurface.HOME))
             assertNull(ArtworkSizing.None.request(ArtworkSurface.HOME))
             assertEquals("home", ArtworkSizing.None.cacheKey("home", ArtworkSurface.HOME))
         } finally { job.cancel(); client.close() }

@@ -111,7 +111,7 @@ class RoomCatalogCacheRepository(
         return row?.json?.let { runCatching { json.decodeFromString<List<ResolvedSection>>(it) }.getOrNull() }
     }
 
-    private fun librarySectionsV2Key(libraryId: Int, owner: AuthScopeSnapshot, artworkFingerprint: String? = null): String =
+    private suspend fun librarySectionsV2Key(libraryId: Int, owner: AuthScopeSnapshot, artworkFingerprint: String? = null): String =
         owner.identityCacheKey(artworkKey("library-sections-v2:$libraryId", ArtworkSurface.HOME, artworkFingerprint))
     private fun librarySectionsV2LegacyKey(libraryId: Int, owner: AuthScopeSnapshot): String =
         owner.identityCacheKey("library-sections-v2:$libraryId")
@@ -203,7 +203,7 @@ class RoomCatalogCacheRepository(
     }
 
     // A write uses the fingerprint its read captured; a read uses the current one.
-    private fun artworkKey(prefix: String, surface: ArtworkSurface, captured: String?) =
+    private suspend fun artworkKey(prefix: String, surface: ArtworkSurface, captured: String?) =
         if (captured != null) ArtworkSizing.cacheKey(prefix, captured) else artwork.cacheKey(prefix, surface)
 
     // Rows cached before artwork widths were keyed by the bare prefix. A read

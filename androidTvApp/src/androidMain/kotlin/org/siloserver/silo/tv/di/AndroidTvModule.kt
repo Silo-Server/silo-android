@@ -131,9 +131,12 @@ val androidTvModule = module {
         val scope = this
         org.siloserver.silo.tv.ui.theme.TvArtworkLayout(
             displayDensity = { resources.displayMetrics.density },
+            // The saved card size, seeded from its local cache before the
+            // first reads (startup's Home warm-up runs before the UI loads it).
             posterScale = {
-                scope.get<org.siloserver.silo.common.settings.CardPresentationStore>()
-                    .state.value.presentation.posterSize.posterScale
+                val cards = scope.get<org.siloserver.silo.common.settings.CardPresentationStore>()
+                cards.seedFromCache()
+                cards.state.value.presentation.posterSize.posterScale
             },
         )
     }
