@@ -34,12 +34,14 @@ import kotlinx.coroutines.yield
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.intOrNull
+import org.siloserver.silo.common.player.PlaybackQualityPair
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.SessionState
@@ -52,6 +54,7 @@ import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.CommittedSubtitle
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
+import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDecisionOutcome
@@ -74,6 +77,7 @@ import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 import org.siloserver.silo.model.playback.SubtitleFidelityPreference
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
+import org.siloserver.silo.model.playback.videoQualityPreference
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.downloadedSubtitleArtifactTrackId
 import org.siloserver.silo.network.AuthScopeSnapshot
@@ -176,6 +180,40 @@ class SubtitleTransactionIntegrationTest {
         assertEquals("file:$FILE_ID:subtitle:$B_INDEX", persistedSidecar.media?.trackId)
         assertEquals("s1", harness.persistence.single().second.sessionId)
         harness.assertNoOrphans()
+    }
+
+    @Test
+    fun `a subtitle change keeps the session's cap under an Auto preference`() = runTest {
+        // The committed quality is "original", which reads as Auto.
+        val harness = harness(
+            replanResponse = { _, _ -> response(sidecarPlan("s1", FILE_ID, B_INDEX).asReplan("s2")) },
+            inPlayerQuality = ::savedAutoPair,
+        )
+        harness.start(sidecarA)
+
+        harness.adapter.select(sidecarB)
+        runCurrent()
+        harness.awaitReplans(1)
+
+        val cap = harness.replanBodies.single()["bandwidth_cap_kbps"]
+        assertTrue(cap == null || cap is JsonNull, "the session started uncapped and stays so: $cap")
+    }
+
+    @Test
+    fun `picking Auto in the player sends the saved cap`() = runTest {
+        val harness = harness(
+            replanResponse = { _, _ -> response(basePlan("s1", FILE_ID, audioIndex = 0).asReplan("s2")) },
+            inPlayerQuality = ::savedAutoPair,
+        )
+        harness.start(sidecarA)
+
+        harness.adapter.selectQuality("auto")
+        runCurrent()
+        harness.awaitReplans(1)
+
+        val body = harness.replanBodies.single()
+        assertEquals("auto", body.getValue("quality_preference").jsonPrimitive.content)
+        assertEquals(2_000, body.getValue("bandwidth_cap_kbps").jsonPrimitive.int)
     }
 
     @Test
@@ -423,16 +461,23 @@ class SubtitleTransactionIntegrationTest {
         assertTrue(harness.replanBodies.isEmpty())
     }
 
+    /** The pair an Auto picked in the player sends with a saved 2 Mbps cap. */
+    private suspend fun savedAutoPair(preference: String?): PlaybackQualityPair? =
+        PlaybackQualityPair(PLAYBACK_QUALITY_AUTO, 2_000)
+            .takeIf { videoQualityPreference(preference) == PLAYBACK_QUALITY_AUTO }
+
     private fun TestScope.harness(
         replanResponse: suspend (Int, JsonObject) -> PlaybackDecisionResponseV3,
         committedSessionCleanupScope: CoroutineScope = backgroundScope,
         committedSessionCleanupScheduler: TestCoroutineScheduler = testScheduler,
+        inPlayerQuality: suspend (String?) -> PlaybackQualityPair? = { null },
     ): Harness = Harness(
         scope = backgroundScope,
         transactionScheduler = testScheduler,
         committedSessionCleanupScope = committedSessionCleanupScope,
         committedSessionCleanupScheduler = committedSessionCleanupScheduler,
         replanResponse = replanResponse,
+        inPlayerQuality = inPlayerQuality,
     )
 
     private class Harness(
@@ -441,6 +486,7 @@ class SubtitleTransactionIntegrationTest {
         committedSessionCleanupScope: CoroutineScope,
         private val committedSessionCleanupScheduler: TestCoroutineScheduler,
         private val replanResponse: suspend (Int, JsonObject) -> PlaybackDecisionResponseV3,
+        private val inPlayerQuality: suspend (String?) -> PlaybackQualityPair?,
     ) {
         val stoppedSessions: MutableList<String> =
             Collections.synchronizedList(mutableListOf())
@@ -602,7 +648,7 @@ class SubtitleTransactionIntegrationTest {
             mountedSubtitleIdentity = committedIdentity
             adapter = TvSubtitleTransactionAdapter(
                 scope = scope,
-                stagedPort = PlaybackSessionManagerTvSubtitleStagedReplanPort(manager, lifecycle),
+                stagedPort = PlaybackSessionManagerTvSubtitleStagedReplanPort(manager, lifecycle, inPlayerQuality),
                 persistencePort = object : TvSubtitlePersistencePort {
                     override suspend fun persist(
                         committed: CommittedSubtitle,

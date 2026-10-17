@@ -82,17 +82,21 @@ internal fun roomTargetBufferedLocally(
 /**
  * One rung below the current one on the same file's quality ladder, or null
  * when nothing lower exists. An unmatched [selectedLabel] (Auto, or none) is
- * treated as the source, at [sourceHeight] when the plan reports it. The
- * source entry older servers list is never offered.
+ * treated as the source: at [sourceHeight] when the plan reports it, else at
+ * the source entry older servers list, else at the top rung. That source
+ * entry is never offered.
  */
 internal fun lowerQualityRung(
     available: List<PlaybackAvailableQualityV3>,
     selectedLabel: String?,
     sourceHeight: Int = 0,
 ): PlaybackAvailableQualityV3? {
-    val rungs = available.filter { it.height > 0 && !it.isSourceQualityEntry() }
+    val (sourceEntries, rungs) = available
+        .filter { it.height > 0 }
+        .partition { it.isSourceQualityEntry() }
     val currentHeight = rungs.firstOrNull { it.label == selectedLabel }?.height
         ?: sourceHeight.takeIf { it > 0 }
+        ?: sourceEntries.firstOrNull()?.height
         ?: rungs.maxOfOrNull { it.height }
         ?: return null
     return rungs

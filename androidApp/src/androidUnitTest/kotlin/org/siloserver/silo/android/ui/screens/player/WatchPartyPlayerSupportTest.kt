@@ -95,6 +95,20 @@ class WatchPartyPlayerSupportTest {
     }
 
     @Test
+    fun autoWithNoReportedSourceHeightStepsDownFromTheSourceEntry() {
+        val ladder = listOf(
+            PlaybackAvailableQualityV3(label = "original", height = 2160, preservesSource = true),
+            PlaybackAvailableQualityV3(label = "1080p", height = 1080),
+            PlaybackAvailableQualityV3(label = "720p", height = 720),
+        )
+        // The plan reports no source height, but the older server's source
+        // entry says the source is 2160p, so the first step down is 1080p.
+        assertEquals("1080p", lowerQualityRung(ladder, selectedLabel = "auto")?.label)
+        // With one transcode rung under the source, it is still offered.
+        assertEquals("720p", lowerQualityRung(ladder.filter { it.height != 1080 }, selectedLabel = "auto")?.label)
+    }
+
+    @Test
     fun autoStepsDownFromTheSourceWhenTheServerNoLongerListsIt() {
         val ladder = listOf(
             PlaybackAvailableQualityV3(label = "1080p-high", height = 1080),

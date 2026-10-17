@@ -93,6 +93,8 @@ internal data class TvSubtitleStageRequest(
     val subtitleTrackIndex: Int,
     val outputRouteGeneration: Long = 0L,
     val classification: String = "subtitle_track_changed",
+    /** Picks a quality other than the committed one, whatever else changes with it. */
+    val qualityChanged: Boolean = false,
     val capabilities: ClientCodecCapabilities,
     val clientPlaybackContext: ClientPlaybackContext,
 )
@@ -1185,6 +1187,7 @@ internal class TvSubtitleTransactionAdapter(
         val requestSessionId = requestContext.sessionId ?: return
         if (transition.pending?.generation != requested.generation) return
 
+        val qualityChanged = requested.qualityPreference != transition.committed.qualityPreference
         val request = TvSubtitleStageRequest(
             generation = requested.generation,
             contentId = requestContext.contentId,
@@ -1201,12 +1204,12 @@ internal class TvSubtitleTransactionAdapter(
             classification = when {
                 desiredOutputRouteGeneration != committedOutputRouteGeneration ->
                     "output_route_changed"
-                requested.qualityPreference != transition.committed.qualityPreference ->
-                    "quality_changed"
+                qualityChanged -> "quality_changed"
                 requested.audioTrackIndex != transition.committed.audioTrackIndex ->
                     "audio_track_changed"
                 else -> "subtitle_track_changed"
             },
+            qualityChanged = qualityChanged,
         )
         val staged = try {
             stagedPort.stage(request)
@@ -2369,7 +2372,11 @@ internal class TvSubtitleTransactionAdapter(
 internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
     private val manager: PlaybackSessionManager,
     private val lifecycle: PlaybackSessionLifecycle,
-    /** The pair an Auto picked in the player sends; null for other picks. */
+    /**
+     * The pair an Auto picked in the player sends; null for other picks.
+     * Asked only when the request changes the quality: a track change keeps
+     * the session's quality and cap.
+     */
     private val inPlayerQuality: suspend (String?) -> PlaybackQualityPair? = { null },
 ) : TvSubtitleStagedReplanPort {
     override suspend fun stage(request: TvSubtitleStageRequest): ApiResult<TvStagedSubtitleCandidate> {
@@ -2393,7 +2400,7 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
                 qualityPreference = request.qualityPreference,
                 capabilities = input.capabilities,
                 clientPlaybackContext = input.clientPlaybackContext,
-                qualityPair = inPlayerQuality(request.qualityPreference),
+                qualityPair = if (request.qualityChanged) inPlayerQuality(request.qualityPreference) else null,
             )
         ) {
             is ApiResult.Success -> {

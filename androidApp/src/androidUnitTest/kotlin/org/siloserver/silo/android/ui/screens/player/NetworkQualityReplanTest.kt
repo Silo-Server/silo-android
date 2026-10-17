@@ -2,51 +2,87 @@ package org.siloserver.silo.android.ui.screens.player
 
 import org.siloserver.silo.common.player.FollowedSession
 import org.siloserver.silo.common.player.PlaybackQualityPair
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class NetworkQualityReplanTest {
     private val main = PlaybackQualityPair("auto", null)
-    private val cellular = PlaybackQualityPair("720p", 2_000)
 
     @Test
     fun `a session follows the network unless it has no server session, is a download or a room, or a rung was picked`() {
-        assertEquals(FollowedSession(main), followed())
-        assertNull(followed(hasServerSession = false))
+        assertEquals(FollowedSession("s1", main), followed())
+        assertNull(followed(sessionId = null))
         assertNull(followed(playsDownload = true))
         assertNull(followed(inRoom = true))
         assertNull(followed(pickedQuality = "1080p-medium"))
         assertNull(followed(pickedQuality = "1080p"))
         // Auto picked in the player means "follow my settings for this connection".
-        assertEquals(FollowedSession(main, autoPicked = true), followed(pickedQuality = "auto"))
+        assertEquals(FollowedSession("s1", main, autoPicked = true), followed(pickedQuality = "auto"))
     }
 
     @Test
-    fun `a queued network move is dropped once the viewer picks a quality or the session is on its pair`() {
-        val move = MobileRecoveryReplan("quality_changed", "Changing quality for this network.", qualityPair = cellular)
+    fun `a replacement session on the same pair is not the session a move was worked out for`() {
+        // The player starts a network move only while it still plays the
+        // followed session it was handed.
+        assertNotEquals(followed(sessionId = "s1"), followed(sessionId = "s2"))
+    }
 
-        assertTrue(move.stillWanted(FollowedSession(main)))
-        assertFalse(move.stillWanted(null), "the viewer picked a rung while it waited")
-        assertFalse(move.stillWanted(FollowedSession(cellular)), "already on that pair")
-        // A settings pair with a fixed resolution would undo an Auto picked
-        // while it waited; the restarted follower moves the cap instead.
-        assertFalse(move.stillWanted(FollowedSession(main, autoPicked = true)))
-        val autoMove = MobileRecoveryReplan("quality_changed", "n", qualityPair = PlaybackQualityPair("auto", 2_000))
-        assertTrue(autoMove.stillWanted(FollowedSession(main, autoPicked = true)))
-        // Queued replans the viewer asked for are re-driven as before.
-        assertTrue(MobileRecoveryReplan("subtitle_track_changed", "Applying subtitles.").stillWanted(null))
+    @Test
+    fun `picks made during a network move are applied after it, in order`() = runTest {
+        val picks = PicksDuringNetworkMove()
+        val applied = mutableListOf<String>()
+        val finish = CompletableDeferred<Unit>()
+        val move = launch { finish.await() }
+        picks.holdUntilDone(move)
+
+        picks.applyAfterMove { applied += "720p" }
+        picks.applyAfterMove { applied += "subtitles" }
+        runCurrent()
+        assertEquals(emptyList(), applied, "held while the move runs")
+
+        finish.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("720p", "subtitles"), applied)
+
+        picks.applyAfterMove { applied += "audio" }
+        assertEquals(listOf("720p", "subtitles", "audio"), applied, "no move in flight: applied at once")
+    }
+
+    @Test
+    fun `picks held for a move that is cancelled or cleared are dropped`() = runTest {
+        val picks = PicksDuringNetworkMove()
+        val applied = mutableListOf<String>()
+        val cancelled = launch { CompletableDeferred<Unit>().await() }
+        picks.holdUntilDone(cancelled)
+        picks.applyAfterMove { applied += "720p" }
+        cancelled.cancel()
+        runCurrent()
+
+        val cleared = launch { CompletableDeferred<Unit>().await() }
+        picks.holdUntilDone(cleared)
+        picks.applyAfterMove { applied += "480p" }
+        picks.clear()
+        cleared.cancel()
+        runCurrent()
+
+        assertEquals(emptyList(), applied)
     }
 
     private fun followed(
-        hasServerSession: Boolean = true,
+        sessionId: String? = "s1",
         playsDownload: Boolean = false,
         inRoom: Boolean = false,
         pickedQuality: String? = null,
     ): FollowedSession? = settingsFollowedQuality(
-        hasServerSession = hasServerSession,
+        sessionId = sessionId,
         playsDownload = playsDownload,
         inRoom = inRoom,
         pickedQuality = pickedQuality,

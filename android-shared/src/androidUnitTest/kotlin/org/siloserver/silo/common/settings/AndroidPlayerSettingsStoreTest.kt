@@ -1174,6 +1174,40 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `using the profile setting for cellular quality before the revision is known still resets it`() = runTest {
+        fun storeAt(revision: () -> ApiResult<org.siloserver.silo.model.settings.SettingsContractCapabilities>, name: String) = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            settingsRepository = SettingsRepository(FakeSettingsApi()),
+            getDeviceId = { null },
+            contractRevision = SettingsContractRevision({ revision() }, { serverUrl }),
+            dataStoreFactory = { id ->
+                PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_cell_${name}_$id.preferences_pb") })
+            },
+        )
+
+        // Nothing has read the revision yet; the server turns out to be 19,
+        // which drops the delete and never sends the key back.
+        val older = storeAt({ capabilitiesAt(19) }, "older")
+        older.setCellularQuality("1080p", 6_000)
+        older.resetDeviceSetting(PlaybackSettingsKeys.CellularPreferredQuality)
+        older.refreshFromServer()
+        assertEquals("720p", older.cellularPreferredQualityFlow.first())
+        assertEquals(2_000, older.cellularMaxBitrateKbpsFlow.first())
+
+        // Offline, the default applies until a server that stores the pair
+        // answers with the profile's value.
+        val offline = storeAt({ ApiResult.NetworkError(IllegalStateException("offline")) }, "offline")
+        offline.setCellularQuality("1080p", 6_000)
+        offline.resetDeviceSetting(PlaybackSettingsKeys.CellularPreferredQuality)
+        assertEquals("720p", offline.cellularPreferredQualityFlow.first())
+        assertEquals(2_000, offline.cellularMaxBitrateKbpsFlow.first())
+    }
+
+    @Test
     fun `a cellular choice made against an older server reaches it once it upgrades`() = runTest {
         var revision = capabilitiesAt(19)
         val contractRevision = SettingsContractRevision({ revision }, { serverUrl })

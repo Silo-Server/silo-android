@@ -63,6 +63,8 @@ internal data class MobileSubtitleStageRequest(
     val audioTrackIndex: Int?,
     val qualityPreference: String?,
     val subtitleTrackIndex: Int,
+    /** Picks a quality other than the committed one. */
+    val qualityChanged: Boolean = false,
 )
 
 internal data class MobileStagedSubtitleCandidate(
@@ -701,6 +703,7 @@ internal class MobileSubtitleTransactionAdapter(
             audioTrackIndex = requested.audioTrackIndex,
             qualityPreference = requested.qualityPreference,
             subtitleTrackIndex = requested.identity.serverTrackIndex(),
+            qualityChanged = changesQuality(requested),
         )
         val staged = try {
             stagedPort.stage(request)
@@ -990,11 +993,14 @@ internal class MobileSubtitleTransactionAdapter(
         transition.pending?.let(stagedRequests::trySend)
     }
 
+    /** Whether [pending] picks a quality other than the committed one. */
+    private fun changesQuality(pending: org.siloserver.silo.model.playback.PendingSubtitle): Boolean =
+        pending.qualityPreferenceSpecified &&
+            pending.qualityPreference != transition.committed.qualityPreference
+
     private fun fail(generation: Long, message: String) {
         val failedPending = transition.pending?.takeIf { it.generation == generation }
-        val failedQualityChange = failedPending != null &&
-            failedPending.qualityPreferenceSpecified &&
-            failedPending.qualityPreference != transition.committed.qualityPreference
+        val failedQualityChange = failedPending != null && changesQuality(failedPending)
         val failedLocalOwner = pendingLocalSelection?.takeIf { owner ->
             owner.proposedState.pending?.generation == generation
         }
@@ -1198,7 +1204,11 @@ internal class MobileSubtitleTransactionAdapter(
 
 internal class PlaybackSessionManagerMobileSubtitleStagedReplanPort(
     private val manager: PlaybackSessionManager,
-    /** The pair an Auto picked in the player sends; null for other picks. */
+    /**
+     * The pair an Auto picked in the player sends; null for other picks.
+     * Asked only when the request changes the quality: a track change keeps
+     * the session's quality and cap.
+     */
     private val inPlayerQuality: suspend (String?) -> PlaybackQualityPair? = { null },
 ) : MobileSubtitleStagedReplanPort {
     override suspend fun stage(
@@ -1211,7 +1221,7 @@ internal class PlaybackSessionManagerMobileSubtitleStagedReplanPort(
             audioTrackIndex = request.audioTrackIndex,
             subtitleTrackIndex = request.subtitleTrackIndex,
             qualityPreference = request.qualityPreference,
-            qualityPair = inPlayerQuality(request.qualityPreference),
+            qualityPair = if (request.qualityChanged) inPlayerQuality(request.qualityPreference) else null,
         )
     ) {
         is ApiResult.Success -> {

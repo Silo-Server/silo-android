@@ -787,6 +787,7 @@ class PlayerViewModel(
     // once that flight completes so the selection isn't silently dropped;
     // last-write-wins because only the newest selection matters.
     private var queuedInvalidationReplan: MobileRecoveryReplan? = null
+    private val picksDuringNetworkMove = PicksDuringNetworkMove()
 
     private enum class ServerSeekRecoveryMode {
         REANCHOR,
@@ -2077,8 +2078,8 @@ class PlayerViewModel(
         subtitleTrackIndexOverride: Int? = null,
         /** A new quality pair for the network; see [replanForNetworkQuality]. */
         qualityPair: PlaybackQualityPair? = null,
-    ) {
-        val queuedRequest = MobileRecoveryReplan(classification, notice, subtitleTrackIndexOverride, qualityPair)
+    ): Job? {
+        val queuedRequest = MobileRecoveryReplan(classification, notice, subtitleTrackIndexOverride)
         if (recoveryJob?.isActive == true || serverSeekRecoveryInFlight) {
             // Never silently drop a user selection: queue it (newest wins) and
             // re-drive it when the in-flight recovery completes. Failure-driven
@@ -2087,16 +2088,16 @@ class PlayerViewModel(
             if (queuedRequest.shouldQueue) {
                 queuedInvalidationReplan = queuedRequest
             }
-            return
+            return null
         }
         if (mobileSubtitleTransactions.hasActiveTransaction) {
             if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS) {
                 queuedInvalidationReplan = queuedRequest
-                return
+                return null
             }
             mobileSubtitleTransactions.invalidate()
         }
-        val fileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId ?: return
+        val fileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId ?: return null
         val recoveryGeneration = playbackRecoveryGeneration
         recoveryJob = viewModelScope.launch {
             val selectedSubtitleTrackIndex = subtitleTrackIndexOverride ?: selectedServerSubtitleTrackIndex(
@@ -2395,12 +2396,12 @@ class PlayerViewModel(
                 refreshRoomObservation()
             }
         }
+        return recoveryJob
     }
 
     private fun redriveQueuedInvalidationReplan() {
         val queued = queuedInvalidationReplan ?: return
         queuedInvalidationReplan = null
-        if (!queued.stillWanted(networkFollowedQuality())) return
         // Current state, not the queuing-time state, so the replan carries the
         // latest committed track/quality selection.
         startProtocolV3Replan(
@@ -2408,7 +2409,6 @@ class PlayerViewModel(
             queued.notice,
             _uiState.value,
             subtitleTrackIndexOverride = queued.subtitleTrackIndexOverride,
-            qualityPair = queued.qualityPair,
         )
     }
 
@@ -2416,7 +2416,7 @@ class PlayerViewModel(
     private fun networkFollowedQuality(): FollowedSession? {
         val state = _uiState.value
         return settingsFollowedQuality(
-            hasServerSession = state.sessionId != null,
+            sessionId = state.sessionId,
             playsDownload = state.isLocalFilePlayback(),
             inRoom = inRoom,
             pickedQuality = currentMobileQualityPreference(),
@@ -2424,14 +2424,28 @@ class PlayerViewModel(
         )
     }
 
-    /** Moves the session to the quality pair of the network it is now on. */
-    private fun replanForNetworkQuality(pair: PlaybackQualityPair) {
-        startProtocolV3Replan(
+    /**
+     * Moves [session] to the quality pair of the network it is now on and
+     * returns once the move has finished. It does nothing when playback is
+     * no longer [session] as the follower read it, or while another replan
+     * or a track or quality change is in flight; the follower tries again
+     * from what it finds then. Picks made during the move wait for it.
+     */
+    private suspend fun replanForNetworkQuality(session: FollowedSession, pair: PlaybackQualityPair) {
+        if (networkFollowedQuality() != session) return
+        if (recoveryJob?.isActive == true || serverSeekRecoveryInFlight ||
+            mobileSubtitleTransactions.hasActiveTransaction
+        ) {
+            return
+        }
+        val move = startProtocolV3Replan(
             classification = "quality_changed",
             notice = "Changing quality for this network.",
             state = _uiState.value,
             qualityPair = pair,
-        )
+        ) ?: return
+        picksDuringNetworkMove.holdUntilDone(move)
+        move.join()
     }
 
     /**
@@ -2506,6 +2520,7 @@ class PlayerViewModel(
         playbackRecoveryGeneration++
         cancelRecoveryJob()
         queuedInvalidationReplan = null
+        picksDuringNetworkMove.clear()
         seekRecoveryJob?.cancel()
         seekRecoveryJob = null
         serverSeekRecoveryInFlight = false
@@ -3718,11 +3733,12 @@ class PlayerViewModel(
      * Quality menu pick: replans at [id], a plan entry's label sent verbatim,
      * or auto to hand the choice back to the server. The active row is a no-op.
      */
-    fun onSelectQuality(id: String) {
+    fun onSelectQuality(id: String) = picksDuringNetworkMove.applyAfterMove {
+        // Checked when applied, against the plan playing then.
         val state = _uiState.value
         val menu = playbackQualityMenu(state.playbackPlan?.availableQualities.orEmpty())
-        if (menu.none { it.id == id }) return
-        if (id == state.activeQualityId(menu)) return
+        if (menu.none { it.id == id }) return@applyAfterMove
+        if (id == state.activeQualityId(menu)) return@applyAfterMove
         mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
         mobileSubtitleTransactions.selectQuality(id)
     }
@@ -4146,8 +4162,10 @@ class PlayerViewModel(
             routeOrdinal = catalogSubtitleRouteOrdinal(state, identity),
             identity = identity,
         )
-        mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
-        mobileSubtitleTransactions.select(identity)
+        picksDuringNetworkMove.applyAfterMove {
+            mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(_uiState.value))
+            mobileSubtitleTransactions.select(identity)
+        }
     }
 
     internal fun isCurrentSubtitleMount(mount: MobileSubtitleMount?): Boolean =
@@ -4202,8 +4220,10 @@ class PlayerViewModel(
         ) {
             return
         }
-        mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
-        mobileSubtitleTransactions.selectAudio(serverIndex)
+        picksDuringNetworkMove.applyAfterMove {
+            mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(_uiState.value))
+            mobileSubtitleTransactions.selectAudio(serverIndex)
+        }
     }
 
     // ---- Desired audio ------------------------------------------------------
@@ -6046,16 +6066,16 @@ private const val MAX_LOCAL_AUDIO_ATTEMPTS = 3
  * fixed pick: the session keeps following, with only its cap moving.
  */
 internal fun settingsFollowedQuality(
-    hasServerSession: Boolean,
+    sessionId: String?,
     playsDownload: Boolean,
     inRoom: Boolean,
     pickedQuality: String?,
     active: PlaybackQualityPair?,
 ): FollowedSession? {
-    if (!hasServerSession || playsDownload || inRoom || active == null) return null
+    if (sessionId == null || playsDownload || inRoom || active == null) return null
     return when (videoQualityPreference(pickedQuality)) {
-        null -> FollowedSession(active)
-        PLAYBACK_QUALITY_AUTO -> FollowedSession(active, autoPicked = true)
+        null -> FollowedSession(sessionId, active)
+        PLAYBACK_QUALITY_AUTO -> FollowedSession(sessionId, active, autoPicked = true)
         else -> null
     }
 }

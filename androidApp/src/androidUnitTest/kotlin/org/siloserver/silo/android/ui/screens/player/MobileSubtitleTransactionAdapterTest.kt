@@ -748,6 +748,23 @@ class MobileSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `only a quality pick asks the port to change the quality`() = runTest {
+        val harness = harness(backgroundScope)
+
+        // A track change keeps the session's quality and cap.
+        harness.adapter.select(sidecar(4))
+        runCurrent()
+        assertFalse(harness.port.requests.last().qualityChanged)
+        harness.port.failStage(ApiResult.NetworkError(IllegalStateException("offline")))
+        runCurrent()
+
+        // The harness commits "auto"; picking it again changes nothing.
+        harness.adapter.selectQuality("720p-medium")
+        runCurrent()
+        assertTrue(harness.port.requests.last().qualityChanged)
+    }
+
+    @Test
     fun `failed quality change is reported apart from subtitle failures`() = runTest {
         val harness = harness(backgroundScope)
 

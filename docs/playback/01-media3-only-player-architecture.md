@@ -205,13 +205,18 @@ lacks `NET_CAPABILITY_NOT_METERED` (a phone hotspot, metered Wi-Fi). A VPN over
 Wi-Fi gets the main pair: Android marks most VPNs metered by default. A network
 change that holds for five seconds replans an active session with
 `operation: "quality_change"` and the other pair, unless the viewer picked a
-fixed rung in the player or the session is a download or a Watch Party. Android
-TV always sends the main pair. Against a server whose settings manifest
+fixed rung in the player or the session is a download or a Watch Party. A move
+waits while another replan or a track or quality change is in flight. A move
+that fails or has to wait is tried again after 5, 15 and 30 seconds, from the
+session and settings current then, unless the network changes again first.
+Track and quality picks made while a move is in flight are applied once it
+finishes. Android TV always sends the main pair. Against a server whose settings manifest
 predates revision 20 the cellular pair is kept and applied on the device only.
 
 An Auto picked in the player sends `auto` with the saved bitrate cap for the
 current connection (no cap for No limit). It is not a fixed pick: the session
-keeps following network changes, with only the cap moving. A renewal,
+keeps following network changes, with only the cap moving. A subtitle or audio
+change keeps the session's quality and cap. A renewal,
 recovery, or reload of the same title carries only a quality the viewer picked
 in the player or the route named; otherwise it reads the saved settings again
 for the connection it is on. The next episode always starts from the saved

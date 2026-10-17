@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import java.lang.reflect.Proxy
@@ -57,8 +58,8 @@ class NetworkQualityFollowerTest {
     @Test
     fun `a network change that holds moves the session to the other pair`() = runTest {
         val network = MutableStateFlow(snapshot("wifi"))
-        var playing = FollowedSession(main)
-        val replans = follow(network, { playing }) { playing = FollowedSession(it) }
+        var playing = FollowedSession("s1", main)
+        val replans = follow(network, { playing }) { _, pair -> playing = FollowedSession("s1", pair) }
 
         settle()
         assertEquals(emptyList(), replans, "already on the Wi-Fi pair")
@@ -78,7 +79,7 @@ class NetworkQualityFollowerTest {
     @Test
     fun `a brief drop to another network does not replan`() = runTest {
         val network = MutableStateFlow(snapshot("wifi"))
-        val replans = follow(network, { FollowedSession(main) })
+        val replans = follow(network, { FollowedSession("s1", main) })
 
         network.value = snapshot("cellular", metered = true)
         advanceTimeBy(2_000)
@@ -91,7 +92,7 @@ class NetworkQualityFollowerTest {
     @Test
     fun `moments without a connection are not read as unmetered`() = runTest {
         val network = MutableStateFlow(snapshot("cellular", metered = true))
-        val replans = follow(network, { FollowedSession(cellular) })
+        val replans = follow(network, { FollowedSession("s1", cellular) })
 
         network.value = PlaybackNetworkSnapshot()
         settle()
@@ -105,8 +106,8 @@ class NetworkQualityFollowerTest {
     fun `Auto picked in the player keeps following, with only the cap moving`() = runTest {
         val network = MutableStateFlow(snapshot("wifi"))
         // The saved resolution is 4K; the viewer picked Auto over it.
-        var playing = FollowedSession(PlaybackQualityPair("auto", 40_000), autoPicked = true)
-        val replans = follow(network, { playing }) { playing = playing.copy(pair = it) }
+        var playing = FollowedSession("s1", PlaybackQualityPair("auto", 40_000), autoPicked = true)
+        val replans = follow(network, { playing }) { _, pair -> playing = playing.copy(pair = pair) }
 
         settle()
         assertEquals(emptyList(), replans)
@@ -132,17 +133,89 @@ class NetworkQualityFollowerTest {
         assertEquals(emptyList(), replans)
     }
 
+    @Test
+    fun `a move that does not take is tried again, reading the session afresh, until it takes`() = runTest {
+        val network = MutableStateFlow(snapshot("wifi"))
+        var playing = FollowedSession("s1", main)
+        val attempts = mutableListOf<Pair<FollowedSession, Long>>()
+        backgroundScope.launch {
+            NetworkQualityFollower(network, store).follow({ playing }) { session, pair ->
+                attempts += session to currentTime
+                // The first request fails; then a recovery replaces the
+                // session, still on the Wi-Fi pair; the second try takes.
+                playing = if (attempts.size == 1) FollowedSession("s2", main) else FollowedSession("s2", pair)
+            }
+        }
+        network.value = snapshot("cellular", metered = true)
+        settle()
+        val first = attempts.single().second
+
+        advanceTimeBy(NetworkQualityFollower.RETRY_DELAYS_MS[1])
+        runCurrent()
+        // The retry moves the session playing now, not the one the first try read.
+        assertEquals(listOf("s1", "s2"), attempts.map { it.first.sessionId })
+        assertEquals(first + NetworkQualityFollower.RETRY_DELAYS_MS[1], attempts.last().second)
+
+        advanceTimeBy(120_000)
+        runCurrent()
+        assertEquals(2, attempts.size, "nothing left to move once it took")
+    }
+
+    @Test
+    fun `retries are bounded`() = runTest {
+        val network = MutableStateFlow(snapshot("wifi"))
+        // Every request fails: the session stays on the Wi-Fi pair.
+        val replans = follow(network, { FollowedSession("s1", main) })
+
+        network.value = snapshot("cellular", metered = true)
+        settle()
+        advanceTimeBy(10 * 60_000)
+        runCurrent()
+
+        assertEquals(List(NetworkQualityFollower.RETRY_DELAYS_MS.size) { cellular }, replans)
+    }
+
+    @Test
+    fun `a newer network supersedes a pending retry`() = runTest {
+        val network = MutableStateFlow(snapshot("wifi"))
+        val replans = follow(network, { FollowedSession("s1", main) })
+
+        network.value = snapshot("cellular", metered = true)
+        settle()
+        assertEquals(listOf(cellular), replans)
+
+        // Back on Wi-Fi before the retry: the session already plays its pair.
+        network.value = snapshot("wifi")
+        advanceTimeBy(10 * 60_000)
+        runCurrent()
+        assertEquals(listOf(cellular), replans)
+    }
+
+    @Test
+    fun `a retry stops once the viewer picks a fixed rung`() = runTest {
+        val network = MutableStateFlow(snapshot("wifi"))
+        var playing: FollowedSession? = FollowedSession("s1", main)
+        val replans = follow(network, { playing }) { _, _ -> playing = null }
+
+        network.value = snapshot("cellular", metered = true)
+        settle()
+        advanceTimeBy(10 * 60_000)
+        runCurrent()
+
+        assertEquals(listOf(cellular), replans)
+    }
+
     private fun TestScope.follow(
         network: Flow<PlaybackNetworkSnapshot>,
         playing: () -> FollowedSession?,
-        onReplan: (PlaybackQualityPair) -> Unit = {},
+        onReplan: (FollowedSession, PlaybackQualityPair) -> Unit = { _, _ -> },
     ): List<PlaybackQualityPair> {
         val replans = mutableListOf<PlaybackQualityPair>()
         // Collects forever, so it runs where the test does not wait for it.
         backgroundScope.launch {
-            NetworkQualityFollower(network, store).follow(playing) { pair ->
+            NetworkQualityFollower(network, store).follow(playing) { session, pair ->
                 replans += pair
-                onReplan(pair)
+                onReplan(session, pair)
             }
         }
         return replans
