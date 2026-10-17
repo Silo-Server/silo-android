@@ -826,7 +826,7 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
-    fun `a failed timing save does not overwrite a device write sent later in the same drain`() = runTest {
+    fun `a timing save queued before a device write in the same drain does not overwrite it`() = runTest {
         val api = RecordingSettingsApi().apply { manifestRevision(17) }
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
         api.failNextPuts(1, ApiResult.Error(503, "unavailable", "busy"))
@@ -837,10 +837,13 @@ class ServerSettingsFlusherTest {
         flusher.flushNow()
         advanceUntilIdle()
 
-        assertEquals(
-            listOf(JsonPrimitive(100L), JsonPrimitive(200L)),
-            api.calls.map { it.value },
-            "the older value must not be replayed over the newer one",
+        // At revision 17 the profile save falls back to the row the newer
+        // device write owns, so it is dropped; only the failed device write
+        // is retried.
+        assertTrue(api.calls.isNotEmpty())
+        assertTrue(
+            api.calls.all { it.value == JsonPrimitive(200L) },
+            "the older value must not be sent over the newer one: ${api.calls.map { it.value }}",
         )
         assertTrue(flusher.pendingKeys("p1").isEmpty())
     }
@@ -897,6 +900,54 @@ class ServerSettingsFlusherTest {
             "the older value must not be replayed over the newer one",
         )
         assertTrue(api.calls.all { it.scope == SettingScopeIdentity.profileDevice() })
+        assertTrue(flusher.pendingKeys("p1").isEmpty())
+    }
+
+    @Test
+    fun `a held timing save does not overwrite a device write made while the revision was unknown`() = runTest {
+        val api = RecordingSettingsApi().apply {
+            capabilities = ApiResult.NetworkError(IllegalStateException("offline"))
+        }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue("p1", syncKey, "100", serverUrl, scope = SettingWriteScope.Profile(minRevision = 18))
+        flusher.flushNow()
+        assertTrue(api.calls.isEmpty())
+        // "Only on This Device" turned on and the delay edited: a device
+        // write, which needs no revision and lands.
+        flusher.enqueue("p1", syncKey, "200", serverUrl)
+        flusher.flushNow()
+
+        api.manifestRevision(17)
+        flusher.flushNow()
+
+        assertEquals(
+            listOf(JsonPrimitive(200L)),
+            api.calls.map { it.value },
+            "at revision 17 the held save falls back to the row the newer write owns",
+        )
+        assertTrue(flusher.pendingKeys("p1").isEmpty())
+    }
+
+    @Test
+    fun `a failed device write kept by a revision-gated clear checks the revision again on retry`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(17) }
+        val revision = SettingsContractRevision({ api.getContractCapabilities() })
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200, contractRevision = revision)
+        api.failNextPuts(1, ApiResult.Error(503, "unavailable", "busy"))
+
+        flusher.enqueue("p1", syncKey, "250", serverUrl)
+        flusher.enqueueDelete("p1", syncKey, serverUrl, minRevision = 18)
+        flusher.flushNow()
+        assertEquals(RecordingSettingsApi.Call.Kind.PUT, api.calls.single().kind)
+
+        // The server is upgraded before the retry.
+        api.manifestRevision(18)
+        revision.refresh(serverUrl)
+        flusher.flushNow()
+
+        assertEquals(2, api.calls.size)
+        assertEquals(RecordingSettingsApi.Call.Kind.DELETE, api.calls.last().kind)
         assertTrue(flusher.pendingKeys("p1").isEmpty())
     }
 

@@ -119,11 +119,18 @@ private sealed class PendingOp {
     abstract val serverUrl: String
     abstract val authority: AuthScopeSnapshot?
 
+    /**
+     * [deviceWroteAfter]: this device wrote its own value for the key after
+     * this revision-gated profile save was made, while the revision was still
+     * unknown. If the save then resolves to this device's row it would put
+     * the older value back over that write, so it is dropped there.
+     */
     data class Set(
         val value: String,
         override val serverUrl: String,
         override val authority: AuthScopeSnapshot?,
         val scope: SettingWriteScope = SettingWriteScope.Device,
+        val deviceWroteAfter: Boolean = false,
     ) : PendingOp()
 
     /**
@@ -199,7 +206,7 @@ class DefaultServerSettingsFlusher(
         scheduleDebounced(composite) { existing ->
             val next = PendingOp.Set(value, serverUrl, authority, scope).keepingDeviceClearOf(existing)
             // Identical pending intent may coalesce only under the same owner.
-            if (existing is PendingOp.Set &&
+            if (existing is PendingOp.Set && !existing.deviceWroteAfter &&
                 existing.value == value && existing.scope == next.scope &&
                 existing.serverUrl == serverUrl && existing.authority == authority
             ) {
@@ -390,6 +397,8 @@ class DefaultServerSettingsFlusher(
      * - A profile save the server can only take on this device (revision
      *   known to be below its minimum) targets the very row the newer write
      *   owns; sending it later would put the older value back, so it goes.
+     *   While the revision is unknown it is marked instead, and [flushSet]
+     *   drops it if it resolves to this device's row.
      * - A clear left over from a landed profile save goes too.
      */
     private fun PendingOp.supersededByDeviceIntent(): PendingOp? {
@@ -398,7 +407,8 @@ class DefaultServerSettingsFlusher(
         val profile = set.scope as? SettingWriteScope.Profile ?: return this
         val known = contractRevision.known.value?.takeIf { it.serverUrl == serverUrl }?.manifestRevision
         if (profile.minRevision > 0 && known != null && known < profile.minRevision) return null
-        return if (profile.clearDevice) set.copy(scope = profile.copy(clearDevice = false)) else this
+        val marked = if (profile.minRevision > 0) set.copy(deviceWroteAfter = true) else set
+        return if (profile.clearDevice) marked.copy(scope = profile.copy(clearDevice = false)) else marked
     }
 
     private fun scheduleRetry(attempt: Int) {
@@ -478,6 +488,10 @@ class DefaultServerSettingsFlusher(
             ?: return op.takeIf { failed("put", key, "settings manifest revision unknown", retry = true) }
         val target = resolveScope(op.scope, op.serverUrl)
             ?: return op.takeIf { failed("put", key, "settings manifest revision unknown", retry = true) }
+        if (op.deviceWroteAfter && target.identity == SettingScopeIdentity.profileDevice()) {
+            SiloLog.w(CATEGORY, TAG, "dropping $key: a newer device write owns the row this save falls back to")
+            return null
+        }
         return when (
             val result = settingsApi.putValue(
                 key = key,
@@ -564,7 +578,10 @@ class DefaultServerSettingsFlusher(
         if (replaced != null && op.minRevision > 0) {
             val revision = contractRevision.revisionFor(op.serverUrl)
                 ?: return op.takeIf { failed("delete", key, "settings manifest revision unknown", retry = true) }
-            if (revision < op.minRevision) return flushSet(profileId, key, replaced)
+            // A failed write retries inside this clear, so the next attempt
+            // checks the revision again rather than writing the device row
+            // after the server has started storing the key per profile.
+            if (revision < op.minRevision) return op.takeIf { flushSet(profileId, key, replaced) != null }
         }
         return op.takeIf { flushDelete(profileId, key, op) }
     }
