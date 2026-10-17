@@ -28,7 +28,11 @@ enum class ArtworkSurface {
 
 /** How wide each app draws each surface's artwork, in device pixels. */
 fun interface ArtworkLayout {
-    fun widths(surface: ArtworkSurface): ArtworkWidths
+    /** [surface]'s widths with cards scaled by [cardScale], the card-size preference's poster scale. */
+    fun widths(surface: ArtworkSurface, cardScale: Float): ArtworkWidths
+
+    /** The active card-size preference's poster scale. */
+    fun cardScale(): Float = 1f
 }
 
 /**
@@ -47,21 +51,29 @@ class ArtworkSizing(
         val layout = layout ?: return null
         val probe = capabilities?.settled() ?: return null
         val slots = probe.capabilities?.acceptedWidthSlots.orEmpty()
-        return layout.widths(surface).only(slots).takeUnless { it.isEmpty }?.copy(serverId = probe.serverId)
+        val widths = layout.widths(surface, layout.cardScale())
+        return widths.only(slots).takeUnless { it.isEmpty }?.copy(serverId = probe.serverId)
     }
 
     /**
-     * Binds a cached read of [surface] to the widths this device draws it at,
-     * whether or not the server takes them, so the key does not change when
-     * the capability probe has not answered yet (offline, for one).
+     * The cache fingerprint of [surface] on this device: its widths at the
+     * standard card size, whether or not the server takes them. It doesn't
+     * change when the capability probe or the card-size preference hasn't
+     * loaded yet (offline, for one). Capture it before a read and cache the
+     * result under it, so a fold during the read can't file one layout's
+     * artwork under another's key.
      */
-    fun cacheKey(prefix: String, surface: ArtworkSurface): String {
-        val widths = layout?.widths(surface)?.key.orEmpty()
-        return if (widths.isEmpty()) prefix else "$prefix@$widths"
-    }
+    fun cacheFingerprint(surface: ArtworkSurface): String = layout?.widths(surface, 1f)?.key.orEmpty()
+
+    /** [prefix] bound to [surface]'s current cache fingerprint. */
+    fun cacheKey(prefix: String, surface: ArtworkSurface): String = cacheKey(prefix, cacheFingerprint(surface))
 
     companion object {
         /** Sends no widths; for tests and callers outside the apps. */
         val None = ArtworkSizing(null, null)
+
+        /** [prefix] bound to a captured cache [fingerprint]. */
+        fun cacheKey(prefix: String, fingerprint: String): String =
+            if (fingerprint.isEmpty()) prefix else "$prefix@$fingerprint"
     }
 }

@@ -58,12 +58,15 @@ class RoomHomeCacheRepository(
         }
     }
 
-    override suspend fun cacheHomeV2(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, stillCurrent: () -> Boolean) {
+    override fun artworkFingerprint(): String = artwork.cacheFingerprint(ArtworkSurface.HOME)
+
+    override suspend fun cacheHomeV2(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, artworkFingerprint: String?,
+        stillCurrent: () -> Boolean) {
         val profile = owner.profileId ?: return
         // Encoding suspends, so it runs before the ownership check, not between it and the write.
         val body = encode(sections)
         if (owner != snapshotProvider()) return
-        val key = scopedKey(owner)
+        val key = scopedKey(owner, artworkFingerprint)
         db.withTransaction {
             if (!stillCurrent()) return@withTransaction
             if (body.encodeToByteArray().size > MAX_CACHE_BYTES) scopedDao.delete(owner.serverId, profile, key)
@@ -71,12 +74,13 @@ class RoomHomeCacheRepository(
         }
     }
 
-    override suspend fun cacheHomeV2IfAbsent(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, stillCurrent: () -> Boolean) {
+    override suspend fun cacheHomeV2IfAbsent(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, artworkFingerprint: String?,
+        stillCurrent: () -> Boolean) {
         val profile = owner.profileId ?: return
         val body = encode(sections)
         if (body.encodeToByteArray().size > MAX_CACHE_BYTES) return
         if (owner != snapshotProvider()) return
-        val key = scopedKey(owner)
+        val key = scopedKey(owner, artworkFingerprint)
         db.withTransaction {
             if (!stillCurrent() || scopedDao.get(owner.serverId, profile, key) != null) return@withTransaction
             scopedDao.upsert(org.siloserver.silo.common.data.db.entity.CatalogCacheEntity(owner.serverId, profile, key, body, now()))
@@ -92,8 +96,9 @@ class RoomHomeCacheRepository(
         return sections?.let { HomeCacheSnapshot(it, row.cachedAtMs) }
     }
 
-    private fun scopedKey(owner: AuthScopeSnapshot): String =
-        owner.identityCacheKey(artwork.cacheKey("home-sections-v2", ArtworkSurface.HOME))
+    // A write uses the fingerprint its read captured; a read uses the current one.
+    private fun scopedKey(owner: AuthScopeSnapshot, captured: String? = null): String =
+        owner.identityCacheKey(ArtworkSizing.cacheKey("home-sections-v2", captured ?: artworkFingerprint()))
 
     override suspend fun cacheHome(sections: List<ResolvedSection>) {
         cacheHome(

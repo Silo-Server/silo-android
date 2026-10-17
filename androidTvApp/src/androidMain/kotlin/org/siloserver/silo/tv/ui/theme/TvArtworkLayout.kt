@@ -39,15 +39,21 @@ object TvArtworkDimens {
 /**
  * The per-slot widths the TV app asks the server for. Home, For You and detail
  * send the same backdrop width, so the hero image Home or For You loaded is the
- * one detail draws.
+ * one detail draws. Cards and grid cells grow with the card-size preference
+ * (`cardScaled()`); the heroes and logos don't.
  */
-class TvArtworkLayout(private val displayDensity: () -> Float) : ArtworkLayout {
-    override fun widths(surface: ArtworkSurface): ArtworkWidths {
+class TvArtworkLayout(
+    private val displayDensity: () -> Float,
+    private val posterScale: () -> Float = { 1f },
+) : ArtworkLayout {
+    override fun cardScale(): Float = posterScale()
+
+    override fun widths(surface: ArtworkSurface, cardScale: Float): ArtworkWidths {
         val density = displayDensity()
         return when (surface) {
             ArtworkSurface.HOME, ArtworkSurface.DISCOVER -> ArtworkWidths.ofDp(
                 density,
-                poster = RowDimens.DensePosterWidth.value,
+                poster = RowDimens.DensePosterWidth.value * cardScale,
                 backdrop = TvArtworkDimens.HeroBackdropWidth.value,
                 logo = TvArtworkDimens.MarqueeLogoWidth.value,
             )
@@ -57,10 +63,11 @@ class TvArtworkLayout(private val displayDensity: () -> Float) : ArtworkLayout {
                 logo = TvArtworkDimens.DetailLogoWidth.value,
                 photo = TvArtworkDimens.CastPhotoSize.value,
             )
-            ArtworkSurface.EPISODES -> ArtworkWidths.ofDp(density, still = RowDimens.BackdropWidth.value)
-            ArtworkSurface.SEASON_EPISODES -> ArtworkWidths.ofDp(density, still = TvArtworkDimens.SeasonEpisodeStillWidth.value)
-            ArtworkSurface.SIMILAR -> ArtworkWidths.ofDp(density, poster = RowDimens.PosterWidth.value)
-            ArtworkSurface.BROWSE -> ArtworkWidths.ofDp(density, poster = TvArtworkDimens.GridPosterWidth.value)
+            ArtworkSurface.EPISODES -> ArtworkWidths.ofDp(density, still = RowDimens.BackdropWidth.value * cardScale)
+            ArtworkSurface.SEASON_EPISODES ->
+                ArtworkWidths.ofDp(density, still = TvArtworkDimens.SeasonEpisodeStillWidth.value * cardScale)
+            ArtworkSurface.SIMILAR -> ArtworkWidths.ofDp(density, poster = RowDimens.PosterWidth.value * cardScale)
+            ArtworkSurface.BROWSE -> ArtworkWidths.ofDp(density, poster = TvArtworkDimens.GridPosterWidth.value * cardScale)
         }
     }
 }

@@ -71,13 +71,18 @@ class ImageCapabilitiesSessionTest {
             addHandler { respond(body, headers = headersOf(HttpHeaders.ContentType, "application/json")) }
         })) { install(SiloAuthPlugin) { tokenManager = tokens } }
         val session = ImageCapabilitiesSession(ImageCapabilitiesApi(client, tokens, ApiV2Gate.Unrestricted), tokens, barrier)
-        val layout = ArtworkLayout { ArtworkWidths(poster = 176, backdrop = 1344, logo = 880) }
+        val layout = object : ArtworkLayout {
+            override fun widths(surface: ArtworkSurface, cardScale: Float) =
+                ArtworkWidths(poster = (176 * cardScale).toInt(), backdrop = 1344, logo = 880)
+            override fun cardScale() = 1.5f
+        }
         val sizing = ArtworkSizing(layout, session)
         val job = session.start(backgroundScope)
         try {
             runCurrent()
+            // Requests use the active card size; cache keys stay at the standard size.
             val sized = sizing.request(ArtworkSurface.HOME)
-            assertEquals("poster_width=176&backdrop_width=1344", sized?.key)
+            assertEquals("poster_width=264&backdrop_width=1344", sized?.key)
             assertEquals("a", sized?.serverId)
             assertEquals("home@poster_width=176&backdrop_width=1344&logo_width=880", sizing.cacheKey("home", ArtworkSurface.HOME))
 
@@ -121,7 +126,7 @@ class ImageCapabilitiesSessionTest {
                 }
             })) { install(SiloAuthPlugin) { tokenManager = tokens } }
             val session = ImageCapabilitiesSession(ImageCapabilitiesApi(client, tokens, ApiV2Gate.Unrestricted), tokens, barrier)
-            val sizing = ArtworkSizing(ArtworkLayout { ArtworkWidths(poster = 176, backdrop = 1344, logo = 880) }, session)
+            val sizing = ArtworkSizing(ArtworkLayout { _, _ -> ArtworkWidths(poster = 176, backdrop = 1344, logo = 880) }, session)
             val gate = ApiV2Gate.Unrestricted
             val recommendations = RecommendationRepository(RecommendationApi(client,
                 similar = SimilarCardsV2Api(client, tokens, gate), discover = DiscoverV2Api(client, tokens, gate)), sizing)
@@ -172,7 +177,7 @@ class ImageCapabilitiesSessionTest {
             }
         })) { install(SiloAuthPlugin) { tokenManager = tokens } }
         val session = ImageCapabilitiesSession(ImageCapabilitiesApi(client, tokens, ApiV2Gate.Unrestricted), tokens, barrier)
-        val sizing = ArtworkSizing(ArtworkLayout { ArtworkWidths(poster = 176) }, session)
+        val sizing = ArtworkSizing(ArtworkLayout { _, _ -> ArtworkWidths(poster = 176) }, session)
         val job = session.start(backgroundScope)
         try {
             runCurrent()

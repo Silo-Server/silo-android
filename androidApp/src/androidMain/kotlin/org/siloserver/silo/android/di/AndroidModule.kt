@@ -174,13 +174,20 @@ val androidModule = module {
     }
     single<org.siloserver.silo.repository.ArtworkLayout> {
         val resources = androidContext().resources
-        org.siloserver.silo.android.ui.util.PhoneArtworkLayout {
-            org.siloserver.silo.android.ui.util.PhoneArtworkLayout.Screen(
-                resources.configuration.screenWidthDp,
-                resources.configuration.screenHeightDp,
-                resources.displayMetrics.density,
-            )
-        }
+        val scope = this
+        org.siloserver.silo.android.ui.util.PhoneArtworkLayout(
+            screen = {
+                org.siloserver.silo.android.ui.util.PhoneArtworkLayout.Screen(
+                    resources.configuration.screenWidthDp,
+                    resources.configuration.screenHeightDp,
+                    resources.displayMetrics.density,
+                )
+            },
+            posterScale = {
+                scope.get<org.siloserver.silo.common.settings.CardPresentationStore>()
+                    .state.value.presentation.posterSize.posterScale
+            },
+        )
     }
     single<org.siloserver.silo.repository.port.HomeCachePort> {
         val tokenManager: TokenManager = get()

@@ -37,7 +37,7 @@ class LibrarySectionListV2Test {
         var cacheReads = 0; var changeOnCache = false; var cached: List<ResolvedSection>? = null
         val original = owner
         val cache = object : CatalogCachePort {
-            override suspend fun cacheLibrarySectionsV2(libraryId: Int, sections: List<ResolvedSection>, owner: AuthScopeSnapshot) { assertEquals(original, owner); cached = sections }
+            override suspend fun cacheLibrarySectionsV2(libraryId: Int, sections: List<ResolvedSection>, owner: AuthScopeSnapshot, artworkFingerprint: String?) { assertEquals(original, owner); cached = sections }
             override suspend fun getCachedLibrarySectionsV2(libraryId: Int, owner: AuthScopeSnapshot): List<ResolvedSection>? {
                 assertEquals(original, owner); cacheReads++
                 if (changeOnCache) this@LibrarySectionListV2Test.owner = owner.copy(profileToken = "new")

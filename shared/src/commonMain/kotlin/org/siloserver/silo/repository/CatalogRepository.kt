@@ -100,6 +100,7 @@ class CatalogRepository(
         match: String? = null,
     ): ApiResult<CatalogResponse> {
         val requestIdentityGeneration = identityTransitions.generation.value
+        val artworkFingerprint = artwork.cacheFingerprint(ArtworkSurface.BROWSE)
         val result = catalogApi.getCatalog(
             widths = if (continuation == null) artwork.request(ArtworkSurface.BROWSE) else null,
             source = source,
@@ -131,7 +132,7 @@ class CatalogRepository(
         } ?: return result
 
         if (result is ApiResult.Success) {
-            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
+            writeIfIdentityUnchanged(requestIdentityGeneration, artworkFingerprint) { cacheWriteLease ->
                 catalogCache.cacheDefaultLibraryPage(cacheableLibraryId, result.data, cacheWriteLease)
             }
             return result
@@ -400,9 +401,10 @@ class CatalogRepository(
         requestIdentityGeneration: Long,
         requestLanguageRevision: Long,
     ): ApiResult<ItemDetail> {
+        val artworkFingerprint = artwork.cacheFingerprint(ArtworkSurface.DETAIL)
         val result = catalogApi.getItemDetail(contentId, widths = artwork.request(ArtworkSurface.DETAIL))
         if (result is ApiResult.Success) {
-            writeLocalizedCache(requestIdentityGeneration, requestLanguageRevision) { cacheWriteLease ->
+            writeLocalizedCache(requestIdentityGeneration, requestLanguageRevision, artworkFingerprint) { cacheWriteLease ->
                 catalogCache.cacheItemDetail(contentId, result.data, cacheWriteLease)
             }
             return result
@@ -440,9 +442,10 @@ class CatalogRepository(
         requestLanguageRevision: Long,
         serveCacheOnFailure: Boolean = true,
     ): ApiResult<EpisodesResponse> {
+        val artworkFingerprint = artwork.cacheFingerprint(surface)
         val result = catalogApi.getEpisodes(seriesId, seasonNumber, widths = artwork.request(surface))
         if (result is ApiResult.Success) {
-            writeLocalizedCache(requestIdentityGeneration, requestLanguageRevision) { cacheWriteLease ->
+            writeLocalizedCache(requestIdentityGeneration, requestLanguageRevision, artworkFingerprint) { cacheWriteLease ->
                 catalogCache.cacheEpisodes(
                     seriesId,
                     seasonNumber,
@@ -495,6 +498,7 @@ class CatalogRepository(
     private suspend fun writeLocalizedCache(
         requestIdentityGeneration: Long,
         requestLanguageRevision: Long,
+        artworkFingerprint: String? = null,
         write: suspend (CatalogCacheWriteLease) -> Unit,
     ) {
         localizedCacheMutex.withLock {
@@ -502,17 +506,18 @@ class CatalogRepository(
             if (requestLanguageRevision == revision &&
                 requestIdentityGeneration == identityTransitions.generation.value
             ) {
-                write(CatalogCacheWriteLease(requestIdentityGeneration))
+                write(CatalogCacheWriteLease(requestIdentityGeneration, artworkFingerprint))
             }
         }
     }
 
     private suspend fun writeIfIdentityUnchanged(
         requestGeneration: Long,
+        artworkFingerprint: String? = null,
         write: suspend (CatalogCacheWriteLease) -> Unit,
     ) {
         if (requestGeneration == identityTransitions.generation.value) {
-            write(CatalogCacheWriteLease(requestGeneration))
+            write(CatalogCacheWriteLease(requestGeneration, artworkFingerprint))
         }
     }
 

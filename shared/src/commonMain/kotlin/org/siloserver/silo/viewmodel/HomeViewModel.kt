@@ -287,6 +287,7 @@ class HomeViewModel(
         val membershipWitnesses = mediaActions.memberships.readWitnesses()
         if (!mayPublish(owner, generation)) return generation
         val requestIdentityGeneration = identityTransitions.generation.value
+        val artworkFingerprint = homeCache.artworkFingerprint()
         // Whether we already have something to show (cached or prior fetch) — if a
         // refresh fails we keep it rather than replacing it with a blocking error.
         val hadSections = _uiState.value.sections.isNotEmpty()
@@ -381,7 +382,9 @@ class HomeViewModel(
                     generation == fetchGeneration &&
                     requestIdentityGeneration == identityTransitions.generation.value
                 ) {
-                    homeCache.cacheHomeV2(resolved, owner) { generation == fetchGeneration && displayedOwner == owner }
+                    homeCache.cacheHomeV2(resolved, owner, artworkFingerprint) {
+                        generation == fetchGeneration && displayedOwner == owner
+                    }
                 }
             }
             is ApiResult.Error -> {

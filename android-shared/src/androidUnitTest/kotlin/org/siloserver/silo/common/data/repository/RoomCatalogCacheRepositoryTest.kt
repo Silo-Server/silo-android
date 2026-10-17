@@ -59,7 +59,7 @@ class RoomCatalogCacheRepositoryTest {
     @Test
     fun artworkReadsAreKeyedByTheWidthsTheyAreDrawnAt() = runTest {
         var widths = ArtworkWidths(backdrop = 1344, still = 360)
-        val layout = ArtworkLayout { surface ->
+        val layout = ArtworkLayout { surface, _ ->
             if (surface == ArtworkSurface.SEASON_EPISODES) ArtworkWidths(still = 460) else widths
         }
         val sized = RoomCatalogCacheRepository(db = db, snapshotProvider = { scope }, now = { 1000L },
@@ -80,6 +80,23 @@ class RoomCatalogCacheRepositoryTest {
         sized.invalidateDetailMetadata()
         assertNull(sized.getCachedItemDetail("c1"))
         assertNull(sized.getCachedEpisodes("c1", 1, ArtworkSurface.EPISODES))
+    }
+
+    @Test
+    fun aReadIsCachedUnderTheLayoutItWasSizedFor() = runTest {
+        val open = ArtworkWidths(backdrop = 2152)
+        val folded = ArtworkWidths(backdrop = 2423)
+        var widths = open
+        val artwork = ArtworkSizing({ _, _ -> widths }, null)
+        val sized = RoomCatalogCacheRepository(db = db, snapshotProvider = { scope }, now = { 1000L }, artwork = artwork)
+        val detail = org.siloserver.silo.model.catalog.ItemDetail(contentId = "c1", type = "movie", title = "Movie")
+        // The read starts open; the device folds before its answer is cached.
+        val captured = artwork.cacheFingerprint(ArtworkSurface.DETAIL)
+        widths = folded
+        sized.cacheItemDetail("c1", detail, CatalogCacheWriteLease(0L, captured))
+        assertNull(sized.getCachedItemDetail("c1"))
+        widths = open
+        assertEquals(detail, sized.getCachedItemDetail("c1"))
     }
 
     @Test

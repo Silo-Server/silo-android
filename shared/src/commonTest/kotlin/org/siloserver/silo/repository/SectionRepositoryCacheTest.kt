@@ -41,7 +41,7 @@ class SectionRepositoryCacheTest {
     private class FakeCache(val preset: List<ResolvedSection>?) : CatalogCachePort {
         var cachedFor: Int? = null
         var cachedSections: List<ResolvedSection>? = null
-        override suspend fun cacheLibrarySectionsV2(libraryId: Int, sections: List<ResolvedSection>, owner: AuthScopeSnapshot) {
+        override suspend fun cacheLibrarySectionsV2(libraryId: Int, sections: List<ResolvedSection>, owner: AuthScopeSnapshot, artworkFingerprint: String?) {
             cachedFor = libraryId; cachedSections = sections
         }
         override suspend fun getCachedLibrarySectionsV2(libraryId: Int, owner: AuthScopeSnapshot): List<ResolvedSection>? = preset

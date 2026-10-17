@@ -34,7 +34,7 @@ class HomeScreenV2Test {
     private var listHook: suspend () -> Unit = {}
     private val cache = object : HomeCachePort {
         override suspend fun getCachedHomeV2(owner: AuthScopeSnapshot): HomeCacheSnapshot? { val value = cached; cacheHook(); return value }
-        override suspend fun cacheHomeV2(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, stillCurrent: () -> Boolean) { cacheWrites++; cached = HomeCacheSnapshot(sections, 1) }
+        override suspend fun cacheHomeV2(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, artworkFingerprint: String?, stillCurrent: () -> Boolean) { cacheWrites++; cached = HomeCacheSnapshot(sections, 1) }
     }
     private val local = object : UserItemStatePort by NoOpUserItemStatePort {
         override suspend fun localPlaybackProgressForContent(contentIds: List<String>): Map<String, LocalPlaybackProgress> { overlayHook(); return emptyMap() }

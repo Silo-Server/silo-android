@@ -26,7 +26,7 @@ class StartupHomeV2Test {
     private var listHook: () -> Unit = {}
     private var cacheHook: () -> Unit = {}
     private val cache = object : HomeCachePort {
-        override suspend fun cacheHomeV2IfAbsent(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, stillCurrent: () -> Boolean) {
+        override suspend fun cacheHomeV2IfAbsent(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, artworkFingerprint: String?, stillCurrent: () -> Boolean) {
             assertEquals(this@StartupHomeV2Test.owner, owner); assertTrue(stillCurrent()); writes++; cacheHook()
         }
     }

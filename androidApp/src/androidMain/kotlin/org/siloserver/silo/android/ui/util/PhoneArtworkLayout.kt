@@ -9,7 +9,6 @@ import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.screens.detail.ExpandedDetailBreakpoint
 import org.siloserver.silo.android.ui.screens.detail.expandedDetailHorizontalPadding
 import org.siloserver.silo.android.ui.screens.detail.expandedDetailPosterWidth
-import org.siloserver.silo.model.settings.CardPosterSize
 import org.siloserver.silo.network.ArtworkWidths
 import org.siloserver.silo.repository.ArtworkLayout
 import org.siloserver.silo.repository.ArtworkSurface
@@ -20,18 +19,23 @@ import org.siloserver.silo.repository.ArtworkSurface
  * orientations, so rotating keeps a listing's widths and its cached copy;
  * folding or unfolding changes the screen, and so the widths.
  *
- * Rail cards scale with the card-size preference, which loads from the server
- * after launch, so rails ask for the largest size. Grids adapt their column
- * count to that preference instead, so their cells barely change.
+ * Rail cards grow with the card-size preference, and grids widen their cells
+ * by dropping columns. Grids are sized at the Normal grid density: Comfortable
+ * and Compact are a browse screen's own choice, made after its listing loads.
  */
-class PhoneArtworkLayout(private val screen: () -> Screen) : ArtworkLayout {
+class PhoneArtworkLayout(
+    private val screen: () -> Screen,
+    private val posterScale: () -> Float = { 1f },
+) : ArtworkLayout {
     /** The screen's size in dp in its current orientation, and its density. */
     data class Screen(val widthDp: Int, val heightDp: Int, val density: Float)
 
-    override fun widths(surface: ArtworkSurface): ArtworkWidths {
+    override fun cardScale(): Float = posterScale()
+
+    override fun widths(surface: ArtworkSurface, cardScale: Float): ArtworkWidths {
         val (widthDp, heightDp, density) = screen()
-        val portrait = slots(surface, widthDp.dp)
-        val landscape = slots(surface, heightDp.dp)
+        val portrait = slots(surface, widthDp.dp, cardScale)
+        val landscape = slots(surface, heightDp.dp, cardScale)
         fun wider(a: Dp?, b: Dp?) = listOfNotNull(a, b).maxOrNull()?.value
         return ArtworkWidths.ofDp(
             density,
@@ -51,14 +55,15 @@ class PhoneArtworkLayout(private val screen: () -> Screen) : ArtworkLayout {
         val photo: Dp? = null,
     )
 
-    private fun slots(surface: ArtworkSurface, window: Dp): Slots = when (surface) {
+    private fun slots(surface: ArtworkSurface, window: Dp, cardScale: Float): Slots = when (surface) {
         // MediaCard posters, and BackdropCard for Continue Watching and Next Up.
-        ArtworkSurface.HOME, ArtworkSurface.DISCOVER -> Slots(poster = RailPosterWidth, backdrop = RailBackdropWidth)
-        ArtworkSurface.SIMILAR -> Slots(poster = RailPosterWidth)
+        ArtworkSurface.HOME, ArtworkSurface.DISCOVER ->
+            Slots(poster = RailPosterWidth * cardScale, backdrop = RailBackdropWidth * cardScale)
+        ArtworkSurface.SIMILAR -> Slots(poster = RailPosterWidth * cardScale)
         ArtworkSurface.DETAIL -> detail(window)
         // EpisodeList cards.
         ArtworkSurface.EPISODES, ArtworkSurface.SEASON_EPISODES -> Slots(still = 240.dp)
-        ArtworkSurface.BROWSE -> Slots(poster = gridCellWidth(window))
+        ArtworkSurface.BROWSE -> Slots(poster = gridCellWidth(window, MediaGridDefaults.PosterGridMinWidth * cardScale))
     }
 
     private fun detail(window: Dp): Slots {
@@ -87,11 +92,11 @@ class PhoneArtworkLayout(private val screen: () -> Screen) : ArtworkLayout {
         )
     }
 
-    /** The cell CatalogGrid's adaptive columns give a [window]-wide screen at Normal density. */
-    private fun gridCellWidth(window: Dp): Dp {
+    /** The cell CatalogGrid's adaptive columns of [minCell] give a [window]-wide screen. */
+    private fun gridCellWidth(window: Dp, minCell: Dp): Dp {
         val available = window - 32.dp
         val spacing = MediaGridDefaults.PosterGridHorizontalSpacing
-        val columns = floor((available + spacing) / (MediaGridDefaults.PosterGridMinWidth + spacing)).toInt().coerceAtLeast(1)
+        val columns = floor((available + spacing) / (minCell + spacing)).toInt().coerceAtLeast(1)
         return (available - spacing * (columns - 1)) / columns
     }
 
@@ -99,9 +104,8 @@ class PhoneArtworkLayout(private val screen: () -> Screen) : ArtworkLayout {
         /** CastCrewSection's headshot circle. */
         val CastPhotoSize = 76.dp
 
-        /** MediaCard and BackdropCard at the largest card size. */
-        val RailScale = CardPosterSize.entries.maxOf { it.posterScale }
-        val RailPosterWidth = 120.dp * RailScale
-        val RailBackdropWidth = 280.dp * RailScale
+        /** MediaCard and BackdropCard at the standard card size. */
+        val RailPosterWidth = 120.dp
+        val RailBackdropWidth = 280.dp
     }
 }

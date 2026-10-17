@@ -128,7 +128,14 @@ val androidTvModule = module {
     }
     single<org.siloserver.silo.repository.ArtworkLayout> {
         val resources = androidContext().resources
-        org.siloserver.silo.tv.ui.theme.TvArtworkLayout { resources.displayMetrics.density }
+        val scope = this
+        org.siloserver.silo.tv.ui.theme.TvArtworkLayout(
+            displayDensity = { resources.displayMetrics.density },
+            posterScale = {
+                scope.get<org.siloserver.silo.common.settings.CardPresentationStore>()
+                    .state.value.presentation.posterSize.posterScale
+            },
+        )
     }
     single<org.siloserver.silo.repository.port.HomeCachePort> {
         val tokenManager: TokenManager = get()

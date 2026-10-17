@@ -12,8 +12,11 @@ import org.siloserver.silo.repository.ArtworkSurface
 /**
  * Ownership captured before a cacheable network request starts. Identity-scoped
  * cache implementations must reject the write when this generation is stale.
+ * [artworkFingerprint] is the artwork cache fingerprint captured with it
+ * ([org.siloserver.silo.repository.ArtworkSizing.cacheFingerprint]); a read
+ * that carries artwork is cached under it, not under the layout at write time.
  */
-data class CatalogCacheWriteLease(val identityGeneration: Long)
+data class CatalogCacheWriteLease(val identityGeneration: Long, val artworkFingerprint: String? = null)
 
 /** The durable cache owner, without credentials or a device session. */
 data class CatalogCacheScope(val serverId: String, val profileId: String)
@@ -34,8 +37,12 @@ interface CatalogCachePort {
     /** Drop localized details, seasons, and episodes for the active profile. */
     suspend fun invalidateDetailMetadata(scope: CatalogCacheScope? = null) {}
 
-    /** V2 library-section cache entries require the exact initiating authority. */
-    suspend fun cacheLibrarySectionsV2(libraryId: Int, sections: List<ResolvedSection>, owner: org.siloserver.silo.network.AuthScopeSnapshot) {}
+    /**
+     * V2 library-section cache entries require the exact initiating authority.
+     * [artworkFingerprint] is the artwork cache fingerprint captured before the read.
+     */
+    suspend fun cacheLibrarySectionsV2(libraryId: Int, sections: List<ResolvedSection>, owner: org.siloserver.silo.network.AuthScopeSnapshot,
+        artworkFingerprint: String? = null) {}
     suspend fun getCachedLibrarySectionsV2(libraryId: Int, owner: org.siloserver.silo.network.AuthScopeSnapshot): List<ResolvedSection>? = null
 
     suspend fun cacheLibraries(libraries: List<UserLibrary>) {}

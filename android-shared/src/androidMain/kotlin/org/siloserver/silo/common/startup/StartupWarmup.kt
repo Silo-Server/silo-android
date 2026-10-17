@@ -173,6 +173,7 @@ internal suspend fun warmStartupHomeSections(
     suspend fun mayWarm(): Boolean = sectionRepository.isHomeAuthorityCurrent(owner) &&
         currentCoroutineContext().isActive && stillCurrent()
     if (!mayWarm()) return
+    val artworkFingerprint = homeCache.artworkFingerprint()
     val result = sectionRepository.getHomeSections(owner)
     if (!mayWarm() || result !is ApiResult.Success) return
     val hydration = hydrateHomeSections(result.data.sections) { id ->
@@ -180,7 +181,7 @@ internal suspend fun warmStartupHomeSections(
         else sectionRepository.getHomeSectionItems(id, owner)
     }
     if (!mayWarm() || !hydration.fullyResolved || hydration.sections.isEmpty()) return
-    homeCache.cacheHomeV2IfAbsent(hydration.sections, owner, stillCurrent)
+    homeCache.cacheHomeV2IfAbsent(hydration.sections, owner, artworkFingerprint, stillCurrent)
     if (!mayWarm()) return
     warmArtwork(hydration.sections, ::mayWarm)
 }
