@@ -1,9 +1,14 @@
 package org.siloserver.silo.domain.player
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlin.math.floor
+import kotlin.math.max
 
 /** One rung of the plan's quality menu, as far as the controller needs it. */
 data class BufferingQualityRung(
@@ -107,6 +112,28 @@ data class BufferingPlanSummary(
  * Callers feed it playback events and the viewer's answers; it hands back
  * replans through [onReplan] and display-only notices through [onNotice], and
  * publishes the actionable pill in [pill]. It never touches the player.
+ *
+ * ### Stall detection
+ *
+ * Each plan gets a fresh stall tracker, a copy of the web player's
+ * `createStallTracker`: stall time inside the startup grace does not count, a
+ * stall must last [STALL_MIN_MS] to count, and the trigger is
+ * [STALLS_BEFORE_TRIGGER] counted stalls inside [STALL_WINDOW_MS] or one stall
+ * reaching [LONG_STALL_MS]. The trigger is evaluated only on [onPlaying] and
+ * when a stall in progress reaches [LONG_STALL_MS], never on [onWaiting]. A
+ * trigger that is suppressed leaves the history as it is; a timed-out prompt,
+ * the rearm after an unadopted replan, `never`, "can't lower" and a viewer
+ * quality change clear it.
+ *
+ * When a trigger is suppressed only by time (the no-lower cooldown or the
+ * re-offer delay) while a stall is still in progress, one re-evaluation is
+ * scheduled for the moment the suppression lifts, and it runs only if that
+ * stall is still in progress.
+ *
+ * ### Threading
+ *
+ * Not thread-safe. Call it from the thread [scope] dispatches on, as with
+ * [IntroAutoSkipController].
  */
 class BufferingQualityController(
     private val scope: CoroutineScope,
@@ -147,60 +174,698 @@ class BufferingQualityController(
 
     val totalCountdownSeconds: Int get() = promptSeconds
 
+    // ---- Settings and player state ----------------------------------------
+
+    private var mode: BufferingQualityMode = BufferingQualityMode.Default
+    private var enabled = true
+    private var otherPillVisible = false
+
+    /** The viewer paused and has not resumed. Freezes a pill's timer. */
+    private var paused = false
+
+    /** Media requests are failing: any wait is an outage, not a stall. */
+    private var transportTrouble = false
+
+    // ---- The playing plan --------------------------------------------------
+
+    private var current: PlanState? = null
+
+    // ---- Per-title state ---------------------------------------------------
+
+    /** The quality the viewer answered at (Keep or Restore), until they change quality. */
+    private var answeredQuality: String? = null
+
+    /** "Can't lower quality" from a trigger shows once per title. */
+    private var cantLowerShown = false
+
+    /** After a prompt timed out, no new prompt before this time. */
+    private var reofferNotBefore: Long? = null
+
+    /** The replan this controller sent and is waiting to see adopted. */
+    private var pending: Pending? = null
+
+    // ---- Pill --------------------------------------------------------------
+
+    private var activePill: PillKind? = null
+    private var deferredPill: PillKind? = null
+    private var deferredPlanId: String? = null
+    private var promptShownAt: Long = 0L
+    private var pillRemainingMs: Long = 0L
+    private var pillStepMs: Long = 0L
+    private var pillStepStartedAt: Long = 0L
+    private var pillJob: Job? = null
+
+    // ---- Timers ------------------------------------------------------------
+
+    private var longStallJob: Job? = null
+    private var reevaluateJob: Job? = null
+    private var rearmJob: Job? = null
+
     /** The effective `playback.buffering_quality_mode`. */
-    fun setMode(mode: BufferingQualityMode): Unit = TODO()
+    fun setMode(mode: BufferingQualityMode): Unit {
+        this.mode = mode
+        if (mode == BufferingQualityMode.NEVER) hidePill()
+    }
 
     /** False inside a Watch Party room: the pill hides and events are ignored. */
-    fun setEnabled(enabled: Boolean): Unit = TODO()
+    fun setEnabled(enabled: Boolean): Unit {
+        if (enabled == this.enabled) return
+        if (!enabled) {
+            // The playing plan's summary goes out now, because the controller
+            // stops following it. Re-enabling starts from the next adoption.
+            dropPlan(clock())
+            cancelPlanTimers()
+        }
+        this.enabled = enabled
+    }
 
     /** The intro-skip or Next Up pill is on screen; buffering pills wait for it. */
-    fun setOtherPillVisible(visible: Boolean): Unit = TODO()
+    fun setOtherPillVisible(visible: Boolean): Unit {
+        otherPillVisible = visible
+        if (visible || !enabled) return
+        val kind = deferredPill ?: return
+        if (deferredPlanId != null && deferredPlanId == current?.plan?.planId) {
+            present(kind)
+        } else {
+            deferredPill = null
+            deferredPlanId = null
+        }
+    }
 
     /** A plan with a new `plan_id` became the playing plan. */
-    fun onPlanAdopted(plan: BufferingQualityPlan): Unit = TODO()
+    fun onPlanAdopted(plan: BufferingQualityPlan): Unit {
+        if (!enabled) return
+        if (current?.plan?.planId == plan.planId) return
+        val now = clock()
+        current?.let { flushSummary(it, now) }
+        hidePill()
+        cancelPlanTimers()
+        val state = PlanState(plan)
+        current = state
+
+        val settled = pending ?: return
+        pending = null
+        when (settled.kind) {
+            PendingKind.RESTORE -> Unit
+            PendingKind.AUTOMATIC, PendingKind.ACCEPTED -> {
+                val delivered = plan.deliveredKbps?.takeIf { it > 0 }
+                val from = settled.fromKbps?.takeIf { it > 0 }
+                val noLower = plan.qualityReductionUnavailable ||
+                    (delivered != null && from != null && delivered >= from)
+                when {
+                    noLower -> {
+                        state.action = BufferingAction.CANT_LOWER
+                        state.cooldownUntil = now + NO_LOWER_COOLDOWN_MS
+                        cantLowerShown = true
+                        onNotice(BufferingQualityNotice.CANT_LOWER)
+                    }
+                    settled.kind == PendingKind.AUTOMATIC -> showPill(PillKind.UNDO)
+                    else -> onNotice(BufferingQualityNotice.LOWERED)
+                }
+            }
+        }
+    }
 
     /** Playback is running: the first frame, or a resume from waiting or pause. */
-    fun onPlaying(): Unit = TODO()
+    fun onPlaying(): Unit {
+        paused = false
+        if (!enabled) return
+        val state = current ?: return
+        val now = clock()
+        thawPill()
+        if (state.playingSince == null) state.playingSince = now
+        val tracker = state.tracker
+        if (tracker.firstPlayingAt == null) tracker.firstPlayingAt = now
+        tracker.stalled = false
+
+        state.statsStallStartedAt?.let { recordStallStat(state, now - it) }
+        state.statsStallStartedAt = null
+
+        val startedAt = tracker.stallStartedAt
+        if (startedAt != null) {
+            clearStallTiming(state)
+            // A stall timed during transport trouble cannot exist: trouble
+            // drops the timing and only its end re-times the stall.
+            val duration = now - startedAt
+            if (duration >= LONG_STALL_MS) {
+                tracker.longStallEndedAt = now
+            } else if (duration >= STALL_MIN_MS) {
+                tracker.stallEnds += now
+            }
+        }
+        evaluate(now)
+    }
 
     /** The player ran out of data while it should be playing. */
-    fun onWaiting(cause: BufferingWaitCause = BufferingWaitCause.NETWORK): Unit = TODO()
+    fun onWaiting(cause: BufferingWaitCause = BufferingWaitCause.NETWORK): Unit {
+        if (!enabled) return
+        val state = current ?: return
+        val now = clock()
+        stopPlayedClock(state, now)
+        if (cause != BufferingWaitCause.NETWORK) {
+            interrupt(state)
+            return
+        }
+        val tracker = state.tracker
+        tracker.stalled = true
+        tracker.noteWaiting(now)
+        if (transportTrouble) return
+        startStallTiming(state, now)
+    }
 
     /** The viewer paused. */
-    fun onPause(): Unit = TODO()
+    fun onPause(): Unit {
+        paused = true
+        if (!enabled) return
+        freezePill()
+        val state = current ?: return
+        stopPlayedClock(state, clock())
+        interrupt(state)
+    }
 
     /** The viewer seeked. */
-    fun onSeek(): Unit = TODO()
+    fun onSeek(): Unit {
+        if (!enabled) return
+        val state = current ?: return
+        stopPlayedClock(state, clock())
+        interrupt(state)
+    }
 
     /** Media requests started failing, or the device went offline. */
-    fun onTransportErrorStart(): Unit = TODO()
+    fun onTransportErrorStart(): Unit {
+        transportTrouble = true
+        if (!enabled) return
+        val state = current ?: return
+        if (state.tracker.stallStartedAt != null) {
+            // Still stalled, but the outage owns this wait now.
+            clearStallTiming(state)
+            state.statsStallStartedAt = null
+        }
+    }
 
     /** Media requests recovered. */
-    fun onTransportErrorEnd(): Unit = TODO()
+    fun onTransportErrorEnd(): Unit {
+        transportTrouble = false
+        if (!enabled) return
+        val state = current ?: return
+        if (state.tracker.stalled && state.tracker.stallStartedAt == null) {
+            startStallTiming(state, clock())
+        }
+    }
 
     /** The controller's last replan failed or will never be adopted. */
-    fun onReplanFailed(): Unit = TODO()
+    fun onReplanFailed(): Unit {
+        if (!enabled) return
+        // The rearm timer keeps running: the current plan is watched again
+        // REARM_AFTER_UNADOPTED_MS after the replan was sent.
+        pending = null
+    }
 
     /** The viewer picked a quality from the quality menu. */
-    fun onViewerQualityChange(): Unit = TODO()
+    fun onViewerQualityChange(): Unit {
+        if (!enabled) return
+        hidePill()
+        answeredQuality = null
+        reofferNotBefore = null
+        pending = null
+        rearmJob?.cancel()
+        rearmJob = null
+        current?.let { resetTracker(it, clock()) }
+    }
 
     /** The playing plan stopped (ended, closed or failed) without a successor. */
-    fun onPlaybackStopped(): Unit = TODO()
+    fun onPlaybackStopped(): Unit {
+        if (!enabled) return
+        dropPlan(clock())
+        cancelPlanTimers()
+    }
 
     /** "Lower quality" on the prompt. True when a prompt was answered. */
-    fun selectLower(): Boolean = TODO()
+    fun selectLower(): Boolean {
+        if (activePill != PillKind.PROMPT) return false
+        val state = current ?: return false
+        val now = clock()
+        hidePill()
+        val lowering = loweringFor(state.plan)
+        if (lowering == null) {
+            // Unreachable while the prompt's plan is still playing (adoption
+            // hides the prompt), but never send a replan that cannot lower.
+            showCantLower(state)
+            resetTracker(state, now)
+            return true
+        }
+        sendLowering(state, lowering, PendingKind.ACCEPTED, BufferingAction.ACCEPTED)
+        return true
+    }
 
     /** "Keep quality" on the prompt. True when a prompt was answered. */
-    fun selectKeep(): Boolean = TODO()
+    fun selectKeep(): Boolean {
+        if (activePill != PillKind.PROMPT) return false
+        val state = current ?: return false
+        hidePill()
+        answeredQuality = state.plan.quality
+        state.action = BufferingAction.KEPT
+        return true
+    }
 
     /** "Restore quality" on the undo pill. True when an undo was answered. */
-    fun selectRestore(): Boolean = TODO()
+    fun selectRestore(): Boolean {
+        if (activePill != PillKind.UNDO) return false
+        val state = current ?: return false
+        hidePill()
+        state.action = BufferingAction.RESTORED
+        answeredQuality = QUALITY_AUTO
+        pending = Pending(PendingKind.RESTORE, fromKbps = null)
+        startRearm()
+        onReplan(BufferingQualityReplan(qualityPreference = QUALITY_AUTO, learnedLimit = LEARNED_LIMIT_CLEAR))
+        return true
+    }
 
     /** Select/OK at the player root: the visible pill's primary action. */
-    fun selectPrimary(): Boolean = TODO()
+    fun selectPrimary(): Boolean = when (activePill) {
+        PillKind.PROMPT -> selectLower()
+        PillKind.UNDO -> selectRestore()
+        null -> false
+    }
 
     /** Back while a pill shows. True when a pill consumed it. */
-    fun back(): Boolean = TODO()
+    fun back(): Boolean = when (activePill) {
+        // Back on the prompt is Keep quality.
+        PillKind.PROMPT -> selectKeep()
+        // Back on the undo only hides it; the lower plan keeps playing.
+        PillKind.UNDO -> {
+            hidePill()
+            true
+        }
+        null -> false
+    }
 
     /** Clears all per-title state, for when playback moves to different content. */
-    fun reset(): Unit = TODO()
+    fun reset(): Unit {
+        dropPlan(clock())
+        cancelPlanTimers()
+        answeredQuality = null
+        cantLowerShown = false
+        reofferNotBefore = null
+        promptShownAt = 0L
+    }
+
+    // ---- Trigger -----------------------------------------------------------
+
+    private fun evaluate(now: Long) {
+        if (!enabled) return
+        val state = current ?: return
+        if (!state.tracker.shouldTrigger(now)) return
+        if (isBusy()) return
+        state.cooldownUntil?.let { until ->
+            if (now < until) {
+                suppressUntil(state, until, now)
+                return
+            }
+        }
+        val plan = state.plan
+        if (answeredQuality == plan.quality) return
+        if (mode == BufferingQualityMode.NEVER) {
+            state.action = BufferingAction.IGNORED
+            resetTracker(state, now)
+            return
+        }
+        val lowering = loweringFor(plan)
+        if (lowering == null) {
+            showCantLower(state)
+            resetTracker(state, now)
+            return
+        }
+        if (plan.quality == QUALITY_AUTO && mode == BufferingQualityMode.ALWAYS) {
+            sendLowering(state, lowering, PendingKind.AUTOMATIC, BufferingAction.LOWERED)
+            return
+        }
+        reofferNotBefore?.let { notBefore ->
+            if (now < notBefore) {
+                suppressUntil(state, notBefore, now)
+                return
+            }
+        }
+        showPill(PillKind.PROMPT)
+    }
+
+    /**
+     * Something of ours is already in flight: a replan, the rearm wait after
+     * one that was not adopted, or a pill that is showing or waiting to show.
+     */
+    private fun isBusy(): Boolean =
+        pending != null || rearmJob?.isActive == true || activePill != null || deferredPill != null
+
+    /**
+     * A trigger held but a time-based rule blocked it. While the stall is
+     * still in progress, look again when the rule lifts; the stall's own end
+     * evaluates otherwise.
+     */
+    private fun suppressUntil(state: PlanState, liftAt: Long, now: Long) {
+        if (state.tracker.stallStartedAt == null) return
+        reevaluateJob?.cancel()
+        reevaluateJob = scope.launch {
+            delay(liftAt - now)
+            reevaluateJob = null
+            if (current === state && state.tracker.stallStartedAt != null) evaluate(clock())
+        }
+    }
+
+    /** The replan that lowers [plan] one step, or null when nothing is lower. */
+    private fun loweringFor(plan: BufferingQualityPlan): Lowering? {
+        val rungs = plan.availableQualities
+            .filter { it.bitrateKbps > 0 }
+            .sortedByDescending { it.bitrateKbps }
+        val delivered = plan.deliveredKbps?.takeIf { it > 0 }
+        if (plan.quality == QUALITY_AUTO) {
+            delivered ?: return null
+            if (rungs.none { it.bitrateKbps < delivered }) return null
+            val estimate = floor(STEP_DOWN_RATIO * delivered).toInt()
+            if (estimate < MIN_ESTIMATE_KBPS) return null
+            return Lowering(
+                replan = BufferingQualityReplan(
+                    qualityPreference = QUALITY_AUTO,
+                    bandwidthEstimateKbps = estimate,
+                    bandwidthEstimateSource = ESTIMATE_SOURCE_OBSERVED_REBUFFER,
+                ),
+                fromKbps = delivered,
+            )
+        }
+        val ceiling = rungs.firstOrNull { it.label == plan.quality }?.bitrateKbps
+            ?: delivered
+            ?: return null
+        val lower = rungs.firstOrNull { it.bitrateKbps < ceiling } ?: return null
+        return Lowering(
+            replan = BufferingQualityReplan(qualityPreference = lower.label),
+            fromKbps = ceiling,
+        )
+    }
+
+    private fun sendLowering(
+        state: PlanState,
+        lowering: Lowering,
+        kind: PendingKind,
+        action: BufferingAction,
+    ) {
+        pending = Pending(kind, lowering.fromKbps)
+        state.action = action
+        startRearm()
+        onReplan(lowering.replan)
+    }
+
+    private fun showCantLower(state: PlanState) {
+        state.action = BufferingAction.CANT_LOWER
+        if (cantLowerShown) return
+        cantLowerShown = true
+        onNotice(BufferingQualityNotice.CANT_LOWER)
+    }
+
+    /** Rearm is timed from the send, whether or not the replan later fails. */
+    private fun startRearm() {
+        rearmJob?.cancel()
+        rearmJob = scope.launch {
+            delay(REARM_AFTER_UNADOPTED_MS)
+            rearmJob = null
+            pending = null
+            current?.let { resetTracker(it, clock()) }
+        }
+    }
+
+    // ---- Stall tracker -----------------------------------------------------
+
+    /** Starts timing the stall in progress, from the end of the grace at the earliest. */
+    private fun startStallTiming(state: PlanState, now: Long) {
+        val tracker = state.tracker
+        val startedAt = tracker.stallStartedAt ?: max(now, tracker.graceEndsAt(now))
+        tracker.stallStartedAt = startedAt
+        if (state.statsStallStartedAt == null) state.statsStallStartedAt = startedAt
+        if (longStallJob?.isActive == true) return
+        longStallJob = scope.launch {
+            delay(startedAt + LONG_STALL_MS - now)
+            longStallJob = null
+            if (current === state && state.tracker.stallStartedAt == startedAt) evaluate(clock())
+        }
+    }
+
+    /** Stops timing the current stall without ending it. */
+    private fun clearStallTiming(state: PlanState) {
+        state.tracker.stallStartedAt = null
+        longStallJob?.cancel()
+        longStallJob = null
+        reevaluateJob?.cancel()
+        reevaluateJob = null
+    }
+
+    /** A seek, pause or reload: the wait in progress was not the network's. */
+    private fun interrupt(state: PlanState) {
+        state.tracker.stalled = false
+        clearStallTiming(state)
+        state.statsStallStartedAt = null
+    }
+
+    /**
+     * Clears the stall history with the grace treated as elapsed, and times a
+     * stall still in progress from now.
+     */
+    private fun resetTracker(state: PlanState, now: Long) {
+        val tracker = state.tracker
+        tracker.firstPlayingAt = now - STARTUP_GRACE_MS
+        tracker.stallEnds.clear()
+        tracker.longStallEndedAt = null
+        clearStallTiming(state)
+        if (tracker.stalled && !transportTrouble) startStallTiming(state, now)
+    }
+
+    // ---- Summary -----------------------------------------------------------
+
+    private fun stopPlayedClock(state: PlanState, now: Long) {
+        state.playingSince?.let { state.playedMs += (now - it).coerceAtLeast(0L) }
+        state.playingSince = null
+    }
+
+    private fun recordStallStat(state: PlanState, durationMs: Long) {
+        if (durationMs < STALL_MIN_MS) return
+        state.stallCount += 1
+        state.stallTotalMs += durationMs
+        state.stallLongestMs = max(state.stallLongestMs, durationMs)
+    }
+
+    /**
+     * Emits [state]'s summary. A stall still in progress counts up to now,
+     * because a plan replaced mid-stall is usually the one that stalled.
+     */
+    private fun flushSummary(state: PlanState, now: Long) {
+        stopPlayedClock(state, now)
+        state.statsStallStartedAt?.let { recordStallStat(state, now - it) }
+        state.statsStallStartedAt = null
+        onPlanSummary(
+            BufferingPlanSummary(
+                planId = state.plan.planId,
+                playedMs = state.playedMs,
+                stallCount = state.stallCount,
+                stallTotalMs = state.stallTotalMs,
+                stallLongestMs = state.stallLongestMs,
+                deliveredKbps = state.plan.deliveredKbps,
+                mode = mode,
+                action = state.action,
+            ),
+        )
+    }
+
+    /** Emits the playing plan's summary and forgets the plan and anything in flight. */
+    private fun dropPlan(now: Long) {
+        current?.let { flushSummary(it, now) }
+        current = null
+        pending = null
+        hidePill()
+    }
+
+    private fun cancelPlanTimers() {
+        longStallJob?.cancel()
+        longStallJob = null
+        reevaluateJob?.cancel()
+        reevaluateJob = null
+        rearmJob?.cancel()
+        rearmJob = null
+    }
+
+    // ---- Pill --------------------------------------------------------------
+
+    /** Shows [kind] now, or once the other pill hides. */
+    private fun showPill(kind: PillKind) {
+        if (otherPillVisible) {
+            deferredPill = kind
+            deferredPlanId = current?.plan?.planId
+            return
+        }
+        present(kind)
+    }
+
+    private fun present(kind: PillKind) {
+        deferredPill = null
+        deferredPlanId = null
+        activePill = kind
+        pillRemainingMs = promptSeconds * 1000L
+        if (kind == PillKind.PROMPT) promptShownAt = clock()
+        publishPill()
+        if (paused) _timerRunning.value = false else startPillTimer()
+    }
+
+    /**
+     * Runs the wall-clock timer down from [pillRemainingMs], publishing at
+     * each whole second. The remainder is kept in milliseconds so a pause
+     * resumes from exactly where it froze.
+     */
+    private fun startPillTimer() {
+        pillJob?.cancel()
+        pillJob = null
+        if (pillRemainingMs <= 0L) {
+            _timerRunning.value = false
+            pillTimedOut()
+            return
+        }
+        _countdownRun.value += 1
+        _timerRunning.value = true
+        pillJob = scope.launch {
+            while (pillRemainingMs > 0L) {
+                publishPill()
+                val step = pillRemainingMs - (secondsFor(pillRemainingMs) - 1) * 1000L
+                pillStepMs = step
+                pillStepStartedAt = clock()
+                delay(step)
+                pillRemainingMs -= step
+            }
+            pillJob = null
+            _timerRunning.value = false
+            pillTimedOut()
+        }
+    }
+
+    private fun freezePill() {
+        val job = pillJob ?: return
+        if (!job.isActive) return
+        val elapsed = (clock() - pillStepStartedAt).coerceIn(0L, pillStepMs)
+        pillRemainingMs = (pillRemainingMs - elapsed).coerceAtLeast(0L)
+        job.cancel()
+        pillJob = null
+        _timerRunning.value = false
+        publishPill()
+    }
+
+    private fun thawPill() {
+        if (activePill == null || pillJob != null) return
+        startPillTimer()
+    }
+
+    private fun pillTimedOut() {
+        val kind = activePill ?: return
+        hidePill()
+        if (kind != PillKind.PROMPT) return
+        // The prompt withdraws without an answer: history clears and a new
+        // trigger may offer again after REOFFER_MIN_MS.
+        val state = current ?: return
+        state.action = BufferingAction.TIMED_OUT
+        reofferNotBefore = promptShownAt + REOFFER_MIN_MS
+        resetTracker(state, clock())
+    }
+
+    private fun publishPill() {
+        val seconds = secondsFor(pillRemainingMs).toInt()
+        _pill.value = when (activePill) {
+            PillKind.PROMPT -> BufferingQualityPill.Prompt(seconds)
+            PillKind.UNDO -> BufferingQualityPill.Undo(seconds)
+            null -> BufferingQualityPill.Hidden
+        }
+    }
+
+    /** Takes any pill down, visible or deferred, deciding nothing. */
+    private fun hidePill() {
+        pillJob?.cancel()
+        pillJob = null
+        activePill = null
+        deferredPill = null
+        deferredPlanId = null
+        pillRemainingMs = 0L
+        _timerRunning.value = false
+        if (_pill.value !is BufferingQualityPill.Hidden) _pill.value = BufferingQualityPill.Hidden
+    }
+
+    private fun secondsFor(ms: Long): Long = (ms + 999L) / 1000L
+
+    // ---- Private types -----------------------------------------------------
+
+    private enum class PillKind { PROMPT, UNDO }
+
+    private enum class PendingKind {
+        /** Lowered on Auto without asking; its plan gets the undo pill. */
+        AUTOMATIC,
+
+        /** Lowered after "Lower quality"; its plan gets the "lowered" notice. */
+        ACCEPTED,
+
+        /** "Restore quality"; its plan shows nothing. */
+        RESTORE,
+    }
+
+    private class Pending(val kind: PendingKind, val fromKbps: Int?)
+
+    private class Lowering(val replan: BufferingQualityReplan, val fromKbps: Int?)
+
+    /** One plan's stall history: the web player's `createStallTracker`. */
+    private class StallTracker {
+        var firstPlayingAt: Long? = null
+
+        /** The first wait before any frame; a start that never gets going is timed from here. */
+        var firstWaitingAt: Long? = null
+
+        /** When the stall being timed started counting, or null when none is. */
+        var stallStartedAt: Long? = null
+
+        /** A network wait is in progress, timed or not (an outage pauses the timing). */
+        var stalled = false
+
+        /** When each counted short stall ended. */
+        val stallEnds = mutableListOf<Long>()
+
+        /** When a stall that reached LONG_STALL_MS ended. */
+        var longStallEndedAt: Long? = null
+
+        fun noteWaiting(now: Long) {
+            if (firstPlayingAt == null && firstWaitingAt == null) firstWaitingAt = now
+        }
+
+        fun graceEndsAt(now: Long): Long =
+            (firstPlayingAt ?: firstWaitingAt ?: now) + STARTUP_GRACE_MS
+
+        fun shouldTrigger(now: Long): Boolean {
+            val longEnded = longStallEndedAt
+            if (longEnded != null && now - longEnded < STALL_WINDOW_MS) return true
+            val startedAt = stallStartedAt
+            if (startedAt != null && now - startedAt >= LONG_STALL_MS) return true
+            stallEnds.removeAll { now - it >= STALL_WINDOW_MS }
+            return stallEnds.size >= STALLS_BEFORE_TRIGGER
+        }
+    }
+
+    /** Everything the controller tracks about the playing plan. */
+    private class PlanState(val plan: BufferingQualityPlan) {
+        val tracker = StallTracker()
+        var action: BufferingAction = BufferingAction.NONE
+
+        /** No trigger acts on this plan before this time ("can't lower" result). */
+        var cooldownUntil: Long? = null
+
+        var playingSince: Long? = null
+        var playedMs: Long = 0L
+
+        /**
+         * When the stall in progress started, for the summary. Unlike the
+         * tracker's start, a history reset does not move it, so one stall is
+         * reported whole.
+         */
+        var statsStallStartedAt: Long? = null
+        var stallCount: Int = 0
+        var stallTotalMs: Long = 0L
+        var stallLongestMs: Long = 0L
+    }
 }
