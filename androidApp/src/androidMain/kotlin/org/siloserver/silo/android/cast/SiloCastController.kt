@@ -176,6 +176,19 @@ class SiloCastController(
     )
     val launchFeedback: SharedFlow<SiloCastLaunchFeedback> = _launchFeedback.asSharedFlow()
 
+    private val _endedByTv = MutableSharedFlow<String>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /**
+     * The TV ended the session: its viewer took control back with the TV
+     * remote or pressed Disconnect Remote, another phone took over, or the TV
+     * switched servers or handed an idle borrowed profile back. Carries a
+     * short notice for the phone to show; the remote screen closes on it.
+     */
+    val endedByTv: SharedFlow<String> = _endedByTv.asSharedFlow()
+
     private var session: SiloCastTlsClientSession? = null
     private var output: OutputStream? = null
     private var readJob: Job? = null
@@ -185,6 +198,9 @@ class SiloCastController(
 
     @Volatile
     private var missedHeartbeats = 0
+
+    /** The error text of the last message the TV sent, if it was an error. */
+    private var lastMessageError: String? = null
 
     // The read loop's finally block decides between reconnect and teardown;
     // set before any deliberate close (ours or the TV's) so an intentional
@@ -961,6 +977,8 @@ class SiloCastController(
     }
 
     private suspend fun handleMessage(message: SiloCastMessage) {
+        val errorBeforeMessage = lastMessageError
+        lastMessageError = (message as? SiloCastMessage.Error)?.error?.message
         when (message) {
             is SiloCastMessage.Hello -> {
                 val version = SiloCastProtocol.negotiatedVersion(message.hello.supportedVersions)
@@ -1046,6 +1064,15 @@ class SiloCastController(
                 // foreground probe silently reattaches.
                 suppressReconnect = true
                 lastTargetStore.clear()
+                val ended = _state.value
+                // An unconfirmed auto-resume never surfaced, so it ends quietly.
+                if (!ended.isAutoResuming) {
+                    // A refusal the TV sent just before its goodbye says more;
+                    // an older error in the state belongs to another exchange.
+                    _endedByTv.tryEmit(
+                        errorBeforeMessage ?: "Disconnected from ${ended.connectedTarget?.name ?: "the TV"}.",
+                    )
+                }
                 closeConnection()
             }
             else -> Unit

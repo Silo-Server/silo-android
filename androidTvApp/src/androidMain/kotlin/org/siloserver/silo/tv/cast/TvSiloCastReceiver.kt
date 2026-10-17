@@ -336,6 +336,25 @@ class TvSiloCastReceiver(
         closePreviousController()
     }
 
+    /**
+     * The viewer left the player with the TV's own remote, so the TV takes
+     * control back. Call before the player exits: once its player
+     * unregisters, a still-connected phone would put the standby takeover
+     * over the screen the viewer returned to. The phone gets the `close`
+     * goodbye and lets go without reconnecting. A borrowed profile is handed
+     * back once the player's session stop has landed (see [scheduleIdentityEnd]).
+     */
+    @Synchronized
+    fun returnControlToTv() {
+        if (activeSession != null) DiagnosticsCastLogger.event("TV cast control returned to the TV")
+        // A title the phone sent just before Back must not open after it; if
+        // navigation already took it, confirmLaunch now refuses its player.
+        pendingLaunch?.let { clearPendingLaunch(it.id, dropQueued = true) }
+        // Even with no session: the epoch bump turns away a phone still
+        // handshaking, which would otherwise bring the standby back.
+        closePreviousController()
+    }
+
     internal fun recordPlayerVolume(volume: Double) {
         volumeTracker.recordVolume(volume)
     }
@@ -843,7 +862,8 @@ class TvSiloCastReceiver(
     /**
      * Ends [generationId] after [delayMs]. With [keepIfLenderReturns] (the
      * lending phone left), a phone back in the slot by then keeps it under
-     * the idle limit instead: a dropped link reconnects within seconds.
+     * the idle limit instead: a dropped link reconnects within seconds. The
+     * end also waits (bounded) for a queued player teardown to finish.
      */
     private fun scheduleIdentityEnd(
         generationId: String,
@@ -854,6 +874,11 @@ class TvSiloCastReceiver(
         val owner = scope ?: return
         identityEndJob = owner.launch {
             delay(delayMs)
+            // The exited player's final progress report and stopSession ride
+            // on this identity; ending it first revokes the session under
+            // them (401). Bounded, so the identity is always ended. Before the
+            // lender check, so a phone back during the wait keeps it.
+            withTimeoutOrNull(PLAYBACK_TEARDOWN_TIMEOUT_MS) { awaitPlaybackTeardown() }
             if (keepIfLenderReturns && isLenderConnected(generationId) && isIdentityIdle()) {
                 scheduleIdentityEnd(generationId, IDENTITY_IDLE_MS)
                 return@launch
