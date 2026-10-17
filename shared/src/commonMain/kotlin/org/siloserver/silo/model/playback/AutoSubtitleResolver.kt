@@ -1,6 +1,7 @@
 package org.siloserver.silo.model.playback
 
 import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.playback.canonicalSubtitleLanguage
 import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import org.siloserver.silo.playback.isClientMountableBitmapCodecFamily
 import org.siloserver.silo.playback.playbackSubtitleIdentity
@@ -243,31 +244,12 @@ private fun AutoSubtitleCandidate.requiresBurnIn(): Boolean =
     needsBurnIn ?: isBitmapSubtitleCodecFamily(codec)
 
 /**
- * The ONE ISO-639 folding table for auto-selection language comparison.
- *
- * Deliberately smaller than the display-name alias table and deliberately
- * drops `und`: it answers "is this the language the viewer asked for", not
- * "what do we call this language".
+ * The language key auto-selection compares: the primary subtitle language with
+ * every ISO 639-2 code folded to its ISO 639-1 form, `und` dropped. Mounted
+ * tracks report 639-1 (`it`) while the catalog and server rows usually carry
+ * 639-2 (`ita`), so the whole table is needed, not a few common aliases.
  */
-fun autoSubtitleLanguageKey(language: String?): String? {
-    val primary = language
-        ?.trim()
-        ?.takeUnless { it.isBlank() || it.equals("und", ignoreCase = true) }
-        ?.lowercase()
-        ?.replace('_', '-')
-        ?.substringBefore('-')
-        ?: return null
-    return when (primary) {
-        "eng" -> "en"
-        "spa" -> "es"
-        "fre", "fra" -> "fr"
-        "ger", "deu" -> "de"
-        "dut", "nld" -> "nl"
-        "jpn" -> "ja"
-        "dan" -> "da"
-        else -> primary
-    }
-}
+fun autoSubtitleLanguageKey(language: String?): String? = canonicalSubtitleLanguage(language)
 
 /**
  * Candidates over the CATALOG subtitle list, in catalog order, addressed in

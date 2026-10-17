@@ -709,6 +709,27 @@ class MobileSubtitleAutoSelectionTest {
     }
 
     @Test
+    fun preferenceAndTrackLanguagesMatchAcrossIso639Forms() {
+        // The preference says "it", the server row says "ita" (and the other
+        // way round): the phone matched these before it moved to the shared
+        // resolver, and must still.
+        fun resolve(preferred: String, trackLanguage: String) = resolveMobileAutoSubtitleSelection(
+            audioTracks = listOf(audio(language = "en")),
+            selectedAudioIndex = 0,
+            subtitles = listOf(
+                subtitle(index = 0, label = "English", language = "en"),
+                subtitle(index = 1, label = "Other", language = trackLanguage),
+            ),
+            preferredLanguage = preferred,
+            subtitleMode = "always",
+            showForcedSubtitles = false,
+        )
+        assertEquals(MobileSubtitleAutoSelection.Select(1), resolve("it", "ita"))
+        assertEquals(MobileSubtitleAutoSelection.Select(1), resolve("por", "pt"))
+        assertEquals(MobileSubtitleAutoSelection.Select(1), resolve("ru", "rus"))
+    }
+
+    @Test
     fun subtitlesOffStillStartTheForcedTrackForTheAudioThatPlays() {
         // Series (or profile) set to Off with "Show forced subtitles" on: the
         // next episode starts on the forced English line, as on web and TV.

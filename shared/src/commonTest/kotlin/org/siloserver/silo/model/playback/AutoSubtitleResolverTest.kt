@@ -410,6 +410,9 @@ class AutoSubtitleResolverTest {
         assertEquals("fr", autoSubtitleLanguageKey("fra"))
         assertEquals("fr", autoSubtitleLanguageKey("fre"))
         assertEquals("pt", autoSubtitleLanguageKey("pt-BR"))
+        assertEquals("it", autoSubtitleLanguageKey("ita"))
+        assertEquals("pt", autoSubtitleLanguageKey("por"))
+        assertEquals("ru", autoSubtitleLanguageKey("rus"))
         assertNull(autoSubtitleLanguageKey("und"))
         assertNull(autoSubtitleLanguageKey(" "))
     }
