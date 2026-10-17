@@ -134,7 +134,6 @@ open class PlaybackSessionManager(
          * the limit for the rest of the session.
          */
         val bandwidthCapKbps: Int?,
-        val networkEvidence: PlaybackNetworkSnapshot,
         val sessionId: String,
         val plan: PlaybackPlanV3,
         val serverFeatures: Set<String>,
@@ -378,8 +377,6 @@ open class PlaybackSessionManager(
                 // the track id above already filter negatives the same way.
                 subtitleTrackIndex = subtitleTrackIndex?.takeIf { it >= 0 },
                 clientFeatures = playbackClientFeaturesV3(clientPlaybackContext),
-                metered = network.metered,
-                bandwidthEstimateKbps = network.bandwidthEstimateKbps,
                 bandwidthCapKbps = maxBitrateKbps?.takeIf { it > 0 },
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
@@ -396,7 +393,6 @@ open class PlaybackSessionManager(
                         val planAttemptId = UUID.randomUUID().toString()
                         val active = newActiveAttempt(
                             request = request,
-                            network = network,
                             sessionId = validated.sessionId,
                             plan = validated.plan,
                             serverFeatures = result.data.serverFeatures.toSet(),
@@ -477,7 +473,6 @@ open class PlaybackSessionManager(
                         val planAttemptId = UUID.randomUUID().toString()
                         val active = newActiveAttempt(
                             request = request,
-                            network = network,
                             sessionId = validated.sessionId,
                             plan = validated.plan,
                             serverFeatures = result.data.serverFeatures.toSet(),
@@ -577,7 +572,6 @@ open class PlaybackSessionManager(
 
     private fun newActiveAttempt(
         request: PlaybackStartRequestV3,
-        network: PlaybackNetworkSnapshot,
         sessionId: String,
         plan: PlaybackPlanV3,
         serverFeatures: Set<String>,
@@ -594,7 +588,6 @@ open class PlaybackSessionManager(
             playbackAttemptId = request.playbackAttemptId,
             qualityPreference = request.qualityPreference,
             bandwidthCapKbps = request.bandwidthCapKbps,
-            networkEvidence = network,
             sessionId = sessionId,
             plan = plan,
             serverFeatures = serverFeatures,
@@ -725,6 +718,11 @@ open class PlaybackSessionManager(
 
     internal fun activeSessionIdForTest(): String? = activeVideoAttempt.get()?.sessionId
 
+    /** The quality pair the active video attempt plays at, or null with none active. */
+    fun activeVideoQualityPair(): PlaybackQualityPair? = activeVideoAttempt.get()?.let {
+        PlaybackQualityPair(it.qualityPreference, it.bandwidthCapKbps)
+    }
+
     internal suspend fun orphanedSessionIdsForTest(): Set<String> =
         videoAttemptMutex.withLock { orphanedSessionIds.toSet() }
 
@@ -739,6 +737,13 @@ open class PlaybackSessionManager(
         qualityPreference: String? = null,
         capabilities: ClientCodecCapabilities? = null,
         clientPlaybackContext: ClientPlaybackContext? = null,
+        /**
+         * Replaces both the quality preference and the bandwidth cap, for this
+         * request and every later one in the session: the phone moving between
+         * its main and cellular pair, or an Auto picked in the player taking
+         * the saved cap for the connection. Null keeps the session's.
+         */
+        qualityPair: PlaybackQualityPair? = null,
     ): ApiResult<VideoSessionStartV3> = immediateVideoReplanMutex.withLock {
         when (
             val prepared = prepareActiveVideoSessionReplan(
@@ -752,6 +757,7 @@ open class PlaybackSessionManager(
                 qualityPreference = qualityPreference,
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
+                qualityPair = qualityPair,
                 operation = replanOperationForClassification(classification),
                 // A rejected subtitle retry must not tear down healthy video.
                 // Reuse staged rejection cleanup while successful retries still commit.
@@ -778,6 +784,8 @@ open class PlaybackSessionManager(
         qualityPreference: String? = null,
         capabilities: ClientCodecCapabilities? = null,
         clientPlaybackContext: ClientPlaybackContext? = null,
+        /** Replaces quality and cap as on [replanActiveVideoSession]: an in-player Auto. */
+        qualityPair: PlaybackQualityPair? = null,
     ): ApiResult<StagedVideoReplan> = when (
         val prepared = prepareActiveVideoSessionReplan(
             classification = classification,
@@ -792,6 +800,7 @@ open class PlaybackSessionManager(
             clientPlaybackContext = clientPlaybackContext,
             operation = replanOperationForClassification(classification),
             preserveImmediateOutcomes = false,
+            qualityPair = qualityPair,
         )
     ) {
         is ApiResult.Success -> when (val value = prepared.data) {
@@ -819,6 +828,7 @@ open class PlaybackSessionManager(
         clientPlaybackContext: ClientPlaybackContext? = null,
         operation: String,
         preserveImmediateOutcomes: Boolean,
+        qualityPair: PlaybackQualityPair? = null,
     ): ApiResult<PreparedVideoReplan> = withSettledVideoAttempt {
         if (contentResetInProgress) {
             return@withSettledVideoAttempt ApiResult.Error(
@@ -840,7 +850,8 @@ open class PlaybackSessionManager(
             )
         }
         val intent = operation in INTENT_V3_OPERATIONS
-        val effectiveQuality = qualityPreference?.lowercase() ?: active.qualityPreference
+        val effectiveQuality = (qualityPair?.qualityPreference ?: qualityPreference)?.lowercase()
+            ?: active.qualityPreference
         // Mirror the server's own validator so a malformed operation is caught
         // before it costs a round trip: failure recovery must name what failed,
         // and a quality change must name the rung it wants — an empty
@@ -930,12 +941,14 @@ open class PlaybackSessionManager(
             attemptCount = requestAttemptCount,
             qualityPreference = effectiveQuality,
             positionSeconds = positionSeconds,
-            metered = network.metered,
-            bandwidthEstimateKbps = network.bandwidthEstimateKbps,
             // The cap is a per-request delivery ceiling: omitting it on a
             // replan would silently lift the user's bandwidth limit for the
-            // rest of the session.
-            bandwidthCapKbps = active.bandwidthCapKbps,
+            // rest of the session. A new pair replaces it from here on.
+            bandwidthCapKbps = if (qualityPair != null) {
+                qualityPair.bandwidthCapKbps?.takeIf { it > 0 }
+            } else {
+                active.bandwidthCapKbps
+            },
             selectedTracks = SelectedPlaybackTracksV3(
                 audio = selectedTrackIdentity(active, "audio", audioTrackIndex, active.plan.selectedTracks.audio),
                 subtitle = subtitleTrackIndex?.takeIf { it >= 0 }
@@ -1038,7 +1051,7 @@ open class PlaybackSessionManager(
                         attemptedPlanKeys = attemptedKeys + nextKey,
                         attemptCount = candidateAttemptCount,
                         qualityPreference = request.qualityPreference,
-                        networkEvidence = network,
+                        bandwidthCapKbps = request.bandwidthCapKbps,
                         capabilities = currentCapabilities,
                         context = currentContext,
                         startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
@@ -1868,8 +1881,6 @@ open class PlaybackSessionManager(
             attemptCount = active.attemptCount,
             qualityPreference = active.qualityPreference,
             positionSeconds = positionSeconds,
-            metered = active.networkEvidence.metered,
-            bandwidthEstimateKbps = active.networkEvidence.bandwidthEstimateKbps,
             bandwidthCapKbps = active.bandwidthCapKbps,
             selectedTracks = active.plan.selectedTracks,
             capabilities = active.capabilities,
@@ -2145,11 +2156,6 @@ open class PlaybackSessionManager(
             attemptCount = requestAttemptCount,
             qualityPreference = active.qualityPreference,
             positionSeconds = positionSeconds,
-            // Fresh snapshot, matching replanActiveVideoSession: this path lets
-            // the server pick a different route, so session-start network
-            // evidence would misinform that decision.
-            metered = network.metered,
-            bandwidthEstimateKbps = network.bandwidthEstimateKbps,
             bandwidthCapKbps = active.bandwidthCapKbps,
             selectedTracks = active.plan.selectedTracks,
             failure = PlaybackFailureV3(

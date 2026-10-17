@@ -6,6 +6,7 @@ import org.siloserver.silo.common.player.seek.decideSeek
 import org.siloserver.silo.common.player.watchparty.WatchPartyPlayback
 import org.siloserver.silo.model.playback.PlaybackAvailableQualityV3
 import org.siloserver.silo.model.playback.PlaybackTimeline
+import org.siloserver.silo.model.playback.isSourceQualityEntry
 import org.siloserver.silo.playback.PlaybackAction
 import org.siloserver.silo.watchtogether.RoomPlayerObservation
 import org.siloserver.silo.watchtogether.RoomPlayerPort
@@ -80,20 +81,22 @@ internal fun roomTargetBufferedLocally(
 
 /**
  * One rung below the current one on the same file's quality ladder, or null
- * when nothing lower exists. An unmatched [selectedLabel] (Auto, Original, or
- * none) is treated as the source rung.
+ * when nothing lower exists. An unmatched [selectedLabel] (Auto, or none) is
+ * treated as the source, at [sourceHeight] when the plan reports it. The
+ * source entry older servers list is never offered.
  */
 internal fun lowerQualityRung(
     available: List<PlaybackAvailableQualityV3>,
     selectedLabel: String?,
+    sourceHeight: Int = 0,
 ): PlaybackAvailableQualityV3? {
-    val rungs = available.filter { it.height > 0 }
-    val current = rungs.firstOrNull { it.label == selectedLabel }
-        ?: rungs.firstOrNull { it.preservesSource }
-        ?: rungs.maxByOrNull { it.height }
+    val rungs = available.filter { it.height > 0 && !it.isSourceQualityEntry() }
+    val currentHeight = rungs.firstOrNull { it.label == selectedLabel }?.height
+        ?: sourceHeight.takeIf { it > 0 }
+        ?: rungs.maxOfOrNull { it.height }
         ?: return null
     return rungs
-        .filter { !it.preservesSource && it.height < current.height }
+        .filter { it.height < currentHeight }
         .maxByOrNull { it.height }
 }
 

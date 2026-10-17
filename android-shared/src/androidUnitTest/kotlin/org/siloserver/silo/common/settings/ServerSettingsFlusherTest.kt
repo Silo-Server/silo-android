@@ -574,6 +574,58 @@ class ServerSettingsFlusherTest {
         assertEquals(1, api.capabilityCalls)
         assertEquals(2, api.calls.count { it.key == objectKey })
     }
+
+    // ---- Settings revision gate for cellular quality (revision 20) ----------
+
+    private val cellularQuality = SettingKeys.PLAYBACK_CELLULAR_PREFERRED_QUALITY
+    private val cellularBitrate = SettingKeys.PLAYBACK_CELLULAR_MAX_BITRATE_KBPS
+
+    @Test
+    fun `cellular quality is dropped for a server below revision 20`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(19) }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue("p1", cellularQuality, "1080p", serverUrl)
+        flusher.enqueue("p1", cellularBitrate, "3000", serverUrl)
+        flusher.enqueueDelete("p2", cellularQuality, serverUrl)
+        flusher.enqueue("p1", stringKey, "720p", serverUrl)
+        flusher.flushNow()
+
+        // The server would refuse them as unknown_setting; the device keeps them.
+        assertTrue(api.calls.none { it.key == cellularQuality || it.key == cellularBitrate })
+        assertTrue(flusher.pendingKeys("p1").isEmpty() && flusher.pendingKeys("p2").isEmpty(), "dropped, not held")
+        assertTrue(api.calls.any { it.key == stringKey }, "other writes still land")
+    }
+
+    @Test
+    fun `cellular quality is sent to a revision 20 server`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(20) }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue("p1", cellularQuality, "auto", serverUrl)
+        flusher.enqueue("p1", cellularBitrate, "0", serverUrl)
+        flusher.flushNow()
+
+        assertEquals(JsonPrimitive("auto"), api.calls.single { it.key == cellularQuality }.value)
+        assertEquals(JsonNull, api.calls.single { it.key == cellularBitrate }.value, "uncapped is JSON null")
+    }
+
+    @Test
+    fun `cellular quality is held while the revision is unknown`() = runTest {
+        val api = RecordingSettingsApi().apply {
+            capabilities = ApiResult.NetworkError(IllegalStateException("offline"))
+        }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue("p1", cellularQuality, "480p", serverUrl)
+        flusher.flushNow()
+        assertTrue(api.calls.isEmpty())
+        assertEquals(setOf(cellularQuality), flusher.pendingKeys("p1"))
+
+        api.manifestRevision(20)
+        flusher.flushNow()
+        assertEquals(JsonPrimitive("480p"), api.calls.single { it.key == cellularQuality }.value)
+    }
 }
 
 /**

@@ -10,12 +10,21 @@ import org.siloserver.silo.model.playback.PlaybackQualityOption
 import org.siloserver.silo.model.playback.activePlaybackQualityId
 
 /**
- * The [menu] row the committed preference selects, judged against what the
+ * The [menu] row the session's preference selects, judged against what the
  * plan actually delivers, so a stored "1080p" that a bitrate cap held to
- * 720p marks the 720p entry.
+ * 720p marks the 720p entry, and one that plays the source marks no row.
  */
 internal fun PlayerViewModel.PlayerUiState.activeQualityId(menu: List<PlaybackQualityOption>): String? =
-    activePlaybackQualityId(menu, committedQualityPreference, playbackPlan?.effectiveRecipe)
+    activePlaybackQualityId(
+        menu,
+        qualityPreference,
+        playbackPlan?.effectiveRecipe,
+        playbackPlan?.sourceFile,
+    )
+
+/** A quality the viewer picked, else the one the session plays at. */
+internal val PlayerViewModel.PlayerUiState.qualityPreference: String?
+    get() = committedQualityPreference ?: sessionQualityPreference
 
 /**
  * The plan's Quality menu: Auto, then the server's entries in its order, each

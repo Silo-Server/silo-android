@@ -118,7 +118,11 @@ internal class FakePlayerSettingsStore : PlayerSettingsStore {
     override suspend fun setPreferredQuality(value: String) {
         setterCalls += "setPreferredQuality"; preferredQualityFlow.value = value
     }
-    override suspend fun setQuality(resolution: String, bitrateKbps: Int?) {
+    override suspend fun setMaxBitrateKbps(value: Int?) {
+        setterCalls += "setMaxBitrateKbps"; maxBitrateKbpsFlow.value = value
+    }
+    /** Both quality axes at once, as the legacy import writes them. */
+    suspend fun setQuality(resolution: String, bitrateKbps: Int?) {
         setterCalls += "setQuality"
         preferredQualityFlow.value = resolution
         maxBitrateKbpsFlow.value = bitrateKbps

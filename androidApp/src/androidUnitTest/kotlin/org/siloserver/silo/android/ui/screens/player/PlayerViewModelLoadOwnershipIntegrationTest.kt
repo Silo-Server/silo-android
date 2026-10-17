@@ -69,6 +69,7 @@ import org.siloserver.silo.common.player.Playability
 import org.siloserver.silo.common.player.PlaybackAnalyticsListener
 import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
+import org.siloserver.silo.common.player.PlaybackNetworkSnapshot
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.SleepTimerController
@@ -1437,6 +1438,98 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
     }
 
     @Test
+    fun mobileDataStartsAtTheCellularPair() = runTest(dispatcher) {
+        assertStartsAtTheCellularPair(
+            PlaybackNetworkSnapshot(connected = true, metered = true, transport = "cellular", cellular = true),
+        )
+    }
+
+    @Test
+    fun aVpnOverWifiStartsAtTheMainPair() = runTest(dispatcher) {
+        var allocation: MobileVideoSessionAllocation? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            // Android marks most VPNs metered; Tailscale at home is still Wi-Fi.
+            network = PlaybackNetworkSnapshot(connected = true, metered = true, transport = "wifi", vpn = true),
+            onAllocation = { allocation = it },
+        )
+
+        assertEquals("auto", allocation?.qualityPreference)
+        assertNull(allocation?.maxBitrateKbps)
+    }
+
+    @Test
+    fun aRenewalCarriesNoQualityThatCameFromTheSettings() = runTest(dispatcher) {
+        // Settings for mobile data: 720p at 2 Mbps. A renewal reads them again
+        // for the connection it is on rather than pinning 720p.
+        var adopted: StartParams? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            network = PlaybackNetworkSnapshot(connected = true, metered = true, transport = "cellular", cellular = true),
+            onAdoption = { adopted = it },
+        )
+
+        assertNull(adopted?.qualityPreference)
+    }
+
+    @Test
+    fun aRenewalCarriesAQualityPickedInThePlayer() = runTest(dispatcher) {
+        var allocation: MobileVideoSessionAllocation? = null
+        var adopted: StartParams? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            preferredQualityOverride = "1080p",
+            onAllocation = { allocation = it },
+            onAdoption = { adopted = it },
+        )
+
+        assertEquals("1080p", allocation?.qualityPreference)
+        assertEquals("1080p", adopted?.qualityPreference)
+    }
+
+    @Test
+    fun aMeteredWifiNetworkStartsAtTheCellularPair() = runTest(dispatcher) {
+        // A phone hotspot, or Wi-Fi the user marked metered.
+        assertStartsAtTheCellularPair(PlaybackNetworkSnapshot(connected = true, metered = true, transport = "wifi"))
+    }
+
+    private suspend fun TestScope.assertStartsAtTheCellularPair(network: PlaybackNetworkSnapshot) {
+        var allocation: MobileVideoSessionAllocation? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            network = network,
+            onAllocation = { allocation = it },
+        )
+
+        // The store's cellular defaults: the 720p preset.
+        assertEquals("720p", allocation?.qualityPreference)
+        assertEquals(2_000, allocation?.maxBitrateKbps)
+    }
+
+    @Test
+    fun unmeteredNetworksStartAtTheMainPair() = runTest(dispatcher) {
+        var allocation: MobileVideoSessionAllocation? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            network = PlaybackNetworkSnapshot(connected = true, metered = false, transport = "wifi"),
+            onAllocation = { allocation = it },
+        )
+
+        assertEquals("auto", allocation?.qualityPreference)
+        assertNull(allocation?.maxBitrateKbps)
+    }
+
+    @Test
     fun unknownSourceDurationStaysUnknownAtTheStarterBoundary() = runTest(dispatcher) {
         val ready = start(
             effective = "",
@@ -1457,6 +1550,8 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
         onAllocation: (MobileVideoSessionAllocation) -> Unit = {},
         readyStart: VideoSessionStartV3.Ready = allocatedReady("subtitle-session"),
         onAdoption: (StartParams) -> Unit = {},
+        network: PlaybackNetworkSnapshot = PlaybackNetworkSnapshot(),
+        preferredQualityOverride: String? = null,
     ): VideoPlaybackStartResult.Ready {
         val client = catalogClient(effective, versionFields)
         val tokenManager = FakeTokenManager()
@@ -1488,6 +1583,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                 ApiResult.Success(readyStart)
             },
             sessionAdopter = { params, _ -> onAdoption(params) },
+            networkEvidenceProvider = { network },
         )
 
         val result = starter.start(
@@ -1498,6 +1594,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                 resumePositionOverride = null,
                 audioTrackIndex = explicitAudioTrackIndex,
                 subtitleTrackIndex = explicitSubtitleTrackIndex,
+                preferredQualityOverride = preferredQualityOverride,
             ),
         )
         assertTrue(result is VideoPlaybackStartResult.Ready, "expected a ready start, got $result")
@@ -1729,7 +1826,6 @@ private class FakePlayerSettingsStore(
     override suspend fun setResumeRewindSeconds(value: Int) = Unit
     override suspend fun setPassOutThreshold(value: Int) = Unit
     override suspend fun setPreferredQuality(value: String) = Unit
-    override suspend fun setQuality(resolution: String, bitrateKbps: Int?) = Unit
     override suspend fun setAudioLanguage(value: String) = Unit
     override suspend fun setVideoGravity(value: String) = Unit
     override suspend fun setOrientationMode(value: String) = Unit

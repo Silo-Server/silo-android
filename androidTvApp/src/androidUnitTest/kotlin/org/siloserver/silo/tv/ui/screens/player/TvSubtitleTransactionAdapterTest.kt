@@ -147,6 +147,27 @@ class TvSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `a subtitle change with no quality picked neither sends nor records one`() = runTest {
+        // The player passes no quality until the viewer picks one, so the
+        // session keeps the quality it started at (the saved settings).
+        val harness = harness(backgroundScope, isLocallyMountable = { false }, qualityPreference = null)
+
+        harness.adapter.select(sidecar(4))
+        runCurrent()
+        assertNull(harness.port.requests.single().qualityPreference)
+
+        harness.port.completeStage(candidate("no-pick", 4))
+        runCurrent()
+        confirmPendingPlayerBoundary(harness, "no-pick-mounted")
+        runCurrent()
+
+        assertEquals(sidecar(4), harness.adapter.snapshot.committedIdentity)
+        // The player records a committed quality as the viewer's pick, which
+        // renewals and recoveries then carry.
+        assertNull(harness.adapter.snapshot.transition.committed.qualityPreference)
+    }
+
+    @Test
     fun `burn in route stages one replan before switching to an external sidecar`() = runTest {
         // Burn-in plans intentionally mount no negotiated alternatives. The
         // selected SRT therefore follows the same safe fallback as an old
@@ -2314,6 +2335,7 @@ class TvSubtitleTransactionAdapterTest {
         persistenceCoordinator: PlaybackTrackSelectionWriteCoordinator =
             PlaybackTrackSelectionWriteCoordinator(),
         persistence: RecordingPersistence = RecordingPersistence(),
+        qualityPreference: String? = "auto",
     ): Harness {
         val port = FakeStagedPort()
         val committedPlaybacks = mutableListOf<TvSubtitleCommittedPlayback>()
@@ -2339,7 +2361,7 @@ class TvSubtitleTransactionAdapterTest {
             isLocallyMountable = isLocallyMountable,
         )
         adapter.resetContent(
-            context(sessionId = sessionId, tracks = tracks),
+            context(sessionId = sessionId, tracks = tracks, qualityPreference = qualityPreference),
             committedIdentity = sidecar(3),
         )
         return Harness(adapter, port, persistence, committedPlaybacks)
@@ -2422,6 +2444,7 @@ class TvSubtitleTransactionAdapterTest {
         sessionId: String? = "s1",
         tracks: List<PlayerSubtitleInfo> = emptyList(),
         outputRouteGeneration: Long = 0L,
+        qualityPreference: String? = "auto",
     ): TvSubtitlePlaybackContext = TvSubtitlePlaybackContext(
         contentId = contentId,
         mediaFileId = mediaFileId,
@@ -2429,7 +2452,7 @@ class TvSubtitleTransactionAdapterTest {
         sessionId = sessionId,
         positionSeconds = 42.0,
         audioTrackIndex = 2,
-        qualityPreference = "auto",
+        qualityPreference = qualityPreference,
         subtitleTracks = tracks,
         outputRouteGeneration = outputRouteGeneration,
         writeScope = tvTestPlaybackWriteScope,

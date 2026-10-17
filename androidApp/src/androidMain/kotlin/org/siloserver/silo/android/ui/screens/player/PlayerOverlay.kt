@@ -59,6 +59,7 @@ import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.model.playback.PlaybackQualityOption
 import org.siloserver.silo.model.playback.playbackQualityMenu
+import org.siloserver.silo.model.playback.playbackQualityValueLabel
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.watchtogether.RoomTransportIntent
@@ -446,7 +447,7 @@ fun PlayerOverlay(
                 eyebrow = playerEyebrow(state),
                 tracksValue = playerTracksValue(state),
                 chapterValue = chapterTitleAt(state.chapters, shownPosition),
-                qualityValue = playerQualityLabel(qualityOptions, activeQualityId),
+                qualityValue = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference),
                 pictureInPictureAvailable = pictureInPictureAvailable,
                 onEnterPictureInPicture = onEnterPictureInPicture,
                 isPlaying = state.isPlaying,
@@ -741,7 +742,7 @@ fun PlayerOverlay(
             // A party hides speed (session-only 1x) and the version picker.
             showPlaybackSpeed = !inRoom,
             showQuality = hasQualityMenu,
-            qualityLabel = playerQualityLabel(qualityOptions, activeQualityId),
+            qualityLabel = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference),
             onOpenQuality = {
                 settingsSheetVisible = false
                 qualitySheetVisible = true
@@ -951,9 +952,6 @@ internal fun mobileVideoGravityLabel(value: String): String = when (value) {
  * and tracks sheets show when opened, so the menu can state the current pick
  * without the user having to open anything.
  */
-internal fun playerQualityLabel(options: List<PlaybackQualityOption>, activeId: String?): String =
-    options.firstOrNull { it.id == activeId }?.name ?: "Auto"
-
 internal fun playerVersionLabel(
     versions: List<org.siloserver.silo.model.catalog.FileVersion>,
     selectedIndex: Int,

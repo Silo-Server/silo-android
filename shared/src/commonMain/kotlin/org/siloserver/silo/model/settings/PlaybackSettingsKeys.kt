@@ -10,6 +10,15 @@ object PlaybackSettingsKeys {
      * value the contract's 100..200000 range cannot hold.
      */
     const val MaxBitrateKbps = "playback.max_bitrate_kbps"
+
+    /**
+     * The pair the phone sends instead of [PreferredQuality] and
+     * [MaxBitrateKbps] on mobile data or a metered network, shown as one
+     * preset picker. Contract revision 20; see
+     * [CellularQuality][org.siloserver.silo.model.settings.CellularQuality].
+     */
+    const val CellularPreferredQuality = "playback.cellular_preferred_quality"
+    const val CellularMaxBitrateKbps = "playback.cellular_max_bitrate_kbps"
     const val AudioLanguage = "playback.audio_language"
     /**
      * Deprecated in contract revision 7 by [IntroSkipMode], which says what a
@@ -169,6 +178,8 @@ object PlaybackSettingsKeys {
     val DeviceSettings = listOf(
         PreferredQuality,
         MaxBitrateKbps,
+        CellularPreferredQuality,
+        CellularMaxBitrateKbps,
         AudioLanguage,
         AutoSkipIntro,
         IntroSkipMode,
@@ -208,6 +219,8 @@ object PlaybackSettingsKeys {
     val ProfileLayeredDeviceSettings: Set<String> = setOf(
         PreferredQuality,
         MaxBitrateKbps,
+        CellularPreferredQuality,
+        CellularMaxBitrateKbps,
         AudioLanguage,
         AutoSkipIntro,
         IntroSkipMode,
@@ -219,13 +232,14 @@ object PlaybackSettingsKeys {
 
     /**
      * The keys one control writes together, so going back to the profile's
-     * value has to clear them together. Quality is one picker over two axes,
-     * and the intro-skip enum has the deprecated boolean the server mirrors
-     * beside it; clearing only one of a pair would leave half a device choice
-     * behind.
+     * value has to clear them together. Cellular quality is one preset picker
+     * over two axes, and the intro-skip enum has the deprecated boolean the
+     * server mirrors beside it; clearing only one of a pair would leave half a
+     * device choice behind. The main resolution and bitrate are two pickers,
+     * so each clears alone.
      */
     fun deviceOverrideGroup(key: String): List<String> = when (key) {
-        PreferredQuality, MaxBitrateKbps -> listOf(PreferredQuality, MaxBitrateKbps)
+        CellularPreferredQuality, CellularMaxBitrateKbps -> listOf(CellularPreferredQuality, CellularMaxBitrateKbps)
         IntroSkipMode, AutoSkipIntro -> listOf(IntroSkipMode, AutoSkipIntro)
         else -> listOf(key)
     }

@@ -237,6 +237,18 @@ class LegacyTvPrefsMigrationTest {
     }
 
     @Test
+    fun `a legacy Original quality imports as Auto`() = runTest {
+        val legacy = legacyStore()
+        legacy.edit { prefs -> prefs[legacyQualityKey] = "original" }
+
+        newMigration(legacy).migrateIfNeeded()
+
+        val resolution = fakePlayerStore.preferredQualityFlow.value
+        assertEquals("auto", resolution)
+        assertEquals("auto", QualityPresets.presetFor(resolution, fakePlayerStore.maxBitrateKbpsFlow.value)?.id)
+    }
+
+    @Test
     fun `a legacy quality with an implied cap imports that cap`() = runTest {
         // The bitrates match the server's own migration
         // (internal/settingsmigrate/plan.go decomposes 720p to {720p, 2000}),

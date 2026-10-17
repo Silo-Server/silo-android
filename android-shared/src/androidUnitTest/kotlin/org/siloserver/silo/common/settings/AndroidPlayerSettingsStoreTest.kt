@@ -835,23 +835,38 @@ class AndroidPlayerSettingsStoreTest {
     @Test
     fun `using the profile setting clears every key the control writes`() = runTest {
         val store = newStore(repository = SettingsRepository(FakeSettingsApi()))
-        store.setQuality("1080p", 8000)
+        store.setCellularQuality("1080p", 8000)
         store.setIntroSkipMode(IntroSkipMode.NEVER)
 
-        store.resetDeviceSetting(PlaybackSettingsKeys.PreferredQuality)
+        store.resetDeviceSetting(PlaybackSettingsKeys.CellularPreferredQuality)
         store.resetDeviceSetting(PlaybackSettingsKeys.IntroSkipMode)
 
         val deleted = fakeFlusher.calls.filter { it.isDelete }.map { it.key }.toSet()
         assertEquals(
             setOf(
-                PlaybackSettingsKeys.PreferredQuality,
-                PlaybackSettingsKeys.MaxBitrateKbps,
+                PlaybackSettingsKeys.CellularPreferredQuality,
+                PlaybackSettingsKeys.CellularMaxBitrateKbps,
                 PlaybackSettingsKeys.IntroSkipMode,
                 PlaybackSettingsKeys.AutoSkipIntro,
             ),
             deleted,
         )
         assertEquals(emptySet(), store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `the resolution and bitrate pickers go back to the profile separately`() = runTest {
+        val store = newStore(repository = SettingsRepository(FakeSettingsApi()))
+        store.setPreferredQuality("1080p")
+        store.setMaxBitrateKbps(8000)
+
+        store.resetDeviceSetting(PlaybackSettingsKeys.PreferredQuality)
+
+        assertEquals(
+            listOf(PlaybackSettingsKeys.PreferredQuality),
+            fakeFlusher.calls.filter { it.isDelete }.map { it.key },
+        )
+        assertEquals(setOf(PlaybackSettingsKeys.MaxBitrateKbps), store.deviceOverrideKeysFlow.first())
     }
 
     @Test
@@ -1033,22 +1048,31 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
-    fun `setQuality writes both axes and flushes them together`() = runTest {
+    fun `each quality picker writes and flushes only its own axis`() = runTest {
         val store = newStore()
-        store.setQuality("1080p", 10000)
+        store.setPreferredQuality("1080p")
+        assertEquals(listOf(PlaybackSettingsKeys.PreferredQuality), fakeFlusher.calls.map { it.key })
+        assertEquals(setOf(PlaybackSettingsKeys.PreferredQuality), store.deviceOverrideKeysFlow.first())
 
+        store.setMaxBitrateKbps(40_000)
+        assertEquals(
+            listOf(PlaybackSettingsKeys.PreferredQuality, PlaybackSettingsKeys.MaxBitrateKbps),
+            fakeFlusher.calls.map { it.key },
+        )
         assertEquals("1080p", store.preferredQualityFlow.first())
-        assertEquals(10000, store.maxBitrateKbpsFlow.first())
-        val flushed = fakeFlusher.calls.filterNot { it.isDelete }.associate { it.key to it.value }
-        assertEquals("1080p", flushed[PlaybackSettingsKeys.PreferredQuality])
-        assertEquals("10000", flushed[PlaybackSettingsKeys.MaxBitrateKbps])
+        assertEquals(40_000, store.maxBitrateKbpsFlow.first())
+        assertEquals("40000", fakeFlusher.calls.last().value)
+        assertEquals(
+            setOf(PlaybackSettingsKeys.PreferredQuality, PlaybackSettingsKeys.MaxBitrateKbps),
+            store.deviceOverrideKeysFlow.first(),
+        )
     }
 
     @Test
-    fun `an uncapped preset stores no bitrate`() = runTest {
+    fun `no bitrate limit stores no cap`() = runTest {
         val store = newStore()
-        store.setQuality("1080p", 6000)
-        store.setQuality("original", null)
+        store.setMaxBitrateKbps(6000)
+        store.setMaxBitrateKbps(null)
 
         // null is uncapped, which the store spells as 0 — outside the
         // contract's range, so it can never read back as a real cap.
@@ -1057,6 +1081,184 @@ class AndroidPlayerSettingsStoreTest {
             "0",
             fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.MaxBitrateKbps }.value,
         )
+    }
+
+    @Test
+    fun `a bitrate no picker offers reads back as stored`() = runTest {
+        // Set through the API or another client: kept, not snapped to a choice.
+        val store = newStore(
+            repository = SettingsRepository(
+                FakeSettingsApi(effective = mapOf(stored(PlaybackSettingsKeys.MaxBitrateKbps, JsonPrimitive(8_500)))),
+            ),
+        )
+        store.refreshFromServer()
+
+        assertEquals(8_500, store.maxBitrateKbpsFlow.first())
+        val choices = org.siloserver.silo.model.settings.QualityChoices.bitrateChoices(store.maxBitrateKbpsFlow.first())
+        assertEquals(1, choices.count { it.value == 8_500 })
+    }
+
+    @Test
+    fun `cellular quality defaults to the 720p preset`() = runTest {
+        val store = newStore()
+
+        assertEquals("720p", store.cellularPreferredQualityFlow.first())
+        assertEquals(2_000, store.cellularMaxBitrateKbpsFlow.first())
+    }
+
+    @Test
+    fun `a cellular preset writes both cellular axes and leaves the main pair alone`() = runTest {
+        val store = newStore()
+        store.setPreferredQuality("2160p")
+        store.setCellularQuality("1080p", 3000)
+
+        assertEquals("1080p", store.cellularPreferredQualityFlow.first())
+        assertEquals(3000, store.cellularMaxBitrateKbpsFlow.first())
+        assertEquals("2160p", store.preferredQualityFlow.first())
+        assertEquals(null, store.maxBitrateKbpsFlow.first())
+        val flushed = fakeFlusher.calls.filterNot { it.isDelete }.associate { it.key to it.value }
+        assertEquals("1080p", flushed[PlaybackSettingsKeys.CellularPreferredQuality])
+        assertEquals("3000", flushed[PlaybackSettingsKeys.CellularMaxBitrateKbps])
+
+        // The uncapped presets (Auto, 4K) store no cap rather than the default.
+        store.setCellularQuality("auto", null)
+        assertEquals("auto", store.cellularPreferredQualityFlow.first())
+        assertEquals(null, store.cellularMaxBitrateKbpsFlow.first())
+        assertEquals("0", fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.CellularMaxBitrateKbps }.value)
+    }
+
+    @Test
+    fun `cellular quality is read from a revision 20 server and left out for an older one`() = runTest {
+        var revision = capabilitiesAt(19)
+        val contractRevision = SettingsContractRevision({ revision }, { serverUrl })
+        val api = FakeSettingsApi(
+            effective = mapOf(
+                stored(PlaybackSettingsKeys.CellularPreferredQuality, JsonPrimitive("480p")),
+                stored(PlaybackSettingsKeys.CellularMaxBitrateKbps, JsonPrimitive(1_500)),
+            ),
+        )
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            settingsRepository = SettingsRepository(api),
+            getDeviceId = { null },
+            contractRevision = contractRevision,
+            dataStoreFactory = { id ->
+                PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_cell_$id.preferences_pb") })
+            },
+        )
+        store.setCellularQuality("1080p", 6000)
+
+        // An older server would refuse the whole batch over a key it lacks,
+        // so the pair is not asked for, and the local choice still applies.
+        store.refreshFromServer()
+        assertTrue(api.requestedKeys.isNotEmpty())
+        assertTrue(api.requestedKeys.none { it in org.siloserver.silo.model.settings.CellularQuality.KEYS })
+        assertEquals("1080p", store.cellularPreferredQualityFlow.first())
+        assertEquals(6000, store.cellularMaxBitrateKbpsFlow.first())
+
+        // "Use profile setting" has no profile value to reach there, so the
+        // contract default applies.
+        store.resetDeviceSetting(PlaybackSettingsKeys.CellularPreferredQuality)
+        assertEquals("720p", store.cellularPreferredQualityFlow.first())
+        assertEquals(2_000, store.cellularMaxBitrateKbpsFlow.first())
+
+        revision = capabilitiesAt(20)
+        store.refreshFromServer()
+        assertTrue(api.requestedKeys.containsAll(org.siloserver.silo.model.settings.CellularQuality.KEYS))
+        assertEquals("480p", store.cellularPreferredQualityFlow.first())
+        assertEquals(1_500, store.cellularMaxBitrateKbpsFlow.first())
+    }
+
+    @Test
+    fun `a cellular choice made against an older server reaches it once it upgrades`() = runTest {
+        var revision = capabilitiesAt(19)
+        val contractRevision = SettingsContractRevision({ revision }, { serverUrl })
+        // Upgraded, the server has nothing stored for this device yet.
+        val api = FakeSettingsApi(
+            effective = mapOf(
+                defaulted(PlaybackSettingsKeys.CellularPreferredQuality, JsonPrimitive("720p")),
+                defaulted(PlaybackSettingsKeys.CellularMaxBitrateKbps, JsonPrimitive(2_000)),
+            ),
+        )
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            settingsRepository = SettingsRepository(api),
+            getDeviceId = { null },
+            contractRevision = contractRevision,
+            dataStoreFactory = { id ->
+                PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_cell_upgrade_$id.preferences_pb") })
+            },
+        )
+        store.refreshFromServer()
+        // The flusher drops these for the revision 19 server.
+        store.setCellularQuality("480p", 1_500)
+        fakeFlusher.calls.clear()
+
+        revision = capabilitiesAt(20)
+        store.refreshFromServer()
+
+        assertEquals("480p", store.cellularPreferredQualityFlow.first())
+        assertEquals(1_500, store.cellularMaxBitrateKbpsFlow.first())
+        assertEquals(
+            mapOf(
+                PlaybackSettingsKeys.CellularPreferredQuality to "480p",
+                PlaybackSettingsKeys.CellularMaxBitrateKbps to "1500",
+            ),
+            fakeFlusher.calls.filterNot { it.isDelete }.associate { it.key to it.value },
+            "sent again now that the server stores them",
+        )
+        assertTrue(PlaybackSettingsKeys.CellularPreferredQuality in store.deviceOverrideKeysFlow.first())
+
+        // Once the server shows them stored for this device, its answer applies
+        // again, including a later clear made elsewhere.
+        api.effective = mapOf(
+            stored(PlaybackSettingsKeys.CellularPreferredQuality, JsonPrimitive("480p")),
+            stored(PlaybackSettingsKeys.CellularMaxBitrateKbps, JsonPrimitive(1_500)),
+        )
+        store.refreshFromServer()
+        api.effective = mapOf(
+            stored(PlaybackSettingsKeys.CellularPreferredQuality, JsonPrimitive("1080p"), scope = SettingScope.PROFILE.wire),
+            stored(PlaybackSettingsKeys.CellularMaxBitrateKbps, JsonPrimitive(6_000), scope = SettingScope.PROFILE.wire),
+        )
+        store.refreshFromServer()
+        assertEquals("1080p", store.cellularPreferredQualityFlow.first())
+        assertEquals(6_000, store.cellularMaxBitrateKbpsFlow.first())
+        assertFalse(PlaybackSettingsKeys.CellularPreferredQuality in store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `cellular quality is left out of the batch while the server revision is unknown`() = runTest {
+        val contractRevision = SettingsContractRevision(
+            { ApiResult.NetworkError(IllegalStateException("offline")) },
+            { serverUrl },
+        )
+        val api = FakeSettingsApi()
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            settingsRepository = SettingsRepository(api),
+            getDeviceId = { null },
+            contractRevision = contractRevision,
+            dataStoreFactory = { id ->
+                PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_cell_unknown_$id.preferences_pb") })
+            },
+        )
+
+        store.refreshFromServer()
+
+        assertTrue(api.requestedKeys.contains(PlaybackSettingsKeys.PreferredQuality))
+        assertTrue(api.requestedKeys.none { it in org.siloserver.silo.model.settings.CellularQuality.KEYS })
     }
 
     @Test
@@ -1084,7 +1286,8 @@ class AndroidPlayerSettingsStoreTest {
             ),
         )
         val store = newStore(repository = repo)
-        store.setQuality("1080p", 10000)
+        store.setPreferredQuality("1080p")
+        store.setMaxBitrateKbps(10000)
 
         store.refreshFromServer()
 

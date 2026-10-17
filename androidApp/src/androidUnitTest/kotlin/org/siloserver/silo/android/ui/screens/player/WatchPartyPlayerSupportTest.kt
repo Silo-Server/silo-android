@@ -86,10 +86,23 @@ class WatchPartyPlayerSupportTest {
             PlaybackAvailableQualityV3(label = "720p", height = 720),
             PlaybackAvailableQualityV3(label = "480p", height = 480),
         )
-        assertEquals("1080p", lowerQualityRung(ladder, selectedLabel = null)?.label)
-        assertEquals("1080p", lowerQualityRung(ladder, selectedLabel = "auto")?.label)
+        // The source entry an older server lists is never offered.
+        assertEquals("1080p", lowerQualityRung(ladder, selectedLabel = null, sourceHeight = 2160)?.label)
+        assertEquals("1080p", lowerQualityRung(ladder, selectedLabel = "auto", sourceHeight = 2160)?.label)
         assertEquals("720p", lowerQualityRung(ladder, selectedLabel = "1080p")?.label)
         assertNull(lowerQualityRung(ladder, selectedLabel = "480p"))
         assertNull(lowerQualityRung(emptyList(), selectedLabel = null))
+    }
+
+    @Test
+    fun autoStepsDownFromTheSourceWhenTheServerNoLongerListsIt() {
+        val ladder = listOf(
+            PlaybackAvailableQualityV3(label = "1080p-high", height = 1080),
+            PlaybackAvailableQualityV3(label = "720p-medium", height = 720),
+        )
+        // A 4K source playing on Auto: the top rung is the first step down.
+        assertEquals("1080p-high", lowerQualityRung(ladder, selectedLabel = "auto", sourceHeight = 2160)?.label)
+        // A 1080p source: the 1080p rung is not lower, so step to 720p.
+        assertEquals("720p-medium", lowerQualityRung(ladder, selectedLabel = "auto", sourceHeight = 1080)?.label)
     }
 }

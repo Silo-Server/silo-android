@@ -7,8 +7,9 @@ import kotlin.test.assertNull
 class ContentDeepLinkRoutesTest {
     @Test
     fun playLinkCarriesValidatedVersionQualityAndTracks() {
+        // A legacy Original link plays at Auto, which plays the source when it can.
         assertEquals(
-            "player/movie-1?fileId=121&quality=original&audioTrackIndex=2&subtitleTrackIndex=-1",
+            "player/movie-1?fileId=121&quality=auto&audioTrackIndex=2&subtitleTrackIndex=-1",
             contentDeepLinkRouteOrNull(
                 "silo://play/movie-1?fileId=121&quality=Original&audioTrackIndex=2&subtitleTrackIndex=-1",
             ),

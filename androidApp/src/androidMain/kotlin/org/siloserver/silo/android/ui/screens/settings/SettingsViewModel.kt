@@ -29,6 +29,7 @@ import org.siloserver.silo.model.settings.CardCaption
 import org.siloserver.silo.model.settings.CardPosterSize
 import org.siloserver.silo.model.settings.CardPresentation
 import org.siloserver.silo.model.settings.CardPresentationPreset
+import org.siloserver.silo.model.settings.CellularQuality
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
@@ -75,11 +76,14 @@ data class SettingsUiState(
         ProfileSettingsController.Availability.UNKNOWN,
 
     // Playback
-    // The quality picker composes playback.preferred_quality (a resolution
-    // cap) and playback.max_bitrate_kbps (a bandwidth cap; null = uncapped)
-    // into one list. The compound legacy spellings are dead and never written.
+    // Two pickers: playback.preferred_quality (a resolution cap) and
+    // playback.max_bitrate_kbps (a bandwidth cap; null = uncapped). The
+    // compound legacy spellings are dead and never written.
     val qualityResolution: String = QualityPresets.RESOLUTION_AUTO,
     val maxBitrateKbps: Int? = null,
+    // The pair used on mobile data or a metered network, picked as one preset.
+    val cellularQualityResolution: String = CellularQuality.DEFAULT_RESOLUTION,
+    val cellularMaxBitrateKbps: Int? = CellularQuality.DEFAULT_MAX_BITRATE_KBPS,
     /** True when policy capped the resolution below the profile's choice. */
     val qualityConstrained: Boolean = false,
     // BCP 47 tag, "" = no preference. The picker converts to and from labels.
@@ -288,6 +292,12 @@ class SettingsViewModel(
                     autoSkipCredits = snap.autoSkipCredits,
                 )
             }
+        }.launchIn(viewModelScope)
+        combine(
+            playerSettingsStore.cellularPreferredQualityFlow,
+            playerSettingsStore.cellularMaxBitrateKbpsFlow,
+        ) { resolution, bitrate -> resolution to bitrate }.onEach { (resolution, bitrate) ->
+            _uiState.update { it.copy(cellularQualityResolution = resolution, cellularMaxBitrateKbps = bitrate) }
         }.launchIn(viewModelScope)
         playerSettingsStore.downloadsWifiOnlyFlow.onEach { wifiOnly ->
             _uiState.update { it.copy(downloadsWifiOnly = wifiOnly) }
@@ -546,14 +556,21 @@ class SettingsViewModel(
 
     // -- Playback --
 
-    /**
-     * Applies one quality preset — the two axes it decomposes into. The
-     * compound legacy spellings ("1080p-high") are never written.
-     */
-    fun setQualityPreset(presetId: String) {
+    /** The resolution ceiling, independent of the bitrate. */
+    fun setPreferredQuality(resolution: String) {
+        viewModelScope.launch { playerSettingsStore.setPreferredQuality(resolution) }
+    }
+
+    /** The bitrate ceiling, independent of the resolution; null is no limit. */
+    fun setMaxBitrateKbps(kbps: Int?) {
+        viewModelScope.launch { playerSettingsStore.setMaxBitrateKbps(kbps) }
+    }
+
+    /** Applies one cellular preset — the two axes it decomposes into. */
+    fun setCellularQualityPreset(presetId: String) {
         val preset = QualityPresets.byId(presetId) ?: return
         viewModelScope.launch {
-            playerSettingsStore.setQuality(preset.resolution, preset.bitrateKbps)
+            playerSettingsStore.setCellularQuality(preset.resolution, preset.bitrateKbps)
         }
     }
 

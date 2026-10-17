@@ -77,7 +77,12 @@ const val QUALITY_CHANGE_V3_OPERATION = "quality_change"
  */
 val INTENT_V3_OPERATIONS = setOf(TRACK_CHANGE_V3_OPERATION, QUALITY_CHANGE_V3_OPERATION)
 
-/** The quality rung that asks the server to preserve the source as-is. */
+/**
+ * The label of the source entry older servers list, and the audiobook player's
+ * quality preference. Video requests send Auto instead
+ * ([videoQualityPreference]): Auto plays the source whenever the device and
+ * connection can.
+ */
 const val QUALITY_ORIGINAL_V3 = "original"
 
 const val CLIENT_DV7_TO_DV81 = "client_dv7_to_dv81"
@@ -267,6 +272,8 @@ data class PlaybackSourceDescriptorV3(
     @SerialName("color_range") val colorRange: String? = null,
     val width: Int = 0,
     val height: Int = 0,
+    /** The source file's bitrate; 0 when the server did not report it. */
+    @SerialName("bitrate_kbps") val bitrateKbps: Int = 0,
     @SerialName("dynamic_range") val dynamicRange: String? = null,
     @SerialName("audio_codec") val audioCodec: String? = null,
     @SerialName("letterbox_top_fraction") val letterboxTopFraction: Double = 0.0,
@@ -429,8 +436,18 @@ data class PlaybackStartRequestV3(
     @SerialName("audio_track_index") val audioTrackIndex: Int? = null,
     @SerialName("subtitle_track_id") val subtitleTrackId: String? = null,
     @SerialName("subtitle_track_index") val subtitleTrackIndex: Int? = null,
+    /**
+     * Always false, here and on replans. The server ignores it; older servers
+     * require it on `/api/v2` and drop Auto to their metered limit when it is
+     * true. The phone applies its own cellular quality pair instead.
+     *
+     * No `bandwidth_estimate_kbps` is sent either, so Auto plays the source
+     * whenever the device can. Media3's meter times loads that stall on a
+     * full buffer or wait on a live transcode, so its figure can understate
+     * the link and make Auto convert the next title; a measured estimate waits
+     * for the server's bandwidth probe.
+     */
     val metered: Boolean = false,
-    @SerialName("bandwidth_estimate_kbps") val bandwidthEstimateKbps: Int? = null,
     @SerialName("bandwidth_cap_kbps") val bandwidthCapKbps: Int? = null,
     @SerialName("client_capabilities") val capabilities: ClientCodecCapabilities,
     @SerialName("client_playback_context") val clientPlaybackContext: ClientPlaybackContext,
@@ -472,8 +489,8 @@ data class PlaybackReplanRequestV3(
     @SerialName("attempt_count") val attemptCount: Int,
     @SerialName("quality_preference") val qualityPreference: String = "auto",
     @SerialName("position_seconds") val positionSeconds: Double,
+    /** Always false, with no estimate; see [PlaybackStartRequestV3.metered]. */
     val metered: Boolean = false,
-    @SerialName("bandwidth_estimate_kbps") val bandwidthEstimateKbps: Int? = null,
     @SerialName("bandwidth_cap_kbps") val bandwidthCapKbps: Int? = null,
     @SerialName("selected_tracks") val selectedTracks: SelectedPlaybackTracksV3,
     /**

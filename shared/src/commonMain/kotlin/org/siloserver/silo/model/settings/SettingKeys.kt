@@ -24,7 +24,7 @@ data class SettingPresentation(
 )
 
 object SettingKeys {
-    const val REVISION = 17
+    const val REVISION = 20
 
     /** Blur unwatched episode images */
     const val CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES = "catalog.hide_unwatched_episode_images"
@@ -62,6 +62,10 @@ object SettingKeys {
     const val PLAYBACK_AUTO_SKIP_INTRO = "playback.auto_skip_intro"
     /** Auto-skip recaps */
     const val PLAYBACK_AUTO_SKIP_RECAP = "playback.auto_skip_recap"
+    /** Cellular maximum bitrate */
+    const val PLAYBACK_CELLULAR_MAX_BITRATE_KBPS = "playback.cellular_max_bitrate_kbps"
+    /** Cellular quality */
+    const val PLAYBACK_CELLULAR_PREFERRED_QUALITY = "playback.cellular_preferred_quality"
     /** Skip intros */
     const val PLAYBACK_INTRO_SKIP_MODE = "playback.intro_skip_mode"
     /** Maximum bitrate */
@@ -146,6 +150,8 @@ object SettingKeys {
     const val UI_LIBRARY_PAGE_STATE = "ui.library_page_state"
     /** Next up episodes */
     const val UI_NEXT_UP_MODE = "ui.next_up_mode"
+    /** Show new episodes first */
+    const val UI_NEXT_UP_NEW_RELEASES_FIRST = "ui.next_up_new_releases_first"
     /** Remember library view */
     const val UI_REMEMBER_LIBRARY_PAGE_STATE = "ui.remember_library_page_state"
     /** Pinned sidebar items */
@@ -181,6 +187,8 @@ object SettingKeys {
         PLAYBACK_AUTO_SKIP_CREDITS,
         PLAYBACK_AUTO_SKIP_INTRO,
         PLAYBACK_AUTO_SKIP_RECAP,
+        PLAYBACK_CELLULAR_MAX_BITRATE_KBPS,
+        PLAYBACK_CELLULAR_PREFERRED_QUALITY,
         PLAYBACK_INTRO_SKIP_MODE,
         PLAYBACK_MAX_BITRATE_KBPS,
         PLAYBACK_NEXT_UP_PROMPT_SECONDS,
@@ -219,6 +227,7 @@ object SettingKeys {
         UI_LIBRARY_ORDER,
         UI_LIBRARY_PAGE_STATE,
         UI_NEXT_UP_MODE,
+        UI_NEXT_UP_NEW_RELEASES_FIRST,
         UI_REMEMBER_LIBRARY_PAGE_STATE,
         UI_SIDEBAR_PINS,
         UI_TEXT_SCALE,
@@ -272,6 +281,7 @@ object SettingKeys {
         UI_CARD_OVERLAYS_ENABLED,
         UI_CARD_QUICK_ACTIONS_ENABLED,
         UI_HIGH_CONTRAST,
+        UI_NEXT_UP_NEW_RELEASES_FIRST,
         UI_REMEMBER_LIBRARY_PAGE_STATE,
         UI_THEME_MUSIC_ENABLED,
         UI_THEME_MUSIC_LOOP,
@@ -279,6 +289,7 @@ object SettingKeys {
     )
 
     val INT_KEYS: Set<String> = setOf(
+        PLAYBACK_CELLULAR_MAX_BITRATE_KBPS,
         PLAYBACK_MAX_BITRATE_KBPS,
         PLAYBACK_NEXT_UP_PROMPT_SECONDS,
         PLAYER_AUDIO_SYNC_MS,

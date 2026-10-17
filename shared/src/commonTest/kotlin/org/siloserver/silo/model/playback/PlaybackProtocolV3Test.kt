@@ -543,7 +543,7 @@ class PlaybackProtocolV3Test {
     }
 
     @Test
-    fun startAndReplanRequestsCarryCurrentNetworkEvidence() {
+    fun startAndReplanRequestsCarryTheBitrateCapButNoNetworkEstimate() {
         val start = SiloJson.encodeToString(
             PlaybackStartRequestV3(
                 clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
@@ -551,8 +551,6 @@ class PlaybackProtocolV3Test {
                 profileId = "profile",
                 playbackAttemptId = "attempt",
                 subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
-                metered = true,
-                bandwidthEstimateKbps = 22_000,
                 bandwidthCapKbps = 15_000,
                 capabilities = ClientCodecCapabilities(),
                 clientPlaybackContext = ClientPlaybackContext(formFactor = "tv", appVersion = "test"),
@@ -569,8 +567,6 @@ class PlaybackProtocolV3Test {
                 attemptedPlanKeys = listOf("key"),
                 attemptCount = 2,
                 positionSeconds = 10.0,
-                metered = true,
-                bandwidthEstimateKbps = 9_000,
                 bandwidthCapKbps = 8_000,
                 selectedTracks = SelectedPlaybackTracksV3(),
                 failure = PlaybackFailureV3("transport_stall"),
@@ -579,10 +575,15 @@ class PlaybackProtocolV3Test {
             ),
         )
 
-        assertTrue(start.contains("\"bandwidth_estimate_kbps\":22000"))
         assertTrue(start.contains("\"bandwidth_cap_kbps\":15000"))
-        assertTrue(replan.contains("\"bandwidth_estimate_kbps\":9000"))
         assertTrue(replan.contains("\"bandwidth_cap_kbps\":8000"))
+        // No estimate: Media3's figure can understate the link and make Auto
+        // convert. `metered` goes out false: older servers require it on
+        // /api/v2 and drop Auto to their metered limit on a true one.
+        for (body in listOf(start, replan)) {
+            assertTrue(body.contains("\"metered\":false"))
+            assertFalse(body.contains("\"bandwidth_estimate_kbps\""))
+        }
         assertFalse(replan.contains("\"operation\""))
     }
 

@@ -246,8 +246,7 @@ class TvWatchPartyPlayerTest {
     fun `the lower quality offer is one rung below the current height`() {
         val ladder = listOf(
             VideoQualityOption(id = "auto", label = "Auto", isSelected = false),
-            VideoQualityOption(id = "original", label = "Original", isSelected = true, resolution = "1080p"),
-            VideoQualityOption(id = "1080p", label = "1080p", isSelected = false, resolution = "1080p"),
+            VideoQualityOption(id = "1080p", label = "1080p", isSelected = true, resolution = "1080p"),
             VideoQualityOption(id = "720p", label = "720p", isSelected = false, resolution = "720p"),
             VideoQualityOption(id = "480p", label = "480p", isSelected = false, resolution = "480p"),
         )

@@ -81,7 +81,8 @@ class TvAudiobookRoutingTest {
         val args = parseTvPlaybackDeepLinkArgs(query::get)
 
         assertEquals(121, args.fileId)
-        assertEquals("original", args.quality)
+        // A legacy Original link plays at Auto, which plays the source when it can.
+        assertEquals("auto", args.quality)
         assertEquals(2, args.audioTrackIndex)
         assertEquals(-1, args.subtitleTrackIndex)
         val route = tvPlayDestinationFor(
@@ -94,7 +95,7 @@ class TvAudiobookRoutingTest {
             quality = args.quality,
         )
         assertContains(route, "fileId=121")
-        assertContains(route, "quality=original")
+        assertContains(route, "quality=auto")
         assertContains(route, "audioTrackIndex=2")
         assertContains(route, "subtitleTrackIndex=-1")
     }
@@ -125,7 +126,8 @@ class TvAudiobookRoutingTest {
                 contentId = "movie-1",
                 requested = TvPlaybackDeepLinkArgs(
                     fileId = 42,
-                    quality = "original",
+                    // What parsing a legacy quality=original link now yields.
+                    quality = "auto",
                     audioTrackIndex = 1,
                     subtitleTrackIndex = 8,
                 ),
@@ -147,7 +149,7 @@ class TvAudiobookRoutingTest {
                 contentId = "movie-1",
                 requested = TvPlaybackDeepLinkArgs(
                     fileId = 42,
-                    quality = "original",
+                    quality = "auto",
                     audioTrackIndex = 1,
                     subtitleTrackIndex = 8,
                 ),

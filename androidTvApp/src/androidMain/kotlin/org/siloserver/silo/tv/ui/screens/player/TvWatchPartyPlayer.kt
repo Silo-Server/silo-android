@@ -500,7 +500,7 @@ internal fun tvSiloCastPlaybackSpeed(inWatchParty: Boolean, requested: Double): 
 
 /**
  * One step down the same file's quality ladder: the highest rung below the
- * current height. With no known height (Auto or Original), the top rung.
+ * current height. With no known height (Auto), the top rung.
  */
 internal fun tvLowerQualityOption(
     options: List<VideoQualityOption>,

@@ -144,11 +144,21 @@ fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit
                 dvProfile7HDR10Fallback = state.dvProfile7HDR10Fallback,
                 pictureInPictureEnabled = state.pictureInPictureEnabled,
                 deviceOverrides = state.deviceOverrides,
-                onQualityPresetSelected = viewModel::setQualityPreset,
+                onResolutionSelected = viewModel::setPreferredQuality,
+                onMaxBitrateSelected = viewModel::setMaxBitrateKbps,
                 onAudioLanguageChanged = viewModel::setAudioLanguage,
                 onDolbyVisionEnabledChanged = viewModel::setDolbyVisionEnabled,
                 onDvProfile7HDR10FallbackChanged = viewModel::setDvProfile7HDR10Fallback,
                 onPictureInPictureEnabledChanged = viewModel::setPictureInPictureEnabled,
+                onUseProfileSetting = viewModel::useProfileSetting,
+            )
+        }
+        item(key = "cellular") {
+            PlaybackCellularSection(
+                resolution = state.cellularQualityResolution,
+                maxBitrateKbps = state.cellularMaxBitrateKbps,
+                deviceOverrides = state.deviceOverrides,
+                onPresetSelected = viewModel::setCellularQualityPreset,
                 onUseProfileSetting = viewModel::useProfileSetting,
             )
         }

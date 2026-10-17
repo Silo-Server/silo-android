@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.player.video
 
+import org.siloserver.silo.model.playback.videoQualityPreference
+
 object VideoPlayerRouteArgs {
     const val RESUME_POSITION = "resumePosition"
     const val QUALITY = "quality"
@@ -14,10 +16,9 @@ object VideoPlayerRouteArgs {
         return valid.toString()
     }
 
-    fun normalizeQuality(value: String?): String? = value
-        ?.trim()
-        ?.lowercase()
+    /** A route's quality, with a legacy "original" link read as Auto. */
+    fun normalizeQuality(value: String?): String? = videoQualityPreference(value)
         ?.takeIf { it in PLAYBACK_QUALITIES }
 
-    private val PLAYBACK_QUALITIES = setOf("auto", "original", "2160p", "1080p", "720p", "480p")
+    private val PLAYBACK_QUALITIES = setOf("auto", "2160p", "1080p", "720p", "480p")
 }

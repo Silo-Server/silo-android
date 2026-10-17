@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.download.DownloadQuality
+import org.siloserver.silo.model.settings.CellularQuality
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
@@ -355,6 +356,14 @@ class AndroidPlayerSettingsStore(
             p.intFor(s, PlaybackSettingsKeys.MaxBitrateKbps, 0).takeIf { it > 0 }
         }
 
+    // Unlike the main cap, the cellular one defaults to a value (2000), so an
+    // absent slot reads as that and only an explicit 0 is uncapped.
+    override val cellularMaxBitrateKbpsFlow: Flow<Int?> =
+        profileScopedFlow(CellularQuality.DEFAULT_MAX_BITRATE_KBPS) { p, s ->
+            p.intFor(s, PlaybackSettingsKeys.CellularMaxBitrateKbps, CellularQuality.DEFAULT_MAX_BITRATE_KBPS)
+                .takeIf { it > 0 }
+        }
+
     // ---- Strings -------------------------------------------------------
     // Legacy compound spellings ("1080p-high") are normalized on read: the
     // bitrate they encoded lives on its own axis now, and handing a compound
@@ -363,6 +372,13 @@ class AndroidPlayerSettingsStore(
         profileScopedFlow(QualityPresets.RESOLUTION_AUTO) { p, s ->
             QualityPresets.normalizeResolution(
                 p.stringFor(s, PlaybackSettingsKeys.PreferredQuality, QualityPresets.RESOLUTION_AUTO),
+            )
+        }
+
+    override val cellularPreferredQualityFlow: Flow<String> =
+        profileScopedFlow(CellularQuality.DEFAULT_RESOLUTION) { p, s ->
+            QualityPresets.normalizeResolution(
+                p.stringFor(s, PlaybackSettingsKeys.CellularPreferredQuality, CellularQuality.DEFAULT_RESOLUTION),
             )
         }
 
@@ -529,33 +545,55 @@ class AndroidPlayerSettingsStore(
     override suspend fun setPreferredQuality(value: String) =
         writeString(PlaybackSettingsKeys.PreferredQuality, QualityPresets.normalizeResolution(value))
 
-    override suspend fun setQuality(resolution: String, bitrateKbps: Int?) {
+    override suspend fun setMaxBitrateKbps(value: Int?) =
+        writeInt(PlaybackSettingsKeys.MaxBitrateKbps, localBitrateKbps(value))
+
+    /**
+     * Both cellular axes in one transaction and two enqueues. Against a server
+     * older than [CellularQuality.MIN_CONTRACT_REVISION] the flusher drops the
+     * writes and the local pair still applies; the pair stays unconfirmed, so
+     * the first refresh from that server once it stores the keys sends it
+     * again instead of replacing it with the server's default.
+     */
+    override suspend fun setCellularQuality(resolution: String, bitrateKbps: Int?) {
         val normalized = QualityPresets.normalizeResolution(resolution)
-        // 0 is the local spelling of uncapped; the flusher turns it into the
-        // JSON null the contract means by "no cap".
-        val capped = bitrateKbps?.takeIf { it > 0 }?.coerceIn(MIN_BITRATE_KBPS, MAX_BITRATE_KBPS) ?: 0
+        val capped = localBitrateKbps(bitrateKbps)
         withScope { scope, store ->
             store.edit {
-                it[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PreferredQuality)] = normalized
-                it[intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.MaxBitrateKbps)] = capped
-                markDeviceOverride(it, scope, PlaybackSettingsKeys.PreferredQuality, PlaybackSettingsKeys.MaxBitrateKbps)
+                it[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.CellularPreferredQuality)] = normalized
+                it[intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.CellularMaxBitrateKbps)] = capped
+                markDeviceOverride(
+                    it,
+                    scope,
+                    PlaybackSettingsKeys.CellularPreferredQuality,
+                    PlaybackSettingsKeys.CellularMaxBitrateKbps,
+                )
+                it[unconfirmedKeysKey(scope)] = it[unconfirmedKeysKey(scope)].orEmpty() + CellularQuality.KEYS
             }
             serverSettingsFlusher.enqueue(
                 scope.profileId,
-                PlaybackSettingsKeys.PreferredQuality,
+                PlaybackSettingsKeys.CellularPreferredQuality,
                 normalized,
                 scope.serverUrl,
                 scope.authority,
             )
             serverSettingsFlusher.enqueue(
                 scope.profileId,
-                PlaybackSettingsKeys.MaxBitrateKbps,
+                PlaybackSettingsKeys.CellularMaxBitrateKbps,
                 capped.toString(),
                 scope.serverUrl,
                 scope.authority,
             )
         }
     }
+
+    /**
+     * A bitrate cap in its local spelling: within the contract's bounds, or 0
+     * for uncapped, which the flusher turns into the JSON null the contract
+     * means by "no cap".
+     */
+    private fun localBitrateKbps(value: Int?): Int =
+        value?.takeIf { it > 0 }?.coerceIn(MIN_BITRATE_KBPS, MAX_BITRATE_KBPS) ?: 0
 
     /**
      * `""` (no preference) clears this device's value instead of storing an
@@ -703,7 +741,7 @@ class AndroidPlayerSettingsStore(
         if (!isCurrent()) return false
         // Batched canonical resolution: one request answers every
         // device-relevant key, each with the scope it resolved from.
-        val result = repo.getEffectiveValues(RemoteDeviceSettings, authority = authority)
+        val result = repo.getEffectiveValues(remoteKeysStoredBy(scope.serverUrl), authority = authority)
         if (result !is ApiResult.Success || !isCurrent()) return false
         // Draining is not the same as landing: a write that failed
         // transiently stays queued for retry and flushNow still returns
@@ -736,6 +774,49 @@ class AndroidPlayerSettingsStore(
         return owner.isSameIdentityAs(current) &&
             owner.profileId == current?.profileId &&
             owner.profileToken == current?.profileToken
+    }
+
+    /**
+     * [RemoteDeviceSettings] less the keys newer than the server at
+     * [serverUrl] is known to store. A server answers a batched read that
+     * names a key its contract lacks with 404 for the whole batch, so a key
+     * from a later revision ([CellularQuality]) is asked for only once the
+     * revision is known to include it. Until then its local value stands.
+     */
+    private suspend fun remoteKeysStoredBy(serverUrl: String): List<String> {
+        val tracker = contractRevision ?: return RemoteDeviceSettings
+        val revision = runCatching { tracker.revisionFor(serverUrl) }.getOrNull()
+        return RemoteDeviceSettings.filter { key ->
+            val needed = CellularQuality.minimumRevision(key) ?: return@filter true
+            revision != null && revision >= needed
+        }
+    }
+
+    /**
+     * Keys the server at [serverUrl] is known not to store. "Use profile
+     * setting" for one of them cannot reach a profile value, so it clears the
+     * local value and the contract default applies, as the setting would on
+     * a server that had no rows for it.
+     */
+    private fun keysUnstoredBy(serverUrl: String): Set<String> {
+        val revision = contractRevision?.known?.value?.takeIf { it.serverUrl == serverUrl }?.manifestRevision
+            ?: return emptySet()
+        return RemoteDeviceSettings.filterTo(mutableSetOf()) { key ->
+            CellularQuality.minimumRevision(key)?.let { revision < it } == true
+        }
+    }
+
+    private fun removeLocalValue(
+        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        scope: Scope,
+        key: String,
+    ) {
+        val scopedName = scope.keyPrefix + key
+        when {
+            isBooleanKey(key) -> prefs.remove(booleanPreferencesKey(scopedName))
+            isIntKey(key) -> prefs.remove(intPreferencesKey(scopedName))
+            else -> prefs.remove(stringPreferencesKey(scopedName))
+        }
     }
 
     override suspend fun setSubtitleDeviceOverrideEnabled(enabled: Boolean) {
@@ -799,9 +880,12 @@ class AndroidPlayerSettingsStore(
         val keys = PlaybackSettingsKeys.deviceOverrideGroup(key).filter { it in RemoteDeviceSettings }
         if (keys.isEmpty()) return
         withScope { scope, store ->
+            val unstored = keysUnstoredBy(scope.serverUrl)
             store.edit {
                 clearDeviceOverride(it, scope, *keys.toTypedArray())
+                it[unconfirmedKeysKey(scope)] = it[unconfirmedKeysKey(scope)].orEmpty() - keys.toSet()
                 for (cleared in keys) {
+                    if (cleared in unstored) removeLocalValue(it, scope, cleared)
                     serverSettingsFlusher.enqueueDelete(scope.profileId, cleared, scope.serverUrl, scope.authority)
                 }
             }
@@ -818,8 +902,11 @@ class AndroidPlayerSettingsStore(
             for (key in RemoteDeviceSettings) {
                 serverSettingsFlusher.enqueueDelete(scope.profileId, key, scope.serverUrl, scope.authority)
             }
+            val unstored = keysUnstoredBy(scope.serverUrl)
             store.edit {
                 it.remove(deviceOverridesKey(scope))
+                it.remove(unconfirmedKeysKey(scope))
+                for (key in unstored) removeLocalValue(it, scope, key)
                 it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = false
                 // The local-only playback keys have no server row to delete, so
                 // the refresh below can never restore their defaults. Removing
@@ -868,6 +955,7 @@ class AndroidPlayerSettingsStore(
             if (!isCurrent()) return@edit
             applied = true
             val overrides = prefs[deviceOverridesKey(scope)].orEmpty().toMutableSet()
+            val unconfirmed = prefs[unconfirmedKeysKey(scope)].orEmpty().toMutableSet()
             for (key in RemoteDeviceSettings) {
                 if (key in unlandedKeys) continue
                 // The canonical endpoint answers every known key, including
@@ -879,6 +967,18 @@ class AndroidPlayerSettingsStore(
                 // know (older revision); the local value is kept rather than
                 // guessed at.
                 val entry = effective[key] ?: continue
+                if (key in unconfirmed) {
+                    if (entry.scope == SettingScope.PROFILE_DEVICE.wire) {
+                        unconfirmed -= key
+                    } else {
+                        // Set while this server could not store it: send it
+                        // now that it can, rather than lose it to the default.
+                        prefs.localWireValue(scope, key)?.let { value ->
+                            serverSettingsFlusher.enqueue(scope.profileId, key, value, scope.serverUrl, scope.authority)
+                        }
+                        continue
+                    }
+                }
                 writeJsonValue(prefs, scope, key, entry.value)
                 // Where the value resolved from is the truth about whether
                 // this device holds its own, including one set elsewhere (the
@@ -886,6 +986,7 @@ class AndroidPlayerSettingsStore(
                 if (entry.scope == SettingScope.PROFILE_DEVICE.wire) overrides += key else overrides -= key
             }
             prefs[deviceOverridesKey(scope)] = overrides
+            prefs[unconfirmedKeysKey(scope)] = unconfirmed
             // An appearance whose write has not landed leaves the flag and the
             // granular overlay alone too: they describe where the composite
             // resolved from, and the response predates the queued edit.
@@ -1065,6 +1166,19 @@ class AndroidPlayerSettingsStore(
     private fun deviceOverridesKey(scope: Scope): Preferences.Key<Set<String>> =
         stringSetPreferencesKey(scope.keyPrefix + DEVICE_OVERRIDE_KEYS)
 
+    private fun unconfirmedKeysKey(scope: Scope): Preferences.Key<Set<String>> =
+        stringSetPreferencesKey(scope.keyPrefix + UNCONFIRMED_GATED_KEYS)
+
+    /** [key]'s value in this scope, spelled as the flusher takes it, or null when unset. */
+    private fun Preferences.localWireValue(scope: Scope, key: String): String? {
+        val scopedName = scope.keyPrefix + key
+        return when {
+            isBooleanKey(key) -> this[booleanPreferencesKey(scopedName)]?.toString()
+            isIntKey(key) -> this[intPreferencesKey(scopedName)]?.toString()
+            else -> this[stringPreferencesKey(scopedName)]
+        }
+    }
+
     /** Records that this device now holds its own value for [keys]. */
     private fun markDeviceOverride(
         prefs: androidx.datastore.preferences.core.MutablePreferences,
@@ -1155,6 +1269,13 @@ class AndroidPlayerSettingsStore(
          * which says where each value resolved from.
          */
         const val DEVICE_OVERRIDE_KEYS = "device_override_keys"
+        /**
+         * Local-only: keys from a later contract revision ([CellularQuality])
+         * this device set but no refresh has yet shown stored for it. The
+         * flusher drops them for an older server; this is what sends them
+         * once the server can store them.
+         */
+        const val UNCONFIRMED_GATED_KEYS = "unconfirmed_gated_keys"
         const val MIGRATION_SENTINEL_LEGACY = "migration_v1"
         const val MISSING_SENTINEL = "__missing__"
         // F1/F2 local-only defaults (mirror DefaultResumeRewindSeconds=7.0 and
@@ -1197,7 +1318,10 @@ class AndroidPlayerSettingsStore(
         val DOUBLE_KEYS: Set<String> = SettingKeys.DOUBLE_KEYS
 
         /** Int keys whose contract null means "no cap", stored locally as 0. */
-        val NULLABLE_INT_SETTINGS: Set<String> = setOf(SettingKeys.PLAYBACK_MAX_BITRATE_KBPS)
+        val NULLABLE_INT_SETTINGS: Set<String> = setOf(
+            SettingKeys.PLAYBACK_MAX_BITRATE_KBPS,
+            SettingKeys.PLAYBACK_CELLULAR_MAX_BITRATE_KBPS,
+        )
 
         fun isBooleanKey(key: String): Boolean = key in BOOLEAN_KEYS
         fun isIntKey(key: String): Boolean = key in INT_KEYS

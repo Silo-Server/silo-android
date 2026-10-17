@@ -91,8 +91,10 @@ Android sends one versioned request containing:
 - symbolic user quality preference;
 - user `subtitle_fidelity_preference`;
 - current video, display, audio, and subtitle capabilities;
-- `output_route_generation`, metering state, bandwidth estimate, and any
-  user bandwidth cap used by `auto`;
+- `output_route_generation` and any user bandwidth cap (`bandwidth_cap_kbps`).
+  It sends no bandwidth estimate (see 3.6) and always sends `metered: false`:
+  the server ignores it, and older servers require it on `/api/v2` but drop
+  `auto` to their metered limit on `true`;
 - app, SDK, ABI, form-factor, and protocol feature versions;
 - start position and any active playback-session identity;
 - for recovery, `replan_request_id`, failed `plan_id`, `plan_attempt_id`,
@@ -166,18 +168,60 @@ in section 8 remains required.
 
 ### 3.5 Quality policy
 
-Wire values are `auto`, `original`, `2160p`, `1080p`, `720p`, and `480p`; the UI
-may label `2160p` as “4K.” Their meanings are:
+Wire values are `auto`, `2160p`, `1080p`, `720p`, and `480p`, plus the plan's
+own rung labels picked from the player's Quality menu; the UI may label `2160p`
+as “4K.” Their meanings are:
 
-- `auto`: server-selected from the request's bandwidth/metering inputs and user
-  cap, plus server/administrator constraints;
-- `original`: no user-requested quality reduction, while compatibility
-  adaptation remains allowed;
-- a resolution rung: maximum output resolution with no upscaling.
+- `auto`: play the source whenever the device and the measured connection can
+  carry it, converting only when its capabilities, the bandwidth estimate, the
+  user's bandwidth cap, or a server/administrator limit require it;
+- a resolution rung: maximum output resolution with no upscaling. It ignores
+  the bandwidth estimate; only the cap still applies.
+
+There is no Original choice. A stored or linked `original` (also `source` and
+`max`) reads as `auto`, and video requests never send it, because older servers
+take it to mean never convert. The player's Quality menu hides the source entry
+(`original`, `preserves_source`) that older servers still list; Auto is the way
+back to the source. The audiobook player still sends `original`.
 
 The server returns the effective codec, range, resolution, bitrate, and reason.
 Initial HLS transcodes use one effective rendition; true multi-variant ABR is a
 separate protocol feature and must not be implied by the word “adaptive.”
+
+### 3.6 Network inputs
+
+Requests carry no `bandwidth_estimate_kbps`, so `auto` plays the source
+whenever the device can. Media3's meter times loads that stall on a full buffer
+or wait on a live transcode, so its figure can understate the link and make
+`auto` convert the next title. A measured estimate waits for the server's
+bandwidth probe. `PlaybackNetworkMonitor` still reports Media3's figure in
+route events and the diagnostics bundle.
+
+The phone sends its cellular pair (`playback.cellular_preferred_quality` and
+`playback.cellular_max_bitrate_kbps`) as `quality_preference` and
+`bandwidth_cap_kbps` when the active network has `TRANSPORT_CELLULAR`
+(including a VPN running over mobile data), or when a network that is not a VPN
+lacks `NET_CAPABILITY_NOT_METERED` (a phone hotspot, metered Wi-Fi). A VPN over
+Wi-Fi gets the main pair: Android marks most VPNs metered by default. A network
+change that holds for five seconds replans an active session with
+`operation: "quality_change"` and the other pair, unless the viewer picked a
+fixed rung in the player or the session is a download or a Watch Party. Android
+TV always sends the main pair. Against a server whose settings manifest
+predates revision 20 the cellular pair is kept and applied on the device only.
+
+An Auto picked in the player sends `auto` with the saved bitrate cap for the
+current connection (no cap for No limit). It is not a fixed pick: the session
+keeps following network changes, with only the cap moving. A renewal,
+recovery, or reload of the same title carries only a quality the viewer picked
+in the player or the route named; otherwise it reads the saved settings again
+for the connection it is on. The next episode always starts from the saved
+settings.
+
+The Quality menu lights the row for the session's preference: Auto only when
+that is `auto`, a picked rung its own row, and a saved resolution such as
+`1080p` the delivered class's rung when a cap reduced it. When the source
+plays as-is under a saved resolution, no row is lit, so the viewer can still
+choose Auto, and the control names the resolution.
 
 ## 4. Capability protocol
 

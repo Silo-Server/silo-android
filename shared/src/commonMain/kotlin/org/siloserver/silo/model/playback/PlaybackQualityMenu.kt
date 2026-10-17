@@ -1,7 +1,34 @@
 package org.siloserver.silo.model.playback
 
-/** The quality preference that hands the choice back to the server's planner. */
+import org.siloserver.silo.model.settings.QualityChoices
+
+/**
+ * The quality preference that hands the choice back to the server's planner,
+ * which plays the source whenever the device and connection can.
+ */
 const val PLAYBACK_QUALITY_AUTO = "auto"
+
+/** Retired spellings of "play the source", which Auto now does whenever it can. */
+private val SOURCE_QUALITY_ALIASES = setOf(QUALITY_ORIGINAL_V3, "source", "max")
+
+/**
+ * [preference] as a video `quality_preference`: trimmed and lowercased, with
+ * "original" and its aliases read as Auto. Older servers still take
+ * "original" to mean never convert, so video requests must not send it. Null
+ * for a missing or blank preference.
+ */
+fun videoQualityPreference(preference: String?): String? {
+    val normalized = preference?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return null
+    return if (normalized in SOURCE_QUALITY_ALIASES) PLAYBACK_QUALITY_AUTO else normalized
+}
+
+/**
+ * The source entry ("original", preserves_source) that servers before the
+ * Original removal still list. Auto is the way back to the source, so the
+ * client drops it.
+ */
+fun PlaybackAvailableQualityV3.isSourceQualityEntry(): Boolean =
+    preservesSource || label.equals(QUALITY_ORIGINAL_V3, ignoreCase = true)
 
 /**
  * One row of the player's Quality menu. [id] is the `quality_preference` a
@@ -15,36 +42,34 @@ data class PlaybackQualityOption(
     val bitrateLabel: String? = null,
     val height: Int = 0,
     val bitrateKbps: Int = 0,
-    val preservesSource: Boolean = false,
 )
 
 /**
- * The plan's Quality menu: Auto, then every entry of
+ * The plan's Quality menu: Auto, then the entries of
  * [PlaybackPlanV3.availableQualities] in server order. The server owns the
- * entries and the client never derives or filters them. Auto is added here
+ * entries; the client only drops the source entry older servers still send
+ * ([isSourceQualityEntry]), because Auto plays the source. Auto is added here
  * because it is a preference, not an entry. A plan with a single entry still
- * gets Auto + that entry, as the Apple clients show; only a plan with no
- * entries (no plan at all) gets no menu.
+ * gets Auto + that entry, as the Apple clients show; a plan with no entries
+ * left gets no menu.
  */
 fun playbackQualityMenu(available: List<PlaybackAvailableQualityV3>): List<PlaybackQualityOption> {
-    val entries = available.map { quality ->
+    val entries = available.filterNot { it.isSourceQualityEntry() }.map { quality ->
         PlaybackQualityOption(
             id = quality.label,
             name = playbackQualityName(quality),
             bitrateLabel = formatPlaybackQualityBitrate(quality.bitrateKbps),
             height = quality.height,
             bitrateKbps = quality.bitrateKbps,
-            preservesSource = quality.preservesSource,
         )
     }
     if (entries.isEmpty()) return entries
     return listOf(PlaybackQualityOption(id = PLAYBACK_QUALITY_AUTO, name = "Auto")) + entries
 }
 
-/** The entry's display name, else "Original" for the source entry, else its label. */
+/** The entry's display name, else its label. */
 fun playbackQualityName(quality: PlaybackAvailableQualityV3): String =
-    quality.displayName?.trim()?.takeIf { it.isNotEmpty() }
-        ?: if (quality.preservesSource) "Original" else quality.label
+    quality.displayName?.trim()?.takeIf { it.isNotEmpty() } ?: quality.label
 
 /**
  * A bitrate in Mbps to one decimal, dropping a zero decimal: "40 Mbps",
@@ -59,32 +84,41 @@ fun formatPlaybackQualityBitrate(kbps: Int): String? {
 }
 
 /**
- * The id of the [options] row that [preference] selects, or null when none
- * does. A missing preference is Auto. When the plan has a sole server entry,
- * any other preference selects it, since it is what plays. A stored
- * resolution-only preference such as "1080p" resolves the way the planner
- * applies it: to the source entry when the source fits under it and no
- * bitrate cap reduced it ([delivered] shows that), otherwise to that
+ * The Quality control's value: the lit row's name, or with none lit (a
+ * saved resolution the source plays under) that resolution, such as "1080p".
+ */
+fun playbackQualityValueLabel(
+    options: List<PlaybackQualityOption>,
+    activeId: String?,
+    preference: String?,
+): String = options.firstOrNull { it.id == activeId }?.name
+    ?: QualityChoices.resolutionLabel(videoQualityPreference(preference))
+
+/**
+ * The id of the [options] row that [preference], the session's preference,
+ * selects, or null when none does. Auto lights only for an "auto" preference
+ * (also a missing one, "original" and its aliases); a picked rung lights its
+ * own row. A resolution-only preference such as "1080p" resolves the way the
+ * planner applies it: to no row when the [source] fits under it and no
+ * bitrate cap reduced it ([delivered] shows that), since the source plays
+ * as-is and the viewer can still choose Auto, otherwise to the delivered
  * resolution class's Medium entry.
  */
 fun activePlaybackQualityId(
     options: List<PlaybackQualityOption>,
     preference: String?,
     delivered: PlaybackEffectiveRecipeV3? = null,
+    source: PlaybackSourceDescriptorV3? = null,
 ): String? {
-    val normalized = preference?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: PLAYBACK_QUALITY_AUTO
+    if (options.isEmpty()) return null
+    val normalized = videoQualityPreference(preference) ?: PLAYBACK_QUALITY_AUTO
     options.firstOrNull { it.id.lowercase() == normalized }?.let { return it.id }
-    options.singleOrNull { it.id != PLAYBACK_QUALITY_AUTO }?.let { return it.id }
+    val aliasHeight = qualityPreferenceHeight(normalized) ?: return null
 
-    val original = options.firstOrNull { it.preservesSource }
-    val aliasHeight = qualityPreferenceHeight(normalized)
-    if (aliasHeight == null) {
-        return if (normalized == "source" || normalized == "max") original?.id else null
-    }
-
+    val sourceHeight = source?.height?.takeIf { it > 0 }
     val deliveredKbps = delivered?.bitrateKbps?.takeIf { it > 0 }
-    val capped = deliveredKbps != null && deliveredKbps < (original?.bitrateKbps ?: 0)
-    if (original != null && !capped && original.height <= aliasHeight) return original.id
+    val capped = deliveredKbps != null && deliveredKbps < (source?.bitrateKbps ?: 0)
+    if (sourceHeight != null && !capped && sourceHeight <= aliasHeight) return null
 
     val classHeight = ladderClassHeight(delivered?.width, delivered?.height) ?: aliasHeight
     val rungId = when (classHeight) {

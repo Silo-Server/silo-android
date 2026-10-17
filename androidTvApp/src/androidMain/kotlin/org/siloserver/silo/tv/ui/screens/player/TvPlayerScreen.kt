@@ -2285,6 +2285,7 @@ fun TvPlayerScreen(
                             episodeNumber = state.episodeNumber,
                             audioTracks = state.audioTracks,
                             videoQualities = state.videoQualities,
+                            videoQualityPreference = state.videoQualityPreference,
                             fileVersions = state.fileVersions,
                             selectedFileId = state.selectedFileId ?: state.mediaFileId,
                             onSelectFileVersion = viewModel::onSelectFileVersion,

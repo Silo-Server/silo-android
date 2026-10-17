@@ -251,7 +251,6 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     override suspend fun setResumeRewindSeconds(value: Int) = Unit
     override suspend fun setPassOutThreshold(value: Int) = Unit
     override suspend fun setPreferredQuality(value: String) = Unit
-    override suspend fun setQuality(resolution: String, bitrateKbps: Int?) = Unit
     override suspend fun setAudioLanguage(value: String) = Unit
     override suspend fun setVideoGravity(value: String) = Unit
     override suspend fun setOrientationMode(value: String) = Unit

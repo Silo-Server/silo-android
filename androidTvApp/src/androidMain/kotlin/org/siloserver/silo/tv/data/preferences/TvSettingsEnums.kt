@@ -14,11 +14,12 @@ package org.siloserver.silo.tv.data.preferences
 
 /**
  * Playback quality ladder. Mirrors what the server's transcode pipeline accepts
- * and what tvOS exposes in Settings. "Auto" defers to the server.
+ * and what tvOS exposes in Settings. "Auto" defers to the server, which plays
+ * the source whenever the device and connection can; a legacy "original"
+ * reads as Auto.
  */
 enum class PlaybackQuality(val label: String, val wireValue: String) {
     Auto("Auto", "auto"),
-    Original("Original", "original"),
     P4K("4K", "2160p"),
     P1080("1080p", "1080p"),
     P720("720p", "720p"),

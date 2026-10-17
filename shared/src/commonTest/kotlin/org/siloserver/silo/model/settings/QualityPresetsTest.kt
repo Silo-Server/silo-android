@@ -70,7 +70,6 @@ class QualityPresetsTest {
         assertEquals(
             listOf(
                 "auto" to null,
-                "original" to null,
                 "2160p" to null,
                 "1080p" to 10000,
                 "1080p" to 6000,
@@ -83,7 +82,7 @@ class QualityPresetsTest {
         )
         assertEquals(
             listOf(
-                "Auto", "Original", "4K", "1080p High", "1080p", "1080p Low",
+                "Auto", "4K", "1080p High", "1080p", "1080p Low",
                 "720p High", "720p", "480p",
             ),
             QualityPresets.ALL.map { it.label },
@@ -117,7 +116,20 @@ class QualityPresetsTest {
         assertEquals("auto", QualityPresets.normalizeResolution("328p"))
         assertEquals("auto", QualityPresets.normalizeResolution(""))
         assertEquals("auto", QualityPresets.normalizeResolution(null))
-        assertEquals("original", QualityPresets.normalizeResolution("Original"))
+    }
+
+    @Test
+    fun `a stored original reads as Auto`() {
+        // "original" stays a legal (deprecated) contract member and older
+        // servers still hold it, but there is no Original preset: Auto plays
+        // the source whenever the device can.
+        for (alias in listOf("original", "Original", " source ", "max")) {
+            assertEquals("auto", QualityPresets.normalizeResolution(alias))
+        }
+        assertEquals("auto", QualityPresets.presetFor("original", null)?.id)
+        assertEquals("Auto", QualityPresets.describe("original", null))
+        assertNull(QualityPresets.byId("original"))
+        assertTrue(QualityPresets.ALL.none { it.label == "Original" })
     }
 
     @Test

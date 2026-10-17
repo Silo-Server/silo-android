@@ -19,6 +19,7 @@ import kotlinx.coroutines.yield
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.double
@@ -180,8 +181,14 @@ class PlaybackSessionManagerSeekReanchorTest {
             "7",
             request["client_playback_context"]!!.jsonObject["output"]!!.jsonObject.string("output_context_id"),
         )
-        assertFalse(request["metered"]!!.jsonPrimitive.content.toBoolean())
-        assertEquals(50_000, request["bandwidth_estimate_kbps"]!!.jsonPrimitive.int)
+        // No request carries an estimate, even on a measured link: Media3's
+        // figure can understate it and make Auto convert. `metered` goes out
+        // false even on a metered link: older servers require it on /api/v2
+        // and drop Auto to their metered limit on a true one.
+        for (body in harness.startBodies + request) {
+            assertFalse(body["metered"]!!.jsonPrimitive.content.toBoolean())
+            assertNull(body["bandwidth_estimate_kbps"])
+        }
         assertEquals("file:42:audio:1", request["selected_tracks"]!!.jsonObject["audio"]!!.jsonObject.string("id"))
         assertEquals(listOf("hevc"), request["client_capabilities"]!!.jsonObject["codecs_video"]!!.jsonArray.map { it.jsonPrimitive.content })
         // Keys are server-owned: a local mutation records itself in
@@ -565,6 +572,91 @@ class PlaybackSessionManagerSeekReanchorTest {
         val selectedTracks = harness.replanBodies.single()["selected_tracks"]!!.jsonObject
         assertEquals("file:84:audio:2", selectedTracks["audio"]!!.jsonObject.string("id"))
         assertEquals("server-owned-subtitle-id", selectedTracks["subtitle"]!!.jsonObject.string("id"))
+    }
+
+    @Test
+    fun `a network quality pair replaces the quality and cap for this and later replans`() = runTest {
+        val initial = plan()
+        val harness = Harness(response(initial)) { index, _ ->
+            success(response(initial.copy(planId = "plan-${index + 2}", planAttemptKey = "v3:00000000000000b$index")))
+        }
+        harness.manager.start()
+        assertEquals(PlaybackQualityPair("original", null), harness.manager.activeVideoQualityPair())
+
+        val cellular = PlaybackQualityPair("720p", 2_000)
+        val moved = harness.manager.replanActiveVideoSession(
+            classification = "quality_changed",
+            positionSeconds = 30.0,
+            audioTrackIndex = 1,
+            subtitleTrackIndex = null,
+            qualityPair = cellular,
+        )
+
+        assertIs<VideoSessionStartV3.Ready>(assertIs<ApiResult.Success<VideoSessionStartV3>>(moved).data)
+        val request = harness.replanBodies.single()
+        assertEquals("quality_change", request.string("operation"))
+        assertEquals("720p", request.string("quality_preference"))
+        assertEquals(2_000, request["bandwidth_cap_kbps"]!!.jsonPrimitive.int)
+        assertEquals(cellular, harness.manager.activeVideoQualityPair())
+
+        // A later replan that names no pair keeps the new one.
+        harness.manager.replanActiveVideoSession(
+            classification = "audio_track_changed",
+            positionSeconds = 40.0,
+            audioTrackIndex = 1,
+            subtitleTrackIndex = null,
+        )
+        assertEquals("720p", harness.replanBodies[1].string("quality_preference"))
+        assertEquals(2_000, harness.replanBodies[1]["bandwidth_cap_kbps"]!!.jsonPrimitive.int)
+
+        // An uncapped pair lifts the cap.
+        harness.manager.replanActiveVideoSession(
+            classification = "quality_changed",
+            positionSeconds = 50.0,
+            audioTrackIndex = 1,
+            subtitleTrackIndex = null,
+            qualityPair = PlaybackQualityPair("auto", null),
+        )
+        assertEquals("auto", harness.replanBodies[2].string("quality_preference"))
+        assertTrue(harness.replanBodies[2]["bandwidth_cap_kbps"].let { it == null || it is JsonNull })
+        assertEquals(PlaybackQualityPair("auto", null), harness.manager.activeVideoQualityPair())
+    }
+
+    @Test
+    fun `an Auto picked in the player is staged with the cap it is given`() = runTest {
+        val initial = plan()
+        val harness = Harness(response(initial)) { index, _ ->
+            success(response(initial.copy(planId = "plan-${index + 2}", planAttemptKey = "v3:00000000000000c$index")))
+        }
+        // The session started under a 40 Mbps cap.
+        assertIs<ApiResult.Success<VideoSessionStartV3>>(
+            harness.manager.startVideoSessionV3(
+                fileId = 42,
+                profileId = "profile-1",
+                capabilities = ClientCodecCapabilities(),
+                clientPlaybackContext = ClientPlaybackContext(formFactor = "mobile", appVersion = "test"),
+                audioTrackIndex = 1,
+                subtitleTrackIndex = null,
+                qualityPreference = "1080p",
+                startPosition = 0.0,
+                maxBitrateKbps = 40_000,
+            ),
+        )
+
+        val staged = harness.manager.stageActiveVideoSessionReplan(
+            classification = "quality_changed",
+            positionSeconds = 30.0,
+            audioTrackIndex = 1,
+            subtitleTrackIndex = null,
+            qualityPreference = "auto",
+            qualityPair = PlaybackQualityPair("auto", 2_000),
+        )
+
+        assertIs<ApiResult.Success<StagedVideoReplan>>(staged)
+        val request = harness.replanBodies.single()
+        assertEquals("quality_change", request.string("operation"))
+        assertEquals("auto", request.string("quality_preference"))
+        assertEquals(2_000, request["bandwidth_cap_kbps"]!!.jsonPrimitive.int)
     }
 
     private class Harness(

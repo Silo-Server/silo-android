@@ -14,6 +14,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import org.siloserver.silo.common.player.PlaybackQualityPair
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.PlaybackTrackSelectionWriteCoordinator
 import org.siloserver.silo.common.player.StagedVideoReplan
@@ -1197,6 +1198,8 @@ internal class MobileSubtitleTransactionAdapter(
 
 internal class PlaybackSessionManagerMobileSubtitleStagedReplanPort(
     private val manager: PlaybackSessionManager,
+    /** The pair an Auto picked in the player sends; null for other picks. */
+    private val inPlayerQuality: suspend (String?) -> PlaybackQualityPair? = { null },
 ) : MobileSubtitleStagedReplanPort {
     override suspend fun stage(
         request: MobileSubtitleStageRequest,
@@ -1208,6 +1211,7 @@ internal class PlaybackSessionManagerMobileSubtitleStagedReplanPort(
             audioTrackIndex = request.audioTrackIndex,
             subtitleTrackIndex = request.subtitleTrackIndex,
             qualityPreference = request.qualityPreference,
+            qualityPair = inPlayerQuality(request.qualityPreference),
         )
     ) {
         is ApiResult.Success -> {

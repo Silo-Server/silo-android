@@ -254,6 +254,12 @@ data class PlaybackExecutionPlan(
      * to mark the entry a stored resolution preference actually landed on.
      */
     @SerialName("effective_recipe") val effectiveRecipe: PlaybackEffectiveRecipeV3? = null,
+    /**
+     * The source file as the server describes it, unlike [source], which
+     * describes what is delivered. The Quality menu reads its height and
+     * bitrate to tell a plan that plays the source from a conversion.
+     */
+    @SerialName("source_file") val sourceFile: PlaybackSourceDescriptorV3 = PlaybackSourceDescriptorV3(),
 )
 
 /**

@@ -181,6 +181,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
         requestedMediaFileId = requestedMediaFileId ?: mediaFileId,
         effectiveMediaFileId = effectiveFileId,
         effectiveRecipe = effectiveRecipe,
+        sourceFile = source,
     )
     return PlaybackSessionResponse(
         sessionId = sessionId,

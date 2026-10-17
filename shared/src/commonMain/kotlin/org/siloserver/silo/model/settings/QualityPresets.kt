@@ -1,13 +1,14 @@
 package org.siloserver.silo.model.settings
 
 /**
- * The quality picker's presets.
+ * The cellular quality picker's presets.
  *
- * The server stores two orthogonal values — `playback.preferred_quality` (a
- * resolution cap) and `playback.max_bitrate_kbps` (a bandwidth cap, null for
- * uncapped). This table composes them into the single list a user picks from,
- * and is a field-for-field port of the web client's `qualityPresets.ts` so a
- * preset chosen on one platform reads back with the same label on the others.
+ * The server stores each quality choice as two orthogonal values — a
+ * resolution cap and a bandwidth cap, null for uncapped. The main pair
+ * (`playback.preferred_quality`, `playback.max_bitrate_kbps`) is edited as two
+ * pickers; the phone's cellular pair is picked from this table, because
+ * bitrate is what matters on a data plan. The labels match the presets the
+ * web client offered, so a stored pair reads back the same everywhere.
  *
  * Presets live here rather than in the contract on purpose. Baking "high" into
  * an enum member would freeze what it means: retuning 1080p High from 10 to 12
@@ -19,11 +20,14 @@ package org.siloserver.silo.model.settings
  * third dimension, only a bitrate written into the resolution string. They are
  * dead: nothing here produces one, and [presetFor] decomposes any that a
  * pre-contract local value still holds.
+ *
+ * There is no Original preset. Auto plays the original file whenever the
+ * device and connection can, so a stored `original` (still a legal,
+ * deprecated contract member, and what older servers may hold) reads as Auto.
  */
 data class QualityPreset(
     val id: String,
     val label: String,
-    val description: String,
     /** A `playback.preferred_quality` enum member. */
     val resolution: String,
     /** null is uncapped — the absence of a `playback.max_bitrate_kbps` row. */
@@ -33,69 +37,56 @@ data class QualityPreset(
 object QualityPresets {
 
     const val RESOLUTION_AUTO = "auto"
-    const val RESOLUTION_ORIGINAL = "original"
+
+    /** Retired spellings of "play the source", which Auto now does whenever it can. */
+    private val SOURCE_ALIASES = setOf("original", "source", "max")
 
     val ALL: List<QualityPreset> = listOf(
         QualityPreset(
             id = "auto",
             label = "Auto",
-            description = "Silo picks based on your connection.",
             resolution = RESOLUTION_AUTO,
-            bitrateKbps = null,
-        ),
-        QualityPreset(
-            id = "original",
-            label = "Original",
-            description = "Never transcode. Needs bandwidth to match the file.",
-            resolution = RESOLUTION_ORIGINAL,
             bitrateKbps = null,
         ),
         QualityPreset(
             id = "2160p",
             label = "4K",
-            description = "Up to 2160p.",
             resolution = "2160p",
             bitrateKbps = null,
         ),
         QualityPreset(
             id = "1080p-high",
             label = "1080p High",
-            description = "1080p at up to 10 Mbps.",
             resolution = "1080p",
             bitrateKbps = 10000,
         ),
         QualityPreset(
             id = "1080p",
             label = "1080p",
-            description = "1080p at up to 6 Mbps.",
             resolution = "1080p",
             bitrateKbps = 6000,
         ),
         QualityPreset(
             id = "1080p-low",
             label = "1080p Low",
-            description = "1080p at up to 3 Mbps, for a slower link.",
             resolution = "1080p",
             bitrateKbps = 3000,
         ),
         QualityPreset(
             id = "720p-high",
             label = "720p High",
-            description = "720p at up to 4 Mbps.",
             resolution = "720p",
             bitrateKbps = 4000,
         ),
         QualityPreset(
             id = "720p",
             label = "720p",
-            description = "720p at up to 2 Mbps.",
             resolution = "720p",
             bitrateKbps = 2000,
         ),
         QualityPreset(
             id = "480p",
             label = "480p",
-            description = "480p at up to 1.5 Mbps, for the tightest connections.",
             resolution = "480p",
             bitrateKbps = 1500,
         ),
@@ -123,7 +114,6 @@ object QualityPresets {
         val normalized = normalizeResolution(resolution)
         val resolutionLabel = when (normalized) {
             RESOLUTION_AUTO -> "Auto"
-            RESOLUTION_ORIGINAL -> "Original"
             "2160p" -> "4K"
             else -> normalized
         }
@@ -138,12 +128,12 @@ object QualityPresets {
      * spellings older builds wrote (`1080p-high`, `720p-8`, `4k`) — to a member
      * of the contract's enum. The bitrate half of a compound value is dropped
      * rather than guessed at: the bitrate axis carries it now, and inventing a
-     * cap the user never chose would silently throttle playback.
+     * cap the user never chose would silently throttle playback. `original`
+     * and its aliases become Auto.
      */
     fun normalizeResolution(value: String?): String {
         val trimmed = value?.trim()?.lowercase().orEmpty()
-        if (trimmed.isEmpty()) return RESOLUTION_AUTO
-        if (trimmed == RESOLUTION_AUTO || trimmed == RESOLUTION_ORIGINAL) return trimmed
+        if (trimmed.isEmpty() || trimmed == RESOLUTION_AUTO || trimmed in SOURCE_ALIASES) return RESOLUTION_AUTO
         if (trimmed == "4k") return "2160p"
         val head = trimmed.substringBefore('-')
         return when (head) {

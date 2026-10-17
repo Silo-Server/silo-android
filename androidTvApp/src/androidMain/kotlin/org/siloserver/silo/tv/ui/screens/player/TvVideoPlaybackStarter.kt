@@ -36,6 +36,7 @@ import org.siloserver.silo.model.playback.isExplicitStartOver
 import org.siloserver.silo.playback.firstPlaybackPart
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
+import org.siloserver.silo.model.playback.videoQualityPreference
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.orNullIfBlank
 import org.siloserver.silo.playback.resolveAudioTrackOrdinal
@@ -104,9 +105,15 @@ class TvVideoPlaybackStarter(
             }
 
             val serverUrl = playbackSessionManager.getServerUrl()
-            val preferredQuality = request.preferredQualityOverride
-                ?: playerSettingsStore.preferredQualityFlow.first()
-            val playbackQualityIntent = request.playbackQualityIntent ?: preferredQuality
+            // Never "original" for video: older servers read it as never convert.
+            val preferredQuality = videoQualityPreference(
+                request.preferredQualityOverride ?: playerSettingsStore.preferredQualityFlow.first(),
+            )
+            val playbackQualityIntent = videoQualityPreference(request.playbackQualityIntent) ?: preferredQuality
+            // What a renewal may carry over: a quality picked in the player or
+            // named by the route, never one that came from the saved settings.
+            val carriedQuality = videoQualityPreference(request.playbackQualityIntent)
+                ?: videoQualityPreference(request.preferredQualityOverride)
             val room = request.room
             if (room != null && watchDetail.versions.none { it.fileId == room.fileId }) {
                 return failure(
@@ -341,7 +348,7 @@ class TvVideoPlaybackStarter(
                         } else {
                             request.subtitleTrackIndex
                         },
-                        qualityPreference = playbackQualityIntent,
+                        qualityPreference = carriedQuality,
                         startPosition = sourceStartPos,
                         clientPlaybackContext = readyV3.clientPlaybackContext,
                         allowAlternateVersions = allowAlternateVersions,

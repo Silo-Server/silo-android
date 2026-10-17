@@ -1,6 +1,8 @@
 package org.siloserver.silo.playback
 
 import org.siloserver.silo.model.catalog.FileVersion
+import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
+import org.siloserver.silo.model.playback.videoQualityPreference
 
 fun selectPlaybackVersion(
     versions: List<FileVersion>,
@@ -13,8 +15,8 @@ fun selectPlaybackVersion(
         versions.firstOrNull { it.fileId == lastFileId }?.let { return it }
     }
 
-    val target = preferredQuality?.trim()?.lowercase().orEmpty()
-    if (target.isBlank() || target == "auto" || target == "original") {
+    val target = videoQualityPreference(preferredQuality) ?: PLAYBACK_QUALITY_AUTO
+    if (target == PLAYBACK_QUALITY_AUTO) {
         return versions.bestAvailable()
     }
 

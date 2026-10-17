@@ -219,7 +219,7 @@ class ExternalRouteNavigationTest {
             MobilePlayerRouteIntent(
                 contentId = "movie-1",
                 fileId = 121,
-                quality = "original",
+                quality = "auto",
                 audioTrackIndex = 2,
                 subtitleTrackIndex = -1,
                 resumePositionSeconds = 42.0,

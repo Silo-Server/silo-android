@@ -5,11 +5,14 @@ import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlaybackRouteFamily
+import org.siloserver.silo.model.playback.PlaybackSourceDescriptorV3
 import org.siloserver.silo.model.playback.playbackQualityMenu
+import org.siloserver.silo.model.playback.playbackQualityValueLabel
 import org.siloserver.silo.watchtogether.WatchPartyPlaybackContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class MobileQualityMenuTest {
@@ -19,15 +22,23 @@ class MobileQualityMenuTest {
         PlaybackAvailableQualityV3("720p-medium", 720, 4_000),
     )
 
-    private fun state(recipe: PlaybackEffectiveRecipeV3?) = PlayerViewModel.PlayerUiState(
+    private val sourcePlays = PlaybackEffectiveRecipeV3(width = 1920, height = 1080, bitrateKbps = 8_000)
+
+    private fun state(
+        recipe: PlaybackEffectiveRecipeV3?,
+        sessionPreference: String? = "1080p",
+        picked: String? = null,
+    ) = PlayerViewModel.PlayerUiState(
         playbackPlan = PlaybackExecutionPlan(
             planId = "plan",
             delivery = PlaybackDelivery.SERVER_TRANSCODE_HLS,
             routeFamily = PlaybackRouteFamily.SERVER_ADAPTIVE,
             availableQualities = ladder,
             effectiveRecipe = recipe,
+            sourceFile = PlaybackSourceDescriptorV3(width = 1920, height = 1080, bitrateKbps = 8_000),
         ),
-        committedQualityPreference = "1080p",
+        committedQualityPreference = picked,
+        sessionQualityPreference = sessionPreference,
     )
 
     @Test
@@ -37,8 +48,23 @@ class MobileQualityMenuTest {
         val capped = state(PlaybackEffectiveRecipeV3(width = 1280, height = 720, bitrateKbps = 4_000))
         assertEquals("720p-medium", capped.activeQualityId(menu))
 
-        val uncapped = state(PlaybackEffectiveRecipeV3(width = 1920, height = 1080, bitrateKbps = 8_000))
-        assertEquals("original", uncapped.activeQualityId(menu))
+        // The source plays as-is under the saved 1080p: no row is lit, so the
+        // viewer can still choose Auto, and the control names the setting.
+        // The source entry an older server still lists is not in the menu.
+        val uncapped = state(sourcePlays)
+        assertNull(uncapped.activeQualityId(menu))
+        assertEquals("1080p", playbackQualityValueLabel(menu, null, uncapped.qualityPreference))
+        assertEquals(listOf("auto", "1080p-medium", "720p-medium"), menu.map { it.id })
+    }
+
+    @Test
+    fun autoLightsOnlyForAnAutoPreferenceAndAPickLightsItsOwnRow() {
+        val menu = playbackQualityMenu(ladder)
+
+        assertEquals("auto", state(sourcePlays, sessionPreference = "auto").activeQualityId(menu))
+        // Auto picked in the player over a saved 1080p.
+        assertEquals("auto", state(sourcePlays, picked = "auto").activeQualityId(menu))
+        assertEquals("720p-medium", state(sourcePlays, picked = "720p-medium").activeQualityId(menu))
     }
 
     @Test

@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.settings
 
 import org.siloserver.silo.domain.player.IntroSkipMode
+import org.siloserver.silo.model.settings.CellularQuality
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -110,6 +111,18 @@ interface PlayerSettingsStore {
      */
     val maxBitrateKbpsFlow: Flow<Int?>
 
+    /**
+     * The phone's cellular pair, sent instead of [preferredQualityFlow] and
+     * [maxBitrateKbpsFlow] on mobile data or a metered network. Defaults to
+     * the 720p preset. Kept and applied locally against a server too old to
+     * store it; see [CellularQuality].
+     */
+    val cellularPreferredQualityFlow: Flow<String>
+        get() = flowOf(CellularQuality.DEFAULT_RESOLUTION)
+    /** null is uncapped, as for [maxBitrateKbpsFlow]. */
+    val cellularMaxBitrateKbpsFlow: Flow<Int?>
+        get() = flowOf(CellularQuality.DEFAULT_MAX_BITRATE_KBPS)
+
     // Strings
     val preferredQualityFlow: Flow<String>
     val audioLanguageFlow: Flow<String>
@@ -190,14 +203,15 @@ interface PlayerSettingsStore {
 
     suspend fun setPreferredQuality(value: String)
 
+    /** The bitrate ceiling, independent of the resolution; null is uncapped. */
+    suspend fun setMaxBitrateKbps(value: Int?) = Unit
+
     /**
-     * Set both quality axes at once — the two values one picker preset
-     * decomposes into. Writing them together is what keeps the pair
-     * consistent: a resolution stored without its bitrate is a combination no
-     * preset covers, which the picker then has to render as "custom".
+     * Set both cellular axes at once — the two values one preset decomposes
+     * into, so the pair never holds a combination no preset covers.
      * [bitrateKbps] null is uncapped.
      */
-    suspend fun setQuality(resolution: String, bitrateKbps: Int?)
+    suspend fun setCellularQuality(resolution: String, bitrateKbps: Int?) = Unit
     suspend fun setAudioLanguage(value: String)
     suspend fun setVideoGravity(value: String)
     suspend fun setOrientationMode(value: String)

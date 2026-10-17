@@ -21,6 +21,7 @@ import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.isPlaybackSessionEnded
 import org.siloserver.silo.common.player.PlaybackSessionManager
+import org.siloserver.silo.common.player.inPlayerQualityPair
 import org.siloserver.silo.common.player.PlaybackTeardownGate
 import org.siloserver.silo.common.player.video.MountedAudioTrack
 import org.siloserver.silo.common.player.video.AudioReconcileAction
@@ -95,6 +96,7 @@ import org.siloserver.silo.model.playback.selectedCandidate
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackAvailableQualityV3
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
+import org.siloserver.silo.model.playback.PlaybackSourceDescriptorV3
 import org.siloserver.silo.model.playback.activePlaybackQualityId
 import org.siloserver.silo.model.playback.playbackQualityMenu
 import org.siloserver.silo.model.playback.PlayMethod
@@ -109,6 +111,7 @@ import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
+import org.siloserver.silo.model.playback.videoQualityPreference
 import org.siloserver.silo.playback.ADMIN_ENDED_PLAYBACK_NOTICE
 import org.siloserver.silo.playback.PlaybackMarkersUpdate
 import org.siloserver.silo.playback.PlaybackSubtitleReady
@@ -211,9 +214,10 @@ internal fun authoritativePlaybackQualityOptions(
     available: List<PlaybackAvailableQualityV3>,
     selectedLabel: String?,
     delivered: PlaybackEffectiveRecipeV3? = null,
+    source: PlaybackSourceDescriptorV3? = null,
 ): List<VideoQualityOption> {
     val menu = playbackQualityMenu(available)
-    val activeId = activePlaybackQualityId(menu, selectedLabel, delivered)
+    val activeId = activePlaybackQualityId(menu, selectedLabel, delivered, source)
     return menu.map { option ->
         VideoQualityOption(
             id = option.id,
@@ -834,11 +838,11 @@ class TvPlayerViewModel(
      * resolution file because of the server's version sort order.
      */
     private var preferredFileId: Int? = launchArgs.preferredFileId
-    private var preferredQuality: String? = launchArgs.preferredQuality
+    // A legacy "original" route reads as Auto, which plays the source when it can.
+    private var preferredQuality: String? = videoQualityPreference(launchArgs.preferredQuality)
     // Explicit session-level video-quality intent chosen in the player's
-    // Quality menu. Null uses [preferredQuality] as the default output ceiling.
-    // Wire values match
-    // [PlaybackQuality]: "auto"/"original"/"2160p"/"1080p"/"720p"/"480p".
+    // Quality menu: a plan entry's label, or "auto". Null uses
+    // [preferredQuality] as the default output ceiling.
     private var qualityOverride: String? = null
     // Blank means solo, exactly as the screen treats it.
     private val roomId: String? = launchArgs.roomId?.takeIf { it.isNotBlank() }
@@ -1099,6 +1103,12 @@ class TvPlayerViewModel(
         // from the video group, plus a synthetic "Auto". Distinct from
         // [videoTracks] (group-level): only this drives the HUD Quality picker.
         val videoQualities: List<VideoQualityOption> = emptyList(),
+        /**
+         * The preference the session plays at: a pick, the route's, or the
+         * saved settings. With no row lit (a saved resolution the source
+         * plays under) the HUD names it instead of Auto.
+         */
+        val videoQualityPreference: String? = null,
         // Scrubber preview state — `isScrubbing` flips on the first arrow
         // press from the focused scrubber, `scrubPreviewSec` shadows the
         // intended seek target so the overlay can render a preview puck
@@ -1254,10 +1264,12 @@ class TvPlayerViewModel(
 
     private val subtitleTransactions = TvSubtitleTransactionAdapter(
         scope = viewModelScope,
+        // An Auto picked in the player takes the saved cap. The TV has no
+        // cellular pair.
         stagedPort = PlaybackSessionManagerTvSubtitleStagedReplanPort(
             playbackSessionManager,
             sessionLifecycle,
-        ),
+        ) { preference -> playerSettingsStore.inPlayerQualityPair(preference, cellular = false) },
         settlementScope = TvSubtitleSettlementOwner.scope,
         persistencePort = object : TvSubtitlePersistencePort {
             override suspend fun persist(
@@ -1830,9 +1842,10 @@ class TvPlayerViewModel(
             sessionId = state.sessionId,
             positionSeconds = state.position,
             audioTrackIndex = selectedAudio,
-            qualityPreference = qualityOverride
-                ?: preferredQuality
-                ?: PlaybackQuality.Auto.wireValue,
+            // Only a pick (or the route's quality). Defaulting to "auto" here
+            // sent Auto on every subtitle change, over a saved resolution, and
+            // the commit then recorded it as the viewer's pick.
+            qualityPreference = qualityOverride ?: preferredQuality,
             subtitleTracks = state.subtitleUrls,
             audioTracks = version?.audioTracks.orEmpty(),
             outputRouteGeneration = capabilityDetector.outputRouteGeneration.value,
@@ -1917,9 +1930,11 @@ class TvPlayerViewModel(
                     ?: ready.plan.effectiveRecipe.height?.let { "${it}p" },
                 videoQualities = authoritativePlaybackQualityOptions(
                     available = ready.plan.availableQualities,
-                    selectedLabel = adoption.committed.qualityPreference,
+                    selectedLabel = adoption.committed.qualityPreference ?: sessionQualityPreference(),
                     delivered = ready.plan.effectiveRecipe,
+                    source = ready.plan.source,
                 ),
+                videoQualityPreference = adoption.committed.qualityPreference ?: sessionQualityPreference(),
                 container = ready.plan.stream.container ?: version?.container ?: state.container,
                 duration = duration,
                 serverDuration = duration,
@@ -2386,11 +2401,11 @@ class TvPlayerViewModel(
                                 selectedFileResolution = result.fileResolution,
                                 videoQualities = authoritativePlaybackQualityOptions(
                                     available = result.playbackPlanV3?.availableQualities.orEmpty(),
-                                    selectedLabel = qualityOverride
-                                        ?: preferredQuality
-                                        ?: PlaybackQuality.Auto.wireValue,
+                                    selectedLabel = sessionQualityPreference(),
                                     delivered = result.playbackPlanV3?.effectiveRecipe,
+                                    source = result.playbackPlanV3?.source,
                                 ),
+                                videoQualityPreference = sessionQualityPreference(),
                                 mediaFileId = result.mediaFileId,
                                 startPosition = result.startPositionSeconds,
                                 position = result.sourceStartPositionSeconds,
@@ -2838,10 +2853,11 @@ class TvPlayerViewModel(
                                     capabilities = decision.capabilities,
                                     audioTrackIndex = returnedAudioIndex,
                                     subtitleTrackIndex = returnedSubtitleIndex ?: -1,
+                                    // A renewal carries only a pick; the saved
+                                    // settings are read again.
                                     qualityPreference = qualityPreference
                                         ?: qualityOverride
-                                        ?: preferredQuality
-                                        ?: PlaybackQuality.Auto.wireValue,
+                                        ?: preferredQuality,
                                     startPosition = decision.session.position,
                                     clientPlaybackContext = decision.clientPlaybackContext,
                                 ),
@@ -2888,12 +2904,11 @@ class TvPlayerViewModel(
                                 selectedFileResolution = effectiveResolution,
                                 videoQualities = authoritativePlaybackQualityOptions(
                                     available = decision.plan.availableQualities,
-                                    selectedLabel = qualityPreference
-                                        ?: qualityOverride
-                                        ?: preferredQuality
-                                        ?: PlaybackQuality.Auto.wireValue,
+                                    selectedLabel = qualityPreference ?: sessionQualityPreference(),
                                     delivered = decision.plan.effectiveRecipe,
+                                    source = decision.plan.source,
                                 ),
+                                videoQualityPreference = qualityPreference ?: sessionQualityPreference(),
                                 container = effectiveContainer,
                                 duration = effectiveDuration,
                                 serverDuration = effectiveDuration,
@@ -3995,9 +4010,8 @@ class TvPlayerViewModel(
             ?: SubtitleIdentity.Off
         val returnedAudioIndex = decision.plan.selectedTracks.audio?.index
             ?: decision.session.audioTrackIndex
-        val committedQualityPreference = qualityOverride
-            ?: preferredQuality
-            ?: PlaybackQuality.Auto.wireValue
+        // A renewal carries only a pick; the saved settings are read again.
+        val committedQualityPreference = qualityOverride ?: preferredQuality
         seekRecoveryRollbackInvalidated = false
         if (!isCurrentSeekRecovery(request)) return
         val adopted = sessionLifecycle.adoptActiveSessionIfCurrent(
@@ -5601,13 +5615,22 @@ class TvPlayerViewModel(
     }
 
     /**
+     * The preference the session plays at: a pick, the route's, or the saved
+     * setting the session started with. Auto lights in the menu only when
+     * this is "auto".
+     */
+    private fun sessionQualityPreference(): String? =
+        qualityOverride ?: preferredQuality ?: playbackSessionManager.activeVideoQualityPair()?.qualityPreference
+
+    /**
      * Switch the in-player video quality (tvOS ApplePlaybackQuality parity): pin
      * a session-level [qualityOverride] and request a protocol-v3 replan at the
      * current position so the server transcodes to the chosen rung (or returns to
-     * Auto/Original). [wireValue] is a [PlaybackQuality] wire value.
+     * Auto, which plays the source when it can). [wireValue] is a plan entry's
+     * label or "auto".
      */
     fun switchQuality(wireValue: String): Boolean {
-        val current = qualityOverride ?: preferredQuality ?: PlaybackQuality.Auto.wireValue
+        val current = sessionQualityPreference() ?: PlaybackQuality.Auto.wireValue
         if (wireValue == current) return false
         val state = _uiState.value
         playbackMutationFence.beginReplan()

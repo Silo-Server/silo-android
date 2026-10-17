@@ -22,6 +22,12 @@ import org.siloserver.silo.common.player.Playability
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.isPlaybackSessionEnded
 import org.siloserver.silo.common.player.PlaybackSessionManager
+import org.siloserver.silo.common.player.FollowedSession
+import org.siloserver.silo.common.player.NetworkQualityFollower
+import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
+import org.siloserver.silo.common.player.PlaybackQualityPair
+import org.siloserver.silo.common.player.inPlayerQualityPair
+import org.siloserver.silo.common.player.usesCellularQuality
 import org.siloserver.silo.common.player.PlaybackTeardownGate
 import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
@@ -67,7 +73,9 @@ import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
+import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.playbackQualityMenu
+import org.siloserver.silo.model.playback.videoQualityPreference
 import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.CommittedSubtitle
@@ -148,6 +156,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -311,6 +320,8 @@ class PlayerViewModel(
     private val activeProfileStore: org.siloserver.silo.model.profile.ActiveProfileStore? = null,
     // Shuffle: the server picks what plays next. Optional for the same reason.
     private val shuffleFeatureStore: org.siloserver.silo.model.feature.ShuffleFeatureStore? = null,
+    // The network, for the cellular quality pair. Optional for the same reason.
+    private val networkEvidenceProvider: PlaybackNetworkEvidenceProvider = PlaybackNetworkEvidenceProvider.None,
 ) : ViewModel() {
 
     // Last load request, replayed by the "Can't reach server" Retry / Try Anyway.
@@ -451,6 +462,12 @@ class PlayerViewModel(
         val playbackPlan: PlaybackExecutionPlan? = null,
         /** The quality preference the playing plan was built for; null is Auto. */
         val committedQualityPreference: String? = null,
+        /**
+         * The preference the session plays at when the viewer picked none:
+         * the route's, or the saved settings for the connection it started
+         * on. The Quality menu lights Auto only when this is "auto".
+         */
+        val sessionQualityPreference: String? = null,
         val requestHeaders: Map<String, String> = emptyMap(),
         val delivery: PlaybackDelivery? = null,
         val streamUrl: String? = null,
@@ -569,7 +586,13 @@ class PlayerViewModel(
 
     private val mobileSubtitleTransactions = MobileSubtitleTransactionAdapter(
         scope = viewModelScope,
-        stagedPort = PlaybackSessionManagerMobileSubtitleStagedReplanPort(playbackSessionManager),
+        // An Auto picked in the player takes the saved cap for the connection.
+        stagedPort = PlaybackSessionManagerMobileSubtitleStagedReplanPort(playbackSessionManager) { preference ->
+            playerSettingsStore.inPlayerQualityPair(
+                preference,
+                cellular = networkEvidenceProvider.snapshot().usesCellularQuality,
+            )
+        },
         persistencePort = object : MobileSubtitlePersistencePort {
             override suspend fun persist(
                 committed: CommittedSubtitle,
@@ -972,6 +995,32 @@ class PlayerViewModel(
                 .map { it.mediaFileId }
                 .distinctUntilChanged()
                 .collect { org.siloserver.silo.common.player.ActivePlaybackFile.set(it) }
+        }
+        // The Quality menu reads the session's own preference, which comes
+        // from the saved settings unless the viewer picked one.
+        viewModelScope.launch {
+            _uiState
+                .map { it.sessionId to it.playbackPlan?.planId }
+                .distinctUntilChanged()
+                .collect {
+                    val preference = playbackSessionManager.activeVideoQualityPair()?.qualityPreference
+                    _uiState.update { it.copy(sessionQualityPreference = preference) }
+                }
+        }
+        // Mobile data or a metered network plays at the cellular quality pair
+        // (the starter picks it); moving between networks mid-playback moves
+        // the session to the other pair. Restarted per session, so one that
+        // started just before the network changed is still moved.
+        viewModelScope.launch {
+            val follower = NetworkQualityFollower(networkEvidenceProvider.updates, playerSettingsStore)
+            _uiState
+                .map { it.sessionId }
+                .distinctUntilChanged()
+                .collectLatest { sessionId ->
+                    if (sessionId != null) {
+                        follower.follow(playing = ::networkFollowedQuality, replan = ::replanForNetworkQuality)
+                    }
+                }
         }
         // Subtitle sync applies to server playback only; offline and local
         // files have no inventory sync keys.
@@ -2026,8 +2075,10 @@ class PlayerViewModel(
         failedTrackType: Int? = null,
         audioTrackIndexOverride: Int? = null,
         subtitleTrackIndexOverride: Int? = null,
+        /** A new quality pair for the network; see [replanForNetworkQuality]. */
+        qualityPair: PlaybackQualityPair? = null,
     ) {
-        val queuedRequest = MobileRecoveryReplan(classification, notice, subtitleTrackIndexOverride)
+        val queuedRequest = MobileRecoveryReplan(classification, notice, subtitleTrackIndexOverride, qualityPair)
         if (recoveryJob?.isActive == true || serverSeekRecoveryInFlight) {
             // Never silently drop a user selection: queue it (newest wins) and
             // re-drive it when the in-flight recovery completes. Failure-driven
@@ -2085,6 +2136,7 @@ class PlayerViewModel(
                 diagnostics = diagnostics,
                 capabilities = capabilities,
                 clientPlaybackContext = playbackContext,
+                qualityPair = qualityPair,
             )
             // Returning on a stale generation is not enough on its own. By the
             // time this call returns, the manager has already committed and
@@ -2330,10 +2382,10 @@ class PlayerViewModel(
                 is ApiResult.Error -> if (result.isPlaybackSessionEnded()) {
                     leaveServerEndedSession()
                 } else {
-                    onReplanRequestFailed(classification, notice, result.message)
+                    onReplanRequestFailed(classification, notice, result.message, quiet = qualityPair != null)
                 }
                 is ApiResult.NetworkError ->
-                    onReplanRequestFailed(classification, notice, result.exception.message)
+                    onReplanRequestFailed(classification, notice, result.exception.message, quiet = qualityPair != null)
             }
         }.also { job ->
             // Cancellation means a content change / reset already cleared the
@@ -2348,6 +2400,7 @@ class PlayerViewModel(
     private fun redriveQueuedInvalidationReplan() {
         val queued = queuedInvalidationReplan ?: return
         queuedInvalidationReplan = null
+        if (!queued.stillWanted(networkFollowedQuality())) return
         // Current state, not the queuing-time state, so the replan carries the
         // latest committed track/quality selection.
         startProtocolV3Replan(
@@ -2355,6 +2408,29 @@ class PlayerViewModel(
             queued.notice,
             _uiState.value,
             subtitleTrackIndexOverride = queued.subtitleTrackIndexOverride,
+            qualityPair = queued.qualityPair,
+        )
+    }
+
+    /** See [settingsFollowedQuality]. */
+    private fun networkFollowedQuality(): FollowedSession? {
+        val state = _uiState.value
+        return settingsFollowedQuality(
+            hasServerSession = state.sessionId != null,
+            playsDownload = state.isLocalFilePlayback(),
+            inRoom = inRoom,
+            pickedQuality = currentMobileQualityPreference(),
+            active = playbackSessionManager.activeVideoQualityPair(),
+        )
+    }
+
+    /** Moves the session to the quality pair of the network it is now on. */
+    private fun replanForNetworkQuality(pair: PlaybackQualityPair) {
+        startProtocolV3Replan(
+            classification = "quality_changed",
+            notice = "Changing quality for this network.",
+            state = _uiState.value,
+            qualityPair = pair,
         )
     }
 
@@ -2364,10 +2440,16 @@ class PlayerViewModel(
      * still mounted and healthy, so a benign 409 or a network blip must not
      * tear playback down with a fatal error banner.
      */
-    private fun onReplanRequestFailed(classification: String, notice: String, detail: String?) {
+    private fun onReplanRequestFailed(
+        classification: String,
+        notice: String,
+        detail: String?,
+        /** The viewer made no change (a network move), so nothing is shown. */
+        quiet: Boolean = false,
+    ) {
         if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS) {
             Log.w(TAG, "Invalidation replan failed ($classification): $detail")
-            showVersionSwitchMessage("Couldn't apply the change — playback continues unchanged.")
+            if (!quiet) showVersionSwitchMessage("Couldn't apply the change — playback continues unchanged.")
             _uiState.update { it.copy(isLoading = false, isBuffering = false) }
         } else {
             nextUpTransitionGate.cancel()
@@ -3616,9 +3698,11 @@ class PlayerViewModel(
     /** One rung down the current file's quality ladder, or null when there is none. */
     fun lowerRoomQualityLabel(): String? {
         if (!inRoom) return null
+        val plan = _uiState.value.playbackPlan
         return lowerQualityRung(
-            available = _uiState.value.playbackPlan?.availableQualities.orEmpty(),
+            available = plan?.availableQualities.orEmpty(),
             selectedLabel = currentMobileQualityPreference(),
+            sourceHeight = plan?.sourceFile?.height ?: 0,
         )?.label
     }
 
@@ -5954,6 +6038,28 @@ private const val MAX_LOCAL_AUDIO_ATTEMPTS = 3
  * A downloaded file mounted by the offline-first path: a local URI with no
  * server session or playback plan behind it.
  */
+/**
+ * The session the network follower moves, playing at [active]; null when
+ * there is no server session, it plays a download, it is in a Watch Party, or
+ * the viewer picked a fixed rung in the player (or the route named one), which
+ * a network change must not override. Auto picked in the player is not a
+ * fixed pick: the session keeps following, with only its cap moving.
+ */
+internal fun settingsFollowedQuality(
+    hasServerSession: Boolean,
+    playsDownload: Boolean,
+    inRoom: Boolean,
+    pickedQuality: String?,
+    active: PlaybackQualityPair?,
+): FollowedSession? {
+    if (!hasServerSession || playsDownload || inRoom || active == null) return null
+    return when (videoQualityPreference(pickedQuality)) {
+        null -> FollowedSession(active)
+        PLAYBACK_QUALITY_AUTO -> FollowedSession(active, autoPicked = true)
+        else -> null
+    }
+}
+
 internal fun PlayerViewModel.PlayerUiState.isLocalFilePlayback(): Boolean {
     val url = streamUrl ?: return false
     return sessionId == null && playbackPlan == null &&

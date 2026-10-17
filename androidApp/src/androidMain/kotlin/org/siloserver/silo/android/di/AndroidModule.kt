@@ -356,10 +356,11 @@ val androidModule = module {
     // playback session so the raw phone stream is never cast.
     single { SiloCastSessionManager(androidContext()) }
     single {
+        // No network evidence: the phone's measured throughput describes its
+        // own link, not the receiver's, so cast starts carry no estimate.
         CastPlaybackPreparer(
             playbackRepository = get(),
             tokenManager = get(),
-            networkEvidenceProvider = get(),
         )
     }
     factory<VideoPlaybackStarter>(named("mobileVideoPlaybackStarter")) {
@@ -372,6 +373,7 @@ val androidModule = module {
             sessionLifecycle = get(),
             reachabilityMonitor = get(),
             userItemStatePort = get(),
+            networkEvidenceProvider = get(),
         )
     }
     factory {
@@ -474,6 +476,7 @@ val androidModule = module {
             seekIntervalStore = get(),
             activeProfileStore = get(),
             shuffleFeatureStore = get(),
+            networkEvidenceProvider = get(),
         )
     }
     viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get()) }

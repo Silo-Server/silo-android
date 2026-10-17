@@ -60,7 +60,7 @@ import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
 import org.siloserver.silo.common.network.clientVersionLabel
 import org.siloserver.silo.common.settings.CardPresentationSupport
 import org.siloserver.silo.model.settings.LanguageOptions
-import org.siloserver.silo.model.settings.QualityPresets
+import org.siloserver.silo.model.settings.QualityChoices
 import org.siloserver.silo.model.settings.SettingKeys
 
 /** Silo's privacy policy, linked from About and from Diagnostics. */
@@ -141,7 +141,8 @@ fun SettingsScreen(
         "profile selection", "profiles", "who's watching", "launch", "pin",
     )
     val matchesPlayback = search.matches(
-        "playback", "quality", "audio", "dolby vision", "picture-in-picture", "episodes", "next up",
+        "playback", "quality", "resolution", "bitrate", "cellular", "mobile data", "audio", "dolby vision",
+        "picture-in-picture", "episodes", "next up",
         "skip", "intros", "credits", "rewind", "still watching", "skip interval", "audiobooks",
         "spoilers", "unwatched", "blur", "descriptions",
     )
@@ -267,7 +268,7 @@ fun SettingsScreen(
                             SettingsNavigationRow(
                                 label = "Playback",
                                 icon = Icons.Filled.PlayArrow,
-                                value = QualityPresets.describe(state.qualityResolution, state.maxBitrateKbps),
+                                value = QualityChoices.summary(state.qualityResolution, state.maxBitrateKbps),
                                 onClick = onOpenPlayback,
                             )
                         }

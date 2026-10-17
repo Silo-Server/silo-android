@@ -112,6 +112,7 @@ import org.siloserver.silo.model.settings.CardPresentationPreset
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
+import org.siloserver.silo.model.settings.QualityChoices
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
@@ -289,7 +290,8 @@ fun TvSettingsScreen(
         onManageServers = onManageServers,
         onOpenDiagnosticsReport = onOpenDiagnosticsReport,
         onRequestSignOut = { showSignOutConfirm = true },
-        onQualityPresetSelected = viewModel::onQualityPresetSelected,
+        onResolutionSelected = viewModel::onResolutionSelected,
+        onMaxBitrateSelected = viewModel::onMaxBitrateSelected,
         onAudioLanguageChanged = viewModel::onAudioLanguageChanged,
         onAutoPlayNextChanged = viewModel::onAutoPlayNextChanged,
         onIntroSkipModeChanged = viewModel::onIntroSkipModeChanged,
@@ -441,8 +443,10 @@ private fun SettingsSplitLayout(
     onManageServers: () -> Unit,
     onOpenDiagnosticsReport: (reportId: String) -> Unit,
     onRequestSignOut: () -> Unit,
-    /** Receives a [QualityPresets] preset id. */
-    onQualityPresetSelected: (String) -> Unit,
+    /** Receives a [QualityChoices.RESOLUTIONS] value. */
+    onResolutionSelected: (String) -> Unit,
+    /** Receives a [QualityChoices.bitrateChoices] value; null is no limit. */
+    onMaxBitrateSelected: (Int?) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
     onAutoPlayNextChanged: (Boolean) -> Unit,
     onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
@@ -526,7 +530,8 @@ private fun SettingsSplitLayout(
             onProfileLaunchBehaviorChanged = onProfileLaunchBehaviorChanged,
             onManageServers = onManageServers,
             onOpenDiagnosticsReport = onOpenDiagnosticsReport,
-            onQualityPresetSelected = onQualityPresetSelected,
+            onResolutionSelected = onResolutionSelected,
+            onMaxBitrateSelected = onMaxBitrateSelected,
             onAudioLanguageChanged = onAudioLanguageChanged,
             onAutoPlayNextChanged = onAutoPlayNextChanged,
             onIntroSkipModeChanged = onIntroSkipModeChanged,
@@ -811,8 +816,10 @@ private fun SettingsDetailPane(
     onProfileLaunchBehaviorChanged: (ProfileLaunchBehavior) -> Unit,
     onManageServers: () -> Unit,
     onOpenDiagnosticsReport: (reportId: String) -> Unit,
-    /** Receives a [QualityPresets] preset id. */
-    onQualityPresetSelected: (String) -> Unit,
+    /** Receives a [QualityChoices.RESOLUTIONS] value. */
+    onResolutionSelected: (String) -> Unit,
+    /** Receives a [QualityChoices.bitrateChoices] value; null is no limit. */
+    onMaxBitrateSelected: (Int?) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
     onAutoPlayNextChanged: (Boolean) -> Unit,
     onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
@@ -871,7 +878,8 @@ private fun SettingsDetailPane(
             TvSettingsCategory.Playback -> TvPlaybackSettingsPane(
                 state = state,
                 firstFocusRequester = detailFocusRequester,
-                onQualityPresetSelected = onQualityPresetSelected,
+                onResolutionSelected = onResolutionSelected,
+                onMaxBitrateSelected = onMaxBitrateSelected,
                 onAudioLanguageChanged = onAudioLanguageChanged,
                 onAutoPlayNextChanged = onAutoPlayNextChanged,
                 onIntroSkipModeChanged = onIntroSkipModeChanged,
@@ -1186,6 +1194,9 @@ private enum class CardPresentationPicker {
 /** Picker id for the synthetic "Custom" preset row (never on the wire). */
 private const val CustomCardPresetId = "custom"
 
+/** Picker id for the Maximum Bitrate sheet's "No limit" row (never on the wire). */
+private const val NoBitrateLimitId = "no_limit"
+
 /** How Profile Selection's descriptions name this device. */
 private const val PROFILE_LAUNCH_DEVICE = "this Android TV"
 
@@ -1193,8 +1204,10 @@ private const val PROFILE_LAUNCH_DEVICE = "this Android TV"
 private fun TvPlaybackSettingsPane(
     state: TvSettingsViewModel.UiState,
     firstFocusRequester: FocusRequester,
-    /** Receives a [QualityPresets] preset id. */
-    onQualityPresetSelected: (String) -> Unit,
+    /** Receives a [QualityChoices.RESOLUTIONS] value. */
+    onResolutionSelected: (String) -> Unit,
+    /** Receives a [QualityChoices.bitrateChoices] value; null is no limit. */
+    onMaxBitrateSelected: (Int?) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
     onAutoPlayNextChanged: (Boolean) -> Unit,
     onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
@@ -1251,10 +1264,15 @@ private fun TvPlaybackSettingsPane(
         item {
             SettingsGroup(title = "Streaming") {
                 SettingsValueRow(
-                    label = "Quality",
-                    value = QualityPresets.describe(state.qualityResolution, state.maxBitrateKbps),
-                    onClick = { activePicker = PlaybackPicker.Quality },
+                    label = "Resolution",
+                    value = QualityChoices.resolutionLabel(state.qualityResolution),
+                    onClick = { activePicker = PlaybackPicker.Resolution },
                     focusRequester = firstFocusRequester,
+                )
+                SettingsValueRow(
+                    label = "Maximum Bitrate",
+                    value = QualityChoices.bitrateLabel(state.maxBitrateKbps),
+                    onClick = { activePicker = PlaybackPicker.MaxBitrate },
                 )
                 SettingsValueRow(
                     label = "Audio Language",
@@ -1297,14 +1315,12 @@ private fun TvPlaybackSettingsPane(
                     checked = state.trueBlackBars,
                     onCheckedChange = onTrueBlackBarsChanged,
                 )
-                // tvOS footer: the chosen preset's description, then the
-                // caveat for Force HDR Passthrough. The True Black Bars
-                // sentence is Android TV's own.
+                // tvOS footer: what the quality choices do, then the caveat
+                // for Force HDR Passthrough. The True Black Bars sentence is
+                // Android TV's own.
                 SettingsFooterText(
-                    text = (
-                        QualityPresets.presetFor(state.qualityResolution, state.maxBitrateKbps)?.description
-                            ?: "${QualityPresets.describe(state.qualityResolution, state.maxBitrateKbps)}."
-                        ) + " Force HDR Passthrough allows HDR playback when this TV doesn't report " +
+                    text = QualityChoices.description(state.qualityResolution, state.maxBitrateKbps) +
+                        " Force HDR Passthrough allows HDR playback when this TV doesn't report " +
                         "support. It does not force the HDMI output into HDR; Android may still convert " +
                         "the picture to SDR. Enable it only if you've confirmed your TV supports the " +
                         "source format. Unsupported formats may produce a black screen or incorrect colors." +
@@ -1436,24 +1452,46 @@ private fun TvPlaybackSettingsPane(
     }
 
     when (activePicker) {
-        // The picker offers presets; a stored pair no preset covers (set
-        // through the API, or left by a legacy compound value) selects
-        // nothing rather than silently highlighting the wrong entry.
-        PlaybackPicker.Quality -> {
+        PlaybackPicker.Resolution -> {
             val (options, selectedId) = profileLayered(
                 PlaybackSettingsKeys.PreferredQuality,
-                QualityPresets.ALL.map { PickerOption(it.id, it.label) },
-                QualityPresets.presetFor(state.qualityResolution, state.maxBitrateKbps)?.id ?: "",
+                QualityChoices.RESOLUTIONS.map { PickerOption(it.value, it.label) },
+                QualityPresets.normalizeResolution(state.qualityResolution),
             )
             TvSettingsPickerSheet(
-                title = "Quality",
+                title = "Resolution",
                 options = options,
                 selectedId = selectedId,
                 onSelect = { id ->
                     if (id == UseProfileSettingId) {
                         onUseProfileSetting(PlaybackSettingsKeys.PreferredQuality)
                     } else {
-                        onQualityPresetSelected(id)
+                        onResolutionSelected(id)
+                    }
+                    activePicker = null
+                },
+                onDismiss = { activePicker = null },
+            )
+        }
+        // A stored cap that is not one of the choices is listed in its place,
+        // so it stays visible and selected.
+        PlaybackPicker.MaxBitrate -> {
+            val (options, selectedId) = profileLayered(
+                PlaybackSettingsKeys.MaxBitrateKbps,
+                QualityChoices.bitrateChoices(state.maxBitrateKbps).map {
+                    PickerOption(it.value?.toString() ?: NoBitrateLimitId, it.label)
+                },
+                state.maxBitrateKbps?.toString() ?: NoBitrateLimitId,
+            )
+            TvSettingsPickerSheet(
+                title = "Maximum Bitrate",
+                options = options,
+                selectedId = selectedId,
+                onSelect = { id ->
+                    when (id) {
+                        UseProfileSettingId -> onUseProfileSetting(PlaybackSettingsKeys.MaxBitrateKbps)
+                        NoBitrateLimitId -> onMaxBitrateSelected(null)
+                        else -> id.toIntOrNull()?.let(onMaxBitrateSelected)
                     }
                     activePicker = null
                 },
@@ -2228,7 +2266,8 @@ private fun accountSubtitle(state: TvSettingsViewModel.UiState): String {
 }
 
 private enum class PlaybackPicker {
-    Quality,
+    Resolution,
+    MaxBitrate,
     AudioLanguage,
     NextUpPrompt,
     IntroSkipMode,

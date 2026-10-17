@@ -548,15 +548,14 @@ class TvSettingsViewModel(
             .ifBlank { url }
     }
 
-    /**
-     * Applies one quality preset — the two axes it decomposes into. The
-     * compound legacy spellings ("1080p-high") are never written.
-     */
-    fun onQualityPresetSelected(presetId: String) {
-        val preset = QualityPresets.byId(presetId) ?: return
-        viewModelScope.launch {
-            playerSettingsStore.setQuality(preset.resolution, preset.bitrateKbps)
-        }
+    /** The resolution ceiling, independent of the bitrate. */
+    fun onResolutionSelected(resolution: String) {
+        viewModelScope.launch { playerSettingsStore.setPreferredQuality(resolution) }
+    }
+
+    /** The bitrate ceiling, independent of the resolution; null is no limit. */
+    fun onMaxBitrateSelected(kbps: Int?) {
+        viewModelScope.launch { playerSettingsStore.setMaxBitrateKbps(kbps) }
     }
 
     // The four profile preferences below are canonical settings written at

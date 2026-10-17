@@ -1,6 +1,8 @@
 package org.siloserver.silo.model.settings
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -25,8 +27,24 @@ class PlaybackSettingsKeysContractTest {
             .associateBy { it.getValue("key").jsonPrimitive.content }
     }
 
-    private fun scopes(key: String): List<String> =
-        definitions.getValue(key).getValue("allowed_scopes").jsonArray.map { it.jsonPrimitive.content }
+    /**
+     * The scopes every server that knows [key] allows. An entry may be an
+     * object naming the revision that added the scope; one added after the
+     * key itself (revision 19 gave `player.subtitle_sync_ms` a profile row)
+     * is missing on older servers, where clearing the device value falls to
+     * the default, so it does not count.
+     */
+    private fun scopes(key: String): List<String> {
+        val definition = definitions.getValue(key)
+        val since = definition.getValue("introduced_in").jsonPrimitive.int
+        return definition.getValue("allowed_scopes").jsonArray.mapNotNull { entry ->
+            when (entry) {
+                is JsonObject -> entry.getValue("scope").jsonPrimitive.content
+                    .takeIf { (entry["introduced_in"]?.jsonPrimitive?.int ?: since) <= since }
+                else -> entry.jsonPrimitive.content
+            }
+        }
+    }
 
     @Test
     fun profileLayeredKeysAreExactlyTheDeviceKeysWithAProfileScope() {
