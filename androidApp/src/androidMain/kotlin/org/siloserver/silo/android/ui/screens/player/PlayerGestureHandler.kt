@@ -195,14 +195,15 @@ fun PlayerGestureHandler(
                         }
                     } while (event.changes.any { it.pressed })
                     if (isPinch) {
-                        val expand = when {
-                            zoomAccumulator > PinchGravityThreshold -> true
-                            zoomAccumulator < 1f / PinchGravityThreshold -> false
-                            else -> null
-                        }
-                        if (expand != null) {
-                            view.performGestureHaptic(GestureHaptic.PinchStep)
-                            onPinchVideoGravity(expand)
+                        when {
+                            zoomAccumulator > PinchGravityThreshold -> {
+                                view.performGestureHaptic(GestureHaptic.PinchStep)
+                                onPinchVideoGravity(true)
+                            }
+                            zoomAccumulator < 1f / PinchGravityThreshold -> {
+                                view.performGestureHaptic(GestureHaptic.PinchStep)
+                                onPinchVideoGravity(false)
+                            }
                         }
                     }
                 }
