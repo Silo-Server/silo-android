@@ -4,8 +4,8 @@ commit=8b9c08624767396e3c3c70390fbdfa71e21631b7
 protocol_version=3
 
 hls-subtitle-rendition-decision_response.json is newer than the commit above:
-branch=feat/transcode-embedded-subtitle-segments
-commit=1c33b47b409ccd96d5543d6a293b0498488130f0
+branch=feat/buffering-quality
+commit=857655f4f5786235dba6cc9f24c844e65ea33cb1
 
 Byte-identical copies of the server's golden playback-v3 wire fixtures; do not
 hand-edit any of them. They are generated from the live Go contract types by

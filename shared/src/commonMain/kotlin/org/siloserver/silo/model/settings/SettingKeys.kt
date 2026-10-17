@@ -24,7 +24,7 @@ data class SettingPresentation(
 )
 
 object SettingKeys {
-    const val REVISION = 20
+    const val REVISION = 21
 
     /** Blur unwatched episode images */
     const val CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES = "catalog.hide_unwatched_episode_images"
@@ -62,6 +62,8 @@ object SettingKeys {
     const val PLAYBACK_AUTO_SKIP_INTRO = "playback.auto_skip_intro"
     /** Auto-skip recaps */
     const val PLAYBACK_AUTO_SKIP_RECAP = "playback.auto_skip_recap"
+    /** Lower quality when buffering */
+    const val PLAYBACK_BUFFERING_QUALITY_MODE = "playback.buffering_quality_mode"
     /** Cellular maximum bitrate */
     const val PLAYBACK_CELLULAR_MAX_BITRATE_KBPS = "playback.cellular_max_bitrate_kbps"
     /** Cellular quality */
@@ -187,6 +189,7 @@ object SettingKeys {
         PLAYBACK_AUTO_SKIP_CREDITS,
         PLAYBACK_AUTO_SKIP_INTRO,
         PLAYBACK_AUTO_SKIP_RECAP,
+        PLAYBACK_BUFFERING_QUALITY_MODE,
         PLAYBACK_CELLULAR_MAX_BITRATE_KBPS,
         PLAYBACK_CELLULAR_PREFERRED_QUALITY,
         PLAYBACK_INTRO_SKIP_MODE,
