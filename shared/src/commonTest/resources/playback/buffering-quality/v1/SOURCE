@@ -1,0 +1,12 @@
+repository=https://github.com/Silo-Server/silo-server
+path=docs/design/schemas/buffering-quality/v1/vectors.json
+branch=feat/buffering-quality
+commit=61b75ed55e94520305afecc82b7095c2d36e46bc
+sha256=8b596409c2a0e002f823b07fe3f11a009231e7c63b85d57eb0fa61572f7c4ba6
+
+A byte-identical copy of the buffering-quality conformance vectors; do not
+hand-edit it. The spec is docs/design/2026-10-17-buffering-quality.md in the
+same repository, and the server repo owns both files. A case that seems to
+contradict the spec is a spec bug: fix it there and re-vendor, never patch this
+copy. BufferingQualityVectorsTest replays every case against
+BufferingQualityController on a virtual clock.
