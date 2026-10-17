@@ -180,7 +180,7 @@ class DormantMembershipTest {
             port.projection(authority, "item", MembershipPort.Kind.WATCHLIST)?.disposition)
         assertEquals(listOf(HttpMethod.Delete, HttpMethod.Get), methods)
     }
-    @Test fun restartProjectsAbandonedClaimAsReadRecoveryAndMismatchPauses() = runTest {
+    @Test fun restartProjectsAbandonedClaimAsReadRecoveryAndOnlyRetryResends() = runTest {
         var future = open()
         val first = port(MockEngine { error("No initial transport") })
         val command = first.record(authority, "item", MembershipPort.Kind.FAVORITE, true)
@@ -188,7 +188,10 @@ class DormantMembershipTest {
         future.dirtyOperationDao().claimMembership(command.id, requireNotNull(row.membershipAuthority), "claim", "dead-process")
         future.close(); future = open()
         val methods = mutableListOf<HttpMethod>()
-        val restarted = port(MockEngine { methods += it.method; respond("", HttpStatusCode.NotFound) })
+        val restarted = port(MockEngine {
+            methods += it.method
+            respond("", if (it.method == HttpMethod.Get) HttpStatusCode.NotFound else HttpStatusCode.NoContent)
+        })
         assertEquals(MembershipPort.Disposition.NEEDS_RECONCILIATION,
             restarted.projection(authority, "item", MembershipPort.Kind.FAVORITE)?.disposition)
         assertTrue(restarted.dispatch().isEmpty())
@@ -199,6 +202,10 @@ class DormantMembershipTest {
         assertNotNull(future.dirtyOperationDao().getById(command.id))
         assertEquals(0, future.dirtyOperationDao().runnableLegacyCountForScope("s", "p"))
         assertEquals(listOf(HttpMethod.Get), methods)
+        assertTrue(restarted.retry(command).mayPublish)
+        assertEquals(MembershipPort.Disposition.ACKNOWLEDGED,
+            restarted.projection(authority, "item", MembershipPort.Kind.FAVORITE)?.disposition)
+        assertEquals(listOf(HttpMethod.Get, HttpMethod.Get, HttpMethod.Put), methods)
     }
 
     @Test fun dispatcherLimitBoundsRequestsAndOldIdentityAckDoesNotPublish() = runTest {

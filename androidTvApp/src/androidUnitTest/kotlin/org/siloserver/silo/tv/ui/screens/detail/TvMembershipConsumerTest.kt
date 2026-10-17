@@ -20,7 +20,7 @@ import kotlin.test.*
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TvMembershipConsumerTest {
-    @Test fun episodeProducerRetainsStateOnUncertaintyAndUpdatesOnlyAfterExplicitRead() = runTest {
+    @Test fun episodeProducerRetainsStateOnUncertaintyAndUpdatesOnlyAfterRetryConfirms() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val barrier = DefaultIdentityTransitionBarrier()
         val port = TestPort()
@@ -29,12 +29,10 @@ class TvMembershipConsumerTest {
         val vm = createVm(client, repository, barrier)
         try {
             vm.onSetEpisodeFavorite("episode", true)
-            advanceUntilIdle()
+            runCurrent()
             assertEquals("episode", port.command?.itemId)
             assertEquals(MembershipPort.Kind.FAVORITE, port.command?.kind)
             assertNull(vm.uiState.value.episodeFavoriteStates["episode"])
-            val intent = repository.memberships.actions.value.values.single().intent
-            repository.memberships.checkStatus(intent)
             advanceUntilIdle()
             assertEquals(true, vm.uiState.value.episodeFavoriteStates["episode"])
             assertEquals(1, port.sends); assertEquals(1, port.reads)
@@ -68,18 +66,16 @@ class TvMembershipConsumerTest {
         val vm = createVm(client, repository, barrier)
         try {
             vm.onSetEpisodeFavorite("episode", true); advanceUntilIdle()
-            val intent = repository.memberships.actions.value.values.single().intent
-            repository.memberships.checkStatus(intent); advanceUntilIdle()
             assertEquals(true, vm.uiState.value.episodeFavoriteStates["episode"])
             assertIs<ApiResult.Success<Boolean>>(repository.isFavorite("episode"))
             advanceUntilIdle()
             assertEquals(false, vm.uiState.value.episodeFavoriteStates["episode"])
 
             val next = repository.memberships.begin("episode", MembershipPort.Kind.FAVORITE, true)
-            repository.memberships.perform(next)
+            val performing = async { repository.memberships.perform(next) }; runCurrent()
             port.readRelease = CompletableDeferred()
             val read = async { repository.isFavorite("episode") }; runCurrent()
-            repository.memberships.checkStatus(next); advanceUntilIdle()
+            advanceUntilIdle(); performing.await()
             assertEquals(true, vm.uiState.value.episodeFavoriteStates["episode"])
             port.readRelease!!.complete(Unit)
             assertIs<ApiResult.Error>(read.await()); advanceUntilIdle()
@@ -97,7 +93,7 @@ class TvMembershipConsumerTest {
         try {
             for (kind in MembershipPort.Kind.entries) {
                 val intent = repository.memberships.begin("", kind, true)
-                repository.memberships.perform(intent); repository.memberships.checkStatus(intent)
+                repository.memberships.perform(intent)
                 advanceUntilIdle()
                 assertTrue(if (kind == MembershipPort.Kind.FAVORITE) vm.uiState.value.isFavorite else vm.uiState.value.inWatchlist)
                 if (kind == MembershipPort.Kind.FAVORITE) repository.isFavorite("") else repository.isInWatchlist("")
@@ -134,6 +130,7 @@ class TvMembershipConsumerTest {
         override suspend fun reconcile(command: MembershipPort.Command): MembershipPort.Completion {
             reads++; return MembershipPort.Completion(MembershipPort.Disposition.RECONCILED, true)
         }
+        override suspend fun retry(command: MembershipPort.Command) = reconcile(command)
         override suspend fun read(authority: DurableLoginAuthority, itemId: String, kind: MembershipPort.Kind): ApiResult<Boolean> {
             readRelease?.await(); return ApiResult.Success(false)
         }
