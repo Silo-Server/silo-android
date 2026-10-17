@@ -50,22 +50,26 @@ class ArtworkSizing(
      * The widths to send with [surface]'s read, or null to send none. They are
      * bound to the server that advertised them.
      */
-    suspend fun request(surface: ArtworkSurface): ArtworkWidths? {
-        val layout = layout ?: return null
-        val probe = capabilities?.settled() ?: return null
-        val slots = probe.capabilities?.acceptedWidthSlots.orEmpty()
-        val widths = layout.widths(surface, layout.cardScale())
-        return widths.only(slots).takeUnless { it.isEmpty }?.copy(serverId = probe.serverId)
-    }
+    suspend fun request(surface: ArtworkSurface): ArtworkWidths? = sizedRead(surface).widths
 
     /**
-     * Whether an answer read with [sent] widths may be cached under this
-     * layout's fingerprint. Not when it went without widths only because the
-     * capability check hadn't answered: the server may size artwork per
-     * screen, and this answer isn't sized for any.
+     * [request]'s widths, and whether the answer may be cached under this
+     * layout's fingerprint. Not when it goes without widths only because the
+     * capability check didn't answer in time: the server may size artwork per
+     * screen, and this answer isn't sized for any. Both are decided before the
+     * read goes out, so the check answering mid-read can't change them.
      */
-    fun mayCache(sent: ArtworkWidths?): Boolean =
-        sent != null || layout == null || capabilities == null || capabilities.hasSettled
+    suspend fun sizedRead(surface: ArtworkSurface): SizedRead {
+        val layout = layout ?: return SizedRead(null, cacheable = true)
+        val capabilities = capabilities ?: return SizedRead(null, cacheable = true)
+        val probe = capabilities.settled() ?: return SizedRead(null, cacheable = false)
+        val slots = probe.capabilities?.acceptedWidthSlots.orEmpty()
+        val widths = layout.widths(surface, layout.cardScale()).only(slots).takeUnless { it.isEmpty }
+        return SizedRead(widths?.copy(serverId = probe.serverId), cacheable = true)
+    }
+
+    /** A read's widths, or null to send none, and whether its answer may be cached. */
+    data class SizedRead(val widths: ArtworkWidths?, val cacheable: Boolean)
 
     /**
      * The cache fingerprint of [surface] on this device: the widths it is

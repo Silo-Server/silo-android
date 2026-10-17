@@ -158,22 +158,22 @@ class RoomCatalogCacheRepository(
         getArtwork(episodesPrefix(seriesId, seasonNumber), surface)
             ?.let { runCatching { json.decodeFromString<EpisodesResponse>(it) }.getOrNull() }
 
-    /** Whether the row was written. */
+    /** The owner the row was written for, or null when it wasn't written. */
     private suspend fun put(
         cacheKey: String,
         jsonStr: String,
         lease: CatalogCacheWriteLease,
-    ): Boolean {
-        if (lease.identityGeneration != identityTransitions.generation.value) return false
-        val snapshot = snapshotProvider() ?: return false
-        val profileId = snapshot.profileId ?: return false
-        if (lease.identityGeneration != identityTransitions.generation.value) return false
+    ): CatalogCacheScope? {
+        if (lease.identityGeneration != identityTransitions.generation.value) return null
+        val snapshot = snapshotProvider() ?: return null
+        val profileId = snapshot.profileId ?: return null
+        if (lease.identityGeneration != identityTransitions.generation.value) return null
         // A Room row must fit SQLite's ~2MB CursorWindow or the *read* throws
         // SQLiteBlobTooBigException. Big library pages can exceed it, so don't
         // store an unreadable row — drop any prior row for this key and skip.
         if (jsonStr.encodeToByteArray().size > MAX_CACHE_BYTES) {
             runCatching { dao.delete(snapshot.serverId, profileId, cacheKey) }
-            return false
+            return null
         }
         dao.upsert(
             CatalogCacheEntity(
@@ -184,7 +184,7 @@ class RoomCatalogCacheRepository(
                 cachedAtMs = now(),
             ),
         )
-        return true
+        return CatalogCacheScope(snapshot.serverId, profileId)
     }
 
     private fun currentWriteLease() =
@@ -215,10 +215,9 @@ class RoomCatalogCacheRepository(
 
     private suspend fun putArtwork(prefix: String, surface: ArtworkSurface, jsonStr: String, lease: CatalogCacheWriteLease) {
         val key = artworkKey(prefix, surface, lease.artworkFingerprint)
-        if (!put(key, jsonStr, lease) || key == prefix) return
-        val snapshot = snapshotProvider() ?: return
-        val profileId = snapshot.profileId ?: return
-        runCatching { dao.delete(snapshot.serverId, profileId, prefix) }
+        // Retire the legacy row of the owner the write went to, even if identity changed since.
+        val owner = put(key, jsonStr, lease) ?: return
+        if (key != prefix) runCatching { dao.delete(owner.serverId, owner.profileId, prefix) }
     }
 
     private fun libraryPrefix(libraryId: Int) = "library:$libraryId"

@@ -100,10 +100,10 @@ class CatalogRepository(
         match: String? = null,
     ): ApiResult<CatalogResponse> {
         val requestIdentityGeneration = identityTransitions.generation.value
-        val widths = if (continuation == null) artwork.request(ArtworkSurface.BROWSE) else null
+        val sized = if (continuation == null) artwork.sizedRead(ArtworkSurface.BROWSE) else null
         val artworkFingerprint = artwork.cacheFingerprint(ArtworkSurface.BROWSE)
         val result = catalogApi.getCatalog(
-            widths = widths,
+            widths = sized?.widths,
             source = source,
             query = query,
             mediaType = mediaType,
@@ -133,7 +133,7 @@ class CatalogRepository(
         } ?: return result
 
         if (result is ApiResult.Success) {
-            if (artwork.mayCache(widths)) {
+            if (sized?.cacheable == true) {
                 writeIfIdentityUnchanged(requestIdentityGeneration, artworkFingerprint) { cacheWriteLease ->
                     catalogCache.cacheDefaultLibraryPage(cacheableLibraryId, result.data, cacheWriteLease)
                 }
@@ -404,11 +404,11 @@ class CatalogRepository(
         requestIdentityGeneration: Long,
         requestLanguageRevision: Long,
     ): ApiResult<ItemDetail> {
-        val widths = artwork.request(ArtworkSurface.DETAIL)
+        val sized = artwork.sizedRead(ArtworkSurface.DETAIL)
         val artworkFingerprint = artwork.cacheFingerprint(ArtworkSurface.DETAIL)
-        val result = catalogApi.getItemDetail(contentId, widths = widths)
+        val result = catalogApi.getItemDetail(contentId, widths = sized.widths)
         if (result is ApiResult.Success) {
-            if (artwork.mayCache(widths)) {
+            if (sized.cacheable) {
                 writeLocalizedCache(requestIdentityGeneration, requestLanguageRevision, artworkFingerprint) { cacheWriteLease ->
                     catalogCache.cacheItemDetail(contentId, result.data, cacheWriteLease)
                 }
@@ -448,11 +448,11 @@ class CatalogRepository(
         requestLanguageRevision: Long,
         serveCacheOnFailure: Boolean = true,
     ): ApiResult<EpisodesResponse> {
-        val widths = artwork.request(surface)
+        val sized = artwork.sizedRead(surface)
         val artworkFingerprint = artwork.cacheFingerprint(surface)
-        val result = catalogApi.getEpisodes(seriesId, seasonNumber, widths = widths)
+        val result = catalogApi.getEpisodes(seriesId, seasonNumber, widths = sized.widths)
         if (result is ApiResult.Success) {
-            if (artwork.mayCache(widths)) {
+            if (sized.cacheable) {
                 writeLocalizedCache(requestIdentityGeneration, requestLanguageRevision, artworkFingerprint) { cacheWriteLease ->
                     catalogCache.cacheEpisodes(
                         seriesId,

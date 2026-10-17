@@ -121,6 +121,24 @@ class RoomCatalogCacheRepositoryTest {
     }
 
     @Test
+    fun retiringALegacyRowLeavesAnotherProfilesRow() = runTest {
+        val first = scope!!
+        val second = AuthScopeSnapshot("s1", "p2", "https://s1.example", null)
+        val detail = org.siloserver.silo.model.catalog.ItemDetail(contentId = "c1", type = "movie", title = "Before")
+        repo.cacheItemDetail("c1", detail)
+        scope = second
+        repo.cacheItemDetail("c1", detail)
+        // The write goes to the first profile; the profile switches while Room stores it.
+        var reads = 0
+        val sized = RoomCatalogCacheRepository(db = db, snapshotProvider = { if (reads++ == 0) first else second },
+            now = { 1000L }, artwork = ArtworkSizing({ _, _ -> ArtworkWidths(backdrop = 1344) }, null))
+        sized.cacheItemDetail("c1", detail.copy(title = "After"))
+        assertEquals(detail, repo.getCachedItemDetail("c1"))
+        scope = first
+        assertNull(repo.getCachedItemDetail("c1"))
+    }
+
+    @Test
     fun roundTripsLibraries() = runTest {
         assertNull(repo.getCachedLibraries())
         repo.cacheLibraries(listOf(UserLibrary(id = 1, name = "Movies", type = "movie")))
