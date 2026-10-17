@@ -1,8 +1,11 @@
 package org.siloserver.silo.common.player
 
+import org.siloserver.silo.common.diagnostics.SiloLog
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
 import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.videoQualityPreference
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -93,7 +96,8 @@ class NetworkQualityFollower(
      * in flight) is tried again after each of [RETRY_DELAYS_MS], reading the
      * session and settings afresh, until the session plays the network's
      * pair, stops following, or another network supersedes it, settled or
-     * not.
+     * not. A settings read that fails waits for the next try the same way,
+     * so it never ends the following.
      */
     @OptIn(FlowPreview::class)
     suspend fun follow(
@@ -112,10 +116,18 @@ class NetworkQualityFollower(
                     delay(wait)
                     if (latestCellular.value != cellular) return@collectLatest
                     val current = playing() ?: return@collectLatest
-                    val wanted = if (current.autoPicked) {
-                        settings.autoQualityPair(cellular)
-                    } else {
-                        settings.qualityPair(cellular)
+                    val wanted = try {
+                        if (current.autoPicked) settings.autoQualityPair(cellular) else settings.qualityPair(cellular)
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (failure: Exception) {
+                        SiloLog.w(
+                            DiagnosticsLogCategory.PLAYBACK,
+                            TAG,
+                            "quality settings read failed",
+                            throwable = failure,
+                        )
+                        continue
                     }
                     if (wanted == current.pair) return@collectLatest
                     replan(current, wanted)
@@ -124,6 +136,7 @@ class NetworkQualityFollower(
     }
 
     companion object {
+        private const val TAG = "NetworkQualityFollower"
         const val DEFAULT_SETTLE_MS = 5_000L
 
         /** The wait before each try at a move: at once, then three retries over 50 seconds. */

@@ -4,12 +4,14 @@ import org.siloserver.silo.common.settings.PlayerSettingsStore
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import java.io.IOException
 import java.lang.reflect.Proxy
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -162,6 +164,32 @@ class NetworkQualityFollowerTest {
     }
 
     @Test
+    fun `a settings read that fails is tried again, and following goes on`() = runTest {
+        val network = MutableStateFlow(snapshot("wifi"))
+        var failingReads = 1
+        val flaky = qualityStore(main = main, cellular = cellular) { failingReads-- > 0 }
+        var playing = FollowedSession("s1", main)
+        val replans = mutableListOf<PlaybackQualityPair>()
+        backgroundScope.launch {
+            NetworkQualityFollower(network, flaky).follow({ playing }) { _, pair ->
+                replans += pair
+                playing = FollowedSession("s1", pair)
+            }
+        }
+
+        network.value = snapshot("cellular", metered = true)
+        settle()
+        assertEquals(emptyList(), replans, "the read failed")
+        advanceTimeBy(NetworkQualityFollower.RETRY_DELAYS_MS[1])
+        runCurrent()
+        assertEquals(listOf(cellular), replans)
+
+        network.value = snapshot("wifi")
+        settle()
+        assertEquals(listOf(cellular, main), replans)
+    }
+
+    @Test
     fun `retries are bounded`() = runTest {
         val network = MutableStateFlow(snapshot("wifi"))
         // Every request fails: the session stays on the Wi-Fi pair.
@@ -236,17 +264,28 @@ class NetworkQualityFollowerTest {
             vpn = vpn,
         )
 
-    /** Only the four quality flows answer; anything else fails the test. */
-    private fun qualityStore(main: PlaybackQualityPair, cellular: PlaybackQualityPair): PlayerSettingsStore {
+    /**
+     * Only the four quality flows answer; anything else fails the test. A
+     * read throws while [readFails] says so, as DataStore does on a disk error.
+     */
+    private fun qualityStore(
+        main: PlaybackQualityPair,
+        cellular: PlaybackQualityPair,
+        readFails: () -> Boolean = { false },
+    ): PlayerSettingsStore {
         val unused = Proxy.newProxyInstance(
             PlayerSettingsStore::class.java.classLoader,
             arrayOf(PlayerSettingsStore::class.java),
         ) { _, method, _ -> throw UnsupportedOperationException(method.name) } as PlayerSettingsStore
+        fun <T> read(value: T): Flow<T> = flow {
+            if (readFails()) throw IOException("settings read failed")
+            emit(value)
+        }
         return object : PlayerSettingsStore by unused {
-            override val preferredQualityFlow = MutableStateFlow(main.qualityPreference)
-            override val maxBitrateKbpsFlow = MutableStateFlow(main.bandwidthCapKbps)
-            override val cellularPreferredQualityFlow = MutableStateFlow(cellular.qualityPreference)
-            override val cellularMaxBitrateKbpsFlow = MutableStateFlow(cellular.bandwidthCapKbps)
+            override val preferredQualityFlow = read(main.qualityPreference)
+            override val maxBitrateKbpsFlow = read(main.bandwidthCapKbps)
+            override val cellularPreferredQualityFlow = read(cellular.qualityPreference)
+            override val cellularMaxBitrateKbpsFlow = read(cellular.bandwidthCapKbps)
         }
     }
 }

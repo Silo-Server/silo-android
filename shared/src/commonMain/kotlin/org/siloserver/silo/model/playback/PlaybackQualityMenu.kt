@@ -99,10 +99,11 @@ fun playbackQualityValueLabel(
  * selects, or null when none does. Auto lights only for an "auto" preference
  * (also a missing one, "original" and its aliases); a picked rung lights its
  * own row. A resolution-only preference such as "1080p" resolves the way the
- * planner applies it: to no row when the [source] fits under it and no
- * bitrate cap reduced it ([delivered] shows that), since the source plays
- * as-is and the viewer can still choose Auto, otherwise to the delivered
- * resolution class's Medium entry.
+ * planner applies it: to no row when the [source] fits under it and nothing
+ * reduced it, since the source plays as-is and the viewer can still choose
+ * Auto, otherwise to the delivered resolution class's Medium entry.
+ * [delivered] shows a reduction as a lower bitrate or a shorter frame than
+ * the source's.
  */
 fun activePlaybackQualityId(
     options: List<PlaybackQualityOption>,
@@ -116,9 +117,13 @@ fun activePlaybackQualityId(
     val aliasHeight = qualityPreferenceHeight(normalized) ?: return null
 
     val sourceHeight = source?.height?.takeIf { it > 0 }
+    val sourceKbps = source?.bitrateKbps?.takeIf { it > 0 }
+    val deliveredHeight = delivered?.height?.takeIf { it > 0 }
     val deliveredKbps = delivered?.bitrateKbps?.takeIf { it > 0 }
-    val capped = deliveredKbps != null && deliveredKbps < (source?.bitrateKbps ?: 0)
-    if (sourceHeight != null && !capped && sourceHeight <= aliasHeight) return null
+    // A shorter delivered frame shows a reduction even when the bitrate does not.
+    val reduced = (deliveredKbps != null && sourceKbps != null && deliveredKbps < sourceKbps) ||
+        (deliveredHeight != null && sourceHeight != null && deliveredHeight < sourceHeight)
+    if (sourceHeight != null && !reduced && sourceHeight <= aliasHeight) return null
 
     val classHeight = ladderClassHeight(delivered?.width, delivered?.height) ?: aliasHeight
     val rungId = when (classHeight) {

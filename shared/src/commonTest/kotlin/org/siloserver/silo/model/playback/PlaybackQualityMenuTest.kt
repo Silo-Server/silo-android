@@ -156,4 +156,36 @@ class PlaybackQualityMenuTest {
             activePlaybackQualityId(menu, "1080p", PlaybackEffectiveRecipeV3(width = 960, height = 540, bitrateKbps = 2_000), source),
         )
     }
+
+    @Test
+    fun aShorterDeliveredFrameMovesAResolutionPreferenceToTheDeliveredClass() {
+        val menu = playbackQualityMenu(
+            listOf(
+                PlaybackAvailableQualityV3("1080p-medium", 1080, 6_000),
+                PlaybackAvailableQualityV3("720p-medium", 720, 4_000),
+            ),
+        )
+        val delivered720 = PlaybackEffectiveRecipeV3(width = 1280, height = 720, bitrateKbps = 9_000)
+
+        // A 1080p source delivered at 720p is reduced even though the
+        // delivered bitrate is not lower than the source's.
+        assertEquals(
+            "720p-medium",
+            activePlaybackQualityId(menu, "1080p", delivered720, PlaybackSourceDescriptorV3(width = 1920, height = 1080, bitrateKbps = 8_000)),
+        )
+        // Or when the source bitrate is unknown.
+        assertEquals(
+            "720p-medium",
+            activePlaybackQualityId(menu, "1080p", delivered720, PlaybackSourceDescriptorV3(width = 1920, height = 1080)),
+        )
+        // The same frame as the source is not a reduction.
+        assertNull(
+            activePlaybackQualityId(
+                menu,
+                "1080p",
+                PlaybackEffectiveRecipeV3(width = 1920, height = 1080),
+                PlaybackSourceDescriptorV3(width = 1920, height = 1080),
+            ),
+        )
+    }
 }
