@@ -73,6 +73,19 @@ class OverlayRegistryTest {
     }
 
     @Test
+    fun availability_getValue_formatsFractionOrComplete() {
+        val def = OverlayRegistry.def(OverlayId.Availability)!!
+        assertEquals("8/10", def.getValue(OverlayData(availabilityHave = 8, availabilityTotal = 10)))
+        assertEquals("Complete", def.getValue(OverlayData(availabilityHave = 10, availabilityTotal = 10)))
+        assertNull(def.getValue(OverlayData(availabilityHave = 1, availabilityTotal = 0)))
+        assertNull(def.getValue(OverlayData()))
+        assertEquals(OverlayIconId.Check, def.getIcon?.invoke(OverlayData(availabilityHave = 3, availabilityTotal = 3)))
+        assertNull(def.getIcon?.invoke(OverlayData(availabilityHave = 2, availabilityTotal = 3)))
+        assertEquals("#21c452", def.getAccent?.invoke(OverlayData(availabilityHave = 3, availabilityTotal = 3)))
+        assertEquals("#f59e0b", def.getAccent?.invoke(OverlayData(availabilityHave = 2, availabilityTotal = 3)))
+    }
+
+    @Test
     fun runtime_getValue_formatsHoursMinutes() {
         val def = OverlayRegistry.def(OverlayId.Runtime)!!
         assertEquals("2h 22m", def.getValue(OverlayData(runtime = 142)))
