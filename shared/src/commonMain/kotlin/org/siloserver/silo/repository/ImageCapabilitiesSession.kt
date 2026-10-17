@@ -42,6 +42,9 @@ class ImageCapabilitiesSession(
     // The active server's finished probe; null while it runs or while signed out.
     private val probe = MutableStateFlow<Probe?>(null)
 
+    /** Whether the active identity's probe has answered or failed. */
+    val hasSettled: Boolean get() = probe.value != null
+
     /**
      * The probe for the active server, once it answers or fails. A probe of
      * another server is never returned, so a server switch can't carry one

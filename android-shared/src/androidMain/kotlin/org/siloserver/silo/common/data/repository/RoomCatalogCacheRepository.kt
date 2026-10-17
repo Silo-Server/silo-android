@@ -49,8 +49,9 @@ class RoomCatalogCacheRepository(
     override suspend fun cacheLibraries(libraries: List<UserLibrary>) =
         cacheLibraries(libraries, currentWriteLease())
 
-    override suspend fun cacheLibraries(libraries: List<UserLibrary>, lease: CatalogCacheWriteLease) =
+    override suspend fun cacheLibraries(libraries: List<UserLibrary>, lease: CatalogCacheWriteLease) {
         put(KEY_LIBRARIES, json.encodeToString(libraries), lease)
+    }
 
     override suspend fun getCachedLibraries(): List<UserLibrary>? =
         get(KEY_LIBRARIES)?.let { runCatching { json.decodeFromString<List<UserLibrary>>(it) }.getOrNull() }
@@ -62,10 +63,11 @@ class RoomCatalogCacheRepository(
         libraryId: Int,
         response: CatalogResponse,
         lease: CatalogCacheWriteLease,
-    ) = put(libraryKey(libraryId, lease.artworkFingerprint), json.encodeToString(response), lease)
+    ) = putArtwork(libraryPrefix(libraryId), ArtworkSurface.BROWSE, json.encodeToString(response), lease)
 
     override suspend fun getCachedDefaultLibraryPage(libraryId: Int): CatalogResponse? =
-        get(libraryKey(libraryId))?.let { runCatching { json.decodeFromString<CatalogResponse>(it) }.getOrNull() }
+        getArtwork(libraryPrefix(libraryId), ArtworkSurface.BROWSE)
+            ?.let { runCatching { json.decodeFromString<CatalogResponse>(it) }.getOrNull() }
 
     override suspend fun cacheLibrarySections(libraryId: Int, sections: List<ResolvedSection>) =
         cacheLibrarySections(libraryId, sections, currentWriteLease())
@@ -74,7 +76,9 @@ class RoomCatalogCacheRepository(
         libraryId: Int,
         sections: List<ResolvedSection>,
         lease: CatalogCacheWriteLease,
-    ) = put(librarySectionsKey(libraryId), json.encodeToString(sections), lease)
+    ) {
+        put(librarySectionsKey(libraryId), json.encodeToString(sections), lease)
+    }
 
     override suspend fun getCachedLibrarySections(libraryId: Int): List<ResolvedSection>? =
         get(librarySectionsKey(libraryId))?.let { runCatching { json.decodeFromString<List<ResolvedSection>>(it) }.getOrNull() }
@@ -91,19 +95,26 @@ class RoomCatalogCacheRepository(
         }
         // Address only the captured owner's key, even if identity changes during Room's suspension.
         dao.upsert(CatalogCacheEntity(owner.serverId, profile, key, body, now()))
+        val legacy = librarySectionsV2LegacyKey(libraryId, owner)
+        if (key != legacy) runCatching { dao.delete(owner.serverId, profile, legacy) }
     }
 
     override suspend fun getCachedLibrarySectionsV2(libraryId: Int, owner: AuthScopeSnapshot): List<ResolvedSection>? {
         val profile = owner.profileId ?: return null
         if (owner != snapshotProvider()) return null
         val key = librarySectionsV2Key(libraryId, owner)
-        val row = runCatching { dao.get(owner.serverId, profile, key) }.getOrNull()
+        val legacy = librarySectionsV2LegacyKey(libraryId, owner)
+        val row = runCatching {
+            dao.get(owner.serverId, profile, key) ?: if (key != legacy) dao.get(owner.serverId, profile, legacy) else null
+        }.getOrNull()
         if (owner != snapshotProvider()) return null
         return row?.json?.let { runCatching { json.decodeFromString<List<ResolvedSection>>(it) }.getOrNull() }
     }
 
     private fun librarySectionsV2Key(libraryId: Int, owner: AuthScopeSnapshot, artworkFingerprint: String? = null): String =
         owner.identityCacheKey(artworkKey("library-sections-v2:$libraryId", ArtworkSurface.HOME, artworkFingerprint))
+    private fun librarySectionsV2LegacyKey(libraryId: Int, owner: AuthScopeSnapshot): String =
+        owner.identityCacheKey("library-sections-v2:$libraryId")
 
     override suspend fun cacheItemDetail(contentId: String, detail: ItemDetail) =
         cacheItemDetail(contentId, detail, currentWriteLease())
@@ -112,10 +123,11 @@ class RoomCatalogCacheRepository(
         contentId: String,
         detail: ItemDetail,
         lease: CatalogCacheWriteLease,
-    ) = put(itemDetailKey(contentId, lease.artworkFingerprint), json.encodeToString(detail), lease)
+    ) = putArtwork(itemDetailPrefix(contentId), ArtworkSurface.DETAIL, json.encodeToString(detail), lease)
 
     override suspend fun getCachedItemDetail(contentId: String): ItemDetail? =
-        get(itemDetailKey(contentId))?.let { runCatching { json.decodeFromString<ItemDetail>(it) }.getOrNull() }
+        getArtwork(itemDetailPrefix(contentId), ArtworkSurface.DETAIL)
+            ?.let { runCatching { json.decodeFromString<ItemDetail>(it) }.getOrNull() }
 
     override suspend fun cacheSeasons(seriesId: String, response: SeasonsResponse) =
         cacheSeasons(seriesId, response, currentWriteLease())
@@ -124,7 +136,9 @@ class RoomCatalogCacheRepository(
         seriesId: String,
         response: SeasonsResponse,
         lease: CatalogCacheWriteLease,
-    ) = put(seasonsKey(seriesId), json.encodeToString(response), lease)
+    ) {
+        put(seasonsKey(seriesId), json.encodeToString(response), lease)
+    }
 
     override suspend fun getCachedSeasons(seriesId: String): SeasonsResponse? =
         get(seasonsKey(seriesId))?.let { runCatching { json.decodeFromString<SeasonsResponse>(it) }.getOrNull() }
@@ -138,26 +152,28 @@ class RoomCatalogCacheRepository(
         response: EpisodesResponse,
         lease: CatalogCacheWriteLease,
         surface: ArtworkSurface,
-    ) = put(episodesKey(seriesId, seasonNumber, surface, lease.artworkFingerprint), json.encodeToString(response), lease)
+    ) = putArtwork(episodesPrefix(seriesId, seasonNumber), surface, json.encodeToString(response), lease)
 
     override suspend fun getCachedEpisodes(seriesId: String, seasonNumber: Int, surface: ArtworkSurface): EpisodesResponse? =
-        get(episodesKey(seriesId, seasonNumber, surface))?.let { runCatching { json.decodeFromString<EpisodesResponse>(it) }.getOrNull() }
+        getArtwork(episodesPrefix(seriesId, seasonNumber), surface)
+            ?.let { runCatching { json.decodeFromString<EpisodesResponse>(it) }.getOrNull() }
 
+    /** Whether the row was written. */
     private suspend fun put(
         cacheKey: String,
         jsonStr: String,
         lease: CatalogCacheWriteLease,
-    ) {
-        if (lease.identityGeneration != identityTransitions.generation.value) return
-        val snapshot = snapshotProvider() ?: return
-        val profileId = snapshot.profileId ?: return
-        if (lease.identityGeneration != identityTransitions.generation.value) return
+    ): Boolean {
+        if (lease.identityGeneration != identityTransitions.generation.value) return false
+        val snapshot = snapshotProvider() ?: return false
+        val profileId = snapshot.profileId ?: return false
+        if (lease.identityGeneration != identityTransitions.generation.value) return false
         // A Room row must fit SQLite's ~2MB CursorWindow or the *read* throws
         // SQLiteBlobTooBigException. Big library pages can exceed it, so don't
         // store an unreadable row — drop any prior row for this key and skip.
         if (jsonStr.encodeToByteArray().size > MAX_CACHE_BYTES) {
             runCatching { dao.delete(snapshot.serverId, profileId, cacheKey) }
-            return
+            return false
         }
         dao.upsert(
             CatalogCacheEntity(
@@ -168,6 +184,7 @@ class RoomCatalogCacheRepository(
                 cachedAtMs = now(),
             ),
         )
+        return true
     }
 
     private fun currentWriteLease() =
@@ -188,12 +205,25 @@ class RoomCatalogCacheRepository(
     // A write uses the fingerprint its read captured; a read uses the current one.
     private fun artworkKey(prefix: String, surface: ArtworkSurface, captured: String?) =
         if (captured != null) ArtworkSizing.cacheKey(prefix, captured) else artwork.cacheKey(prefix, surface)
-    private fun libraryKey(libraryId: Int, captured: String? = null) =
-        artworkKey("library:$libraryId", ArtworkSurface.BROWSE, captured)
-    private fun itemDetailKey(contentId: String, captured: String? = null) =
-        artworkKey("item-detail:$contentId", ArtworkSurface.DETAIL, captured)
-    private fun episodesKey(seriesId: String, seasonNumber: Int, surface: ArtworkSurface, captured: String? = null) =
-        artworkKey("episodes:$seriesId:$seasonNumber", surface, captured)
+
+    // Rows cached before artwork widths were keyed by the bare prefix. A read
+    // falls back to one until this item is cached again, which retires it.
+    private suspend fun getArtwork(prefix: String, surface: ArtworkSurface): String? {
+        val key = artwork.cacheKey(prefix, surface)
+        return get(key) ?: if (key != prefix) get(prefix) else null
+    }
+
+    private suspend fun putArtwork(prefix: String, surface: ArtworkSurface, jsonStr: String, lease: CatalogCacheWriteLease) {
+        val key = artworkKey(prefix, surface, lease.artworkFingerprint)
+        if (!put(key, jsonStr, lease) || key == prefix) return
+        val snapshot = snapshotProvider() ?: return
+        val profileId = snapshot.profileId ?: return
+        runCatching { dao.delete(snapshot.serverId, profileId, prefix) }
+    }
+
+    private fun libraryPrefix(libraryId: Int) = "library:$libraryId"
+    private fun itemDetailPrefix(contentId: String) = "item-detail:$contentId"
+    private fun episodesPrefix(seriesId: String, seasonNumber: Int) = "episodes:$seriesId:$seasonNumber"
 
     private companion object {
         // Stay well under SQLite's ~2MB CursorWindow.

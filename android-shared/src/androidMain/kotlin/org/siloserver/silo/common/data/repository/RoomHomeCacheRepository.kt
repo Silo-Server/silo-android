@@ -67,10 +67,12 @@ class RoomHomeCacheRepository(
         val body = encode(sections)
         if (owner != snapshotProvider()) return
         val key = scopedKey(owner, artworkFingerprint)
+        val legacy = legacyKey(owner)
         db.withTransaction {
             if (!stillCurrent()) return@withTransaction
             if (body.encodeToByteArray().size > MAX_CACHE_BYTES) scopedDao.delete(owner.serverId, profile, key)
             else scopedDao.upsert(org.siloserver.silo.common.data.db.entity.CatalogCacheEntity(owner.serverId, profile, key, body, now()))
+            if (key != legacy) scopedDao.delete(owner.serverId, profile, legacy)
         }
     }
 
@@ -90,7 +92,11 @@ class RoomHomeCacheRepository(
     override suspend fun getCachedHomeV2(owner: AuthScopeSnapshot): HomeCacheSnapshot? {
         val profile = owner.profileId ?: return null
         if (owner != snapshotProvider()) return null
-        val row = runCatching { scopedDao.get(owner.serverId, profile, scopedKey(owner)) }.getOrNull() ?: return null
+        val key = scopedKey(owner)
+        val legacy = legacyKey(owner)
+        val row = runCatching {
+            scopedDao.get(owner.serverId, profile, key) ?: if (key != legacy) scopedDao.get(owner.serverId, profile, legacy) else null
+        }.getOrNull() ?: return null
         val sections = decode(row.json)
         if (owner != snapshotProvider()) return null
         return sections?.let { HomeCacheSnapshot(it, row.cachedAtMs) }
@@ -99,6 +105,10 @@ class RoomHomeCacheRepository(
     // A write uses the fingerprint its read captured; a read uses the current one.
     private fun scopedKey(owner: AuthScopeSnapshot, captured: String? = null): String =
         owner.identityCacheKey(ArtworkSizing.cacheKey("home-sections-v2", captured ?: artworkFingerprint()))
+
+    // Home cached before artwork widths was keyed without them. A read falls
+    // back to it until Home is cached again, which retires it.
+    private fun legacyKey(owner: AuthScopeSnapshot): String = owner.identityCacheKey("home-sections-v2")
 
     override suspend fun cacheHome(sections: List<ResolvedSection>) {
         cacheHome(

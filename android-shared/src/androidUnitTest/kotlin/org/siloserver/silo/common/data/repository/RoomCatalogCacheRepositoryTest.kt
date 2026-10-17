@@ -100,6 +100,27 @@ class RoomCatalogCacheRepositoryTest {
     }
 
     @Test
+    fun rowsCachedBeforeArtworkWidthsAreReadUntilReplaced() = runTest {
+        // An earlier app version cached under the bare key.
+        val detail = org.siloserver.silo.model.catalog.ItemDetail(contentId = "c1", type = "movie", title = "Before")
+        val episodes = org.siloserver.silo.model.catalog.EpisodesResponse()
+        val page = CatalogResponse(total = 1, items = listOf(BrowseItem(contentId = "c1", type = "movie", title = "A")))
+        repo.cacheItemDetail("c1", detail)
+        repo.cacheEpisodes("s1", 1, episodes)
+        repo.cacheDefaultLibraryPage(7, page)
+        val sized = RoomCatalogCacheRepository(db = db, snapshotProvider = { scope }, now = { 1000L },
+            artwork = ArtworkSizing({ _, _ -> ArtworkWidths(poster = 300, backdrop = 1344, still = 360) }, null))
+        assertEquals(detail, sized.getCachedItemDetail("c1"))
+        assertEquals(episodes, sized.getCachedEpisodes("s1", 1, ArtworkSurface.EPISODES))
+        assertEquals(page, sized.getCachedDefaultLibraryPage(7))
+        // Caching the item again retires the old row.
+        val after = detail.copy(title = "After")
+        sized.cacheItemDetail("c1", after)
+        assertEquals(after, sized.getCachedItemDetail("c1"))
+        assertNull(repo.getCachedItemDetail("c1"))
+    }
+
+    @Test
     fun roundTripsLibraries() = runTest {
         assertNull(repo.getCachedLibraries())
         repo.cacheLibraries(listOf(UserLibrary(id = 1, name = "Movies", type = "movie")))

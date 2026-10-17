@@ -79,6 +79,20 @@ class RoomHomeCacheRepositoryTest {
     }
 
     @Test
+    fun homeCachedBeforeArtworkWidthsIsReadUntilReplaced() = runTest {
+        val owner = scope!!
+        val before = listOf(section("row", "before"))
+        repo.cacheHomeV2(before, owner)
+        val sized = RoomHomeCacheRepository(db = db, snapshotProvider = { scope }, now = { 1000L },
+            artwork = ArtworkSizing({ _, _ -> ArtworkWidths(poster = 176) }, null))
+        assertEquals(before, sized.getCachedHomeV2(owner)?.sections)
+        val after = listOf(section("row", "after"))
+        sized.cacheHomeV2(after, owner)
+        assertEquals(after, sized.getCachedHomeV2(owner)?.sections)
+        assertNull(repo.getCachedHomeV2(owner))
+    }
+
+    @Test
     fun supersededHomeWriterChecksRunAfterWaitingForTransaction() = runTest {
         val owner = scope!!
         val entered = CompletableDeferred<Unit>()

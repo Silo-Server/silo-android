@@ -88,10 +88,11 @@ class SectionRepository(
     /** Fetches a library's resolved sections (offline: last cached sections). */
     suspend fun getLibrarySections(libraryId: Int, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SectionsResponse> {
         // getLibrarySections guards the owner before and after the exchange.
+        val widths = artwork.request(ArtworkSurface.HOME)
         val artworkFingerprint = artwork.cacheFingerprint(ArtworkSurface.HOME)
-        val result = sectionApi.getLibrarySections(libraryId, owner, artwork.request(ArtworkSurface.HOME))
+        val result = sectionApi.getLibrarySections(libraryId, owner, widths)
         if (result is ApiResult.Success) {
-            catalogCache.cacheLibrarySectionsV2(libraryId, result.data.sections, owner, artworkFingerprint)
+            if (artwork.mayCache(widths)) catalogCache.cacheLibrarySectionsV2(libraryId, result.data.sections, owner, artworkFingerprint)
             if (!isLibrarySectionAuthorityCurrent(owner)) return identityChanged()
             return result
         }

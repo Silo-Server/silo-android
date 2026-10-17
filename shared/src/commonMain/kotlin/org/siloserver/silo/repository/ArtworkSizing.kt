@@ -56,6 +56,15 @@ class ArtworkSizing(
     }
 
     /**
+     * Whether an answer read with [sent] widths may be cached under this
+     * layout's fingerprint. Not when it went without widths only because the
+     * capability check hadn't answered: the server may size artwork per
+     * screen, and this answer isn't sized for any.
+     */
+    fun mayCache(sent: ArtworkWidths?): Boolean =
+        sent != null || layout == null || capabilities == null || capabilities.hasSettled
+
+    /**
      * The cache fingerprint of [surface] on this device: its widths at the
      * standard card size, whether or not the server takes them. It doesn't
      * change when the capability probe or the card-size preference hasn't

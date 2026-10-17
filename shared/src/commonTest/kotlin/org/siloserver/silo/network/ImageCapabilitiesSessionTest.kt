@@ -250,14 +250,20 @@ class ImageCapabilitiesSessionTest {
             }
         })) { install(SiloAuthPlugin) { tokenManager = tokens } }
         val session = ImageCapabilitiesSession(ImageCapabilitiesApi(client, tokens, ApiV2Gate.Unrestricted), tokens, barrier)
+        val sizing = ArtworkSizing(ArtworkLayout { _, _ -> ArtworkWidths(poster = 176) }, session)
         val job = session.start(backgroundScope)
         try {
-            // A probe that never answers lets the request go without widths after the timeout.
+            // A probe that never answers lets the request go without widths after the timeout,
+            // and the answer isn't cached: it's sized for no layout.
             assertNull(session.settled(1.seconds))
+            assertEquals(false, sizing.mayCache(sizing.request(ArtworkSurface.HOME)))
             val waiting = async { session.settled(10.seconds) }
             runCurrent()
             release.complete(Unit)
             assertEquals(setOf("poster"), waiting.await()?.capabilities?.acceptedWidthSlots)
+            assertEquals(true, sizing.mayCache(sizing.request(ArtworkSurface.HOME)))
+            // Once the check has answered, a read without widths is one the server does not size.
+            assertEquals(true, sizing.mayCache(null))
         } finally { job.cancel(); client.close() }
     }
 
