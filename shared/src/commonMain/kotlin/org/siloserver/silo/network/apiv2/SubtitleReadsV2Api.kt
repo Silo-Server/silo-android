@@ -46,4 +46,6 @@ class SubtitleReadsV2Api(private val client: HttpClient, private val tokens: Tok
         }) { SubtitleSearchResponse(it.results.map { row -> row.project() },it.warnings) }
     }
     suspend fun aiStatus(): ApiResult<SubtitleAiStatus> = read<SubtitleAiStatus, SubtitleAiStatus>("/api/v2/subtitles/ai/status") { it }
+    suspend fun providerStatus(): ApiResult<SubtitleProviderStatus> =
+        read<SubtitleProviderStatus, SubtitleProviderStatus>("/api/v2/subtitles/providers/status") { it }
 }
