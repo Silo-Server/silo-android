@@ -69,8 +69,12 @@ object RoomCatchup {
     /** Drift loop cadence. */
     const val LOOP_INTERVAL_MS = 500L
 
-    /** A rate-incapable mount aims its correction seeks at most this far ahead. */
-    const val FALLBACK_MAX_LEAD_SECONDS = 3.0
+    /**
+     * A rate-incapable mount aims its correction seeks at most this far ahead:
+     * the host band, so a host never lands far enough ahead that the server
+     * takes its report as a decision and moves the room.
+     */
+    const val FALLBACK_MAX_LEAD_SECONDS = HOST_COMMAND_SEEK_SECONDS
 
     /** Correction seeks that keep missing back off up to this interval. */
     const val FALLBACK_MAX_INTERVAL_MS = 16_000L
