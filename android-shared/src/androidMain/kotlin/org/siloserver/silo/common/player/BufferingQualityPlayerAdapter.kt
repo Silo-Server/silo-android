@@ -9,6 +9,7 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
 import org.siloserver.silo.domain.player.BufferingQualityController
+import org.siloserver.silo.domain.player.BufferingQualityController.Companion.RENDERER_WAIT_BUFFER_MS
 import org.siloserver.silo.domain.player.BufferingWaitCause
 
 /** The playback events [BufferingQualityController] consumes, as [BufferingQualityPlayerAdapter] emits them. */
@@ -48,7 +49,7 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
  * - Starved (`STATE_BUFFERING` while `playWhenReady`) →
  *   [BufferingPlaybackEventSink.onWaiting], caused by [BufferingWaitCause.SEEK]
  *   after a seek, [BufferingWaitCause.RELOAD] after [markReload],
- *   [BufferingWaitCause.RENDERER] when more than [STARVED_MAX_AHEAD_MS] of
+ *   [BufferingWaitCause.RENDERER] when more than [RENDERER_WAIT_BUFFER_MS] of
  *   media is buffered past the playhead, and otherwise
  *   [BufferingWaitCause.NETWORK]. Both flags clear when playback next runs. A
  *   new plan's first wait is a network wait; the controller applies the
@@ -57,7 +58,8 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
  *   next keyframe, with seconds of media still buffered. The spec's stall is
  *   running out of data, so that wait is [BufferingWaitCause.RENDERER], which
  *   the controller does not count. If the buffer then drains before playback
- *   resumes, [sampleBuffer] re-announces the wait as a network wait.
+ *   resumes, [sampleBuffer] re-announces the wait as a network wait, from
+ *   which the stall is timed.
  * - `playWhenReady` false, `STATE_ENDED` or `STATE_IDLE` →
  *   [BufferingPlaybackEventSink.onPause].
  * - A seek discontinuity → [BufferingPlaybackEventSink.onSeek]. During a
@@ -170,7 +172,7 @@ class BufferingQualityPlayerAdapter(
         }
         if (phase == Phase.STARVED &&
             waitCause == BufferingWaitCause.RENDERER &&
-            bufferedAheadMs() <= STARVED_MAX_AHEAD_MS
+            bufferedAheadMs() <= RENDERER_WAIT_BUFFER_MS
         ) {
             announceWait(BufferingWaitCause.NETWORK)
         }
@@ -315,7 +317,7 @@ class BufferingQualityPlayerAdapter(
                 when {
                     seekSinceRun -> BufferingWaitCause.SEEK
                     reloadMarked -> BufferingWaitCause.RELOAD
-                    bufferedAheadMs() > STARVED_MAX_AHEAD_MS -> BufferingWaitCause.RENDERER
+                    bufferedAheadMs() > RENDERER_WAIT_BUFFER_MS -> BufferingWaitCause.RENDERER
                     else -> BufferingWaitCause.NETWORK
                 },
             )
@@ -340,13 +342,6 @@ class BufferingQualityPlayerAdapter(
     companion object {
         /** How recent data must be for a slow plan to count as still receiving it. */
         const val RECEIVING_DATA_WINDOW_MS: Long = 5_000L
-
-        /**
-         * The most media a wait can start with and still be the player
-         * running out of data. A network stall starts with the buffer empty;
-         * Media3's keyframe catch-up starts with seconds left.
-         */
-        const val STARVED_MAX_AHEAD_MS: Long = 1_000L
 
         private const val TRANSPORT_STALL_CLASSIFICATION = "transport_stall"
     }

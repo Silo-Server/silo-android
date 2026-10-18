@@ -71,6 +71,7 @@ class BufferingQualityVectorsTest {
             assertEquals(REOFFER_MIN_MS, long("REOFFER_MIN_MS"))
             assertEquals(NO_LOWER_COOLDOWN_MS, long("NO_LOWER_COOLDOWN_MS"))
             assertEquals(REARM_AFTER_UNADOPTED_MS, long("REARM_AFTER_UNADOPTED_MS"))
+            assertEquals(RENDERER_WAIT_BUFFER_MS, long("RENDERER_WAIT_BUFFER_MS"))
             assertEquals(STEP_DOWN_RATIO, constants.getValue("STEP_DOWN_RATIO").jsonPrimitive.double)
             assertEquals(MIN_ESTIMATE_KBPS, int("MIN_ESTIMATE_KBPS"))
         }
@@ -240,6 +241,7 @@ class BufferingQualityVectorsTest {
         "seek" -> BufferingWaitCause.SEEK
         "pause" -> BufferingWaitCause.PAUSE
         "reload" -> BufferingWaitCause.RELOAD
+        "renderer" -> BufferingWaitCause.RENDERER
         else -> fail("unknown waiting cause $cause")
     }
 

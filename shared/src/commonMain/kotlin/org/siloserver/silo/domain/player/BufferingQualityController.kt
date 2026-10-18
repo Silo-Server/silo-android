@@ -41,8 +41,10 @@ data class BufferingQualityPlan(
 
 /**
  * Why the player started waiting. Only [NETWORK], the player running out of
- * data, can become a stall. [RENDERER] is a wait with media still buffered
- * ahead: the decoder fell behind and the player is catching up.
+ * data, can become a stall. [RENDERER] is a wait that began with more than
+ * [BufferingQualityController.RENDERER_WAIT_BUFFER_MS] of media buffered past
+ * the playhead: the decoder fell behind and the player is catching up. A
+ * [NETWORK] wait during it means the buffer fell to that threshold.
  */
 enum class BufferingWaitCause { NETWORK, SEEK, PAUSE, RELOAD, RENDERER }
 
@@ -173,6 +175,7 @@ class BufferingQualityController(
         const val REOFFER_MIN_MS: Long = 120_000L
         const val NO_LOWER_COOLDOWN_MS: Long = 300_000L
         const val REARM_AFTER_UNADOPTED_MS: Long = 60_000L
+        const val RENDERER_WAIT_BUFFER_MS: Long = 1_000L
         /**
          * Documentation only: the step-down estimate is the exact integer
          * `delivered × 7 / 10`, because a floating-point `0.7` can floor one
