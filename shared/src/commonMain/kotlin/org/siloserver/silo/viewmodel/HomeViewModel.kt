@@ -248,6 +248,7 @@ class HomeViewModel(
             val owner = sectionRepository.captureHomeAuthority()
             if (owner == null) {
                 if (fetchGeneration == bootstrapGeneration) fetchSections(HomeLoadTrigger.INITIAL)
+                runPendingRealtimeRefresh()
                 return@launch
             }
             if (!mayPublish(owner, bootstrapGeneration)) return@launch
