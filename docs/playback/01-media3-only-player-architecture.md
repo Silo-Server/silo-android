@@ -206,6 +206,16 @@ When the server advertises `playback_plan_summary_v1`, each plan that stops
 playing is reported in a `plan_summary` route event: its stalls, delivered
 bitrate, mode, last buffering action, and the estimate it was requested with.
 
+Only running out of data is a stall. Media3 also reports `STATE_BUFFERING`
+when its decoder falls behind and drops to the next keyframe, with seconds of
+media still buffered. The adapter reports a wait that begins with more than
+`RENDERER_WAIT_BUFFER_MS` (1 s) buffered past the playhead as a renderer wait,
+which the controller does not count, and turns it into a stall if the buffer
+falls to that threshold before playback resumes. A buffering pill waits, its
+timer frozen, while an intro, recap, credits or Next Up pill shows, while the
+player is in picture in picture and, on the phone, while Silo is in the
+background.
+
 The startup stall detector (section 8) treats a starved decoder, buffering with
 under 5 s buffered ahead, as a transport stall. While data still arrives, that
 stall belongs to the buffering controller, which lowers quality, rather than to
