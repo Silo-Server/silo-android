@@ -7,8 +7,11 @@ import org.siloserver.silo.domain.player.BufferingPlanSummary
 import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.BufferingQualityReplan
 import org.siloserver.silo.model.playback.BUFFERING_QUALITY_V1_FEATURE
+import org.siloserver.silo.model.playback.LEARNED_LIMIT_CLEAR
 import org.siloserver.silo.model.playback.LEARNED_LIMIT_IGNORE
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_SUMMARY_V1_FEATURE
+import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
+import org.siloserver.silo.model.playback.videoQualityPreference
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.gatedForBufferingQuality
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
@@ -298,6 +301,64 @@ open class PlaybackSessionManager(
 
     private fun modeLearnedLimit(): String? =
         LEARNED_LIMIT_IGNORE.takeIf { bufferingQualityModeProvider() == BufferingQualityMode.NEVER }
+
+    /** The estimate one playback attempt's Auto was lowered with. */
+    private data class StepDownEstimate(val playbackAttemptId: String, val stepDownEstimateKbps: Int)
+
+    /**
+     * The estimate the buffering-quality controller last lowered Auto with,
+     * for the playback attempt it names. Set when a replan carrying a
+     * buffering-quality estimate is sent; see [withStepDownEstimate].
+     *
+     * Every later replan in that attempt that reads as Auto and carries no
+     * estimate of its own (track changes, failure recoveries, seek re-anchors
+     * and seek recoveries) re-sends it, without a source because it is not a
+     * new observation. Without it such a replan undoes the lowering whenever
+     * no learned limit applies (a server without `buffering_quality_v1`, or
+     * `never` mode): the server plans the source again, playback stalls, and
+     * the controller lowers once more.
+     *
+     * Restore quality (`learned_limit: clear`) clears it, and so does a
+     * `quality_change` the controller did not ask for: a viewer pick or a
+     * network move is a different choice or a different link. Keyed by
+     * playback attempt id, which every start mints afresh, so a new attempt
+     * never inherits it.
+     */
+    private val stepDownEstimate = AtomicReference<StepDownEstimate?>()
+
+    /**
+     * Records what [bufferingQuality] says about the step-down estimate and
+     * returns this request as it should be sent: with the remembered estimate
+     * added when it reads as Auto and has no estimate of its own. Call it
+     * where the request is built, right before it is sent. See
+     * [stepDownEstimate].
+     */
+    private fun PlaybackReplanRequestV3.withStepDownEstimate(
+        bufferingQuality: BufferingQualityReplan?,
+    ): PlaybackReplanRequestV3 {
+        val observed = bufferingQuality?.bandwidthEstimateKbps
+        val clears = bufferingQuality?.learnedLimit == LEARNED_LIMIT_CLEAR ||
+            (bufferingQuality == null && operation == QUALITY_CHANGE_V3_OPERATION)
+        when {
+            clears -> {
+                stepDownEstimate.getAndUpdate { it?.takeUnless { e -> e.playbackAttemptId == playbackAttemptId } }
+                return this
+            }
+            observed != null -> {
+                stepDownEstimate.set(StepDownEstimate(playbackAttemptId, observed))
+                return this
+            }
+        }
+        if (bandwidthEstimateKbps != null ||
+            videoQualityPreference(qualityPreference) != PLAYBACK_QUALITY_AUTO
+        ) {
+            return this
+        }
+        val remembered = stepDownEstimate.get()
+            ?.takeIf { it.playbackAttemptId == playbackAttemptId }
+            ?: return this
+        return copy(bandwidthEstimateKbps = remembered.stepDownEstimateKbps, bandwidthEstimateSource = null)
+    }
 
     private suspend fun <T> withSettledVideoAttempt(
         block: suspend () -> T,
@@ -895,7 +956,8 @@ open class PlaybackSessionManager(
          * and `learned_limit` go on the request. [sendReplan] then drops the
          * source and `learned_limit` for a server without
          * `buffering_quality_v1`. The session's bandwidth cap still applies.
-         * Null leaves the request unchanged.
+         * Null leaves the request unchanged, apart from the remembered
+         * step-down estimate (see [stepDownEstimate]).
          */
         bufferingQuality: BufferingQualityReplan? = null,
     ): ApiResult<PreparedVideoReplan> = withSettledVideoAttempt {
@@ -1032,7 +1094,7 @@ open class PlaybackSessionManager(
             failure = if (intent) null else PlaybackFailureV3(classification, message, decoderName),
             capabilities = currentCapabilities,
             clientPlaybackContext = currentContext,
-        )
+        ).withStepDownEstimate(bufferingQuality)
         val result = sendReplan(active.sessionId, request)
         var committedPlanAttemptId: String? = null
         if (result is ApiResult.Success) {
@@ -1965,7 +2027,7 @@ open class PlaybackSessionManager(
             selectedTracks = active.plan.selectedTracks,
             capabilities = active.capabilities,
             clientPlaybackContext = active.context,
-        )
+        ).withStepDownEstimate(bufferingQuality = null)
         emitRouteEvent(
             PlaybackRouteEventV3(
                 playbackAttemptId = active.playbackAttemptId,
@@ -2246,7 +2308,7 @@ open class PlaybackSessionManager(
             ),
             capabilities = active.capabilities,
             clientPlaybackContext = active.context,
-        )
+        ).withStepDownEstimate(bufferingQuality = null)
         emitRouteEvent(
             PlaybackRouteEventV3(
                 playbackAttemptId = active.playbackAttemptId,
@@ -2323,6 +2385,7 @@ open class PlaybackSessionManager(
                             planAttemptKey = nextKey,
                             attemptedPlanKeys = attemptedKeys,
                             attemptCount = nextAttemptCount,
+                            bandwidthEstimateKbps = request.bandwidthEstimateKbps,
                         )
                         if (next == null) {
                             return@withSettledVideoAttempt ApiResult.Error(
@@ -2419,6 +2482,8 @@ open class PlaybackSessionManager(
         planAttemptKey: String,
         attemptedPlanKeys: List<String>,
         attemptCount: Int,
+        /** The estimate the recovery request carried, for `plan_summary`. */
+        bandwidthEstimateKbps: Int?,
     ): ActiveVideoAttempt? {
         val current = activeVideoAttempt.get() ?: return null
         if (current.playbackAttemptId != expected.playbackAttemptId ||
@@ -2442,9 +2507,8 @@ open class PlaybackSessionManager(
             startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
             firstFrameReported = false,
         )
-        // Seek recovery sends no bandwidth estimate.
         return next.takeIf { activeVideoAttempt.compareAndSet(current, next) }
-            ?.also { rememberPlan(it, bandwidthEstimateKbps = null) }
+            ?.also { rememberPlan(it, bandwidthEstimateKbps) }
     }
 
     private fun mapOfNotNull(vararg values: Pair<String, String?>): Map<String, String> =
