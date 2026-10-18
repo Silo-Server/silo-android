@@ -266,6 +266,17 @@ fun PlayerScreen(
     val sessionState by viewModel.sessionState.collectAsState()
     val pictureInPictureEnabled by playerSettingsStore.pictureInPictureEnabledFlow.collectAsState(initial = true)
     val isInPictureInPictureMode by pictureInPictureCoordinator.isInPictureInPictureMode.collectAsState()
+    // Picture in picture and the background show no pills, so a buffering
+    // pill waits there with its timer frozen, as behind a higher-priority pill.
+    DisposableEffect(lifecycleOwner, isInPictureInPictureMode) {
+        fun report() = viewModel.onPlayerViewHiddenChanged(
+            isInPictureInPictureMode ||
+                !lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED),
+        )
+        val observer = LifecycleEventObserver { _, _ -> report() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val backendFactory: VideoPlaybackBackendFactory = koinInject()
     val audioCapabilityManager: AudioCapabilityManager = koinInject()
     val capabilityDetector: PlaybackCapabilityDetector = koinInject()

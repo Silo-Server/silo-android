@@ -732,6 +732,9 @@ class PlayerViewModel(
     /** Total seconds a buffering pill runs for, for the fill's arithmetic. */
     val bufferingTotalSeconds: Int = bufferingQualityController.totalCountdownSeconds
 
+    /** No pill can show: the player is in picture in picture or in the background. */
+    private val playerViewHidden = MutableStateFlow(false)
+
     private val _bufferingNotice = MutableStateFlow<BufferingQualityNotice?>(null)
 
     /** A display-only buffering notice, cleared after a few seconds; the overlay supplies the copy. */
@@ -761,7 +764,9 @@ class PlayerViewModel(
         // and Next Up outrank a buffering pill, which waits (or hides with its
         // timer frozen) while one shows. Outside a Watch Party (the only place
         // the controller runs) each shows whenever this state says so; the
-        // marker pill mirrors PlayerOverlay's own condition.
+        // marker pill mirrors PlayerOverlay's own condition. A player in
+        // picture in picture or in the background shows no pill at all, so
+        // the buffering pill waits there the same way.
         viewModelScope.launch {
             combine(
                 introAutoSkipController.state.map { it.isVisible },
@@ -769,7 +774,8 @@ class PlayerViewModel(
                     state.showUpNext ||
                         (!state.isLoading && markerSkipTarget(state.position, state.recap, state.credits) != null)
                 },
-            ) { introVisible, otherVisible -> introVisible || otherVisible }
+                playerViewHidden,
+            ) { introVisible, otherVisible, viewHidden -> introVisible || otherVisible || viewHidden }
                 .distinctUntilChanged()
                 .collect { bufferingQualityController.setOtherPillVisible(it) }
         }
@@ -3929,6 +3935,11 @@ class PlayerViewModel(
 
     /** Back while a buffering pill shows. True when the pill consumed it. */
     fun onBufferingBack(): Boolean = bufferingQualityController.back()
+
+    /** The screen reports whether the full player is out of view: picture in picture, or in the background. */
+    fun onPlayerViewHiddenChanged(hidden: Boolean) {
+        playerViewHidden.value = hidden
+    }
 
     /** Select at the player root: the visible buffering pill's primary action. */
     fun onBufferingSelectPrimary(): Boolean = bufferingQualityController.selectPrimary()

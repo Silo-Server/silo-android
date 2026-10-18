@@ -649,11 +649,13 @@ fun TvPlayerScreen(
     // The intro, recap and credits skip pills and Next Up outrank the
     // buffering pill: it hides (its timer frozen) while any of them shows.
     // As displayed: in a room the intro pill shows only to members who may
-    // seek, and the marker pill only when its own gates allow.
-    val segmentOrNextUpPillDisplayed =
-        visibleIntroSkipState.isVisible || manualSkipTarget != null || state.showNextUp
-    LaunchedEffect(segmentOrNextUpPillDisplayed) {
-        viewModel.onOtherPillDisplayed(segmentOrNextUpPillDisplayed)
+    // seek, and the marker pill only when its own gates allow. Picture in
+    // picture shows no pills, so the buffering pill waits there the same way;
+    // leaving the player otherwise pauses or closes it.
+    val bufferingPillBlocked = visibleIntroSkipState.isVisible || manualSkipTarget != null ||
+        state.showNextUp || isInPictureInPictureMode
+    LaunchedEffect(bufferingPillBlocked) {
+        viewModel.onOtherPillDisplayed(bufferingPillBlocked)
     }
     val latestRoomSnapshot by rememberUpdatedState(roomSnapshot)
     val latestShowPartyPanel by rememberUpdatedState(showPartyPanel)

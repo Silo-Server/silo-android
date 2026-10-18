@@ -5975,7 +5975,8 @@ class TvPlayerViewModel(
     /**
      * At most one actionable pill: the intro, recap and credits skip pills
      * and Next Up outrank the buffering pill. The screen reports them as
-     * displayed, since only it knows which are on screen.
+     * displayed, since only it knows which are on screen, and reports picture
+     * in picture the same way, because it shows no pills either.
      */
     fun onOtherPillDisplayed(displayed: Boolean) {
         bufferingQualityController.setOtherPillVisible(displayed)
