@@ -92,9 +92,10 @@ Android sends one versioned request containing:
 - user `subtitle_fidelity_preference`;
 - current video, display, audio, and subtitle capabilities;
 - `output_route_generation` and any user bandwidth cap (`bandwidth_cap_kbps`).
-  It sends no bandwidth estimate (see 3.6) and always sends `metered: false`:
-  the server ignores it, and older servers require it on `/api/v2` but drop
-  `auto` to their metered limit on `true`;
+  A start may carry the bandwidth probe's estimate and a lowering replan its
+  step-down estimate (see 3.6). It always sends `metered: false`: the server
+  ignores it, and older servers require it on `/api/v2` but drop `auto` to
+  their metered limit on `true`;
 - app, SDK, ABI, form-factor, and protocol feature versions;
 - start position and any active playback-session identity;
 - for recovery, `replan_request_id`, failed `plan_id`, `plan_attempt_id`,
@@ -173,10 +174,11 @@ own rung labels picked from the player's Quality menu; the UI may label `2160p`
 as “4K.” Their meanings are:
 
 - `auto`: play the source whenever the device and the measured connection can
-  carry it, converting only when its capabilities, the bandwidth estimate, the
-  user's bandwidth cap, or a server/administrator limit require it;
+  carry it, converting only when its capabilities, the bandwidth estimate, a
+  learned limit, the user's bandwidth cap, or a server/administrator limit
+  require it;
 - a resolution rung: maximum output resolution with no upscaling. It ignores
-  the bandwidth estimate; only the cap still applies.
+  the bandwidth estimate and any learned limit; only the cap still applies.
 
 There is no Original choice. A stored or linked `original` (also `source` and
 `max`) reads as `auto`, and video requests never send it, because older servers
@@ -188,14 +190,96 @@ The server returns the effective codec, range, resolution, bitrate, and reason.
 Initial HLS transcodes use one effective rendition; true multi-variant ABR is a
 separate protocol feature and must not be implied by the word “adaptive.”
 
+Repeated rebuffering lowers quality, as the server repo's
+`docs/design/2026-10-17-buffering-quality.md` specifies. The phone and TV
+players run one `BufferingQualityController` (`shared/`), fed by one Media3
+adapter, `BufferingQualityPlayerAdapter` (`android-shared/`). It has the web
+player's stall detector and the spec's state machine, and
+`BufferingQualityVectorsTest` replays the spec's vendored `vectors.json`. Its
+mode is `playback.buffering_quality_mode` (Settings → Lower quality when
+buffering): `always`, the default, lowers Auto at once and offers **Restore
+quality**; `ask` asks first; `never` only detects and reports. A quality the
+viewer picked is always asked about. Lowering Auto is a `quality_change` replan
+with the step-down estimate (see 3.6); lowering a picked rung names the next
+rung's label and carries no estimate. The controller is off in a Watch Party.
+When the server advertises `playback_plan_summary_v1`, each plan that stops
+playing is reported in a `plan_summary` route event: its stalls, delivered
+bitrate, mode, last buffering action, and the estimate it was requested with.
+
+The startup stall detector (section 8) treats a starved decoder, buffering with
+under 5 s buffered ahead, as a transport stall. While data still arrives, that
+stall belongs to the buffering controller, which lowers quality, rather than to
+a same-plan reopen.
+
+The server remembers what a lowering learned. A start or replan
+carrying `bandwidth_estimate_source: "observed_rebuffer"` records a learned
+limit for this user, device (`X-Silo-Device-Id`) and connection for 7 days from
+the last observation, and Auto plans under it. A plan the limit lowered carries
+`playback_plan.bandwidth_limit`, and the Quality menu labels Auto “Auto ·
+limited after buffering”. **Restore quality** sends `learned_limit: "clear"`,
+and `never` mode sends `learned_limit: "ignore"` on every start and replan, so
+a limit learned by another profile on this device does not reach it. Settings →
+Playback shows the limit for the current connection with a **Reset**
+(`DELETE /api/v2/playback/connection/learned-limit`). Only a server that
+advertises `buffering_quality_v1` gets `buffering_quality_v1` in
+`client_features`, `bandwidth_estimate_source`, and `learned_limit`;
+`gatedForBufferingQuality` strips them for any other server and keeps the
+estimate, and nothing is learned there.
+
 ### 3.6 Network inputs
 
-Requests carry no `bandwidth_estimate_kbps`, so `auto` plays the source
-whenever the device can. Media3's meter times loads that stall on a full buffer
-or wait on a live transcode, so its figure can understate the link and make
-`auto` convert the next title. A measured estimate waits for the server's
-bandwidth probe. `PlaybackNetworkMonitor` still reports Media3's figure in
+A request sends `bandwidth_estimate_kbps` in two cases only:
+
+- **The probe estimate, on a start.** A start sends the bandwidth probe's
+  fresh measurement with `bandwidth_estimate_source: "probe"`. It is a hint:
+  the server uses it only to rule out a source above 80% of the estimate, and
+  only when playback starts. Replans never carry it.
+- **The step-down estimate, on lowering replans.** A replan that lowers Auto
+  after repeated rebuffering sends `floor(delivered bitrate × 7 / 10)` with
+  `bandwidth_estimate_source: "observed_rebuffer"`. Later Auto replans in the
+  same playback keep sending that estimate, without a source, so a failure or
+  track replan does not lift it. The carry ends with **Restore quality**, a
+  quality change the controller did not send, or a new playback attempt.
+
+Media3's bandwidth meter is never sent. It times loads that stall on a full
+buffer or wait on a live transcode, so its figure can understate the link and
+make `auto` convert the next title. `PlaybackNetworkMonitor` reports it only in
 route events and the diagnostics bundle.
+
+The probe follows the web player's `bandwidth-probe.ts` (see the server design,
+*Probe on Android and Apple*). One `BandwidthProbeScheduler` per process
+(`android-shared/.../player/probe/`) runs it:
+
+- **Endpoint.** Only for a server whose capability `features` carry
+  `connection_speed_v1` and that names a `bandwidth_probe_url`, the probe on the
+  path this client's media takes. That URL is the server's own and goes out
+  with the app's normal auth. A redirect to a short-lived proxy URL is followed
+  once, without credentials. A `429` is reported with its `Retry-After`.
+- **Measurement.** It asks for 40 MB and times 2 s from the first byte, after
+  a 300 ms warm-up when the window allows. It abandons a probe with no byte in
+  10 s, cuts off a read that stalls 500 ms past the window, and stops the
+  download when the window ends.
+- **When.** In the background 5 s after sign-in or a return to the
+  foreground, again when the result expires, and every 5 minutes while a probe
+  could not run. Leaving the foreground stops it.
+- **When not.** Never on a metered or cellular network (`metered || cellular`
+  in `PlaybackNetworkSnapshot`, so a VPN Android marks metered is skipped too),
+  and never while local media plays or loads. The process's one Media3 player
+  (`ActivePlayerHolder`) is the playing signal. A video start also tells the
+  probe, which cancels a running probe and holds off new ones for 60 s.
+- **Cache.** 30 minutes, for the server and network it was measured on. A
+  network change (lost, or another network handle, transport, or metering) or
+  a server change discards it, and a start then sends no estimate.
+- **Reporting.** Each result goes to
+  `POST /api/v2/playback/bandwidth-probe/results` with its transport
+  (`wifi`, `ethernet`, `cellular` or `other`).
+
+Settings → Playback → Connection, shown only while the server advertises
+`connection_speed_v1`, displays the latest measurement from
+`GET /api/v2/playback/connection` (`probe`) with **Test speed**, which runs the
+probe in the foreground under the same gates. It also shows the server's
+`auto_budget_kbps`, which the client displays and never computes. On cellular
+and metered networks it says speed tests are skipped instead.
 
 The phone sends its cellular pair (`playback.cellular_preferred_quality` and
 `playback.cellular_max_bitrate_kbps`) as `quality_preference` and
