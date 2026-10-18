@@ -34,6 +34,7 @@ class PlaybackStartupStallDetector(
     private var clientTransformDecoderOutputCount: Int = 0
     private var clientTransformProgressAtMs: Long = 0L
     private var clientTransformOwnedLastSample = true
+    private var decoderOwnedLastSample = true
     private var paused = false
     // Last time playback made forward progress (or the mount time before it
     // starts). The stall is measured from here, so the same logic covers a
@@ -74,6 +75,7 @@ class PlaybackStartupStallDetector(
         this.clientTransformDecoderOutputCount = 0
         this.clientTransformProgressAtMs = nowMs
         this.clientTransformOwnedLastSample = true
+        this.decoderOwnedLastSample = true
         this.paused = false
         this.lastProgressPositionMs = this.startPositionMs
         this.lastBufferedPositionMs = this.startPositionMs
@@ -205,13 +207,30 @@ class PlaybackStartupStallDetector(
         // Audio may advance the position and set isPlaying=true while video is
         // wedged before its first output. This deadline is deliberately
         // independent from the transport/buffering progress clock.
+        //
+        // The same ownership rule as the transform deadline above: a decoder
+        // that has had a few samples but sits in BUFFERING with a thin buffer
+        // is starved, not wedged. On a throttled link it holds some input and
+        // no first output for as long as the network takes, so while BUFFERING
+        // below the threshold transport owns the stall and this deadline stays
+        // anchored to now. The starved case then reaches the transport clock
+        // below as a transport stall, which the screens hand to the buffering
+        // controller instead of racing it with a failure replan. A player that
+        // is PLAYING keeps the deadline however little is buffered: audio is
+        // advancing from the same source, so a silent video decoder is at
+        // fault. The deadline restarts from the sample on which ownership
+        // returns to the decoder, so a gap between polls spanning the refill
+        // cannot leave it pointing into the starved stretch.
+        val transportOwnsDecoderStartup = isBuffering && !isPlaying &&
+            bufferedAheadMs < clientTransformMinBufferedAheadMs
         if (!signaled && !firstFrameRendered && playWhenReady && decoderInputBufferCount > 0) {
+            if (transportOwnsDecoderStartup || !decoderOwnedLastSample) decoderStartupAtMs = nowMs
             val decoderStart = decoderStartupAtMs ?: nowMs.also { decoderStartupAtMs = it }
             val decoderStalledForMs = nowMs - decoderStart
             if (decoderStalledForMs > startupGraceMs) {
                 signaled = true
                 return Playability.StartupStalled(
-                    bufferedAheadMs = (bufferedPositionMs - currentPositionMs).coerceAtLeast(0L),
+                    bufferedAheadMs = bufferedAheadMs,
                     stalledForMs = decoderStalledForMs,
                     classification = if (decoderOutputCount == 0) {
                         "decoder_no_output"
@@ -221,6 +240,7 @@ class PlaybackStartupStallDetector(
                 )
             }
         }
+        decoderOwnedLastSample = !transportOwnsDecoderStartup
 
         // Forward progress (actively playing, or position advanced meaningfully)
         // re-anchors the stall clock and latches "started".
@@ -253,11 +273,14 @@ class PlaybackStartupStallDetector(
 
         signaled = true
         return Playability.StartupStalled(
-            bufferedAheadMs = (bufferedPositionMs - currentPositionMs).coerceAtLeast(0L),
+            bufferedAheadMs = bufferedAheadMs,
             stalledForMs = stalledForMs,
+            // Input without output blames the decoder only when it has been
+            // fed; a starved one is the transport's stall (see above).
             classification = if (
                 decoderInputBufferCount > 0 &&
-                decoderOutputCount == 0
+                decoderOutputCount == 0 &&
+                !transportOwnsDecoderStartup
             ) {
                 "decoder_no_output"
             } else {

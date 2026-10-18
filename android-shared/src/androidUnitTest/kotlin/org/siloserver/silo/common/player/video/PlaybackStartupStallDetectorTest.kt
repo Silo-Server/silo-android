@@ -173,6 +173,111 @@ class PlaybackStartupStallDetectorTest {
     }
 
     @Test
+    fun starvedDecoderBeforeStartIsATransportStall() {
+        // The device trace: a throttled link, BUFFERING with 1.5 s ahead, the
+        // decoder holding a few samples and no first output. It is waiting on
+        // the network, so the transport clock reports it for the buffering
+        // controller rather than a decoder failure that races it.
+        val detector = PlaybackStartupStallDetector()
+        detector.onMounted("starved", PlayMethod.DIRECT, 0, 0)
+
+        for (nowMs in 1_000L..20_000L step 1_000L) {
+            assertNull(detector.sample("starved", nowMs, true, false, true, 0, 1_542, decoderInputBufferCount = 3))
+        }
+        assertEquals(
+            Playability.StartupStalled(bufferedAheadMs = 1_542, stalledForMs = 20_295, classification = "transport_stall"),
+            detector.sample("starved", 20_295, true, false, true, 0, 1_542, decoderInputBufferCount = 3),
+        )
+    }
+
+    @Test
+    fun starvedDecoderDoesNotRunTheDecoderStartupDeadline() {
+        // Audio started while the video decoder got its first sample, then the
+        // link throttled. The 30 s mid-stream clock leaves the decoder
+        // deadline visible on its own: 25 s starved must not trip it.
+        val detector = PlaybackStartupStallDetector(startupGraceMs = 20_000, midStreamGraceMs = 30_000)
+        detector.onMounted("starved-mid", PlayMethod.DIRECT, 0, 0)
+
+        assertNull(detector.sample("starved-mid", 1_000, true, true, false, 1_000, 2_500, decoderInputBufferCount = 1))
+        for (nowMs in 2_000L..27_000L step 1_000L) {
+            assertNull(
+                detector.sample("starved-mid", nowMs, true, false, true, 1_000, 2_542, decoderInputBufferCount = 3),
+                "a starved decoder at ${nowMs}ms is not a decoder failure",
+            )
+        }
+        assertEquals(
+            "transport_stall",
+            detector.sample("starved-mid", 31_001, true, false, true, 1_000, 2_542, decoderInputBufferCount = 3)
+                ?.classification,
+        )
+    }
+
+    @Test
+    fun fedDecoderWithoutOutputWhileBufferingStillFails() {
+        // Five seconds buffered is enough to have fed the decoder, so its
+        // silence is its own fault.
+        val detector = PlaybackStartupStallDetector(startupGraceMs = 20_000, midStreamGraceMs = 30_000)
+        detector.onMounted("fed", PlayMethod.DIRECT, 0, 0)
+
+        assertNull(detector.sample("fed", 1_000, true, true, false, 1_000, 2_500, decoderInputBufferCount = 1))
+        assertNull(detector.sample("fed", 2_000, true, false, true, 1_000, 6_000, decoderInputBufferCount = 3))
+        assertNull(detector.sample("fed", 21_000, true, false, true, 1_000, 6_000, decoderInputBufferCount = 3))
+        assertEquals(
+            Playability.StartupStalled(bufferedAheadMs = 5_000, stalledForMs = 20_001, classification = "decoder_no_output"),
+            detector.sample("fed", 21_001, true, false, true, 1_000, 6_000, decoderInputBufferCount = 3),
+        )
+    }
+
+    @Test
+    fun silentVideoWhileAudioPlaysFailsHoweverLittleIsBuffered() {
+        val noOutput = PlaybackStartupStallDetector(startupGraceMs = 1_000)
+        noOutput.onMounted("thin-black-video", PlayMethod.DIRECT, 0, 0)
+        assertNull(noOutput.sample("thin-black-video", 100, true, true, false, 100, 1_600, decoderInputBufferCount = 1))
+        assertEquals(
+            "decoder_no_output",
+            noOutput.sample("thin-black-video", 1_101, true, true, false, 1_101, 2_600, decoderInputBufferCount = 8)
+                ?.classification,
+        )
+
+        val droppedOutput = PlaybackStartupStallDetector(startupGraceMs = 1_000)
+        droppedOutput.onMounted("thin-dropped-video", PlayMethod.DIRECT, 0, 0)
+        assertNull(
+            droppedOutput.sample("thin-dropped-video", 100, true, true, false, 100, 1_600, decoderInputBufferCount = 1),
+        )
+        assertEquals(
+            "render_startup_failure",
+            droppedOutput.sample(
+                "thin-dropped-video", 1_101, true, true, false, 1_101, 2_600,
+                decoderInputBufferCount = 8,
+                decoderDroppedBufferCount = 4,
+            )?.classification,
+        )
+    }
+
+    @Test
+    fun decoderDeadlineRestartsOnTheSampleThatReturnsOwnershipFromTransport() {
+        // Started, then starved; no polls during the refill (a lifecycle gap),
+        // and the first poll after it finds 6 s buffered and still no output.
+        // The deadline counts from that hand-back, not from before the starved
+        // stretch or from its last sample.
+        val detector = PlaybackStartupStallDetector(startupGraceMs = 20_000, midStreamGraceMs = 60_000)
+        detector.onMounted("handback", PlayMethod.DIRECT, 0, 0)
+
+        assertNull(detector.sample("handback", 1_000, true, true, false, 1_000, 2_500, decoderInputBufferCount = 1))
+        assertNull(detector.sample("handback", 2_000, true, false, true, 1_000, 2_542, decoderInputBufferCount = 3))
+        assertNull(
+            detector.sample("handback", 17_000, true, false, true, 1_000, 7_000, decoderInputBufferCount = 3),
+            "the sample that hands ownership back to the decoder must not be blamed on it",
+        )
+        assertNull(detector.sample("handback", 22_001, true, false, true, 1_000, 7_000, decoderInputBufferCount = 3))
+        assertNull(detector.sample("handback", 37_000, true, false, true, 1_000, 7_000, decoderInputBufferCount = 3))
+        assertEquals(
+            Playability.StartupStalled(bufferedAheadMs = 6_000, stalledForMs = 20_001, classification = "decoder_no_output"),
+            detector.sample("handback", 37_001, true, false, true, 1_000, 7_000, decoderInputBufferCount = 3),
+        )
+    }
+
+    @Test
     fun firstFrameDisarmsIndependentDecoderDeadline() {
         val detector = PlaybackStartupStallDetector(startupGraceMs = 1_000)
         detector.onMounted("rendered", PlayMethod.DIRECT, 0, 0)
