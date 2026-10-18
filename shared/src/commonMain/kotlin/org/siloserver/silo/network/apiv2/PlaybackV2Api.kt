@@ -3,7 +3,9 @@ package org.siloserver.silo.network.apiv2
 import io.ktor.client.HttpClient
 import io.ktor.client.request.*
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.*
+import io.ktor.utils.io.readAvailable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
@@ -14,6 +16,12 @@ import org.siloserver.silo.network.*
 import org.siloserver.silo.network.localroute.stayOnSavedAddress
 
 const val SEQUENCED_PROGRESS_FEATURE = "sequenced_progress_v1"
+
+/** The redirects a bandwidth probe download follows once; the server sends 307. */
+private val PROBE_REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)
+
+/** The wait a 429 implies when it names none, as the web probe assumes. */
+private const val DEFAULT_PROBE_RETRY_AFTER_SECONDS = 30
 
 /** `PlaybackCapabilities.state` on the wire. */
 object PlaybackCapabilityStateV2 {
@@ -37,7 +45,44 @@ data class PlaybackCapabilitiesV2(
     val allowed: Boolean,
     @SerialName("protocol_versions") val protocolVersions: List<Int>,
     val features: List<String>,
+    /**
+     * The bandwidth probe on the path this client's media takes, sent with
+     * [CONNECTION_SPEED_V1_FEATURE][org.siloserver.silo.model.playback.CONNECTION_SPEED_V1_FEATURE].
+     * Stable and authenticated; a download of it may redirect to a
+     * short-lived proxy URL ([PlaybackV2Api.bandwidthProbe]).
+     */
+    @SerialName("bandwidth_probe_url") val bandwidthProbeUrl: String? = null,
 )
+
+/**
+ * `POST /api/v2/playback/bandwidth-probe/results`: one probe measurement from
+ * this device, which the server keeps per learned-limit key and shows in
+ * Settings and on the admin device page.
+ */
+@Serializable
+data class PlaybackBandwidthProbeResultV2(
+    val kbps: Int,
+    val bytes: Long,
+    @SerialName("duration_ms") val durationMs: Int,
+    /** `wifi`, `ethernet`, `cellular` or `other`. */
+    val transport: String,
+)
+
+/** How a bandwidth probe download answered ([PlaybackV2Api.bandwidthProbe]). */
+sealed interface BandwidthProbeResponseV2 {
+    /** HTTP 429: the server allows another probe after [retryAfterSeconds]. */
+    data class RateLimited(val retryAfterSeconds: Int) : BandwidthProbeResponseV2
+
+    /**
+     * Any other refusal: a non-200 status, a redirect without a usable
+     * `Location` or a second redirect, or a server this build must not call
+     * ([status] 0).
+     */
+    data class Unavailable(val status: Int) : BandwidthProbeResponseV2
+
+    /** HTTP 200: [read] fills a buffer with the next bytes and returns the count, or -1 at the end. */
+    class Body(val read: suspend (ByteArray) -> Int) : BandwidthProbeResponseV2
+}
 
 /**
  * `GET /api/v2/playback/connection`: this device's state on the connection it
@@ -147,6 +192,70 @@ class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate)
     suspend fun resetLearnedLimit(scope: AuthScopeSnapshot): ApiResult<Unit> =
         exchange<Unit, Unit>(HttpStatusCode.NoContent, {
             client.delete("/api/v2/playback/connection/learned-limit") { authScope(scope); requireSiloAuth() }
+        }) { it }
+
+    /** Redirects are followed by hand in [bandwidthProbe], so this client follows none. */
+    private val probeClient: HttpClient by lazy { client.config { followRedirects = false } }
+
+    /**
+     * Downloads the advertised bandwidth probe [url] (`bandwidth_probe_url`
+     * plus `size`), hands the answer to [read], and ends the transfer when
+     * [read] returns: the server stops at its next write.
+     *
+     * The advertised URL is the server's own and goes out with this app's
+     * normal auth, pinned to [scope]. It may answer with a redirect to a
+     * short-lived proxy URL that carries its own token and can be another
+     * host, so that one hop is followed with none of this app's credentials.
+     * Exceptions (no access token, a failed connection) propagate.
+     */
+    suspend fun <T> bandwidthProbe(
+        scope: AuthScopeSnapshot,
+        url: String,
+        read: suspend (BandwidthProbeResponseV2) -> T,
+    ): T {
+        if (gate.blocked() != null) return read(BandwidthProbeResponseV2.Unavailable(0))
+        return probeClient.prepareGet(url) {
+            authScope(scope); requireSiloAuth(); acceptProbeBytes()
+        }.execute { response ->
+            val location = response.headers[HttpHeaders.Location]
+            if (response.status.value !in PROBE_REDIRECT_STATUSES) return@execute probeAnswer(response, read)
+            if (location.isNullOrBlank()) return@execute read(BandwidthProbeResponseV2.Unavailable(response.status.value))
+            val target = URLBuilder(response.call.request.url).apply {
+                parameters.clear()
+                takeFrom(location)
+            }.buildString()
+            probeClient.prepareGet(target) { skipSiloAuth(); acceptProbeBytes() }
+                .execute { proxied -> probeAnswer(proxied, read) }
+        }
+    }
+
+    private fun HttpRequestBuilder.acceptProbeBytes() {
+        header(HttpHeaders.Accept, ContentType.Application.OctetStream.toString())
+        header(HttpHeaders.CacheControl, "no-store")
+    }
+
+    private suspend fun <T> probeAnswer(response: HttpResponse, read: suspend (BandwidthProbeResponseV2) -> T): T =
+        when (response.status) {
+            HttpStatusCode.OK -> {
+                val body = response.bodyAsChannel()
+                read(BandwidthProbeResponseV2.Body { buffer -> body.readAvailable(buffer, 0, buffer.size) })
+            }
+            HttpStatusCode.TooManyRequests -> read(
+                BandwidthProbeResponseV2.RateLimited(
+                    response.headers[HttpHeaders.RetryAfter]?.trim()?.toIntOrNull()?.takeIf { it > 0 }
+                        ?: DEFAULT_PROBE_RETRY_AFTER_SECONDS,
+                ),
+            )
+            else -> read(BandwidthProbeResponseV2.Unavailable(response.status.value))
+        }
+
+    /** HTTP 204: stores this device's latest probe measurement for its current connection. */
+    suspend fun reportBandwidthProbe(scope: AuthScopeSnapshot, result: PlaybackBandwidthProbeResultV2): ApiResult<Unit> =
+        exchange<Unit, Unit>(HttpStatusCode.NoContent, {
+            client.post("/api/v2/playback/bandwidth-probe/results") {
+                authScope(scope); requireSiloAuth(); singleAttempt()
+                contentType(ContentType.Application.Json); setBody(result)
+            }
         }) { it }
 
     suspend fun account(scope: AuthScopeSnapshot): ApiResult<Account> = safeApiV2Call(gate) {

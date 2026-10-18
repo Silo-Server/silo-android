@@ -37,13 +37,24 @@ import org.siloserver.silo.network.api.SettingsApi
 import org.siloserver.silo.repository.LibraryPlaybackPrefsRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SettingsRepository
+import org.siloserver.silo.common.player.probe.BandwidthProbeScheduler
+import org.siloserver.silo.common.player.probe.PlaybackBandwidthEstimates
+import org.siloserver.silo.common.player.probe.PlaybackV2BandwidthProbeServer
+import org.siloserver.silo.common.player.probe.PlayerMediaActivity
+import org.siloserver.silo.model.server.ServerEntry
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import org.koin.android.ext.koin.androidContext
 import org.koin.dsl.module
+
+/** The entry's id while it is signed in with a profile: what the bandwidth probe measures. */
+private fun ServerEntry?.signedInServerId(): String? = this?.takeIf { !it.profileId.isNullOrBlank() }?.id
 
 /**
  * Phase 0 player infrastructure DI module.
@@ -64,6 +75,33 @@ val playerInfraModule = module {
     single { org.siloserver.silo.network.apiv2.PlaybackV2Api(get(), get()) }
     // The buffering-quality connection state and learned-limit reset Settings shows.
     single { org.siloserver.silo.repository.PlaybackConnectionRepository(get(), get()) }
+    // The bandwidth probe: one schedule per process, which each app's
+    // Application starts on the process lifecycle. Playback starts read its
+    // estimate through PlaybackBandwidthEstimates.
+    single {
+        val registry = get<ServerRegistry>()
+        // One coroutine at a time: the scheduler's state is confined to it.
+        val probeScope = CoroutineScope(
+            SupervisorJob() + Dispatchers.Default.limitedParallelism(1) +
+                CoroutineExceptionHandler { _, failure ->
+                    // Class name only: the message can carry the server's address.
+                    android.util.Log.w("BandwidthProbe", "bandwidth probe failed: ${failure::class.simpleName}")
+                },
+        )
+        BandwidthProbeScheduler(
+            server = PlaybackV2BandwidthProbeServer(get(), get()),
+            network = get(),
+            mediaActive = PlayerMediaActivity(
+                holder = get(),
+                scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+            ).active,
+            activeServer = registry.activeEntry
+                .map { it.signedInServerId() }
+                .stateIn(probeScope, SharingStarted.Eagerly, registry.activeEntry.value.signedInServerId()),
+            scope = probeScope,
+        )
+    }
+    single<PlaybackBandwidthEstimates> { get<BandwidthProbeScheduler>() }
     single {
         org.siloserver.silo.repository.SequencedPlayback(
             get(), get(), get(), get(),
