@@ -777,7 +777,10 @@ class PlayerViewModel(
                 playerViewHidden,
             ) { introVisible, otherVisible, viewHidden -> introVisible || otherVisible || viewHidden }
                 .distinctUntilChanged()
-                .collect { bufferingQualityController.setOtherPillVisible(it) }
+                .collect { blocked ->
+                    Log.i(TAG, "buffering_quality pill_blocked=$blocked")
+                    bufferingQualityController.setOtherPillVisible(blocked)
+                }
         }
         viewModelScope.launch {
             var shownKind: String? = null
@@ -3938,6 +3941,7 @@ class PlayerViewModel(
 
     /** The screen reports whether the full player is out of view: picture in picture, or in the background. */
     fun onPlayerViewHiddenChanged(hidden: Boolean) {
+        if (playerViewHidden.value != hidden) Log.i(TAG, "buffering_quality player_view_hidden=$hidden")
         playerViewHidden.value = hidden
     }
 
