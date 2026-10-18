@@ -1741,27 +1741,28 @@ fun LibrariesSelectorSheet(
         contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
         // iOS `LibraryPickerSheet`: a large "Libraries" navigation title above a
-        // VStack(spacing: 8) of rows, with h/v padding = padding (16).
-        Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+        // ScrollView of VStack(spacing: 8) rows, with h/v padding = padding (16).
+        // The title stays put and the rows scroll, so every library is reachable
+        // when the list is taller than the screen.
+        Text(
+            text = "Libraries",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp),
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+
+        LazyColumn(
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 48.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                text = "Libraries",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            libraries.forEach { library ->
+            items(libraries, key = { it.id }) { library ->
                 LibrarySelectorRow(
                     library = library,
                     isSelected = library.id == selectedLibraryId,
                     onClick = { onSelectLibrary(library.id) },
                 )
             }
-
-            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }
