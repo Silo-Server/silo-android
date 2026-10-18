@@ -343,7 +343,6 @@ class PlaybackProtocolV3ConformanceTest {
         assertClientReadsEveryFieldExcept(
             raw,
             json.encodeToJsonElement(PlaybackStartRequestV3.serializer(), decoded),
-            unsentKeys = UNSENT_NETWORK_EVIDENCE,
         )
     }
 
@@ -368,7 +367,6 @@ class PlaybackProtocolV3ConformanceTest {
         assertClientReadsEveryFieldExcept(
             raw,
             json.encodeToJsonElement(PlaybackReplanRequestV3.serializer(), decoded),
-            unsentKeys = UNSENT_NETWORK_EVIDENCE,
         )
     }
 
@@ -575,7 +573,6 @@ class PlaybackProtocolV3ConformanceTest {
         assertClientReadsEveryFieldExcept(
             raw,
             json.encodeToJsonElement(ConformanceMatrixFixtureV3.serializer(), matrix),
-            unsentKeys = UNSENT_NETWORK_EVIDENCE,
         )
     }
 
@@ -647,12 +644,9 @@ class PlaybackProtocolV3ConformanceTest {
         rawFixture: String,
         reencoded: JsonElement,
         allowedMissing: Set<String> = emptySet(),
-        /** Request keys the client deliberately never sends, at any depth. */
-        unsentKeys: Set<String> = emptySet(),
     ) {
         val lost = mutableListOf<String>()
         collectLostPaths(SiloJson.parseToJsonElement(rawFixture), reencoded, "$", lost)
-        lost.removeAll { path -> unsentKeys.any { path.endsWith(".$it") } }
 
         assertEquals(
             allowedMissing.sorted(),
@@ -731,13 +725,6 @@ class PlaybackProtocolV3ConformanceTest {
          * it means a new server field went unread, so add an entry only with a
          * reason.
          */
-        /**
-         * The request field this client never sends: Media3's estimate can
-         * understate the link and make Auto convert. The fixtures still carry
-         * it. (`metered` is still sent, always false.)
-         */
-        val UNSENT_NETWORK_EVIDENCE = setOf("bandwidth_estimate_kbps")
-
         val UNMODELLED_SOURCE_DETAIL = setOf(
             "$.playback_plan.source.video_profile",
             "$.playback_plan.source.video_level",
