@@ -52,6 +52,16 @@ data class PlaybackCapabilitiesV2(
      * short-lived proxy URL ([PlaybackV2Api.bandwidthProbe]).
      */
     @SerialName("bandwidth_probe_url") val bandwidthProbeUrl: String? = null,
+    /**
+     * The rate a quick test has to prove: the highest bitrate the server would
+     * plan for this viewer, plus 25%. Absent when the server has none, for
+     * example before any video is scanned.
+     */
+    @SerialName("bandwidth_probe_target_kbps") val bandwidthProbeTargetKbps: Int? = null,
+    /** False when the admin turned automatic tests off; **Test speed** still works. Absent reads as on. */
+    @SerialName("bandwidth_probe_automatic") val bandwidthProbeAutomatic: Boolean = true,
+    /** How long a reading stays current. */
+    @SerialName("bandwidth_probe_max_age_seconds") val bandwidthProbeMaxAgeSeconds: Long? = null,
 )
 
 /**
@@ -66,6 +76,12 @@ data class PlaybackBandwidthProbeResultV2(
     @SerialName("duration_ms") val durationMs: Int,
     /** `wifi`, `ethernet`, `cellular` or `other`. */
     val transport: String,
+    /**
+     * True when the link is at least [kbps]: a quick test that reached its
+     * target, or a rate capped at 1,000,000. Null, and so omitted, otherwise:
+     * the server reads absent as false.
+     */
+    @SerialName("lower_bound") val lowerBound: Boolean? = null,
 )
 
 /** How a bandwidth probe download answered ([PlaybackV2Api.bandwidthProbe]). */
@@ -88,8 +104,10 @@ sealed interface BandwidthProbeResponseV2 {
  * `GET /api/v2/playback/connection`: this device's state on the connection it
  * is using now. Served only by a server advertising
  * [BUFFERING_QUALITY_V1_FEATURE][org.siloserver.silo.model.playback.BUFFERING_QUALITY_V1_FEATURE].
- * Phase 1 servers send [connection] and [learnedLimit]; phase 2 adds [probe]
- * and [autoBudgetKbps], which the server computes and clients only display.
+ * Phase 1 servers send [connection] and [learnedLimit]; phase 2 adds [probe],
+ * [playbackSample] and [autoBudgetKbps], which the server computes and clients
+ * only display. The server sends the latest probe and sample whether or not
+ * they are current; clients judge that against the reading lifetime.
  */
 @Serializable
 data class PlaybackConnectionV2(
@@ -98,6 +116,8 @@ data class PlaybackConnectionV2(
     /** Absent when no limit is stored for this device on this connection. */
     @SerialName("learned_limit") val learnedLimit: PlaybackLearnedLimitV2? = null,
     val probe: PlaybackConnectionProbeV2? = null,
+    /** The highest rate this device's playback received data at on this connection; a lower bound. */
+    @SerialName("playback_sample") val playbackSample: PlaybackConnectionSampleV2? = null,
     @SerialName("auto_budget_kbps") val autoBudgetKbps: Int? = null,
 )
 
@@ -113,9 +133,18 @@ data class PlaybackLearnedLimitV2(
 @Serializable
 data class PlaybackConnectionProbeV2(
     val kbps: Int,
+    /** The link is at least [kbps]: a quick test that reached its target. */
+    @SerialName("lower_bound") val lowerBound: Boolean = false,
     @SerialName("measured_at") val measuredAt: String? = null,
     /** `wifi`, `ethernet`, `cellular` or `other`. */
     val transport: String? = null,
+)
+
+/** A playback sample the server kept for this device on this connection; RFC 3339 time. */
+@Serializable
+data class PlaybackConnectionSampleV2(
+    val kbps: Int,
+    @SerialName("measured_at") val measuredAt: String? = null,
 )
 
 @Serializable

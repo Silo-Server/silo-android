@@ -5,11 +5,11 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import kotlin.coroutines.ContinuationInterceptor
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 import org.siloserver.silo.common.diagnostics.SiloLog
 import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.PlaybackNetworkSnapshot
+import org.siloserver.silo.domain.player.SpeedTestMode
 import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
 import org.siloserver.silo.model.playback.CONNECTION_SPEED_V1_FEATURE
 import org.siloserver.silo.network.ApiResult
@@ -49,9 +50,9 @@ const val PLAYBACK_START_QUIET_MS = 60_000L
  */
 interface PlaybackBandwidthEstimates {
     /**
-     * The probe's kbps for the active server on the network in use now, or
-     * null when the reading is past its lifetime ([BANDWIDTH_READING_LIFETIME_MS]),
-     * there is none, or the network is metered or cellular.
+     * The highest current reading's kbps for the active server on the network
+     * in use now, or null when there is none current, or the network is
+     * metered or cellular.
      */
     fun freshEstimateKbps(): Int?
 
@@ -66,7 +67,7 @@ interface PlaybackBandwidthEstimates {
     }
 }
 
-/** One probe measurement, as Settings shows it and the server stores it. */
+/** One speed test result, as Settings shows it and the server stores it. */
 data class BandwidthEstimate(
     val kbps: Int,
     val bytes: Long,
@@ -75,14 +76,22 @@ data class BandwidthEstimate(
     val transport: String,
     /** When it was measured, in epoch milliseconds. */
     val measuredAtEpochMs: Long,
+    /** The link is at least [kbps]: a quick test that reached its target, or a capped rate. */
+    val lowerBound: Boolean = false,
 )
+
+/** The rate this device's playback received data at, which the server kept. Always a lower bound. */
+data class PlaybackSample(val kbps: Int, val measuredAtEpochMs: Long)
 
 /** What a probe request came to. */
 sealed interface ProbeOutcome {
     data class Measured(val estimate: BandwidthEstimate) : ProbeOutcome
 
-    /** The server already held this device's reading for the connection, young enough to use: no test ran. */
-    data class Stored(val estimate: BandwidthEstimate) : ProbeOutcome
+    /** A current reading the server held for this device proves the link: no test ran. */
+    data object Stored : ProbeOutcome
+
+    /** The admin turned automatic tests off and nothing current proves the link: no test ran. */
+    data object AutomaticOff : ProbeOutcome
 
     /** HTTP 429: try again after [retryAfterSeconds]. */
     data class RateLimited(val retryAfterSeconds: Int) : ProbeOutcome
@@ -116,22 +125,27 @@ sealed interface ProbeOutcome {
 val PlaybackNetworkSnapshot.skipsBandwidthProbe: Boolean
     get() = metered || cellular
 
-/** The probe endpoint of the active server, for one probe and its report. */
+/** The probe endpoint of the active server and its schedule, for one check or test and its report. */
 class BandwidthProbeTarget(
     /** `ServerEntry.id` of the server the probe measures. */
     val serverId: String,
-    /** The download URL, `size` included. */
+    /** `bandwidth_probe_url`, resolved; [bandwidthProbeDownloadUrl] adds the size. */
     val url: String,
     val scope: AuthScopeSnapshot,
-    /** How long a reading on this server stands; see [BANDWIDTH_READING_LIFETIME_MS]. */
+    /** `bandwidth_probe_target_kbps`, the rate a quick test has to prove; null when the server has none. */
+    val targetKbps: Int? = null,
+    /** `bandwidth_probe_automatic`: false when the admin turned automatic tests off. */
+    val automatic: Boolean = true,
+    /** `bandwidth_probe_max_age_seconds`, or [BANDWIDTH_READING_LIFETIME_MS] when the server sends none. */
     val readingLifetimeMs: Long = BANDWIDTH_READING_LIFETIME_MS,
 )
 
-/** This device's stored reading on its current connection ([BandwidthProbeServer.storedReading]). */
+/** The readings the server holds for this device on its current connection ([BandwidthProbeServer.storedReading]). */
 sealed interface StoredReadingLookup {
-    data class Found(val estimate: BandwidthEstimate) : StoredReadingLookup
+    /** At least one of [probe] and [sample], current or not. */
+    data class Found(val probe: BandwidthEstimate?, val sample: PlaybackSample?) : StoredReadingLookup
 
-    /** The server holds no reading for this device on this connection, or one without a time. */
+    /** No reading for this device on this connection, or none with a time. */
     data object None : StoredReadingLookup
 
     data class Failed(val cause: Throwable?) : StoredReadingLookup
@@ -144,13 +158,15 @@ sealed interface BandwidthProbeTargetLookup {
     data class Failed(val cause: Throwable?) : BandwidthProbeTargetLookup
 }
 
-/** The server side of a probe: discovery, the download and the report. */
+/** The server side of a probe: discovery, the readings, the download and the report. */
 interface BandwidthProbeServer {
-    /** The active profile's probe endpoint, read from the capability response. */
+    /** The active profile's probe endpoint and schedule, read from the capability response. */
     suspend fun target(): BandwidthProbeTargetLookup
 
+    /** Downloads the probe for [mode] and hands the answer to [read]. */
     suspend fun download(
         target: BandwidthProbeTarget,
+        mode: SpeedTestMode,
         read: suspend (BandwidthProbeResponseV2) -> BandwidthProbeResult,
     ): BandwidthProbeResult
 
@@ -158,8 +174,9 @@ interface BandwidthProbeServer {
     suspend fun report(target: BandwidthProbeTarget, result: PlaybackBandwidthProbeResultV2): Boolean
 
     /**
-     * The reading the server already holds for this device on the connection
-     * it is using now: the `probe` of `GET /api/v2/playback/connection`.
+     * The readings the server already holds for this device on the connection
+     * it is using now: `probe` and `playback_sample` of
+     * `GET /api/v2/playback/connection`.
      */
     suspend fun storedReading(target: BandwidthProbeTarget): StoredReadingLookup
 }
@@ -179,12 +196,23 @@ class PlaybackV2BandwidthProbeServer(
             ?: return BandwidthProbeTargetLookup.NotSupported
         return when (val result = api.capabilities(scope)) {
             is ApiResult.Success -> {
-                val advertised = result.data.bandwidthProbeUrl?.takeIf {
-                    it.isNotBlank() && CONNECTION_SPEED_V1_FEATURE in result.data.features
+                val capabilities = result.data
+                val advertised = capabilities.bandwidthProbeUrl?.takeIf {
+                    it.isNotBlank() && CONNECTION_SPEED_V1_FEATURE in capabilities.features
                 } ?: return BandwidthProbeTargetLookup.NotSupported
-                val url = runCatching { bandwidthProbeDownloadUrl(scope.serverUrl, advertised) }.getOrNull()
+                val url = runCatching { resolveBandwidthProbeUrl(scope.serverUrl, advertised) }.getOrNull()
                     ?: return BandwidthProbeTargetLookup.NotSupported
-                BandwidthProbeTargetLookup.Found(BandwidthProbeTarget(scope.serverId, url, scope))
+                BandwidthProbeTargetLookup.Found(
+                    BandwidthProbeTarget(
+                        serverId = scope.serverId,
+                        url = url,
+                        scope = scope,
+                        targetKbps = capabilities.bandwidthProbeTargetKbps?.takeIf { it > 0 },
+                        automatic = capabilities.bandwidthProbeAutomatic,
+                        readingLifetimeMs = capabilities.bandwidthProbeMaxAgeSeconds?.takeIf { it > 0 }
+                            ?.let { it * 1_000 } ?: BANDWIDTH_READING_LIFETIME_MS,
+                    ),
+                )
             }
             // An older server has no v2 capabilities at all.
             is ApiResult.Error -> if (result.code == 404) BandwidthProbeTargetLookup.NotSupported
@@ -195,8 +223,9 @@ class PlaybackV2BandwidthProbeServer(
 
     override suspend fun download(
         target: BandwidthProbeTarget,
+        mode: SpeedTestMode,
         read: suspend (BandwidthProbeResponseV2) -> BandwidthProbeResult,
-    ): BandwidthProbeResult = api.bandwidthProbe(target.scope, target.url, read)
+    ): BandwidthProbeResult = api.bandwidthProbe(target.scope, bandwidthProbeDownloadUrl(target.url, mode), read)
 
     override suspend fun report(target: BandwidthProbeTarget, result: PlaybackBandwidthProbeResultV2): Boolean =
         api.reportBandwidthProbe(target.scope, result) is ApiResult.Success
@@ -204,21 +233,22 @@ class PlaybackV2BandwidthProbeServer(
     override suspend fun storedReading(target: BandwidthProbeTarget): StoredReadingLookup =
         when (val result = api.connection(target.scope)) {
             is ApiResult.Success -> {
-                val probe = result.data.probe
-                val measuredAt = probe?.measuredAt?.let(::parseRfc3339ToEpochMillis)
-                if (probe == null || measuredAt == null) {
-                    StoredReadingLookup.None
-                } else {
-                    StoredReadingLookup.Found(
+                val probe = result.data.probe?.let { stored ->
+                    stored.measuredAt?.let(::parseRfc3339ToEpochMillis)?.let { measuredAt ->
                         BandwidthEstimate(
-                            kbps = probe.kbps,
+                            kbps = stored.kbps,
                             bytes = 0,
                             durationMs = 0,
-                            transport = probe.transport ?: "other",
+                            transport = stored.transport ?: "other",
                             measuredAtEpochMs = measuredAt,
-                        ),
-                    )
+                            lowerBound = stored.lowerBound,
+                        )
+                    }
                 }
+                val sample = result.data.playbackSample?.let { stored ->
+                    stored.measuredAt?.let(::parseRfc3339ToEpochMillis)?.let { PlaybackSample(stored.kbps, it) }
+                }
+                if (probe == null && sample == null) StoredReadingLookup.None else StoredReadingLookup.Found(probe, sample)
             }
             is ApiResult.Error -> if (result.code == 404) StoredReadingLookup.None else StoredReadingLookup.Failed(null)
             is ApiResult.NetworkError -> StoredReadingLookup.Failed(result.exception)
@@ -226,29 +256,34 @@ class PlaybackV2BandwidthProbeServer(
 }
 
 /**
- * Keeps a reading of the connection while Silo is in the foreground and
+ * Keeps this device's connection readings while Silo is in the foreground and
  * signed in, for playback starts ([freshEstimateKbps]) and Settings
- * ([lastMeasurement], [runNow]). One per process.
+ * ([lastMeasurement], [runNow]). One per process. The spec is *Connection
+ * speed test → When to test* in the server repo's
+ * `docs/design/2026-10-17-buffering-quality.md`.
  *
- * - **Reading**: one per server and network, used until it is
- *   [BandwidthProbeTarget.readingLifetimeMs] old. Playback starts send it for
- *   that whole lifetime.
+ * - **Readings**: a probe and a playback sample, per server and network,
+ *   current while younger than [BandwidthProbeTarget.readingLifetimeMs].
+ *   Playback starts send the highest current one. A settled probe proves the
+ *   link; a lower bound proves it only while it is at least the current
+ *   [BandwidthProbeTarget.targetKbps].
  * - **Checks**: [PROBE_START_DELAY_MS] after Silo returns to the foreground, a
  *   server is signed in or the network changes, and at no other time. A check
- *   with a reading in hand does nothing. Otherwise it asks the server for the
- *   reading it holds for this device on this connection
- *   ([BandwidthProbeServer.storedReading]) and measures only when the server
- *   has none young enough. A check that fails or is refused waits for the next
- *   one, and after a `429` none runs before its `Retry-After`. Leaving the
- *   foreground stops the checks and any running probe.
- * - **Test speed** ([runNow]) always measures. It replaces a running
- *   automatic check rather than joining it.
+ *   with a current settled probe in hand does nothing. Otherwise it reads the
+ *   server's readings ([BandwidthProbeServer.storedReading]) and runs the quick
+ *   test only when automatic tests are on and no current reading proves the
+ *   link. A check that fails or is refused waits for the next one, and after a
+ *   `429` none tests before its `Retry-After`. Leaving the foreground stops the
+ *   checks and any running test.
+ * - **Test speed** ([runNow]) runs the accurate test, whatever the readings or
+ *   the automatic setting. It replaces a running automatic check rather than
+ *   joining it.
  * - **Not**: while media plays or starts ([mediaActive], [playbackStarting],
  *   then [PLAYBACK_START_QUIET_MS]), on a metered or cellular network, or for
  *   a server without `connection_speed_v1`. Media starting cancels a running
- *   probe.
- * - **Reporting**: every measurement is POSTed with the transport it was
- *   taken on.
+ *   test.
+ * - **Reporting**: every result is POSTed with the transport it was taken on,
+ *   and `lower_bound` when it is one.
  *
  * Everything runs on [scope], which must be single-threaded.
  *
@@ -266,11 +301,14 @@ class BandwidthProbeScheduler(
     private val wallClock: () -> Long = { System.currentTimeMillis() },
 ) : PlaybackBandwidthEstimates {
 
+    /** The readings for one server and network, with the schedule they are judged by. */
     private data class Cached(
         val serverId: String,
         val networkKey: String,
-        val estimate: BandwidthEstimate,
+        val probe: BandwidthEstimate?,
+        val sample: PlaybackSample?,
         val lifetimeMs: Long,
+        val targetKbps: Int?,
     )
 
     /** One check or test, and the outcome it ends with when something cancels it. */
@@ -287,20 +325,20 @@ class BandwidthProbeScheduler(
     @Volatile private var cached: Cached? = null
     @Volatile private var lastPlaybackAtElapsedMs: Long? = null
 
-    /** After a `429`, no automatic check measures before this time. */
-    private var notBeforeElapsedMs: Long? = null
-
     // Confined to the scope.
     private var foreground = false
     private var timer: Job? = null
     private var inFlight: ProbeRun? = null
 
+    /** After a `429`, no automatic check tests before this time. */
+    private var notBeforeElapsedMs: Long? = null
+
     private val _lastMeasurement = MutableStateFlow<BandwidthEstimate?>(null)
 
     /**
-     * The reading on the active server and network, measured here or taken
-     * from the server, kept past its lifetime so Settings can show it. Null
-     * once the network or server changes.
+     * The probe reading on the active server and network, measured here or
+     * taken from the server, kept past its lifetime so Settings can show it.
+     * Null once the network or server changes.
      */
     val lastMeasurement: StateFlow<BandwidthEstimate?> = _lastMeasurement.asStateFlow()
 
@@ -334,8 +372,11 @@ class BandwidthProbeScheduler(
     }
 
     override fun freshEstimateKbps(): Int? {
-        val entry = cached ?: return null
-        return entry.estimate.kbps.takeIf { isFresh(entry, network.snapshot()) }
+        val entry = cached?.takeIf { onThisNetwork(it, network.snapshot()) } ?: return null
+        return listOfNotNull(
+            entry.probe?.takeIf { isCurrent(it.measuredAtEpochMs, entry) }?.kbps,
+            entry.sample?.takeIf { isCurrent(it.measuredAtEpochMs, entry) }?.kbps,
+        ).maxOrNull()
     }
 
     override fun playbackStarting() {
@@ -344,10 +385,10 @@ class BandwidthProbeScheduler(
     }
 
     /**
-     * **Test speed**: measures now, in the foreground, and reports the result.
-     * Refuses as the checks do, except that a reading in hand does not stand in
-     * for a new one. Replaces a running automatic check; joins another Test
-     * speed.
+     * **Test speed**: runs the accurate test now, in the foreground, and
+     * reports the result. Refuses as the checks do, except that a current
+     * reading and the automatic setting do not matter. Replaces a running
+     * automatic check; joins another Test speed.
      */
     suspend fun runNow(): ProbeOutcome = withContext(context) {
         gate()?.let { return@withContext it }
@@ -404,14 +445,17 @@ class BandwidthProbeScheduler(
     }
 
     private suspend fun runScheduled() {
-        if (activeServer.value == null || hasReading()) return
-        if (notBeforeElapsedMs?.let { elapsedClock() < it } == true) return
+        if (activeServer.value == null || hasSettledReading()) return
         if (gate() != null) return
         probeOnce(manual = false)
     }
 
-    /** A reading for this server and network is in hand and still young enough. */
-    private fun hasReading(): Boolean = cached?.let { isFresh(it, network.snapshot()) } == true
+    /** A current settled probe for this server and network is in hand: it proves the link whatever the target. */
+    private fun hasSettledReading(): Boolean {
+        val entry = cached?.takeIf { onThisNetwork(it, network.snapshot()) } ?: return false
+        val probe = entry.probe ?: return false
+        return !probe.lowerBound && isCurrent(probe.measuredAtEpochMs, entry)
+    }
 
     /** Why a probe may not run now, or null when it may. */
     private fun gate(): ProbeOutcome? {
@@ -427,29 +471,34 @@ class BandwidthProbeScheduler(
         }
     }
 
-    /** On the same server and network, and younger than its lifetime; a reading from the future counts. */
-    private fun isFresh(entry: Cached, snapshot: PlaybackNetworkSnapshot): Boolean {
-        if (!snapshot.connected || snapshot.skipsBandwidthProbe) return false
-        if (networkKey(snapshot) != entry.networkKey || activeServer.value != entry.serverId) return false
-        return wallClock() - entry.estimate.measuredAtEpochMs <= entry.lifetimeMs
+    /** [entry] is for the active server and the network in use, and that network may be tested. */
+    private fun onThisNetwork(entry: Cached, snapshot: PlaybackNetworkSnapshot): Boolean =
+        snapshot.connected && !snapshot.skipsBandwidthProbe &&
+            networkKey(snapshot) == entry.networkKey && activeServer.value == entry.serverId
+
+    /** Younger than [Cached.lifetimeMs]; a reading from the future counts. */
+    private fun isCurrent(measuredAtEpochMs: Long, entry: Cached): Boolean =
+        wallClock() - measuredAtEpochMs < entry.lifetimeMs
+
+    /** A current reading proves the link: a settled probe, or a lower bound at least the target. */
+    private fun provesTheLink(entry: Cached): Boolean {
+        val target = entry.targetKbps
+        val probe = entry.probe?.takeIf { isCurrent(it.measuredAtEpochMs, entry) }
+        if (probe != null && (!probe.lowerBound || (target != null && probe.kbps >= target))) return true
+        val sample = entry.sample?.takeIf { isCurrent(it.measuredAtEpochMs, entry) }
+        return sample != null && target != null && sample.kbps >= target
     }
 
     private suspend fun probeOnce(manual: Boolean): ProbeOutcome {
         val running = inFlight?.takeIf { it.result.isActive }
-        // Test speed asks for a measurement of its own, so it does not settle
-        // for a check that may only read the server's.
+        // Test speed asks for an accurate test of its own, so it does not
+        // settle for a check's quick one or the server's reading.
         if (running != null && manual && !running.manual) {
             running.cancelledFor = ProbeOutcome.Interrupted
             running.result.cancel()
         }
         val run = running?.takeIf { it.result.isActive } ?: ProbeRun(manual).also { run ->
-            run.result = scope.async {
-                measureAndReport(manual).also { outcome ->
-                    if (outcome is ProbeOutcome.RateLimited) {
-                        notBeforeElapsedMs = elapsedClock() + outcome.retryAfterSeconds * 1_000L
-                    }
-                }
-            }
+            run.result = scope.async { measureAndReport(manual) }
             inFlight = run
         }
         return try {
@@ -470,10 +519,37 @@ class BandwidthProbeScheduler(
         if (target.serverId != activeServer.value) return ProbeOutcome.Interrupted
         val snapshot = network.snapshot()
         val networkKey = networkKey(snapshot)
-        if (!manual) adoptStoredReading(target, networkKey)?.let { return it }
-        val measured = when (val result = probe.measure { read -> server.download(target, read) }) {
+        if (!manual) {
+            val stored = when (val lookup = server.storedReading(target)) {
+                is StoredReadingLookup.Found -> lookup
+                StoredReadingLookup.None -> null
+                is StoredReadingLookup.Failed -> return ProbeOutcome.NetworkError(lookup.cause)
+            }
+            val entry = remember(target, networkKey, stored?.probe, stored?.sample)
+            if (provesTheLink(entry)) {
+                SiloLog.i(
+                    DiagnosticsLogCategory.PLAYBACK,
+                    TAG,
+                    "bandwidth probe: current reading proves the link (probe ${entry.probe?.describe()}, " +
+                        "sample ${entry.sample?.kbps} kbps, target ${target.targetKbps} kbps)",
+                )
+                return ProbeOutcome.Stored
+            }
+            if (!target.automatic) return ProbeOutcome.AutomaticOff
+            notBeforeElapsedMs?.let { notBefore ->
+                val waitMs = notBefore - elapsedClock()
+                if (waitMs > 0) return ProbeOutcome.RateLimited(((waitMs + 999) / 1_000).toInt())
+            }
+        }
+        val mode = if (manual) SpeedTestMode.ACCURATE else SpeedTestMode.QUICK
+        val measured = when (
+            val result = probe.measure(mode, target.targetKbps) { read -> server.download(target, mode, read) }
+        ) {
             is BandwidthProbeResult.Measured -> result
-            is BandwidthProbeResult.RateLimited -> return ProbeOutcome.RateLimited(result.retryAfterSeconds)
+            is BandwidthProbeResult.RateLimited -> {
+                notBeforeElapsedMs = elapsedClock() + result.retryAfterSeconds * 1_000L
+                return ProbeOutcome.RateLimited(result.retryAfterSeconds)
+            }
             is BandwidthProbeResult.Unavailable -> return ProbeOutcome.Unavailable
             BandwidthProbeResult.TooLittleData -> return ProbeOutcome.TooLittleData
             is BandwidthProbeResult.NetworkError -> return ProbeOutcome.NetworkError(result.cause)
@@ -488,13 +564,19 @@ class BandwidthProbeScheduler(
             durationMs = measured.durationMs,
             transport = reportedTransport(snapshot),
             measuredAtEpochMs = wallClock(),
+            lowerBound = measured.lowerBound,
         )
-        cached = Cached(target.serverId, networkKey, estimate, target.readingLifetimeMs)
-        _lastMeasurement.value = estimate
+        remember(target, networkKey, estimate, sample = null)
         val reported = try {
             server.report(
                 target,
-                PlaybackBandwidthProbeResultV2(estimate.kbps, estimate.bytes, estimate.durationMs, estimate.transport),
+                PlaybackBandwidthProbeResultV2(
+                    kbps = estimate.kbps,
+                    bytes = estimate.bytes,
+                    durationMs = estimate.durationMs,
+                    transport = estimate.transport,
+                    lowerBound = true.takeIf { estimate.lowerBound },
+                ),
             )
         } catch (cancellation: CancellationException) {
             throw cancellation
@@ -504,33 +586,34 @@ class BandwidthProbeScheduler(
         SiloLog.i(
             DiagnosticsLogCategory.PLAYBACK,
             TAG,
-            "bandwidth probe: ${estimate.kbps} kbps over ${estimate.durationMs} ms on ${estimate.transport}" +
-                if (reported) "" else " (report failed)",
+            "bandwidth probe: ${mode.name.lowercase()} test ${estimate.describe()} over ${estimate.durationMs} ms " +
+                "on ${estimate.transport}" + if (reported) "" else " (report failed)",
         )
         return ProbeOutcome.Measured(estimate)
     }
 
     /**
-     * Takes the server's reading for this connection when it is younger than
-     * its lifetime ([ProbeOutcome.Stored]); null when a measurement is needed.
+     * Keeps the readings for [target]'s server on [networkKey]: the newer of
+     * [probe] and the probe already kept for it, and [sample] or the kept one.
      */
-    private suspend fun adoptStoredReading(target: BandwidthProbeTarget, networkKey: String): ProbeOutcome? {
-        val stored = when (val lookup = server.storedReading(target)) {
-            is StoredReadingLookup.Found -> lookup.estimate
-            StoredReadingLookup.None -> return null
-            is StoredReadingLookup.Failed -> return ProbeOutcome.NetworkError(lookup.cause)
-        }
-        val entry = Cached(target.serverId, networkKey, stored, target.readingLifetimeMs)
-        if (!isFresh(entry, network.snapshot())) return null
-        cached = entry
-        _lastMeasurement.value = stored
-        SiloLog.i(
-            DiagnosticsLogCategory.PLAYBACK,
-            TAG,
-            "bandwidth probe: using the server's ${stored.kbps} kbps reading " +
-                "from ${(wallClock() - stored.measuredAtEpochMs) / 60_000} min ago",
+    private fun remember(
+        target: BandwidthProbeTarget,
+        networkKey: String,
+        probe: BandwidthEstimate?,
+        sample: PlaybackSample?,
+    ): Cached {
+        val kept = cached?.takeIf { it.serverId == target.serverId && it.networkKey == networkKey }
+        val entry = Cached(
+            serverId = target.serverId,
+            networkKey = networkKey,
+            probe = listOfNotNull(kept?.probe, probe).maxByOrNull { it.measuredAtEpochMs },
+            sample = sample ?: kept?.sample,
+            lifetimeMs = target.readingLifetimeMs,
+            targetKbps = target.targetKbps,
         )
-        return ProbeOutcome.Stored(stored)
+        cached = entry
+        _lastMeasurement.value = entry.probe
+        return entry
     }
 
     private companion object {
@@ -546,5 +629,7 @@ class BandwidthProbeScheduler(
             "wifi", "ethernet", "cellular" -> snapshot.transport
             else -> "other"
         }
+
+        fun BandwidthEstimate.describe(): String = "$kbps kbps" + if (lowerBound) " (lower bound)" else ""
     }
 }
