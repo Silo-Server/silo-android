@@ -233,8 +233,6 @@ class SettingsViewModel(
         observeEpisodeSpoilers()
         // Opening Settings is a refresh edge for the seek-interval support probe.
         seekIntervals.refresh()
-        // And the one read of the learned limit and connection speed; neither is polled.
-        loadPlaybackConnection()
     }
 
     private fun observeAccountCard() {
@@ -626,11 +624,14 @@ class SettingsViewModel(
     }
 
     /**
-     * Reads the learned limit for this device's connection. The row it feeds
-     * shows only when the server advertises `buffering_quality_v1` and has a
-     * limit stored; a failed read hides it.
+     * Reads the learned limit for this device's connection, and the connection
+     * speed. The Playback page calls it on every visit: a playback since the
+     * last one can learn or clear a limit, and the page can stay in the back
+     * stack under the player. The limit row shows only when the server
+     * advertises `buffering_quality_v1` and has a limit stored; a failed read
+     * hides it.
      */
-    private fun loadPlaybackConnection() {
+    fun refreshPlaybackConnection() {
         val repository = playbackConnection ?: return
         viewModelScope.launch {
             val settings = repository.settingsState()

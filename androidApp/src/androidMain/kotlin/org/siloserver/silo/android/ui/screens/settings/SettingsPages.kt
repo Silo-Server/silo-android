@@ -128,6 +128,7 @@ fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit
     val seekIntervals by viewModel.seekIntervals.state.collectAsState()
     val connectionSpeed = viewModel.connectionSpeed?.state?.collectAsState()?.value
     val context = LocalContext.current
+    LaunchedEffect(viewModel) { viewModel.refreshPlaybackConnection() }
     LaunchedEffect(state.playbackOverridesReset) {
         val landed = state.playbackOverridesReset ?: return@LaunchedEffect
         Toast.makeText(context, UseProfileSettingsCopy.notice(landed), Toast.LENGTH_SHORT).show()
