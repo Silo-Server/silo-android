@@ -6,6 +6,8 @@ import android.util.Log
 import org.siloserver.silo.domain.player.BufferingPlanSummary
 import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.BufferingQualityReplan
+import org.siloserver.silo.common.player.probe.PlaybackBandwidthEstimates
+import org.siloserver.silo.model.playback.BANDWIDTH_ESTIMATE_SOURCE_PROBE
 import org.siloserver.silo.model.playback.BUFFERING_QUALITY_V1_FEATURE
 import org.siloserver.silo.model.playback.LEARNED_LIMIT_CLEAR
 import org.siloserver.silo.model.playback.LEARNED_LIMIT_IGNORE
@@ -131,6 +133,15 @@ open class PlaybackSessionManager(
      * that matters: its plans are for a receiver across the room.
      */
     private val passthroughSuppression: PassthroughSuppressionScope = PassthroughSuppressionRegistry,
+    /**
+     * The bandwidth probe. A video start sends its fresh estimate as
+     * `bandwidth_estimate_kbps` with source `probe`, and tells it playback is
+     * starting so a running probe stops. Replans never carry it: a probe
+     * estimate is a hint for the start only. A manager whose plans play
+     * elsewhere (Cast) keeps [PlaybackBandwidthEstimates.None]: this device's
+     * link is not the receiver's.
+     */
+    private val bandwidthEstimates: PlaybackBandwidthEstimates = PlaybackBandwidthEstimates.None,
 ) {
     private data class ActiveVideoAttempt(
         val fileId: Int,
@@ -464,6 +475,10 @@ open class PlaybackSessionManager(
             if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
                 return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
             val network = networkEvidenceProvider.snapshot()
+            // Read before the probe hears of the start, which only stops a
+            // running probe; the cached estimate stays.
+            val probeEstimateKbps = bandwidthEstimates.freshEstimateKbps()
+            bandwidthEstimates.playbackStarting()
             if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
                 return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
             val playbackAttemptId = UUID.randomUUID().toString()
@@ -490,7 +505,10 @@ open class PlaybackSessionManager(
                 subtitleTrackIndex = subtitleTrackIndex?.takeIf { it >= 0 },
                 clientFeatures = playbackClientFeaturesV3(clientPlaybackContext),
                 bandwidthCapKbps = maxBitrateKbps?.takeIf { it > 0 },
-                // SequencedPlayback strips it for a server without buffering_quality_v1.
+                bandwidthEstimateKbps = probeEstimateKbps,
+                // SequencedPlayback strips the source and learned_limit for a
+                // server without buffering_quality_v1; the estimate stays.
+                bandwidthEstimateSource = probeEstimateKbps?.let { BANDWIDTH_ESTIMATE_SOURCE_PROBE },
                 learnedLimit = modeLearnedLimit(),
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
@@ -712,7 +730,7 @@ open class PlaybackSessionManager(
             attemptCount = 1,
             startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
             firstFrameReported = false,
-        ).also { rememberPlan(it, bandwidthEstimateKbps = null) } // A start carries no estimate.
+        ).also { rememberPlan(it, request.bandwidthEstimateKbps) } // The probe's estimate, if the start sent one.
     }
 
     private fun installActiveVideoAttemptLocked(

@@ -517,15 +517,23 @@ data class PlaybackStartRequestV3(
      * Always false, here and on replans. The server ignores it; older servers
      * require it on `/api/v2` and drop Auto to their metered limit when it is
      * true. The phone applies its own cellular quality pair instead.
-     *
-     * No `bandwidth_estimate_kbps` is sent either, so Auto plays the source
-     * whenever the device can. Media3's meter times loads that stall on a
-     * full buffer or wait on a live transcode, so its figure can understate
-     * the link and make Auto convert the next title; a measured estimate waits
-     * for the server's bandwidth probe.
      */
     val metered: Boolean = false,
     @SerialName("bandwidth_cap_kbps") val bandwidthCapKbps: Int? = null,
+    /**
+     * Only the bandwidth probe's fresh measurement for this server and
+     * network, a hint Auto uses to rule out a source the link clearly cannot
+     * carry. Absent without one, and on metered or cellular networks, which
+     * are never probed. Media3's bandwidth meter is never sent: it times
+     * loads that stall on a full buffer or wait on a live transcode, so its
+     * figure can understate the link and make Auto convert.
+     */
+    @SerialName("bandwidth_estimate_kbps") val bandwidthEstimateKbps: Int? = null,
+    /**
+     * [BANDWIDTH_ESTIMATE_SOURCE_PROBE] alongside [bandwidthEstimateKbps];
+     * needs [BUFFERING_QUALITY_V1_FEATURE].
+     */
+    @SerialName("bandwidth_estimate_source") val bandwidthEstimateSource: String? = null,
     /**
      * `ignore` in `never` mode, so a limit learned by another profile on this
      * device does not reach this one. Sent only to a server advertising

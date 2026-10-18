@@ -364,7 +364,8 @@ val androidModule = module {
             playbackAnalytics = get(),
         )
     }
-    single { PlaybackSessionManager(get(), get(), get()) }
+    // Video starts send the bandwidth probe's estimate; the audiobook manager below does not.
+    single { PlaybackSessionManager(get(), get(), get(), bandwidthEstimates = get()) }
     single(AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER) {
         PlaybackSessionManager(
             playbackRepository = get(),

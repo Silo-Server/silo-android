@@ -265,6 +265,8 @@ class SequencedPlayback(
             }
             log("start_request quality_preference=${gated.qualityPreference} learned_limit=${gated.learnedLimit} " +
                 "bandwidth_cap_kbps=${gated.bandwidthCapKbps} " +
+                "bandwidth_estimate_kbps=${gated.bandwidthEstimateKbps} " +
+                "bandwidth_estimate_source=${gated.bandwidthEstimateSource} " +
                 "client_features_has_bq=${BUFFERING_QUALITY_V1_FEATURE in gated.clientFeatures}")
             // A saved attempt is uncertainty, even if its owner changes before send.
             guard()

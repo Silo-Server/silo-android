@@ -16,10 +16,15 @@ fun PlaybackStartRequestV3.gatedForBufferingQuality(
     serverFeatures: Collection<String>,
 ): PlaybackStartRequestV3 =
     if (BUFFERING_QUALITY_V1_FEATURE in serverFeatures) {
-        copy(clientFeatures = clientFeatures.withBufferingQualityFeature())
+        copy(
+            clientFeatures = clientFeatures.withBufferingQualityFeature(),
+            // A source without an estimate is a 400.
+            bandwidthEstimateSource = bandwidthEstimateSource.takeIf { bandwidthEstimateKbps != null },
+        )
     } else {
         copy(
             clientFeatures = clientFeatures.withoutBufferingQualityFeature(),
+            bandwidthEstimateSource = null,
             learnedLimit = null,
         )
     }

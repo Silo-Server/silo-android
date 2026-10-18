@@ -87,6 +87,29 @@ class BufferingQualityRequestGatingTest {
     fun aSourceWithoutAnEstimateIsNeverSent() {
         // The server answers 400 to a source without an estimate.
         assertNull(replan(estimate = null).gatedForBufferingQuality(advertising).bandwidthEstimateSource)
+        assertNull(probeStart(estimate = null).gatedForBufferingQuality(advertising).bandwidthEstimateSource)
+    }
+
+    private fun probeStart(estimate: Int? = 48_000) = start(learnedLimit = null).copy(
+        bandwidthEstimateKbps = estimate,
+        bandwidthEstimateSource = BANDWIDTH_ESTIMATE_SOURCE_PROBE,
+    )
+
+    @Test
+    fun aProbeEstimateGoesOutWithItsSourceToAnAdvertisingServer() {
+        val gated = probeStart().gatedForBufferingQuality(advertising)
+        assertEquals(48_000, gated.bandwidthEstimateKbps)
+        assertEquals(BANDWIDTH_ESTIMATE_SOURCE_PROBE, gated.bandwidthEstimateSource)
+        assertTrue(BUFFERING_QUALITY_V1_FEATURE in gated.clientFeatures)
+        assertEquals(gated, gated.gatedForBufferingQuality(advertising))
+    }
+
+    @Test
+    fun anOlderServerGetsTheProbeEstimateWithoutItsSource() {
+        val gated = probeStart().gatedForBufferingQuality(older)
+        assertEquals(48_000, gated.bandwidthEstimateKbps)
+        assertNull(gated.bandwidthEstimateSource)
+        assertFalse(BUFFERING_QUALITY_V1_FEATURE in gated.clientFeatures)
     }
 
     private companion object {
