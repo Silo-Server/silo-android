@@ -50,6 +50,43 @@
     <!-- The Quality menu's Auto row while a learned limit lowered the plan. -->
     <string name="player_quality_auto_limited">Auto · limited after buffering</string>
 
+    <!-- Connection speed (the bandwidth probe; buffering-quality phase 2) -->
+    <string name="settings_connection_title">Connection</string>
+    <string name="settings_connection_speed">Connection speed</string>
+    <string name="settings_connection_test">Test speed</string>
+    <string name="settings_connection_testing">Testing…</string>
+    <string name="settings_connection_not_measured">Not measured yet</string>
+    <!-- %1$s is a rate (settings_rate_mbps or settings_rate_kbps), %2$s how long ago (settings_connection_age_*), %3$s the network (settings_connection_transport_*). -->
+    <string name="settings_connection_measured">%1$s · measured %2$s on %3$s</string>
+    <!-- %1$s is a rate; %2$s the network (settings_connection_transport_*). -->
+    <string name="settings_connection_measured_undated">%1$s · measured on %2$s</string>
+    <string name="settings_connection_age_just_now">just now</string>
+    <plurals name="settings_connection_age_minutes">
+        <item quantity="one">%d minute ago</item>
+        <item quantity="other">%d minutes ago</item>
+    </plurals>
+    <plurals name="settings_connection_age_hours">
+        <item quantity="one">%d hour ago</item>
+        <item quantity="other">%d hours ago</item>
+    </plurals>
+    <plurals name="settings_connection_age_days">
+        <item quantity="one">%d day ago</item>
+        <item quantity="other">%d days ago</item>
+    </plurals>
+    <string name="settings_connection_transport_wifi">Wi-Fi</string>
+    <string name="settings_connection_transport_ethernet">Ethernet</string>
+    <string name="settings_connection_transport_cellular">cellular</string>
+    <string name="settings_connection_transport_other">this connection</string>
+    <!-- %1$s is a rate (settings_rate_mbps or settings_rate_kbps). -->
+    <string name="settings_connection_budget">Auto plays videos up to %1$s without converting them.</string>
+    <plurals name="settings_connection_try_again">
+        <item quantity="one">Try again in %d second</item>
+        <item quantity="other">Try again in %d seconds</item>
+    </plurals>
+    <string name="settings_connection_stop_playback">Stop playback before testing, then try again.</string>
+    <string name="settings_connection_failed">Couldn\'t measure the connection speed. Try again.</string>
+    <string name="settings_connection_skipped_metered">Speed tests are skipped on metered networks.</string>
+
     <!-- Common states -->
     <string name="loading">Loading…</string>
     <string name="error_generic">Something went wrong</string>

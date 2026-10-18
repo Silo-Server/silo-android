@@ -126,6 +126,7 @@ fun SettingsInterfaceScreen(viewModel: SettingsViewModel, onBackClick: () -> Uni
 fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit) {
     val state by viewModel.uiState.collectAsState()
     val seekIntervals by viewModel.seekIntervals.state.collectAsState()
+    val connectionSpeed = viewModel.connectionSpeed?.state?.collectAsState()?.value
     val context = LocalContext.current
     LaunchedEffect(state.playbackOverridesReset) {
         val landed = state.playbackOverridesReset ?: return@LaunchedEffect
@@ -157,6 +158,12 @@ fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit
                 onResetLearnedLimit = viewModel::resetLearnedLimit,
                 onUseProfileSetting = viewModel::useProfileSetting,
             )
+        }
+        // Under Streaming, whose buffering and learned-limit rows it explains.
+        if (connectionSpeed?.visible == true) {
+            item(key = "connection") {
+                PlaybackConnectionSection(state = connectionSpeed, onTestSpeed = viewModel::testConnectionSpeed)
+            }
         }
         item(key = "cellular") {
             PlaybackCellularSection(

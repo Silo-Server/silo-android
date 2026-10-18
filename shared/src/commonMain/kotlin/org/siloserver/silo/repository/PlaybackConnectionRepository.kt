@@ -1,11 +1,23 @@
 package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.playback.BUFFERING_QUALITY_V1_FEATURE
+import org.siloserver.silo.model.playback.CONNECTION_SPEED_V1_FEATURE
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.apiv2.PlaybackConnectionV2
 import org.siloserver.silo.network.apiv2.PlaybackV2Api
+
+/** What Settings shows about this device's connection ([PlaybackConnectionRepository.settingsState]). */
+data class PlaybackConnectionSettings(
+    /** Null when the server does not advertise `buffering_quality_v1` or the read failed. */
+    val connection: PlaybackConnectionV2?,
+    /**
+     * The server advertises `connection_speed_v1` with a `bandwidth_probe_url`,
+     * so Settings shows the Connection group.
+     */
+    val connectionSpeed: Boolean,
+)
 
 /**
  * This device's connection state and learned bandwidth limit, for Settings.
@@ -39,6 +51,27 @@ class PlaybackConnectionRepository(
         val scope = tokens.snapshotCurrentScope() ?: return null
         if (!advertises(scope)) return null
         return (api.connection(scope) as? ApiResult.Success)?.data
+    }
+
+    /**
+     * One read for Settings: the connection state (when the server advertises
+     * [BUFFERING_QUALITY_V1_FEATURE]) and whether the server measures
+     * connection speed. Null when nobody is signed in or the capability read
+     * fails.
+     */
+    suspend fun settingsState(): PlaybackConnectionSettings? {
+        val scope = tokens.snapshotCurrentScope() ?: return null
+        val capabilities = (api.capabilities(scope) as? ApiResult.Success)?.data ?: return null
+        val connection = if (BUFFERING_QUALITY_V1_FEATURE in capabilities.features) {
+            (api.connection(scope) as? ApiResult.Success)?.data
+        } else {
+            null
+        }
+        return PlaybackConnectionSettings(
+            connection = connection,
+            connectionSpeed = CONNECTION_SPEED_V1_FEATURE in capabilities.features &&
+                !capabilities.bandwidthProbeUrl.isNullOrBlank(),
+        )
     }
 
     /** Deletes this device's learned limit on its current connection (HTTP 204). */

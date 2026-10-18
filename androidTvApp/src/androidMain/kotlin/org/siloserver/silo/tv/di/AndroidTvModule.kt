@@ -677,6 +677,7 @@ val androidTvModule = module {
             profileLaunchPreferences = get(),
             watchNextSeeder = get(),
             playbackConnection = get(),
+            bandwidthProbe = get(),
         )
     }
     viewModel { TvDiagnosticsViewModel(get()) }

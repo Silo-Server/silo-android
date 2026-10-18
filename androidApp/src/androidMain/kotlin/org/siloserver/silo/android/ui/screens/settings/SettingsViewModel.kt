@@ -38,6 +38,9 @@ import org.siloserver.silo.network.apiv2.PlaybackLearnedLimitV2
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.NotificationsRepository
 import org.siloserver.silo.repository.PlaybackConnectionRepository
+import org.siloserver.silo.common.player.probe.BandwidthProbeScheduler
+import org.siloserver.silo.common.player.usesCellularQuality
+import org.siloserver.silo.common.settings.ConnectionSpeedSettingsModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -190,6 +193,7 @@ class SettingsViewModel(
     private val downloadsRepository: DownloadsRepository? = null,
     private val serverRegistry: ServerRegistry? = null,
     private val playbackConnection: PlaybackConnectionRepository? = null,
+    bandwidthProbe: BandwidthProbeScheduler? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -208,6 +212,17 @@ class SettingsViewModel(
     /** Profile-wide video and audiobook skip intervals (settings revision 9). */
     val seekIntervals = SeekIntervalSettingsModel(seekIntervalStore, audiobookSettingsStore, viewModelScope)
 
+    /**
+     * Playback → Connection: the measured speed, **Test speed** and Auto's
+     * budget. Null without the probe; hidden unless the server measures speed.
+     * On cellular and metered networks the phone's Cellular quality applies.
+     */
+    val connectionSpeed: ConnectionSpeedSettingsModel? = bandwidthProbe?.let { probe ->
+        playbackConnection?.let { connection ->
+            ConnectionSpeedSettingsModel(probe, connection, viewModelScope) { it.usesCellularQuality }
+        }
+    }
+
     init {
         loadUserInfo()
         observeAccountCard()
@@ -218,7 +233,7 @@ class SettingsViewModel(
         observeEpisodeSpoilers()
         // Opening Settings is a refresh edge for the seek-interval support probe.
         seekIntervals.refresh()
-        // And the one read of the learned limit; it is not polled.
+        // And the one read of the learned limit and connection speed; neither is polled.
         loadPlaybackConnection()
     }
 
@@ -618,9 +633,15 @@ class SettingsViewModel(
     private fun loadPlaybackConnection() {
         val repository = playbackConnection ?: return
         viewModelScope.launch {
-            val limit = repository.connection()?.learnedLimit
-            _uiState.update { it.copy(learnedLimit = limit) }
+            val settings = repository.settingsState()
+            _uiState.update { it.copy(learnedLimit = settings?.connection?.learnedLimit) }
+            connectionSpeed?.update(settings)
         }
+    }
+
+    /** Settings → Playback → Connection → Test speed. */
+    fun testConnectionSpeed() {
+        connectionSpeed?.testSpeed()
     }
 
     /** Forgets the learned limit, then reads the connection again so the row goes. */

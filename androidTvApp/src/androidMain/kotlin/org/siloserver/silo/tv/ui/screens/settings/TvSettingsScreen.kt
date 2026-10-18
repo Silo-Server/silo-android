@@ -102,6 +102,7 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.common.network.clientVersionLabel
 import org.siloserver.silo.common.settings.CardPresentationSource
 import org.siloserver.silo.common.settings.CardPresentationSupport
+import org.siloserver.silo.common.settings.ConnectionSpeedSettingsModel
 import org.siloserver.silo.common.settings.LearnedLimitText
 import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.common.settings.UseProfileSettingsCopy
@@ -315,6 +316,7 @@ fun TvSettingsScreen(
         onResetPlaybackOverrides = viewModel::resetPlaybackOverrides,
         onUseProfileSetting = viewModel::onUseProfileSetting,
         seekIntervals = viewModel.seekIntervals,
+        connectionSpeed = viewModel.connectionSpeed,
         onSubtitleModeChanged = viewModel::onSubtitleModeChanged,
         onSubtitleLanguageChanged = viewModel::onSubtitleLanguageChanged,
         onMetadataLanguageChanged = viewModel::onMetadataLanguageChanged,
@@ -472,6 +474,7 @@ private fun SettingsSplitLayout(
     onResetPlaybackOverrides: () -> Unit,
     onUseProfileSetting: (String) -> Unit,
     seekIntervals: SeekIntervalSettingsModel? = null,
+    connectionSpeed: ConnectionSpeedSettingsModel? = null,
     onSubtitleModeChanged: (SubtitleMode) -> Unit,
     onSubtitleLanguageChanged: (String) -> Unit,
     onMetadataLanguageChanged: (String) -> Unit,
@@ -559,6 +562,7 @@ private fun SettingsSplitLayout(
             onResetPlaybackOverrides = onResetPlaybackOverrides,
             onUseProfileSetting = onUseProfileSetting,
             seekIntervals = seekIntervals,
+            connectionSpeed = connectionSpeed,
             onSubtitleModeChanged = onSubtitleModeChanged,
             onSubtitleLanguageChanged = onSubtitleLanguageChanged,
             onMetadataLanguageChanged = onMetadataLanguageChanged,
@@ -849,6 +853,7 @@ private fun SettingsDetailPane(
     onResetPlaybackOverrides: () -> Unit,
     onUseProfileSetting: (String) -> Unit,
     seekIntervals: SeekIntervalSettingsModel? = null,
+    connectionSpeed: ConnectionSpeedSettingsModel? = null,
     onSubtitleModeChanged: (SubtitleMode) -> Unit,
     onSubtitleLanguageChanged: (String) -> Unit,
     onMetadataLanguageChanged: (String) -> Unit,
@@ -911,6 +916,7 @@ private fun SettingsDetailPane(
                 onResetPlaybackOverrides = onResetPlaybackOverrides,
                 onUseProfileSetting = onUseProfileSetting,
                 seekIntervals = seekIntervals,
+                connectionSpeed = connectionSpeed,
             )
             TvSettingsCategory.Subtitles -> TvSubtitleSettingsPane(
                 state = state,
@@ -1242,6 +1248,7 @@ private fun TvPlaybackSettingsPane(
     /** Receives the key of the control going back to the profile's value. */
     onUseProfileSetting: (String) -> Unit,
     seekIntervals: SeekIntervalSettingsModel? = null,
+    connectionSpeed: ConnectionSpeedSettingsModel? = null,
 ) {
     var activePicker by remember { mutableStateOf<PlaybackPicker?>(null) }
     var confirmingReset by remember { mutableStateOf(false) }
@@ -1259,6 +1266,7 @@ private fun TvPlaybackSettingsPane(
     val skipCreditsFocus = remember { FocusRequester() }
     val bufferingQualityFocus = remember { FocusRequester() }
     val seekState = seekIntervals?.state?.collectAsState()?.value
+    val connectionState = connectionSpeed?.state?.collectAsState()?.value
     var seekPicker by remember { mutableStateOf<Pair<SeekMedia, SeekDirection>?>(null) }
     // Where focus goes when a skip-interval group drops the focused row and
     // has no row of its own left to take it (the row just above the groups).
@@ -1370,6 +1378,12 @@ private fun TvPlaybackSettingsPane(
                         "playback. Try it if they look grey in HDR or Dolby Vision, and turn it off again " +
                         "if they get lighter or show a thin line.",
                 )
+            }
+        }
+        // Under Streaming, whose buffering and learned-limit rows it explains.
+        if (connectionState?.visible == true) {
+            item {
+                TvConnectionSettingsGroup(state = connectionState, onTestSpeed = { connectionSpeed?.testSpeed() })
             }
         }
         item {

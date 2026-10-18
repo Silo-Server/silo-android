@@ -33,6 +33,8 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.apiv2.PlaybackLearnedLimitV2
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.PlaybackConnectionRepository
+import org.siloserver.silo.common.player.probe.BandwidthProbeScheduler
+import org.siloserver.silo.common.settings.ConnectionSpeedSettingsModel
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
 import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
@@ -79,6 +81,7 @@ class TvSettingsViewModel(
     private val profileLaunchPreferences: ProfileLaunchPreferences? = null,
     private val watchNextSeeder: WatchNextSeeder? = null,
     private val playbackConnection: PlaybackConnectionRepository? = null,
+    bandwidthProbe: BandwidthProbeScheduler? = null,
 ) : ViewModel() {
 
     /**
@@ -92,6 +95,14 @@ class TvSettingsViewModel(
         } else {
             null
         }
+
+    /**
+     * Playback → Connection: the measured speed, **Test speed** and Auto's
+     * budget. Null without the probe; hidden unless the server measures speed.
+     */
+    val connectionSpeed: ConnectionSpeedSettingsModel? = bandwidthProbe?.let { probe ->
+        playbackConnection?.let { connection -> ConnectionSpeedSettingsModel(probe, connection, viewModelScope) }
+    }
 
     enum class NavAction { SIGNED_OUT, SWITCH_PROFILE }
 
@@ -197,7 +208,7 @@ class TvSettingsViewModel(
         observeCardPresentation()
         observeEpisodeSpoilers()
         observeProfileLaunch()
-        // The one read of the learned limit; it is not polled.
+        // The one read of the learned limit and connection speed; neither is polled.
         loadPlaybackConnection()
     }
 
@@ -798,8 +809,9 @@ class TvSettingsViewModel(
     private fun loadPlaybackConnection() {
         val repository = playbackConnection ?: return
         viewModelScope.launch {
-            val limit = repository.connection()?.learnedLimit
-            _uiState.update { it.copy(learnedLimit = limit) }
+            val settings = repository.settingsState()
+            _uiState.update { it.copy(learnedLimit = settings?.connection?.learnedLimit) }
+            connectionSpeed?.update(settings)
         }
     }
 
