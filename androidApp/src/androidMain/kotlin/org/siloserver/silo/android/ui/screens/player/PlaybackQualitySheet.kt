@@ -5,7 +5,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.android.R
+import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.PlaybackQualityOption
 import org.siloserver.silo.model.playback.activePlaybackQualityId
 
@@ -36,6 +39,8 @@ internal val PlayerViewModel.PlayerUiState.qualityPreference: String?
 fun PlaybackQualitySheet(
     options: List<PlaybackQualityOption>,
     activeId: String?,
+    // Auto plays under a limit learned from buffering; its row says so.
+    autoLimitedAfterBuffering: Boolean = false,
     // A Watch Party keeps every member on the room's file; quality still
     // applies to this device's stream.
     inRoom: Boolean,
@@ -56,9 +61,14 @@ fun PlaybackQualitySheet(
             }
             Spacer(Modifier.height(8.dp))
             PlayerGroup {
+                val autoLimitedLabel = stringResource(R.string.buffering_quality_auto_limited)
                 options.forEachIndexed { index, option ->
                     PlayerCheckRow(
-                        label = option.name,
+                        label = if (autoLimitedAfterBuffering && option.id == PLAYBACK_QUALITY_AUTO) {
+                            autoLimitedLabel
+                        } else {
+                            option.name
+                        },
                         detail = option.bitrateLabel,
                         selected = option.id == activeId,
                         onClick = {

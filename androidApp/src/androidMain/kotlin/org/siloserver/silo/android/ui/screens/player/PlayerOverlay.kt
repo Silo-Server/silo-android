@@ -57,6 +57,9 @@ import org.siloserver.silo.common.player.NoticeTone
 import org.siloserver.silo.common.player.PlayerNotice
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerState
+import org.siloserver.silo.domain.player.BufferingQualityNotice
+import org.siloserver.silo.domain.player.BufferingQualityPill
+import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.PlaybackQualityOption
 import org.siloserver.silo.model.playback.playbackQualityMenu
 import org.siloserver.silo.model.playback.playbackQualityValueLabel
@@ -212,6 +215,29 @@ fun PlayerOverlay(
     // disabled. The player has no other BackHandler of its own — sheets live in
     // their own dialog windows, so an open sheet's Back never reaches here.
     BackHandler(enabled = introSkipState.isVisible && introPillAllowed) { viewModel.onDismissIntroPrompt() }
+    val bufferingPill by viewModel.bufferingPill.collectAsState()
+    val bufferingCountdownRun by viewModel.bufferingCountdownRun.collectAsState()
+    val bufferingTimerRunning by viewModel.bufferingTimerRunning.collectAsState()
+    val bufferingNoticeKey by viewModel.bufferingNotice.collectAsState()
+    // Hidden under Next Up, as the intro pill is.
+    val bufferingPillShown = bufferingPill.isVisible && !state.showUpNext
+    // Back on a buffering pill is consumed: Keep quality on the prompt, hide
+    // on the undo. The controller holds its pill while the intro pill shows;
+    // should both still be up, the intro pill takes Back.
+    BackHandler(enabled = bufferingPillShown && !(introSkipState.isVisible && introPillAllowed)) {
+        viewModel.onBufferingBack()
+    }
+    val bufferingNotice = bufferingNoticeKey?.let { key ->
+        PlayerNotice(
+            stringResource(
+                when (key) {
+                    BufferingQualityNotice.LOWERED -> R.string.buffering_quality_lowered
+                    BufferingQualityNotice.CANT_LOWER -> R.string.buffering_quality_cant_lower
+                },
+            ),
+            NoticeTone.Info,
+        )
+    }
     val sleepTimerState by viewModel.sleepTimerState.collectAsState()
     val sleepTimerDefault by viewModel.sleepTimerDefaultMinutes.collectAsState()
     val videoGravity by viewModel.videoGravity.collectAsState()
@@ -350,15 +376,31 @@ fun PlayerOverlay(
         // server-reconnecting / suspend warnings as a transient toast. Stacks above the
         // buffering spinner; fine to obscure briefly during Reconnecting (the spinner is
         // a redundant signal at that point).
+        // While the buffering pill shows, the anchor rises above the controls so
+        // the pill stays tappable, and drops below the top bar so it covers no
+        // control (the sleep timer chip's rule).
+        val noticeBelowTopBar = bufferingPillShown &&
+            (alwaysShowControls || state.showControls) && !state.showUpNext && !menuDocked
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(top = 16.dp, start = 16.dp),
+                .padding(top = if (noticeBelowTopBar) 72.dp else 16.dp, start = 16.dp)
+                .zIndex(if (bufferingPillShown) 9f else 0f),
             contentAlignment = Alignment.TopStart,
         ) {
-            // A session notice (reconnecting, suspended) outranks an AI failure.
-            PlayerNoticeOverlay(notice = notice ?: aiFailureNotice)
+            // A session notice (reconnecting, suspended) outranks an AI failure,
+            // and both outrank a buffering notice.
+            PlayerNoticeOverlay(
+                notice = notice ?: aiFailureNotice ?: bufferingNotice,
+                bufferingPill = if (bufferingPillShown) bufferingPill else BufferingQualityPill.Hidden,
+                bufferingTotalSeconds = viewModel.bufferingTotalSeconds,
+                bufferingCountdownRun = bufferingCountdownRun,
+                bufferingTimerRunning = bufferingTimerRunning,
+                onBufferingLower = viewModel::onBufferingLower,
+                onBufferingKeep = viewModel::onBufferingKeep,
+                onBufferingRestore = viewModel::onBufferingRestore,
+            )
         }
 
         // Subtitle sync card (top-right, below the top bar's actions): follows
@@ -704,6 +746,9 @@ fun PlayerOverlay(
             PlaybackQualitySheet(
                 options = qualityOptions,
                 activeId = activeQualityId,
+                // A learned limit holds this Auto plan down.
+                autoLimitedAfterBuffering = state.playbackPlan?.bandwidthLimit != null &&
+                    activeQualityId == PLAYBACK_QUALITY_AUTO,
                 inRoom = inRoom,
                 onSelect = viewModel::onSelectQuality,
                 onDismiss = { qualitySheetVisible = false },

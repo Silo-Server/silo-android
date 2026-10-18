@@ -1194,6 +1194,24 @@ fun PlayerScreen(
         }
     }
 
+    // The buffering-quality controller reads the player that renders the plan:
+    // its states for stalls, and its loads for whether data is still arriving.
+    DisposableEffect(sessionPlayer) {
+        val player = sessionPlayer as? ExoPlayer
+        if (player == null) {
+            onDispose { }
+        } else {
+            val adapter = viewModel.bufferingQualityAdapter
+            player.addListener(adapter)
+            player.addAnalyticsListener(adapter)
+            adapter.seed(player.playWhenReady, player.playbackState, player.isPlaying)
+            onDispose {
+                player.removeListener(adapter)
+                player.removeAnalyticsListener(adapter)
+            }
+        }
+    }
+
     // Player event listener to feed state back to ViewModel + track video size for PiP
     DisposableEffect(mediaController, videoBackend, playWhenReadyReconciliationGate) {
         val controller = mediaController
@@ -1420,6 +1438,10 @@ fun PlayerScreen(
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
                 val decoderCounters = (sessionPlayer as? androidx.media3.exoplayer.ExoPlayer)?.videoDecoderCounters
+                viewModel.bufferingQualityAdapter.sampleBuffer(
+                    nowMs = SystemClock.elapsedRealtime(),
+                    bufferedPositionMs = controller.bufferedPosition.coerceAtLeast(0L),
+                )
                 val reason = startupStallDetector.sample(
                     sessionKey = sessionKey,
                     nowMs = SystemClock.elapsedRealtime(),
@@ -1433,7 +1455,22 @@ fun PlayerScreen(
                     decoderSkippedOutputBufferCount = decoderCounters?.skippedOutputBufferCount ?: 0,
                     decoderDroppedBufferCount = decoderCounters?.droppedBufferCount ?: 0,
                 )
-                if (reason != null) {
+                // A slow plan that is still receiving data belongs to the
+                // buffering-quality controller: no same-plan reopen and no
+                // failure replan, and this loop keeps sampling.
+                if (reason != null &&
+                    viewModel.bufferingQualityAdapter.ownsStartupStall(
+                        reason = reason,
+                        nowMs = SystemClock.elapsedRealtime(),
+                        controllerEnabled = viewModel.bufferingQualityEnabled,
+                    )
+                ) {
+                    Log.i(
+                        TAG,
+                        "startup_stall owned_by=buffering_quality classification=${reason.classification} " +
+                            "stalled_for_ms=${reason.stalledForMs}",
+                    )
+                } else if (reason != null) {
                     Log.i(TAG, "Startup stall fallback: $reason")
                     viewModel.onUnsupportedPlayback(reason, uiState.mediaMountGeneration)
                     return@repeatOnLifecycle

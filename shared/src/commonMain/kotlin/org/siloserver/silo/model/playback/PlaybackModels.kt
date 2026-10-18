@@ -283,6 +283,8 @@ data class PlaybackExecutionPlan(
      * bitrate to tell a plan that plays the source from a conversion.
      */
     @SerialName("source_file") val sourceFile: PlaybackSourceDescriptorV3 = PlaybackSourceDescriptorV3(),
+    /** [PlaybackPlanV3.bandwidthLimit]: a learned limit lowered this Auto plan. */
+    @SerialName("bandwidth_limit") val bandwidthLimit: PlaybackBandwidthLimitV3? = null,
 )
 
 /**

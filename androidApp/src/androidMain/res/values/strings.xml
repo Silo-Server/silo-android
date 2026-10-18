@@ -52,6 +52,15 @@
     <string name="settings_rate_kbps">%1$d kbps</string>
     <string name="settings_learned_limit_reset">Reset</string>
     <string name="settings_learned_limit_reset_failed">Couldn\'t reset the limit. Try again.</string>
+    <!-- The player's buffering pills and notices (contract-fixed copy) -->
+    <string name="buffering_quality_prompt_title">Playback keeps buffering</string>
+    <string name="buffering_quality_prompt_lower">Lower quality</string>
+    <string name="buffering_quality_prompt_keep">Keep quality</string>
+    <string name="buffering_quality_lowered">Quality lowered to stop buffering</string>
+    <string name="buffering_quality_restore">Restore quality</string>
+    <string name="buffering_quality_cant_lower">Can\'t lower quality for this video</string>
+    <!-- The Quality menu's Auto row while a learned limit holds Auto down. -->
+    <string name="buffering_quality_auto_limited">Auto · limited after buffering</string>
 
     <!-- Placeholder -->
     <string name="coming_soon">Coming soon</string>
