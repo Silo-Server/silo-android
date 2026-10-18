@@ -95,6 +95,26 @@ class BufferingQualityControllerTest {
     }
 
     @Test
+    fun `a wait after a stop the viewer did not make runs the frozen timer again`() = runTest {
+        val controller = newController(BufferingQualityMode.ASK)
+        longStall(controller)
+        // A player error reaches the controller as a stop.
+        controller.onPause()
+        assertFalse(controller.timerRunning.value)
+
+        at(140_000)
+        controller.onWaiting(BufferingWaitCause.PAUSE)
+        assertFalse(controller.timerRunning.value)
+        // Recovery re-prepares the player, which waits for data to play.
+        controller.onWaiting()
+        assertTrue(controller.timerRunning.value)
+        at(154_999)
+        assertTrue(controller.pill.value.isVisible)
+        at(155_000)
+        assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
+    }
+
+    @Test
     fun `a deferred prompt shows when the other pill hides on the same plan`() = runTest {
         val controller = newController(BufferingQualityMode.ASK)
         controller.setOtherPillVisible(true)

@@ -368,11 +368,19 @@ class BufferingQualityController(
         evaluate(now)
     }
 
-    /** The player ran out of data while it should be playing. */
+    /**
+     * The player is waiting for [cause]; only a [BufferingWaitCause.NETWORK]
+     * wait can be a stall. Any wait but a [BufferingWaitCause.PAUSE] one means
+     * the player is trying to play, so the viewer has not paused: a pill
+     * frozen by a stop the viewer did not make, such as a player error, runs
+     * again.
+     */
     fun onWaiting(cause: BufferingWaitCause = BufferingWaitCause.NETWORK): Unit {
+        if (cause != BufferingWaitCause.PAUSE) paused = false
         if (!enabled) return
         val state = current ?: return
         val now = clock()
+        if (!paused) thawPill()
         stopPlayedClock(state, now)
         if (cause != BufferingWaitCause.NETWORK) {
             interrupt(state)
