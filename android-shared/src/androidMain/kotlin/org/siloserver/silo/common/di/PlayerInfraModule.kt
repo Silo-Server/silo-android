@@ -63,7 +63,10 @@ val playerInfraModule = module {
     }
     single { org.siloserver.silo.network.apiv2.PlaybackV2Api(get(), get()) }
     single {
-        org.siloserver.silo.repository.SequencedPlayback(get(), get(), get(), get()) {
+        org.siloserver.silo.repository.SequencedPlayback(
+            get(), get(), get(), get(),
+            log = { android.util.Log.i("SequencedPlayback", it) },
+        ) {
             java.util.UUID.randomUUID().toString()
         }
     }

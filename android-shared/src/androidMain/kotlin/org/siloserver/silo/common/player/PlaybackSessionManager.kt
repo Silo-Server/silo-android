@@ -3,6 +3,14 @@ package org.siloserver.silo.common.player
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackLogger
 import android.os.SystemClock
 import android.util.Log
+import org.siloserver.silo.domain.player.BufferingPlanSummary
+import org.siloserver.silo.domain.player.BufferingQualityMode
+import org.siloserver.silo.domain.player.BufferingQualityReplan
+import org.siloserver.silo.model.playback.BUFFERING_QUALITY_V1_FEATURE
+import org.siloserver.silo.model.playback.LEARNED_LIMIT_IGNORE
+import org.siloserver.silo.model.playback.PLAYBACK_PLAN_SUMMARY_V1_FEATURE
+import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
+import org.siloserver.silo.model.playback.gatedForBufferingQuality
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PlaybackStartRequestV3
@@ -249,6 +257,48 @@ open class PlaybackSessionManager(
     private var pendingVideoPublication: PendingVideoPublication? = null
     private var contentResetInProgress = false
 
+    /**
+     * The effective `playback.buffering_quality_mode`, read on every start and
+     * replan. In [BufferingQualityMode.NEVER] each request carries
+     * `learned_limit: ignore` (unless it names its own), so a limit learned by
+     * another profile on this device does not reach this one. Servers without
+     * `buffering_quality_v1` never see the field. The video view models set it.
+     */
+    @Volatile
+    var bufferingQualityModeProvider: () -> BufferingQualityMode = { BufferingQualityMode.Default }
+
+    /** The plan identity a `plan_summary` names, kept after the plan stops being active. */
+    private data class PlanSummaryIdentity(
+        val playbackAttemptId: String,
+        val sessionId: String,
+        val planAttemptId: String,
+        val planAttemptKey: String,
+        val outputContextId: String?,
+        /** The estimate on the request that produced the plan. */
+        val bandwidthEstimateKbps: Int?,
+    )
+
+    /** Recent plans by plan id, oldest evicted first. Guarded by itself. */
+    private val recentPlans = object : LinkedHashMap<String, PlanSummaryIdentity>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, PlanSummaryIdentity>?): Boolean =
+            size > RECENT_PLAN_LIMIT
+    }
+
+    private fun rememberPlan(attempt: ActiveVideoAttempt, bandwidthEstimateKbps: Int?) {
+        val identity = PlanSummaryIdentity(
+            playbackAttemptId = attempt.playbackAttemptId,
+            sessionId = attempt.sessionId,
+            planAttemptId = attempt.planAttemptId,
+            planAttemptKey = attempt.planAttemptKey,
+            outputContextId = attempt.context.output.outputContextId,
+            bandwidthEstimateKbps = bandwidthEstimateKbps,
+        )
+        synchronized(recentPlans) { recentPlans[attempt.plan.planId] = identity }
+    }
+
+    private fun modeLearnedLimit(): String? =
+        LEARNED_LIMIT_IGNORE.takeIf { bufferingQualityModeProvider() == BufferingQualityMode.NEVER }
+
     private suspend fun <T> withSettledVideoAttempt(
         block: suspend () -> T,
     ): T {
@@ -379,6 +429,8 @@ open class PlaybackSessionManager(
                 subtitleTrackIndex = subtitleTrackIndex?.takeIf { it >= 0 },
                 clientFeatures = playbackClientFeaturesV3(clientPlaybackContext),
                 bandwidthCapKbps = maxBitrateKbps?.takeIf { it > 0 },
+                // SequencedPlayback strips it for a server without buffering_quality_v1.
+                learnedLimit = modeLearnedLimit(),
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
                 allowAlternateVersions = allowAlternateVersions,
@@ -599,7 +651,7 @@ open class PlaybackSessionManager(
             attemptCount = 1,
             startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
             firstFrameReported = false,
-        )
+        ).also { rememberPlan(it, bandwidthEstimateKbps = null) } // A start carries no estimate.
     }
 
     private fun installActiveVideoAttemptLocked(
@@ -745,6 +797,8 @@ open class PlaybackSessionManager(
          * the saved cap for the connection. Null keeps the session's.
          */
         qualityPair: PlaybackQualityPair? = null,
+        /** See [prepareActiveVideoSessionReplan]. */
+        bufferingQuality: BufferingQualityReplan? = null,
     ): ApiResult<VideoSessionStartV3> = immediateVideoReplanMutex.withLock {
         when (
             val prepared = prepareActiveVideoSessionReplan(
@@ -759,7 +813,8 @@ open class PlaybackSessionManager(
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
                 qualityPair = qualityPair,
-                operation = replanOperationForClassification(classification),
+                operation = replanOperation(classification, bufferingQuality),
+                bufferingQuality = bufferingQuality,
                 // A rejected subtitle retry must not tear down healthy video.
                 // Reuse staged rejection cleanup while successful retries still commit.
                 preserveImmediateOutcomes = classification !in SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS,
@@ -787,6 +842,8 @@ open class PlaybackSessionManager(
         clientPlaybackContext: ClientPlaybackContext? = null,
         /** Replaces quality and cap as on [replanActiveVideoSession]: an in-player Auto. */
         qualityPair: PlaybackQualityPair? = null,
+        /** See [prepareActiveVideoSessionReplan]. */
+        bufferingQuality: BufferingQualityReplan? = null,
     ): ApiResult<StagedVideoReplan> = when (
         val prepared = prepareActiveVideoSessionReplan(
             classification = classification,
@@ -799,9 +856,10 @@ open class PlaybackSessionManager(
             qualityPreference = qualityPreference,
             capabilities = capabilities,
             clientPlaybackContext = clientPlaybackContext,
-            operation = replanOperationForClassification(classification),
+            operation = replanOperation(classification, bufferingQuality),
             preserveImmediateOutcomes = false,
             qualityPair = qualityPair,
+            bufferingQuality = bufferingQuality,
         )
     ) {
         is ApiResult.Success -> when (val value = prepared.data) {
@@ -830,6 +888,16 @@ open class PlaybackSessionManager(
         operation: String,
         preserveImmediateOutcomes: Boolean,
         qualityPair: PlaybackQualityPair? = null,
+        /**
+         * A replan the buffering-quality controller asked for. The callers
+         * send it as `quality_change` (see [replanOperation]); its quality
+         * preference replaces any other, and its estimate, estimate source
+         * and `learned_limit` go on the request. [sendReplan] then drops the
+         * source and `learned_limit` for a server without
+         * `buffering_quality_v1`. The session's bandwidth cap still applies.
+         * Null leaves the request unchanged.
+         */
+        bufferingQuality: BufferingQualityReplan? = null,
     ): ApiResult<PreparedVideoReplan> = withSettledVideoAttempt {
         if (contentResetInProgress) {
             return@withSettledVideoAttempt ApiResult.Error(
@@ -851,7 +919,8 @@ open class PlaybackSessionManager(
             )
         }
         val intent = operation in INTENT_V3_OPERATIONS
-        val effectiveQuality = (qualityPair?.qualityPreference ?: qualityPreference)?.lowercase()
+        val effectiveQuality = (bufferingQuality?.qualityPreference ?: qualityPair?.qualityPreference ?: qualityPreference)
+            ?.lowercase()
             ?: active.qualityPreference
         // Mirror the server's own validator so a malformed operation is caught
         // before it costs a round trip: failure recovery must name what failed,
@@ -950,6 +1019,9 @@ open class PlaybackSessionManager(
             } else {
                 active.bandwidthCapKbps
             },
+            bandwidthEstimateKbps = bufferingQuality?.bandwidthEstimateKbps,
+            bandwidthEstimateSource = bufferingQuality?.bandwidthEstimateSource,
+            learnedLimit = bufferingQuality?.learnedLimit,
             selectedTracks = SelectedPlaybackTracksV3(
                 audio = selectedTrackIdentity(active, "audio", audioTrackIndex, active.plan.selectedTracks.audio),
                 subtitle = subtitleTrackIndex?.takeIf { it >= 0 }
@@ -961,7 +1033,7 @@ open class PlaybackSessionManager(
             capabilities = currentCapabilities,
             clientPlaybackContext = currentContext,
         )
-        val result = playbackRepository.replanPlaybackV3(active.sessionId, request)
+        val result = sendReplan(active.sessionId, request)
         var committedPlanAttemptId: String? = null
         if (result is ApiResult.Success) {
             // The server has committed this plan. Record it before any
@@ -1058,6 +1130,7 @@ open class PlaybackSessionManager(
                         startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
                         firstFrameReported = false,
                     )
+                    rememberPlan(next, request.bandwidthEstimateKbps)
                     val ready = VideoSessionStartV3.Ready(
                         session = validated.plan.toSessionResponse(
                             validated.sessionId,
@@ -1909,7 +1982,7 @@ open class PlaybackSessionManager(
             ),
         )
 
-        when (val result = playbackRepository.replanPlaybackV3(active.sessionId, request)) {
+        when (val result = sendReplan(active.sessionId, request)) {
             is ApiResult.Success -> {
                 if (SEEK_REANCHOR_V3_FEATURE !in result.data.serverFeatures) {
                     return@withSettledVideoAttempt invalidSeekReanchorResponse(
@@ -2192,7 +2265,7 @@ open class PlaybackSessionManager(
             ),
         )
 
-        when (val result = playbackRepository.replanPlaybackV3(active.sessionId, request)) {
+        when (val result = sendReplan(active.sessionId, request)) {
             is ApiResult.Success -> {
                 result.data.playbackPlan?.let { committedPlan ->
                     val committedKey = committedPlan.planAttemptKey
@@ -2369,7 +2442,9 @@ open class PlaybackSessionManager(
             startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
             firstFrameReported = false,
         )
+        // Seek recovery sends no bandwidth estimate.
         return next.takeIf { activeVideoAttempt.compareAndSet(current, next) }
+            ?.also { rememberPlan(it, bandwidthEstimateKbps = null) }
     }
 
     private fun mapOfNotNull(vararg values: Pair<String, String?>): Map<String, String> =
@@ -2387,6 +2462,75 @@ open class PlaybackSessionManager(
         telemetryScope.launch {
             playbackRepository.reportRouteEventV3(event)
         }
+    }
+
+    /**
+     * Every replan leaves through here. `never` mode adds `learned_limit:
+     * ignore` unless the request names its own, then the buffering-quality
+     * feature gate applies. SequencedPlayback applies the same gate at the
+     * wire from the same feature record, so gating here only makes the log
+     * line match the body sent.
+     */
+    private suspend fun sendReplan(
+        sessionId: String,
+        request: PlaybackReplanRequestV3,
+    ): ApiResult<PlaybackDecisionResponseV3> {
+        val outgoing = request
+            .copy(learnedLimit = request.learnedLimit ?: modeLearnedLimit())
+            .gatedForBufferingQuality(playbackRepository.playbackServerFeatures(request.playbackAttemptId))
+        Log.i(
+            TAG,
+            "replan_request operation=${outgoing.operation ?: FAILURE_RECOVERY_V3_OPERATION} " +
+                "quality_preference=${outgoing.qualityPreference} " +
+                "bandwidth_estimate_kbps=${outgoing.bandwidthEstimateKbps} " +
+                "bandwidth_estimate_source=${outgoing.bandwidthEstimateSource} " +
+                "learned_limit=${outgoing.learnedLimit} " +
+                "bandwidth_cap_kbps=${outgoing.bandwidthCapKbps} " +
+                "failure=${outgoing.failure?.classification} " +
+                "client_features_has_bq=${BUFFERING_QUALITY_V1_FEATURE in outgoing.clientFeatures}",
+        )
+        return playbackRepository.replanPlaybackV3(sessionId, outgoing)
+    }
+
+    /**
+     * Sends the `plan_summary` route event for a plan that stopped being the
+     * playing plan: what [org.siloserver.silo.domain.player.BufferingQualityController]
+     * hands its `onPlanSummary` callback. It names the summarized plan even
+     * when the active attempt has already moved to its successor or stopped.
+     *
+     * Sent only while the server advertises `playback_plan_summary_v1` for the
+     * attempt; otherwise, or for a plan this manager no longer remembers, it
+     * is dropped.
+     */
+    fun emitPlanSummary(summary: BufferingPlanSummary) {
+        val identity = synchronized(recentPlans) { recentPlans[summary.planId] } ?: run {
+            Log.w(TAG, "plan_summary dropped: the plan is no longer known")
+            return
+        }
+        if (PLAYBACK_PLAN_SUMMARY_V1_FEATURE !in playbackRepository.playbackServerFeatures(identity.playbackAttemptId)) {
+            return
+        }
+        emitRouteEvent(
+            PlaybackRouteEventV3(
+                playbackAttemptId = identity.playbackAttemptId,
+                sessionId = identity.sessionId,
+                planId = summary.planId,
+                planAttemptId = identity.planAttemptId,
+                planAttemptKey = identity.planAttemptKey,
+                event = "plan_summary",
+                outputContextId = identity.outputContextId,
+                diagnostics = buildMap {
+                    put("played_ms", summary.playedMs.toString())
+                    put("stall_count", summary.stallCount.toString())
+                    put("stall_total_ms", summary.stallTotalMs.toString())
+                    put("stall_longest_ms", summary.stallLongestMs.toString())
+                    summary.deliveredKbps?.takeIf { it > 0 }?.let { put("delivered_kbps", it.toString()) }
+                    put("buffering_mode", summary.mode.wireValue)
+                    put("buffering_action", summary.action.wireValue)
+                    identity.bandwidthEstimateKbps?.let { put("bandwidth_estimate_kbps", it.toString()) }
+                },
+            ),
+        )
     }
 
     fun reportActiveVideoEvent(
@@ -2565,6 +2709,13 @@ open class PlaybackSessionManager(
             "quality_changed" -> QUALITY_CHANGE_V3_OPERATION
             else -> FAILURE_RECOVERY_V3_OPERATION
         }
+
+        /** A buffering-quality replan is always a `quality_change`, whatever the classification. */
+        private fun replanOperation(classification: String, bufferingQuality: BufferingQualityReplan?): String =
+            if (bufferingQuality != null) QUALITY_CHANGE_V3_OPERATION else replanOperationForClassification(classification)
+
+        /** Plans remembered for `plan_summary`: the playing one, its predecessors and staged candidates. */
+        private const val RECENT_PLAN_LIMIT = 8
 
         /**
          * The server returned a structurally valid plan that names a client-side

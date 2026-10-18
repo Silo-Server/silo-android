@@ -11,6 +11,8 @@ import org.siloserver.silo.network.AuthScopeSnapshot
 class PlaybackRepository(private val sequenced: SequencedPlayback) {
     suspend fun controlOwner(sessionId: String): Pair<AuthScopeSnapshot, String?>? = sequenced.controlOwner(sessionId)
     fun isSequenced(sessionId: String): Boolean = sequenced.owns(sessionId)
+    /** See [SequencedPlayback.serverFeatures]. */
+    fun playbackServerFeatures(playbackAttemptId: String): Set<String> = sequenced.serverFeatures(playbackAttemptId)
     /** [SequencedPlayback] answers null for a session it never journaled. */
     private fun unknownSession() = ApiResult.Error(0, "playback_unavailable", "This playback session is not owned by the app.")
     private suspend fun <T> guarded(block: suspend () -> ApiResult<T>): ApiResult<T> = try { block() }

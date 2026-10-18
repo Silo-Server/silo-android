@@ -6,10 +6,12 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
+import org.siloserver.silo.model.playback.BUFFERING_QUALITY_V1_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.PlaybackStartRequestV3
 import org.siloserver.silo.model.playback.PlaybackReplanRequestV3
 import org.siloserver.silo.model.playback.PlaybackRouteEventV3
+import org.siloserver.silo.model.playback.gatedForBufferingQuality
 import org.siloserver.silo.network.*
 import org.siloserver.silo.network.apiv2.*
 
@@ -52,6 +54,8 @@ class SequencedPlayback(
     private val tokens: TokenManager,
     private val authorities: DurableLoginAuthorityProvider,
     private val store: PlaybackJournalStore,
+    /** One-line request summaries for device logs. No URLs, tokens or identifiers. */
+    private val log: (String) -> Unit = {},
     private val newId: () -> String,
 ) {
     private companion object {
@@ -80,6 +84,22 @@ class SequencedPlayback(
     private val scopes = mutableMapOf<String, AuthScopeSnapshot>()
     @kotlin.concurrent.Volatile private var sessions: Set<String> = emptySet()
     fun owns(sessionId: String): Boolean = sessionId in sessions
+
+    // Read without the mutex by [serverFeatures]; written only under the mutex as whole replacements.
+    @kotlin.concurrent.Volatile private var attemptFeatures: Map<String, Set<String>> = emptyMap()
+
+    /**
+     * Everything the server advertised for [attemptId]: the `/api/v2` capability
+     * `features` fetched for its start, plus the `server_features` of every
+     * decision it returned since. A feature named by either source counts.
+     * Empty for an attempt this process did not start.
+     */
+    fun serverFeatures(attemptId: String): Set<String> = attemptFeatures[attemptId].orEmpty()
+
+    private fun recordFeatures(attemptId: String, features: Collection<String>) {
+        val known = attemptFeatures[attemptId] ?: return
+        if (!known.containsAll(features)) attemptFeatures = attemptFeatures + (attemptId to known + features)
+    }
 
     private suspend fun load(): List<PlaybackJournalEntry> {
         if (entries == null) { entries = store.read(); publish() }
@@ -113,6 +133,7 @@ class SequencedPlayback(
         adopted.remove(attemptId)
         auxiliaryHeaders.remove(attemptId)
         auxiliaryGenerations = auxiliaryGenerations - attemptId
+        attemptFeatures = attemptFeatures - attemptId
     }
 
     /**
@@ -231,11 +252,20 @@ class SequencedPlayback(
             if (load().any { it.attemptId == request.playbackAttemptId })
                 return@withStableIdentity failure("attempt_exists", "This playback attempt is already recorded.")
             guard()
+            // The server rejects fields it does not know, so the journaled body is the gated one.
+            val features = capability.features.toSet()
+            val gated = request.gatedForBufferingQuality(features)
             val entry = PlaybackJournalEntry(current.serverId, current.serverUrl, loginId, account.id,
-                request.profileId, capability.installationId, request.playbackAttemptId, request.v2Body(capability.installationId))
+                request.profileId, capability.installationId, request.playbackAttemptId, gated.v2Body(capability.installationId))
             save(entry)
             // Unless save() just pruned it: its temporary identity ended in between.
-            if (load().any { it.attemptId == entry.attemptId }) scopes[entry.attemptId] = current
+            if (load().any { it.attemptId == entry.attemptId }) {
+                scopes[entry.attemptId] = current
+                attemptFeatures = attemptFeatures + (entry.attemptId to features)
+            }
+            log("start_request quality_preference=${gated.qualityPreference} learned_limit=${gated.learnedLimit} " +
+                "bandwidth_cap_kbps=${gated.bandwidthCapKbps} " +
+                "client_features_has_bq=${BUFFERING_QUALITY_V1_FEATURE in gated.clientFeatures}")
             // A saved attempt is uncertainty, even if its owner changes before send.
             guard()
             sendStart(entry, current, expectedMetadataOwner, allowsLocalRoute)
@@ -268,6 +298,7 @@ class SequencedPlayback(
                         // The sequenced-progress contract is negotiated on /playback/capabilities;
                         // the decision's server_features lists only protocol-v3 plan features.
                         val decision = decodePlaybackDecisionV2(result.data)
+                        recordFeatures(entry.attemptId, decision.serverFeatures)
                         guard()
                         val ready = withAuxiliaryAuthority(decision, entry, captured, sentHeaders)
                         adopted += entry.attemptId
@@ -322,7 +353,8 @@ class SequencedPlayback(
         val captured = scope(entry) ?: return@withLock authorityChanged()
         if (entry.terminal || entry.stop != null) return@withLock failure("playback_stopping", "Playback is stopping.")
         if (request.playbackAttemptId != entry.attemptId) return@withLock failure("identity_changed", "The playback attempt changed.")
-        val body = request.v2Body(entry.installationId)
+        // Every replan passes here, so this is where the buffering-quality wire gate holds.
+        val body = request.gatedForBufferingQuality(serverFeatures(entry.attemptId)).v2Body(entry.installationId)
         val previous = entry.replans.find { it.body["replan_request_id"] == body["replan_request_id"] }
         if (previous != null) {
             if (previous.body != body) return@withLock failure("replan_conflict", "A replan identity cannot be reused with a different request.")
@@ -357,6 +389,7 @@ class SequencedPlayback(
                 if (decision.sessionId != sessionId || (decision.playbackPlan?.sessionId?.let { it != sessionId } == true))
                     return@withLock failure("invalid_decision", "The replacement plan belongs to another session.")
                 save(entry.copy(replans = entry.replans.dropLast(1) + intent.copy(response = result.data)))
+                recordFeatures(entry.attemptId, decision.serverFeatures)
                 if (scope(entry) == null) return@withLock authorityChanged()
                 ApiResult.Success(withAuxiliaryAuthority(decision, entry, captured, sentHeaders))
             }

@@ -341,6 +341,52 @@ class SequencedPlaybackTest {
     private fun decision(session: String) = adoptedDecision.replace("session-1", session)
     private val adoptedDecision = """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1","sequenced_progress_v1"],"outcome":"playable","session_id":"session-1","playback_plan":{"plan_id":"plan-0001","plan_attempt_key":"plan-key-0001","session_id":"session-1","delivery":"original_http","stream":{"url":"/api/v2/stream/session-1","protocol":"http_progressive"},"decision_reason":"direct","requested_media_file_id":"42","effective_media_file_id":"42","source":{"media_file_id":"42"}}}"""
 
+    /** Start and replan bodies as the wire saw them, for [capabilityFeatures] and [decisionFeatures]. */
+    private suspend fun bufferingQualityBodies(capabilityFeatures: String, decisionFeatures: String): Triple<JsonObject, JsonObject, Set<String>> {
+        val identity = Identity(); val bodies = mutableListOf<JsonObject>()
+        val wire = adoptedDecision.replace("\"sequenced_progress_v1\"]", "\"sequenced_progress_v1\"$decisionFeatures]")
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps("\"sequenced_progress_v1\"$capabilityFeatures"))
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> { bodies += SiloJson.parseToJsonElement(req.body.toByteArray().decodeToString()).jsonObject; reply(wire, HttpStatusCode.Created) }
+            "/api/v2/playback/session-1/replan" -> { bodies += SiloJson.parseToJsonElement(req.body.toByteArray().decodeToString()).jsonObject; reply(wire) }
+            else -> error("Unexpected request ${req.url}")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, Store()) { stopId }
+            assertIs<ApiResult.Success<*>>(runtime.start(request().copy(learnedLimit = LEARNED_LIMIT_IGNORE)))
+            assertIs<ApiResult.Success<*>>(runtime.replan("session-1", replanRequest().copy(
+                operation = QUALITY_CHANGE_V3_OPERATION, bandwidthEstimateKbps = 44100,
+                bandwidthEstimateSource = BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER, learnedLimit = LEARNED_LIMIT_CLEAR)))
+            return Triple(bodies[0], bodies[1], runtime.serverFeatures("attempt-1"))
+        } finally { c.close() }
+    }
+    private fun JsonObject.features() = getValue("client_features").jsonArray.map { it.jsonPrimitive.content }
+
+    @Test fun bufferingQualityFieldsReachOnlyAServerThatAdvertisesTheFeature() = runTest {
+        // An older server rejects unknown fields: strip them, keep the existing estimate field.
+        val (oldStart, oldReplan, _) = bufferingQualityBodies(capabilityFeatures = "", decisionFeatures = "")
+        assertNull(oldStart["learned_limit"]); assertFalse(BUFFERING_QUALITY_V1_FEATURE in oldStart.features())
+        assertEquals(JsonPrimitive(44100), oldReplan["bandwidth_estimate_kbps"])
+        assertNull(oldReplan["bandwidth_estimate_source"]); assertNull(oldReplan["learned_limit"])
+        assertFalse(BUFFERING_QUALITY_V1_FEATURE in oldReplan.features())
+
+        val bq = ",\"$BUFFERING_QUALITY_V1_FEATURE\""
+        val (start, replan, features) = bufferingQualityBodies(capabilityFeatures = bq, decisionFeatures = "")
+        assertEquals(JsonPrimitive(LEARNED_LIMIT_IGNORE), start["learned_limit"])
+        assertTrue(BUFFERING_QUALITY_V1_FEATURE in start.features())
+        assertEquals(JsonPrimitive(BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER), replan["bandwidth_estimate_source"])
+        assertEquals(JsonPrimitive(LEARNED_LIMIT_CLEAR), replan["learned_limit"])
+        assertTrue(BUFFERING_QUALITY_V1_FEATURE in replan.features())
+        assertTrue(BUFFERING_QUALITY_V1_FEATURE in features)
+
+        // A start only knows the capability; its decision's server_features also count for replans.
+        val (lateStart, lateReplan, _) = bufferingQualityBodies(capabilityFeatures = "", decisionFeatures = bq)
+        assertNull(lateStart["learned_limit"])
+        assertEquals(JsonPrimitive(LEARNED_LIMIT_CLEAR), lateReplan["learned_limit"])
+        assertTrue(BUFFERING_QUALITY_V1_FEATURE in lateReplan.features())
+    }
+
     @Test fun uncertainReplanIsDurableAndCannotReplayOrRebase() = runTest {
         val identity = Identity(); val store = Store(); var replans = 0
         val c = client { req -> when (req.url.encodedPath) {

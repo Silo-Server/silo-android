@@ -1,0 +1,60 @@
+package org.siloserver.silo.domain.player
+
+import org.siloserver.silo.model.playback.PlaybackAvailableQualityV3
+import org.siloserver.silo.model.playback.PlaybackDegradationWarning
+import org.siloserver.silo.model.playback.PlaybackDelivery
+import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
+import org.siloserver.silo.model.playback.PlaybackPlanV3
+import org.siloserver.silo.model.playback.PlaybackSourceDescriptorV3
+import org.siloserver.silo.model.playback.PlaybackStreamProtocol
+import org.siloserver.silo.model.playback.PlaybackStreamV3
+import org.siloserver.silo.model.playback.QUALITY_REDUCTION_UNAVAILABLE_WARNING
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+class BufferingQualityPlanMappingTest {
+    private fun plan(
+        recipeKbps: Int? = null,
+        sourceKbps: Int = 0,
+        warnings: List<String> = emptyList(),
+    ) = PlaybackPlanV3(
+        planId = "p1",
+        delivery = PlaybackDelivery.ORIGINAL_HTTP,
+        stream = PlaybackStreamV3(url = "/api/v2/stream/s", protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE),
+        effectiveRecipe = PlaybackEffectiveRecipeV3(bitrateKbps = recipeKbps),
+        source = PlaybackSourceDescriptorV3(bitrateKbps = sourceKbps),
+        availableQualities = listOf(
+            PlaybackAvailableQualityV3(label = "original", bitrateKbps = 63000, preservesSource = true),
+            PlaybackAvailableQualityV3(label = "1080p-high", height = 1080, bitrateKbps = 10000),
+        ),
+        degradationWarnings = warnings.map { PlaybackDegradationWarning(code = it, message = it) },
+        decisionReason = "direct",
+    )
+
+    @Test
+    fun deliveredBitrateIsTheRecipeThenTheSource() {
+        assertEquals(31600, plan(recipeKbps = 31600, sourceKbps = 63000).toBufferingQualityPlan("auto").deliveredKbps)
+        assertEquals(63000, plan(recipeKbps = null, sourceKbps = 63000).toBufferingQualityPlan("auto").deliveredKbps)
+        assertEquals(63000, plan(recipeKbps = 0, sourceKbps = 63000).toBufferingQualityPlan("auto").deliveredKbps)
+        assertNull(plan().toBufferingQualityPlan("auto").deliveredKbps)
+    }
+
+    @Test
+    fun qualityRungsAndWarningMap() {
+        val mapped = plan(warnings = listOf("other", QUALITY_REDUCTION_UNAVAILABLE_WARNING)).toBufferingQualityPlan("1080P-High")
+        assertEquals("p1", mapped.planId)
+        assertEquals("1080p-high", mapped.quality)
+        assertEquals(
+            listOf(BufferingQualityRung("original", 63000), BufferingQualityRung("1080p-high", 10000)),
+            mapped.availableQualities,
+        )
+        assertTrue(mapped.qualityReductionUnavailable)
+
+        val plain = plan(warnings = listOf("other")).toBufferingQualityPlan(" ")
+        assertEquals("auto", plain.quality)
+        assertFalse(plain.qualityReductionUnavailable)
+    }
+}
