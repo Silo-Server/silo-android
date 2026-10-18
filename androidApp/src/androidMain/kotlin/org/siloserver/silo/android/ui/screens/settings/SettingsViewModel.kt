@@ -644,7 +644,11 @@ class SettingsViewModel(
         connectionSpeed?.testSpeed()
     }
 
-    /** Forgets the learned limit, then reads the connection again so the row goes. */
+    /**
+     * Forgets the learned limit, then reads the connection again so the row
+     * goes and the Connection group's Auto budget, which the limit capped,
+     * catches up.
+     */
     fun resetLearnedLimit() {
         val repository = playbackConnection ?: return
         if (learnedLimitResetInFlight) return
@@ -653,8 +657,9 @@ class SettingsViewModel(
         viewModelScope.launch {
             try {
                 if (repository.resetLearnedLimit() is ApiResult.Success) {
-                    val limit = repository.connection()?.learnedLimit
-                    _uiState.update { it.copy(learnedLimit = limit) }
+                    val settings = repository.settingsState()
+                    _uiState.update { it.copy(learnedLimit = settings?.connection?.learnedLimit) }
+                    connectionSpeed?.update(settings)
                 } else {
                     _uiState.update { it.copy(learnedLimitResetFailed = true) }
                 }
