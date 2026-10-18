@@ -47,10 +47,17 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
  * - Playback running → [BufferingPlaybackEventSink.onPlaying].
  * - Starved (`STATE_BUFFERING` while `playWhenReady`) →
  *   [BufferingPlaybackEventSink.onWaiting], caused by [BufferingWaitCause.SEEK]
- *   after a seek, [BufferingWaitCause.RELOAD] after [markReload], and
- *   otherwise [BufferingWaitCause.NETWORK]. Both flags clear when playback
- *   next runs. A new plan's first wait is a network wait; the controller
- *   applies the startup grace.
+ *   after a seek, [BufferingWaitCause.RELOAD] after [markReload],
+ *   [BufferingWaitCause.RENDERER] when more than [STARVED_MAX_AHEAD_MS] of
+ *   media is buffered past the playhead, and otherwise
+ *   [BufferingWaitCause.NETWORK]. Both flags clear when playback next runs. A
+ *   new plan's first wait is a network wait; the controller applies the
+ *   startup grace.
+ * - Media3 also buffers when its decoder falls behind and it drops to the
+ *   next keyframe, with seconds of media still buffered. The spec's stall is
+ *   running out of data, so that wait is [BufferingWaitCause.RENDERER], which
+ *   the controller does not count. If the buffer then drains before playback
+ *   resumes, [sampleBuffer] re-announces the wait as a network wait.
  * - `playWhenReady` false, `STATE_ENDED` or `STATE_IDLE` →
  *   [BufferingPlaybackEventSink.onPause].
  * - A seek discontinuity → [BufferingPlaybackEventSink.onSeek]. During a
@@ -100,6 +107,12 @@ class BufferingQualityPlayerAdapter(
     private var seekSinceRun = false
     private var reloadMarked = false
 
+    /** The cause of the wait in progress, while [phase] is [Phase.STARVED]. */
+    private var waitCause: BufferingWaitCause? = null
+
+    /** Media buffered past the playhead, read from the attached player. */
+    private var bufferedAheadMs: () -> Long = { 0L }
+
     private var loadTrouble = false
     private var offline = false
 
@@ -109,8 +122,18 @@ class BufferingQualityPlayerAdapter(
     /** Failing media loads or no network: stalls now belong to the reconnect path. */
     val transportTroubleActive: Boolean get() = loadTrouble || offline
 
-    /** The player's state when the adapter attaches to it. Sends what a callback would have. */
-    fun seed(playWhenReady: Boolean, playbackState: Int, isPlaying: Boolean) {
+    /**
+     * The player's state when the adapter attaches to it. Sends what a
+     * callback would have. [bufferedAheadMs] reads the player's
+     * `totalBufferedDuration`.
+     */
+    fun seed(
+        playWhenReady: Boolean,
+        playbackState: Int,
+        isPlaying: Boolean,
+        bufferedAheadMs: () -> Long = { 0L },
+    ) {
+        this.bufferedAheadMs = bufferedAheadMs
         this.playWhenReady = playWhenReady
         this.playbackState = playbackState
         this.isPlaying = isPlaying
@@ -124,7 +147,7 @@ class BufferingQualityPlayerAdapter(
      */
     fun markReload() {
         reloadMarked = true
-        if (phase == Phase.STARVED) sink.onWaiting(BufferingWaitCause.RELOAD)
+        if (phase == Phase.STARVED) announceWait(BufferingWaitCause.RELOAD)
     }
 
     /** The default network came or went; feed it `PlaybackNetworkSnapshot.connected`. */
@@ -135,7 +158,8 @@ class BufferingQualityPlayerAdapter(
     /**
      * One sample from the screen's stall-sampling loop, on the same clock as
      * [clock]. A buffered position that advanced since the last sample is
-     * data arriving, and it clears load trouble.
+     * data arriving, and it clears load trouble. A renderer wait whose buffer
+     * has drained since it began has become a network wait.
      */
     fun sampleBuffer(nowMs: Long, bufferedPositionMs: Long) {
         val previous = lastBufferedPositionMs
@@ -143,6 +167,12 @@ class BufferingQualityPlayerAdapter(
         if (previous != null && bufferedPositionMs > previous) {
             lastDataAtMs = nowMs
             setTrouble(load = false, offline = offline)
+        }
+        if (phase == Phase.STARVED &&
+            waitCause == BufferingWaitCause.RENDERER &&
+            bufferedAheadMs() <= STARVED_MAX_AHEAD_MS
+        ) {
+            announceWait(BufferingWaitCause.NETWORK)
         }
     }
 
@@ -186,7 +216,7 @@ class BufferingQualityPlayerAdapter(
         lastBufferedPositionMs = null
         lastDataAtMs = null
         when (phase) {
-            Phase.STARVED -> sink.onWaiting(BufferingWaitCause.NETWORK)
+            Phase.STARVED -> announceWait(BufferingWaitCause.NETWORK)
             Phase.RUNNING -> sink.onPlaying()
             Phase.STOPPED -> Unit
         }
@@ -249,7 +279,7 @@ class BufferingQualityPlayerAdapter(
         // The buffer jumps with the playhead; that is not data arriving.
         lastBufferedPositionMs = null
         sink.onSeek()
-        if (phase == Phase.STARVED) sink.onWaiting(BufferingWaitCause.SEEK)
+        if (phase == Phase.STARVED) announceWait(BufferingWaitCause.SEEK)
     }
 
     internal fun onLoadFailed(wasCanceled: Boolean) {
@@ -273,6 +303,7 @@ class BufferingQualityPlayerAdapter(
         }
         if (next == phase) return
         phase = next
+        if (next != Phase.STARVED) waitCause = null
         when (next) {
             Phase.RUNNING -> {
                 seekSinceRun = false
@@ -280,15 +311,21 @@ class BufferingQualityPlayerAdapter(
                 setTrouble(load = false, offline = offline)
                 sink.onPlaying()
             }
-            Phase.STARVED -> sink.onWaiting(
+            Phase.STARVED -> announceWait(
                 when {
                     seekSinceRun -> BufferingWaitCause.SEEK
                     reloadMarked -> BufferingWaitCause.RELOAD
+                    bufferedAheadMs() > STARVED_MAX_AHEAD_MS -> BufferingWaitCause.RENDERER
                     else -> BufferingWaitCause.NETWORK
                 },
             )
             Phase.STOPPED -> sink.onPause()
         }
+    }
+
+    private fun announceWait(cause: BufferingWaitCause) {
+        waitCause = cause
+        sink.onWaiting(cause)
     }
 
     private fun setTrouble(load: Boolean, offline: Boolean) {
@@ -303,6 +340,13 @@ class BufferingQualityPlayerAdapter(
     companion object {
         /** How recent data must be for a slow plan to count as still receiving it. */
         const val RECEIVING_DATA_WINDOW_MS: Long = 5_000L
+
+        /**
+         * The most media a wait can start with and still be the player
+         * running out of data. A network stall starts with the buffer empty;
+         * Media3's keyframe catch-up starts with seconds left.
+         */
+        const val STARVED_MAX_AHEAD_MS: Long = 1_000L
 
         private const val TRANSPORT_STALL_CLASSIFICATION = "transport_stall"
     }

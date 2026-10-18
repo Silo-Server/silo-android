@@ -54,6 +54,34 @@ class BufferingQualityPlayerAdapterTest {
     }
 
     @Test
+    fun aWaitWithMediaBufferedAheadIsARendererWaitUntilItDrains() {
+        var aheadMs = 3_600L
+        adapter.seed(playWhenReady = true, playbackState = Player.STATE_READY, isPlaying = true) { aheadMs }
+        sink.events.clear()
+
+        // Media3 dropping to a keyframe: buffering with seconds still buffered.
+        starve()
+        resume()
+        // The same kind of wait, but the buffer drains before playback resumes.
+        starve()
+        aheadMs = 400L
+        adapter.sampleBuffer(nowMs = 1_000L, bufferedPositionMs = 10_000L)
+        adapter.sampleBuffer(nowMs = 2_000L, bufferedPositionMs = 10_000L)
+        resume()
+        // Out of data from the start.
+        starve()
+
+        assertEquals(
+            listOf(
+                "waiting:renderer", "playing",
+                "waiting:renderer", "waiting:network", "playing",
+                "waiting:network",
+            ),
+            sink.events,
+        )
+    }
+
+    @Test
     fun aSeekMakesTheNextWaitASeekWaitUntilPlaybackRuns() {
         playing()
         adapter.onDiscontinuity(Player.DISCONTINUITY_REASON_SEEK)

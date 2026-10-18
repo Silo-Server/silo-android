@@ -1215,7 +1215,12 @@ fun PlayerScreen(
             val adapter = viewModel.bufferingQualityAdapter
             player.addListener(adapter)
             player.addAnalyticsListener(adapter)
-            adapter.seed(player.playWhenReady, player.playbackState, player.isPlaying)
+            adapter.seed(
+                playWhenReady = player.playWhenReady,
+                playbackState = player.playbackState,
+                isPlaying = player.isPlaying,
+                bufferedAheadMs = { player.totalBufferedDuration },
+            )
             onDispose {
                 player.removeListener(adapter)
                 player.removeAnalyticsListener(adapter)

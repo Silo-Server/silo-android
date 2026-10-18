@@ -1637,6 +1637,7 @@ fun TvPlayerScreen(
                 playWhenReady = player.playWhenReady,
                 playbackState = player.playbackState,
                 isPlaying = player.isPlaying,
+                bufferedAheadMs = { player.totalBufferedDuration },
             )
             onDispose {
                 player.removeAnalyticsListener(listener)

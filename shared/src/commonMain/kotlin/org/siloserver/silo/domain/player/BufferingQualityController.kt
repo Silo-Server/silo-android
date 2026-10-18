@@ -39,8 +39,12 @@ data class BufferingQualityPlan(
     val serverPlanId: String = planId,
 )
 
-/** Why the player started waiting for data. Only [NETWORK] can become a stall. */
-enum class BufferingWaitCause { NETWORK, SEEK, PAUSE, RELOAD }
+/**
+ * Why the player started waiting. Only [NETWORK], the player running out of
+ * data, can become a stall. [RENDERER] is a wait with media still buffered
+ * ahead: the decoder fell behind and the player is catching up.
+ */
+enum class BufferingWaitCause { NETWORK, SEEK, PAUSE, RELOAD, RENDERER }
 
 /**
  * The `quality_change` replan the controller wants sent. The caller builds the
