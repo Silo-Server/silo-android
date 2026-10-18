@@ -15,17 +15,19 @@ class ConnectionSpeedTextTest {
     @Test
     fun theSpecsExample() {
         assertEquals(
-            ConnectionSpeedText(48, RateUnit.MBPS, Age(AgeUnit.MINUTES, 3), Transport.WIFI),
+            ConnectionSpeedText(48.0, RateUnit.MBPS, Age(AgeUnit.MINUTES, 3), Transport.WIFI),
             connectionSpeedText(48_000, minutesAgo(3), now, "wifi"),
         )
     }
 
     @Test
-    fun ratesRoundToWholeMegabitsLikeTheLearnedLimit() {
-        assertEquals(35 to RateUnit.MBPS, connectionRate(35_280))
-        assertEquals(36 to RateUnit.MBPS, connectionRate(35_500))
-        assertEquals(1 to RateUnit.MBPS, connectionRate(500))
-        assertEquals(400 to RateUnit.KBPS, connectionRate(400))
+    fun ratesAreWholeMegabitsFromTenAndTenthsBelow() {
+        assertEquals(35.0 to RateUnit.MBPS, connectionRate(35_280))
+        assertEquals(36.0 to RateUnit.MBPS, connectionRate(35_500))
+        assertEquals(10.0 to RateUnit.MBPS, connectionRate(9_960))
+        assertEquals(1.3 to RateUnit.MBPS, connectionRate(1_267))
+        assertEquals(0.4 to RateUnit.MBPS, connectionRate(400))
+        assertEquals(49.0 to RateUnit.KBPS, connectionRate(49))
     }
 
     @Test

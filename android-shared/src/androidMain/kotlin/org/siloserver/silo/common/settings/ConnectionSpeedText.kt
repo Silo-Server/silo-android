@@ -8,8 +8,8 @@ import kotlin.math.roundToInt
  * string resources, as with [LearnedLimitText].
  */
 data class ConnectionSpeedText(
-    /** The speed in [unit]. */
-    val rate: Int,
+    /** The speed in [unit]; see [connectionRate]. */
+    val rate: Double,
     val unit: LearnedLimitText.RateUnit,
     /** How long ago it was measured; null when the time is unknown. */
     val age: Age?,
@@ -24,14 +24,19 @@ data class ConnectionSpeedText(
 }
 
 /**
- * [kbps] in whole megabits per second, rounded to the nearest, or in kbps
- * when that rounds to 0, as the learned-limit row shows a rate. Server
- * figures such as `auto_budget_kbps` read the same way.
+ * [kbps] as Settings shows a rate: megabits per second to one decimal below
+ * 10 Mbps and whole from there ("1.4 Mbps", "44 Mbps"), or kbps below
+ * 100 kbps. The learned-limit row, the speed line and server figures such as
+ * `auto_budget_kbps` all read this way. Whole megabits alone would show a
+ * 1400 kbps limit as 1 Mbps.
  */
-fun connectionRate(kbps: Int): Pair<Int, LearnedLimitText.RateUnit> {
-    val mbps = (kbps / 1000.0).roundToInt()
-    return if (mbps > 0) mbps to LearnedLimitText.RateUnit.MBPS
-    else kbps.coerceAtLeast(0) to LearnedLimitText.RateUnit.KBPS
+fun connectionRate(kbps: Int): Pair<Double, LearnedLimitText.RateUnit> {
+    val tenths = (kbps / 100.0).roundToInt()
+    return when {
+        tenths < 1 -> kbps.coerceAtLeast(0).toDouble() to LearnedLimitText.RateUnit.KBPS
+        tenths < 100 -> tenths / 10.0 to LearnedLimitText.RateUnit.MBPS
+        else -> (kbps / 1000.0).roundToInt().toDouble() to LearnedLimitText.RateUnit.MBPS
+    }
 }
 
 /**

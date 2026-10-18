@@ -11,6 +11,7 @@ import org.siloserver.silo.common.settings.ConnectionSpeedReading
 import org.siloserver.silo.common.settings.ConnectionSpeedText
 import org.siloserver.silo.common.settings.ConnectionSpeedUiState
 import org.siloserver.silo.common.settings.LearnedLimitText
+import org.siloserver.silo.common.settings.formatRate
 import org.siloserver.silo.common.settings.connectionRate
 import org.siloserver.silo.common.settings.connectionSpeedText
 import org.siloserver.silo.tv.R
@@ -80,9 +81,9 @@ private fun speedLabel(reading: ConnectionSpeedReading?, nowEpochMs: Long): Stri
 private fun rateLabel(kbps: Int): String = connectionRate(kbps).let { (rate, unit) -> rateLabel(rate, unit) }
 
 @Composable
-private fun rateLabel(rate: Int, unit: LearnedLimitText.RateUnit): String = stringResource(
+private fun rateLabel(rate: Double, unit: LearnedLimitText.RateUnit): String = stringResource(
     if (unit == LearnedLimitText.RateUnit.MBPS) R.string.settings_rate_mbps else R.string.settings_rate_kbps,
-    rate,
+    formatRate(rate),
 )
 
 @Composable

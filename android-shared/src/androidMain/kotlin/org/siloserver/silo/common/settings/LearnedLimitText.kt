@@ -1,11 +1,11 @@
 package org.siloserver.silo.common.settings
 
 import org.siloserver.silo.util.parseRfc3339ToEpochMillis
+import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
-import kotlin.math.roundToInt
 
 /**
  * The parts of the Settings row for a learned bandwidth limit, "Limited to
@@ -13,8 +13,8 @@ import kotlin.math.roundToInt
  * its own string resources.
  */
 data class LearnedLimitText(
-    /** The limit in [unit]. */
-    val rate: Int,
+    /** The limit in [unit]; see [connectionRate]. */
+    val rate: Double,
     val unit: RateUnit,
     /** When the limit was observed, as a short month and day; null when unknown. */
     val date: String?,
@@ -23,9 +23,9 @@ data class LearnedLimitText(
 }
 
 /**
- * [kbps] in whole megabits per second, rounded to the nearest, or in kbps
- * when that rounds to 0. [observedAt] (RFC 3339) is shown in [timeZone] with
- * [datePattern], by default the [locale]'s abbreviated month and day.
+ * [kbps] as a rate ([connectionRate]). [observedAt] (RFC 3339) is shown in
+ * [timeZone] with [datePattern], by default the [locale]'s abbreviated month
+ * and day.
  */
 fun learnedLimitText(
     kbps: Int,
@@ -37,13 +37,13 @@ fun learnedLimitText(
     val date = observedAt?.let(::parseRfc3339ToEpochMillis)?.let { millis ->
         SimpleDateFormat(datePattern, locale).apply { this.timeZone = timeZone }.format(Date(millis))
     }
-    val mbps = (kbps / 1000.0).roundToInt()
-    return if (mbps > 0) {
-        LearnedLimitText(mbps, LearnedLimitText.RateUnit.MBPS, date)
-    } else {
-        LearnedLimitText(kbps.coerceAtLeast(0), LearnedLimitText.RateUnit.KBPS, date)
-    }
+    val (rate, unit) = connectionRate(kbps)
+    return LearnedLimitText(rate, unit, date)
 }
+
+/** [rate] as the [locale] writes it, with at most one decimal: "1.4", "44". */
+fun formatRate(rate: Double, locale: Locale = Locale.getDefault()): String =
+    NumberFormat.getNumberInstance(locale).apply { maximumFractionDigits = 1 }.format(rate)
 
 /** The [locale]'s pattern for an abbreviated month and a day, "MMM d" in US English. */
 fun shortMonthDayPattern(locale: Locale): String =

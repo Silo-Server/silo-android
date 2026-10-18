@@ -16,6 +16,7 @@ import androidx.compose.ui.semantics.semantics
 import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import org.siloserver.silo.common.settings.LearnedLimitText
+import org.siloserver.silo.common.settings.formatRate
 import org.siloserver.silo.common.settings.UseProfileSettingsCopy
 import org.siloserver.silo.common.settings.learnedLimitText
 import org.siloserver.silo.domain.player.BufferingQualityMode
@@ -413,7 +414,7 @@ private fun learnedLimitLabel(limit: PlaybackLearnedLimitV2): String {
     val text = remember(limit) { learnedLimitText(limit.kbps, limit.observedAt) }
     val rate = stringResource(
         if (text.unit == LearnedLimitText.RateUnit.MBPS) R.string.settings_rate_mbps else R.string.settings_rate_kbps,
-        text.rate,
+        formatRate(text.rate),
     )
     return text.date?.let { stringResource(R.string.settings_learned_limit, rate, it) }
         ?: stringResource(R.string.settings_learned_limit_undated, rate)

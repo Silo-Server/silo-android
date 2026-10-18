@@ -12,16 +12,24 @@ class LearnedLimitTextTest {
         learnedLimitText(kbps, observedAt, Locale.US, TimeZone.getTimeZone(zone), datePattern = "MMM d")
 
     @Test
-    fun ratesRoundToTheNearestWholeMbps() {
-        assertEquals(LearnedLimitText(44, RateUnit.MBPS, "Oct 17"), text(44_100))
-        assertEquals(45, text(44_500).rate)
-        assertEquals(1, text(500).rate)
+    fun ratesAreWholeMbpsFromTenAndTenthsBelow() {
+        assertEquals(LearnedLimitText(44.0, RateUnit.MBPS, "Oct 17"), text(44_100))
+        assertEquals(45.0, text(44_500).rate)
+        assertEquals(1.4, text(1_400).rate)
+        assertEquals(0.5, text(500).rate)
         assertEquals(RateUnit.MBPS, text(500).unit)
     }
 
     @Test
-    fun aLimitBelowHalfAMegabitIsShownInKbps() {
-        assertEquals(LearnedLimitText(499, RateUnit.KBPS, "Oct 17"), text(499))
+    fun aLimitBelowATenthOfAMegabitIsShownInKbps() {
+        assertEquals(LearnedLimitText(49.0, RateUnit.KBPS, "Oct 17"), text(49))
+    }
+
+    @Test
+    fun ratesAreWrittenInTheLocale() {
+        assertEquals("1.4", formatRate(1.4, Locale.US))
+        assertEquals("44", formatRate(44.0, Locale.US))
+        assertEquals("1,4", formatRate(1.4, Locale.GERMANY))
     }
 
     @Test

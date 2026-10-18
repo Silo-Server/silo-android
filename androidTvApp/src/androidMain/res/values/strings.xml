@@ -35,8 +35,8 @@
     <!-- %1$s is a rate (settings_rate_mbps or settings_rate_kbps); %2$s is a short month and day, such as Oct 17. -->
     <string name="settings_learned_limit">Limited to %1$s after buffering on %2$s</string>
     <string name="settings_learned_limit_undated">Limited to %1$s after buffering</string>
-    <string name="settings_rate_mbps">%1$d Mbps</string>
-    <string name="settings_rate_kbps">%1$d kbps</string>
+    <string name="settings_rate_mbps">%1$s Mbps</string>
+    <string name="settings_rate_kbps">%1$s kbps</string>
     <string name="settings_learned_limit_reset">Reset</string>
     <string name="settings_learned_limit_reset_failed">Couldn\'t reset the limit. Try again.</string>
     <!-- Player pills and notices; the copy is contract-fixed. -->
