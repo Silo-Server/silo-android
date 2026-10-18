@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.player
 
 import android.os.SystemClock
+import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -75,13 +76,19 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
  * [onNetworkAvailable]. If playback runs and that clears the last trouble, the
  * end is sent first, so the controller re-times the stall before it ends.
  *
+ * Every event it sends is logged, because the controller keeps no log of its
+ * own: these lines, with the players' `buffering_quality` plan and replan
+ * lines, are how a device log replays its decisions.
+ *
  * Main thread only, as Media3 delivers both listeners' callbacks.
  */
 @UnstableApi
 class BufferingQualityPlayerAdapter(
-    private val sink: BufferingPlaybackEventSink,
+    sink: BufferingPlaybackEventSink,
     private val clock: () -> Long = { SystemClock.elapsedRealtime() },
 ) : Player.Listener, AnalyticsListener {
+
+    private val sink: BufferingPlaybackEventSink = sink.logged()
 
     private enum class Phase { STOPPED, STARVED, RUNNING }
 
@@ -298,5 +305,45 @@ class BufferingQualityPlayerAdapter(
         const val RECEIVING_DATA_WINDOW_MS: Long = 5_000L
 
         private const val TRANSPORT_STALL_CLASSIFICATION = "transport_stall"
+    }
+}
+
+private const val TAG = "BufferingQuality"
+
+private fun BufferingPlaybackEventSink.logged(): BufferingPlaybackEventSink {
+    val sink = this
+    fun log(event: String) {
+        Log.i(TAG, "buffering_quality event=$event")
+    }
+    return object : BufferingPlaybackEventSink {
+        override fun onPlaying() {
+            log("playing")
+            sink.onPlaying()
+        }
+
+        override fun onWaiting(cause: BufferingWaitCause) {
+            log("waiting cause=${cause.name.lowercase()}")
+            sink.onWaiting(cause)
+        }
+
+        override fun onPause() {
+            log("pause")
+            sink.onPause()
+        }
+
+        override fun onSeek() {
+            log("seek")
+            sink.onSeek()
+        }
+
+        override fun onTransportErrorStart() {
+            log("transport_error_start")
+            sink.onTransportErrorStart()
+        }
+
+        override fun onTransportErrorEnd() {
+            log("transport_error_end")
+            sink.onTransportErrorEnd()
+        }
     }
 }
