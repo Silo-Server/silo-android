@@ -4006,7 +4006,8 @@ class PlayerViewModel(
         Log.i(
             TAG,
             "buffering_quality plan_adopted plan_id=${adopted.serverPlanId} adoption=${adopted.planId} " +
-                "delivered_kbps=${adopted.deliveredKbps} quality=${adopted.quality}",
+                "delivered_kbps=${adopted.deliveredKbps} quality=${adopted.quality} " +
+                "bandwidth_limit_kbps=${plan.bandwidthLimit?.kbps}",
         )
     }
 
