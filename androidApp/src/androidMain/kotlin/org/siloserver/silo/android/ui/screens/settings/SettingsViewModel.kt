@@ -16,6 +16,7 @@ import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.SeekIntervalSettingsModel
 import org.siloserver.silo.common.settings.SeekIntervalStore
 import org.siloserver.silo.common.player.AudiobookSettingsStore
+import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.auth.User
@@ -33,8 +34,10 @@ import org.siloserver.silo.model.settings.CellularQuality
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.network.apiv2.PlaybackLearnedLimitV2
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.NotificationsRepository
+import org.siloserver.silo.repository.PlaybackConnectionRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -90,6 +93,15 @@ data class SettingsUiState(
     val audioLanguage: String = "",
     val audioLanguageSuggestions: List<String> = emptyList(),
     val introSkipMode: IntroSkipMode = IntroSkipMode.Default,
+    val bufferingQualityMode: BufferingQualityMode = BufferingQualityMode.Default,
+    /**
+     * The limit the server learned for this device on this connection after
+     * buffering, or null when there is none or the server does not advertise
+     * the feature. Loaded when Settings opens and after a reset.
+     */
+    val learnedLimit: PlaybackLearnedLimitV2? = null,
+    /** True after a reset the server did not confirm, until the next attempt. */
+    val learnedLimitResetFailed: Boolean = false,
     val autoSkipCredits: Boolean = false,
     val pictureInPictureEnabled: Boolean = true,
     val dolbyVisionEnabled: Boolean = true,
@@ -177,6 +189,7 @@ class SettingsViewModel(
     audiobookSettingsStore: AudiobookSettingsStore,
     private val downloadsRepository: DownloadsRepository? = null,
     private val serverRegistry: ServerRegistry? = null,
+    private val playbackConnection: PlaybackConnectionRepository? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -188,6 +201,9 @@ class SettingsViewModel(
     private var subtitleLanguageConfirmedGeneration = 0L
     private var subtitleModeConfirmedGeneration = 0L
     private var forcedSubtitlesConfirmedGeneration = 0L
+
+    /** A second Reset press while the first is in flight is ignored. */
+    private var learnedLimitResetInFlight = false
 
     /** Profile-wide video and audiobook skip intervals (settings revision 9). */
     val seekIntervals = SeekIntervalSettingsModel(seekIntervalStore, audiobookSettingsStore, viewModelScope)
@@ -202,6 +218,8 @@ class SettingsViewModel(
         observeEpisodeSpoilers()
         // Opening Settings is a refresh edge for the seek-interval support probe.
         seekIntervals.refresh()
+        // And the one read of the learned limit; it is not polled.
+        loadPlaybackConnection()
     }
 
     private fun observeAccountCard() {
@@ -292,6 +310,9 @@ class SettingsViewModel(
                     autoSkipCredits = snap.autoSkipCredits,
                 )
             }
+        }.launchIn(viewModelScope)
+        playerSettingsStore.bufferingQualityModeFlow.onEach { mode ->
+            _uiState.update { it.copy(bufferingQualityMode = mode) }
         }.launchIn(viewModelScope)
         combine(
             playerSettingsStore.cellularPreferredQualityFlow,
@@ -583,6 +604,43 @@ class SettingsViewModel(
 
     fun setIntroSkipMode(mode: IntroSkipMode) {
         viewModelScope.launch { playerSettingsStore.setIntroSkipMode(mode) }
+    }
+
+    fun setBufferingQualityMode(mode: BufferingQualityMode) {
+        viewModelScope.launch { playerSettingsStore.setBufferingQualityMode(mode) }
+    }
+
+    /**
+     * Reads the learned limit for this device's connection. The row it feeds
+     * shows only when the server advertises `buffering_quality_v1` and has a
+     * limit stored; a failed read hides it.
+     */
+    private fun loadPlaybackConnection() {
+        val repository = playbackConnection ?: return
+        viewModelScope.launch {
+            val limit = repository.connection()?.learnedLimit
+            _uiState.update { it.copy(learnedLimit = limit) }
+        }
+    }
+
+    /** Forgets the learned limit, then reads the connection again so the row goes. */
+    fun resetLearnedLimit() {
+        val repository = playbackConnection ?: return
+        if (learnedLimitResetInFlight) return
+        learnedLimitResetInFlight = true
+        _uiState.update { it.copy(learnedLimitResetFailed = false) }
+        viewModelScope.launch {
+            try {
+                if (repository.resetLearnedLimit() is ApiResult.Success) {
+                    val limit = repository.connection()?.learnedLimit
+                    _uiState.update { it.copy(learnedLimit = limit) }
+                } else {
+                    _uiState.update { it.copy(learnedLimitResetFailed = true) }
+                }
+            } finally {
+                learnedLimitResetInFlight = false
+            }
+        }
     }
 
     fun setAutoSkipCredits(enabled: Boolean) {

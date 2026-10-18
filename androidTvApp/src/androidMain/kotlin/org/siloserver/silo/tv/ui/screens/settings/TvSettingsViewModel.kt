@@ -17,6 +17,7 @@ import org.siloserver.silo.common.settings.SeekIntervalStore
 import org.siloserver.silo.common.player.AudiobookSettingsStore
 import org.siloserver.silo.model.settings.CardPresentation
 import org.siloserver.silo.model.auth.User
+import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.settings.QualityPresets
@@ -29,7 +30,9 @@ import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.apiv2.PlaybackLearnedLimitV2
 import org.siloserver.silo.repository.AuthRepository
+import org.siloserver.silo.repository.PlaybackConnectionRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
 import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
@@ -75,6 +78,7 @@ class TvSettingsViewModel(
     audiobookSettingsStore: AudiobookSettingsStore? = null,
     private val profileLaunchPreferences: ProfileLaunchPreferences? = null,
     private val watchNextSeeder: WatchNextSeeder? = null,
+    private val playbackConnection: PlaybackConnectionRepository? = null,
 ) : ViewModel() {
 
     /**
@@ -129,6 +133,15 @@ class TvSettingsViewModel(
         val subtitleTextOpacitySupported: Boolean = true,
         val autoPlayNext: Boolean = true,
         val introSkipMode: IntroSkipMode = IntroSkipMode.Default,
+        val bufferingQualityMode: BufferingQualityMode = BufferingQualityMode.Default,
+        /**
+         * The limit the server learned for this device on this connection
+         * after buffering, or null when there is none or the server does not
+         * advertise the feature. Loaded when Settings opens and after a reset.
+         */
+        val learnedLimit: PlaybackLearnedLimitV2? = null,
+        /** True after a reset the server did not confirm, until the next attempt. */
+        val learnedLimitResetFailed: Boolean = false,
         val matchContentFrameRate: Boolean = false,
         val dolbyVisionEnabled: Boolean = true,
         val showAudiobooksTab: Boolean = false,
@@ -174,6 +187,9 @@ class TvSettingsViewModel(
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
+    /** A second Reset press while the first is in flight is ignored. */
+    private var learnedLimitResetInFlight = false
+
     init {
         loadUser()
         loadSettings()
@@ -181,6 +197,8 @@ class TvSettingsViewModel(
         observeCardPresentation()
         observeEpisodeSpoilers()
         observeProfileLaunch()
+        // The one read of the learned limit; it is not polled.
+        loadPlaybackConnection()
     }
 
     private fun observeProfileLaunch() {
@@ -406,6 +424,11 @@ class TvSettingsViewModel(
         viewModelScope.launch {
             playerSettingsStore.nextUpPromptSecondsFlow.collect { seconds ->
                 _uiState.update { it.copy(nextUpPromptSeconds = seconds) }
+            }
+        }
+        viewModelScope.launch {
+            playerSettingsStore.bufferingQualityModeFlow.collect { mode ->
+                _uiState.update { it.copy(bufferingQualityMode = mode) }
             }
         }
         viewModelScope.launch {
@@ -761,6 +784,43 @@ class TvSettingsViewModel(
 
     fun onIntroSkipModeChanged(value: IntroSkipMode) {
         viewModelScope.launch { playerSettingsStore.setIntroSkipMode(value) }
+    }
+
+    fun onBufferingQualityModeChanged(value: BufferingQualityMode) {
+        viewModelScope.launch { playerSettingsStore.setBufferingQualityMode(value) }
+    }
+
+    /**
+     * Reads the learned limit for this device's connection. The row it feeds
+     * shows only when the server advertises `buffering_quality_v1` and has a
+     * limit stored; a failed read hides it.
+     */
+    private fun loadPlaybackConnection() {
+        val repository = playbackConnection ?: return
+        viewModelScope.launch {
+            val limit = repository.connection()?.learnedLimit
+            _uiState.update { it.copy(learnedLimit = limit) }
+        }
+    }
+
+    /** Forgets the learned limit, then reads the connection again so the row goes. */
+    fun onResetLearnedLimit() {
+        val repository = playbackConnection ?: return
+        if (learnedLimitResetInFlight) return
+        learnedLimitResetInFlight = true
+        _uiState.update { it.copy(learnedLimitResetFailed = false) }
+        viewModelScope.launch {
+            try {
+                if (repository.resetLearnedLimit() is ApiResult.Success) {
+                    val limit = repository.connection()?.learnedLimit
+                    _uiState.update { it.copy(learnedLimit = limit) }
+                } else {
+                    _uiState.update { it.copy(learnedLimitResetFailed = true) }
+                }
+            } finally {
+                learnedLimitResetInFlight = false
+            }
+        }
     }
 
     fun onAutoSkipCreditsChanged(value: Boolean) {

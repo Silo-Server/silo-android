@@ -2,7 +2,7 @@ package org.siloserver.silo.common.settings
 
 import org.siloserver.silo.common.diagnostics.SiloLog
 import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
-import org.siloserver.silo.model.settings.CellularQuality
+import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SettingScopeIdentity
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -315,13 +315,14 @@ class DefaultServerSettingsFlusher(
     /**
      * Whether the server at [serverUrl] stores [key], or null while that
      * depends on a manifest revision not known yet. Only keys from a later
-     * revision than every server this app supports ([CellularQuality]) are
-     * checked. A server that lacks one refuses it as unknown_setting, so the
-     * write is dropped and the value stays on the device; while the revision
-     * is unknown it is held and retried like a transient failure.
+     * revision than every server this app supports
+     * ([PlaybackSettingsKeys.minimumRevision]) are checked. A server that
+     * lacks one refuses it as unknown_setting, so the write is dropped and the
+     * value stays on the device; while the revision is unknown it is held and
+     * retried like a transient failure.
      */
     private suspend fun serverStores(key: String, serverUrl: String): Boolean? {
-        val needed = CellularQuality.minimumRevision(key) ?: return true
+        val needed = PlaybackSettingsKeys.minimumRevision(key) ?: return true
         val revision = contractRevision.revisionFor(serverUrl) ?: return null
         return revision >= needed
     }

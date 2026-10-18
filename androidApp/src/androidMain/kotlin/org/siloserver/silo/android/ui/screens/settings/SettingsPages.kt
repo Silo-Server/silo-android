@@ -143,6 +143,9 @@ fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit
                 dolbyVisionEnabled = state.dolbyVisionEnabled,
                 dvProfile7HDR10Fallback = state.dvProfile7HDR10Fallback,
                 pictureInPictureEnabled = state.pictureInPictureEnabled,
+                bufferingQualityMode = state.bufferingQualityMode,
+                learnedLimit = state.learnedLimit,
+                learnedLimitResetFailed = state.learnedLimitResetFailed,
                 deviceOverrides = state.deviceOverrides,
                 onResolutionSelected = viewModel::setPreferredQuality,
                 onMaxBitrateSelected = viewModel::setMaxBitrateKbps,
@@ -150,6 +153,8 @@ fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit
                 onDolbyVisionEnabledChanged = viewModel::setDolbyVisionEnabled,
                 onDvProfile7HDR10FallbackChanged = viewModel::setDvProfile7HDR10Fallback,
                 onPictureInPictureEnabledChanged = viewModel::setPictureInPictureEnabled,
+                onBufferingQualityModeChanged = viewModel::setBufferingQualityMode,
+                onResetLearnedLimit = viewModel::resetLearnedLimit,
                 onUseProfileSetting = viewModel::useProfileSetting,
             )
         }

@@ -672,6 +672,7 @@ val androidTvModule = module {
             audiobookSettingsStore = get(),
             profileLaunchPreferences = get(),
             watchNextSeeder = get(),
+            playbackConnection = get(),
         )
     }
     viewModel { TvDiagnosticsViewModel(get()) }

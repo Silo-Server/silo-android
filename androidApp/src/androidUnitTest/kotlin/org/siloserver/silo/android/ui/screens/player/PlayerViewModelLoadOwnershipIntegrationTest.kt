@@ -81,6 +81,7 @@ import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.VideoPlaybackStartResult
 import org.siloserver.silo.common.player.video.VideoPlaybackStarter
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.libass.LibassBridge
@@ -1845,6 +1846,7 @@ private class FakePlayerSettingsStore(
     private val audioLanguage: String = "",
 ) : PlayerSettingsStore {
     override val introSkipModeFlow: Flow<IntroSkipMode> = flowOf(IntroSkipMode.ASK)
+    override val bufferingQualityModeFlow: Flow<BufferingQualityMode> = flowOf(BufferingQualityMode.Default)
     override val autoSkipCreditsFlow: Flow<Boolean> = flowOf(false)
     override val autoPlayNextFlow: Flow<Boolean> = flowOf(true)
     override val hdrEnabledFlow: Flow<Boolean> = flowOf(true)
@@ -1878,6 +1880,7 @@ private class FakePlayerSettingsStore(
         flowOf(SubtitleAppearance.DEFAULT)
 
     override suspend fun setIntroSkipMode(value: IntroSkipMode) = Unit
+    override suspend fun setBufferingQualityMode(value: BufferingQualityMode) = Unit
     override suspend fun setAutoSkipCredits(value: Boolean) = Unit
     override suspend fun setAutoPlayNext(value: Boolean) = Unit
     override suspend fun setHdrEnabled(value: Boolean) = Unit

@@ -62,6 +62,8 @@ val playerInfraModule = module {
         org.siloserver.silo.common.player.AndroidPlaybackJournalStore(androidContext())
     }
     single { org.siloserver.silo.network.apiv2.PlaybackV2Api(get(), get()) }
+    // The buffering-quality connection state and learned-limit reset Settings shows.
+    single { org.siloserver.silo.repository.PlaybackConnectionRepository(get(), get()) }
     single {
         org.siloserver.silo.repository.SequencedPlayback(
             get(), get(), get(), get(),

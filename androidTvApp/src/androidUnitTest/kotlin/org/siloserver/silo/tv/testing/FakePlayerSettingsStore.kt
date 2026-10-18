@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.testing
 
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,6 +19,7 @@ internal class FakePlayerSettingsStore : PlayerSettingsStore {
     var flushCount = 0
 
     override val introSkipModeFlow = MutableStateFlow(IntroSkipMode.ASK)
+    override val bufferingQualityModeFlow = MutableStateFlow(BufferingQualityMode.Default)
     override val autoSkipCreditsFlow = MutableStateFlow(false)
     override val autoPlayNextFlow = MutableStateFlow(true)
     override val hdrEnabledFlow = MutableStateFlow(true)
@@ -50,6 +52,9 @@ internal class FakePlayerSettingsStore : PlayerSettingsStore {
 
     override suspend fun setIntroSkipMode(value: IntroSkipMode) {
         setterCalls += "setIntroSkipMode"; introSkipModeFlow.value = value
+    }
+    override suspend fun setBufferingQualityMode(value: BufferingQualityMode) {
+        setterCalls += "setBufferingQualityMode"; bufferingQualityModeFlow.value = value
     }
     override suspend fun setAutoSkipCredits(value: Boolean) {
         setterCalls += "setAutoSkipCredits"; autoSkipCreditsFlow.value = value

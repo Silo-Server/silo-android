@@ -39,6 +39,40 @@ data class PlaybackCapabilitiesV2(
     val features: List<String>,
 )
 
+/**
+ * `GET /api/v2/playback/connection`: this device's state on the connection it
+ * is using now. Served only by a server advertising
+ * [BUFFERING_QUALITY_V1_FEATURE][org.siloserver.silo.model.playback.BUFFERING_QUALITY_V1_FEATURE].
+ * Phase 1 servers send [connection] and [learnedLimit]; phase 2 adds [probe]
+ * and [autoBudgetKbps], which the server computes and clients only display.
+ */
+@Serializable
+data class PlaybackConnectionV2(
+    /** The connection label, such as `local` or `remote`. */
+    val connection: String,
+    /** Absent when no limit is stored for this device on this connection. */
+    @SerialName("learned_limit") val learnedLimit: PlaybackLearnedLimitV2? = null,
+    val probe: PlaybackConnectionProbeV2? = null,
+    @SerialName("auto_budget_kbps") val autoBudgetKbps: Int? = null,
+)
+
+/** The limit Auto plans under after buffering lowered it; RFC 3339 timestamps. */
+@Serializable
+data class PlaybackLearnedLimitV2(
+    val kbps: Int,
+    @SerialName("observed_at") val observedAt: String? = null,
+    @SerialName("expires_at") val expiresAt: String? = null,
+)
+
+/** The latest bandwidth probe result reported from this device (phase 2). */
+@Serializable
+data class PlaybackConnectionProbeV2(
+    val kbps: Int,
+    @SerialName("measured_at") val measuredAt: String? = null,
+    /** `wifi`, `ethernet`, `cellular` or `other`. */
+    val transport: String? = null,
+)
+
 @Serializable
 data class PlaybackSampleV2(val sequence: Long, val position: Double, @SerialName("is_paused") val isPaused: Boolean)
 
@@ -97,6 +131,22 @@ class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate)
     suspend fun capabilities(scope: AuthScopeSnapshot): ApiResult<PlaybackCapabilitiesV2> =
         exchange<PlaybackCapabilitiesV2, PlaybackCapabilitiesV2>(HttpStatusCode.OK, {
             client.get("/api/v2/playback/capabilities") { authScope(scope); requireSiloAuth() }
+        }) { it }
+
+    /**
+     * HTTP 200 [PlaybackConnectionV2] for the calling device. The auth plugin
+     * attaches `X-Silo-Device-Id`, which the server keys the state on. Exists
+     * only on a server advertising `buffering_quality_v1`.
+     */
+    suspend fun connection(scope: AuthScopeSnapshot): ApiResult<PlaybackConnectionV2> =
+        exchange<PlaybackConnectionV2, PlaybackConnectionV2>(HttpStatusCode.OK, {
+            client.get("/api/v2/playback/connection") { authScope(scope); requireSiloAuth() }
+        }) { it }
+
+    /** HTTP 204: forgets this device's learned limit on its current connection. */
+    suspend fun resetLearnedLimit(scope: AuthScopeSnapshot): ApiResult<Unit> =
+        exchange<Unit, Unit>(HttpStatusCode.NoContent, {
+            client.delete("/api/v2/playback/connection/learned-limit") { authScope(scope); requireSiloAuth() }
         }) { it }
 
     suspend fun account(scope: AuthScopeSnapshot): ApiResult<Account> = safeApiV2Call(gate) {

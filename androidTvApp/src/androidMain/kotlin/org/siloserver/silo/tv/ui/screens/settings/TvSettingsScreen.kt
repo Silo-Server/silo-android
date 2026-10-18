@@ -102,15 +102,19 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.common.network.clientVersionLabel
 import org.siloserver.silo.common.settings.CardPresentationSource
 import org.siloserver.silo.common.settings.CardPresentationSupport
+import org.siloserver.silo.common.settings.LearnedLimitText
 import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.common.settings.UseProfileSettingsCopy
+import org.siloserver.silo.common.settings.learnedLimitText
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.CardCaption
 import org.siloserver.silo.model.settings.CardPosterSize
 import org.siloserver.silo.model.settings.CardPresentation
 import org.siloserver.silo.model.settings.CardPresentationPreset
 import org.siloserver.silo.model.settings.LanguageOptions
+import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.IntroSkipMode
+import org.siloserver.silo.network.apiv2.PlaybackLearnedLimitV2
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.settings.QualityChoices
 import org.siloserver.silo.model.settings.QualityPresets
@@ -295,6 +299,8 @@ fun TvSettingsScreen(
         onAudioLanguageChanged = viewModel::onAudioLanguageChanged,
         onAutoPlayNextChanged = viewModel::onAutoPlayNextChanged,
         onIntroSkipModeChanged = viewModel::onIntroSkipModeChanged,
+        onBufferingQualityModeChanged = viewModel::onBufferingQualityModeChanged,
+        onResetLearnedLimit = viewModel::onResetLearnedLimit,
         onAutoSkipCreditsChanged = viewModel::onAutoSkipCreditsChanged,
         onHideUnwatchedEpisodeImagesChanged = viewModel::setHideUnwatchedEpisodeImages,
         onHideUnwatchedEpisodeOverviewsChanged = viewModel::setHideUnwatchedEpisodeOverviews,
@@ -450,6 +456,8 @@ private fun SettingsSplitLayout(
     onAudioLanguageChanged: (String) -> Unit,
     onAutoPlayNextChanged: (Boolean) -> Unit,
     onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
+    onBufferingQualityModeChanged: (BufferingQualityMode) -> Unit,
+    onResetLearnedLimit: () -> Unit,
     onAutoSkipCreditsChanged: (Boolean) -> Unit,
     onHideUnwatchedEpisodeImagesChanged: (Boolean) -> Unit,
     onHideUnwatchedEpisodeOverviewsChanged: (Boolean) -> Unit,
@@ -535,6 +543,8 @@ private fun SettingsSplitLayout(
             onAudioLanguageChanged = onAudioLanguageChanged,
             onAutoPlayNextChanged = onAutoPlayNextChanged,
             onIntroSkipModeChanged = onIntroSkipModeChanged,
+            onBufferingQualityModeChanged = onBufferingQualityModeChanged,
+            onResetLearnedLimit = onResetLearnedLimit,
             onAutoSkipCreditsChanged = onAutoSkipCreditsChanged,
             onHideUnwatchedEpisodeImagesChanged = onHideUnwatchedEpisodeImagesChanged,
             onHideUnwatchedEpisodeOverviewsChanged = onHideUnwatchedEpisodeOverviewsChanged,
@@ -823,6 +833,8 @@ private fun SettingsDetailPane(
     onAudioLanguageChanged: (String) -> Unit,
     onAutoPlayNextChanged: (Boolean) -> Unit,
     onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
+    onBufferingQualityModeChanged: (BufferingQualityMode) -> Unit,
+    onResetLearnedLimit: () -> Unit,
     onAutoSkipCreditsChanged: (Boolean) -> Unit,
     onHideUnwatchedEpisodeImagesChanged: (Boolean) -> Unit,
     onHideUnwatchedEpisodeOverviewsChanged: (Boolean) -> Unit,
@@ -883,6 +895,8 @@ private fun SettingsDetailPane(
                 onAudioLanguageChanged = onAudioLanguageChanged,
                 onAutoPlayNextChanged = onAutoPlayNextChanged,
                 onIntroSkipModeChanged = onIntroSkipModeChanged,
+                onBufferingQualityModeChanged = onBufferingQualityModeChanged,
+                onResetLearnedLimit = onResetLearnedLimit,
                 onAutoSkipCreditsChanged = onAutoSkipCreditsChanged,
                 onHideUnwatchedEpisodeImagesChanged = onHideUnwatchedEpisodeImagesChanged,
                 onHideUnwatchedEpisodeOverviewsChanged = onHideUnwatchedEpisodeOverviewsChanged,
@@ -1211,6 +1225,8 @@ private fun TvPlaybackSettingsPane(
     onAudioLanguageChanged: (String) -> Unit,
     onAutoPlayNextChanged: (Boolean) -> Unit,
     onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
+    onBufferingQualityModeChanged: (BufferingQualityMode) -> Unit,
+    onResetLearnedLimit: () -> Unit,
     onAutoSkipCreditsChanged: (Boolean) -> Unit,
     onHideUnwatchedEpisodeImagesChanged: (Boolean) -> Unit,
     onHideUnwatchedEpisodeOverviewsChanged: (Boolean) -> Unit,
@@ -1241,6 +1257,7 @@ private fun TvPlaybackSettingsPane(
     // handed back to the switch above it rather than lost.
     val autoPlayNextFocus = remember { FocusRequester() }
     val skipCreditsFocus = remember { FocusRequester() }
+    val bufferingQualityFocus = remember { FocusRequester() }
     val seekState = seekIntervals?.state?.collectAsState()?.value
     var seekPicker by remember { mutableStateOf<Pair<SeekMedia, SeekDirection>?>(null) }
     // Where focus goes when a skip-interval group drops the focused row and
@@ -1274,6 +1291,31 @@ private fun TvPlaybackSettingsPane(
                     value = QualityChoices.bitrateLabel(state.maxBitrateKbps),
                     onClick = { activePicker = PlaybackPicker.MaxBitrate },
                 )
+                // Next to Maximum Bitrate, the manual cap on Auto it
+                // complements; the same value row and picker sheet as Skip Intros.
+                SettingsValueRow(
+                    label = stringResource(R.string.settings_buffering_quality_title),
+                    value = stringResource(bufferingQualityModeLabel(state.bufferingQualityMode)),
+                    onClick = { activePicker = PlaybackPicker.BufferingQualityMode },
+                    focusRequester = bufferingQualityFocus,
+                )
+                SettingsFooterText(text = stringResource(R.string.settings_buffering_quality_description))
+                state.learnedLimit?.let { limit ->
+                    // Leaves once the reset lands, so, as with a switch's "Use
+                    // Profile Setting" row, focus is handed to the row above it
+                    // rather than lost.
+                    SettingsValueRow(
+                        label = learnedLimitLabel(limit),
+                        value = stringResource(R.string.settings_learned_limit_reset),
+                        onClick = {
+                            bufferingQualityFocus.requestFocus()
+                            onResetLearnedLimit()
+                        },
+                    )
+                    if (state.learnedLimitResetFailed) {
+                        SettingsFooterText(text = stringResource(R.string.settings_learned_limit_reset_failed))
+                    }
+                }
                 SettingsValueRow(
                     label = "Audio Language",
                     value = LanguageOptions.label(
@@ -1557,6 +1599,30 @@ private fun TvPlaybackSettingsPane(
                         onUseProfileSetting(PlaybackSettingsKeys.IntroSkipMode)
                     } else {
                         IntroSkipMode.entries.firstOrNull { it.wireValue == id }?.let(onIntroSkipModeChanged)
+                    }
+                    activePicker = null
+                },
+                onDismiss = { activePicker = null },
+            )
+        }
+        PlaybackPicker.BufferingQualityMode -> {
+            val (options, selectedId) = profileLayered(
+                PlaybackSettingsKeys.BufferingQualityMode,
+                BufferingQualityMode.entries.map { mode ->
+                    PickerOption(mode.wireValue, stringResource(bufferingQualityModeLabel(mode)))
+                },
+                state.bufferingQualityMode.wireValue,
+            )
+            TvSettingsPickerSheet(
+                title = stringResource(R.string.settings_buffering_quality_title),
+                options = options,
+                selectedId = selectedId,
+                onSelect = { id ->
+                    if (id == UseProfileSettingId) {
+                        onUseProfileSetting(PlaybackSettingsKeys.BufferingQualityMode)
+                    } else {
+                        BufferingQualityMode.entries.firstOrNull { it.wireValue == id }
+                            ?.let(onBufferingQualityModeChanged)
                     }
                     activePicker = null
                 },
@@ -2271,6 +2337,7 @@ private enum class PlaybackPicker {
     AudioLanguage,
     NextUpPrompt,
     IntroSkipMode,
+    BufferingQualityMode,
     ResumeRewind,
     PassOutThreshold,
 }
@@ -2281,6 +2348,26 @@ private fun introSkipModeLabel(mode: IntroSkipMode): Int = when (mode) {
     IntroSkipMode.NEVER -> R.string.settings_intro_skip_never
     IntroSkipMode.ASK -> R.string.settings_intro_skip_ask
     IntroSkipMode.ALWAYS -> R.string.settings_intro_skip_always
+}
+
+/** The label each buffering-quality mode is offered under. The copy is the spec's. */
+@StringRes
+private fun bufferingQualityModeLabel(mode: BufferingQualityMode): Int = when (mode) {
+    BufferingQualityMode.NEVER -> R.string.settings_buffering_quality_never
+    BufferingQualityMode.ASK -> R.string.settings_buffering_quality_ask
+    BufferingQualityMode.ALWAYS -> R.string.settings_buffering_quality_always
+}
+
+/** "Limited to 44 Mbps after buffering on Oct 17", in this TV's locale and time zone. */
+@Composable
+private fun learnedLimitLabel(limit: PlaybackLearnedLimitV2): String {
+    val text = remember(limit) { learnedLimitText(limit.kbps, limit.observedAt) }
+    val rate = stringResource(
+        if (text.unit == LearnedLimitText.RateUnit.MBPS) R.string.settings_rate_mbps else R.string.settings_rate_kbps,
+        text.rate,
+    )
+    return text.date?.let { stringResource(R.string.settings_learned_limit, rate, it) }
+        ?: stringResource(R.string.settings_learned_limit_undated, rate)
 }
 
 private enum class SubtitlePicker {

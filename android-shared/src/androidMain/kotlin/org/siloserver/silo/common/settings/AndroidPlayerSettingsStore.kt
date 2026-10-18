@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
+import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.settings.CellularQuality
@@ -256,6 +257,14 @@ class AndroidPlayerSettingsStore(
                 )
         }
 
+    // No legacy boolean behind this one: an absent or unknown value is the
+    // contract default.
+    override val bufferingQualityModeFlow: Flow<BufferingQualityMode> =
+        profileScopedFlow(BufferingQualityMode.Default) { p, s ->
+            BufferingQualityMode.fromWire(p.stringFor(s, PlaybackSettingsKeys.BufferingQualityMode, ""))
+                ?: BufferingQualityMode.Default
+        }
+
     // ---- Booleans ------------------------------------------------------
     override val autoSkipCreditsFlow: Flow<Boolean> =
         profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.AutoSkipCredits, false) }
@@ -463,6 +472,26 @@ class AndroidPlayerSettingsStore(
      */
     override suspend fun setIntroSkipMode(value: IntroSkipMode) =
         writeString(PlaybackSettingsKeys.IntroSkipMode, value.wireValue)
+
+    /**
+     * Like [setCellularQuality], the key is newer than some servers this app
+     * supports ([PlaybackSettingsKeys.BufferingQualityModeMinRevision]). The
+     * flusher drops the write for such a server and the local value still
+     * applies; marking it unconfirmed makes the first refresh from a server
+     * that stores it send the value again rather than replace it with the
+     * server's default.
+     */
+    override suspend fun setBufferingQualityMode(value: BufferingQualityMode) {
+        val key = PlaybackSettingsKeys.BufferingQualityMode
+        withScope { scope, store ->
+            store.edit {
+                it[stringPreferencesKey(scope.keyPrefix + key)] = value.wireValue
+                markDeviceOverride(it, scope, key)
+                it[unconfirmedKeysKey(scope)] = it[unconfirmedKeysKey(scope)].orEmpty() + key
+            }
+            serverSettingsFlusher.enqueue(scope.profileId, key, value.wireValue, scope.serverUrl, scope.authority)
+        }
+    }
 
     override suspend fun setAutoSkipCredits(value: Boolean) =
         writeBool(PlaybackSettingsKeys.AutoSkipCredits, value)
@@ -780,14 +809,15 @@ class AndroidPlayerSettingsStore(
      * [RemoteDeviceSettings] less the keys newer than the server at
      * [serverUrl] is known to store. A server answers a batched read that
      * names a key its contract lacks with 404 for the whole batch, so a key
-     * from a later revision ([CellularQuality]) is asked for only once the
-     * revision is known to include it. Until then its local value stands.
+     * from a later revision ([PlaybackSettingsKeys.minimumRevision]) is asked
+     * for only once the revision is known to include it. Until then its local
+     * value stands.
      */
     private suspend fun remoteKeysStoredBy(serverUrl: String): List<String> {
         val tracker = contractRevision ?: return RemoteDeviceSettings
         val revision = runCatching { tracker.revisionFor(serverUrl) }.getOrNull()
         return RemoteDeviceSettings.filter { key ->
-            val needed = CellularQuality.minimumRevision(key) ?: return@filter true
+            val needed = PlaybackSettingsKeys.minimumRevision(key) ?: return@filter true
             revision != null && revision >= needed
         }
     }
@@ -808,7 +838,7 @@ class AndroidPlayerSettingsStore(
         val tracker = contractRevision ?: return emptySet()
         val revision = tracker.known.value?.takeIf { it.serverUrl == serverUrl }?.manifestRevision
         return RemoteDeviceSettings.filterTo(mutableSetOf()) { key ->
-            val needed = CellularQuality.minimumRevision(key) ?: return@filterTo false
+            val needed = PlaybackSettingsKeys.minimumRevision(key) ?: return@filterTo false
             revision == null || revision < needed
         }
     }
@@ -1277,10 +1307,10 @@ class AndroidPlayerSettingsStore(
          */
         const val DEVICE_OVERRIDE_KEYS = "device_override_keys"
         /**
-         * Local-only: keys from a later contract revision ([CellularQuality])
-         * this device set but no refresh has yet shown stored for it. The
-         * flusher drops them for an older server; this is what sends them
-         * once the server can store them.
+         * Local-only: keys from a later contract revision
+         * ([PlaybackSettingsKeys.minimumRevision]) this device set but no
+         * refresh has yet shown stored for it. The flusher drops them for an
+         * older server; this is what sends them once the server can store them.
          */
         const val UNCONFIRMED_GATED_KEYS = "unconfirmed_gated_keys"
         const val MIGRATION_SENTINEL_LEGACY = "migration_v1"

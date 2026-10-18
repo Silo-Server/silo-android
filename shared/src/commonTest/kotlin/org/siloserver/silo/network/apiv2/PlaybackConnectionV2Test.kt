@@ -1,0 +1,48 @@
+package org.siloserver.silo.network.apiv2
+
+import org.siloserver.silo.network.SiloJson
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+
+/** `GET /api/v2/playback/connection`, from the buffering-quality spec's *Reporting and display*. */
+class PlaybackConnectionV2Test {
+    @Test fun phaseOneBodyCarriesOnlyTheConnectionAndItsLimit() {
+        val body = """{"connection":"remote",
+            "learned_limit":{"kbps":44100,"observed_at":"2026-10-17T16:21:40Z","expires_at":"2026-10-24T16:21:40Z"}}"""
+        val decoded = SiloJson.decodeFromString(PlaybackConnectionV2.serializer(), body)
+        assertEquals(
+            PlaybackConnectionV2(
+                connection = "remote",
+                learnedLimit = PlaybackLearnedLimitV2(44100, "2026-10-17T16:21:40Z", "2026-10-24T16:21:40Z"),
+            ),
+            decoded,
+        )
+        assertNull(decoded.probe)
+        assertNull(decoded.autoBudgetKbps)
+    }
+
+    @Test fun phaseOneBodyWithoutALimit() {
+        val decoded = SiloJson.decodeFromString(PlaybackConnectionV2.serializer(), """{"connection":"local"}""")
+        assertEquals(PlaybackConnectionV2(connection = "local"), decoded)
+    }
+
+    @Test fun phaseTwoBodyAddsTheProbeAndBudgetAndIgnoresUnknownFields() {
+        val body = """{
+            "connection":"remote",
+            "probe":{"kbps":48000,"measured_at":"2026-10-17T19:02:11Z","transport":"wifi","bytes":40000000},
+            "learned_limit":{"kbps":44100,"observed_at":"2026-10-17T16:21:40Z","expires_at":"2026-10-24T16:21:40Z"},
+            "auto_budget_kbps":35280,
+            "connection_label":"Home"
+        }"""
+        assertEquals(
+            PlaybackConnectionV2(
+                connection = "remote",
+                learnedLimit = PlaybackLearnedLimitV2(44100, "2026-10-17T16:21:40Z", "2026-10-24T16:21:40Z"),
+                probe = PlaybackConnectionProbeV2(48000, "2026-10-17T19:02:11Z", "wifi"),
+                autoBudgetKbps = 35280,
+            ),
+            SiloJson.decodeFromString(PlaybackConnectionV2.serializer(), body),
+        )
+    }
+}

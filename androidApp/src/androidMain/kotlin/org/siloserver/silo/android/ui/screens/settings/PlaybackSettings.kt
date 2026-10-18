@@ -1,6 +1,8 @@
 package org.siloserver.silo.android.ui.screens.settings
 
 import androidx.annotation.StringRes
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -13,7 +15,10 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
+import org.siloserver.silo.common.settings.LearnedLimitText
 import org.siloserver.silo.common.settings.UseProfileSettingsCopy
+import org.siloserver.silo.common.settings.learnedLimitText
+import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.settings.CellularQuality
 import org.siloserver.silo.model.settings.LanguageOptions
@@ -21,6 +26,7 @@ import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.QualityChoices
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.model.settings.SettingKeys
+import org.siloserver.silo.network.apiv2.PlaybackLearnedLimitV2
 
 // Quality is two independent pickers, as on the web: playback.preferred_quality
 // (a resolution cap) and playback.max_bitrate_kbps (a bandwidth cap, null =
@@ -54,6 +60,7 @@ private fun ProfileLayeredDropdownRow(
     overridden: Boolean,
     onOptionSelected: (String) -> Unit,
     onUseProfileSetting: () -> Unit,
+    description: String? = null,
 ) {
     SettingsDropdownRow(
         label = label,
@@ -63,6 +70,7 @@ private fun ProfileLayeredDropdownRow(
         onOptionSelected = { option ->
             if (option == UseProfileSettingsCopy.OPTION) onUseProfileSetting() else onOptionSelected(option)
         },
+        description = description,
     )
 }
 
@@ -106,6 +114,10 @@ fun PlaybackStreamingSection(
     dolbyVisionEnabled: Boolean,
     dvProfile7HDR10Fallback: Boolean,
     pictureInPictureEnabled: Boolean,
+    bufferingQualityMode: BufferingQualityMode,
+    /** Shown, with its Reset action, only while the server reports one. */
+    learnedLimit: PlaybackLearnedLimitV2?,
+    learnedLimitResetFailed: Boolean,
     /** Keys this device holds its own value for. */
     deviceOverrides: Set<String>,
     /** Receives a [QualityChoices.RESOLUTIONS] value. */
@@ -116,6 +128,8 @@ fun PlaybackStreamingSection(
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
     onDvProfile7HDR10FallbackChanged: (Boolean) -> Unit,
     onPictureInPictureEnabledChanged: (Boolean) -> Unit,
+    onBufferingQualityModeChanged: (BufferingQualityMode) -> Unit,
+    onResetLearnedLimit: () -> Unit,
     /** Receives the key of the control going back to the profile's value. */
     onUseProfileSetting: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -132,6 +146,8 @@ fun PlaybackStreamingSection(
     // A stored cap that is not one of the choices (set through the API or
     // another client) is listed in its place, so it stays visible and selected.
     val bitrateChoices = remember(maxBitrateKbps) { QualityChoices.bitrateChoices(maxBitrateKbps) }
+    val bufferingQualityOptions =
+        BufferingQualityMode.entries.map { it to stringResource(bufferingQualityModeLabel(it)) }
     SettingsSection(
         title = "Streaming",
         footer = QualityChoices.description(qualityResolution, maxBitrateKbps),
@@ -158,6 +174,31 @@ fun PlaybackStreamingSection(
             },
             onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.MaxBitrateKbps) },
         )
+
+        // Next to Maximum Bitrate, the manual cap on Auto it complements. The
+        // copy is the spec's.
+        ProfileLayeredDropdownRow(
+            label = stringResource(R.string.settings_buffering_quality_title),
+            value = stringResource(bufferingQualityModeLabel(bufferingQualityMode)),
+            options = bufferingQualityOptions.map { it.second },
+            overridden = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, PlaybackSettingsKeys.BufferingQualityMode),
+            onOptionSelected = { label ->
+                bufferingQualityOptions.firstOrNull { it.second == label }?.let { onBufferingQualityModeChanged(it.first) }
+            },
+            onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.BufferingQualityMode) },
+            description = stringResource(R.string.settings_buffering_quality_description),
+        )
+
+        if (learnedLimit != null) {
+            SettingsRow(label = learnedLimitLabel(learnedLimit)) {
+                TextButton(onClick = onResetLearnedLimit) {
+                    Text(stringResource(R.string.settings_learned_limit_reset))
+                }
+            }
+            if (learnedLimitResetFailed) {
+                SettingsProse(body = stringResource(R.string.settings_learned_limit_reset_failed))
+            }
+        }
 
         ProfileLayeredDropdownRow(
             label = "Audio Language",
@@ -356,4 +397,24 @@ private fun introSkipModeLabel(mode: IntroSkipMode): Int = when (mode) {
     IntroSkipMode.NEVER -> R.string.settings_intro_skip_never
     IntroSkipMode.ASK -> R.string.settings_intro_skip_ask
     IntroSkipMode.ALWAYS -> R.string.settings_intro_skip_always
+}
+
+/** The label each buffering-quality mode is offered under; the copy is the spec's. */
+@StringRes
+private fun bufferingQualityModeLabel(mode: BufferingQualityMode): Int = when (mode) {
+    BufferingQualityMode.NEVER -> R.string.settings_buffering_quality_never
+    BufferingQualityMode.ASK -> R.string.settings_buffering_quality_ask
+    BufferingQualityMode.ALWAYS -> R.string.settings_buffering_quality_always
+}
+
+/** "Limited to 44 Mbps after buffering on Oct 17", in this device's locale and time zone. */
+@Composable
+private fun learnedLimitLabel(limit: PlaybackLearnedLimitV2): String {
+    val text = remember(limit) { learnedLimitText(limit.kbps, limit.observedAt) }
+    val rate = stringResource(
+        if (text.unit == LearnedLimitText.RateUnit.MBPS) R.string.settings_rate_mbps else R.string.settings_rate_kbps,
+        text.rate,
+    )
+    return text.date?.let { stringResource(R.string.settings_learned_limit, rate, it) }
+        ?: stringResource(R.string.settings_learned_limit_undated, rate)
 }
