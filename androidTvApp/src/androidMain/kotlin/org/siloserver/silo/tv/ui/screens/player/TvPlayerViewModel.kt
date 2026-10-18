@@ -78,6 +78,17 @@ import org.siloserver.silo.common.player.video.VideoPlayerUiState
 import org.siloserver.silo.common.player.video.serverTerminalUserMessage
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
+import org.siloserver.silo.common.player.BufferingQualityPlayerAdapter
+import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
+import org.siloserver.silo.common.player.asPlaybackEventSink
+import org.siloserver.silo.domain.player.BufferingQualityController
+import org.siloserver.silo.domain.player.BufferingQualityMode
+import org.siloserver.silo.domain.player.BufferingQualityNotice
+import org.siloserver.silo.domain.player.BufferingQualityPill
+import org.siloserver.silo.domain.player.BufferingQualityReplan
+import org.siloserver.silo.domain.player.toBufferingQualityPlan
+import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
+import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroAutoSkipState
 import org.siloserver.silo.domain.player.IntroSkipMode
@@ -769,6 +780,10 @@ class TvPlayerViewModel(
     // Home sections feeding the Up Next overlay's On Deck row. Optional so
     // tests that construct the VM directly stay source-compatible.
     private val sectionRepository: org.siloserver.silo.repository.SectionRepository? = null,
+    // Network availability for the buffering-quality adapter: a wait while
+    // the device is offline is an outage, not a stall. Optional for tests
+    // that construct the VM directly; null reads as always connected.
+    private val networkEvidence: PlaybackNetworkEvidenceProvider? = null,
 ) : ViewModel() {
 
     companion object {
@@ -796,6 +811,10 @@ class TvPlayerViewModel(
         private const val ROOM_FALLBACK_WAIT_MS = 15_000L
         const val SHUFFLE_CONTINUE_FAILED = "Couldn't continue the shuffle."
         const val SHUFFLE_PICK_FAILED = "Couldn't pick another."
+        // How long a display-only buffering notice stays up.
+        private const val BUFFERING_NOTICE_MS = 4_000L
+        // Published plans remembered for mount adoption (current, predecessors, rollbacks).
+        private const val BUFFERING_PLAN_MEMORY = 8
     }
 
     // Up-Next auto-play countdown ticker. Cancelled on dismiss / Play Now /
@@ -1396,6 +1415,10 @@ class TvPlayerViewModel(
                 mounted = state.subtitleTracks.map { it.toMountedTvSubtitleTrack() },
             ) != null
         },
+        onBufferingQualityReplanFailed = {
+            Log.i(TAG, "buffering_quality replan_failed")
+            bufferingQualityController.onReplanFailed()
+        },
     )
     private val subtitleTransactionLaunchMutex = Mutex()
     private val playbackMutationFence by lazy {
@@ -1413,6 +1436,90 @@ class TvPlayerViewModel(
 
     /** Total seconds a fresh intro prompt runs for, for the fill's arithmetic. */
     val introSkipTotalSeconds: Int = introAutoSkipController.totalCountdownSeconds
+
+    // ---- Buffering quality (server docs/design/2026-10-17-buffering-quality.md) ----
+
+    /**
+     * Lowers quality when playback keeps buffering, or offers to. Off in a
+     * Watch Party, where the room's own lower-quality offer applies. Main
+     * thread only, like the intro controller.
+     */
+    private val bufferingQualityController = BufferingQualityController(
+        scope = viewModelScope,
+        clock = { SystemClock.elapsedRealtime() },
+        onReplan = ::requestBufferingQualityReplan,
+        onNotice = ::showBufferingQualityNotice,
+        onPlanSummary = { playbackSessionManager.emitPlanSummary(it) },
+    )
+
+    /** False in a Watch Party. TV has no local file playback, so that is the only exclusion. */
+    val bufferingQualityEnabled: Boolean = roomId == null
+
+    /** The Media3 adapter feeding the controller. The screen attaches it to the in-process ExoPlayer. */
+    val bufferingQualityAdapter = BufferingQualityPlayerAdapter(bufferingQualityController.asPlaybackEventSink())
+
+    /** The buffering pill. The screen consumes this directly. */
+    val bufferingPill: StateFlow<BufferingQualityPill> = bufferingQualityController.pill
+
+    /** Bumps whenever the pill's timer (re)starts, so the fill can re-anchor. */
+    val bufferingCountdownRun: StateFlow<Int> = bufferingQualityController.countdownRun
+
+    /** False while the pill is up but its timer is frozen by a pause. */
+    val bufferingTimerRunning: StateFlow<Boolean> = bufferingQualityController.timerRunning
+
+    /** Total seconds a fresh buffering pill runs for, for the fill's arithmetic. */
+    val bufferingTotalSeconds: Int = bufferingQualityController.totalCountdownSeconds
+
+    private val _bufferingNotice = MutableStateFlow<BufferingQualityNotice?>(null)
+
+    /**
+     * A display-only buffering notice, cleared after [BUFFERING_NOTICE_MS].
+     * The screen words it from string resources; lifecycle notices win.
+     */
+    val bufferingNotice: StateFlow<BufferingQualityNotice?> = _bufferingNotice.asStateFlow()
+    private var bufferingNoticeJob: Job? = null
+
+    private val _bufferingAutoLimited = MutableStateFlow(false)
+
+    /** The playing plan is on Auto under a learned limit: the menu says so. */
+    val bufferingAutoLimited: StateFlow<Boolean> = _bufferingAutoLimited.asStateFlow()
+
+    @Volatile
+    private var latestBufferingMode: BufferingQualityMode = BufferingQualityMode.Default
+    private val bufferingModeProvider: () -> BufferingQualityMode = { latestBufferingMode }
+
+    /**
+     * The adoption last handed to the controller. Every published plan that
+     * mounts is a new adoption, even when the server repeats its plan_id.
+     */
+    private var bufferingAdoptionId: String? = null
+
+    /**
+     * The mount nonce of a client-side same-plan remount (a `client_retry`
+     * copy of the playing plan). Its mount is a reload, not an adoption.
+     */
+    private var pendingBufferingReloadNonce: Long? = null
+
+    /** A published protocol-v3 plan and the UI projection it was shown as. */
+    private class PublishedBufferingPlan(val shown: PlaybackExecutionPlan?, val plan: PlaybackPlanV3)
+
+    /** Recently published plans, newest last, so a mount can map the plan it shows. */
+    private val bufferingPlans = ArrayDeque<PublishedBufferingPlan>()
+
+    private fun rememberBufferingPlan(shown: PlaybackExecutionPlan?, plan: PlaybackPlanV3?) {
+        plan ?: return
+        bufferingPlans.addLast(PublishedBufferingPlan(shown, plan))
+        while (bufferingPlans.size > BUFFERING_PLAN_MEMORY) bufferingPlans.removeFirst()
+    }
+
+    /**
+     * The protocol-v3 plan behind the projection now in UI state: by
+     * instance first (a rollback restores the predecessor's own), then the
+     * newest publication with its plan_id.
+     */
+    private fun publishedBufferingPlan(shown: PlaybackExecutionPlan): PlaybackPlanV3? =
+        bufferingPlans.lastOrNull { it.shown === shown }?.plan
+            ?: bufferingPlans.lastOrNull { it.plan.planId == shown.planId }?.plan
 
     private val seekRequestChannel = Channel<Double>(capacity = Channel.BUFFERED)
     val seekRequests: Flow<Double> = seekRequestChannel.receiveAsFlow()
@@ -1619,6 +1726,7 @@ class TvPlayerViewModel(
     private val subtitleSnapshotSettlement = TvSubtitleSnapshotSettlementTracker()
 
     init {
+        startBufferingQuality()
         // Keep the process-wide active-file marker in sync (phone parity), so
         // Reclaim Watched never deletes bytes under a live player.
         viewModelScope.launch {
@@ -1924,6 +2032,7 @@ class TvPlayerViewModel(
             adoption.requestedSourcePositionSeconds,
         )
         val mountNonce = nextTypedSubtitleMountNonce(adoption.committed.identity)
+        rememberBufferingPlan(ready.session.playbackPlan, ready.plan)
         _uiState.update { state ->
             state.copy(
                 error = null,
@@ -2045,6 +2154,7 @@ class TvPlayerViewModel(
             // absent, which at worst costs an unnecessary reanchor.
             playerWindowIsSeekable = false
             playerWindowEndPlayerMs = -1L
+            adoptBufferingQualityPlan(nonce)
             roomMountAppliedAtMs = SystemClock.elapsedRealtime()
             roomMountGeneration++
             pendingNativeSeekAfterMount?.let { targetSeconds ->
@@ -2139,6 +2249,7 @@ class TvPlayerViewModel(
         resetSeekRecoveryForContentChange()
         transportMountGate.beginLoad()
         introAutoSkipController.reset()
+        resetBufferingQuality()
         manualSubtitleSelectionApplied = false
         launchSubtitleSelectionApplied = false
         autoSelectedSubtitleIdentity = null
@@ -2375,6 +2486,7 @@ class TvPlayerViewModel(
                                 // invariant that lets exitSessionId read it
                                 // first.
                                 result.sessionId?.let { lastAdoptedSessionId = it }
+                                rememberBufferingPlan(result.playbackPlan, result.playbackPlanV3)
                                 if (requestRoom != null) {
                                     // A room session starts paused; only the
                                     // room's command after attach plays it.
@@ -2689,6 +2801,8 @@ class TvPlayerViewModel(
             transientNetworkRetries++
             val plan = state.playbackPlan
             val transportMountNonce = nextTransportMountNonce(selectedSubtitleTrackIndex(state))
+            // The same plan, reopened: a reload for the buffering controller.
+            pendingBufferingReloadNonce = transportMountNonce
             _uiState.update {
                 it.copy(
                     error = null,
@@ -2899,6 +3013,7 @@ class TvPlayerViewModel(
                         if (recoveryContentGeneration != contentLoadGeneration) return@launch
                         val transportMountNonce = nextTypedSubtitleMountNonce(returnedSubtitleIdentity)
                         val previousFileId = _uiState.value.mediaFileId
+                        rememberBufferingPlan(decision.session.playbackPlan, decision.plan)
                         _uiState.update {
                             it.copy(
                                 error = null,
@@ -4048,6 +4163,7 @@ class TvPlayerViewModel(
         lastAdoptedSessionId = decision.session.sessionId
         if (!isCurrentSeekRecovery(request)) return
         val transportMountNonce = nextTypedSubtitleMountNonce(returnedSubtitleIdentity)
+        rememberBufferingPlan(decision.session.playbackPlan, decision.plan)
         _uiState.update {
             if (!isCurrentSeekRecovery(request)) return@update it
             it.copy(
@@ -4942,6 +5058,7 @@ class TvPlayerViewModel(
         subtitleTransactions.persistCommittedSelectionAndFlush()
         introObserveJob?.cancel()
         introAutoSkipController.reset()
+        resetBufferingQuality()
         val stopped = sessionLifecycle.stop(expectedSessionId = expectedSessionId)
         if (stopped) finalPositionScope = null
         return stopped
@@ -5642,6 +5759,10 @@ class TvPlayerViewModel(
     fun switchQuality(wireValue: String): Boolean {
         val current = sessionQualityPreference() ?: PlaybackQuality.Auto.wireValue
         if (wireValue == current) return false
+        // The viewer's own pick (the HUD menu or a phone remote): any buffering
+        // pill hides and its answer clears. The controller's replans never come
+        // through here.
+        bufferingQualityController.onViewerQualityChange()
         val state = _uiState.value
         playbackMutationFence.beginReplan()
         launchSubtitleTransaction(state) {
@@ -5675,6 +5796,206 @@ class TvPlayerViewModel(
      * caller consumes the press only then.
      */
     fun onDismissIntroPrompt(): Boolean = introAutoSkipController.dismiss()
+
+    // ---- Buffering quality ----------------------------------------------------
+
+    private fun startBufferingQuality() {
+        // In a Watch Party the room's own lower-quality offer applies.
+        bufferingQualityController.setEnabled(bufferingQualityEnabled)
+        playbackSessionManager.bufferingQualityModeProvider = bufferingModeProvider
+        viewModelScope.launch {
+            playerSettingsStore.bufferingQualityModeFlow
+                .distinctUntilChanged()
+                .collect { mode ->
+                    latestBufferingMode = mode
+                    bufferingQualityController.setMode(mode)
+                }
+        }
+        networkEvidence?.let { evidence ->
+            viewModelScope.launch {
+                // Connected, not validated: a captive or unvalidated network
+                // still carries media, and only its absence is an outage.
+                evidence.updates
+                    .map { it.connected }
+                    .distinctUntilChanged()
+                    .collect { connected -> bufferingQualityAdapter.onNetworkAvailable(connected) }
+            }
+        }
+        viewModelScope.launch {
+            var shownKind: String? = null
+            bufferingPill
+                .map { pill ->
+                    when (pill) {
+                        BufferingQualityPill.Hidden -> null
+                        is BufferingQualityPill.Prompt -> "prompt"
+                        is BufferingQualityPill.Undo -> "undo"
+                    }
+                }
+                .distinctUntilChanged()
+                .collect { kind ->
+                    if (kind != null) {
+                        Log.i(TAG, "buffering_quality pill_shown kind=$kind")
+                    } else if (shownKind != null) {
+                        Log.i(TAG, "buffering_quality pill_hidden kind=$shownKind")
+                    }
+                    shownKind = kind
+                }
+        }
+    }
+
+    /**
+     * The mount [nonce] replaced the media item. A client-side same-plan
+     * remount (a `client_retry` copy) is a reload of the plan the controller
+     * already has; any other mount is a newly published plan, so a new
+     * adoption, even when the server repeated its plan_id.
+     */
+    private fun adoptBufferingQualityPlan(nonce: Long) {
+        val reload = pendingBufferingReloadNonce == nonce
+        pendingBufferingReloadNonce = null
+        if (reload && bufferingAdoptionId != null) {
+            bufferingQualityAdapter.reset()
+            bufferingQualityAdapter.markReload()
+            return
+        }
+        val state = _uiState.value
+        val shown = state.playbackPlan ?: return
+        val adoptionId = "${shown.planId}#$nonce"
+        bufferingAdoptionId = adoptionId
+        val plan = publishedBufferingPlan(shown)
+        if (plan == null) {
+            // Not a protocol-v3 plan this screen published: nothing to lower
+            // from, and the previous plan's stalls must not carry over.
+            Log.w(TAG, "buffering_quality plan_unmapped adoption_id=$adoptionId")
+            _bufferingAutoLimited.value = false
+            bufferingQualityController.onPlaybackStopped()
+            return
+        }
+        // What the mounted plan was requested at, session pick included. The
+        // session manager's pair comes first because it also carries a fixed
+        // rung saved in Settings, which must never be treated as Auto.
+        // videoQualityPreference reads "original" and its aliases as Auto.
+        val quality = videoQualityPreference(
+            playbackSessionManager.activeVideoQualityPair()?.qualityPreference
+                ?: state.videoQualityPreference
+                ?: sessionQualityPreference(),
+        ) ?: PLAYBACK_QUALITY_AUTO
+        val adopted = plan.toBufferingQualityPlan(quality, adoptionId)
+        Log.i(
+            TAG,
+            "buffering_quality plan_adopted adoption_id=$adoptionId plan_id=${plan.planId} " +
+                "delivered_kbps=${adopted.deliveredKbps} quality=${adopted.quality} " +
+                "bandwidth_limit_kbps=${plan.bandwidthLimit?.kbps}",
+        )
+        _bufferingAutoLimited.value = plan.bandwidthLimit != null && adopted.quality == PLAYBACK_QUALITY_AUTO
+        bufferingQualityController.onPlanAdopted(adopted)
+        // After adoption: re-announces the player's phase to the new plan.
+        bufferingQualityAdapter.reset()
+    }
+
+    /**
+     * The controller's own `quality_change`. It rides the subtitle
+     * transaction like a menu pick, so subtitle state survives it, but it is
+     * not the viewer's quality change. A picked-rung lowering applies to this
+     * playback only: the committed transaction moves [qualityOverride], and
+     * the saved preference never changes.
+     */
+    private fun requestBufferingQualityReplan(replan: BufferingQualityReplan) {
+        Log.i(
+            TAG,
+            "buffering_quality replan_requested quality_preference=${replan.qualityPreference} " +
+                "bandwidth_estimate_kbps=${replan.bandwidthEstimateKbps} " +
+                "bandwidth_estimate_source=${replan.bandwidthEstimateSource} " +
+                "learned_limit=${replan.learnedLimit}",
+        )
+        val state = _uiState.value
+        val blocked = when {
+            state.sessionId == null || state.playbackPlan == null -> "no_active_session"
+            state.isLoading || state.isNextUpTransitioning -> "load_in_flight"
+            transportMountGate.suppressPositionReports -> "mount_pending"
+            recoveryJob?.isActive == true -> "recovery_in_flight"
+            seekRecoveryQueue.hasInFlight -> "seek_recovery_in_flight"
+            subtitleTransactions.hasActiveTransaction -> "transaction_in_flight"
+            else -> null
+        }
+        if (blocked != null) {
+            Log.i(TAG, "buffering_quality replan_not_sent reason=$blocked")
+            bufferingQualityController.onReplanFailed()
+            return
+        }
+        playbackMutationFence.beginReplan()
+        val adoptionId = bufferingAdoptionId
+        launchSubtitleTransaction(state) {
+            // The launch waits on the transaction mutex: never send a replan
+            // meant for a plan that has since been replaced.
+            if (adoptionId == null || adoptionId != bufferingAdoptionId) {
+                Log.i(TAG, "buffering_quality replan_not_sent reason=plan_changed")
+                bufferingQualityController.onReplanFailed()
+                return@launchSubtitleTransaction
+            }
+            subtitleTransactions.selectQuality(replan.qualityPreference, bufferingQuality = replan)
+        }
+    }
+
+    private fun showBufferingQualityNotice(notice: BufferingQualityNotice) {
+        Log.i(TAG, "buffering_quality notice key=${notice.key}")
+        bufferingNoticeJob?.cancel()
+        _bufferingNotice.value = notice
+        bufferingNoticeJob = viewModelScope.launch {
+            delay(BUFFERING_NOTICE_MS)
+            _bufferingNotice.value = null
+        }
+    }
+
+    /** Clears the controller and its notice for different content or an exit. */
+    private fun resetBufferingQuality() {
+        bufferingQualityController.reset()
+        bufferingAdoptionId = null
+        pendingBufferingReloadNonce = null
+        _bufferingAutoLimited.value = false
+        bufferingNoticeJob?.cancel()
+        bufferingNoticeJob = null
+        _bufferingNotice.value = null
+    }
+
+    /** "Lower quality" on the buffering prompt. */
+    fun onBufferingLower() {
+        bufferingQualityController.selectLower()
+    }
+
+    /** "Keep quality" on the buffering prompt. */
+    fun onBufferingKeep() {
+        bufferingQualityController.selectKeep()
+    }
+
+    /** "Restore quality" on the undo pill. */
+    fun onBufferingRestore() {
+        bufferingQualityController.selectRestore()
+    }
+
+    /**
+     * At most one actionable pill: the intro, recap and credits skip pills
+     * and Next Up outrank the buffering pill. The screen reports them as
+     * displayed, since only it knows which are on screen.
+     */
+    fun onOtherPillDisplayed(displayed: Boolean) {
+        bufferingQualityController.setOtherPillVisible(displayed)
+    }
+
+    /** Back while a buffering pill shows. True when the pill consumed it. */
+    fun onBufferingBack(): Boolean = bufferingQualityController.back()
+
+    /** Select at the player root: the visible pill's primary action. True when consumed. */
+    fun onBufferingSelectPrimary(): Boolean = bufferingQualityController.selectPrimary()
+
+    /**
+     * Whether a startup-stall report belongs to the buffering-quality
+     * controller (a slow plan still receiving data) rather than the
+     * same-plan reopen.
+     */
+    fun bufferingOwnsStartupStall(
+        reason: org.siloserver.silo.common.player.Playability,
+        nowMs: Long,
+    ): Boolean = bufferingQualityAdapter.ownsStartupStall(reason, nowMs, bufferingQualityEnabled)
 
     /**
      * HUD Chapters pane picked a row. Returns the seek target in seconds;
@@ -6318,6 +6639,7 @@ class TvPlayerViewModel(
         introObserveJob?.cancel()
         nextUpCountdownJob?.cancel()
         introAutoSkipController.reset()
+        resetBufferingQuality()
         // Only fills a gap; never overwrites. The adoption paths publish this
         // token ahead of UI state on purpose, and taking the UI value here would
         // put the older id back.
@@ -6443,6 +6765,8 @@ class TvPlayerViewModel(
                 playbackSessionManager.trySingleLocalPcmRetry(mime, selectedTrack?.channelCount ?: 0)
             ) {
                 val transportMountNonce = nextTransportMountNonce(selectedSubtitleTrackIndex(state))
+                // The same plan, remounted for PCM: a reload for the buffering controller.
+                pendingBufferingReloadNonce = transportMountNonce
                 _uiState.update {
                     it.copy(
                         error = null,
@@ -6509,6 +6833,8 @@ class TvPlayerViewModel(
             Log.i(TAG, "Transient network error; retrying same route ($transientNetworkRetries/$MAX_TRANSIENT_NETWORK_RETRIES)")
             val plan = state.playbackPlan
             val transportMountNonce = nextTransportMountNonce(selectedSubtitleTrackIndex(state))
+            // The same plan, reopened: a reload for the buffering controller.
+            pendingBufferingReloadNonce = transportMountNonce
             _uiState.update {
                 it.copy(
                     isLoading = false,
@@ -6712,6 +7038,11 @@ class TvPlayerViewModel(
         lifecycleObserveJob?.cancel()
         nextUpCountdownJob?.cancel()
         introAutoSkipController.reset()
+        resetBufferingQuality()
+        // Only ours: an incoming player may already have installed its own.
+        if (playbackSessionManager.bufferingQualityModeProvider === bufferingModeProvider) {
+            playbackSessionManager.bufferingQualityModeProvider = { BufferingQualityMode.Default }
+        }
     }
 
 }

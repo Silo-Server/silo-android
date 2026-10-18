@@ -113,6 +113,7 @@ import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.settings.QualityChoices
 import org.siloserver.silo.model.catalog.VersionChapter
+import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
@@ -200,6 +201,8 @@ internal fun TvPlayerHud(
     videoQualities: List<VideoQualityOption>,
     /** The session's quality preference, named when no row is lit. */
     videoQualityPreference: String? = null,
+    /** The playing plan is on Auto under a learned buffering limit; the Auto row says so. */
+    autoQualityLimited: Boolean = false,
     fileVersions: List<org.siloserver.silo.model.catalog.FileVersion> = emptyList(),
     selectedFileId: Int? = null,
     onSelectFileVersion: (Int) -> Unit = {},
@@ -560,7 +563,14 @@ internal fun TvPlayerHud(
                     )
                     HudTab.Stats -> HudPaneViewport { HudStatsPane(stats) }
                     HudTab.Video -> HudVideoPane(
-                        videoQualities = videoQualities,
+                        videoQualities = if (autoQualityLimited) {
+                            val limitedAuto = stringResource(R.string.player_quality_auto_limited)
+                            videoQualities.map { option ->
+                                if (option.id == PLAYBACK_QUALITY_AUTO) option.copy(label = limitedAuto) else option
+                            }
+                        } else {
+                            videoQualities
+                        },
                         videoQualityPreference = videoQualityPreference,
                         onSelectVideoQuality = onSelectVideoQuality,
                         fileVersions = if (versionAndSpeedControlsVisible) fileVersions else emptyList(),

@@ -21,6 +21,7 @@ import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.common.player.PlaybackTrackSelectionWriteCoordinator
+import org.siloserver.silo.domain.player.BufferingQualityReplan
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -1831,6 +1832,56 @@ class TvSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `a buffering replan rides its quality request and a later viewer pick does not`() = runTest {
+        var failures = 0
+        val harness = harness(backgroundScope, onBufferingQualityReplanFailed = { failures += 1 })
+        val replan = BufferingQualityReplan(
+            qualityPreference = "auto",
+            bandwidthEstimateKbps = 5_600,
+            bandwidthEstimateSource = "observed_rebuffer",
+        )
+
+        // Auto stepping down under an estimate: the quality itself is unchanged.
+        harness.adapter.selectQuality("auto", bufferingQuality = replan)
+        runCurrent()
+        val lowered = harness.port.requests.single()
+        assertEquals(replan, lowered.bufferingQuality)
+        assertEquals("quality_changed", lowered.classification)
+        assertFalse(lowered.qualityChanged)
+
+        harness.port.completeStage(candidate("lowered", 3, qualityPreference = "auto"))
+        runCurrent()
+        confirmPendingPlayerBoundary(harness, "lowered-mounted")
+        runCurrent()
+        harness.adapter.selectQuality("720p")
+        runCurrent()
+
+        assertNull(harness.port.requests.last().bufferingQuality)
+        // Committed: nothing reports it as failed, a reset included.
+        harness.adapter.resetContent(context(sessionId = "s-lowered"), committedIdentity = sidecar(3))
+        assertEquals(0, failures)
+    }
+
+    @Test
+    fun `a failed buffering replan reports once and a failed viewer pick does not`() = runTest {
+        var failures = 0
+        val harness = harness(backgroundScope, onBufferingQualityReplanFailed = { failures += 1 })
+
+        harness.adapter.selectQuality("480p", bufferingQuality = BufferingQualityReplan(qualityPreference = "480p"))
+        runCurrent()
+        harness.port.failStage(ApiResult.NetworkError(IllegalStateException("replan failed")))
+        runCurrent()
+        assertEquals(1, failures)
+        assertEquals("auto", harness.adapter.snapshot.transition.committed.qualityPreference)
+
+        harness.adapter.selectQuality("720p")
+        runCurrent()
+        harness.port.failStage(ApiResult.NetworkError(IllegalStateException("pick failed")))
+        runCurrent()
+        assertEquals(1, failures)
+    }
+
+    @Test
     fun `exit flush captures only the committed quality subtitle snapshot`() = runTest {
         val harness = harness(backgroundScope)
 
@@ -2407,6 +2458,7 @@ class TvSubtitleTransactionAdapterTest {
             PlaybackTrackSelectionWriteCoordinator(),
         persistence: RecordingPersistence = RecordingPersistence(),
         qualityPreference: String? = "auto",
+        onBufferingQualityReplanFailed: () -> Unit = {},
     ): Harness {
         val port = FakeStagedPort()
         val committedPlaybacks = mutableListOf<TvSubtitleCommittedPlayback>()
@@ -2431,6 +2483,7 @@ class TvSubtitleTransactionAdapterTest {
                 }
             },
             isLocallyMountable = isLocallyMountable,
+            onBufferingQualityReplanFailed = onBufferingQualityReplanFailed,
         )
         adapter.resetContent(
             context(sessionId = sessionId, tracks = tracks, qualityPreference = qualityPreference),
