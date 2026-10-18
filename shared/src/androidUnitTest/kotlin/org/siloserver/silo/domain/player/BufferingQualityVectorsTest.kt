@@ -174,6 +174,7 @@ class BufferingQualityVectorsTest {
         runCurrent()
     }
 
+    /** Applies one event. Fields the controller has no input for, such as `controllerInitiated`, are ignored. */
     private fun apply(controller: BufferingQualityController, event: JsonObject) {
         when (val type = event.getValue("type").jsonPrimitive.content) {
             "plan_adopted" -> controller.onPlanAdopted(planOf(event.getValue("plan").jsonObject))
@@ -188,6 +189,8 @@ class BufferingQualityVectorsTest {
             "select_keep" -> controller.selectKeep()
             "select_restore" -> controller.selectRestore()
             "back" -> controller.back()
+            "pill_obscured" -> controller.setOtherPillVisible(true)
+            "pill_unobscured" -> controller.setOtherPillVisible(false)
             else -> fail("unknown event type $type")
         }
     }
@@ -200,6 +203,7 @@ class BufferingQualityVectorsTest {
         else -> fail("unknown waiting cause $cause")
     }
 
+    /** A vector's `plan_id` label is an adoption identity; missing `delivered_kbps` is encoded as 0. */
     private fun planOf(plan: JsonObject) = BufferingQualityPlan(
         planId = plan.getValue("plan_id").jsonPrimitive.content,
         deliveredKbps = plan["delivered_kbps"]?.jsonPrimitive?.intOrNull,

@@ -27,8 +27,14 @@ class BufferingQualityControllerTest {
         BufferingQualityRung("720p-high", 4_000),
     )
 
-    private fun plan(id: String, deliveredKbps: Int = 63_000) =
-        BufferingQualityPlan(planId = id, deliveredKbps = deliveredKbps, quality = "auto", availableQualities = menu)
+    private fun plan(id: String, deliveredKbps: Int = 63_000, serverPlanId: String = id) =
+        BufferingQualityPlan(
+            planId = id,
+            deliveredKbps = deliveredKbps,
+            quality = "auto",
+            availableQualities = menu,
+            serverPlanId = serverPlanId,
+        )
 
     private val replans = mutableListOf<BufferingQualityReplan>()
     private val notices = mutableListOf<BufferingQualityNotice>()
@@ -115,6 +121,29 @@ class BufferingQualityControllerTest {
         controller.onPlanAdopted(plan("p2"))
         controller.setOtherPillVisible(false)
         assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
+    }
+
+    @Test
+    fun `an adoption that repeats the server plan id is still a new plan`() = runTest {
+        val controller = newController(BufferingQualityMode.ALWAYS)
+        controller.onPlanAdopted(plan("s1#1", serverPlanId = "s1"))
+        controller.onPlaying()
+        at(125_000)
+        controller.onWaiting()
+        at(131_000)
+        assertEquals(44_100, replans.single().bandwidthEstimateKbps)
+
+        at(134_000)
+        val lower = plan("s1#2", deliveredKbps = 31_600, serverPlanId = "s1")
+        controller.onPlanAdopted(lower)
+        assertTrue(controller.pill.value is BufferingQualityPill.Undo)
+        // The same adoption reported again changes nothing.
+        controller.onPlanAdopted(lower)
+        assertTrue(controller.pill.value is BufferingQualityPill.Undo)
+
+        controller.onPlaybackStopped()
+        assertEquals(listOf("s1", "s1"), summaries.map { it.planId })
+        assertEquals(BufferingAction.LOWERED, summaries.first().action)
     }
 
     @Test

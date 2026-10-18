@@ -54,6 +54,7 @@ import org.siloserver.silo.common.player.seek.sourcePositionForPlayer
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.MarkerReconciliationFence
+import org.siloserver.silo.common.player.video.markerSkipTarget
 import org.siloserver.silo.common.player.video.NextUpTransitionGate
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.common.player.video.VideoPlayerUiState
@@ -745,9 +746,6 @@ class PlayerViewModel(
         private set
     private var bufferingQualityLocalPlayback = false
 
-    /** The plan last handed to the controller, so mounting it again is a reload, not a new plan. */
-    private var bufferingQualityPlanId: String? = null
-
     init {
         // The session manager reads the mode on every request. The holder, not
         // this ViewModel, is what the process-wide manager keeps.
@@ -759,14 +757,19 @@ class PlayerViewModel(
                 bufferingQualityController.setMode(mode)
             }
         }
-        // At most one actionable pill: a buffering pill waits while the intro
-        // pill or Next Up shows. Outside a Watch Party (the only place the
-        // controller runs) the intro pill shows whenever its state is visible.
+        // At most one actionable pill: intro skip, the recap/credits skip pill
+        // and Next Up outrank a buffering pill, which waits (or hides with its
+        // timer frozen) while one shows. Outside a Watch Party (the only place
+        // the controller runs) each shows whenever this state says so; the
+        // marker pill mirrors PlayerOverlay's own condition.
         viewModelScope.launch {
             combine(
                 introAutoSkipController.state.map { it.isVisible },
-                _uiState.map { it.showUpNext },
-            ) { introVisible, upNextVisible -> introVisible || upNextVisible }
+                _uiState.map { state ->
+                    state.showUpNext ||
+                        (!state.isLoading && markerSkipTarget(state.position, state.recap, state.credits) != null)
+                },
+            ) { introVisible, otherVisible -> introVisible || otherVisible }
                 .distinctUntilChanged()
                 .collect { bufferingQualityController.setOtherPillVisible(it) }
         }
@@ -2720,7 +2723,7 @@ class PlayerViewModel(
             subtitleRefreshGate.reset()
             positionReportsBlockedForPendingLoad = false
             if (inRoom) resetRoomEngineToMount()
-            adoptBufferingQualityPlan()
+            adoptBufferingQualityPlan(generation)
             pendingNativeSeekAfterMount?.let { (targetSeconds, immediate) ->
                 pendingNativeSeekAfterMount = null
                 // The load may have resolved to an online V3 plan after the
@@ -3971,29 +3974,27 @@ class PlayerViewModel(
     }
 
     /**
-     * The mounted plan became the playing plan. A new plan id is handed to
-     * the controller; the same plan mounted again is a reload, so its coming
-     * wait is not a stall.
+     * The plan mounted as [generation] became the playing plan. The server
+     * `plan_id` can repeat across replans, so the adoption identity carries
+     * the mount generation.
      */
-    private fun adoptBufferingQualityPlan() {
+    private fun adoptBufferingQualityPlan(generation: Long) {
         val state = _uiState.value
         bufferingQualityLocalPlayback = state.isLocalFilePlayback()
         syncBufferingQualityEnabled()
         if (!bufferingQualityEnabled) return
         val plan = state.playbackPlan ?: return
-        if (plan.planId == bufferingQualityPlanId) {
-            bufferingQualityAdapter.reset()
-            bufferingQualityAdapter.markReload()
-            return
-        }
-        bufferingQualityPlanId = plan.planId
-        val adopted = plan.toBufferingQualityPlan(bufferingQualityPreference())
+        // Every applied mount is a new adoption: phone same-plan retries never remount.
+        val adopted = plan.toBufferingQualityPlan(
+            bufferingQualityPreference(),
+            adoptionId = "${plan.planId}#$generation",
+        )
         bufferingQualityController.onPlanAdopted(adopted)
         // After the adoption: it re-announces the player's phase to the new plan.
         bufferingQualityAdapter.reset()
         Log.i(
             TAG,
-            "buffering_quality plan_adopted plan_id=${adopted.planId} " +
+            "buffering_quality plan_adopted plan_id=${adopted.serverPlanId} adoption=${adopted.planId} " +
                 "delivered_kbps=${adopted.deliveredKbps} quality=${adopted.quality}",
         )
     }
@@ -4011,8 +4012,6 @@ class PlayerViewModel(
 
     private fun syncBufferingQualityEnabled() {
         val enabled = !inRoom && !bufferingQualityLocalPlayback
-        // Disabling drops the controller's plan, so the next mount is a new one.
-        if (!enabled) bufferingQualityPlanId = null
         bufferingQualityEnabled = enabled
         bufferingQualityController.setEnabled(enabled)
     }
@@ -4020,7 +4019,6 @@ class PlayerViewModel(
     /** Playback moved to other content, or ended. */
     private fun resetBufferingQuality() {
         bufferingQualityController.reset()
-        bufferingQualityPlanId = null
         bufferingNoticeJob?.cancel()
         bufferingNoticeJob = null
         _bufferingNotice.value = null

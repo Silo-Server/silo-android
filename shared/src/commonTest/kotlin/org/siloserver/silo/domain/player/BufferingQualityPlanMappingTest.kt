@@ -36,16 +36,18 @@ class BufferingQualityPlanMappingTest {
 
     @Test
     fun deliveredBitrateIsTheRecipeThenTheSource() {
-        assertEquals(31600, plan(recipeKbps = 31600, sourceKbps = 63000).toBufferingQualityPlan("auto").deliveredKbps)
-        assertEquals(63000, plan(recipeKbps = null, sourceKbps = 63000).toBufferingQualityPlan("auto").deliveredKbps)
-        assertEquals(63000, plan(recipeKbps = 0, sourceKbps = 63000).toBufferingQualityPlan("auto").deliveredKbps)
-        assertNull(plan().toBufferingQualityPlan("auto").deliveredKbps)
+        assertEquals(31600, plan(recipeKbps = 31600, sourceKbps = 63000).toBufferingQualityPlan("auto", adoptionId = "p1#1").deliveredKbps)
+        assertEquals(63000, plan(recipeKbps = null, sourceKbps = 63000).toBufferingQualityPlan("auto", adoptionId = "p1#1").deliveredKbps)
+        assertEquals(63000, plan(recipeKbps = 0, sourceKbps = 63000).toBufferingQualityPlan("auto", adoptionId = "p1#1").deliveredKbps)
+        assertNull(plan().toBufferingQualityPlan("auto", adoptionId = "p1#1").deliveredKbps)
     }
 
     @Test
     fun qualityRungsAndWarningMap() {
-        val mapped = plan(warnings = listOf("other", QUALITY_REDUCTION_UNAVAILABLE_WARNING)).toBufferingQualityPlan("1080P-High")
-        assertEquals("p1", mapped.planId)
+        val mapped = plan(warnings = listOf("other", QUALITY_REDUCTION_UNAVAILABLE_WARNING))
+            .toBufferingQualityPlan("1080P-High", adoptionId = "p1#7")
+        assertEquals("p1#7", mapped.planId)
+        assertEquals("p1", mapped.serverPlanId)
         assertEquals("1080p-high", mapped.quality)
         assertEquals(
             listOf(BufferingQualityRung("original", 63000), BufferingQualityRung("1080p-high", 10000)),
@@ -53,7 +55,7 @@ class BufferingQualityPlanMappingTest {
         )
         assertTrue(mapped.qualityReductionUnavailable)
 
-        val plain = plan(warnings = listOf("other")).toBufferingQualityPlan(" ")
+        val plain = plan(warnings = listOf("other")).toBufferingQualityPlan(" ", adoptionId = "p1#8")
         assertEquals("auto", plain.quality)
         assertFalse(plain.qualityReductionUnavailable)
     }

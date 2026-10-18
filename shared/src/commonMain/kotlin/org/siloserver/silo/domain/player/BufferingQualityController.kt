@@ -7,7 +7,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlin.math.floor
 import kotlin.math.max
 
 /** One rung of the plan's quality menu, as far as the controller needs it. */
@@ -18,6 +17,11 @@ data class BufferingQualityRung(
 
 /** What the controller needs from a plan that just became the playing plan. */
 data class BufferingQualityPlan(
+    /**
+     * The local adoption identity, unique per adoption. The spec's *plan* is
+     * one adoption: a replan can return the same server `plan_id` again, and
+     * it is still a new plan. The vectors' `plan_id` labels stand for this.
+     */
     val planId: String,
     /**
      * The spec's *delivered bitrate*: `effective_recipe.bitrate_kbps`, else
@@ -31,6 +35,8 @@ data class BufferingQualityPlan(
     val availableQualities: List<BufferingQualityRung>,
     /** `degradation_warnings` carries `quality_reduction_unavailable`. */
     val qualityReductionUnavailable: Boolean = false,
+    /** The server `plan_id`, which can repeat across adoptions. Reported in [BufferingPlanSummary.planId]. */
+    val serverPlanId: String = planId,
 )
 
 /** Why the player started waiting for data. Only [NETWORK] can become a stall. */
@@ -91,6 +97,7 @@ enum class BufferingAction(val wireValue: String) {
 
 /** One plan's `plan_summary` facts, emitted when it stops being the playing plan. */
 data class BufferingPlanSummary(
+    /** The server plan_id, for the plan_summary route event. */
     val planId: String,
     val playedMs: Long,
     val stallCount: Int,
@@ -130,6 +137,14 @@ data class BufferingPlanSummary(
  * scheduled for the moment the suppression lifts, and it runs only if that
  * stall is still in progress.
  *
+ * ### Pills
+ *
+ * At most one buffering pill exists. Higher-priority pills (intro or other
+ * segment skip, Next Up) win: a buffering pill that wants to show while one is
+ * up waits with its full timer, and one already showing hides with its timer
+ * frozen and comes back with the remainder. Either way it is dropped if the
+ * plan changes first. While it waits or hides, the controller is busy.
+ *
  * ### Threading
  *
  * Not thread-safe. Call it from the thread [scope] dispatches on, as with
@@ -154,6 +169,11 @@ class BufferingQualityController(
         const val REOFFER_MIN_MS: Long = 120_000L
         const val NO_LOWER_COOLDOWN_MS: Long = 300_000L
         const val REARM_AFTER_UNADOPTED_MS: Long = 60_000L
+        /**
+         * Documentation only: the step-down estimate is the exact integer
+         * `delivered × 7 / 10`, because a floating-point `0.7` can floor one
+         * kbps low (22120 must give 15484).
+         */
         const val STEP_DOWN_RATIO: Double = 0.7
         const val MIN_ESTIMATE_KBPS: Int = 100
         const val QUALITY_AUTO: String = "auto"
@@ -206,10 +226,22 @@ class BufferingQualityController(
 
     // ---- Pill --------------------------------------------------------------
 
+    /** The buffering pill on screen. */
     private var activePill: PillKind? = null
+
+    /** The buffering pill waiting behind, or hidden by, a higher-priority pill. */
     private var deferredPill: PillKind? = null
-    private var deferredPlanId: String? = null
+
+    /** The plan [deferredPill] belongs to; it is dropped if another plan is playing. */
+    private var deferredFor: PlanState? = null
+
+    /** [deferredPill] was already shown, so it comes back with [pillRemainingMs]. */
+    private var deferredResumes = false
+
+    /** When the current offer first showed, for [REOFFER_MIN_MS]. A resumed prompt keeps it. */
     private var promptShownAt: Long = 0L
+
+    /** The visible or deferred pill's time left. */
     private var pillRemainingMs: Long = 0L
     private var pillStepMs: Long = 0L
     private var pillStepStartedAt: Long = 0L
@@ -239,20 +271,33 @@ class BufferingQualityController(
         this.enabled = enabled
     }
 
-    /** The intro-skip or Next Up pill is on screen; buffering pills wait for it. */
+    /**
+     * A higher-priority pill (intro or other segment skip, Next Up) is on
+     * screen. A buffering pill that wants to show waits for it with its full
+     * timer; one already showing hides with its timer frozen. When the last
+     * such pill hides, the buffering pill shows with the time it had left,
+     * unless the plan changed meanwhile.
+     */
     fun setOtherPillVisible(visible: Boolean): Unit {
         otherPillVisible = visible
-        if (visible || !enabled) return
+        if (!enabled) return
+        if (visible) {
+            obscurePill()
+            return
+        }
         val kind = deferredPill ?: return
-        if (deferredPlanId != null && deferredPlanId == current?.plan?.planId) {
-            present(kind)
+        val owner = deferredFor
+        if (owner != null && owner === current) {
+            present(kind, resume = deferredResumes)
         } else {
-            deferredPill = null
-            deferredPlanId = null
+            clearDeferred()
         }
     }
 
-    /** A plan with a new `plan_id` became the playing plan. */
+    /**
+     * A new adoption became the playing plan. [BufferingQualityPlan.planId]
+     * identifies the adoption; a repeat of the current one is ignored.
+     */
     fun onPlanAdopted(plan: BufferingQualityPlan): Unit {
         if (!enabled) return
         if (current?.plan?.planId == plan.planId) return
@@ -511,7 +556,8 @@ class BufferingQualityController(
 
     /**
      * Something of ours is already in flight: a replan, the rearm wait after
-     * one that was not adopted, or a pill that is showing or waiting to show.
+     * one that was not adopted, or a pill that is showing, waiting or hidden
+     * behind a higher-priority pill.
      */
     private fun isBusy(): Boolean =
         pending != null || rearmJob?.isActive == true || activePill != null || deferredPill != null
@@ -540,7 +586,8 @@ class BufferingQualityController(
         if (plan.quality == QUALITY_AUTO) {
             delivered ?: return null
             if (rungs.none { it.bitrateKbps < delivered }) return null
-            val estimate = floor(STEP_DOWN_RATIO * delivered).toInt()
+            // The exact integer floor of delivered × 7 / 10; see STEP_DOWN_RATIO.
+            val estimate = (delivered.toLong() * 7L / 10L).toInt()
             if (estimate < MIN_ESTIMATE_KBPS) return null
             return Lowering(
                 replan = BufferingQualityReplan(
@@ -660,7 +707,7 @@ class BufferingQualityController(
         state.statsStallStartedAt = null
         onPlanSummary(
             BufferingPlanSummary(
-                planId = state.plan.planId,
+                planId = state.plan.serverPlanId,
                 playedMs = state.playedMs,
                 stallCount = state.stallCount,
                 stallTotalMs = state.stallTotalMs,
@@ -691,24 +738,49 @@ class BufferingQualityController(
 
     // ---- Pill --------------------------------------------------------------
 
-    /** Shows [kind] now, or once the other pill hides. */
+    /** Offers a fresh [kind] now, or with its full timer once the other pill hides. */
     private fun showPill(kind: PillKind) {
         if (otherPillVisible) {
             deferredPill = kind
-            deferredPlanId = current?.plan?.planId
+            deferredFor = current
+            deferredResumes = false
+            pillRemainingMs = promptSeconds * 1000L
             return
         }
-        present(kind)
+        present(kind, resume = false)
     }
 
-    private fun present(kind: PillKind) {
-        deferredPill = null
-        deferredPlanId = null
+    /**
+     * Puts [kind] on screen. A fresh pill starts its full timer and, for the
+     * prompt, the re-offer clock; a [resume] keeps both and continues from
+     * [pillRemainingMs].
+     */
+    private fun present(kind: PillKind, resume: Boolean) {
+        clearDeferred()
         activePill = kind
-        pillRemainingMs = promptSeconds * 1000L
-        if (kind == PillKind.PROMPT) promptShownAt = clock()
+        if (!resume) {
+            pillRemainingMs = promptSeconds * 1000L
+            if (kind == PillKind.PROMPT) promptShownAt = clock()
+        }
         publishPill()
         if (paused) _timerRunning.value = false else startPillTimer()
+    }
+
+    /** A higher-priority pill arrived: hide the visible pill and keep its time left. */
+    private fun obscurePill() {
+        val kind = activePill ?: return
+        stopPillTimer()
+        activePill = null
+        deferredPill = kind
+        deferredFor = current
+        deferredResumes = true
+        if (_pill.value !is BufferingQualityPill.Hidden) _pill.value = BufferingQualityPill.Hidden
+    }
+
+    private fun clearDeferred() {
+        deferredPill = null
+        deferredFor = null
+        deferredResumes = false
     }
 
     /**
@@ -741,15 +813,23 @@ class BufferingQualityController(
         }
     }
 
+    /** Pause: the visible pill stays up with its timer frozen. */
     private fun freezePill() {
-        val job = pillJob ?: return
-        if (!job.isActive) return
-        val elapsed = (clock() - pillStepStartedAt).coerceIn(0L, pillStepMs)
-        pillRemainingMs = (pillRemainingMs - elapsed).coerceAtLeast(0L)
-        job.cancel()
+        if (pillJob?.isActive != true) return
+        stopPillTimer()
+        publishPill()
+    }
+
+    /** Stops a running pill timer, keeping the exact time left in [pillRemainingMs]. */
+    private fun stopPillTimer() {
+        val job = pillJob
+        if (job != null && job.isActive) {
+            val elapsed = (clock() - pillStepStartedAt).coerceIn(0L, pillStepMs)
+            pillRemainingMs = (pillRemainingMs - elapsed).coerceAtLeast(0L)
+            job.cancel()
+        }
         pillJob = null
         _timerRunning.value = false
-        publishPill()
     }
 
     private fun thawPill() {
@@ -778,13 +858,12 @@ class BufferingQualityController(
         }
     }
 
-    /** Takes any pill down, visible or deferred, deciding nothing. */
+    /** Takes any pill down, visible, waiting or hidden, deciding nothing. */
     private fun hidePill() {
         pillJob?.cancel()
         pillJob = null
         activePill = null
-        deferredPill = null
-        deferredPlanId = null
+        clearDeferred()
         pillRemainingMs = 0L
         _timerRunning.value = false
         if (_pill.value !is BufferingQualityPill.Hidden) _pill.value = BufferingQualityPill.Hidden
