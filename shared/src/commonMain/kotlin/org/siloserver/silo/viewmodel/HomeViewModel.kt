@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
@@ -69,9 +70,24 @@ class HomeViewModel(
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
     private val diagnostics: HomeDiagnosticsObserver = HomeDiagnosticsObserver.None,
     private val catalogLanguage: org.siloserver.silo.domain.settings.CatalogLanguageRevision? = null,
+    /**
+     * Whether Home starts on screen. Android TV keeps one Home for the whole
+     * shell, which can come back on another tab, so it starts hidden and the
+     * screens that show its rows report [onShown] and [onHidden]; the phone
+     * never reports and stays shown.
+     */
+    startShown: Boolean = true,
 ) : ViewModel() {
 
     private var displayedOwner: AuthScopeSnapshot? = null
+
+    /**
+     * Realtime and language refreshes run only while Home is on screen; one
+     * that comes while it is hidden waits in [realtimeRefreshPending]. A full
+     * read of a large Home takes tens of megabytes, and on Android TV the
+     * player covering Home holds up to half the heap.
+     */
+    private var shown = startShown
 
     private suspend fun mayPublish(owner: AuthScopeSnapshot, generation: Int): Boolean {
         val valid = sectionRepository.isHomeAuthorityCurrent(owner)
@@ -100,9 +116,14 @@ class HomeViewModel(
         catalogLanguage?.let { language ->
             viewModelScope.launch {
                 // A metadata-language change re-localizes every card: re-read
-                // quietly. Unlike refreshFromRealtime this never skips, since a
-                // fetch already in flight still asked for the old language.
+                // quietly. Unlike refreshFromRealtime this doesn't wait for a
+                // fetch already in flight, which still asked for the old
+                // language. A hidden Home re-reads when it is shown.
                 language.revision.drop(1).collectLatest {
+                    if (!shown) {
+                        realtimeRefreshPending = true
+                        return@collectLatest
+                    }
                     val generation = fetchSections(HomeLoadTrigger.REALTIME)
                     if (generation == fetchGeneration) {
                         _uiState.update { it.copy(isRefreshing = false) }
@@ -118,13 +139,40 @@ class HomeViewModel(
         }
     }
 
+    /**
+     * Home's rows are on screen. A refresh that waited while they were hidden
+     * runs on [runPendingRealtimeRefresh] or the next [refreshFromRealtime].
+     */
+    fun onShown() {
+        shown = true
+    }
+
+    /**
+     * Home's rows left the screen. Realtime and language refreshes wait for
+     * [onShown], and a realtime refresh still reading is dropped and waits too,
+     * unless Home is still empty: that read may be the one that fills it.
+     */
+    fun onHidden() {
+        shown = false
+        if (realtimeRefreshInFlight && !_uiState.value.isLoading) {
+            realtimeRefreshJob?.cancel()
+            realtimeRefreshInFlight = false
+            realtimeRefreshPending = true
+        }
+    }
+
     private var realtimeRefreshInFlight = false
+    private var realtimeRefreshJob: Job? = null
+
+    /** Bumped per realtime refresh, so a dropped one cannot clear its successor's in-flight flag. */
+    private var realtimeRefreshRun = 0
 
     /**
      * A realtime signal arrived while a fetch was running. That fetch may have
      * been answered before the event behind the signal (an access change made
      * after the request went out), so one more realtime refresh runs when it
-     * finishes.
+     * finishes. Also set by a realtime or language refresh that came while
+     * Home was hidden.
      */
     private var realtimeRefreshPending = false
 
@@ -145,9 +193,10 @@ class HomeViewModel(
      * Debounced realtime refetch: quiet (no spinner) and single-flight.
      * Signals that arrive while a realtime or manual refresh is running are
      * not raced against it; they collapse into one follow-up refresh after it.
+     * While Home is hidden they wait for it to be shown.
      */
     fun refreshFromRealtime() {
-        if (realtimeRefreshInFlight || _uiState.value.isRefreshing) {
+        if (!shown || realtimeRefreshInFlight || _uiState.value.isRefreshing) {
             realtimeRefreshPending = true
             diagnostics.completed(
                 HomeLoadObservation(
@@ -163,18 +212,26 @@ class HomeViewModel(
             return
         }
         realtimeRefreshInFlight = true
-        viewModelScope.launch {
+        // This read starts after every signal that is waiting.
+        realtimeRefreshPending = false
+        val run = ++realtimeRefreshRun
+        realtimeRefreshJob = viewModelScope.launch {
             try {
                 fetchSections(HomeLoadTrigger.REALTIME)
             } finally {
-                realtimeRefreshInFlight = false
+                if (run == realtimeRefreshRun) realtimeRefreshInFlight = false
             }
             runPendingRealtimeRefresh()
         }
     }
 
-    private fun runPendingRealtimeRefresh() {
-        if (!realtimeRefreshPending) return
+    /**
+     * Runs the realtime refresh that is waiting, if any. While the first load
+     * is still filling an empty Home it keeps waiting: that load runs it when
+     * it ends, instead of a second full read beside it.
+     */
+    fun runPendingRealtimeRefresh() {
+        if (!realtimeRefreshPending || _uiState.value.isLoading) return
         realtimeRefreshPending = false
         refreshFromRealtime()
     }
@@ -233,6 +290,8 @@ class HomeViewModel(
                 _uiState.update { it.copy(isLoading = true, error = null) }
             }
             fetchSections(HomeLoadTrigger.INITIAL)
+            // A refresh that waited during the first load runs after it, not beside it.
+            runPendingRealtimeRefresh()
         }
     }
 

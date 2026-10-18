@@ -96,21 +96,24 @@ fun TvHomeScreen(
 
     // TV has no pull-to-refresh, so ON_RESUME is the only manual freshness
     // path — refresh quietly whenever the user returns to Home (e.g. after
-    // finishing playback), complementing the realtime socket.
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                // The observer gets ON_RESUME as soon as it is added. On a new
-                // ViewModel that is while its own first load is still running,
-                // and a second full Home read would only supersede it.
-                if (shouldRefreshOnResume() && !viewModel.uiState.value.isLoading) {
-                    viewModel.refreshFromRealtime()
-                }
-            }
+    // finishing playback), complementing the realtime socket. While Home is
+    // paused (the player, a detail page or another tab covers it) realtime
+    // updates wait, so a large Home is not re-read beside the player's buffer.
+    androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) {
+        viewModel.onShown()
+        // The effect runs as soon as it is added. On a new ViewModel that is
+        // while its own first load is still running, and a second full Home
+        // read would only supersede it; the first load runs a waiting update.
+        if (shouldRefreshOnResume() && !viewModel.uiState.value.isLoading) {
+            viewModel.refreshFromRealtime()
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        onPauseOrDispose { viewModel.onHidden() }
+    }
+    // A return from a detail page skips the resume refresh until the shell has
+    // restored focus. An update that waited while Home was hidden runs then.
+    val refreshAllowed = shouldRefreshOnResume()
+    LaunchedEffect(refreshAllowed) {
+        if (refreshAllowed) viewModel.runPendingRealtimeRefresh()
     }
 
     when {
