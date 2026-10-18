@@ -9,7 +9,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
-import java.util.Collections
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
@@ -74,9 +74,9 @@ class PlaybackSessionManagerBufferingQualityTest {
     }
 
     private class Harness(capabilityFeatures: List<String>) {
-        val startBodies: MutableList<JsonObject> = Collections.synchronizedList(mutableListOf())
-        val replanBodies: MutableList<JsonObject> = Collections.synchronizedList(mutableListOf())
-        val routeEvents: MutableList<JsonObject> = Collections.synchronizedList(mutableListOf())
+        val startBodies: MutableList<JsonObject> = CopyOnWriteArrayList()
+        val replanBodies: MutableList<JsonObject> = CopyOnWriteArrayList()
+        val routeEvents: MutableList<JsonObject> = CopyOnWriteArrayList()
         private val identity = Identity()
         private val client = HttpClient(
             MockEngine { request ->
