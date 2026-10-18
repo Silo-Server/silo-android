@@ -45,8 +45,11 @@ const val PROBE_MIN_BYTES = 1_000_000L
 /** Let the first screen settle before spending bandwidth on a probe. */
 const val PROBE_START_DELAY_MS = 5_000L
 
-/** How long a measurement stands in for the network before it is re-taken. */
-const val BANDWIDTH_ESTIMATE_TTL_MS = 30 * 60 * 1000L
+/**
+ * How long a reading stands for its server and network: playback starts send
+ * it, and nothing measures that connection again, until it is this old.
+ */
+const val BANDWIDTH_READING_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000L
 
 /** The contract bounds `bandwidth_estimate_kbps` to this range. */
 const val MIN_ESTIMATE_KBPS = 100

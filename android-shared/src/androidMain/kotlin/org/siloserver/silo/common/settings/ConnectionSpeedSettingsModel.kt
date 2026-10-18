@@ -118,7 +118,7 @@ class ConnectionSpeedSettingsModel(
             try {
                 val outcome = probe.runNow()
                 message = when (outcome) {
-                    is ProbeOutcome.Measured -> null
+                    is ProbeOutcome.Measured, is ProbeOutcome.Stored -> null
                     is ProbeOutcome.RateLimited -> ConnectionSpeedMessage.TryAgainIn(outcome.retryAfterSeconds)
                     ProbeOutcome.PlaybackActive -> ConnectionSpeedMessage.StopPlayback
                     // The row already says speed tests are skipped here.

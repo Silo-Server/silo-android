@@ -269,17 +269,24 @@ The probe follows the web player's `bandwidth-probe.ts` (see the server design,
   a 300 ms warm-up when the window allows. It abandons a probe with no byte in
   10 s, cuts off a read that stalls 500 ms past the window, and stops the
   download when the window ends.
-- **When.** In the background 5 s after sign-in or a return to the
-  foreground, again when the result expires, and every 5 minutes while a probe
-  could not run. Leaving the foreground stops it.
+- **When.** A check runs in the background 5 s after sign-in, a return to the
+  foreground or a network change, and at no other time. With a reading in hand
+  it does nothing. Otherwise it reads this device's stored reading for the
+  connection (`probe` in `GET /api/v2/playback/connection`) and measures only
+  when there is none younger than the lifetime. A check that fails or is
+  refused waits for the next one, and after a `429` none measures before its
+  `Retry-After`. **Test speed** always measures. Leaving the foreground stops
+  it.
 - **When not.** Never on a metered or cellular network (`metered || cellular`
   in `PlaybackNetworkSnapshot`, so a VPN Android marks metered is skipped too),
   and never while local media plays or loads. The process's one Media3 player
   (`ActivePlayerHolder`) is the playing signal. A video start also tells the
   probe, which cancels a running probe and holds off new ones for 60 s.
-- **Cache.** 30 minutes, for the server and network it was measured on. A
-  network change (lost, or another network handle, transport, or metering) or
-  a server change discards it, and a start then sends no estimate.
+- **Reading.** It lasts 7 days, for the server and network it was measured
+  on, and playback starts send it for that whole time. A network change (lost,
+  or another network handle, transport, or metering) or a server change
+  discards the reading in hand, and the next check looks for the new
+  connection's.
 - **Reporting.** Each result goes to
   `POST /api/v2/playback/bandwidth-probe/results` with its transport
   (`wifi`, `ethernet`, `cellular` or `other`).
