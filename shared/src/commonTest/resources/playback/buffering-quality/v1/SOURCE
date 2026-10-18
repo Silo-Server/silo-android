@@ -1,8 +1,8 @@
 repository=https://github.com/Silo-Server/silo-server
 path=docs/design/schemas/buffering-quality/v1/vectors.json
 branch=feat/buffering-quality
-commit=bdd8892a02ecf37040b633d14d6be85e0eb47c9a
-sha256=de60715fa154cec4b46dbcd52abee9de987a01363473af82c245edb1a06c99a8
+commit=408328dc76e97bb18fa213c51faadc084b0d0486
+sha256=1e85474860c5e37e1097127b438bf80e03cb402a5aef3ed396f2a4bf09ad2d23
 
 A byte-identical copy of the buffering-quality conformance vectors; do not
 hand-edit it. The spec is docs/design/2026-10-17-buffering-quality.md in the

@@ -13,6 +13,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.intOrNull
@@ -21,6 +22,14 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
+import org.siloserver.silo.model.playback.ClientCodecCapabilities
+import org.siloserver.silo.model.playback.ClientPlaybackContext
+import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
+import org.siloserver.silo.model.playback.PLAYBACK_START_CLIENT_FEATURES_V3
+import org.siloserver.silo.model.playback.PlaybackReplanRequestV3
+import org.siloserver.silo.model.playback.QUALITY_CHANGE_V3_OPERATION
+import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
+import org.siloserver.silo.network.SiloJson
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -29,7 +38,9 @@ import kotlin.test.fail
 /**
  * Replays the server's buffering-quality conformance vectors
  * (`docs/design/schemas/buffering-quality/v1/vectors.json`, vendored unchanged)
- * against [BufferingQualityController].
+ * against [BufferingQualityController] and the kept-estimate rule
+ * ([withKeptStepDownEstimate]), composed the way the players and
+ * `PlaybackSessionManager` compose them.
  *
  * A failing case is a divergence from web and Apple, which replay the same
  * file. Fix the controller, or fix the spec and the vectors on the server and
@@ -101,10 +112,11 @@ class BufferingQualityVectorsTest {
         val clock = { testScheduler.currentTime }
         val outputs = mutableListOf<JsonElement>()
         val summaries = mutableListOf<BufferingPlanSummary>()
+        val replans = ClientReplans()
         val controller = BufferingQualityController(
             scope = scope,
             clock = clock,
-            onReplan = { outputs += replanOutput(clock(), it) },
+            onReplan = { outputs += replanOutput(clock(), replans.forController(it)) },
             onNotice = { notice ->
                 outputs += buildJsonObject {
                     put("t", clock())
@@ -141,7 +153,7 @@ class BufferingQualityVectorsTest {
             for (element in case.getValue("events").jsonArray) {
                 val event = element.jsonObject
                 advanceTo(event.getValue("t").jsonPrimitive.long)
-                apply(controller, event)
+                apply(controller, replans, event)?.let { outputs += replanOutput(clock(), it) }
             }
             advanceTo(case.getValue("until").jsonPrimitive.long)
 
@@ -174,10 +186,37 @@ class BufferingQualityVectorsTest {
         runCurrent()
     }
 
-    /** Applies one event. Fields the controller has no input for, such as `controllerInitiated`, are ignored. */
-    private fun apply(controller: BufferingQualityController, event: JsonObject) {
+    /**
+     * Applies one event, returning the replan it makes the client send for its
+     * own reasons, if any. `controllerInitiated` is ignored: the controller has
+     * no such input, and an adoption with no controller replan pending already
+     * reads as one the controller did not send.
+     */
+    private fun apply(
+        controller: BufferingQualityController,
+        replans: ClientReplans,
+        event: JsonObject,
+    ): PlaybackReplanRequestV3? {
         when (val type = event.getValue("type").jsonPrimitive.content) {
-            "plan_adopted" -> controller.onPlanAdopted(planOf(event.getValue("plan").jsonObject))
+            "plan_adopted" -> {
+                val plan = planOf(event.getValue("plan").jsonObject)
+                replans.adoptedQuality = plan.quality
+                controller.onPlanAdopted(plan)
+            }
+            "client_replan" -> return replans.forClient(event.getValue("operation").jsonPrimitive.content)
+            "quality_changed" -> {
+                // The viewer's pick, as PlayerViewModel.onSelectQuality and
+                // the TV equivalent make it: the controller hears of it, and
+                // the pick goes out as a quality_change the controller did not
+                // send. Its replan is not one of the vectors' outputs.
+                controller.onViewerQualityChange()
+                replans.forClient(QUALITY_CHANGE_V3_OPERATION)
+            }
+            "new_attempt" -> {
+                // A fresh load resets the controller and mints a new attempt.
+                controller.reset()
+                replans.newAttempt()
+            }
             "playing" -> controller.onPlaying()
             "waiting" -> controller.onWaiting(causeOf(event["cause"]?.jsonPrimitive?.content))
             "pause" -> controller.onPause()
@@ -193,6 +232,7 @@ class BufferingQualityVectorsTest {
             "pill_unobscured" -> controller.setOtherPillVisible(false)
             else -> fail("unknown event type $type")
         }
+        return null
     }
 
     private fun causeOf(cause: String?): BufferingWaitCause = when (cause) {
@@ -219,18 +259,75 @@ class BufferingQualityVectorsTest {
             .any { it.jsonPrimitive.content == "quality_reduction_unavailable" },
     )
 
-    private fun replanOutput(t: Long, replan: BufferingQualityReplan) = buildJsonObject {
+    /** A sent replan as a vector output: its body is the wire request, cut to the fields the vectors cover. */
+    private fun replanOutput(t: Long, request: PlaybackReplanRequestV3) = buildJsonObject {
         put("t", t)
         put("type", "replan")
-        put(
-            "body",
-            buildJsonObject {
-                put("operation", "quality_change")
-                put("quality_preference", replan.qualityPreference)
-                replan.bandwidthEstimateKbps?.let { put("bandwidth_estimate_kbps", it) }
-                replan.bandwidthEstimateSource?.let { put("bandwidth_estimate_source", it) }
-                replan.learnedLimit?.let { put("learned_limit", it) }
-            },
+        val wire = SiloJson.encodeToJsonElement(request).jsonObject
+        put("body", JsonObject(wire.filterKeys { it in REPLAN_BODY_KEYS }))
+    }
+
+    /**
+     * The replans one playback sends, built as `PlaybackSessionManager` builds
+     * them and passed through the kept-estimate rule, with the kept estimate
+     * held between requests as the manager holds it.
+     */
+    private class ClientReplans {
+        private var attempt = 1
+        private var kept: KeptStepDownEstimate? = null
+
+        /** The playing plan's quality, which the client's own replans ask for. */
+        var adoptedQuality: String = PLAYBACK_QUALITY_AUTO
+
+        /** The controller's replan: always a `quality_change` carrying its fields. */
+        fun forController(replan: BufferingQualityReplan): PlaybackReplanRequestV3 = send(
+            request(QUALITY_CHANGE_V3_OPERATION, replan.qualityPreference).copy(
+                bandwidthEstimateKbps = replan.bandwidthEstimateKbps,
+                bandwidthEstimateSource = replan.bandwidthEstimateSource,
+                learnedLimit = replan.learnedLimit,
+            ),
+            replan,
+        )
+
+        /** A replan the client sends for its own reasons, at the playing plan's quality. */
+        fun forClient(operation: String): PlaybackReplanRequestV3 =
+            send(request(operation, adoptedQuality), bufferingQuality = null)
+
+        fun newAttempt() {
+            attempt++
+        }
+
+        private fun send(request: PlaybackReplanRequestV3, bufferingQuality: BufferingQualityReplan?): PlaybackReplanRequestV3 {
+            val sent = request.withKeptStepDownEstimate(kept, bufferingQuality)
+            kept = sent.kept
+            return sent.request
+        }
+
+        private fun request(operation: String, quality: String) = PlaybackReplanRequestV3(
+            clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
+            operation = operation,
+            playbackAttemptId = "attempt-$attempt",
+            replanRequestId = "replan",
+            failedPlanId = "plan",
+            planAttemptId = "plan-attempt",
+            planAttemptKey = "key",
+            attemptedPlanKeys = emptyList(),
+            attemptCount = 1,
+            qualityPreference = quality,
+            positionSeconds = 0.0,
+            selectedTracks = SelectedPlaybackTracksV3(),
+            capabilities = ClientCodecCapabilities(),
+            clientPlaybackContext = ClientPlaybackContext(formFactor = "mobile", appVersion = "test"),
+        )
+    }
+
+    private companion object {
+        val REPLAN_BODY_KEYS = setOf(
+            "operation",
+            "quality_preference",
+            "bandwidth_estimate_kbps",
+            "bandwidth_estimate_source",
+            "learned_limit",
         )
     }
 }
