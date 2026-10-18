@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
@@ -118,12 +119,13 @@ class HomeViewModel(
                 // A metadata-language change re-localizes every card: re-read
                 // quietly. Unlike refreshFromRealtime this doesn't wait for a
                 // fetch already in flight, which still asked for the old
-                // language. A hidden Home re-reads when it is shown.
-                language.revision.drop(1).collectLatest {
-                    if (!shown) {
-                        realtimeRefreshPending = true
-                        return@collectLatest
-                    }
+                // language. A hidden Home re-reads when it is shown; that
+                // change is held back before collectLatest, so it never
+                // cancels a read that may be the one filling Home.
+                language.revision.drop(1).filter {
+                    if (!shown) realtimeRefreshPending = true
+                    shown
+                }.collectLatest {
                     val generation = fetchSections(HomeLoadTrigger.REALTIME)
                     if (generation == fetchGeneration) {
                         _uiState.update { it.copy(isRefreshing = false) }
@@ -497,7 +499,8 @@ class HomeViewModel(
             val result = mediaActions.performPersonalWrite(writeIntent)
             if (!mediaActions.isCurrent(writeIntent)) return@launch
             when (result) {
-                is ApiResult.Success -> refresh()
+                // A hidden Home re-reads when it is shown, not beside the player.
+                is ApiResult.Success -> if (shown) refresh() else realtimeRefreshPending = true
                 else -> _uiState.update { it.copy(sections = previous) }
             }
         }

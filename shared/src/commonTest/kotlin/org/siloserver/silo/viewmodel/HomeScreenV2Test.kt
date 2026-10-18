@@ -183,6 +183,22 @@ class HomeScreenV2Test {
         assertEquals("Old", vm.uiState.value.sections.single().items.single().title)
     }
 
+    @Test fun hiddenLanguageChangeKeepsTheReadThatFillsAnEmptyHome() = scenario { vm ->
+        val gate = CompletableDeferred<Unit>(); listHook = { gate.await() }
+        runCurrent()
+        // This read supersedes the first load, so only it can fill Home.
+        language.changed(); runCurrent()
+        assertEquals(2, listReads)
+        vm.onHidden(); language.changed(); runCurrent()
+        gate.complete(Unit); runCurrent()
+        assertFalse(vm.uiState.value.isLoading)
+        assertEquals("Old", vm.uiState.value.sections.single().items.single().title)
+        listHook = {}; title = "New"
+        vm.onShown(); vm.runPendingRealtimeRefresh(); runCurrent()
+        assertEquals(3, listReads)
+        assertEquals("New", vm.uiState.value.sections.single().items.single().title)
+    }
+
     @Test fun updateThatWaitedDuringFirstLoadRunsAfterIt() = scenario(startShown = false) { vm ->
         val gate = CompletableDeferred<Unit>(); listHook = { gate.await() }
         runCurrent(); assertEquals(1, listReads)
