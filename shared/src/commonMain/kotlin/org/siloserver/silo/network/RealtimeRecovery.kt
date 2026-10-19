@@ -42,6 +42,15 @@ class RealtimeBackoff(
     private var unavailable = 0
     private var shield = 0
     private var usefulSince: Long? = null
+    private var admissionNotBeforeMs = 0L
+    private var admissionAuthority: AuthScopeSnapshot? = null
+
+    internal fun bindAdmissionAuthority(authority: AuthScopeSnapshot) {
+        if (admissionAuthority != null && admissionAuthority != authority) admissionNotBeforeMs = 0
+        admissionAuthority = authority
+    }
+
+    internal fun remainingAdmissionMs(): Long = (admissionNotBeforeMs - nowMs()).coerceAtLeast(0)
     var overloaded: Boolean = false
         private set
 
@@ -53,23 +62,25 @@ class RealtimeBackoff(
         }
     }
 
-    fun refused(code: String, minimumMs: Long): Long {
+    fun refused(code: String, minimumMs: Long, retainForAdmission: Boolean = false): Long {
         usefulSince = null
         overloaded = true
         val base = if (code == "realtime_unavailable") {
             UNAVAILABLE[(unavailable++).coerceAtMost(UNAVAILABLE.lastIndex)]
         } else 0L
-        return maxOf(minimumMs.coerceAtLeast(250), base) + jitterMs().coerceIn(0, 250)
+        val wait = maxOf(minimumMs.coerceAtLeast(250), base) + jitterMs().coerceIn(0, 250)
+        if (retainForAdmission) admissionNotBeforeMs = maxOf(admissionNotBeforeMs, nowMs() + wait)
+        return wait
     }
 
     fun disconnected(minimumMs: Long = 0, unavailableFailure: Boolean = false, inputShield: Boolean = false): Long {
         usefulSince = null
         if (inputShield) {
             overloaded = true
-            return maxOf(minimumMs, SHIELD[(shield++).coerceAtMost(SHIELD.lastIndex)]) + jitterMs().coerceIn(0, 250)
+            return maxOf(remainingAdmissionMs(), minimumMs, SHIELD[(shield++).coerceAtMost(SHIELD.lastIndex)]) + jitterMs().coerceIn(0, 250)
         }
-        if (unavailableFailure) return refused("realtime_unavailable", minimumMs)
-        return maxOf(minimumMs, OPAQUE[(opaque++).coerceAtMost(OPAQUE.lastIndex)]) + jitterMs().coerceIn(0, 250)
+        if (unavailableFailure) return maxOf(remainingAdmissionMs(), refused("realtime_unavailable", minimumMs))
+        return maxOf(remainingAdmissionMs(), minimumMs, OPAQUE[(opaque++).coerceAtMost(OPAQUE.lastIndex)]) + jitterMs().coerceIn(0, 250)
     }
 
     companion object {

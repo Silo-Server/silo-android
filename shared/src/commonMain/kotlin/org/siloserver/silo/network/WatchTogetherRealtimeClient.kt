@@ -93,6 +93,13 @@ interface WatchTogetherRealtimeClient {
     /** Correlated work is pinned to a physical connection; default has no delivery claim. */
     suspend fun sendWorkOnConnection(connectionId: Long, request: RoomWorkRequest): Boolean = false
 
+    /** Revalidate a selected retry after client suspension, immediately before dispatch. */
+    suspend fun sendWorkOnConnection(
+        connectionId: Long,
+        request: RoomWorkRequest,
+        beforeDispatch: suspend () -> Boolean,
+    ): Boolean = beforeDispatch() && sendWorkOnConnection(connectionId, request)
+
     /** Opaque identity of the currently writable physical socket, if any. */
     suspend fun currentConnectionId(): Long? = null
 
@@ -338,6 +345,17 @@ class DefaultWatchTogetherRealtimeClient private constructor(
 
     override suspend fun sendWorkOnConnection(connectionId: Long, request: RoomWorkRequest): Boolean {
         val writable = sessionMutex.withLock { session.takeIf { activeSessionId == connectionId } } ?: return false
+        if (request.playbackIntent?.isCurrent == false) return false
+        return deliver(writable, request.encode(json))
+    }
+
+    override suspend fun sendWorkOnConnection(
+        connectionId: Long,
+        request: RoomWorkRequest,
+        beforeDispatch: suspend () -> Boolean,
+    ): Boolean {
+        val writable = sessionMutex.withLock { session.takeIf { activeSessionId == connectionId } } ?: return false
+        if (request.playbackIntent?.isCurrent == false || !beforeDispatch()) return false
         return deliver(writable, request.encode(json))
     }
 

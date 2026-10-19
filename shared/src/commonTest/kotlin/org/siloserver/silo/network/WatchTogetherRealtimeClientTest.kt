@@ -358,7 +358,12 @@ class WatchTogetherRealtimeClientTest {
         val request = RoomWorkRequest(RoomWorkKind.Transport, "synthetic-request", action = "pause")
         assertFalse(client.sendWorkOnConnection(id + 1, request))
         assertTrue(socket.sent.isEmpty())
-        assertTrue(client.sendWorkOnConnection(id, request))
+        var dispatchChecks = 0
+        assertFalse(client.sendWorkOnConnection(id, request) { dispatchChecks++; false })
+        assertEquals(1, dispatchChecks)
+        assertTrue(socket.sent.isEmpty())
+        assertTrue(client.sendWorkOnConnection(id, request) { dispatchChecks++; true })
+        assertEquals(2, dispatchChecks)
         val wire = SiloJson.parseToJsonElement(socket.sent.single()).jsonObject
         assertEquals("synthetic-request", wire["request_id"]?.jsonPrimitive?.content)
         socket.incoming.send("""{"type":"error","code":"realtime_rate_limited","request_id":"synthetic-request","retry_after_ms":250,"work_started":false}""")

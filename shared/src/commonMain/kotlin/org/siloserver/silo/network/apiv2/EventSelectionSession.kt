@@ -29,6 +29,7 @@ internal class EventSelectionSession(
         transmit: suspend (String) -> Unit,
         current: suspend () -> Boolean,
         desiredSelections: Flow<List<String>> = emptyFlow(),
+        onEnvelope: suspend (type: String?, errorCode: String?) -> Unit = { _, _ -> },
     ): Flow<String> = channelFlow {
         val inputs = Channel<Input>(Channel.BUFFERED)
         var desired = initial.toList()
@@ -75,6 +76,7 @@ internal class EventSelectionSession(
                         val obj = runCatching { SiloJson.parseToJsonElement(input.raw) as? JsonObject }.getOrNull()
                         val type = (obj?.get("type") as? JsonPrimitive)?.content
                         val id = (obj?.get("request_id") as? JsonPrimitive)?.content
+                        onEnvelope(type, if (type == "error") (obj?.get("code") as? JsonPrimitive)?.content else null)
                         if (type == "hello") {
                             val capability = obj["work_admission"]?.let {
                                 runCatching { SiloJson.decodeFromJsonElement(RealtimeWorkAdmission.serializer(), it) }.getOrNull()
@@ -86,7 +88,7 @@ internal class EventSelectionSession(
                             if (refusal?.preWork == true && refusal.requestId == requestId) {
                                 retry?.cancel()
                                 val captured = requestId
-                                val wait = recovery.refused(refusal.code, refusal.retryAfterMs!!)
+                                val wait = recovery.refused(refusal.code, refusal.retryAfterMs!!, retainForAdmission = true)
                                 retryNotBeforeMs = nowMs() + wait
                                 retryId = captured
                                 retry = launch { delay(wait); inputs.send(Input.Retry(captured)) }

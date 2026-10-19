@@ -64,7 +64,7 @@ class RoomWorkRecoveryTest {
         now = 11_000; assertTrue(recovery.due { identity }.isEmpty())
     }
 
-    @Test fun desiredBufferingIsRecomputedAfterClassFloorAndStaleCancellationDropsRefusal() {
+    @Test fun desiredBufferingIsRecomputedAndCancellationRetainsDelayedClassRefusal() {
         val recovery = controller()
         recovery.sent(request(RoomWorkKind.Buffering), identity)
         assertTrue(recovery.refused(refused()))
@@ -75,7 +75,7 @@ class RoomWorkRecoveryTest {
         assertTrue(recovery.due { identity }.isEmpty()) // no stored stale buffering report
         recovery.sent(request(RoomWorkKind.Buffering), identity)
         recovery.cancel(RoomWorkKind.Buffering)
-        assertFalse(recovery.refused(refused()))
+        assertTrue(recovery.refused(refused()))
     }
 
     @Test fun delayedRefusalOfAnEarlierReportStillDelaysItsClassWithoutQueueingAReport() {
@@ -101,7 +101,7 @@ class RoomWorkRecoveryTest {
         val latest = request().copy(requestId = "latest", positionSeconds = 99.0)
         now = 250
         recovery.sent(latest, identity)
-        assertFalse(recovery.refused(refused()))
+        assertTrue(recovery.refused(refused()))
         assertTrue(recovery.due { identity }.isEmpty())
         assertTrue(recovery.applied("latest", "transport_request"))
     }
@@ -141,4 +141,44 @@ class RoomWorkRecoveryTest {
         recovery.echoLobby(true, identity)
         assertNull(recovery.nextWakeMs())
     }
+    @Test fun refusedUndispatchedWorkIsNotUncertainOnDisconnect() {
+        for (select in listOf(false, true)) {
+            now = 0
+            val recovery = controller()
+            recovery.sent(request(), identity)
+            recovery.refused(refused())
+            if (select) { now = 250; assertEquals(listOf(request()), recovery.due { identity }) }
+            recovery.disconnect()
+            assertEquals(0L, recovery.update.uncertaintySequence)
+            assertTrue(recovery.due { identity }.isEmpty())
+        }
+    }
+
+    @Test fun selectedRetryExpiresBeforeDispatchAfterSuspension() {
+        val recovery = controller()
+        recovery.sent(request(), identity); recovery.refused(refused())
+        now = 250; assertEquals(listOf(request()), recovery.due { identity })
+        now = 5_001
+        assertFalse(recovery.retryStillCurrent(request(), identity))
+    }
+
+    @Test fun canceledDesireRetainsOnlyItsBoundedClassCorrelation() {
+        val recovery = controller()
+        recovery.sent(request(RoomWorkKind.Buffering), identity)
+        recovery.cancel(RoomWorkKind.Buffering)
+        assertTrue(recovery.refused(refused(delay = 60_000)))
+        assertFalse(recovery.permitted(RoomWorkKind.Ready))
+        assertTrue(recovery.due { identity }.isEmpty())
+    }
+
+    @Test fun physicallyDispatchedRetryWithoutAcknowledgementIsStillUncertain() {
+        val recovery = controller()
+        recovery.sent(request(), identity); recovery.refused(refused())
+        now = 250; assertEquals(listOf(request()), recovery.due { identity })
+        assertTrue(recovery.retryStillCurrent(request(), identity))
+        recovery.retryDispatched(request())
+        recovery.disconnect()
+        assertEquals(1L, recovery.update.uncertaintySequence)
+    }
+
 }

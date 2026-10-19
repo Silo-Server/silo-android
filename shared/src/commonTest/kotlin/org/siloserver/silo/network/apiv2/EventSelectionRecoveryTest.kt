@@ -4,6 +4,10 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.*
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.*
+import io.ktor.http.*
+import kotlinx.coroutines.flow.toList
 import org.siloserver.silo.model.notifications.WsSubscribe
 import org.siloserver.silo.network.*
 import kotlin.test.*
@@ -70,4 +74,59 @@ class EventSelectionRecoveryTest {
 
     private fun refusal(id: String, wait: Long) =
         """{"type":"error","code":"realtime_rate_limited","request_id":"$id","retry_after_ms":$wait,"work_started":false}"""
+    @Test fun refusedDeadlineSurvivesSocketCompletionAndFencesFreshTicketMint() = runTest {
+        val recovery = RealtimeBackoff({ testScheduler.currentTime }, { 0 })
+        val incoming = Channel<String>(Channel.UNLIMITED)
+        val sent = mutableListOf<WsSubscribe>()
+        val first = backgroundScope.launch {
+            EventSelectionSession(recovery, true, { testScheduler.currentTime })
+                .frames(listOf("notifications"), { incoming.receiveCatching().getOrNull() }, {
+                    sent += SiloJson.decodeFromString(WsSubscribe.serializer(), it)
+                }, { true }).collect { }
+        }
+        runCurrent(); incoming.send(refusal(sent.single().requestId!!, 60_000)); runCurrent()
+        incoming.close(); runCurrent(); first.join()
+        assertTrue(recovery.disconnected() >= 60_000)
+        var mints = 0
+        val scope = AuthScopeSnapshot("server", "profile", "https://example.invalid", "synthetic-proof", identityGeneration = 1)
+        val tokens = object : TokenManager by TokenManagerImpl() { override suspend fun snapshotCurrentScope() = scope }
+        val client = HttpClient(MockEngine) {
+            engine {
+                dispatcher = UnconfinedTestDispatcher(testScheduler)
+                addHandler {
+                    mints++
+                    respond("""{"type":"https://example.invalid/rate_limited","status":429}""",
+                        HttpStatusCode.TooManyRequests, headersOf(HttpHeaders.ContentType, "application/json"))
+                }
+            }
+        }
+        val attempt = backgroundScope.launch { runCatching {
+            EventsSocketV2Api(client, tokens, ApiV2Gate.Unrestricted).frames(listOf("notifications"), recovery).toList()
+        } }
+        try {
+            runCurrent(); assertEquals(0, mints)
+            advanceTimeBy(59_999); runCurrent(); assertEquals(0, mints)
+            advanceTimeBy(1); runCurrent(); assertEquals(1, mints)
+        } finally { attempt.cancel(); client.close() }
+    }
+
+    @Test fun snapshotAndAccessMetadataDoNotUseTheRefusalDecoder() = runTest {
+        val incoming = Channel<String>(Channel.UNLIMITED)
+        val metadata = mutableListOf<Pair<String?, String?>>()
+        val frames = mutableListOf<String>()
+        val job = backgroundScope.launch {
+            EventSelectionSession(RealtimeBackoff({ testScheduler.currentTime }, { 0 }), true)
+                .frames(listOf("notifications"), { incoming.receiveCatching().getOrNull() }, {}, { true },
+                    onEnvelope = { type, code -> metadata += type to code }).collect { frames += it }
+        }
+        runCurrent()
+        incoming.send("""{"type":"snapshot","channel":"notifications","data":[]}""")
+        incoming.send("""{"type":"access_changed"}""")
+        incoming.send("""{"type":"error","code":"realtime_input_limited"}""")
+        runCurrent()
+        assertEquals<List<Pair<String?, String?>>>(listOf("snapshot" to null, "access_changed" to null, "error" to "realtime_input_limited"), metadata)
+        assertEquals(3, frames.size)
+        job.cancel(); incoming.close()
+    }
+
 }

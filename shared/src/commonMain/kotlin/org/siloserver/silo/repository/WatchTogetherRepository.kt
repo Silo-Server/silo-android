@@ -831,7 +831,7 @@ class WatchTogetherRepository(
         } ?: return false
         if (workAdmission) return sendWork(
             RoomWorkRequest(RoomWorkKind.Transport, "", sessionId = authorization.snapshot.attachedSessionId.orEmpty(),
-                action = action, positionSeconds = positionSeconds ?: 0.0, isPaused = isPaused),
+                action = action, positionSeconds = positionSeconds, isPaused = isPaused),
             authorization,
         )
         return target.first.transportRequestOnConnection(
@@ -840,6 +840,20 @@ class WatchTogetherRepository(
             positionSeconds = positionSeconds,
             isPaused = isPaused,
         )
+    }
+
+    override suspend fun transportRequestForPlayback(
+        authorization: RoomTransportAuthorization,
+        intent: RoomTransportIntent,
+        action: String,
+        positionSeconds: Double?,
+        isPaused: Boolean,
+        playbackIntent: org.siloserver.silo.watchtogether.RoomPlaybackIntent,
+    ): Boolean {
+        if (!playbackIntent.isCurrent) return false
+        if (!workAdmission) return transportRequestForAuthorization(authorization, intent, action, positionSeconds, isPaused)
+        return sendWork(RoomWorkRequest(RoomWorkKind.Transport, "", action = action,
+            positionSeconds = positionSeconds, isPaused = isPaused, playbackIntent = playbackIntent), authorization)
     }
 
     override suspend fun stateReport(
@@ -907,6 +921,7 @@ class WatchTogetherRepository(
         var deferred = false
         val target = stateMutex.withLock {
             val client = realtime ?: return@withLock null
+            if (request.playbackIntent?.isCurrent == false) return@withLock null
             if (request.kind == RoomWorkKind.Attach) localWorkSession = request.sessionId
             val identity = workIdentityLocked(request.kind) ?: return@withLock null
             if (authorization != null && (transportAuthorization != authorization ||
@@ -956,9 +971,14 @@ class WatchTogetherRepository(
             val reconcile = stateMutex.withLock { workReconcileNeeded.also { workReconcileNeeded = false } }
             if (reconcile) reconcileRoom(lease)
             for ((client, connectionId, request) in due) {
-                val current = stateMutex.withLock { workRecovery.retryStillCurrent(request, workIdentityLocked(request.kind)) }
-                if (!current) continue
-                val sent = client.sendWorkOnConnection(connectionId, request)
+                val sent = client.sendWorkOnConnection(connectionId, request) {
+                    stateMutex.withLock {
+                        workRecovery.retryStillCurrent(request, workIdentityLocked(request.kind)).also {
+                            if (it) workRecovery.retryDispatched(request)
+                            publishWorkUpdateLocked(wake = false)
+                        }
+                    }
+                }
                 if (!sent) stateMutex.withLock { workRecovery.failed(request.requestId); publishWorkUpdateLocked() }
             }
         }
@@ -1022,6 +1042,11 @@ class WatchTogetherRepository(
         var lastHealthyMs = monotonicNowMs()
         var proofRenewedForRefusal = false
         while (isCurrent(lease, owner)) {
+            val remainingAdmission = stateMutex.withLock { workRecovery.recoveryDelayMs() }
+            if (remainingAdmission > 0) {
+                delay(remainingAdmission)
+                if (!isCurrent(lease, owner)) break
+            }
             val token = proofToken(lease) ?: break
             var openedAtMs: Long? = null
             var sawSnapshot = false
@@ -1150,7 +1175,7 @@ class WatchTogetherRepository(
             }
             val step = timing.backoffMs[backoffIndex.coerceAtMost(timing.backoffMs.lastIndex)]
             val wait = if (workAdmission || shield || ticket?.status in setOf(429, 503)) workBackoff.disconnected(
-                minimumMs = ticket?.retryAfterMs ?: 0, unavailableFailure = ticket?.status == 503, inputShield = shield,
+                minimumMs = maxOf(ticket?.retryAfterMs ?: 0, stateMutex.withLock { workRecovery.recoveryDelayMs() }), unavailableFailure = ticket?.status == 503, inputShield = shield,
             ) else step + random.nextLong(0L, step / 4 + 1)
             delay(wait)
             backoffIndex = (backoffIndex + 1).coerceAtMost(timing.backoffMs.lastIndex)

@@ -55,6 +55,14 @@ class RoomPlaybackBindingTest {
     private class Sent(val kind: String, val position: Double, val paused: Boolean, val commandId: String? = null, val ready: Boolean = false)
 
     private inner class FakeRoom : RoomPlaybackRoom {
+        var lastTransportIntent: RoomPlaybackIntent? = null
+        override suspend fun transportRequestForPlayback(
+            authorization: RoomTransportAuthorization, intent: RoomTransportIntent, action: String,
+            positionSeconds: Double?, isPaused: Boolean, playbackIntent: RoomPlaybackIntent,
+        ): Boolean {
+            lastTransportIntent = playbackIntent
+            return transportRequestForAuthorization(authorization, intent, action, positionSeconds, isPaused)
+        }
         override var workAdmissionEnabled = false
         override val workUpdate = MutableStateFlow(RoomWorkUpdate())
         val canceledWork = mutableListOf<RoomWorkKind>()
@@ -1203,7 +1211,7 @@ class RoomPlaybackBindingTest {
     }
 
     @Test
-    fun `admission seeks coalesce absolute targets for 250ms while pause stays distinct`() = runTest {
+    fun `admission seeks coalesce and a distinct pause flushes the latest target first`() = runTest {
         val room = FakeRoom().apply {
             workAdmissionEnabled = true
             roomSnapshot.value = playing(role = MemberRole.Host)
@@ -1216,10 +1224,10 @@ class RoomPlaybackBindingTest {
         binding.requestSeek(binding.relativeSeekOrigin(100.0) + 10.0)
         assertEquals(120.0, binding.pendingSeekSeconds.value)
         binding.requestPlayPause(true); runCurrent()
-        assertEquals(listOf<Pair<String, Double?>>("pause" to 100.0), room.requests)
-        advanceTimeBy(149); runCurrent(); assertEquals(1, room.requests.size)
+        assertEquals(listOf<Pair<String, Double?>>("seek" to 120.0, "pause" to 100.0), room.requests)
+        advanceTimeBy(149); runCurrent(); assertEquals(2, room.requests.size)
         advanceTimeBy(1); runCurrent()
-        assertEquals(listOf<Pair<String, Double?>>("pause" to 100.0, "seek" to 120.0), room.requests)
+        assertEquals(listOf<Pair<String, Double?>>("seek" to 120.0, "pause" to 100.0), room.requests)
         assertTrue(player.seeks.isEmpty())
     }
 
@@ -1241,7 +1249,7 @@ class RoomPlaybackBindingTest {
         binding.requestSeek(160.0)
         advanceTimeBy(250); runCurrent()
         assertEquals(160.0, binding.pendingSeekSeconds.value)
-        room.workUpdate.value = RoomWorkUpdate(sequence = 1, uncertaintySequence = 1, uncertainKind = RoomWorkKind.Transport)
+        room.workUpdate.value = RoomWorkUpdate(sequence = 1, uncertaintySequence = 1, uncertainKind = RoomWorkKind.Transport, uncertainPlaybackIntent = room.lastTransportIntent)
         runCurrent()
         assertNull(binding.pendingSeekSeconds.value)
         assertTrue(RoomPlaybackNotice.Uncertain in notices)

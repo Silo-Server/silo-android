@@ -40,6 +40,12 @@ class EventsSocketV2Api(
 
     fun frames(channels: List<String>, recovery: RealtimeBackoff = RealtimeBackoff()): Flow<String> = flow {
         val scope = tokens.snapshotCurrentScope() ?: return@flow
+        recovery.bindAdmissionAuthority(scope)
+        while (recovery.remainingAdmissionMs() > 0) {
+            delay(recovery.remainingAdmissionMs())
+            if (!current(scope)) return@flow
+        }
+        if (!current(scope)) return@flow
         val mintedAt = TimeSource.Monotonic.markNow()
         val proof = when (val result = ticket(scope)) {
             is ApiResult.Success -> result.data
@@ -89,9 +95,11 @@ class EventsSocketV2Api(
                         },
                         transmit = { send(Frame.Text(it)) },
                         current = { current(scope).also { if (!it) identityLost = true } },
+                        onEnvelope = { type, errorCode ->
+                            if (type == AccessChangeSignals.ACCESS_CHANGED_FRAME_TYPE) reportAccessChange()
+                            if (errorCode == "realtime_input_limited") shieldNotice = true
+                        },
                     ).collect { text ->
-                        if (isAccessChangedFrame(text)) reportAccessChange()
-                        if (runCatching { SiloJson.decodeFromString(RealtimeRefusal.serializer(), text).code }.getOrNull() == "realtime_input_limited") shieldNotice = true
                         this@flow.emit(text)
                     }
                     if (!identityLost) {
