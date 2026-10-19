@@ -40,7 +40,6 @@ import org.siloserver.silo.model.catalog.ItemExtra
 import org.siloserver.silo.model.catalog.TrailerRailEntry
 import org.siloserver.silo.model.catalog.extraKindLabel
 import org.siloserver.silo.model.catalog.trailerRailDurationLabel
-import org.siloserver.silo.model.catalog.youtubeThumbnailUrl
 
 /**
  * "Trailers & More" section — header plus a horizontal rail of remote
@@ -123,13 +122,13 @@ private fun TrailerCard(
                 .clip(TrailerThumbnailShape)
                 .background(SiloSurfaceElevated),
         ) {
-            // Local extras have no artwork of their own — the scanner only
-            // records the file — so they keep the surface tile.
-            if (entry is TrailerRailEntry.Remote) {
-                // hqdefault is 4:3 with letterbox bars; a 16:9 crop removes them.
+            // A local extra the server has no image for yet keeps the
+            // surface tile. YouTube's hqdefault is 4:3 with letterbox bars;
+            // a 16:9 crop removes them.
+            entry.thumbnailUrl?.let { url ->
                 ThumbhashImage(
-                    url = youtubeThumbnailUrl(entry.video.siteKey),
-                    thumbhash = null,
+                    url = url,
+                    thumbhash = entry.thumbhash,
                     contentDescription = null,
                     modifier = Modifier.fillMaxSize(),
                 )
