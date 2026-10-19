@@ -37,6 +37,8 @@ class AuthenticatedDataSourceFactory(
     private val serverUrlProvider: () -> String,
     private val requestHeadersProvider: (Uri) -> Map<String, String> = { emptyMap() },
     private val isResumableDirectPlayUri: (Uri) -> Boolean = { false },
+    /** Added to every data source this factory creates, such as [PlaybackThroughputMeter]. */
+    private val transferListener: TransferListener? = null,
 ) : DataSource.Factory {
 
     override fun createDataSource(): DataSource {
@@ -53,7 +55,7 @@ class AuthenticatedDataSourceFactory(
             content = content,
             serverUrl = serverUrlProvider(),
             requestHeadersProvider = requestHeadersProvider,
-        )
+        ).also { routed -> transferListener?.let(routed::addTransferListener) }
     }
 }
 

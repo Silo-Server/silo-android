@@ -227,10 +227,18 @@ val androidTvModule = module {
             subtitleOffsetHolder = get(),
             libassBridge = get(),
             playbackAnalytics = get(),
+            throughputMeter = get(),
         )
     }
-    // Video starts send the bandwidth probe's estimate; the audiobook manager below does not.
-    single { PlaybackSessionManager(get(), get(), get(), bandwidthEstimates = get()) }
+    // Video starts send the bandwidth probe's estimate, and plan summaries the
+    // video's throughput; the audiobook manager below does neither.
+    single {
+        PlaybackSessionManager(
+            get(), get(), get(),
+            bandwidthEstimates = get(),
+            throughputKbps = get<org.siloserver.silo.common.player.PlaybackThroughputMeter>()::takeKbps,
+        )
+    }
     single(AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER) {
         PlaybackSessionManager(
             playbackRepository = get(),

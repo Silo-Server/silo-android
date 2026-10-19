@@ -80,7 +80,7 @@ class PlaybackSessionManagerBufferingQualityTest {
         override suspend fun write(entries: List<PlaybackJournalEntry>) { this.entries = entries }
     }
 
-    private class Harness(capabilityFeatures: List<String>) {
+    private class Harness(capabilityFeatures: List<String>, throughputKbps: () -> Int? = { null }) {
         val startBodies: MutableList<JsonObject> = CopyOnWriteArrayList()
         val replanBodies: MutableList<JsonObject> = CopyOnWriteArrayList()
         val routeEvents: MutableList<JsonObject> = CopyOnWriteArrayList()
@@ -137,6 +137,7 @@ class PlaybackSessionManagerBufferingQualityTest {
                 },
             ),
             tokenManager = identity,
+            throughputKbps = throughputKbps,
         )
 
         suspend fun start(): VideoSessionStartV3.Ready = assertIs(
@@ -261,6 +262,20 @@ class PlaybackSessionManagerBufferingQualityTest {
         assertEquals(second.planAttemptId, successor.string("plan_attempt_id"))
         assertEquals("44100", successor.diagnostics()["bandwidth_estimate_kbps"])
         assertNull(successor.diagnostics()["delivered_kbps"])
+    }
+
+    @Test
+    fun aPlanSummaryCarriesThePlansThroughput() = runTest {
+        val readings = ArrayDeque(listOf(52_000, null))
+        val harness = Harness(BUFFERING_QUALITY_SERVER + PLAYBACK_PLAN_SUMMARY_V1_FEATURE) { readings.removeFirst() }
+        harness.start()
+        harness.lower()
+
+        harness.manager.emitPlanSummary(summary(PLAN_1.planId, deliveredKbps = 63_000))
+        assertEquals("52000", harness.awaitRouteEvent("plan_summary").diagnostics()["throughput_kbps"])
+        harness.routeEvents.clear()
+        harness.manager.emitPlanSummary(summary(PLAN_2.planId, deliveredKbps = null))
+        assertNull(harness.awaitRouteEvent("plan_summary").diagnostics()["throughput_kbps"])
     }
 
     @Test

@@ -141,6 +141,12 @@ open class PlaybackSessionManager(
      * link is not the receiver's.
      */
     private val bandwidthEstimates: PlaybackBandwidthEstimates = PlaybackBandwidthEstimates.None,
+    /**
+     * The video's receive rate since the last call, which [emitPlanSummary]
+     * sends as `throughput_kbps`: [PlaybackThroughputMeter.takeKbps] for the
+     * manager whose plans play in this process's player, else none.
+     */
+    private val throughputKbps: () -> Int? = { null },
 ) {
     private data class ActiveVideoAttempt(
         val fileId: Int,
@@ -2552,6 +2558,8 @@ open class PlaybackSessionManager(
      * is dropped.
      */
     fun emitPlanSummary(summary: BufferingPlanSummary) {
+        // Taken first, so the next plan's count starts here even when this summary is dropped.
+        val throughput = throughputKbps()
         val identity = synchronized(recentPlans) { recentPlans[summary.planId] } ?: run {
             Log.w(TAG, "plan_summary dropped: the plan is no longer known")
             return
@@ -2574,6 +2582,7 @@ open class PlaybackSessionManager(
                     put("stall_total_ms", summary.stallTotalMs.toString())
                     put("stall_longest_ms", summary.stallLongestMs.toString())
                     summary.deliveredKbps?.takeIf { it > 0 }?.let { put("delivered_kbps", it.toString()) }
+                    throughput?.let { put("throughput_kbps", it.toString()) }
                     put("buffering_mode", summary.mode.wireValue)
                     put("buffering_action", summary.action.wireValue)
                     identity.bandwidthEstimateKbps?.let { put("bandwidth_estimate_kbps", it.toString()) }

@@ -87,6 +87,8 @@ class SiloPlayerFactory(
     private val subtitleOffsetHolder: SubtitleOffsetHolder,
     private val libassBridge: LibassBridge,
     private val playbackAnalytics: PlaybackAnalyticsListener,
+    /** Times the video's requests for each plan's `throughput_kbps`. */
+    throughputMeter: PlaybackThroughputMeter? = null,
 ) {
     val isTv: Boolean = TvModeDetector.isTv(context)
 
@@ -142,6 +144,7 @@ class SiloPlayerFactory(
         serverUrlProvider = { serverUrl },
         requestHeadersProvider = { uri -> requestHeadersFor(uri).withLocalRoute(localRouteHeadersFor(uri)) },
         isResumableDirectPlayUri = ::isResumableDirectPlayUri,
+        transferListener = throughputMeter,
     )
 
     private val embeddedSubtitleParserFactory = OffsetSubtitleParserFactory(
