@@ -270,7 +270,7 @@ private fun CollectionCard(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = if (collection.itemCountStatus != null && collection.itemCountStatus != "available") {
+                    text = if (collection.itemCountStatus != null) {
                         "${collection.collectionType.replaceFirstChar { it.uppercase() }} - ${collection.itemCountLabel}"
                     } else {
                         collection.collectionType.replaceFirstChar { it.uppercase() }
