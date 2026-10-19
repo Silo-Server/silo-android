@@ -5,6 +5,7 @@ import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.ItemExtra
 import org.siloserver.silo.model.catalog.ItemVideo
 import org.siloserver.silo.model.catalog.SubtitleInfo
 import org.siloserver.silo.model.catalog.SubtitleTrack
@@ -82,6 +83,25 @@ class TvDetailMetadataTest {
 
         assertEquals(
             listOf("remote:youtube:abc"),
+            trailerRailEntries(detail).map { it.key },
+        )
+    }
+
+    @Test
+    fun trailerEntriesPutLocalExtrasBeforeRemoteVideos() {
+        val detail = ItemDetail(
+            contentId = "m1",
+            type = "movie",
+            title = "Movie",
+            videos = listOf(ItemVideo(kind = "trailer", site = "youtube", siteKey = "abc")),
+            extras = listOf(
+                ItemExtra(contentId = "extra:1", kind = "featurette"),
+                ItemExtra(contentId = "extra:2", kind = "trailer"),
+            ),
+        )
+
+        assertEquals(
+            listOf("local:extra:1", "local:extra:2", "remote:youtube:abc"),
             trailerRailEntries(detail).map { it.key },
         )
     }

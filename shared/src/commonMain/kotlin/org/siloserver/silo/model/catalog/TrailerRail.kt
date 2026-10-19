@@ -31,16 +31,17 @@ sealed interface TrailerRailEntry {
 /**
  * Merge an item's remote videos and local extras into one ordered rail.
  *
- * Remote videos come first in server order (the server already sorts
- * trailers and official uploads first), then local extras in server order.
+ * Local extras come first in server order, because they play in Silo while
+ * remote videos hand off to YouTube. Remote videos follow in server order
+ * (the server already sorts trailers and official uploads first).
  * YouTube is the only remote site the clients can open, so other sites are
  * dropped rather than rendered as cards that do nothing.
  */
 fun trailerRailEntries(detail: ItemDetail): List<TrailerRailEntry> = buildList {
+    detail.extras.orEmpty().forEach { add(TrailerRailEntry.Local(it)) }
     detail.videos.orEmpty()
         .filter { it.site.equals("youtube", ignoreCase = true) && it.siteKey.isNotBlank() }
         .forEach { add(TrailerRailEntry.Remote(it)) }
-    detail.extras.orEmpty().forEach { add(TrailerRailEntry.Local(it)) }
 }.distinctBy(TrailerRailEntry::key)
 
 /** YouTube's still for a video. `hqdefault` exists for every upload. */
