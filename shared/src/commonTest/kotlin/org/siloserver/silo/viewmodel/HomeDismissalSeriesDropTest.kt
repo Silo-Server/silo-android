@@ -97,11 +97,11 @@ class HomeDismissalSeriesDropTest {
     )
 
     @Test
-    fun progressWinsOverSeriesForTheSurfaceAndLabel() {
+    fun progressWinsOverSeriesForTheSurface() {
         val both = SectionItem(contentId = "e", type = "episode", title = "E", seriesId = "s", progressUpdatedAt = stamp)
         val nextUp = both.copy(progressUpdatedAt = null)
-        assertEquals("continue_watching" to "Remove from Continue Watching", HomeDismissal.of(both)!!.let { it.surface to it.menuLabel })
-        assertEquals("next_up" to "Remove from Next Up", HomeDismissal.of(nextUp)!!.let { it.surface to it.menuLabel })
+        assertEquals("continue_watching" to stamp, HomeDismissal.of(both)!!.let { it.surface to it.anchor })
+        assertEquals("next_up" to "s", HomeDismissal.of(nextUp)!!.let { it.surface to it.anchor })
         assertEquals(null, HomeDismissal.of(nextUp.copy(seriesId = " ")))
     }
 

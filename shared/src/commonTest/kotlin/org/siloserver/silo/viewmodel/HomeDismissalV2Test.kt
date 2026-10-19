@@ -67,7 +67,8 @@ class HomeDismissalV2Test {
                     assertEquals("/api/v2/home/sections", request.url.encodedPath)
                     reads++
                     val items = listOfNotNull(
-                        """{"content_id":"movie/a","type":"episode","title":"$title","series_id":"series:a","progress_updated_at":"$currentStamp"}""".takeIf { "a" !in dismissedOnServer },
+                        // In "refresh" the card's newer progress outlives the older dismissal.
+                        """{"content_id":"movie/a","type":"episode","title":"$title","series_id":"series:a","progress_updated_at":"$currentStamp"}""".takeIf { "a" !in dismissedOnServer || stage == "refresh" },
                         """{"content_id":"movie/b","type":"movie","title":"Second","progress_updated_at":"$currentStamp"}""".takeIf { stage == "concurrent" && "b" !in dismissedOnServer },
                     )
                     val sections = if (items.isEmpty()) "" else """{"id":"row","section_type":"continue_watching","title":"Row","items":[${items.joinToString(",")}]}"""
@@ -109,7 +110,12 @@ class HomeDismissalV2Test {
                         assertEquals(2, reads)
                     }
                     "late" -> assertTrue(vm.uiState.value.sections.isEmpty())
-                    "refresh" -> assertEquals("New observation", vm.uiState.value.sections.single().items.first().title)
+                    // The stale acknowledgement removes nothing locally but still
+                    // re-reads Home, since the server accepted the dismissal.
+                    "refresh" -> {
+                        assertEquals("New observation", vm.uiState.value.sections.single().items.first().title)
+                        assertEquals(3, reads)
+                    }
                     else -> assertEquals("Original", vm.uiState.value.sections.single().items.first().title)
                 }
             }
