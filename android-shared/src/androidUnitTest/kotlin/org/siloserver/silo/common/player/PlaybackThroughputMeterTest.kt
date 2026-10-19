@@ -111,6 +111,16 @@ class PlaybackThroughputMeterTest {
     }
 
     @Test
+    fun aRateUnderTheEstimatesFloorGivesNothing() {
+        val progressive = Source()
+        bytes(progressive, 0, 1)
+        // 20 kB over 2 s: 80 kbps.
+        bytes(progressive, 2_000, 20_000)
+        end(progressive, 2_000)
+        assertNull(meter.takeKbps())
+    }
+
+    @Test
     fun localFilesAndShortReceivingGiveNothing() {
         val file = Source()
         bytes(file, 0, 1, isNetwork = false)

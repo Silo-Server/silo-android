@@ -70,7 +70,7 @@ class PlaybackThroughputMeter(
     /**
      * The rate since the last call, then starts over: kbps, at most
      * [MAX_THROUGHPUT_KBPS], or null when no request received for
-     * [MIN_RECEIVING_MS].
+     * [MIN_RECEIVING_MS] or the rate is under [MIN_THROUGHPUT_KBPS].
      */
     fun takeKbps(): Int? = synchronized(lock) {
         // A long request still open counts what it has so far and carries on
@@ -85,7 +85,7 @@ class PlaybackThroughputMeter(
         val kbps = if (ms < MIN_RECEIVING_MS) null else countedBytes * 8 / ms
         counted.clear()
         countedBytes = 0
-        kbps?.takeIf { it >= 1 }?.coerceAtMost(MAX_THROUGHPUT_KBPS.toLong())?.toInt()
+        kbps?.takeIf { it >= MIN_THROUGHPUT_KBPS }?.coerceAtMost(MAX_THROUGHPUT_KBPS.toLong())?.toInt()
     }
 
     /** Counts [request] if it received for [MIN_RECEIVING_MS]; true when it did. */
@@ -100,7 +100,8 @@ class PlaybackThroughputMeter(
         /** A request that received for less than this does not count, and neither does less than this in all. */
         const val MIN_RECEIVING_MS = 1_000L
 
-        /** The highest rate the server accepts, as for a speed test. */
+        /** The bounds the server accepts, as for a speed test and `bandwidth_estimate_kbps`. */
+        const val MIN_THROUGHPUT_KBPS = 100
         const val MAX_THROUGHPUT_KBPS = 1_000_000
 
         /** How long [spans] cover between them, overlaps once. */

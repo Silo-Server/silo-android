@@ -319,7 +319,8 @@ the first read and its time; time in which several counted requests were
 receiving counts once. A short request on a warm connection, such as one HLS
 segment, arrives at the connection's burst rate, which on the sandbox was about
 twice what the speed test sustained. Each `plan_summary` sends the figure as
-`throughput_kbps` and resets it; with no counted request it sends nothing. The
+`throughput_kbps` and resets it; with no counted request, or under 100 kbps,
+it sends nothing. The
 server keeps the highest as this device's `playback_sample`. A progressive
 request held open while the buffer is full reads low, which keeps the figure a
 lower bound.
