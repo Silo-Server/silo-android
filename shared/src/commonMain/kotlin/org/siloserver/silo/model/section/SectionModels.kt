@@ -4,6 +4,8 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.model.catalog.OverlaySummary
+import org.siloserver.silo.model.personal.availableCollectionItemCount
+import org.siloserver.silo.model.personal.collectionItemCountLabel
 
 @Serializable
 data class SectionItem(
@@ -89,7 +91,13 @@ data class LibraryCollection(
     /** Creator profile id for user-collection-kind entries. Null for
      *  admin-curated library collections. */
     @SerialName("creator_profile_id") val creatorProfileId: String? = null,
-)
+    @SerialName("item_count_status") val itemCountStatus: String? = null,
+) {
+    val availableItemCount: Int?
+        get() = availableCollectionItemCount(itemCount, itemCountStatus)
+    val itemCountLabel: String
+        get() = collectionItemCountLabel(itemCount, itemCountStatus)
+}
 
 /**
  * Library tab response shape. The server returns either a flat

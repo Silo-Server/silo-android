@@ -126,6 +126,7 @@ data class LibraryCollectionCardV2(
     @SerialName("item_count") val itemCount: Int,
     val featured: Boolean = false,
     @SerialName("creator_profile_id") val creatorProfileId: String? = null,
+    @SerialName("item_count_status") val itemCountStatus: String? = null,
 )
 
 @Serializable
@@ -139,6 +140,7 @@ data class CuratedCollectionV2(
     @SerialName("item_count") val itemCount: Int,
     @SerialName("sort_order") val sortOrder: Int,
     @SerialName("group_id") val groupId: String? = null,
+    @SerialName("item_count_status") val itemCountStatus: String? = null,
 )
 
 @Serializable

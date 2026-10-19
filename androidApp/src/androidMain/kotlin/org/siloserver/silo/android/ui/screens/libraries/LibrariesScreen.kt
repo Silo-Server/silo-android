@@ -1544,7 +1544,7 @@ private fun InlineLibraryCollectionCard(
                 modifier = Modifier.fillMaxSize(),
             )
             if (showItemCount) Text(
-                text = collection.itemCount?.takeIf { it > 0 }?.toString() ?: "Smart",
+                text = collection.itemCountLabel,
                 fontSize = 12.sp,
                 color = Color.White,
                 modifier = Modifier
@@ -1566,7 +1566,7 @@ private fun InlineLibraryCollectionCard(
         }
         if (caption.showsMetadata) {
             Text(
-                text = if (showItemCount) collection.itemCount?.let { "$it items" } ?: "Collection" else "Collection",
+                text = if (showItemCount) collection.itemCountLabel else "Collection",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
