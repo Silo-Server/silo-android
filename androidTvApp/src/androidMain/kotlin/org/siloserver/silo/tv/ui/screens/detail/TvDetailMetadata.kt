@@ -151,8 +151,8 @@ internal object TvDetailMetadata {
         return "$monthName ${date.dayOfMonth}, ${date.year}"
     }
 
-    /** A bare `yyyy-MM-dd` as that day, or an RFC 3339 timestamp (with or
-     *  without fraction or offset) as its date in [zone]. */
+    /** A bare `yyyy-MM-dd` as that day, or an RFC 3339 timestamp (`Z` or a
+     *  numeric offset, with or without a fraction) as its date in [zone]. */
     private fun parseServerDate(raw: String, zone: ZoneId): LocalDate? =
         runCatching { LocalDate.parse(raw) }.getOrNull()
             ?: runCatching { Instant.parse(raw).atZone(zone).toLocalDate() }.getOrNull()
