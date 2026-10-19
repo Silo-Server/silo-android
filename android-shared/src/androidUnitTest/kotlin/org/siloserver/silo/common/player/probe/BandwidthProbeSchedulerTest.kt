@@ -115,6 +115,7 @@ class BandwidthProbeSchedulerTest {
     fun aBackgroundProbeRunsAfterTheStartDelayAndIsReported() = runTest {
         val harness = Harness(this)
         harness.foreground()
+        assertEquals(1, harness.server.storedChecks, "the check reads the server at once")
         advanceTimeBy(PROBE_START_DELAY_MS - 1)
         assertEquals(0, harness.server.downloads)
 
@@ -150,20 +151,21 @@ class BandwidthProbeSchedulerTest {
         advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
         assertEquals(1, harness.server.downloads)
 
-        // Coming back to the foreground with a reading in hand asks nobody,
-        // and nothing checks on a timer while it stays in the foreground.
+        // Coming back to the foreground reads the server again, and the
+        // reading in hand still proves the link. Nothing checks on a timer
+        // while Silo stays in the foreground.
         harness.scheduler.onBackground()
         harness.foreground()
         advanceTimeBy(BANDWIDTH_READING_LIFETIME_MS + PROBE_START_DELAY_MS)
         assertEquals(1, harness.server.downloads)
-        assertEquals(1, harness.server.storedChecks)
+        assertEquals(2, harness.server.storedChecks)
 
         // The next check after it expires finds the server's copy just as old, and measures.
         harness.server.stored = harness.storedReading(80_000, BANDWIDTH_READING_LIFETIME_MS + 1)
         harness.scheduler.onBackground()
         harness.foreground()
         advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
-        assertEquals(2, harness.server.storedChecks)
+        assertEquals(3, harness.server.storedChecks)
         assertEquals(2, harness.server.downloads)
     }
 
@@ -178,6 +180,15 @@ class BandwidthProbeSchedulerTest {
         assertTrue(harness.server.reports.isEmpty())
         assertEquals(48_000, harness.scheduler.freshEstimateKbps())
         assertEquals(48_000, harness.scheduler.lastMeasurement.value?.kbps)
+    }
+
+    @Test
+    fun aStartInTheFirstSecondsSendsTheServersReading() = runTest {
+        val harness = Harness(this)
+        harness.server.stored = harness.storedReading(48_000, ageMs = 60_000)
+        harness.foreground()
+        assertEquals(0L, currentTime)
+        assertEquals(48_000, harness.scheduler.freshEstimateKbps())
     }
 
     @Test
@@ -238,8 +249,8 @@ class BandwidthProbeSchedulerTest {
         harness.server.stored = harness.storedReading(30_000, ageMs = 60_000)
         harness.network.state.value = WIFI.copy(networkId = 2)
         runCurrent()
-        assertNull(harness.scheduler.freshEstimateKbps())
-        assertNull(harness.scheduler.lastMeasurement.value)
+        assertEquals(30_000, harness.scheduler.freshEstimateKbps(), "the new network's reading, at once")
+        assertEquals(30_000, harness.scheduler.lastMeasurement.value?.kbps)
 
         advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
         assertEquals(1, harness.server.downloads, "the change alone measures nothing")
@@ -414,12 +425,13 @@ class BandwidthProbeSchedulerTest {
             elapsedClock = { currentTime },
             wallClock = { 1_760_000_000_000 + currentTime },
         ).also { it.observe() }
+        harness.server.serve(probeTarget(targetKbps = 50_000))
         scheduler.onForeground()
-        advanceThrough(PROBE_START_DELAY_MS)
+        runCurrent()
         scheduler.playbackStarting()
         runCurrent()
         reading.complete(harness.storedReading(30_000, ageMs = 60_000, lowerBound = true))
-        advanceThrough(QUICK_TEST_MS)
+        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
         assertEquals(0, harness.server.downloads)
         assertEquals(30_000, scheduler.freshEstimateKbps())
     }
@@ -568,13 +580,30 @@ class BandwidthProbeSchedulerTest {
     }
 
     @Test
-    fun aPlaybackSampleWithoutATargetProvesNothing() = runTest {
+    fun withoutATargetAnyCurrentReadingProvesTheLink() = runTest {
+        for (stored in listOf(
+            { harness: Harness -> harness.storedSample(90_000, ageMs = 60_000) },
+            { harness: Harness -> harness.storedReading(30_000, ageMs = 60_000, lowerBound = true) },
+        )) {
+            val harness = Harness(this)
+            harness.server.stored = stored(harness)
+            harness.foreground()
+            advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
+            assertEquals(1, harness.server.storedChecks)
+            assertEquals(0, harness.server.downloads)
+            assertNotNull(harness.scheduler.freshEstimateKbps())
+        }
+    }
+
+    @Test
+    fun aSampleAndAProbeSendTheHigher() = runTest {
         val harness = Harness(this)
-        harness.server.stored = harness.storedSample(90_000, ageMs = 60_000)
+        harness.server.stored = StoredReadingLookup.Found(
+            probe = BandwidthEstimate(40_000, 0, 0, "wifi", 1_760_000_000_000 - 60_000),
+            sample = PlaybackSample(90_000, 1_760_000_000_000 - 60_000),
+        )
         harness.foreground()
-        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
-        assertEquals(1, harness.server.downloads)
-        assertEquals(90_000, harness.scheduler.freshEstimateKbps(), "the highest current reading")
+        assertEquals(90_000, harness.scheduler.freshEstimateKbps())
     }
 
     @Test

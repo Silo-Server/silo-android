@@ -266,14 +266,16 @@ class PlaybackV2BandwidthProbeServer(
  *   current while younger than [BandwidthProbeTarget.readingLifetimeMs].
  *   Playback starts send the highest current one. A settled probe proves the
  *   link; a lower bound proves it only while it is at least the current
- *   [BandwidthProbeTarget.targetKbps].
- * - **Checks**: [PROBE_START_DELAY_MS] after Silo returns to the foreground, a
- *   server is signed in or the network changes, and at no other time. A check
- *   with a current settled probe in hand does nothing. Otherwise it reads the
- *   server's readings ([BandwidthProbeServer.storedReading]) and runs the quick
- *   test only when automatic tests are on and no current reading proves the
- *   link. A check that fails or is refused waits for the next one, and after a
- *   `429` none tests that server before its `Retry-After`. Leaving the
+ *   [BandwidthProbeTarget.targetKbps], and without a target any current reading
+ *   proves it.
+ * - **Checks**: when Silo returns to the foreground, a server is signed in or
+ *   the network changes, and at no other time. A check reads the server's
+ *   readings ([BandwidthProbeServer.storedReading]) at once, so a playback start
+ *   in the first seconds already sends them. Only the quick test waits,
+ *   [PROBE_START_DELAY_MS], and it runs only when automatic tests are on, no
+ *   current reading proves the link, and it still may: nothing plays or
+ *   starts, and no `429` from that server is waiting out its `Retry-After`. A
+ *   check that fails or is refused waits for the next one. Leaving the
  *   foreground stops the checks and any running test.
  * - **Test speed** ([runNow]) runs the accurate test, whatever the readings or
  *   the automatic setting. It replaces a running automatic check rather than
@@ -318,7 +320,7 @@ class BandwidthProbeScheduler(
         lateinit var result: Deferred<ProbeOutcome>
         @Volatile var cancelledFor: ProbeOutcome? = null
 
-        /** Past reading the server's readings and into the download. */
+        /** Past reading the server's readings and the wait, and into the download. */
         @Volatile var testing = false
     }
 
@@ -403,7 +405,7 @@ class BandwidthProbeScheduler(
 
     internal fun onForeground() {
         foreground = true
-        if (activeServer.value != null) schedule(PROBE_START_DELAY_MS)
+        if (activeServer.value != null) check()
     }
 
     internal fun onBackground() {
@@ -416,13 +418,13 @@ class BandwidthProbeScheduler(
     private fun onNetworkChanged() {
         forget()
         cancelInFlight(ProbeOutcome.Interrupted)
-        if (activeServer.value != null) schedule(PROBE_START_DELAY_MS)
+        if (activeServer.value != null) check()
     }
 
     private fun onServerChanged(serverId: String?) {
         if (cached?.serverId != serverId) forget()
         cancelInFlight(ProbeOutcome.Interrupted)
-        if (serverId != null) schedule(PROBE_START_DELAY_MS) else timer?.cancel()
+        if (serverId != null) check() else timer?.cancel()
     }
 
     private fun onPlaybackActive() {
@@ -446,27 +448,16 @@ class BandwidthProbeScheduler(
         if (inFlight?.testing == true) cancelInFlight(reason)
     }
 
-    private fun schedule(delayMs: Long) {
+    /** Starts a check now, in the foreground; its test waits inside it. */
+    private fun check() {
         timer?.cancel()
         if (!foreground) return
         timer = scope.launch {
-            delay(delayMs.coerceAtLeast(0))
-            runScheduled()
+            if (activeServer.value == null) return@launch
+            // Media playing still lets the check read the server's readings.
+            gate(manual = false)?.takeIf { it != ProbeOutcome.PlaybackActive }?.let { return@launch }
+            probeOnce(manual = false)
         }
-    }
-
-    private suspend fun runScheduled() {
-        if (activeServer.value == null || hasSettledReading()) return
-        // Media playing still lets the check read the server's readings.
-        gate(manual = false)?.takeIf { it != ProbeOutcome.PlaybackActive }?.let { return }
-        probeOnce(manual = false)
-    }
-
-    /** A current settled probe for this server and network is in hand: it proves the link whatever the target. */
-    private fun hasSettledReading(): Boolean {
-        val entry = cached?.takeIf { onThisNetwork(it, network.snapshot()) } ?: return false
-        val probe = entry.probe ?: return false
-        return !probe.lowerBound && isCurrent(probe.measuredAtEpochMs, entry)
     }
 
     /** Why a test may not run now, or null when it may. The quiet period after a start holds only checks, not [manual] Test speed. */
@@ -493,13 +484,19 @@ class BandwidthProbeScheduler(
     private fun isCurrent(measuredAtEpochMs: Long, entry: Cached): Boolean =
         wallClock() - measuredAtEpochMs < entry.lifetimeMs
 
-    /** A current reading proves the link: a settled probe, or a lower bound at least the target. */
+    /**
+     * A current reading proves the link: a settled probe, or a lower bound (a
+     * quick test that reached its target, or a playback sample) at least the
+     * target. Without a target any current reading does: there is nothing to
+     * measure against, and a failed target lookup must not send every device
+     * holding a lower bound into a test.
+     */
     private fun provesTheLink(entry: Cached): Boolean {
         val target = entry.targetKbps
         val probe = entry.probe?.takeIf { isCurrent(it.measuredAtEpochMs, entry) }
-        if (probe != null && (!probe.lowerBound || (target != null && probe.kbps >= target))) return true
         val sample = entry.sample?.takeIf { isCurrent(it.measuredAtEpochMs, entry) }
-        return sample != null && target != null && sample.kbps >= target
+        if (probe != null && (!probe.lowerBound || target == null || probe.kbps >= target)) return true
+        return sample != null && (target == null || sample.kbps >= target)
     }
 
     private suspend fun probeOnce(manual: Boolean): ProbeOutcome {
@@ -550,6 +547,12 @@ class BandwidthProbeScheduler(
                 return ProbeOutcome.Stored
             }
             if (!target.automatic) return ProbeOutcome.AutomaticOff
+            // Only the test waits, so the first screen can settle. Then it
+            // checks again that it may run.
+            delay(PROBE_START_DELAY_MS)
+            if (target.serverId != activeServer.value || networkKey(network.snapshot()) != networkKey) {
+                return ProbeOutcome.Interrupted
+            }
             rateLimit?.takeIf { it.first == target.serverId }?.let { (_, notBefore) ->
                 val waitMs = notBefore - elapsedClock()
                 if (waitMs > 0) return ProbeOutcome.RateLimited(((waitMs + 999) / 1_000).toInt())

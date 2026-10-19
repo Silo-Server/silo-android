@@ -283,17 +283,18 @@ runs it, and `SpeedTestMeter` (`shared/`) holds its arithmetic, which
   average instead, a lower bound, or the target when a quick test's average
   reaches it. A rate above 1 Gbps is reported as 1,000,000 kbps, a lower
   bound. A probe with no byte in 10 s is abandoned.
-- **When.** A check runs in the background 5 s after sign-in, a return to the
-  foreground or a network change, and at no other time. With a current settled
-  reading in hand it does nothing. Otherwise it reads this device's readings
-  for the connection (`probe` and `playback_sample` in
-  `GET /api/v2/playback/connection`) and runs the quick test only when
-  automatic tests are on and no current reading proves the link. A settled
-  rate proves it; a lower bound proves it only while it is at least the
-  current target, so a raised target makes the test due again. A check that
-  fails or is refused waits for the next one, and after a `429` none tests
-  that server before its `Retry-After`. **Test speed** always runs the accurate test.
-  Leaving the foreground stops it.
+- **When.** A check runs on sign-in, a return to the foreground or a network
+  change, and at no other time. It reads this device's readings for the
+  connection (`probe` and `playback_sample` in
+  `GET /api/v2/playback/connection`) at once, so a playback start in the first
+  seconds already sends them. Only the quick test waits, 5 s, and then runs
+  only if automatic tests are on, no current reading proves the link, and it
+  still may (nothing plays or starts, and no `429` from that server is waiting
+  out its `Retry-After`). A settled rate proves the link; a lower bound proves
+  it only while it is at least the current target, so a raised target makes the
+  test due again; without a target any current reading proves it. A check that
+  fails or is refused waits for the next one. **Test speed** always runs the
+  accurate test. Leaving the foreground stops it.
 - **When not.** Never on a metered or cellular network (`metered || cellular`
   in `PlaybackNetworkSnapshot`, so a VPN Android marks metered is skipped too),
   and never while local media plays or loads. The process's one Media3 player
