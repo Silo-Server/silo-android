@@ -47,6 +47,29 @@ class PlaybackStartupStallDetectorTest {
     }
 
     @Test
+    fun aHandedOffStallIsReportedAgainAfterAnotherGrace() {
+        val detector = PlaybackStartupStallDetector(startupGraceMs = 10_000)
+        detector.onMounted(sessionKey = "session-1", playMethod = PlayMethod.TRANSCODE, startPositionMs = 0, nowMs = 0)
+        fun sample(nowMs: Long) = detector.sample(
+            sessionKey = "session-1",
+            nowMs = nowMs,
+            playWhenReady = true,
+            isPlaying = false,
+            isBuffering = true,
+            currentPositionMs = 0,
+            bufferedPositionMs = 100,
+        )
+
+        assertNotNull(sample(10_001))
+        // Unclaimed, the report latches for the rest of the mount.
+        assertNull(sample(30_000))
+
+        detector.onStallHandedOff(nowMs = 30_000)
+        assertNull(sample(40_000))
+        assertNotNull(sample(40_001))
+    }
+
+    @Test
     fun playingOrPositionProgressDisarmsStartupFallback() {
         val detector = PlaybackStartupStallDetector(startupGraceMs = 10_000)
         detector.onMounted(

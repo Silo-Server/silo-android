@@ -82,6 +82,17 @@ class PlaybackStartupStallDetector(
         this.lastProgressAtMs = nowMs
     }
 
+    /**
+     * The buffering-quality controller took the last report: a slow plan that
+     * was still receiving data. Listens again, measuring the next stall from
+     * [nowMs], so a stream that later stops delivering at all is still
+     * reported, and recovered, within the grace period.
+     */
+    fun onStallHandedOff(nowMs: Long) {
+        signaled = false
+        lastProgressAtMs = nowMs
+    }
+
     /** Marks a frame after the caller verifies the analytics event's immutable mount key. */
     fun onFirstFrameRendered() {
         firstFrameRendered = true

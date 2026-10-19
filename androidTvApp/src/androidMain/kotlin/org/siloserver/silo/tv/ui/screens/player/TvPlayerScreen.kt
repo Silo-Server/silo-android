@@ -1849,6 +1849,7 @@ fun TvPlayerScreen(
                             "startup_stall owned_by=buffering_quality classification=${reason.classification} " +
                                 "stalled_for_ms=${reason.stalledForMs}",
                         )
+                        startupStallDetector.onStallHandedOff(SystemClock.elapsedRealtime())
                     } else {
                         Log.i(TAG, "Startup stall fallback: $reason")
                         viewModel.onUnsupportedPlayback(reason, state.transportMountNonce)

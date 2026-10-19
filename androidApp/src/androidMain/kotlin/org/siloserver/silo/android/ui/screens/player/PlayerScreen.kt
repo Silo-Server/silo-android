@@ -1486,6 +1486,7 @@ fun PlayerScreen(
                         "startup_stall owned_by=buffering_quality classification=${reason.classification} " +
                             "stalled_for_ms=${reason.stalledForMs}",
                     )
+                    startupStallDetector.onStallHandedOff(SystemClock.elapsedRealtime())
                 } else if (reason != null) {
                     Log.i(TAG, "Startup stall fallback: $reason")
                     viewModel.onUnsupportedPlayback(reason, uiState.mediaMountGeneration)
