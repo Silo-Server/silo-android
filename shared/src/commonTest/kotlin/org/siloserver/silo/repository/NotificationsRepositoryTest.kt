@@ -467,7 +467,7 @@ class NotificationsRepositoryTest {
         }
 
     @Test
-    fun `connectRealtime treats an access-changed close as an ordinary reconnect`() =
+    fun `connectRealtime preserves immediate access-changed recovery`() =
         kotlinx.coroutines.test.runTest {
             val api = FakeNotificationsApi()
             var connectCount = 0
@@ -478,7 +478,7 @@ class NotificationsRepositoryTest {
                         // The server's 4001 close ends the socket cleanly.
                         kotlinx.coroutines.flow.flowOf(
                             NotificationRealtimeEvent.Snapshot(emptyList()),
-                            NotificationRealtimeEvent.Closed(),
+                            NotificationRealtimeEvent.Closed(recovery = org.siloserver.silo.network.GenericEventsClose(accessChanged = true)),
                         )
                     } else {
                         kotlinx.coroutines.flow.flow { awaitCancellation() }
@@ -490,7 +490,7 @@ class NotificationsRepositoryTest {
             testScheduler.advanceTimeBy(1_100L)
             kotlinx.coroutines.yield()
 
-            assertEquals(2, connectCount, "a clean close reconnects after the initial backoff")
+            assertEquals(2, connectCount, "an access change reconnects immediately")
             assertFalse(repo.realtimeFatal.value)
             job.cancel()
         }
@@ -500,47 +500,129 @@ class NotificationsRepositoryTest {
         assertFalse(NotificationRealtimeEvent.Closed("access_changed").isAuthClose())
     }
 
-    // ---- connectRealtime: backoff resets on first event of each connect ------
-
     @Test
-    fun `connectRealtime resets backoff when first event of a connection arrives`() =
+    fun `useful notification traffic without accepted uptime does not reset failures`() =
         kotlinx.coroutines.test.runTest {
-            val api = FakeNotificationsApi()
-            // Simulate a pattern: first connect yields a Created event then a
-            // clean Closed; the second connect also closes cleanly; the third
-            // connect we cancel. The backoff must NOT have escalated after the
-            // first healthy-then-closed cycle.
-            var connectCount = 0
-            // We use a channel to control what each connection returns.
+            var connects = 0
             val realtime = object : org.siloserver.silo.network.NotificationsRealtimeClient {
-                override fun connect(): kotlinx.coroutines.flow.Flow<NotificationRealtimeEvent> {
-                    connectCount++
-                    return when (connectCount) {
-                        1 -> kotlinx.coroutines.flow.flowOf(
-                            NotificationRealtimeEvent.Created(row("live", "2026-06-12T10:00:00Z")),
-                            NotificationRealtimeEvent.Closed(), // clean close after healthy traffic
-                        )
-                        else -> kotlinx.coroutines.flow.flow {
-                            // Suspend indefinitely so the test can cancel.
-                            kotlinx.coroutines.awaitCancellation()
-                        }
-                    }
+                override fun connect() = kotlinx.coroutines.flow.flow {
+                    connects++
+                    emit(NotificationRealtimeEvent.Created(row("live", "2026-06-12T10:00:00Z")))
+                    emit(NotificationRealtimeEvent.Closed())
                 }
             }
-            val repo = NotificationsRepository(api, realtimeFactory = { realtime })
-            val job = repo.connectRealtime(this)
-            // Advance past the initial backoff (1 s) — because backoff should have
-            // been RESET by the healthy Created event, the second connect fires
-            // after 1 s (not 2 s).
-            testScheduler.advanceTimeBy(1_100L)
-            kotlinx.coroutines.yield()
-
-            assertTrue(connectCount >= 2,
-                "Second connect must have fired after reset-to-initial backoff (connectCount=$connectCount)")
-            assertFalse(repo.realtimeFatal.value,
-                "realtimeFatal must remain false after a clean close")
+            val repo = NotificationsRepository(FakeNotificationsApi(), realtimeFactory = { realtime },
+                recoveryFactory = { org.siloserver.silo.network.GenericEventsBackoff { 0.0 } })
+            val job = repo.connectRealtime(backgroundScope)
+            testScheduler.runCurrent()
+            assertEquals(1, connects)
+            testScheduler.advanceTimeBy(4_999)
+            testScheduler.runCurrent()
+            assertEquals(1, connects)
+            testScheduler.advanceTimeBy(1)
+            testScheduler.runCurrent()
+            assertEquals(2, connects)
+            testScheduler.advanceTimeBy(9_999)
+            testScheduler.runCurrent()
+            assertEquals(2, connects)
             job.cancel()
         }
+
+    @Test
+    fun `notification retries are serial capped and canceled on stop`() = kotlinx.coroutines.test.runTest {
+        val starts = mutableListOf<Long>()
+        var collectors = 0
+        var peak = 0
+        val realtime = object : org.siloserver.silo.network.NotificationsRealtimeClient {
+            override fun connect() = kotlinx.coroutines.flow.flow {
+                starts += testScheduler.currentTime
+                collectors++
+                peak = maxOf(peak, collectors)
+                try { emit(NotificationRealtimeEvent.Closed()) } finally { collectors-- }
+            }
+        }
+        val repo = NotificationsRepository(FakeNotificationsApi(), realtimeFactory = { realtime },
+            recoveryFactory = { org.siloserver.silo.network.GenericEventsBackoff { 0.0 } })
+        val job = repo.connectRealtime(backgroundScope)
+        testScheduler.advanceTimeBy(65_001)
+        assertEquals(listOf(0L, 5_000L, 15_000L, 35_000L, 65_000L), starts)
+        assertEquals(1, peak)
+        job.cancel()
+        testScheduler.runCurrent()
+        testScheduler.advanceTimeBy(300_000)
+        assertEquals(5, starts.size)
+        assertEquals(0, collectors)
+    }
+
+    @Test
+    fun `notification reset cancels old delay and restarts a single fresh ladder`() = kotlinx.coroutines.test.runTest {
+        val starts = mutableListOf<Long>()
+        val realtime = object : org.siloserver.silo.network.NotificationsRealtimeClient {
+            override fun connect() = kotlinx.coroutines.flow.flow {
+                starts += testScheduler.currentTime
+                emit(NotificationRealtimeEvent.Closed())
+            }
+        }
+        val repo = NotificationsRepository(FakeNotificationsApi(), realtimeFactory = { realtime },
+            recoveryFactory = { org.siloserver.silo.network.GenericEventsBackoff { 0.0 } })
+        val job = repo.connectRealtime(backgroundScope)
+        testScheduler.advanceTimeBy(2_000)
+        repo.reset()
+        testScheduler.runCurrent()
+        testScheduler.advanceTimeBy(5_001)
+        assertEquals(listOf(0L, 2_000L, 7_000L), starts)
+        job.cancel()
+    }
+
+    @Test
+    fun `notification healthy uptime and Retry-After use the shared policy`() = kotlinx.coroutines.test.runTest {
+        val starts = mutableListOf<Long>()
+        val outcomes = listOf(
+            org.siloserver.silo.network.GenericEventsClose(),
+            org.siloserver.silo.network.GenericEventsClose(acceptedForMs = 300_000),
+            org.siloserver.silo.network.GenericEventsClose(),
+            org.siloserver.silo.network.GenericEventsClose(retryAfterMs = 60_000),
+        )
+        val realtime = object : org.siloserver.silo.network.NotificationsRealtimeClient {
+            override fun connect() = kotlinx.coroutines.flow.flow {
+                val index = starts.size
+                starts += testScheduler.currentTime
+                if (index < outcomes.size) emit(NotificationRealtimeEvent.Closed(recovery = outcomes[index]))
+                else awaitCancellation()
+            }
+        }
+        val repo = NotificationsRepository(FakeNotificationsApi(), realtimeFactory = { realtime },
+            recoveryFactory = { org.siloserver.silo.network.GenericEventsBackoff { 0.0 } })
+        val job = repo.connectRealtime(backgroundScope)
+        testScheduler.advanceTimeBy(71_001)
+        assertEquals(listOf(0L, 5_000L, 6_000L, 11_000L, 71_000L), starts)
+        job.cancel()
+    }
+
+    @Test
+    fun `notification identity replacement cancels pending work until mutation finishes`() = kotlinx.coroutines.test.runTest {
+        val starts = mutableListOf<Long>()
+        val barrier = org.siloserver.silo.network.DefaultIdentityTransitionBarrier()
+        val realtime = object : org.siloserver.silo.network.NotificationsRealtimeClient {
+            override fun connect() = kotlinx.coroutines.flow.flow {
+                starts += testScheduler.currentTime
+                emit(NotificationRealtimeEvent.Closed())
+            }
+        }
+        val repo = NotificationsRepository(FakeNotificationsApi(), realtimeFactory = { realtime }, identityTransitions = barrier,
+            recoveryFactory = { org.siloserver.silo.network.GenericEventsBackoff { 0.0 } })
+        val job = repo.connectRealtime(backgroundScope)
+        testScheduler.advanceTimeBy(2_000)
+        backgroundScope.launch {
+            barrier.changing(org.siloserver.silo.network.IdentityTransitionKind.ACCOUNT_REPLACE) { kotlinx.coroutines.delay(10_000) }
+        }
+        testScheduler.runCurrent()
+        testScheduler.advanceTimeBy(10_001)
+        assertEquals(listOf(0L, 12_000L), starts)
+        testScheduler.advanceTimeBy(5_000)
+        assertEquals(listOf(0L, 12_000L, 17_000L), starts)
+        job.cancel()
+    }
 
     // ---- atomic mutate consistency -------------------------------------------
 
