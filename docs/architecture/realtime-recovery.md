@@ -48,7 +48,9 @@ A buffering send is in flight until an authoritative echo; correlated refusal ma
 stall eligible again. Recovery cancels the buffering desire. The binding keeps
 the existing ready plus report pair at the waiting cadence. Absolute seek input
 keeps the latest target in each 250 ms window and displays it immediately;
-a distinct play or pause flushes the queued seek first and ends that window.
+a distinct play or pause flushes an eligible queued seek first without ending
+the original window. A subsequent seek waits for that boundary; distinct
+play/pause inputs stay behind it in input order.
 Play and pause remain distinct operations. Local seek intent tokens ensure that
 an older timeout or refusal cannot clear a newer target. A playback binding
 lease is revoked synchronously on disposal; retries also require its original
@@ -65,3 +67,19 @@ cannot use immediate renewal to bypass this delay.
 The focused tests use fake time, stub APIs and mock sockets. They establish
 client state transitions and wire handling, not rendered UI recovery, real
 playback, server admission enforcement or capacity.
+
+Retained admission state belongs to the server and durable login incarnation,
+not a profile, credential epoch, room, or physical socket. The persistent token
+manager captures that marker atomically with the request scope. Refresh and
+profile changes keep it; signing in again conservatively starts a new partition
+because the client has no stable backend account-user ID. Temporary scopes use
+their own incarnation. Legacy/in-memory token managers without a login marker
+can partition only by server. Request authority and playback leases remain
+independent, stricter fences on every send.
+
+The singleton notification repository supplies its recovery owner to each
+foreground client created by its factory. Cancelling a physical attempt or
+resetting profile inbox state does not erase that owner's admission deadline.
+An explicit input-shield notice classifies nonterminal EOF/transport failures
+for that attempt even when the close frame is missing; authority loss, room
+termination, connection replacement and access changes retain precedence.

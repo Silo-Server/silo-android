@@ -129,4 +129,86 @@ class EventSelectionRecoveryTest {
         job.cancel(); incoming.close()
     }
 
+    @Test fun currentAttemptShieldSurvivesMissingCloseMetadataAndTransportError() = runTest {
+        for (failure in listOf(null, IllegalStateException("synthetic EOF"))) {
+            val incoming = Channel<String>(Channel.UNLIMITED)
+            incoming.send("""{"type":"error","code":"realtime_input_limited"}""")
+            incoming.close(failure)
+            val error = runCatching {
+                eventAttemptFrames(RealtimeBackoff({ testScheduler.currentTime }, { 0 }), true,
+                    listOf("notifications"), { incoming.receiveCatching().let { result -> result.exceptionOrNull()?.let { throw it }; result.getOrNull() } },
+                    {}, { true }, { null }, {}).toList()
+            }.exceptionOrNull()
+            assertTrue(assertIs<RealtimeSocketClosed>(error).inputShield)
+        }
+    }
+
+    @Test fun attemptAuthorityAccessChangeAndCancellationTakePrecedenceOverShield() = runTest {
+        for (terminal in listOf("authority", "access", "access-close")) {
+            var current = true; var accessChanges = 0; var index = 0
+            val result = runCatching {
+                eventAttemptFrames(RealtimeBackoff({ testScheduler.currentTime }, { 0 }), true,
+                    listOf("notifications"), {
+                        when (index++) {
+                            0 -> """{"type":"error","code":"realtime_input_limited"}"""
+                            1 -> when (terminal) {
+                                "authority" -> { current = false; null }
+                                "access" -> """{"type":"access_changed"}"""
+                                else -> null
+                            }
+                            else -> null
+                        }
+                    }, {}, { current }, {
+                        if (terminal == "access-close") io.ktor.websocket.CloseReason(4001, "access changed") else null
+                    }, { accessChanges++ }).toList()
+            }
+            assertTrue(result.isSuccess)
+            assertEquals(if (terminal.startsWith("access")) 1 else 0, accessChanges)
+        }
+    }
+
+    @Test fun freshTicketAdmissionRetainsFloorAcrossProfileRefreshButPartitionsNewLogin() = runTest {
+        var scope = AuthScopeSnapshot("server", "profile", "https://example.invalid", "proof", identityGeneration = 1)
+        var login = "login-a"
+        val tokens = object : TokenManager by TokenManagerImpl(), DurableLoginAuthorityProvider {
+            override suspend fun snapshotCurrentScope() = scope
+            override suspend fun snapshotDurableLoginAuthority() = DurableLoginAuthority(login, scope)
+        }
+        val recovery = RealtimeBackoff({ testScheduler.currentTime }, { 0 })
+        recovery.bindAdmissionOwner(tokens.realtimeAdmissionOwner(scope)!!)
+        recovery.refused("realtime_rate_limited", 45_000, retainForAdmission = true)
+        var mints = 0
+        val client = HttpClient(MockEngine) {
+            engine { dispatcher = UnconfinedTestDispatcher(testScheduler); addHandler {
+                mints++
+                respond("""{"status":429}""", HttpStatusCode.TooManyRequests,
+                    headersOf(HttpHeaders.ContentType, "application/json"))
+            } }
+        }
+        try {
+            scope = scope.copy(profileId = "profile-b", profileToken = "replacement-proof", identityGeneration = 2, credentialEpoch = 9)
+            val same = backgroundScope.launch { DefaultNotificationsRealtimeClient(
+                EventsSocketV2Api(client, tokens, ApiV2Gate.Unrestricted), recovery = recovery).connect().toList() }
+            runCurrent(); advanceTimeBy(44_999); runCurrent(); assertEquals(0, mints)
+            same.cancel(); runCurrent()
+            login = "login-b"; scope = scope.copy(identityGeneration = 3)
+            val other = backgroundScope.launch { DefaultNotificationsRealtimeClient(
+                EventsSocketV2Api(client, tokens, ApiV2Gate.Unrestricted), recovery = recovery).connect().toList() }
+            runCurrent(); assertEquals(1, mints)
+            other.cancel()
+        } finally { client.close() }
+    }
+
+    @Test fun cancellingAttemptAfterShieldDoesNotTurnCancellationIntoRecovery() = runTest {
+        val incoming = Channel<String>(Channel.UNLIMITED)
+        incoming.send("""{"type":"error","code":"realtime_input_limited"}""")
+        val job = backgroundScope.launch {
+            eventAttemptFrames(RealtimeBackoff({ testScheduler.currentTime }, { 0 }), true,
+                listOf("notifications"), { incoming.receive() }, {}, { true }, { null }, {}).toList()
+        }
+        runCurrent(); job.cancel(); job.join()
+        assertTrue(job.isCancelled)
+        incoming.close()
+    }
+
 }

@@ -33,6 +33,29 @@ internal class RealtimeSocketClosed(val code: Short?, val reason: String?) : Exc
     val inputShield: Boolean get() = code?.toInt() == 1008 && reason == "realtime input shield"
 }
 
+/** Server plus login incarnation, deliberately independent of profile and refreshed credentials. */
+data class RealtimeAdmissionOwner(val serverId: String, val serverUrl: String, val loginId: String? = null) {
+    override fun toString(): String = "RealtimeAdmissionOwner(<redacted>)"
+}
+
+/** Capture the durable marker atomically; request scope equality remains a separate fence. */
+internal suspend fun TokenManager.realtimeAdmissionOwner(scope: AuthScopeSnapshot): RealtimeAdmissionOwner? {
+    val temporary = scope.credentialGenerationId
+    if (temporary != null) return RealtimeAdmissionOwner(scope.serverId, scope.serverUrl, "temporary:$temporary")
+    val authority = (this as? DurableLoginAuthorityProvider)?.snapshotDurableLoginAuthority()
+    val login = if (authority != null) {
+        if (authority.scope != scope) return null
+        authority.loginId
+    } else {
+        // The durable profile authority may be absent before profile selection.
+        // Capture the saved account marker between two identical request scopes.
+        val marker = loginSessionId(scope.serverId)
+        if (snapshotCurrentScope() != scope) return null
+        marker // legacy/in-memory implementations may have no durable marker
+    }
+    return RealtimeAdmissionOwner(scope.serverId, scope.serverUrl, login)
+}
+
 /** One instance per logical consumer/engagement; opening a socket does not reset it. */
 class RealtimeBackoff(
     private val nowMs: () -> Long = { origin.elapsedNow().inWholeMilliseconds },
@@ -43,11 +66,14 @@ class RealtimeBackoff(
     private var shield = 0
     private var usefulSince: Long? = null
     private var admissionNotBeforeMs = 0L
-    private var admissionAuthority: AuthScopeSnapshot? = null
+    private var admissionOwner: RealtimeAdmissionOwner? = null
 
-    internal fun bindAdmissionAuthority(authority: AuthScopeSnapshot) {
-        if (admissionAuthority != null && admissionAuthority != authority) admissionNotBeforeMs = 0
-        admissionAuthority = authority
+    internal fun bindAdmissionOwner(owner: RealtimeAdmissionOwner) {
+        if (admissionOwner != null && admissionOwner != owner) {
+            admissionNotBeforeMs = 0
+            opaque = 0; unavailable = 0; shield = 0; usefulSince = null; overloaded = false
+        }
+        admissionOwner = owner
     }
 
     internal fun remainingAdmissionMs(): Long = (admissionNotBeforeMs - nowMs()).coerceAtLeast(0)

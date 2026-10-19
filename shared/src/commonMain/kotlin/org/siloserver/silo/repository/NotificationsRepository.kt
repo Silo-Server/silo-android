@@ -120,11 +120,12 @@ internal fun NotificationRealtimeEvent.isAuthClose(): Boolean =
  */
 class NotificationsRepository(
     private val api: NotificationsApi,
-    private val realtimeFactory: () -> NotificationsRealtimeClient? = { null },
+    private val realtimeFactory: (RealtimeBackoff) -> NotificationsRealtimeClient? = { null },
     private val tokens: TokenManager? = null,
     private val authorities: DurableLoginAuthorityProvider? = null,
     private val checkpoints: NotificationSyncStore? = null,
     private val identityTransitions: IdentityTransitionBarrier? = null,
+    private val realtimeRecovery: RealtimeBackoff = RealtimeBackoff(),
 ) {
     // Observable so a parked realtime loop can wait for the next identity.
     private val epochState = MutableStateFlow(0L)
@@ -363,7 +364,7 @@ class NotificationsRepository(
      * completed job.
      */
     fun connectRealtime(scope: CoroutineScope): Job = scope.launch {
-        val client = realtimeFactory() ?: return@launch
+        val client = realtimeFactory(realtimeRecovery) ?: return@launch
         var backoffMs = INITIAL_BACKOFF_MS
         while (true) {
             var established = false // true once the first non-Closed event of this connection arrives

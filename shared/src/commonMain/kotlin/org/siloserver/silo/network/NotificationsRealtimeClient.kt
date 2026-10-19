@@ -47,14 +47,18 @@ interface NotificationsRealtimeClient {
     fun connect(): Flow<NotificationRealtimeEvent>
 }
 
-class DefaultNotificationsRealtimeClient(
-    private val socket: org.siloserver.silo.network.apiv2.EventsSocketV2Api,
+class DefaultNotificationsRealtimeClient internal constructor(
+    private val frames: (List<String>, RealtimeBackoff) -> Flow<String>,
     private val json: Json = SiloJson,
+    private val recovery: RealtimeBackoff = RealtimeBackoff(),
 ) : NotificationsRealtimeClient {
+    constructor(
+        socket: org.siloserver.silo.network.apiv2.EventsSocketV2Api,
+        json: Json = SiloJson,
+        recovery: RealtimeBackoff = RealtimeBackoff(),
+    ) : this(socket::frames, json, recovery)
 
-    private val recovery = RealtimeBackoff()
-
-    override fun connect(): Flow<NotificationRealtimeEvent> = socket.frames(listOf(NotificationRealtime.Channel), recovery)
+    override fun connect(): Flow<NotificationRealtimeEvent> = frames(listOf(NotificationRealtime.Channel), recovery)
         .mapNotNull { decodeRealtimeFrame(json, it) }
         .onCompletion { cause -> if (cause == null) emit(NotificationRealtimeEvent.Closed(retryAfterMs = recovery.disconnected())) }
         .catch { error ->

@@ -21,6 +21,7 @@ import org.siloserver.silo.model.watchtogether.SuggestionReceipt
 import org.siloserver.silo.model.watchtogether.TransportCommand
 import org.siloserver.silo.model.watchtogether.UpdatePolicyRequest
 import org.siloserver.silo.model.watchtogether.GuestControlPolicy
+import org.siloserver.silo.network.RealtimeAdmissionOwner
 import org.siloserver.silo.network.RealtimeBackoff
 import org.siloserver.silo.network.RealtimeSocketClosed
 import org.siloserver.silo.network.RoomWorkKind
@@ -178,6 +179,9 @@ class WatchTogetherRepository(
     private val wallClockMs: () -> Long = ::wallClockMillis,
     private val timing: WatchPartyTiming = WatchPartyTiming(),
     private val random: Random = Random.Default,
+    private val admissionOwnerProvider: suspend (AuthScopeSnapshot) -> RealtimeAdmissionOwner? = {
+        RealtimeAdmissionOwner(it.serverId, it.serverUrl)
+    },
 ) : RoomSessionRepository, RoomPlaybackRoom {
     /** Successful delivery state follows the process connection, not a UI controller. */
     val roomDeliveryLatch = RoomDeliveryLatch()
@@ -192,6 +196,7 @@ class WatchTogetherRepository(
 
     private val workBackoff = RealtimeBackoff(monotonicNowMs) { random.nextLong(251) }
     private val workRecovery = RoomWorkRecovery(monotonicNowMs, workBackoff)
+    private var workOwner: RealtimeAdmissionOwner? = null
     private var workAdmission = false
     private var localWorkSession: String? = null
     private var workReconcileNeeded = false
@@ -341,6 +346,8 @@ class WatchTogetherRepository(
         if (data.room.roomId.isBlank() || data.roomAccessToken.isBlank()) {
             return invalidRoomResponse()
         }
+        val admissionOwner = admissionOwnerProvider(scope) ?: return obsoleteRoomRequest()
+        if (authScopeProvider() != scope) return obsoleteRoomRequest()
         stateMutex.withLock {
             if (requestGeneration != latestRoomRequest) return obsoleteRoomRequest()
             val installed = RoomBinding(
@@ -349,6 +356,11 @@ class WatchTogetherRepository(
                 generation = ++nextGeneration,
             )
             workRecovery.disconnect()
+            if (workOwner != admissionOwner) {
+                workRecovery.resetFloors()
+                workBackoff.bindAdmissionOwner(admissionOwner)
+                workOwner = admissionOwner
+            }
             publishWorkUpdateLocked()
             localWorkSession = null
             workAdmission = false
@@ -1081,8 +1093,7 @@ class WatchTogetherRepository(
                         }
                         is RoomRealtimeEvent.TransportTerminated -> {
                             val failure = event.cause
-                            end = AttemptEnd.Transport(if (shieldNotice && failure is RealtimeSocketClosed && failure.code?.toInt() == 1008)
-                                RealtimeSocketClosed(failure.code, "realtime input shield") else failure)
+                            end = AttemptEnd.Transport(failure)
                             throw AttemptStopped
                         }
                         is RoomRealtimeEvent.Malformed -> scope.launch { reconcileRoom(lease) }
@@ -1155,7 +1166,7 @@ class WatchTogetherRepository(
             if (!isCurrent(lease, owner)) break
             val cause = (end as? AttemptEnd.Transport)?.cause
             val ticket = cause as? RoomTicketRefusedException
-            val shield = (cause as? RealtimeSocketClosed)?.inputShield == true
+            val shield = shieldNotice || (cause as? RealtimeSocketClosed)?.inputShield == true
             val now = monotonicNowMs()
             val opened = openedAtMs
             if (opened != null && sawSnapshot) {
@@ -1165,7 +1176,7 @@ class WatchTogetherRepository(
                     lastHealthyMs = now
                     failures = 0
                     backoffIndex = 0
-                    if (!workBackoff.overloaded && cause !is RealtimeSocketClosed && ticket?.status !in setOf(429, 503)) continue
+                    if (!shield && !workBackoff.overloaded && cause !is RealtimeSocketClosed && ticket?.status !in setOf(429, 503)) continue
                 }
             }
             failures++

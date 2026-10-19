@@ -64,6 +64,12 @@ internal class RoomWorkRecovery(
     fun nextId(): String = "room-${++sequence}"
     fun permitted(kind: RoomWorkKind): Boolean = nowMs() >= if (kind.actionClass) actionFloor else recoveryFloor
 
+    fun resetFloors() {
+        disconnect()
+        recoveryFloor = 0
+        actionFloor = 0
+    }
+
     fun recoveryDelayMs(): Long = (recoveryFloor - nowMs()).coerceAtLeast(0)
 
     private fun remember(entry: Pending) {
@@ -192,6 +198,11 @@ internal class RoomWorkRecovery(
         val entry = pending[request.requestId] ?: return false
         if ((request.kind == RoomWorkKind.Transport && nowMs() >= entry.createdAt + 5_000) ||
             request.playbackIntent?.isCurrent == false) {
+            pending.remove(request.requestId)
+            publish(entry, uncertain = entry.awaitingResponse, discarded = !entry.awaitingResponse)
+            return false
+        }
+        if (entry.identity != current && entry.selected && entry.request == request) {
             pending.remove(request.requestId)
             publish(entry, uncertain = entry.awaitingResponse, discarded = !entry.awaitingResponse)
             return false

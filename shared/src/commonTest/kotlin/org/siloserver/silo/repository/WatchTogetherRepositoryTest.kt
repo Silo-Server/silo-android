@@ -46,6 +46,9 @@ import org.siloserver.silo.network.WatchTogetherSocketConnection
 import org.siloserver.silo.network.WatchTogetherSocketConnector
 import org.siloserver.silo.network.WatchTogetherSocketRequest
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.DurableLoginAuthority
+import org.siloserver.silo.network.DurableLoginAuthorityProvider
+import org.siloserver.silo.network.realtimeAdmissionOwner
 import org.siloserver.silo.network.TokenManagerImpl
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.model.watchtogether.WsTransportRequest
@@ -347,6 +350,9 @@ class WatchTogetherRepositoryTest {
         now: () -> Long = { testScheduler.currentTime },
         timing: WatchPartyTiming = testTiming,
         realtimeFactory: (() -> WatchTogetherRealtimeClient?)? = null,
+        admissionOwnerProvider: suspend (AuthScopeSnapshot) -> org.siloserver.silo.network.RealtimeAdmissionOwner? = {
+            org.siloserver.silo.network.RealtimeAdmissionOwner(it.serverId, it.serverUrl)
+        },
     ) = WatchTogetherRepository(
         api = api,
         realtimeFactory = realtimeFactory ?: { realtime },
@@ -355,6 +361,7 @@ class WatchTogetherRepositoryTest {
         wallClockMs = { 1_000_000L + testScheduler.currentTime },
         timing = timing,
         random = NoJitter,
+        admissionOwnerProvider = admissionOwnerProvider,
     )
 
     private fun create() = CreateRoomRequest(roomId = "room-1")
@@ -2484,6 +2491,153 @@ class WatchTogetherRepositoryTest {
                 assertEquals(1, realtime.workRequests.size, "reconnect must never replay transport")
             } finally { connection.cancelAndJoin() }
         }
+    }
+
+    @Test fun sweepSeekEligibilitySurvivesEarlyFlushAndDistinctActions() = runTest {
+        val h = harness()
+        try {
+            h.binding.requestSeek(210.0); advance(90)
+            h.binding.requestPlayPause(true); runCurrent()
+            assertEquals(listOf("seek", "pause"), h.transports().map { it.action })
+            advance(50); h.binding.requestSeek(240.0)
+            assertEquals(240.0, h.binding.pendingSeekSeconds.value)
+            advance(50); h.binding.requestPlayPause(false); runCurrent()
+            assertEquals(listOf("seek", "pause"), h.transports().map { it.action }, "Only one seek in the original 0..250ms window; play stays behind the second seek")
+            advance(59)
+            assertEquals(2, h.transports().size)
+            advance(1)
+            assertEquals(listOf("seek", "pause", "seek", "play"), h.transports().map { it.action })
+            assertEquals(listOf(210.0, 240.0), h.transports().filter { it.action == "seek" }.map { it.positionSeconds })
+        } finally { finish(h) }
+    }
+
+    private suspend fun TestScope.sweepOwnerTransition(change: String) {
+        val initial = initialPlaying()
+        val wire = FakeRealtime()
+        val api = FakeApi(room(initial))
+        var authority = scopeA.copy(credentialEpoch = 1, isIdentityGenerationStamped = true)
+        val tokens = object : TokenManager by TokenManagerImpl(), DurableLoginAuthorityProvider {
+            override suspend fun snapshotCurrentScope() = authority
+            override suspend fun snapshotDurableLoginAuthority() = DurableLoginAuthority("stable-login", authority)
+        }
+        val repository = repo(api, wire, authScopeProvider = { authority }, admissionOwnerProvider = { tokens.realtimeAdmissionOwner(it) })
+        val barrier = DefaultIdentityTransitionBarrier()
+        val session = RoomSession(repository, backgroundScope, barrier)
+        repository.createRoom(create()); session.enter(initial.roomId); runCurrent()
+        wire.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+        wire.events.emit(RoomRealtimeEvent.Opened); wire.events.emit(RoomRealtimeEvent.SnapshotEvent(initial)); runCurrent()
+        assertTrue(repository.stateReport("session-1", 50.0, false, null, false))
+        val report = wire.workRequests.single().second
+        wire.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", report.requestId, 60_000, false)); runCurrent()
+        barrier.changing(if (change == "server") IdentityTransitionKind.SERVER_SWITCH else IdentityTransitionKind.PROFILE_SWITCH) {
+            authority = when (change) {
+                "server" -> authority.copy(serverId = "server-b", serverUrl = "https://b.invalid", identityGeneration = 2, credentialEpoch = 2)
+                "profile" -> authority.copy(profileId = "profile-b", profileToken = "new-proof", identityGeneration = 2)
+                else -> authority.copy(credentialEpoch = 2) // live credentials may refresh without changing the login
+            }
+        }
+        assertFalse(session.isActive()); assertNull(repository.roomSnapshot.value)
+        val next = initial.copy(roomId = "room-next"); api.createResponse = room(next)
+        repository.createRoom(CreateRoomRequest(roomId = next.roomId)); session.enter(next.roomId); runCurrent()
+        try {
+            if (change == "server") assertEquals(2, wire.connectCount, "An unrelated server owns no prior floor")
+            else {
+                assertEquals(1, wire.connectCount); advance(59_999); assertEquals(1, wire.connectCount)
+                advance(1); assertEquals(2, wire.connectCount)
+            }
+        } finally { session.leave(); runCurrent() }
+    }
+    @Test fun sweepUnrelatedServerDoesNotInheritRoomFloor() = runTest { sweepOwnerTransition("server") }
+    @Test fun sweepSameLoginProfileAndCredentialChangesRetainRoomFloor() = runTest {
+        sweepOwnerTransition("profile"); sweepOwnerTransition("refresh")
+    }
+
+    @Test fun sweepFinalIdentityRejectionDiscardsKnownRefusedRetry() = runTest {
+        val initial = initialPlaying(); val wire = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), wire); val connection = open(repository, wire, initial)
+        try {
+            assertTrue(repository.transportRequest("pause", 12.0, true))
+            val request = wire.workRequests.single().second
+            val gate = CompletableDeferred<Unit>(); val entered = CompletableDeferred<Unit>()
+            wire.beforeRetryDispatch = { entered.complete(Unit); gate.await() }
+            wire.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", request.requestId, 750, false))
+            runCurrent(); advance(750); assertTrue(entered.isCompleted)
+            wire.events.emit(RoomRealtimeEvent.SnapshotEvent(initial.copy(generation = 3))); runCurrent()
+            gate.complete(Unit); runCurrent()
+            assertEquals(1, wire.workRequests.size)
+            assertEquals(0L, repository.workUpdate.value.uncertaintySequence)
+            assertEquals(1L, repository.workUpdate.value.discardedTransportSequence)
+        } finally { connection.cancelAndJoin(); repository.reset() }
+    }
+
+    private suspend fun TestScope.sweepShieldTermination(cause: Throwable?, notice: Boolean, wait: Long) {
+        val initial = initialPlaying(); val wire = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), wire); val connection = open(repository, wire, initial)
+        try {
+            if (notice) wire.events.emit(RoomRealtimeEvent.Error("realtime_input_limited", "shield"))
+            wire.events.emit(RoomRealtimeEvent.TransportTerminated(cause)); runCurrent()
+            advance(wait - 1); assertEquals(1, wire.connectCount)
+            advance(1); assertEquals(2, wire.connectCount)
+        } finally { connection.cancelAndJoin(); repository.reset() }
+    }
+    @Test fun sweepShieldNoticeSurvivesEof() = runTest { sweepShieldTermination(null, true, 5_000) }
+    @Test fun sweepShieldNoticeSurvivesTransportException() = runTest {
+        sweepShieldTermination(IllegalStateException("synthetic EOF"), true, 5_000)
+    }
+    @Test fun sweepShieldAndUnrelated1008RemainDistinct() = runTest {
+        sweepShieldTermination(RealtimeSocketClosed(1008, "realtime input shield"), false, 5_000)
+        sweepShieldTermination(RealtimeSocketClosed(1008, "other policy"), false, 1_000)
+    }
+
+    @Test fun sweepNewLoginOnSameServerStartsWithoutOldFloor() = runTest {
+        val initial = initialPlaying(); val api = FakeApi(room(initial)); val wire = FakeRealtime()
+        var authority = scopeA
+        var login = "login-a"
+        val tokens = object : TokenManager by TokenManagerImpl(), DurableLoginAuthorityProvider {
+            override suspend fun snapshotCurrentScope() = authority
+            override suspend fun snapshotDurableLoginAuthority() = DurableLoginAuthority(login, authority)
+        }
+        val repository = WatchTogetherRepository(api, { wire }, { testScheduler.currentTime },
+            { authority }, { 1_000_000L + testScheduler.currentTime }, testTiming, NoJitter,
+            admissionOwnerProvider = { tokens.realtimeAdmissionOwner(it) })
+        val barrier = DefaultIdentityTransitionBarrier(); val session = RoomSession(repository, backgroundScope, barrier)
+        repository.createRoom(create()); session.enter(initial.roomId); runCurrent()
+        wire.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+        wire.events.emit(RoomRealtimeEvent.Opened); wire.events.emit(RoomRealtimeEvent.SnapshotEvent(initial)); runCurrent()
+        repository.stateReport("session-1", 50.0, false, null, false)
+        val request = wire.workRequests.single().second
+        wire.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", request.requestId, 60_000, false)); runCurrent()
+        barrier.changing(IdentityTransitionKind.ACCOUNT_REPLACE) { login = "login-b"; authority = authority.copy(identityGeneration = 2) }
+        assertFalse(session.isActive())
+        repository.createRoom(create()); session.enter(initial.roomId); runCurrent()
+        try { assertEquals(2, wire.connectCount) } finally { session.leave(); runCurrent() }
+    }
+
+    @Test fun sweepSeekWindowAndDistinctOrderSurviveOwnPauseResponseFrames() = runTest {
+        val h = harness()
+        try {
+            h.binding.requestSeek(210.0); advance(90)
+            h.binding.requestPlayPause(true); runCurrent(); pauseSuccess(h)
+            advance(50); h.binding.requestSeek(240.0)
+            advance(50); h.binding.requestPlayPause(false); runCurrent()
+            assertEquals(listOf("seek", "pause"), h.transports().map { it.action })
+            assertEquals(240.0, h.binding.pendingSeekSeconds.value)
+            advance(60)
+            assertEquals(listOf("seek", "pause", "seek", "play"), h.transports().map { it.action })
+            assertEquals(0L, h.repository.workUpdate.value.discardedTransportSequence)
+        } finally { finish(h) }
+    }
+
+    @Test fun sweepShieldNoticeOnOldSocketCannotTakeImmediateRenewalPath() = runTest {
+        val initial = initialPlaying(); val wire = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), wire); val connection = open(repository, wire, initial)
+        try {
+            advance(30_000)
+            wire.events.emit(RoomRealtimeEvent.Error("realtime_input_limited", "shield"))
+            wire.events.emit(RoomRealtimeEvent.TransportTerminated()); runCurrent()
+            advance(4_999); assertEquals(1, wire.connectCount)
+            advance(1); assertEquals(2, wire.connectCount)
+        } finally { connection.cancelAndJoin(); repository.reset() }
     }
 
 }

@@ -285,7 +285,8 @@ class RoomPlaybackBinding(
     private var pendingSeekIntent: RoomPlaybackIntent? = null
     private var queuedSeekDispatch: (suspend () -> Boolean)? = null
     private var seekSendJob: Job? = null
-    private var seekWindowStartedMs: Long? = null
+    private var seekWindowEndsMs: Long? = null
+    private var seekWindowUsed = false
     private var seenBufferingRefusal = 0L
     private var seenUncertainty = 0L
     private var seenDiscard = 0L
@@ -432,16 +433,16 @@ class RoomPlaybackBinding(
     /** Ask the room to play or pause. The player changes only when the room's command arrives. */
     fun requestPlayPause(pause: Boolean): RoomTransportResult {
         if (!pause && player.observations.value.state == RoomPlayerState.Ended) return RoomTransportResult.Ignored
-        // A distinct input ends the seek coalescing window. Dispatch that initial
-        // seek first, before this action can produce a new generation/command.
+        // Preserve input order, including a seek flushed before its original window
+        // ends. That early flush consumes the window; later seeks wait for it.
         val queued = queuedSeekDispatch
         return request(RoomTransportIntent.PlayPause, if (pause) TransportAction.Pause else TransportAction.Play, null, pause,
             beforeSend = queued?.let { dispatch -> {
                 if (queuedSeekDispatch !== dispatch) true else {
                     queuedSeekDispatch = null
                     seekSendJob?.cancel()
-                    seekWindowStartedMs = null
-                    dispatch()
+                    seekSendJob = null
+                    dispatchInitialSeek(dispatch)
                 }
             } })
     }
@@ -471,15 +472,18 @@ class RoomPlaybackBinding(
         val commandId = room.latestTransportCommand.value?.command?.commandId
         pendingSeekRequestedAtMs = monotonicNowMs()
         _pendingSeekSeconds.value = sourceSeconds // optimistic target immediately, no local player seek
-        if (seekWindowStartedMs == null) seekWindowStartedMs = monotonicNowMs()
+        val now = monotonicNowMs()
+        if (seekWindowEndsMs == null || now >= seekWindowEndsMs!!) {
+            seekWindowEndsMs = now + 250
+            seekWindowUsed = false
+        }
         seekSendJob?.cancel()
-        val wait = (250 - (monotonicNowMs() - seekWindowStartedMs!!)).coerceAtLeast(0)
+        val wait = (seekWindowEndsMs!! - now).coerceAtLeast(0)
         val localIntent = playbackLease.intent()
         pendingSeekIntent = localIntent
         val dispatch: suspend () -> Boolean = dispatch@ {
-            if (pendingSeekIntent !== localIntent) return@dispatch false
             if (!localIntent.isCurrent) {
-                clearPendingSeek()
+                if (pendingSeekIntent === localIntent) clearPendingSeek()
                 _notices.tryEmit(RoomPlaybackNotice.Undelivered)
                 return@dispatch false
             }
@@ -488,11 +492,11 @@ class RoomPlaybackBinding(
                     it.selectionRevision != snapshot.selectionRevision || it.selfRole != snapshot.selfRole || !roomTransportAuthorized(it, RoomTransportIntent.Seek) } != false ||
                 room.latestTransportCommand.value?.command?.commandId != commandId ||
                 player.observations.value.sessionId != observation.sessionId) {
-                clearPendingSeek()
+                if (pendingSeekIntent === localIntent) clearPendingSeek()
                 _notices.tryEmit(RoomPlaybackNotice.Undelivered)
                 return@dispatch false
             }
-            val target = _pendingSeekSeconds.value ?: return@dispatch false
+            val target = sourceSeconds
             val currentAuthorization = room.currentTransportAuthorization() ?: return@dispatch false
             val sent = room.transportRequestForPlayback(currentAuthorization, RoomTransportIntent.Seek, TransportAction.Seek.wire, target, paused, localIntent)
             if (!sent && pendingSeekIntent === localIntent) { clearPendingSeek(); _notices.tryEmit(RoomPlaybackNotice.Uncertain) }
@@ -504,11 +508,23 @@ class RoomPlaybackBinding(
             initialSendMutex.withLock {
                 if (queuedSeekDispatch !== dispatch) return@withLock
                 queuedSeekDispatch = null
-                seekWindowStartedMs = null
-                dispatch()
+                seekSendJob = null
+                dispatchInitialSeek(dispatch)
             }
         }
         return RoomTransportResult.Sent
+    }
+
+    /** Must hold initialSendMutex. An early flush never replenishes the window. */
+    private suspend fun dispatchInitialSeek(dispatch: suspend () -> Boolean): Boolean {
+        val end = seekWindowEndsMs ?: monotonicNowMs()
+        if (seekWindowUsed) delay((end - monotonicNowMs()).coerceAtLeast(0))
+        if (monotonicNowMs() >= end) {
+            seekWindowEndsMs = monotonicNowMs() + 250
+            seekWindowUsed = false
+        }
+        seekWindowUsed = true
+        return dispatch()
     }
 
     /** Drop the pending seek target when it predates [beforeMs] (any target when null). */
@@ -520,7 +536,6 @@ class RoomPlaybackBinding(
         pendingSeekIntent = null
         queuedSeekDispatch = null
         seekSendJob?.cancel()
-        seekWindowStartedMs = null
     }
 
     private fun seeksTo(command: TransportCommand, target: Double): Boolean =

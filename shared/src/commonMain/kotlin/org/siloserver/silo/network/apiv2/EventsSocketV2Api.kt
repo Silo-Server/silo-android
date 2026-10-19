@@ -40,7 +40,9 @@ class EventsSocketV2Api(
 
     fun frames(channels: List<String>, recovery: RealtimeBackoff = RealtimeBackoff()): Flow<String> = flow {
         val scope = tokens.snapshotCurrentScope() ?: return@flow
-        recovery.bindAdmissionAuthority(scope)
+        val admissionOwner = tokens.realtimeAdmissionOwner(scope) ?: return@flow
+        if (!current(scope)) return@flow
+        recovery.bindAdmissionOwner(admissionOwner)
         while (recovery.remainingAdmissionMs() > 0) {
             delay(recovery.remainingAdmissionMs())
             if (!current(scope)) return@flow
@@ -81,10 +83,10 @@ class EventsSocketV2Api(
                     accessChanges?.reportAccessChanged(connectedAt)
                 }
                 try {
-                    var identityLost = false
-                    var shieldNotice = false
-                    EventSelectionSession(recovery, proof.workAdmission?.supported == true).frames(
-                        initial = channels,
+                    eventAttemptFrames(
+                        recovery = recovery,
+                        workAdmission = proof.workAdmission?.supported == true,
+                        channels = channels,
                         receive = {
                             var text: String? = null
                             while (text == null) {
@@ -94,24 +96,56 @@ class EventsSocketV2Api(
                             text
                         },
                         transmit = { send(Frame.Text(it)) },
-                        current = { current(scope).also { if (!it) identityLost = true } },
-                        onEnvelope = { type, errorCode ->
-                            if (type == AccessChangeSignals.ACCESS_CHANGED_FRAME_TYPE) reportAccessChange()
-                            if (errorCode == "realtime_input_limited") shieldNotice = true
-                        },
-                    ).collect { text ->
-                        this@flow.emit(text)
-                    }
-                    if (!identityLost) {
-                        val reason = closeReasonIfClosed()
-                        if (isAccessChangedClose(reason)) reportAccessChange()
-                        if (reason?.code?.toInt() == 1008) throw RealtimeSocketClosed(reason.code,
-                            if (shieldNotice) "realtime input shield" else reason.message)
-                    }
+                        current = { current(scope) },
+                        closeReason = { closeReasonIfClosed() },
+                        accessChanged = { reportAccessChange() },
+                    ).collect { this@flow.emit(it) }
                 } finally { authorityWatcher.cancel() }
             }
         }
     }
+}
+
+/** One physical attempt. A recognized notice survives EOF or missing close metadata. */
+internal fun eventAttemptFrames(
+    recovery: RealtimeBackoff,
+    workAdmission: Boolean,
+    channels: List<String>,
+    receive: suspend () -> String?,
+    transmit: suspend (String) -> Unit,
+    current: suspend () -> Boolean,
+    closeReason: suspend () -> CloseReason?,
+    accessChanged: suspend () -> Unit,
+): Flow<String> = flow {
+    var identityLost = false
+    var shieldNotice = false
+    var accessNotice = false
+    try {
+        EventSelectionSession(recovery, workAdmission).frames(channels, receive, transmit,
+            current = { current().also { if (!it) identityLost = true } },
+            onEnvelope = { type, code ->
+                if (type == AccessChangeSignals.ACCESS_CHANGED_FRAME_TYPE) {
+                    accessNotice = true
+                    accessChanged()
+                }
+                if (code == "realtime_input_limited") shieldNotice = true
+            }).collect { emit(it) }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        if (!identityLost && !accessNotice && shieldNotice && current())
+            throw RealtimeSocketClosed(1008, "realtime input shield")
+        throw e
+    }
+    if (identityLost || !current()) return@flow
+    val reason = closeReason()
+    if (isAccessChangedClose(reason)) {
+        accessChanged()
+        return@flow
+    }
+    if (accessNotice) return@flow
+    if (shieldNotice) throw RealtimeSocketClosed(1008, "realtime input shield")
+    if (reason?.code?.toInt() == 1008) throw RealtimeSocketClosed(reason.code, reason.message)
 }
 
 internal class EventsTicketFailure(val code: Int, val retryAfterMs: Long? = null) : Exception("Realtime ticket unavailable")
