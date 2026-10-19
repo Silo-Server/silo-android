@@ -28,6 +28,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.TimeSource
 
 data class HomeUiState(
@@ -518,6 +520,18 @@ class HomeViewModel(
 
     private val pendingDismissals = mutableSetOf<String>()
 
+    /** Serializes the cached-Home rewrites, so one dismissal cannot write back a card another removed. */
+    private val dismissalCacheWrites = Mutex()
+
+    /** A dismissal succeeded and Home has not re-read since. */
+    private var reloadAfterDismissals = false
+
+    /** Removes a Continue Watching or Next Up card on the list [HomeDismissal] picks for it. */
+    fun dismissFromHome(item: SectionItem) {
+        val dismissal = HomeDismissal.of(item) ?: return
+        dismissHomeProgressItem(dismissal.surface, item.contentId, dismissal.anchor)
+    }
+
     fun dismissContinueWatching(itemId: String, progressUpdatedAt: String) =
         dismissHomeProgressItem("continue_watching", itemId, progressUpdatedAt)
 
@@ -530,13 +544,18 @@ class HomeViewModel(
         val observed = _uiState.value.sections
         fun SectionItem.matches() = contentId == itemId &&
             (if (surface == "continue_watching") progressUpdatedAt == anchor else seriesId == anchor)
-        fun ResolvedSection.progressRow() = sectionType in setOf("continue_watching", "in_progress", "next_up", "up_next")
-        fun List<ResolvedSection>.targetRows() = filter { it.progressRow() }.flatMap { section ->
+        fun List<ResolvedSection>.targetRows() = filter { it.isProgressRow() }.flatMap { section ->
             section.items.filter { it.contentId == itemId }.map { section.id to it }
         }
         val targets = observed.targetRows()
-        if (anchor.isBlank() || targets.none { it.second.matches() }) return
+        val dismissed = targets.firstOrNull { it.second.matches() }?.second
+        if (anchor.isBlank() || dismissed == null) return
         if (!pendingDismissals.add(itemId)) return
+        // On /api/v2, dismissing an episode or a series drops the whole show,
+        // so every card of that series leaves the progress rows with it.
+        val droppedSeries = dismissed.droppedSeriesId()
+        fun SectionItem.removed() = matches() ||
+            (droppedSeries != null && (contentId == droppedSeries || seriesId == droppedSeries))
         fun observationCurrent() = generation == fetchGeneration && displayedOwner == owner &&
             _uiState.value.sections.targetRows() == targets
         viewModelScope.launch {
@@ -545,15 +564,42 @@ class HomeViewModel(
                 val result = sectionRepository.dismissHomeItem(surface, itemId, anchor, owner)
                 if (!mayPublish(owner, generation) || !observationCurrent()) return@launch
                 if (result is ApiResult.Success) {
-                    _uiState.update { state -> state.copy(sections = state.sections.map { section ->
-                        if (section.progressRow()) section.copy(items = section.items.filterNot { it.matches() }) else section
-                    }.filter { it.items.isNotEmpty() }) }
+                    _uiState.update { state -> state.copy(sections = state.sections.removingFromProgressRows { it.removed() }) }
+                    // The next cold start shows the cached Home before it re-reads;
+                    // without this the dismissed cards come back until then.
+                    dismissalCacheWrites.withLock {
+                        val artworkFingerprint = homeCache.artworkFingerprint()
+                        val cached = homeCache.getCachedHomeV2(owner) ?: return@withLock
+                        homeCache.cacheHomeV2(cached.sections.removingFromProgressRows { it.removed() }, owner, artworkFingerprint) {
+                            generation == fetchGeneration && displayedOwner == owner
+                        }
+                    }
+                    reloadAfterDismissals = true
                 }
-            } finally { pendingDismissals.remove(itemId) }
+            } finally {
+                pendingDismissals.remove(itemId)
+                // Then re-read Home from the server, as Mark as Watched does; a
+                // failed read keeps the local removal. It waits for the last
+                // dismissal in flight, because a read that starts sooner would
+                // make that one's observation stale and skip its removal.
+                if (pendingDismissals.isEmpty() && reloadAfterDismissals) {
+                    reloadAfterDismissals = false
+                    if (shown) refresh() else realtimeRefreshPending = true
+                }
+            }
         }
     }
 
 }
+
+/** Rows built from playback state. Next Up appears as its own row and merged into Continue Watching. */
+private fun ResolvedSection.isProgressRow() = sectionType in setOf("continue_watching", "in_progress", "next_up", "up_next")
+
+/** Drops [isRemoved] cards from the progress rows; a row left empty goes too. */
+private fun List<ResolvedSection>.removingFromProgressRows(isRemoved: (SectionItem) -> Boolean): List<ResolvedSection> =
+    map { section ->
+        if (section.isProgressRow()) section.copy(items = section.items.filterNot(isRemoved)) else section
+    }.filter { it.items.isNotEmpty() }
 
 private fun List<ResolvedSection>.duplicateSectionKeyCount(): Int =
     size - distinctBy(ResolvedSection::id).size

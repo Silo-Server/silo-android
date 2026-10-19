@@ -41,6 +41,9 @@ class HomeDismissalV2Test {
         var currentStamp = stamp
         var title = "Original"
         var sends = 0
+        // What the server has dismissed; Home re-reads after a dismissal succeeds.
+        val dismissedOnServer = mutableSetOf<String>()
+        var reads = 0
         val entered = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         val client = HttpClient(MockEngine(MockEngineConfig().apply {
@@ -58,11 +61,17 @@ class HomeDismissalV2Test {
                     assertEquals(if (stage == "next") "series:a" else stamp, body.values.single().jsonPrimitive.content)
                     entered.complete(Unit); release.await()
                     val status = when (stage) { "wrong_status" -> HttpStatusCode.OK; "failure" -> HttpStatusCode.ServiceUnavailable; else -> HttpStatusCode.NoContent }
+                    if (status == HttpStatusCode.NoContent) dismissedOnServer += request.url.encodedPath.substringAfterLast("%2F")
                     respond(if (status == HttpStatusCode.NoContent) "" else "{}", status, headersOf(HttpHeaders.ContentType, "application/json"))
                 } else {
                     assertEquals("/api/v2/home/sections", request.url.encodedPath)
-                    val second = if (stage == "concurrent") """,{"content_id":"movie/b","type":"movie","title":"Second","progress_updated_at":"$currentStamp"}""" else ""
-                    respond("""{"sections":[{"id":"row","section_type":"continue_watching","title":"Row","items":[{"content_id":"movie/a","type":"episode","title":"$title","series_id":"series:a","progress_updated_at":"$currentStamp"}$second]}]}""", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+                    reads++
+                    val items = listOfNotNull(
+                        """{"content_id":"movie/a","type":"episode","title":"$title","series_id":"series:a","progress_updated_at":"$currentStamp"}""".takeIf { "a" !in dismissedOnServer },
+                        """{"content_id":"movie/b","type":"movie","title":"Second","progress_updated_at":"$currentStamp"}""".takeIf { stage == "concurrent" && "b" !in dismissedOnServer },
+                    )
+                    val sections = if (items.isEmpty()) "" else """{"id":"row","section_type":"continue_watching","title":"Row","items":[${items.joinToString(",")}]}"""
+                    respond("""{"sections":[$sections]}""", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
                 }
             }
         })) { install(ContentNegotiation) { json(SiloJson) } }
@@ -94,7 +103,12 @@ class HomeDismissalV2Test {
                 }
                 release.complete(Unit); runCurrent()
                 when (stage) {
-                    "success", "next", "late", "concurrent" -> assertTrue(vm.uiState.value.sections.isEmpty())
+                    // One re-read after the last dismissal settles, and it agrees with the removal.
+                    "success", "next", "concurrent" -> {
+                        assertTrue(vm.uiState.value.sections.isEmpty())
+                        assertEquals(2, reads)
+                    }
+                    "late" -> assertTrue(vm.uiState.value.sections.isEmpty())
                     "refresh" -> assertEquals("New observation", vm.uiState.value.sections.single().items.first().title)
                     else -> assertEquals("Original", vm.uiState.value.sections.single().items.first().title)
                 }

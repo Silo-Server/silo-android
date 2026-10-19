@@ -43,6 +43,7 @@ import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.viewmodel.HomeDismissal
 import org.siloserver.silo.viewmodel.HomeViewModel
 
 internal fun shouldShowHomeEmptyState(
@@ -154,8 +155,7 @@ fun TvHomeScreen(
                 onMarqueeTranslated = viewModel::refreshFromRealtime,
                 onToggleFavorite = viewModel::toggleFavorite,
                 onToggleWatchlist = viewModel::toggleWatchlist,
-                onDismissContinueWatching = viewModel::dismissContinueWatching,
-                onDismissNextUp = viewModel::dismissNextUp,
+                onRemoveFromHome = viewModel::dismissFromHome,
             )
         }
     }
@@ -243,8 +243,7 @@ private fun TvHomeContent(
     onSetWatched: (String, Boolean) -> Unit = { _, _ -> },
     onToggleFavorite: (String, Boolean) -> Unit = { _, _ -> },
     onToggleWatchlist: (String, Boolean) -> Unit = { _, _ -> },
-    onDismissContinueWatching: (String, String) -> Unit = { _, _ -> },
-    onDismissNextUp: (String, String) -> Unit = { _, _ -> },
+    onRemoveFromHome: (SectionItem) -> Unit = {},
     sectionsFullyResolved: Boolean = true,
     onMarqueeTranslated: () -> Unit = {},
 ) {
@@ -298,10 +297,8 @@ private fun TvHomeContent(
             }
         },
         cardActions = { section, item ->
-            val isProgressRow = section.isTvProgressRow()
             val isContinueWatching = section.isTvContinueWatchingRow()
-            val progressUpdatedAt = item.progressUpdatedAt
-            val seriesId = item.seriesId
+            val dismissal = if (section.isTvProgressRow()) HomeDismissal.of(item) else null
             TvMediaCardActions(
                 onPlay = if (isContinueWatching) {
                     {
@@ -318,16 +315,8 @@ private fun TvHomeContent(
                 onSetWatched = { watched -> onSetWatched(item.contentId, watched) },
                 onToggleFavorite = { fav -> onToggleFavorite(item.contentId, fav) },
                 onToggleWatchlist = { wl -> onToggleWatchlist(item.contentId, wl) },
-                onRemoveFromContinueWatching = when {
-                    !isProgressRow -> null
-                    progressUpdatedAt != null -> {
-                        { onDismissContinueWatching(item.contentId, progressUpdatedAt) }
-                    }
-                    seriesId != null -> {
-                        { onDismissNextUp(item.contentId, seriesId) }
-                    }
-                    else -> null
-                },
+                onRemoveFromHome = dismissal?.let { { onRemoveFromHome(item) } },
+                removeFromHomeLabel = dismissal?.menuLabel.orEmpty(),
             )
         },
     )
