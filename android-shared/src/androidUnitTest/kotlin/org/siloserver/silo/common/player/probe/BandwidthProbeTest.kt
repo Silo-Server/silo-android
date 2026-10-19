@@ -99,6 +99,25 @@ class BandwidthProbeTest {
     }
 
     @Test
+    fun aLinkThatDeliversTheWholeRequestBeforeWindow1IsAveragedOverIt() = runTest {
+        // 100 MB in 450 ms from the first byte: 1.8 Gbps, before window 0 even closes.
+        val chunks = List(10) { 50L to 10_000_000 }
+        val result = probe().measure(SpeedTestMode.QUICK, targetKbps = null) { read ->
+            read(body(chunks, hangAfter = false))
+        }
+        assertEquals(BandwidthProbeResult.Measured(1_000_000, 100_000_000, 450, lowerBound = true), result)
+    }
+
+    @Test
+    fun aFastTransferThatEndsShortMeasuresNothing() = runTest {
+        val chunks = List(9) { 50L to 10_000_000 }
+        val result = probe().measure(SpeedTestMode.QUICK, targetKbps = null) { read ->
+            read(body(chunks, hangAfter = false))
+        }
+        assertEquals(BandwidthProbeResult.TooLittleData, result)
+    }
+
+    @Test
     fun anAccurateTestReadsTenSecondsAndSettlesOverTheLastThreeSeconds() = runTest {
         val result = probe().measure(SpeedTestMode.ACCURATE, targetKbps = 50_000) { read -> read(steady) }
         assertEquals(10_100L, currentTime, "the target does not stop the accurate test")

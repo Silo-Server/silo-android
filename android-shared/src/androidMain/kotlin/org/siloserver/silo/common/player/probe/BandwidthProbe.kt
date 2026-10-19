@@ -56,7 +56,10 @@ sealed interface BandwidthProbeResult {
      */
     data class Unavailable(val status: Int) : BandwidthProbeResult
 
-    /** No complete window after the ramp-up window, or under 100 kbps. */
+    /**
+     * No complete window after the ramp-up window and fewer bytes than the
+     * test asked for, or under 100 kbps.
+     */
     data object TooLittleData : BandwidthProbeResult
 
     /** The request failed, or no byte arrived by [SpeedTestMeter.FIRST_BYTE_DEADLINE_MS]. */

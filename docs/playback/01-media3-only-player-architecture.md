@@ -278,8 +278,11 @@ runs it, and `SpeedTestMeter` (`shared/`) holds its arithmetic, which
   window 0 that reaches the target, reporting the target as a lower bound;
   otherwise it reads 3 s and reports the rate over the last 1 s. The accurate
   test asks for 1 GB, reads 10 s and reports the rate over the last 3 s. A
-  rate above 1 Gbps is reported as 1,000,000 kbps, a lower bound. A probe with
-  no byte in 10 s is abandoned.
+  link fast enough to deliver every requested byte before any window after
+  window 0 completes (100 MB in under a second) reports the whole-transfer
+  average instead, a lower bound, or the target when a quick test's average
+  reaches it. A rate above 1 Gbps is reported as 1,000,000 kbps, a lower
+  bound. A probe with no byte in 10 s is abandoned.
 - **When.** A check runs in the background 5 s after sign-in, a return to the
   foreground or a network change, and at no other time. With a current settled
   reading in hand it does nothing. Otherwise it reads this device's readings
