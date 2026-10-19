@@ -45,4 +45,20 @@ class PlaybackConnectionV2Test {
             SiloJson.decodeFromString(PlaybackConnectionV2.serializer(), body),
         )
     }
+
+    @Test fun theSpeedTestRedesignAddsLowerBoundsAndThePlaybackSample() {
+        val body = """{
+            "connection":"remote",
+            "probe":{"kbps":115000,"lower_bound":true,"measured_at":"2026-10-17T19:02:11Z","transport":"wifi"},
+            "playback_sample":{"kbps":51200,"measured_at":"2026-10-18T20:14:03Z"}
+        }"""
+        assertEquals(
+            PlaybackConnectionV2(
+                connection = "remote",
+                probe = PlaybackConnectionProbeV2(115000, "2026-10-17T19:02:11Z", "wifi", lowerBound = true),
+                playbackSample = PlaybackConnectionSampleV2(51200, "2026-10-18T20:14:03Z"),
+            ),
+            SiloJson.decodeFromString(PlaybackConnectionV2.serializer(), body),
+        )
+    }
 }

@@ -133,11 +133,11 @@ data class PlaybackLearnedLimitV2(
 @Serializable
 data class PlaybackConnectionProbeV2(
     val kbps: Int,
-    /** The link is at least [kbps]: a quick test that reached its target. */
-    @SerialName("lower_bound") val lowerBound: Boolean = false,
     @SerialName("measured_at") val measuredAt: String? = null,
     /** `wifi`, `ethernet`, `cellular` or `other`. */
     val transport: String? = null,
+    /** The link is at least [kbps]: a quick test that reached its target, or a capped rate. */
+    @SerialName("lower_bound") val lowerBound: Boolean = false,
 )
 
 /** A playback sample the server kept for this device on this connection; RFC 3339 time. */
