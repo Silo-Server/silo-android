@@ -96,10 +96,15 @@ class PlaybackSessionManagerBufferingQualityTest {
             else -> plan("start-$n", "v3:%016x".format(0xb0 + n), sessionId = "session-$n")
         }.also { servedPlans[it.planId] = it }
 
+        /** When set, the next replan answers with this plan instead. */
+        @Volatile var nextReplanPlan: PlaybackPlanV3? = null
+
         /** A re-anchor keeps its plan; every other replan gets the next one, starting at [PLAN_2]. */
         private fun replanReply(sessionId: String, body: JsonObject): PlaybackPlanV3 =
             if (body.stringOrNull("operation") == SEEK_REANCHOR_V3_OPERATION) {
                 servedPlans.getValue(body.string("failed_plan_id"))
+            } else if (nextReplanPlan != null) {
+                checkNotNull(nextReplanPlan).also { nextReplanPlan = null }
             } else {
                 val n = replanCount.incrementAndGet() + 1
                 plan("plan-$n", "v3:%016x".format(0xa0 + n), sessionId).also { servedPlans[it.planId] = it }
@@ -262,6 +267,27 @@ class PlaybackSessionManagerBufferingQualityTest {
         assertEquals(second.planAttemptId, successor.string("plan_attempt_id"))
         assertEquals("44100", successor.diagnostics()["bandwidth_estimate_kbps"])
         assertNull(successor.diagnostics()["delivered_kbps"])
+    }
+
+    @Test
+    fun aRepeatedPlanIdKeepsEachAdoptionsIdentity() = runTest {
+        val harness = Harness(BUFFERING_QUALITY_SERVER + PLAYBACK_PLAN_SUMMARY_V1_FEATURE)
+        val first = harness.start()
+        // The lowering comes back under the plan id already playing.
+        harness.nextReplanPlan = plan(PLAN_1.planId, "v3:00000000000000c1")
+        val lowered = harness.lower()
+        assertEquals(PLAN_1.planId, lowered.plan.planId)
+
+        harness.manager.emitPlanSummary(summary(PLAN_1.planId, deliveredKbps = 63_000))
+        val stalled = harness.awaitRouteEvent("plan_summary")
+        assertEquals(first.planAttemptId, stalled.string("plan_attempt_id"))
+        assertNull(stalled.diagnostics()["bandwidth_estimate_kbps"], "the start sent no estimate")
+
+        harness.routeEvents.clear()
+        harness.manager.emitPlanSummary(summary(PLAN_1.planId, deliveredKbps = 44_000))
+        val successor = harness.awaitRouteEvent("plan_summary")
+        assertEquals(lowered.planAttemptId, successor.string("plan_attempt_id"))
+        assertEquals("44100", successor.diagnostics()["bandwidth_estimate_kbps"])
     }
 
     @Test

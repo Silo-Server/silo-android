@@ -297,9 +297,14 @@ open class PlaybackSessionManager(
         val bandwidthEstimateKbps: Int?,
     )
 
-    /** Recent plans by plan id, oldest evicted first. Guarded by itself. */
-    private val recentPlans = object : LinkedHashMap<String, PlanSummaryIdentity>() {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, PlanSummaryIdentity>?): Boolean =
+    /**
+     * Recent plans by plan id, oldest evicted first, each with its identities
+     * in the order they were made. Guarded by itself. A plan id can repeat: a
+     * replan can return the plan already playing, before that plan's summary
+     * is sent.
+     */
+    private val recentPlans = object : LinkedHashMap<String, ArrayDeque<PlanSummaryIdentity>>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ArrayDeque<PlanSummaryIdentity>>?): Boolean =
             size > RECENT_PLAN_LIMIT
     }
 
@@ -312,7 +317,19 @@ open class PlaybackSessionManager(
             outputContextId = attempt.context.output.outputContextId,
             bandwidthEstimateKbps = bandwidthEstimateKbps,
         )
-        synchronized(recentPlans) { recentPlans[attempt.plan.planId] = identity }
+        synchronized(recentPlans) {
+            val identities = recentPlans.getOrPut(attempt.plan.planId) { ArrayDeque() }
+            if (identities.lastOrNull() != identity) identities.addLast(identity)
+        }
+    }
+
+    /**
+     * The oldest identity remembered for [planId]. The last one stays, for a
+     * later summary of the same plan, such as after a same-plan remount.
+     */
+    private fun takePlanIdentity(planId: String): PlanSummaryIdentity? = synchronized(recentPlans) {
+        val identities = recentPlans[planId] ?: return null
+        if (identities.size > 1) identities.removeFirst() else identities.firstOrNull()
     }
 
     private fun modeLearnedLimit(): String? =
@@ -2560,7 +2577,7 @@ open class PlaybackSessionManager(
     fun emitPlanSummary(summary: BufferingPlanSummary) {
         // Taken first, so the next plan's count starts here even when this summary is dropped.
         val throughput = throughputKbps()
-        val identity = synchronized(recentPlans) { recentPlans[summary.planId] } ?: run {
+        val identity = takePlanIdentity(summary.planId) ?: run {
             Log.w(TAG, "plan_summary dropped: the plan is no longer known")
             return
         }
