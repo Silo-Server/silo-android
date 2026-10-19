@@ -283,7 +283,8 @@ runs it, and `SpeedTestMeter` (`shared/`) holds its arithmetic, which
   average instead, a lower bound, or the target when a quick test's average
   reaches it. A rate above 1 Gbps is reported as 1,000,000 kbps, a lower
   bound. A probe with no byte in 10 s is abandoned.
-- **When.** A check runs on sign-in, a return to the foreground or a network
+- **When.** A check runs on sign-in, a return to the foreground, a switch to
+  another profile (its target follows the profile's libraries) or a network
   change, and at no other time. It reads this device's readings for the
   connection (`probe` and `playback_sample` in
   `GET /api/v2/playback/connection`) at once, so a playback start in the first

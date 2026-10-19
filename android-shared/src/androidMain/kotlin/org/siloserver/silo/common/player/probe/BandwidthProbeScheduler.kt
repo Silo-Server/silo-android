@@ -19,7 +19,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -120,6 +122,23 @@ sealed interface ProbeOutcome {
 
     /** The network or server changed, or Silo left the foreground, before the probe finished. */
     data object Interrupted : ProbeOutcome
+}
+
+/**
+ * Emits each time the signed-in profile changes to another one on the same
+ * server, given (server id, profile id) pairs. The speed test's target follows
+ * the profile's libraries. A change of server, or one through no profile, is a
+ * change of the active server instead.
+ */
+fun Flow<Pair<String?, String?>>.profileSwitches(): Flow<Unit> = flow {
+    var previous: Pair<String?, String?>? = null
+    collect { next ->
+        val last = previous
+        previous = next
+        val sameServer = last?.first != null && last.first == next.first
+        val otherProfile = last?.second != null && next.second != null && last.second != next.second
+        if (sameServer && otherProfile) emit(Unit)
+    }
 }
 
 /** Speed tests are skipped on this network: it is metered or cellular. */
@@ -271,10 +290,11 @@ class PlaybackV2BandwidthProbeServer(
  *   link; a lower bound proves it only while it is at least the current
  *   [BandwidthProbeTarget.targetKbps], and without a target any current reading
  *   proves it.
- * - **Checks**: when Silo returns to the foreground, a server is signed in or
- *   the network changes, and at no other time. A check reads the server's
- *   readings ([BandwidthProbeServer.storedReading]) at once, so a playback start
- *   in the first seconds already sends them. Only the quick test waits,
+ * - **Checks**: when Silo returns to the foreground, a server is signed in,
+ *   the profile changes or the network changes, and at no other time. A check
+ *   reads the server's readings ([BandwidthProbeServer.storedReading]) at once,
+ *   so a playback start in the first seconds already sends them. Only the
+ *   quick test waits,
  *   [PROBE_START_DELAY_MS], and it runs only when automatic tests are on, no
  *   current reading proves the link, and it still may: nothing plays or
  *   starts, and no `429` from that server is waiting out its `Retry-After`. A
@@ -296,6 +316,8 @@ class PlaybackV2BandwidthProbeServer(
  *
  * @param activeServer the active server's id while it is signed in with a
  *   profile, else null.
+ * @param profileSwitches emits when the profile changes on the same server
+ *   ([profileSwitches]).
  */
 class BandwidthProbeScheduler(
     private val server: BandwidthProbeServer,
@@ -303,6 +325,7 @@ class BandwidthProbeScheduler(
     private val mediaActive: StateFlow<Boolean>,
     private val activeServer: StateFlow<String?>,
     private val scope: CoroutineScope,
+    private val profileSwitches: Flow<Unit> = emptyFlow(),
     private val probe: BandwidthProbe = BandwidthProbe(),
     private val elapsedClock: () -> Long = { SystemClock.elapsedRealtime() },
     private val wallClock: () -> Long = { System.currentTimeMillis() },
@@ -377,6 +400,9 @@ class BandwidthProbeScheduler(
             activeServer.drop(1).collect(::onServerChanged)
         }
         scope.launch {
+            profileSwitches.collect { onProfileSwitched() }
+        }
+        scope.launch {
             mediaActive.filter { it }.collect { onPlaybackActive() }
         }
     }
@@ -428,6 +454,12 @@ class BandwidthProbeScheduler(
         if (cached?.serverId != serverId) forget()
         cancelInFlight(ProbeOutcome.Interrupted)
         if (serverId != null) check() else timer?.cancel()
+    }
+
+    /** Another profile on the same server: its target and credentials apply now. */
+    private fun onProfileSwitched() {
+        cancelInFlight(ProbeOutcome.Interrupted)
+        if (activeServer.value != null) check()
     }
 
     private fun onPlaybackActive() {

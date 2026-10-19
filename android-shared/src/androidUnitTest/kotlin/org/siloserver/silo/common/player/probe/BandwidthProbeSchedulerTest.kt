@@ -4,7 +4,10 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.currentTime
@@ -76,12 +79,14 @@ class BandwidthProbeSchedulerTest {
         val server = Server()
         val media = MutableStateFlow(false)
         val activeServer = MutableStateFlow<String?>("server-1")
+        val profileSwitches = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
         val scheduler = BandwidthProbeScheduler(
             server = server,
             network = network,
             mediaActive = media,
             activeServer = activeServer,
             scope = test.backgroundScope,
+            profileSwitches = profileSwitches,
             probe = BandwidthProbe(clock = { test.currentTime }),
             elapsedClock = { test.currentTime },
             wallClock = { 1_760_000_000_000 + test.currentTime },
@@ -640,6 +645,38 @@ class BandwidthProbeSchedulerTest {
 
         assertIs<ProbeOutcome.Measured>(harness.scheduler.runNow())
         assertEquals(listOf(SpeedTestMode.ACCURATE), harness.server.modes)
+    }
+
+    @Test
+    fun anotherProfileOnTheSameServerChecksAgainUnderItsTarget() = runTest {
+        val harness = Harness(this)
+        harness.server.serve(probeTarget(targetKbps = 50_000))
+        harness.foreground()
+        advanceThrough(PROBE_START_DELAY_MS + 1_100)
+        assertEquals(1, harness.server.downloads)
+
+        // The new profile can play more, so its target is higher than the lower bound in hand.
+        harness.server.serve(probeTarget(targetKbps = 60_000))
+        harness.profileSwitches.tryEmit(Unit)
+        runCurrent()
+        assertEquals(2, harness.server.storedChecks, "the switch reads the server at once")
+        advanceThrough(PROBE_START_DELAY_MS + 1_100)
+        assertEquals(2, harness.server.downloads)
+        assertEquals(60_000, harness.scheduler.freshEstimateKbps())
+    }
+
+    @Test
+    fun profileSwitchesAreProfileChangesOnTheSameServer() = runTest {
+        val switches = flowOf(
+            "server-1" to null,
+            "server-1" to "profile-1",
+            "server-1" to "profile-2",
+            "server-2" to "profile-3",
+            "server-2" to null,
+            "server-2" to "profile-4",
+            null to null,
+        ).profileSwitches().toList()
+        assertEquals(1, switches.size, "only profile-1 to profile-2")
     }
 
     @Test

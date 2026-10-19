@@ -41,6 +41,7 @@ import org.siloserver.silo.common.player.probe.BandwidthProbeScheduler
 import org.siloserver.silo.common.player.probe.PlaybackBandwidthEstimates
 import org.siloserver.silo.common.player.probe.PlaybackV2BandwidthProbeServer
 import org.siloserver.silo.common.player.probe.PlayerMediaActivity
+import org.siloserver.silo.common.player.probe.profileSwitches
 import org.siloserver.silo.model.server.ServerEntry
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -99,6 +100,10 @@ val playerInfraModule = module {
                 .map { it.signedInServerId() }
                 .stateIn(probeScope, SharingStarted.Eagerly, registry.activeEntry.value.signedInServerId()),
             scope = probeScope,
+            profileSwitches = registry.activeEntry
+                .map { it?.id to it?.profileId?.takeIf(String::isNotBlank) }
+                .distinctUntilChanged()
+                .profileSwitches(),
         )
     }
     single<PlaybackBandwidthEstimates> { get<BandwidthProbeScheduler>() }
