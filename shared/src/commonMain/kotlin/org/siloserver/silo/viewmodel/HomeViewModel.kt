@@ -563,8 +563,10 @@ class HomeViewModel(
                 if (!mayPublish(owner, generation) || !observationCurrent()) return@launch
                 val result = sectionRepository.dismissHomeItem(surface, itemId, anchor, owner)
                 // The server dropped the show even if this screen moved on while
-                // the request ran, so re-read either way.
-                if (result is ApiResult.Success && displayedOwner == owner) reloadAfterDismissals = true
+                // the request ran, so re-read either way, for the same profile.
+                if (result is ApiResult.Success && displayedOwner == owner && sectionRepository.isHomeAuthorityCurrent(owner)) {
+                    reloadAfterDismissals = true
+                }
                 if (!mayPublish(owner, generation) || !observationCurrent()) return@launch
                 if (result is ApiResult.Success) {
                     _uiState.update { state -> state.copy(sections = state.sections.removingFromProgressRows { it.removed() }) }

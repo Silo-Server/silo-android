@@ -66,9 +66,13 @@ class HomeDismissalV2Test {
                 } else {
                     assertEquals("/api/v2/home/sections", request.url.encodedPath)
                     reads++
+                    // In "refresh" the re-read after the stale acknowledgement fails, so
+                    // what remains on screen is the local state alone.
+                    if (stage == "refresh" && reads == 3) {
+                        return@addHandler respond("{}", HttpStatusCode.ServiceUnavailable, headersOf(HttpHeaders.ContentType, "application/json"))
+                    }
                     val items = listOfNotNull(
-                        // In "refresh" the card's newer progress outlives the older dismissal.
-                        """{"content_id":"movie/a","type":"episode","title":"$title","series_id":"series:a","progress_updated_at":"$currentStamp"}""".takeIf { "a" !in dismissedOnServer || stage == "refresh" },
+                        """{"content_id":"movie/a","type":"episode","title":"$title","series_id":"series:a","progress_updated_at":"$currentStamp"}""".takeIf { "a" !in dismissedOnServer },
                         """{"content_id":"movie/b","type":"movie","title":"Second","progress_updated_at":"$currentStamp"}""".takeIf { stage == "concurrent" && "b" !in dismissedOnServer },
                     )
                     val sections = if (items.isEmpty()) "" else """{"id":"row","section_type":"continue_watching","title":"Row","items":[${items.joinToString(",")}]}"""
@@ -110,8 +114,8 @@ class HomeDismissalV2Test {
                         assertEquals(2, reads)
                     }
                     "late" -> assertTrue(vm.uiState.value.sections.isEmpty())
-                    // The stale acknowledgement removes nothing locally but still
-                    // re-reads Home, since the server accepted the dismissal.
+                    // The stale acknowledgement removes nothing locally, and Home still
+                    // re-reads (here the read fails), since the server accepted it.
                     "refresh" -> {
                         assertEquals("New observation", vm.uiState.value.sections.single().items.first().title)
                         assertEquals(3, reads)
