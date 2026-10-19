@@ -85,6 +85,32 @@ class PlaybackThroughputMeterTest {
     }
 
     @Test
+    fun shortRequestsDoNotCountEvenWhenTheyAddUp() {
+        // Three segments, each 4 MB in 500 ms: the burst rate, 64 Mbps.
+        for (start in listOf(0L, 2_000L, 4_000L)) {
+            val segment = Source()
+            bytes(segment, start, 8)
+            bytes(segment, start + 500, 4_000_000)
+            end(segment, start + 500)
+        }
+        assertNull(meter.takeKbps())
+    }
+
+    @Test
+    fun onlyLongRequestsCount() {
+        val progressive = Source()
+        bytes(progressive, 0, 1)
+        bytes(progressive, 2_000, 2_000_000)
+        end(progressive, 2_000)
+        val segment = Source()
+        bytes(segment, 1_500, 8)
+        bytes(segment, 1_900, 10_000_000)
+        end(segment, 1_900)
+        // The segment's 10 MB and its time are left out: 2 MB over 2 s.
+        assertEquals(8_000, meter.takeKbps())
+    }
+
+    @Test
     fun localFilesAndShortReceivingGiveNothing() {
         val file = Source()
         bytes(file, 0, 1, isNetwork = false)

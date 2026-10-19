@@ -5,36 +5,42 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
-import java.util.Collections
 import java.util.IdentityHashMap
 
 /**
- * `throughput_kbps` for a plan's `plan_summary`: the rate the player's media
- * requests received data, counted only while a request was receiving
+ * `throughput_kbps` for a plan's `plan_summary`: the rate the player's long
+ * media requests received data, counted only while a request was receiving
  * (*Playback samples* in the server repo's
  * `docs/design/2026-10-17-buffering-quality.md`). The server keeps the
  * highest as this device's `playback_sample`, a lower bound on the link.
  *
- * Listens to the player's media data sources; only network transfers count.
- * A request's clock starts at its first read, so the bytes of that read, which
- * arrived before anything timed them, do not count. Time counts while at least
- * one request has had its first byte and not ended, and each such stretch ends
- * at its last byte, so a request left open after its last byte adds nothing.
- * Pauses between one request's bytes do count: a progressive request held open
- * while the buffer is full reads low, which keeps the figure a lower bound.
+ * Listens to the player's media data sources; only network transfers count. A
+ * request receives from its first read to its last, and the bytes of the first
+ * read, which arrived before anything timed them, do not count. Only a request
+ * that received for at least [MIN_RECEIVING_MS] counts, in bytes and in time:
+ * a short one on a warm connection, such as one HLS segment, arrives at the
+ * connection's burst rate, which can be twice what the link sustains. Time in
+ * which several counted requests were receiving counts once. Pauses inside a
+ * request do count: a progressive request held open while the buffer is full
+ * reads low, which keeps the figure a lower bound.
  */
 @UnstableApi
 class PlaybackThroughputMeter(
     private val clock: () -> Long = { SystemClock.elapsedRealtime() },
 ) : TransferListener {
+    private class Request(var firstMs: Long) {
+        var lastMs = firstMs
+        var bytes = 0L
+    }
+
     private val lock = Any()
 
     /** Requests that have had their first byte and not ended. */
-    private val receiving: MutableSet<DataSource> = Collections.newSetFromMap(IdentityHashMap())
-    private var stretchStartMs: Long? = null
-    private var lastByteMs = 0L
-    private var bytes = 0L
-    private var receivingMs = 0L
+    private val receiving = IdentityHashMap<DataSource, Request>()
+
+    /** The receiving spans of the requests counted since the last [takeKbps], and their bytes. */
+    private val counted = mutableListOf<LongRange>()
+    private var countedBytes = 0L
 
     override fun onTransferInitializing(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) = Unit
 
@@ -44,46 +50,69 @@ class PlaybackThroughputMeter(
         if (!isNetwork || bytesTransferred <= 0) return
         val now = clock()
         synchronized(lock) {
-            if (receiving.add(source)) {
-                if (stretchStartMs == null) stretchStartMs = now
+            val request = receiving[source]
+            if (request == null) {
+                receiving[source] = Request(now)
             } else {
-                bytes += bytesTransferred
+                request.bytes += bytesTransferred
+                request.lastMs = now
             }
-            lastByteMs = now
         }
     }
 
     override fun onTransferEnd(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {
         synchronized(lock) {
-            if (receiving.remove(source) && receiving.isEmpty()) closeStretch()
+            receiving.remove(source)?.let(::count)
         }
     }
 
     /**
      * The rate since the last call, then starts over: kbps, at most
-     * [MAX_THROUGHPUT_KBPS], or null after less than [MIN_RECEIVING_MS] of
-     * receiving.
+     * [MAX_THROUGHPUT_KBPS], or null when no request received for
+     * [MIN_RECEIVING_MS].
      */
     fun takeKbps(): Int? = synchronized(lock) {
-        closeStretch()
-        // Requests still open carry on into the next count from their last byte.
-        if (receiving.isNotEmpty()) stretchStartMs = lastByteMs
-        val kbps = if (receivingMs < MIN_RECEIVING_MS) null else bytes * 8 / receivingMs
-        bytes = 0
-        receivingMs = 0
+        // A long request still open counts what it has so far and carries on
+        // into the next count from its last byte.
+        for (request in receiving.values) {
+            if (count(request)) {
+                request.firstMs = request.lastMs
+                request.bytes = 0
+            }
+        }
+        val ms = unionMs(counted)
+        val kbps = if (ms < MIN_RECEIVING_MS) null else countedBytes * 8 / ms
+        counted.clear()
+        countedBytes = 0
         kbps?.takeIf { it >= 1 }?.coerceAtMost(MAX_THROUGHPUT_KBPS.toLong())?.toInt()
     }
 
-    private fun closeStretch() {
-        stretchStartMs?.let { receivingMs += lastByteMs - it }
-        stretchStartMs = null
+    /** Counts [request] if it received for [MIN_RECEIVING_MS]; true when it did. */
+    private fun count(request: Request): Boolean {
+        if (request.lastMs - request.firstMs < MIN_RECEIVING_MS) return false
+        counted += request.firstMs..request.lastMs
+        countedBytes += request.bytes
+        return true
     }
 
     companion object {
-        /** Less receiving than this gives no figure. */
+        /** A request that received for less than this does not count, and neither does less than this in all. */
         const val MIN_RECEIVING_MS = 1_000L
 
         /** The highest rate the server accepts, as for a speed test. */
         const val MAX_THROUGHPUT_KBPS = 1_000_000
+
+        /** How long [spans] cover between them, overlaps once. */
+        private fun unionMs(spans: List<LongRange>): Long {
+            var total = 0L
+            var end = Long.MIN_VALUE
+            for (span in spans.sortedBy { it.first }) {
+                if (span.last > end) {
+                    total += span.last - maxOf(span.first, end)
+                    end = span.last
+                }
+            }
+            return total
+        }
     }
 }
