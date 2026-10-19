@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 import org.siloserver.silo.common.diagnostics.SiloLog
 import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.PlaybackNetworkSnapshot
+import org.siloserver.silo.domain.player.SpeedTestMeter
 import org.siloserver.silo.domain.player.SpeedTestMode
 import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
 import org.siloserver.silo.model.playback.CONNECTION_SPEED_V1_FEATURE
@@ -263,7 +264,9 @@ class PlaybackV2BandwidthProbeServer(
  * `docs/design/2026-10-17-buffering-quality.md`.
  *
  * - **Readings**: a probe and a playback sample, per server and network,
- *   current while younger than [BandwidthProbeTarget.readingLifetimeMs].
+ *   current while younger than [BandwidthProbeTarget.readingLifetimeMs]. The
+ *   server's are kept only within the estimate's bounds, and a time the
+ *   server dated ahead of this device's clock counts as now.
  *   Playback starts send the highest current one. A settled probe proves the
  *   link; a lower bound proves it only while it is at least the current
  *   [BandwidthProbeTarget.targetKbps], and without a target any current reading
@@ -536,7 +539,8 @@ class BandwidthProbeScheduler(
                 StoredReadingLookup.None -> null
                 is StoredReadingLookup.Failed -> return ProbeOutcome.NetworkError(lookup.cause)
             }
-            val entry = remember(target, networkKey, stored?.probe, stored?.sample)
+            val now = wallClock()
+            val entry = remember(target, networkKey, stored?.probe?.fromServer(now), stored?.sample?.fromServer(now))
             if (provesTheLink(entry)) {
                 SiloLog.i(
                     DiagnosticsLogCategory.PLAYBACK,
@@ -650,5 +654,18 @@ class BandwidthProbeScheduler(
         }
 
         fun BandwidthEstimate.describe(): String = "$kbps kbps" + if (lowerBound) " (lower bound)" else ""
+
+        /**
+         * The bounds of a reading playback can send as `bandwidth_estimate_kbps`.
+         * A stored reading outside them would be refused on every start.
+         */
+        val READING_KBPS = SpeedTestMeter.MIN_KBPS..SpeedTestMeter.MAX_KBPS
+
+        /** A server's reading as this device keeps it: none when out of bounds, and dated no later than [nowMs]. */
+        fun BandwidthEstimate.fromServer(nowMs: Long): BandwidthEstimate? =
+            takeIf { kbps in READING_KBPS }?.copy(measuredAtEpochMs = minOf(measuredAtEpochMs, nowMs))
+
+        fun PlaybackSample.fromServer(nowMs: Long): PlaybackSample? =
+            takeIf { kbps in READING_KBPS }?.copy(measuredAtEpochMs = minOf(measuredAtEpochMs, nowMs))
     }
 }

@@ -303,7 +303,9 @@ runs it, and `SpeedTestMeter` (`shared/`) holds its arithmetic, which
   A check still reads the server's readings while media plays, since the next
   start needs them, and **Test speed** runs as soon as nothing plays.
 - **Reading.** A probe and a playback sample, each current while younger than
-  the lifetime, for the server and network they were taken on. Playback starts
+  the lifetime, for the server and network they were taken on. A server's
+  reading outside 100–1,000,000 kbps, the bounds of `bandwidth_estimate_kbps`,
+  is ignored, and one dated ahead of the device's clock counts as now. Playback starts
   send the highest current one. A network change (lost, or another network
   handle, transport, or metering) or a server change discards the readings in
   hand, and the next check looks for the new connection's.

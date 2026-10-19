@@ -84,12 +84,14 @@ data class ConnectionSpeedUiState(
  *
  * @param cellularQualityApplies whether this device plays at its Cellular
  *   quality on a network (the phone). The TV has none.
+ * @param wallClock epoch milliseconds: a server time ahead of it counts as now.
  */
 class ConnectionSpeedSettingsModel(
     private val probe: BandwidthProbeScheduler,
     private val connection: PlaybackConnectionRepository,
     private val scope: CoroutineScope,
     private val cellularQualityApplies: (PlaybackNetworkSnapshot) -> Boolean = { false },
+    private val wallClock: () -> Long = { System.currentTimeMillis() },
 ) {
     private data class Local(val testing: Boolean = false, val message: ConnectionSpeedMessage? = null)
 
@@ -99,10 +101,11 @@ class ConnectionSpeedSettingsModel(
     val state: StateFlow<ConnectionSpeedUiState> =
         combine(server, probe.lastMeasurement, probe.networkUpdates, local) { settings, own, network, local ->
             val skipped = skipFor(network)
+            val now = wallClock()
             ConnectionSpeedUiState(
                 visible = settings?.connectionSpeed == true,
-                reading = newer(settings?.connection?.probe?.reading(), own?.reading())
-                    ?: settings?.connection?.playbackSample?.reading(),
+                reading = newer(settings?.connection?.probe?.reading(now), own?.reading())
+                    ?: settings?.connection?.playbackSample?.reading(now),
                 autoBudgetKbps = settings?.connection?.autoBudgetKbps.takeIf { skipped == null },
                 testing = local.testing,
                 message = local.message,
@@ -150,12 +153,16 @@ class ConnectionSpeedSettingsModel(
     }
 
     private companion object {
-        fun PlaybackConnectionProbeV2.reading() =
-            ConnectionSpeedReading(kbps, measuredAt?.let(::parseRfc3339ToEpochMillis), transport, lowerBound)
+        /** A server time, no later than [nowMs]: the server's clock can run ahead of this device's. */
+        fun serverTime(measuredAt: String?, nowMs: Long): Long? =
+            measuredAt?.let(::parseRfc3339ToEpochMillis)?.coerceAtMost(nowMs)
 
-        fun PlaybackConnectionSampleV2.reading() = ConnectionSpeedReading(
+        fun PlaybackConnectionProbeV2.reading(nowMs: Long) =
+            ConnectionSpeedReading(kbps, serverTime(measuredAt, nowMs), transport, lowerBound)
+
+        fun PlaybackConnectionSampleV2.reading(nowMs: Long) = ConnectionSpeedReading(
             kbps,
-            measuredAt?.let(::parseRfc3339ToEpochMillis),
+            serverTime(measuredAt, nowMs),
             transport = null,
             lowerBound = true,
             duringPlayback = true,

@@ -642,6 +642,30 @@ class BandwidthProbeSchedulerTest {
         assertEquals(listOf(SpeedTestMode.ACCURATE), harness.server.modes)
     }
 
+    @Test
+    fun aServerTimeAheadOfThisClockCountsAsNow() = runTest {
+        val harness = Harness(this)
+        harness.server.serve(probeTarget(targetKbps = 50_000))
+        // The server's clock runs ten minutes ahead.
+        harness.server.stored = harness.storedReading(30_000, ageMs = -10 * 60_000L, lowerBound = true)
+        harness.foreground()
+        advanceThrough(PROBE_START_DELAY_MS + 1_100)
+        assertEquals(1, harness.server.downloads)
+        // The new test is newer, though the server dated the old reading later.
+        assertEquals(50_000, harness.scheduler.lastMeasurement.value?.kbps)
+        assertEquals(50_000, harness.scheduler.freshEstimateKbps())
+    }
+
+    @Test
+    fun aStoredReadingOutsideTheEstimatesBoundsIsIgnored() = runTest {
+        val harness = Harness(this)
+        harness.server.stored = harness.storedReading(50, ageMs = 60_000)
+        harness.foreground()
+        assertNull(harness.scheduler.freshEstimateKbps(), "a start would be refused for it")
+        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
+        assertEquals(1, harness.server.downloads, "it proves nothing")
+    }
+
     private companion object {
         /** Long enough for any timer the scheduler might wrongly keep. */
         const val IDLE_MS = 60 * 60 * 1000L
