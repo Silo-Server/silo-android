@@ -63,6 +63,14 @@
     <string name="settings_connection_measured">%1$s · measured %2$s on %3$s</string>
     <!-- %1$s is a rate; %2$s the network (settings_connection_transport_*). -->
     <string name="settings_connection_measured_undated">%1$s · measured on %2$s</string>
+    <!-- A lower bound: the link is at least %1$s. Arguments as settings_connection_measured. -->
+    <string name="settings_connection_measured_lower_bound">Faster than %1$s · measured %2$s on %3$s</string>
+    <!-- A lower bound. Arguments as settings_connection_measured_undated. -->
+    <string name="settings_connection_measured_lower_bound_undated">Faster than %1$s · measured on %2$s</string>
+    <!-- A rate this device's playback reached, always a lower bound. %1$s is a rate; %2$s how long ago (settings_connection_age_*). -->
+    <string name="settings_connection_seen_during_playback">Faster than %1$s · seen during playback %2$s</string>
+    <!-- As settings_connection_seen_during_playback, without a time. -->
+    <string name="settings_connection_seen_during_playback_undated">Faster than %1$s · seen during playback</string>
     <string name="settings_connection_age_just_now">just now</string>
     <plurals name="settings_connection_age_minutes">
         <item quantity="one">%d minute ago</item>

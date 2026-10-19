@@ -14,17 +14,22 @@ import org.siloserver.silo.common.player.probe.BandwidthProbeScheduler
 import org.siloserver.silo.common.player.probe.ProbeOutcome
 import org.siloserver.silo.common.player.probe.skipsBandwidthProbe
 import org.siloserver.silo.network.apiv2.PlaybackConnectionProbeV2
+import org.siloserver.silo.network.apiv2.PlaybackConnectionSampleV2
 import org.siloserver.silo.repository.PlaybackConnectionRepository
 import org.siloserver.silo.repository.PlaybackConnectionSettings
 import org.siloserver.silo.util.parseRfc3339ToEpochMillis
 
-/** One connection speed measurement as Settings shows it. */
+/** One connection speed reading as Settings shows it. */
 data class ConnectionSpeedReading(
     val kbps: Int,
     /** Epoch milliseconds; null when the server sent no usable time. */
     val measuredAtEpochMs: Long?,
-    /** `wifi`, `ethernet`, `cellular` or `other`. */
+    /** `wifi`, `ethernet`, `cellular` or `other`; null for a playback sample. */
     val transport: String?,
+    /** The link is at least [kbps]: "Faster than 115 Mbps". */
+    val lowerBound: Boolean = false,
+    /** A rate this device's playback received data at, not a speed test. Always a lower bound. */
+    val duringPlayback: Boolean = false,
 )
 
 /** Why the speed test is not offered on the network in use. */
@@ -55,7 +60,10 @@ sealed interface ConnectionSpeedMessage {
 data class ConnectionSpeedUiState(
     /** The server advertises `connection_speed_v1` with a probe URL. */
     val visible: Boolean = false,
-    /** The latest measurement on this connection: the server's, or this device's own when newer. */
+    /**
+     * The latest speed test on this connection, the server's or this
+     * device's own when newer; without one, the server's playback sample.
+     */
     val reading: ConnectionSpeedReading? = null,
     /** `auto_budget_kbps`, computed by the server; null hides the line. */
     val autoBudgetKbps: Int? = null,
@@ -67,7 +75,8 @@ data class ConnectionSpeedUiState(
 
 /**
  * Settings → Playback → Connection, for the phone and TV view models: the
- * server's `probe` and `auto_budget_kbps` from `GET /api/v2/playback/connection`,
+ * server's `probe`, `playback_sample` and `auto_budget_kbps` from
+ * `GET /api/v2/playback/connection`,
  * this device's own last measurement, the network's skip reason, and
  * **Test speed** ([testSpeed]).
  *
@@ -92,7 +101,8 @@ class ConnectionSpeedSettingsModel(
             val skipped = skipFor(network)
             ConnectionSpeedUiState(
                 visible = settings?.connectionSpeed == true,
-                reading = newer(settings?.connection?.probe?.reading(), own?.reading()),
+                reading = newer(settings?.connection?.probe?.reading(), own?.reading())
+                    ?: settings?.connection?.playbackSample?.reading(),
                 autoBudgetKbps = settings?.connection?.autoBudgetKbps.takeIf { skipped == null },
                 testing = local.testing,
                 message = local.message,
@@ -106,9 +116,9 @@ class ConnectionSpeedSettingsModel(
     }
 
     /**
-     * Runs the probe now, reports the result, then reads the connection again
-     * so the row shows what the server stored. A second press while one runs
-     * is ignored.
+     * Runs the accurate test now (up to 10 seconds), reports the result, then
+     * reads the connection again so the row shows what the server stored. A
+     * second press while one runs is ignored.
      */
     fun testSpeed() {
         if (local.value.testing) return
@@ -141,9 +151,17 @@ class ConnectionSpeedSettingsModel(
 
     private companion object {
         fun PlaybackConnectionProbeV2.reading() =
-            ConnectionSpeedReading(kbps, measuredAt?.let(::parseRfc3339ToEpochMillis), transport)
+            ConnectionSpeedReading(kbps, measuredAt?.let(::parseRfc3339ToEpochMillis), transport, lowerBound)
 
-        fun BandwidthEstimate.reading() = ConnectionSpeedReading(kbps, measuredAtEpochMs, transport)
+        fun PlaybackConnectionSampleV2.reading() = ConnectionSpeedReading(
+            kbps,
+            measuredAt?.let(::parseRfc3339ToEpochMillis),
+            transport = null,
+            lowerBound = true,
+            duringPlayback = true,
+        )
+
+        fun BandwidthEstimate.reading() = ConnectionSpeedReading(kbps, measuredAtEpochMs, transport, lowerBound)
 
         /** The more recent of the two; a reading with a time beats one without. */
         fun newer(server: ConnectionSpeedReading?, own: ConnectionSpeedReading?): ConnectionSpeedReading? {

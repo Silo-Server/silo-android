@@ -64,12 +64,28 @@ fun PlaybackConnectionSection(
     }
 }
 
-/** "48 Mbps · measured 3 minutes ago on Wi-Fi", or "Not measured yet". */
+/**
+ * "48 Mbps · measured 3 minutes ago on Wi-Fi", "Faster than 115 Mbps · …" for
+ * a lower bound, "Faster than 51 Mbps · seen during playback 2 hours ago" for
+ * a playback sample, or "Not measured yet".
+ */
 @Composable
 private fun speedLabel(reading: ConnectionSpeedReading?, nowEpochMs: Long): String {
     reading ?: return stringResource(R.string.settings_connection_not_measured)
     val text = connectionSpeedText(reading.kbps, reading.measuredAtEpochMs, nowEpochMs, reading.transport)
     val rate = rateLabel(text.rate, text.unit)
+    val ago = text.age?.let { age ->
+        when (age.unit) {
+            ConnectionSpeedText.AgeUnit.JUST_NOW -> stringResource(R.string.settings_connection_age_just_now)
+            ConnectionSpeedText.AgeUnit.MINUTES -> pluralStringResource(R.plurals.settings_connection_age_minutes, age.count, age.count)
+            ConnectionSpeedText.AgeUnit.HOURS -> pluralStringResource(R.plurals.settings_connection_age_hours, age.count, age.count)
+            ConnectionSpeedText.AgeUnit.DAYS -> pluralStringResource(R.plurals.settings_connection_age_days, age.count, age.count)
+        }
+    }
+    if (reading.duringPlayback) {
+        return if (ago == null) stringResource(R.string.settings_connection_seen_during_playback_undated, rate)
+        else stringResource(R.string.settings_connection_seen_during_playback, rate, ago)
+    }
     val transport = stringResource(
         when (text.transport) {
             ConnectionSpeedText.Transport.WIFI -> R.string.settings_connection_transport_wifi
@@ -78,14 +94,12 @@ private fun speedLabel(reading: ConnectionSpeedReading?, nowEpochMs: Long): Stri
             ConnectionSpeedText.Transport.OTHER -> R.string.settings_connection_transport_other
         },
     )
-    val age = text.age ?: return stringResource(R.string.settings_connection_measured_undated, rate, transport)
-    val ago = when (age.unit) {
-        ConnectionSpeedText.AgeUnit.JUST_NOW -> stringResource(R.string.settings_connection_age_just_now)
-        ConnectionSpeedText.AgeUnit.MINUTES -> pluralStringResource(R.plurals.settings_connection_age_minutes, age.count, age.count)
-        ConnectionSpeedText.AgeUnit.HOURS -> pluralStringResource(R.plurals.settings_connection_age_hours, age.count, age.count)
-        ConnectionSpeedText.AgeUnit.DAYS -> pluralStringResource(R.plurals.settings_connection_age_days, age.count, age.count)
+    return when {
+        ago == null && reading.lowerBound -> stringResource(R.string.settings_connection_measured_lower_bound_undated, rate, transport)
+        ago == null -> stringResource(R.string.settings_connection_measured_undated, rate, transport)
+        reading.lowerBound -> stringResource(R.string.settings_connection_measured_lower_bound, rate, ago, transport)
+        else -> stringResource(R.string.settings_connection_measured, rate, ago, transport)
     }
-    return stringResource(R.string.settings_connection_measured, rate, ago, transport)
 }
 
 @Composable
