@@ -367,10 +367,12 @@ class NotificationsRepository(
         var backoffMs = INITIAL_BACKOFF_MS
         while (true) {
             var established = false // true once the first non-Closed event of this connection arrives
+            var retryAfterMs: Long? = null
             var authFailed = false  // set inside collect, checked after to break the loop
             val connectionViewer = viewer()
             try {
                 client.connect().collect { event ->
+                    if (event is NotificationRealtimeEvent.Closed) retryAfterMs = event.retryAfterMs
                     if (!current(connectionViewer)) return@collect
                     // Auth-class closes are terminal — stop reconnecting.
                     if (event.isAuthClose()) {
@@ -405,7 +407,7 @@ class NotificationsRepository(
                 backoffMs = INITIAL_BACKOFF_MS
                 continue
             }
-            delay(backoffMs)
+            delay(retryAfterMs ?: backoffMs)
             backoffMs = (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
         }
     }

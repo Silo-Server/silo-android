@@ -21,6 +21,16 @@ import org.siloserver.silo.model.watchtogether.SuggestionReceipt
 import org.siloserver.silo.model.watchtogether.TransportCommand
 import org.siloserver.silo.model.watchtogether.UpdatePolicyRequest
 import org.siloserver.silo.model.watchtogether.GuestControlPolicy
+import org.siloserver.silo.network.RealtimeBackoff
+import org.siloserver.silo.network.RealtimeSocketClosed
+import org.siloserver.silo.network.RoomWorkKind
+import org.siloserver.silo.network.RoomWorkRequest
+import org.siloserver.silo.watchtogether.RoomWorkRecovery
+import org.siloserver.silo.watchtogether.RoomWorkIdentity
+import org.siloserver.silo.watchtogether.RoomWorkUpdate
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.selects.onTimeout
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.RoomRealtimeEvent
@@ -180,6 +190,16 @@ class WatchTogetherRepository(
         override fun toString(): String = "RoomBinding(roomId=<redacted>, generation=$generation)"
     }
 
+    private val workBackoff = RealtimeBackoff(monotonicNowMs) { random.nextLong(251) }
+    private val workRecovery = RoomWorkRecovery(monotonicNowMs, workBackoff)
+    private var workAdmission = false
+    private var localWorkSession: String? = null
+    private var workReconcileNeeded = false
+    private val workWake = Channel<Unit>(Channel.CONFLATED)
+    private val _workUpdate = MutableStateFlow(RoomWorkUpdate())
+    override val workUpdate: StateFlow<RoomWorkUpdate> = _workUpdate.asStateFlow()
+    override val workAdmissionEnabled: Boolean get() = workAdmission
+
     private val stateMutex = Mutex()
     private val actionMutex = Mutex()
     private val suggestionReadMutex = Mutex()
@@ -328,6 +348,10 @@ class WatchTogetherRepository(
                 authScope = scope,
                 generation = ++nextGeneration,
             )
+            workRecovery.disconnect()
+            publishWorkUpdateLocked()
+            localWorkSession = null
+            workAdmission = false
             binding = installed
             proof = RoomProof(data.roomAccessToken, roomProofExpiryMs(data.roomAccessToken))
             terminalGeneration = null
@@ -711,6 +735,8 @@ class WatchTogetherRepository(
     /** Terminal for this membership: nothing may reopen it. */
     private fun endLocked(lease: RoomBinding, reason: String) {
         val last = _roomSnapshot.value
+        workRecovery.disconnect()
+        publishWorkUpdateLocked()
         terminalGeneration = lease.generation
         _ended.value = WatchPartyEnded(
             roomId = lease.roomId,
@@ -753,14 +779,20 @@ class WatchTogetherRepository(
             }
         }
 
-    override suspend fun attachSession(sessionId: String): Boolean =
-        currentWritableRealtime()?.attachSession(sessionId) ?: false
+    override suspend fun attachSession(sessionId: String): Boolean = if (workAdmission)
+        sendWork(RoomWorkRequest(RoomWorkKind.Attach, "", sessionId = sessionId))
+    else currentWritableRealtime()?.attachSession(sessionId) ?: false
 
     suspend fun transportRequest(
         action: String,
         positionSeconds: Double?,
         isPaused: Boolean,
-    ): Boolean = currentWritableRealtime()?.transportRequest(action, positionSeconds, isPaused) ?: false
+    ): Boolean {
+        if (!workAdmission) return currentWritableRealtime()?.transportRequest(action, positionSeconds, isPaused) ?: false
+        val authority = currentTransportAuthorization() ?: return false
+        return transportRequestForAuthorization(authority, if (action == "seek") RoomTransportIntent.Seek else RoomTransportIntent.PlayPause,
+            action, positionSeconds, isPaused)
+    }
 
     /**
      * Send a user transport intent only while the exact room generation that
@@ -797,6 +829,11 @@ class WatchTogetherRepository(
             }
             currentRealtime to connectionId
         } ?: return false
+        if (workAdmission) return sendWork(
+            RoomWorkRequest(RoomWorkKind.Transport, "", sessionId = authorization.snapshot.attachedSessionId.orEmpty(),
+                action = action, positionSeconds = positionSeconds ?: 0.0, isPaused = isPaused),
+            authorization,
+        )
         return target.first.transportRequestOnConnection(
             connectionId = target.second,
             action = action,
@@ -811,24 +848,121 @@ class WatchTogetherRepository(
         isPaused: Boolean,
         commandId: String?,
         isReady: Boolean,
-    ): Boolean = currentWritableRealtime()?.stateReport(sessionId, positionSeconds, isPaused, commandId, isReady) ?: false
+    ): Boolean = if (workAdmission) sendWork(RoomWorkRequest(RoomWorkKind.Report, "", sessionId, positionSeconds, isPaused, commandId, isReady))
+        else currentWritableRealtime()?.stateReport(sessionId, positionSeconds, isPaused, commandId, isReady) ?: false
 
     override suspend fun ready(
         sessionId: String,
         positionSeconds: Double,
         isPaused: Boolean,
         commandId: String?,
-    ): Boolean = currentWritableRealtime()?.ready(sessionId, positionSeconds, isPaused, commandId) ?: false
+    ): Boolean = if (workAdmission) sendWork(RoomWorkRequest(RoomWorkKind.Ready, "", sessionId, positionSeconds, isPaused, commandId))
+        else currentWritableRealtime()?.ready(sessionId, positionSeconds, isPaused, commandId) ?: false
 
     override suspend fun buffering(
         sessionId: String,
         positionSeconds: Double,
         isPaused: Boolean,
-    ): Boolean = currentWritableRealtime()?.buffering(sessionId, positionSeconds, isPaused) ?: false
+    ): Boolean = if (workAdmission) sendWork(RoomWorkRequest(RoomWorkKind.Buffering, "", sessionId, positionSeconds, isPaused))
+        else currentWritableRealtime()?.buffering(sessionId, positionSeconds, isPaused) ?: false
 
     /** Advisory lobby Ready over the room socket. */
-    suspend fun setLobbyReady(ready: Boolean): Boolean =
-        currentWritableRealtime()?.lobbyReady(ready) ?: false
+    suspend fun setLobbyReady(ready: Boolean): Boolean = if (workAdmission)
+        sendWork(RoomWorkRequest(RoomWorkKind.Lobby, "", isReady = ready))
+    else currentWritableRealtime()?.lobbyReady(ready) ?: false
+
+    override suspend fun cancelDesiredWork(kind: RoomWorkKind) {
+        stateMutex.withLock { workRecovery.cancel(kind, uncertain = kind == RoomWorkKind.Transport); publishWorkUpdateLocked() }
+    }
+
+    private fun workIdentityLocked(kind: RoomWorkKind): RoomWorkIdentity? {
+        val lease = binding ?: return null
+        val room = _roomSnapshot.value ?: return null
+        val connection = _connectionState.value
+        val id = realtimeConnectionId ?: return null
+        if (!isCurrentLocked(lease) || !connection.writable || activeConnectionOwner == null) return null
+        if (kind == RoomWorkKind.Lobby && room.phase != RoomPhase.Lobby) return null
+        if (kind != RoomWorkKind.Lobby && room.phase != RoomPhase.Playing) return null
+        return RoomWorkIdentity(lease.generation, room.roomId, room.selectionRevision, room.generation,
+            connection.epoch, id, localWorkSession ?: room.attachedSessionId, room.selfCanControlTransport,
+            _latestCommand.value?.command?.commandId, room.selfRole.wire)
+    }
+
+    private fun publishWorkUpdateLocked(wake: Boolean = true) {
+        val update = workRecovery.update
+        val previous = _workUpdate.value
+        if (update.sequence != previous.sequence) {
+            _workUpdate.value = update
+            val uncertain = update.uncertaintySequence != previous.uncertaintySequence
+            if (uncertain) workReconcileNeeded = true
+            if (uncertain) _errors.tryEmit("Couldn't confirm the party action. Check the current state before trying again.")
+            else if (update.discarded || update.discardedTransportSequence != previous.discardedTransportSequence)
+                _errors.tryEmit("The party action wasn't applied. Try again.")
+            else if (update.refused) _errors.tryEmit("Party updates are delayed. Retrying when available…")
+        }
+        if (wake) workWake.trySend(Unit)
+    }
+
+    private suspend fun sendWork(request: RoomWorkRequest, authorization: RoomTransportAuthorization? = null): Boolean {
+        var deferred = false
+        val target = stateMutex.withLock {
+            val client = realtime ?: return@withLock null
+            if (request.kind == RoomWorkKind.Attach) localWorkSession = request.sessionId
+            val identity = workIdentityLocked(request.kind) ?: return@withLock null
+            if (authorization != null && (transportAuthorization != authorization ||
+                    !roomTransportAuthorized(authorization.snapshot,
+                        if (request.action == "seek") RoomTransportIntent.Seek else RoomTransportIntent.PlayPause))) return@withLock null
+            // A newer desire cancels the previous request even while its class is cooling down.
+            if (request.kind == RoomWorkKind.Lobby) workRecovery.cancel(request.kind)
+            if (request.kind == RoomWorkKind.Transport && request.action == "seek") workRecovery.supersedeSeek()
+            val correlated = request.copy(requestId = workRecovery.nextId())
+            if (!workRecovery.permitted(request.kind)) {
+                if (request.kind == RoomWorkKind.Lobby) {
+                    workRecovery.deferLobby(correlated, identity)
+                    deferred = true
+                    publishWorkUpdateLocked()
+                }
+                return@withLock null
+            }
+            workRecovery.sent(correlated, identity)
+            publishWorkUpdateLocked()
+            Triple(client, identity.connectionId, correlated)
+        } ?: return deferred
+        val sent = target.first.sendWorkOnConnection(target.second, target.third)
+        if (!sent) stateMutex.withLock {
+            workRecovery.failed(target.third.requestId)
+            publishWorkUpdateLocked()
+        }
+        return sent
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private suspend fun workLoop(lease: RoomBinding, owner: Long) {
+        while (isCurrent(lease, owner)) {
+            val wait = stateMutex.withLock { workRecovery.nextWakeMs() }
+            if (wait == null) workWake.receive() else select<Unit> {
+                workWake.onReceive { }
+                onTimeout(wait) { }
+            }
+            val due = stateMutex.withLock {
+                val requests = workRecovery.due { workIdentityLocked(it) }
+                publishWorkUpdateLocked(wake = false)
+                requests.mapNotNull { request ->
+                    val client = realtime ?: return@mapNotNull null
+                    val identity = workIdentityLocked(request.kind) ?: return@mapNotNull null
+                    Triple(client, identity.connectionId, request)
+                }
+            }
+            val reconcile = stateMutex.withLock { workReconcileNeeded.also { workReconcileNeeded = false } }
+            if (reconcile) reconcileRoom(lease)
+            for ((client, connectionId, request) in due) {
+                val current = stateMutex.withLock { workRecovery.retryStillCurrent(request, workIdentityLocked(request.kind)) }
+                if (!current) continue
+                val sent = client.sendWorkOnConnection(connectionId, request)
+                if (!sent) stateMutex.withLock { workRecovery.failed(request.requestId); publishWorkUpdateLocked() }
+            }
+        }
+    }
 
     // ---- WS lifecycle ------------------------------------------------------------
 
@@ -868,8 +1002,9 @@ class WatchTogetherRepository(
         try {
             coroutineScope {
                 val renewal = if (timing.backgroundWork) launch { renewProofLoop(lease, owner) } else null
-                socketLoop(lease, owner, client, this)
-                renewal?.cancel()
+                val work = launch { workLoop(lease, owner) }
+                try { socketLoop(lease, owner, client, this) }
+                finally { renewal?.cancel(); work.cancel() }
             }
         } finally {
             withContext(NonCancellable) { clearRealtimeIfCurrent(lease, client, owner) }
@@ -890,12 +1025,17 @@ class WatchTogetherRepository(
             val token = proofToken(lease) ?: break
             var openedAtMs: Long? = null
             var sawSnapshot = false
+            var shieldNotice = false
             var end: AttemptEnd = AttemptEnd.Transport(null)
             var pings: Job? = null
             try {
+                stateMutex.withLock { workAdmission = false }
                 client.connect(lease.roomId, token, lease.authScope).collect { event ->
                     if (!isCurrent(lease, owner)) throw ObsoleteBinding
                     when (event) {
+                        is RoomRealtimeEvent.Admission -> stateMutex.withLock {
+                            workAdmission = event.capability?.supported == true
+                        }
                         RoomRealtimeEvent.Opened -> {
                             openedAtMs = monotonicNowMs()
                             stateMutex.withLock { connectionClockSamples = 0 }
@@ -915,7 +1055,9 @@ class WatchTogetherRepository(
                             throw AttemptStopped
                         }
                         is RoomRealtimeEvent.TransportTerminated -> {
-                            end = AttemptEnd.Transport(event.cause)
+                            val failure = event.cause
+                            end = AttemptEnd.Transport(if (shieldNotice && failure is RealtimeSocketClosed && failure.code?.toInt() == 1008)
+                                RealtimeSocketClosed(failure.code, "realtime input shield") else failure)
                             throw AttemptStopped
                         }
                         is RoomRealtimeEvent.Malformed -> scope.launch { reconcileRoom(lease) }
@@ -923,6 +1065,7 @@ class WatchTogetherRepository(
                             if (event is RoomRealtimeEvent.SnapshotEvent && event.room.roomId == lease.roomId) {
                                 sawSnapshot = true
                             }
+                            if (event is RoomRealtimeEvent.Error && event.code == "realtime_input_limited") shieldNotice = true
                             fold(lease, owner, event)
                         }
                     }
@@ -985,6 +1128,9 @@ class WatchTogetherRepository(
                 }
             }
             if (!isCurrent(lease, owner)) break
+            val cause = (end as? AttemptEnd.Transport)?.cause
+            val ticket = cause as? RoomTicketRefusedException
+            val shield = (cause as? RealtimeSocketClosed)?.inputShield == true
             val now = monotonicNowMs()
             val opened = openedAtMs
             if (opened != null && sawSnapshot) {
@@ -994,7 +1140,7 @@ class WatchTogetherRepository(
                     lastHealthyMs = now
                     failures = 0
                     backoffIndex = 0
-                    continue
+                    if (!workBackoff.overloaded && cause !is RealtimeSocketClosed && ticket?.status !in setOf(429, 503)) continue
                 }
             }
             failures++
@@ -1003,7 +1149,10 @@ class WatchTogetherRepository(
                 break
             }
             val step = timing.backoffMs[backoffIndex.coerceAtMost(timing.backoffMs.lastIndex)]
-            delay(step + random.nextLong(0L, step / 4 + 1))
+            val wait = if (workAdmission || shield || ticket?.status in setOf(429, 503)) workBackoff.disconnected(
+                minimumMs = ticket?.retryAfterMs ?: 0, unavailableFailure = ticket?.status == 503, inputShield = shield,
+            ) else step + random.nextLong(0L, step / 4 + 1)
+            delay(wait)
             backoffIndex = (backoffIndex + 1).coerceAtMost(timing.backoffMs.lastIndex)
         }
     }
@@ -1116,6 +1265,8 @@ class WatchTogetherRepository(
                 realtimeGeneration = null
                 realtimeConnectionId = null
                 activeConnectionOwner = null
+                workRecovery.disconnect()
+                publishWorkUpdateLocked()
                 _connectionState.value = _connectionState.value.copy(writable = false)
                 refreshTransportAuthorizationLocked()
             }
@@ -1151,6 +1302,8 @@ class WatchTogetherRepository(
                     disconnectedAtMs = previous.disconnectedAtMs ?: monotonicNowMs(),
                 )
                 realtimeConnectionId = null
+                workRecovery.disconnect()
+                publishWorkUpdateLocked()
                 refreshTransportAuthorizationLocked()
             }
         }
@@ -1186,6 +1339,12 @@ class WatchTogetherRepository(
                                 playbackSessionId = sessionId,
                             )
                         }
+                    if (workAdmission) {
+                        workBackoff.useful()
+                        if (room.phase != RoomPhase.Lobby) workRecovery.cancel(RoomWorkKind.Lobby)
+                        else room.selfMember?.let { workRecovery.echoLobby(it.lobbyReady, workIdentityLocked(RoomWorkKind.Lobby)) }
+                        publishWorkUpdateLocked()
+                    }
                     refreshTransportAuthorizationLocked()
                 }
                 is RoomRealtimeEvent.SuggestionsEvent -> {
@@ -1220,9 +1379,18 @@ class WatchTogetherRepository(
                         _clock.value = clockEstimator.estimate
                     }
                 }
-                is RoomRealtimeEvent.Error ->
-                    // Transient, NON-terminal: a rejected request must not end the party.
+                is RoomRealtimeEvent.Error -> {
+                    if (workAdmission) {
+                        workRecovery.refused(event.refusal)
+                        publishWorkUpdateLocked()
+                    }
                     _errors.tryEmit(event.message.ifBlank { event.code })
+                }
+                is RoomRealtimeEvent.ActionResult -> if (workAdmission && event.status == "applied") {
+                    workRecovery.applied(event.requestId, event.action, workIdentityLocked(RoomWorkKind.Lobby))
+                    publishWorkUpdateLocked()
+                }
+                is RoomRealtimeEvent.Admission -> Unit
                 RoomRealtimeEvent.Opened,
                 is RoomRealtimeEvent.Closed,
                 is RoomRealtimeEvent.ConnectionReplaced,
@@ -1248,6 +1416,8 @@ class WatchTogetherRepository(
     /** Clear all room state on leave or identity change. The connect() loop ends via scope cancellation. */
     override suspend fun reset() {
         stateMutex.withLock {
+            workRecovery.disconnect()
+            publishWorkUpdateLocked()
             nextGeneration++
             latestRoomRequest++
             binding = null

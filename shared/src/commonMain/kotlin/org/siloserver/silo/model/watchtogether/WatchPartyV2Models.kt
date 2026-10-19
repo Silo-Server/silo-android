@@ -24,6 +24,7 @@ data class WatchTogetherCapabilitiesV2(
     @SerialName("stop_playback") val stopPlayback: Boolean = false,
     @SerialName("max_member_state_ids") val maxMemberStateIds: Int = 0,
     @SerialName("socket_protocol") val socketProtocol: String = "",
+    @SerialName("work_admission") val workAdmission: org.siloserver.silo.network.RealtimeWorkAdmission? = null,
 )
 
 /** One member's watch state for one content id (`POST .../member-state`). */

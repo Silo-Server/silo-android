@@ -36,7 +36,7 @@ sealed class HomeRealtimeEvent {
     object CatalogChanged : HomeRealtimeEvent()
 
     /** The socket closed (or failed to connect). The coordinator reconnects. */
-    data class Closed(val reason: String? = null) : HomeRealtimeEvent()
+    data class Closed(val reason: String? = null, val retryAfterMs: Long? = null) : HomeRealtimeEvent()
 }
 
 /**
@@ -52,14 +52,22 @@ class DefaultHomeRealtimeClient(
     private val json: Json = SiloJson,
 ) : HomeRealtimeClient {
 
-    override fun connect(): Flow<HomeRealtimeEvent> = socket.frames(listOf(CHANNEL_USER_STATE, CHANNEL_CATALOG))
+    private val recovery = RealtimeBackoff()
+
+    override fun connect(): Flow<HomeRealtimeEvent> = socket.frames(listOf(CHANNEL_USER_STATE, CHANNEL_CATALOG), recovery)
         .mapNotNull { decodeHomeRealtimeFrame(json, it) }
-        .onCompletion { cause -> if (cause == null) emit(HomeRealtimeEvent.Closed()) }
+        .onCompletion { cause -> if (cause == null) emit(HomeRealtimeEvent.Closed(retryAfterMs = recovery.disconnected())) }
         .catch { error ->
             if (error is kotlinx.coroutines.CancellationException) throw error
             val reason = if (error is org.siloserver.silo.network.apiv2.EventsTicketFailure)
                 "ticket_error_${error.code}" else "socket_error"
-            emit(HomeRealtimeEvent.Closed(reason))
+            val ticket = error as? org.siloserver.silo.network.apiv2.EventsTicketFailure
+            val wait = recovery.disconnected(
+                minimumMs = ticket?.retryAfterMs ?: 0,
+                unavailableFailure = ticket?.code == 503,
+                inputShield = (error as? RealtimeSocketClosed)?.inputShield == true,
+            )
+            emit(HomeRealtimeEvent.Closed(reason, wait))
         }
 
     companion object {

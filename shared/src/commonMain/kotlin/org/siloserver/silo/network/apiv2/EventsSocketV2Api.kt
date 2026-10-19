@@ -38,12 +38,12 @@ class EventsSocketV2Api(
         }
     }
 
-    fun frames(channels: List<String>): Flow<String> = flow {
+    fun frames(channels: List<String>, recovery: RealtimeBackoff = RealtimeBackoff()): Flow<String> = flow {
         val scope = tokens.snapshotCurrentScope() ?: return@flow
         val mintedAt = TimeSource.Monotonic.markNow()
         val proof = when (val result = ticket(scope)) {
             is ApiResult.Success -> result.data
-            is ApiResult.Error -> throw EventsTicketFailure(result.code)
+            is ApiResult.Error -> throw EventsTicketFailure(result.code, result.retryAfterMs)
             is ApiResult.NetworkError -> throw EventsTicketFailure(0)
         }
         if (!current(scope) || mintedAt.elapsedNow().inWholeMilliseconds >= proof.expiresIn * 1000L) return@flow
@@ -52,7 +52,7 @@ class EventsSocketV2Api(
         // Do not retry this upgrade, even on a lost handshake response: its
         // single-use proof may already be consumed. Reconnect collects afresh.
         withTimeoutOrNull(proof.maxConnectionSeconds * 1000L) {
-            client.webSocket(request = { eventsUpgrade(scope, proof, channels) }) {
+            client.webSocket(request = { eventsUpgrade(scope, proof, null) }) {
                 check(call.response.headers[HttpHeaders.SecWebSocketProtocol] == EVENTS_PROTOCOL)
                 if (!current(scope)) return@webSocket
                 val session = this
@@ -75,27 +75,38 @@ class EventsSocketV2Api(
                     accessChanges?.reportAccessChanged(connectedAt)
                 }
                 try {
-                    send(Frame.Text(SiloJson.encodeToString(WsSubscribe.serializer(),WsSubscribe(channels = channels))))
                     var identityLost = false
-                    for (frame in incoming) {
-                        if (!current(scope)) {
-                            identityLost = true
-                            break
-                        }
-                        if (frame is Frame.Text) {
-                            val text = frame.readText()
-                            if (isAccessChangedFrame(text)) reportAccessChange()
-                            this@flow.emit(text)
-                        }
+                    var shieldNotice = false
+                    EventSelectionSession(recovery, proof.workAdmission?.supported == true).frames(
+                        initial = channels,
+                        receive = {
+                            var text: String? = null
+                            while (text == null) {
+                                val frame = incoming.receiveCatching().getOrNull() ?: break
+                                if (frame is Frame.Text) text = frame.readText()
+                            }
+                            text
+                        },
+                        transmit = { send(Frame.Text(it)) },
+                        current = { current(scope).also { if (!it) identityLost = true } },
+                    ).collect { text ->
+                        if (isAccessChangedFrame(text)) reportAccessChange()
+                        if (runCatching { SiloJson.decodeFromString(RealtimeRefusal.serializer(), text).code }.getOrNull() == "realtime_input_limited") shieldNotice = true
+                        this@flow.emit(text)
                     }
-                    if (!identityLost && isAccessChangedClose(closeReasonIfClosed())) reportAccessChange()
+                    if (!identityLost) {
+                        val reason = closeReasonIfClosed()
+                        if (isAccessChangedClose(reason)) reportAccessChange()
+                        if (reason?.code?.toInt() == 1008) throw RealtimeSocketClosed(reason.code,
+                            if (shieldNotice) "realtime input shield" else reason.message)
+                    }
                 } finally { authorityWatcher.cancel() }
             }
         }
     }
 }
 
-internal class EventsTicketFailure(val code: Int) : Exception("Realtime ticket unavailable")
+internal class EventsTicketFailure(val code: Int, val retryAfterMs: Long? = null) : Exception("Realtime ticket unavailable")
 
 /** Whether [raw] is the server's `{"type":"access_changed"}` notice. */
 internal fun isAccessChangedFrame(raw: String): Boolean = try {
@@ -129,7 +140,7 @@ internal fun validTicket(ticket: WsTicketResponse): Boolean =
     ticket.protocol == EVENTS_PROTOCOL && ticket.expiresIn in 1..30 && ticket.maxConnectionSeconds in 1..300 &&
         ticket.ticket.isNotEmpty() && ticket.ticket.all { it.isLetterOrDigit() && it.code < 128 || it in "!#$%&'*+-.^_`|~" }
 
-internal fun HttpRequestBuilder.eventsUpgrade(scope: AuthScopeSnapshot, ticket: WsTicketResponse, channels: List<String>) {
+internal fun HttpRequestBuilder.eventsUpgrade(scope: AuthScopeSnapshot, ticket: WsTicketResponse, channels: List<String>?) {
     require(validTicket(ticket))
     url {
         takeFrom(scope.serverUrl)
@@ -138,7 +149,7 @@ internal fun HttpRequestBuilder.eventsUpgrade(scope: AuthScopeSnapshot, ticket: 
         protocol = if (protocol == URLProtocol.HTTPS) URLProtocol.WSS else URLProtocol.WS
         encodedPath = "/api/v2/events/ws"
         parameters.clear(); fragment = ""
-        parameters.append("channels",channels.joinToString(","))
+        if (channels != null) parameters.append("channels",channels.joinToString(","))
     }
     // Pin routing but send only the ticket protocols, never bearer/PIN headers.
     authScope(scope); skipSiloAuth(); singleAttempt()

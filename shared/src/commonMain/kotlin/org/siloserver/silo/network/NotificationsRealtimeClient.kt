@@ -36,7 +36,7 @@ sealed class NotificationRealtimeEvent {
     object Invalidate : NotificationRealtimeEvent()
 
     /** The socket closed (or failed to connect). The repository reconnects. */
-    data class Closed(val reason: String? = null) : NotificationRealtimeEvent()
+    data class Closed(val reason: String? = null, val retryAfterMs: Long? = null) : NotificationRealtimeEvent()
 }
 
 /**
@@ -52,14 +52,22 @@ class DefaultNotificationsRealtimeClient(
     private val json: Json = SiloJson,
 ) : NotificationsRealtimeClient {
 
-    override fun connect(): Flow<NotificationRealtimeEvent> = socket.frames(listOf(NotificationRealtime.Channel))
+    private val recovery = RealtimeBackoff()
+
+    override fun connect(): Flow<NotificationRealtimeEvent> = socket.frames(listOf(NotificationRealtime.Channel), recovery)
         .mapNotNull { decodeRealtimeFrame(json, it) }
-        .onCompletion { cause -> if (cause == null) emit(NotificationRealtimeEvent.Closed()) }
+        .onCompletion { cause -> if (cause == null) emit(NotificationRealtimeEvent.Closed(retryAfterMs = recovery.disconnected())) }
         .catch { error ->
             if (error is kotlinx.coroutines.CancellationException) throw error
             val reason = if (error is org.siloserver.silo.network.apiv2.EventsTicketFailure)
                 "ticket_error_${error.code}" else "socket_error"
-            emit(NotificationRealtimeEvent.Closed(reason))
+            val ticket = error as? org.siloserver.silo.network.apiv2.EventsTicketFailure
+            val wait = recovery.disconnected(
+                minimumMs = ticket?.retryAfterMs ?: 0,
+                unavailableFailure = ticket?.code == 503,
+                inputShield = (error as? RealtimeSocketClosed)?.inputShield == true,
+            )
+            emit(NotificationRealtimeEvent.Closed(reason, wait))
         }
 
 }
