@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.player
 
 import android.os.SystemClock
+import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
@@ -24,7 +25,7 @@ import java.util.IdentityHashMap
  * request do count: a progressive request held open while the buffer is full
  * reads low, which keeps the figure a lower bound.
  */
-@UnstableApi
+@OptIn(UnstableApi::class)
 class PlaybackThroughputMeter(
     private val clock: () -> Long = { SystemClock.elapsedRealtime() },
 ) : TransferListener {
