@@ -109,9 +109,9 @@ class GenericEventsTransportTest {
     @Test fun bothCallersMeasureFromFirstAckAndKeepFreshSingleUseProofs() = runTest {
         withSocket(script = {
             delay(60_000) // Time since open must not count.
-            incoming.send(Frame.Text("""{"type":"subscribed"}"""))
+            incoming.send(Frame.Text("""{"type":"subscribed","channels":["notifications"]}"""))
             delay(20_000)
-            incoming.send(Frame.Text("""{"type":"subscribed"}"""))
+            incoming.send(Frame.Text("""{"type":"subscribed","channels":["notifications"]}"""))
             delay(10_000)
             finish()
         }) { socket, engine ->
@@ -130,7 +130,7 @@ class GenericEventsTransportTest {
 
     @Test fun noAckAtFullLifetimeIsUnhealthyButAcceptedLifetimeIsHealthy() = runTest {
         for (ack in listOf(false, true)) withSocket(script = {
-            if (ack) incoming.send(Frame.Text("""{"type":"subscribed"}"""))
+            if (ack) incoming.send(Frame.Text("""{"type":"subscribed","channels":["notifications"]}"""))
             awaitCancellation()
         }) { socket, engine ->
             val close = assertIs<HomeRealtimeEvent.Closed>(DefaultHomeRealtimeClient(socket).connect().toList().last())
@@ -142,7 +142,7 @@ class GenericEventsTransportTest {
 
     @Test fun shortAcceptedConnectionsStayOnTheFailureLadder() = runTest {
         withSocket(script = {
-            incoming.send(Frame.Text("""{"type":"subscribed"}"""))
+            incoming.send(Frame.Text("""{"type":"subscribed","channels":["notifications"]}"""))
             delay(29_999)
             finish()
         }) { socket, _ ->
@@ -153,6 +153,29 @@ class GenericEventsTransportTest {
             assertEquals(29_999, notifications.recovery.acceptedForMs)
             assertEquals(5_000, recovery.disconnected(home.recovery))
             assertEquals(10_000, recovery.disconnected(notifications.recovery))
+        }
+    }
+
+    @Test fun bothCallersRejectUnacceptedAcksAndMeasureLateAcceptance() = runTest {
+        for (ack in listOf(
+            """{"type":"subscribed"}""",
+            """{"type":"subscribed","channels":[]}""",
+            """{"type":"subscribed","channels":[],"rejected":[{"channel":"notifications","code":"forbidden"}]}""",
+        )) for (lateAcceptance in listOf(false, true)) withSocket(script = {
+            incoming.send(Frame.Text(ack))
+            delay(29_000)
+            if (lateAcceptance) incoming.send(Frame.Text("""{"type":"subscribed","channels":["notifications"]}"""))
+            delay(1_000)
+            finish()
+        }) { socket, engine ->
+            val home = assertIs<HomeRealtimeEvent.Closed>(DefaultHomeRealtimeClient(socket).connect().toList().last())
+            val notifications = assertIs<NotificationRealtimeEvent.Closed>(DefaultNotificationsRealtimeClient(socket).connect().toList().last())
+            assertEquals(if (lateAcceptance) 1_000L else null, home.recovery.acceptedForMs, ack)
+            assertEquals(home.recovery, notifications.recovery)
+            val backoff = GenericEventsBackoff { 0.0 }
+            assertEquals(5_000, backoff.disconnected(home.recovery))
+            assertEquals(10_000, backoff.disconnected(notifications.recovery))
+            assertEquals(2, engine.mints)
         }
     }
 
@@ -205,7 +228,7 @@ class GenericEventsTransportTest {
             runCurrent()
             assertEquals(1, engine.sessions.size)
             owner = owner.copy(profileId = "replacement", identityGeneration = 2)
-            engine.sessions.single().incoming.send(Frame.Text("""{"type":"subscribed"}"""))
+            engine.sessions.single().incoming.send(Frame.Text("""{"type":"subscribed","channels":["notifications"]}"""))
             runCurrent()
             assertTrue(events.none { it is HomeRealtimeEvent.Connected })
             job.cancelAndJoin()

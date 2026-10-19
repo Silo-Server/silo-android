@@ -624,6 +624,37 @@ class NotificationsRepositoryTest {
         job.cancel()
     }
 
+    @Test
+    fun `notification boundary replacement is observed before initial collection`() = kotlinx.coroutines.test.runTest {
+        val barrier = org.siloserver.silo.network.IdentityStartupFixture(backgroundScope)
+        val startsDuringMutation = mutableListOf<Boolean>()
+        var active = 0
+        var peak = 0
+        val realtime = object : org.siloserver.silo.network.NotificationsRealtimeClient {
+            override fun connect() = kotlinx.coroutines.flow.flow<NotificationRealtimeEvent> {
+                startsDuringMutation += barrier.mutating
+                active++
+                peak = maxOf(peak, active)
+                try { awaitCancellation() } finally { active-- }
+            }
+        }
+        val repo = NotificationsRepository(FakeNotificationsApi(), realtimeFactory = { realtime }, identityTransitions = barrier)
+        val job = repo.connectRealtime(backgroundScope)
+        testScheduler.runCurrent()
+        assertTrue(barrier.mutating)
+        assertTrue(startsDuringMutation.none { it }, "no collection may start in the post-barrier mutation")
+        assertEquals(0, active, "WILL_CHANGE must cancel initial collection")
+        barrier.release.complete(Unit)
+        testScheduler.runCurrent()
+        assertEquals(listOf(false), startsDuringMutation, "initial epoch work may be canceled before the client starts")
+        assertEquals(1, active)
+        assertEquals(1, peak)
+        barrier.replacing.join()
+        job.cancel()
+        job.join()
+        assertEquals(0, active)
+    }
+
     // ---- atomic mutate consistency -------------------------------------------
 
     /**

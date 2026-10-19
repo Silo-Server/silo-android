@@ -4,6 +4,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import org.siloserver.silo.model.notifications.WsFrameEnvelope
+import org.siloserver.silo.model.notifications.WsSubscribed
 import org.siloserver.silo.network.GenericEventsClose
 import org.siloserver.silo.network.SiloJson
 import kotlin.time.TimeSource
@@ -16,8 +17,11 @@ internal class GenericEventsAttempt(private val nowMs: () -> Long = { origin.ela
     var accessChanged = false
 
     fun frame(raw: String) {
+        if (acceptedAt != null) return
         val envelope = runCatching { SiloJson.decodeFromString(WsFrameEnvelope.serializer(), raw) }.getOrNull()
-        if (envelope?.type == "subscribed" && acceptedAt == null) acceptedAt = nowMs()
+        if (envelope?.type != "subscribed") return
+        val subscribed = runCatching { SiloJson.decodeFromString(WsSubscribed.serializer(), raw) }.getOrNull()
+        if (subscribed?.type == "subscribed" && subscribed.channels.isNotEmpty()) acceptedAt = nowMs()
     }
 
     fun ended() { if (endedAt == null) endedAt = nowMs() }

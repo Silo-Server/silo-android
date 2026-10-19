@@ -79,6 +79,34 @@ class HomeGenericEventsRecoveryTest {
         job.cancelAndJoin()
     }
 
+    @Test fun boundaryReplacementIsObservedBeforeInitialHomeCollection() = runTest {
+        val transitions = IdentityStartupFixture(backgroundScope)
+        val startsDuringMutation = mutableListOf<Boolean>()
+        var active = 0
+        var peak = 0
+        val client = object : HomeRealtimeClient {
+            override fun connect() = flow<HomeRealtimeEvent> {
+                startsDuringMutation += transitions.mutating
+                active++
+                peak = maxOf(peak, active)
+                try { awaitCancellation() } finally { active-- }
+            }
+        }
+        val job = HomeRealtimeCoordinator(client, TokenManagerImpl(), identityTransitions = transitions).connect(backgroundScope)
+        runCurrent()
+        assertTrue(transitions.mutating)
+        assertTrue(startsDuringMutation.none { it }, "no collection may start in the post-barrier mutation")
+        assertEquals(0, active, "WILL_CHANGE must cancel initial collection")
+        transitions.release.complete(Unit)
+        runCurrent()
+        assertEquals(2, startsDuringMutation.size)
+        assertEquals(1, active)
+        assertEquals(1, peak)
+        transitions.replacing.join()
+        job.cancelAndJoin()
+        assertEquals(0, active)
+    }
+
     @Test fun replacementCancelsOldRetryBeforeStartingNewIdentity() = runTest {
         for (kind in listOf(IdentityTransitionKind.ACCOUNT_REPLACE, IdentityTransitionKind.PROFILE_SWITCH)) {
             val transitions = DefaultIdentityTransitionBarrier()

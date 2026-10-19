@@ -1,9 +1,12 @@
 package org.siloserver.silo.network
 
 import io.ktor.http.fromHttpToGmtDate
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import org.siloserver.silo.network.apiv2.GenericEventsAttempt
 import kotlin.test.*
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class GenericEventsRecoveryTest {
     @Test fun failedAndShortAttemptsAdvanceToCappedFloor() {
         val recovery = GenericEventsBackoff { 0.0 }
@@ -63,13 +66,61 @@ class GenericEventsRecoveryTest {
         attempt.frame("""{"type":"hello"}""")
         attempt.frame("""{"type":"snapshot","channel":"notifications","data":[]}""")
         assertNull(attempt.closed().acceptedForMs, "an open socket and useful data are not an ACK")
-        attempt.frame("""{"type":"subscribed"}""")
+        attempt.frame("""{"type":"subscribed","channels":["notifications"]}""")
         now += 29_999
-        attempt.frame("""{"type":"subscribed"}""")
+        attempt.frame("""{"type":"subscribed","channels":["notifications"]}""")
         assertEquals(29_999, attempt.closed().acceptedForMs)
         now++
         attempt.ended()
         now += 10_000
         assertEquals(30_000, attempt.closed().acceptedForMs, "cleanup does not count as uptime")
     }
+
+    @Test fun bareEmptyAndAllRejectedAcksNeverQualifyAsAccepted() {
+        for (ack in listOf(
+            """{"channels":["notifications"]}""",
+            """{"type":"subscribed"}""",
+            """{"type":"subscribed","channels":[]}""",
+            """{"type":"subscribed","channels":[],"rejected":[{"channel":"notifications","code":"forbidden"}]}""",
+        )) {
+            var now = 0L
+            val attempt = GenericEventsAttempt { now }
+            attempt.frame(ack)
+            now = 300_000
+            attempt.ended()
+            assertNull(attempt.closed().acceptedForMs, ack)
+            assertEquals(5_000, GenericEventsBackoff { 0.0 }.disconnected(attempt.closed()), ack)
+        }
+    }
+
+    @Test fun emptyAckDoesNotBackdateLaterAcceptedChannels() {
+        var now = 0L
+        val attempt = GenericEventsAttempt { now }
+        attempt.frame("""{"type":"subscribed","channels":[]}""")
+        now = 29_000
+        attempt.frame("""{"type":"subscribed","channels":["notifications"]}""")
+        now = 30_000
+        attempt.ended()
+        assertEquals(1_000, attempt.closed().acceptedForMs)
+        assertEquals(5_000, GenericEventsBackoff { 0.0 }.disconnected(attempt.closed()))
+    }
+
+    @Test fun longRetryAfterSaturatesAndRemainsCancelableWithoutImmediateRetry() = kotlinx.coroutines.test.runTest {
+        val floor = genericEventsRetryAfter(Long.MAX_VALUE.toString())!!
+        assertEquals(Long.MAX_VALUE / 1000 * 1000, floor)
+        val delayMs = GenericEventsBackoff { 1.0 }.disconnected(GenericEventsClose(retryAfterMs = floor))
+        assertEquals(Long.MAX_VALUE, delayMs)
+        var retries = 0
+        val job = backgroundScope.launch {
+            kotlinx.coroutines.delay(delayMs)
+            retries++
+        }
+        testScheduler.runCurrent()
+        testScheduler.advanceTimeBy(Int.MAX_VALUE.toLong() + 60_000)
+        testScheduler.runCurrent()
+        assertEquals(0, retries, "a delay beyond browser timer range must not wrap")
+        job.cancelAndJoin()
+        assertEquals(0, retries)
+    }
+
 }
