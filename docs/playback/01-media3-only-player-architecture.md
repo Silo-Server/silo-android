@@ -289,13 +289,15 @@ runs it, and `SpeedTestMeter` (`shared/`) holds its arithmetic, which
   rate proves it; a lower bound proves it only while it is at least the
   current target, so a raised target makes the test due again. A check that
   fails or is refused waits for the next one, and after a `429` none tests
-  before its `Retry-After`. **Test speed** always runs the accurate test.
+  that server before its `Retry-After`. **Test speed** always runs the accurate test.
   Leaving the foreground stops it.
 - **When not.** Never on a metered or cellular network (`metered || cellular`
   in `PlaybackNetworkSnapshot`, so a VPN Android marks metered is skipped too),
   and never while local media plays or loads. The process's one Media3 player
   (`ActivePlayerHolder`) is the playing signal. A video start also tells the
-  probe, which cancels a running test and holds off new ones for 60 s.
+  probe, which cancels a running test and holds off automatic tests for 60 s.
+  A check still reads the server's readings while media plays, since the next
+  start needs them, and **Test speed** runs as soon as nothing plays.
 - **Reading.** A probe and a playback sample, each current while younger than
   the lifetime, for the server and network they were taken on. Playback starts
   send the highest current one. A network change (lost, or another network

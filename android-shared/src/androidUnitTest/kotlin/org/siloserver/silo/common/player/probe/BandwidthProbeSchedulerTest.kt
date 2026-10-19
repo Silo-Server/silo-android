@@ -358,13 +358,88 @@ class BandwidthProbeSchedulerTest {
     }
 
     @Test
-    fun aPlaybackStartHoldsProbesOffForTheQuietPeriod() = runTest {
+    fun aPlaybackStartHoldsChecksOffForTheQuietPeriod() = runTest {
         val harness = Harness(this)
         harness.scheduler.playbackStarting()
+        harness.foreground()
+        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
+        assertEquals(1, harness.server.storedChecks)
+        assertEquals(0, harness.server.downloads)
+
+        advanceTimeBy(PLAYBACK_START_QUIET_MS)
+        harness.scheduler.onBackground()
+        harness.foreground()
+        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
+        assertEquals(1, harness.server.downloads)
+    }
+
+    @Test
+    fun testSpeedRunsAsSoonAsPlaybackEnds() = runTest {
+        val harness = Harness(this)
+        harness.scheduler.playbackStarting()
+        harness.media.value = true
         runCurrent()
         assertEquals(ProbeOutcome.PlaybackActive, harness.scheduler.runNow())
-        advanceTimeBy(PLAYBACK_START_QUIET_MS)
+        harness.media.value = false
+        runCurrent()
         assertIs<ProbeOutcome.Measured>(harness.scheduler.runNow())
+    }
+
+    @Test
+    fun aCheckDuringPlaybackStillTakesTheServersReading() = runTest {
+        val harness = Harness(this)
+        harness.server.stored = harness.storedReading(48_000, ageMs = 60_000)
+        harness.foreground()
+        harness.media.value = true
+        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
+        assertEquals(1, harness.server.storedChecks)
+        assertEquals(0, harness.server.downloads)
+        assertEquals(48_000, harness.scheduler.freshEstimateKbps(), "the next start sends it")
+    }
+
+    @Test
+    fun aStartDuringTheCheckLetsItFinishReadingButNotTest() = runTest {
+        val harness = Harness(this)
+        val reading = CompletableDeferred<StoredReadingLookup>()
+        val server = object : BandwidthProbeServer by harness.server {
+            override suspend fun storedReading(target: BandwidthProbeTarget) = reading.await()
+        }
+        val scheduler = BandwidthProbeScheduler(
+            server = server,
+            network = harness.network,
+            mediaActive = harness.media,
+            activeServer = harness.activeServer,
+            scope = backgroundScope,
+            probe = BandwidthProbe(clock = { currentTime }),
+            elapsedClock = { currentTime },
+            wallClock = { 1_760_000_000_000 + currentTime },
+        ).also { it.observe() }
+        scheduler.onForeground()
+        advanceThrough(PROBE_START_DELAY_MS)
+        scheduler.playbackStarting()
+        runCurrent()
+        reading.complete(harness.storedReading(30_000, ageMs = 60_000, lowerBound = true))
+        advanceThrough(QUICK_TEST_MS)
+        assertEquals(0, harness.server.downloads)
+        assertEquals(30_000, scheduler.freshEstimateKbps())
+    }
+
+    @Test
+    fun aRateLimitHoldsOnlyTheServerThatSentIt() = runTest {
+        val harness = Harness(this)
+        harness.server.answer = { read -> read(BandwidthProbeResponseV2.RateLimited(600)) }
+        harness.foreground()
+        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
+        assertEquals(1, harness.server.downloads)
+
+        harness.server.answer = { read -> read(BandwidthProbeResponseV2.Body { delay(100); 1_000_000 }) }
+        harness.server.serve(probeTarget().let {
+            BandwidthProbeTarget("server-2", it.url, AuthScopeSnapshot("server-2", "profile-1", "https://two.example", null))
+        })
+        harness.activeServer.value = "server-2"
+        runCurrent()
+        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
+        assertEquals(2, harness.server.downloads)
     }
 
     @Test

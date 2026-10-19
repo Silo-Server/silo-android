@@ -273,15 +273,17 @@ class PlaybackV2BandwidthProbeServer(
  *   server's readings ([BandwidthProbeServer.storedReading]) and runs the quick
  *   test only when automatic tests are on and no current reading proves the
  *   link. A check that fails or is refused waits for the next one, and after a
- *   `429` none tests before its `Retry-After`. Leaving the foreground stops the
- *   checks and any running test.
+ *   `429` none tests that server before its `Retry-After`. Leaving the
+ *   foreground stops the checks and any running test.
  * - **Test speed** ([runNow]) runs the accurate test, whatever the readings or
  *   the automatic setting. It replaces a running automatic check rather than
  *   joining it.
- * - **Not**: while media plays or starts ([mediaActive], [playbackStarting],
- *   then [PLAYBACK_START_QUIET_MS]), on a metered or cellular network, or for
- *   a server without `connection_speed_v1`. Media starting cancels a running
- *   test.
+ * - **Not**: no test while media plays or starts ([mediaActive],
+ *   [playbackStarting], then [PLAYBACK_START_QUIET_MS] for checks), on a
+ *   metered or cellular network, or for a server without
+ *   `connection_speed_v1`. A check still reads the server's readings while
+ *   media plays, since the next start needs them; media starting cancels a
+ *   running test, not that read.
  * - **Reporting**: every result is POSTed with the transport it was taken on,
  *   and `lower_bound` when it is one.
  *
@@ -315,6 +317,9 @@ class BandwidthProbeScheduler(
     private class ProbeRun(val manual: Boolean) {
         lateinit var result: Deferred<ProbeOutcome>
         @Volatile var cancelledFor: ProbeOutcome? = null
+
+        /** Past reading the server's readings and into the download. */
+        @Volatile var testing = false
     }
 
     private val context = requireNotNull(scope.coroutineContext[ContinuationInterceptor]) {
@@ -330,8 +335,8 @@ class BandwidthProbeScheduler(
     private var timer: Job? = null
     private var inFlight: ProbeRun? = null
 
-    /** After a `429`, no automatic check tests before this time. */
-    private var notBeforeElapsedMs: Long? = null
+    /** After a `429`: the server that sent it, and the time before which no automatic check tests it. */
+    private var rateLimit: Pair<String, Long>? = null
 
     private val _lastMeasurement = MutableStateFlow<BandwidthEstimate?>(null)
 
@@ -381,17 +386,18 @@ class BandwidthProbeScheduler(
 
     override fun playbackStarting() {
         lastPlaybackAtElapsedMs = elapsedClock()
-        scope.launch { cancelInFlight(ProbeOutcome.PlaybackActive) }
+        scope.launch { cancelTest(ProbeOutcome.PlaybackActive) }
     }
 
     /**
      * **Test speed**: runs the accurate test now, in the foreground, and
      * reports the result. Refuses as the checks do, except that a current
-     * reading and the automatic setting do not matter. Replaces a running
+     * reading, the automatic setting and the quiet period after a start do
+     * not matter: it runs whenever no media plays. Replaces a running
      * automatic check; joins another Test speed.
      */
     suspend fun runNow(): ProbeOutcome = withContext(context) {
-        gate()?.let { return@withContext it }
+        gate(manual = true)?.let { return@withContext it }
         probeOnce(manual = true)
     }
 
@@ -421,7 +427,7 @@ class BandwidthProbeScheduler(
 
     private fun onPlaybackActive() {
         lastPlaybackAtElapsedMs = elapsedClock()
-        cancelInFlight(ProbeOutcome.PlaybackActive)
+        cancelTest(ProbeOutcome.PlaybackActive)
     }
 
     private fun forget() {
@@ -435,6 +441,11 @@ class BandwidthProbeScheduler(
         run.result.cancel()
     }
 
+    /** Media is starting: cancels a run that is testing. One still reading the server's readings finishes them and then does not test. */
+    private fun cancelTest(reason: ProbeOutcome) {
+        if (inFlight?.testing == true) cancelInFlight(reason)
+    }
+
     private fun schedule(delayMs: Long) {
         timer?.cancel()
         if (!foreground) return
@@ -446,7 +457,8 @@ class BandwidthProbeScheduler(
 
     private suspend fun runScheduled() {
         if (activeServer.value == null || hasSettledReading()) return
-        if (gate() != null) return
+        // Media playing still lets the check read the server's readings.
+        gate(manual = false)?.takeIf { it != ProbeOutcome.PlaybackActive }?.let { return }
         probeOnce(manual = false)
     }
 
@@ -457,8 +469,8 @@ class BandwidthProbeScheduler(
         return !probe.lowerBound && isCurrent(probe.measuredAtEpochMs, entry)
     }
 
-    /** Why a probe may not run now, or null when it may. */
-    private fun gate(): ProbeOutcome? {
+    /** Why a test may not run now, or null when it may. The quiet period after a start holds only checks, not [manual] Test speed. */
+    private fun gate(manual: Boolean): ProbeOutcome? {
         val snapshot = network.snapshot()
         val lastPlayback = lastPlaybackAtElapsedMs
         return when {
@@ -466,7 +478,8 @@ class BandwidthProbeScheduler(
             !snapshot.connected -> ProbeOutcome.Offline
             snapshot.skipsBandwidthProbe -> ProbeOutcome.Metered
             mediaActive.value -> ProbeOutcome.PlaybackActive
-            lastPlayback != null && elapsedClock() - lastPlayback < PLAYBACK_START_QUIET_MS -> ProbeOutcome.PlaybackActive
+            !manual && lastPlayback != null && elapsedClock() - lastPlayback < PLAYBACK_START_QUIET_MS ->
+                ProbeOutcome.PlaybackActive
             else -> null
         }
     }
@@ -498,7 +511,7 @@ class BandwidthProbeScheduler(
             running.result.cancel()
         }
         val run = running?.takeIf { it.result.isActive } ?: ProbeRun(manual).also { run ->
-            run.result = scope.async { measureAndReport(manual) }
+            run.result = scope.async { measureAndReport(run) }
             inFlight = run
         }
         return try {
@@ -509,17 +522,18 @@ class BandwidthProbeScheduler(
         }
     }
 
-    private suspend fun measureAndReport(manual: Boolean): ProbeOutcome {
+    private suspend fun measureAndReport(run: ProbeRun): ProbeOutcome {
+        val manual = run.manual
         val target = when (val lookup = server.target()) {
             is BandwidthProbeTargetLookup.Found -> lookup.target
             BandwidthProbeTargetLookup.NotSupported -> return ProbeOutcome.NotSupported
             is BandwidthProbeTargetLookup.Failed -> return ProbeOutcome.NetworkError(lookup.cause)
         }
-        gate()?.let { return it }
         if (target.serverId != activeServer.value) return ProbeOutcome.Interrupted
         val snapshot = network.snapshot()
         val networkKey = networkKey(snapshot)
         if (!manual) {
+            gate(manual = false)?.takeIf { it != ProbeOutcome.PlaybackActive }?.let { return it }
             val stored = when (val lookup = server.storedReading(target)) {
                 is StoredReadingLookup.Found -> lookup
                 StoredReadingLookup.None -> null
@@ -536,18 +550,20 @@ class BandwidthProbeScheduler(
                 return ProbeOutcome.Stored
             }
             if (!target.automatic) return ProbeOutcome.AutomaticOff
-            notBeforeElapsedMs?.let { notBefore ->
+            rateLimit?.takeIf { it.first == target.serverId }?.let { (_, notBefore) ->
                 val waitMs = notBefore - elapsedClock()
                 if (waitMs > 0) return ProbeOutcome.RateLimited(((waitMs + 999) / 1_000).toInt())
             }
         }
+        gate(manual)?.let { return it }
+        run.testing = true
         val mode = if (manual) SpeedTestMode.ACCURATE else SpeedTestMode.QUICK
         val measured = when (
             val result = probe.measure(mode, target.targetKbps) { read -> server.download(target, mode, read) }
         ) {
             is BandwidthProbeResult.Measured -> result
             is BandwidthProbeResult.RateLimited -> {
-                notBeforeElapsedMs = elapsedClock() + result.retryAfterSeconds * 1_000L
+                rateLimit = target.serverId to elapsedClock() + result.retryAfterSeconds * 1_000L
                 return ProbeOutcome.RateLimited(result.retryAfterSeconds)
             }
             is BandwidthProbeResult.Unavailable -> return ProbeOutcome.Unavailable
