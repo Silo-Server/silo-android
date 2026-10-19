@@ -2,6 +2,7 @@ package org.siloserver.silo.common.player.probe
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -438,6 +439,38 @@ class BandwidthProbeSchedulerTest {
         reading.complete(harness.storedReading(30_000, ageMs = 60_000, lowerBound = true))
         advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
         assertEquals(0, harness.server.downloads)
+        assertEquals(30_000, scheduler.freshEstimateKbps())
+    }
+
+    @Test
+    fun aNetworkChangeDuringTheServerReadStartsItsOwnCheck() = runTest {
+        val harness = Harness(this)
+        var reads = 0
+        val server = object : BandwidthProbeServer by harness.server {
+            override suspend fun storedReading(target: BandwidthProbeTarget): StoredReadingLookup {
+                reads += 1
+                // The first network's read never answers.
+                if (reads == 1) awaitCancellation()
+                return harness.storedReading(30_000, ageMs = 60_000)
+            }
+        }
+        val scheduler = BandwidthProbeScheduler(
+            server = server,
+            network = harness.network,
+            mediaActive = harness.media,
+            activeServer = harness.activeServer,
+            scope = backgroundScope,
+            probe = BandwidthProbe(clock = { currentTime }),
+            elapsedClock = { currentTime },
+            wallClock = { 1_760_000_000_000 + currentTime },
+        ).also { it.observe() }
+        scheduler.onForeground()
+        runCurrent()
+        assertEquals(1, reads)
+
+        harness.network.state.value = WIFI.copy(networkId = 2)
+        runCurrent()
+        assertEquals(2, reads)
         assertEquals(30_000, scheduler.freshEstimateKbps())
     }
 
