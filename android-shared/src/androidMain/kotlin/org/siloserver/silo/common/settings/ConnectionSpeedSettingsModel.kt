@@ -82,16 +82,16 @@ data class ConnectionSpeedUiState(
  *
  * The view model reads the connection and hands it over through [update].
  *
+ * @param wallClock epoch milliseconds: a server time ahead of it counts as now.
  * @param cellularQualityApplies whether this device plays at its Cellular
  *   quality on a network (the phone). The TV has none.
- * @param wallClock epoch milliseconds: a server time ahead of it counts as now.
  */
 class ConnectionSpeedSettingsModel(
     private val probe: BandwidthProbeScheduler,
     private val connection: PlaybackConnectionRepository,
     private val scope: CoroutineScope,
-    private val cellularQualityApplies: (PlaybackNetworkSnapshot) -> Boolean = { false },
     private val wallClock: () -> Long = { System.currentTimeMillis() },
+    private val cellularQualityApplies: (PlaybackNetworkSnapshot) -> Boolean = { false },
 ) {
     private data class Local(val testing: Boolean = false, val message: ConnectionSpeedMessage? = null)
 
