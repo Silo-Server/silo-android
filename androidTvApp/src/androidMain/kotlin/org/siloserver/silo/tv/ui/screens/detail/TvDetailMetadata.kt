@@ -12,7 +12,6 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneId
-import java.time.ZoneOffset
 
 /**
  * Pure functions that build the hero metadata for the cinematic detail
@@ -138,17 +137,13 @@ internal object TvDetailMetadata {
     }
 
     /**
-     * tvOS `DetailDateFormatting.abbreviatedDate`: parse the server value as a
-     * UTC instant (its ISO8601 parsers all assume GMT — including bare
-     * `yyyy-MM-dd` dates) and render the DEVICE-LOCAL calendar date. Keeping
-     * that quirk is deliberate: for a viewer west of UTC both clients show
-     * e.g. "Jul 8" for a `2026-07-09T00:00:00Z` air date, instead of the TV
-     * app drifting a day ahead of tvOS.
+     * tvOS `DetailDateFormatting.abbreviatedDate`: the server's air and release
+     * dates are calendar dates (`yyyy-MM-dd`) and show that day in every time
+     * zone. An RFC 3339 timestamp converts to its calendar date in [zone].
      */
     internal fun abbreviatedDate(raw: String?, zone: ZoneId = ZoneId.systemDefault()): String? {
         val trimmed = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-        val instant = parseServerInstant(trimmed) ?: return trimmed
-        val date = instant.atZone(zone).toLocalDate()
+        val date = parseServerDate(trimmed, zone) ?: return trimmed
         val monthName = listOf(
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -156,12 +151,12 @@ internal object TvDetailMetadata {
         return "$monthName ${date.dayOfMonth}, ${date.year}"
     }
 
-    /** RFC3339 timestamp (with/without fraction or offset) or bare full date,
-     *  as UTC — the same parser cascade as Apple's `DetailDateFormatting`. */
-    private fun parseServerInstant(raw: String): Instant? =
-        runCatching { Instant.parse(raw) }.getOrNull()
-            ?: runCatching { OffsetDateTime.parse(raw).toInstant() }.getOrNull()
-            ?: runCatching { LocalDate.parse(raw).atStartOfDay(ZoneOffset.UTC).toInstant() }.getOrNull()
+    /** A bare `yyyy-MM-dd` as that day, or an RFC 3339 timestamp (with or
+     *  without fraction or offset) as its date in [zone]. */
+    private fun parseServerDate(raw: String, zone: ZoneId): LocalDate? =
+        runCatching { LocalDate.parse(raw) }.getOrNull()
+            ?: runCatching { Instant.parse(raw).atZone(zone).toLocalDate() }.getOrNull()
+            ?: runCatching { OffsetDateTime.parse(raw).atZoneSameInstant(zone).toLocalDate() }.getOrNull()
 
     private fun qualityTokens(version: FileVersion?): List<TvHeroFactToken> {
         version ?: return emptyList()

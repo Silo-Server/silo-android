@@ -107,10 +107,9 @@ class TvDetailMetadataTest {
     }
 
     @Test
-    fun airDateRendersInViewerZoneLikeTvOs() {
-        // tvOS parses the timestamp as a UTC instant and formats the LOCAL
-        // calendar date, so a midnight-UTC air date shows the previous day for
-        // viewers west of UTC. The Android hero mirrors that.
+    fun airDateKeepsCalendarDayLikeTvOs() {
+        // A timestamp converts to the viewer's zone, so a midnight-UTC instant
+        // is the previous day west of UTC.
         assertEquals(
             "Mar 29, 2026",
             TvDetailMetadata.abbreviatedDate(
@@ -118,10 +117,10 @@ class TvDetailMetadataTest {
                 zone = ZoneId.of("America/Los_Angeles"),
             ),
         )
-        // Bare full dates are parsed at UTC midnight too (Apple's
-        // `.withFullDate` ISO8601 parser defaults to GMT).
+        // A bare calendar date has no zone and shows the same day everywhere,
+        // like tvOS `DetailDateFormatting`.
         assertEquals(
-            "Mar 29, 2026",
+            "Mar 30, 2026",
             TvDetailMetadata.abbreviatedDate(
                 "2026-03-30",
                 zone = ZoneId.of("America/Los_Angeles"),

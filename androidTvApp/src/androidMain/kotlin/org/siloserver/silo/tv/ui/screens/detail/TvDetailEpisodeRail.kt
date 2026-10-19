@@ -627,8 +627,7 @@ private fun episodeRuntime(runtimeMinutes: Int): String? {
     }
 }
 
-// Shared UTC-instant → device-local formatting (tvOS parity) so the card
-// dates agree with the hero facts row.
+// Shared with the hero facts row (tvOS parity), so the card dates agree with it.
 private fun abbreviatedEpisodeDate(raw: String?): String? =
     TvDetailMetadata.abbreviatedDate(raw)
 
