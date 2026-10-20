@@ -1,7 +1,5 @@
 package org.siloserver.silo.common.settings
 
-import kotlin.math.roundToInt
-
 /**
  * The parts of the Settings → Connection speed line, "48 Mbps · measured
  * 3 minutes ago on Wi-Fi". Each app assembles the sentence from its own
@@ -24,19 +22,16 @@ data class ConnectionSpeedText(
 }
 
 /**
- * [kbps] as Settings shows a rate: megabits per second to one decimal below
- * 10 Mbps and whole from there ("1.4 Mbps", "44 Mbps"), or kbps below
- * 100 kbps. The learned-limit row, the speed line and server figures such as
- * `auto_budget_kbps` all read this way. Whole megabits alone would show a
- * 1400 kbps limit as 1 Mbps.
+ * [kbps] as Settings shows a rate, rounded down so a lower bound or a budget
+ * never overstates the link: kbps below 1 Mbps, megabits per second to one
+ * decimal below 10 Mbps, and whole from there ("850 kbps", "1.4 Mbps",
+ * "44 Mbps"). The learned-limit row, the speed line and server figures such as
+ * `auto_budget_kbps` all read this way.
  */
-fun connectionRate(kbps: Int): Pair<Double, LearnedLimitText.RateUnit> {
-    val tenths = (kbps / 100.0).roundToInt()
-    return when {
-        tenths < 1 -> kbps.coerceAtLeast(0).toDouble() to LearnedLimitText.RateUnit.KBPS
-        tenths < 100 -> tenths / 10.0 to LearnedLimitText.RateUnit.MBPS
-        else -> (kbps / 1000.0).roundToInt().toDouble() to LearnedLimitText.RateUnit.MBPS
-    }
+fun connectionRate(kbps: Int): Pair<Double, LearnedLimitText.RateUnit> = when {
+    kbps < 1_000 -> kbps.coerceAtLeast(0).toDouble() to LearnedLimitText.RateUnit.KBPS
+    kbps < 10_000 -> (kbps / 100) / 10.0 to LearnedLimitText.RateUnit.MBPS
+    else -> (kbps / 1_000).toDouble() to LearnedLimitText.RateUnit.MBPS
 }
 
 /**

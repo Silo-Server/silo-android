@@ -21,12 +21,14 @@ class ConnectionSpeedTextTest {
     }
 
     @Test
-    fun ratesAreWholeMegabitsFromTenAndTenthsBelow() {
+    fun ratesRoundDownToWholeMegabitsFromTenTenthsBelowAndKbpsUnderOne() {
         assertEquals(35.0 to RateUnit.MBPS, connectionRate(35_280))
-        assertEquals(36.0 to RateUnit.MBPS, connectionRate(35_500))
-        assertEquals(10.0 to RateUnit.MBPS, connectionRate(9_960))
-        assertEquals(1.3 to RateUnit.MBPS, connectionRate(1_267))
-        assertEquals(0.4 to RateUnit.MBPS, connectionRate(400))
+        assertEquals(35.0 to RateUnit.MBPS, connectionRate(35_999))
+        assertEquals(10.0 to RateUnit.MBPS, connectionRate(10_000))
+        assertEquals(9.9 to RateUnit.MBPS, connectionRate(9_999))
+        assertEquals(1.2 to RateUnit.MBPS, connectionRate(1_267))
+        assertEquals(1.0 to RateUnit.MBPS, connectionRate(1_000))
+        assertEquals(999.0 to RateUnit.KBPS, connectionRate(999))
         assertEquals(49.0 to RateUnit.KBPS, connectionRate(49))
     }
 

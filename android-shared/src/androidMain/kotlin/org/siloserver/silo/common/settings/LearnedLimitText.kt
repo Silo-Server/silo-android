@@ -41,9 +41,12 @@ fun learnedLimitText(
     return LearnedLimitText(rate, unit, date)
 }
 
-/** [rate] as the [locale] writes it, with at most one decimal: "1.4", "44". */
+/** [rate] as the [locale] writes it, with at most one decimal and no digit grouping: "1.4", "44", "1000". */
 fun formatRate(rate: Double, locale: Locale = Locale.getDefault()): String =
-    NumberFormat.getNumberInstance(locale).apply { maximumFractionDigits = 1 }.format(rate)
+    NumberFormat.getNumberInstance(locale).apply {
+        maximumFractionDigits = 1
+        isGroupingUsed = false
+    }.format(rate)
 
 /** The [locale]'s pattern for an abbreviated month and a day, "MMM d" in US English. */
 fun shortMonthDayPattern(locale: Locale): String =
