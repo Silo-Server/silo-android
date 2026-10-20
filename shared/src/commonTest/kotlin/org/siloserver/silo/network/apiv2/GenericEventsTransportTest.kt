@@ -210,6 +210,60 @@ class GenericEventsTransportTest {
         }
     }
 
+    @Test fun upgradeAuthRefusalsRetryFreshProofInActualNotificationRepository() = runTest {
+        for (status in listOf(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden)) {
+            withSocket(script = { error("refused upgrade must not create a session") }) { socket, engine ->
+                engine.upgradeStatus = status
+                val repository = org.siloserver.silo.repository.NotificationsRepository(
+                    org.siloserver.silo.network.UnusedNotificationsApi,
+                    realtimeFactory = { DefaultNotificationsRealtimeClient(socket) }, tokens = tokens,
+                    recoveryFactory = { GenericEventsBackoff { 0.0 } },
+                )
+                val job = repository.connectRealtime(backgroundScope)
+                runCurrent()
+                assertEquals(1, engine.mints)
+                assertFalse(repository.realtimeFatal.value, "upgrade refusal is not mint authentication failure")
+                advanceTimeBy(4_999)
+                runCurrent()
+                assertEquals(1, engine.mints)
+                advanceTimeBy(1)
+                runCurrent()
+                assertEquals(2, engine.mints, "a new proof must be minted at the 5s failed-attempt floor")
+                assertEquals(2, engine.proofs.distinct().size, "the spent proof must never be replayed")
+                val previous = owner
+                owner = owner.copy(profileId = "replacement", identityGeneration = owner.identityGeneration + 1)
+                advanceTimeBy(10_001)
+                runCurrent()
+                assertEquals(2, engine.mints, "stale authority must not mint again")
+                job.cancelAndJoin()
+                advanceTimeBy(300_000)
+                assertEquals(2, engine.mints)
+                owner = previous
+            }
+        }
+    }
+
+    @Test fun mintAuthRefusalsStillParkNotificationRepository() = runTest {
+        for (status in listOf(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden)) {
+            withSocket(script = { error("mint refusal has no upgrade") }) { socket, engine ->
+                engine.mintStatus = status
+                val repository = org.siloserver.silo.repository.NotificationsRepository(
+                    org.siloserver.silo.network.UnusedNotificationsApi,
+                    realtimeFactory = { DefaultNotificationsRealtimeClient(socket) }, tokens = tokens,
+                    recoveryFactory = { GenericEventsBackoff { 0.0 } },
+                )
+                val job = repository.connectRealtime(backgroundScope)
+                runCurrent()
+                assertTrue(repository.realtimeFatal.value)
+                advanceTimeBy(300_000)
+                runCurrent()
+                assertEquals(1, engine.mints)
+                assertTrue(engine.proofs.isEmpty())
+                job.cancelAndJoin()
+            }
+        }
+    }
+
     @Test fun frameAndCloseAccessChangeRemainsImmediate() = runTest {
         for (frame in listOf(false, true)) withSocket(script = {
             if (frame) incoming.send(Frame.Text("""{"type":"access_changed"}"""))

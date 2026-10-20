@@ -67,7 +67,7 @@ class EventsSocketV2Api(
                     // Read refusal headers before Ktor converts the response to a session.
                     if (response.status != HttpStatusCode.SwitchingProtocols) {
                         attempt.retryAfterMs = genericEventsRetryAfter(response.headers[HttpHeaders.RetryAfter])
-                        throw EventsTicketFailure(response.status.value)
+                        throw EventsUpgradeFailure(response.status.value, attempt.retryAfterMs)
                     }
                     val session = response.body<DefaultClientWebSocketSession>()
                     try {

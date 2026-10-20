@@ -82,7 +82,8 @@ internal suspend fun genericEventsForIdentity(
             // onSubscription registers observation before waiting for initial readiness.
             transitions.transitions.onSubscription { start() }
                 .collect { transition ->
-                    if (!transition.affectsCurrentIdentity) return@collect
+                    // FULL request ownership includes the global generation, even when
+                    // an inactive server changed. Rebase only after the privacy barrier.
                     // Startup may have waited through these already-completed transitions.
                     if (startedGeneration?.let { transition.generation <= it } == true) return@collect
                     collector?.cancelAndJoin()

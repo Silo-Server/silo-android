@@ -48,6 +48,7 @@ internal fun <T : Any> EventsSocketV2Api.genericEventsConnection(
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
+        if (e is EventsUpgradeFailure) attempt.retryAfterMs = e.retryAfterMs
         reason = if (e is EventsTicketFailure) "ticket_error_${e.code}" else "socket_error"
     }
     emit(closed(reason, attempt.closed()))
