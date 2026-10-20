@@ -1119,6 +1119,8 @@ fun PlayerScreen(
             allowsLocalRoute = !inRoom,
         )
         viewModel.onSubtitleMediaMountChanging()
+        // The same plan, remounted: its coming wait is a reload, not a stall.
+        viewModel.bufferingQualityAdapter.markReload()
         backend.refresh(mediaSpec)
         viewModel.onSubtitleMediaMountApplied(MobileSubtitleMount(uiState.mediaMountGeneration, uiState.subtitleRefreshNonce))
         viewModel.onSubtitleCuesMounted(uiState.subtitleCueRevisions)

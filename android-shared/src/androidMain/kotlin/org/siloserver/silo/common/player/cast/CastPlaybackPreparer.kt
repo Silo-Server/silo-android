@@ -80,6 +80,9 @@ class CastPlaybackPreparer(
             tokenManager = tokenManager,
             networkEvidenceProvider = networkEvidenceProvider,
             passthroughSuppression = PassthroughSuppressionScope.None,
+            // The receiver is outside the buffering-quality controller: no
+            // estimate (the default), and none of this device's learned limits.
+            ignoresLearnedLimits = true,
         )
 
         val result = castSession.startVideoSessionV3(

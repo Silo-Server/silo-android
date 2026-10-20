@@ -82,8 +82,8 @@ import org.siloserver.silo.common.player.BufferingQualityPlayerAdapter
 import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.asPlaybackEventSink
 import org.siloserver.silo.domain.player.BufferingQualityController
-import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.BufferingQualityNotice
+import org.siloserver.silo.domain.player.BufferingQualityNoticeSlot
 import org.siloserver.silo.domain.player.BufferingQualityPill
 import org.siloserver.silo.domain.player.BufferingQualityReplan
 import org.siloserver.silo.domain.player.toBufferingQualityPlan
@@ -811,8 +811,6 @@ class TvPlayerViewModel(
         private const val ROOM_FALLBACK_WAIT_MS = 15_000L
         const val SHUFFLE_CONTINUE_FAILED = "Couldn't continue the shuffle."
         const val SHUFFLE_PICK_FAILED = "Couldn't pick another."
-        // How long a display-only buffering notice stays up.
-        private const val BUFFERING_NOTICE_MS = 4_000L
         // Published plans remembered for mount adoption (current, predecessors, rollbacks).
         private const val BUFFERING_PLAN_MEMORY = 8
     }
@@ -1440,9 +1438,10 @@ class TvPlayerViewModel(
     // ---- Buffering quality (server docs/design/2026-10-17-buffering-quality.md) ----
 
     /**
-     * Lowers quality when playback keeps buffering, or offers to. Off in a
-     * Watch Party, where the room's own lower-quality offer applies. Main
-     * thread only, like the intro controller.
+     * Lowers quality when playback keeps buffering, or offers to. Suspended
+     * in a Watch Party, where the room's own lower-quality offer applies: it
+     * times stalls and summarizes plans but never acts. Main thread only,
+     * like the intro controller.
      */
     private val bufferingQualityController = BufferingQualityController(
         scope = viewModelScope,
@@ -1452,7 +1451,10 @@ class TvPlayerViewModel(
         onPlanSummary = { playbackSessionManager.emitPlanSummary(it) },
     )
 
-    /** False in a Watch Party. TV has no local file playback, so that is the only exclusion. */
+    /**
+     * True while the controller acts on stalls: false in a Watch Party. TV has
+     * no local file playback, so that is the only exclusion.
+     */
     val bufferingQualityEnabled: Boolean = roomId == null
 
     /** The Media3 adapter feeding the controller. The screen attaches it to the in-process ExoPlayer. */
@@ -1470,23 +1472,33 @@ class TvPlayerViewModel(
     /** Total seconds a fresh buffering pill runs for, for the fill's arithmetic. */
     val bufferingTotalSeconds: Int = bufferingQualityController.totalCountdownSeconds
 
-    private val _bufferingNotice = MutableStateFlow<BufferingQualityNotice?>(null)
+    /** Picture in picture: no pill or notice shows. */
+    private val playerViewHidden = MutableStateFlow(false)
 
     /**
-     * A display-only buffering notice, cleared after [BUFFERING_NOTICE_MS].
-     * The screen words it from string resources; lifecycle notices win.
+     * The buffering notice. It waits while the player is in picture in
+     * picture or a lifecycle notice, which the screen ranks first, holds the
+     * slot.
      */
-    val bufferingNotice: StateFlow<BufferingQualityNotice?> = _bufferingNotice.asStateFlow()
-    private var bufferingNoticeJob: Job? = null
+    private val bufferingNoticeSlot = BufferingQualityNoticeSlot(
+        scope = viewModelScope,
+        slotFree = combine(sessionLifecycle.notice, playerViewHidden) { other, hidden -> other == null && !hidden },
+        clock = { SystemClock.elapsedRealtime() },
+    )
+
+    /** A display-only buffering notice; the screen words it from string resources. */
+    val bufferingNotice: StateFlow<BufferingQualityNotice?> = bufferingNoticeSlot.notice
 
     private val _bufferingAutoLimited = MutableStateFlow(false)
 
     /** The playing plan is on Auto under a learned limit: the menu says so. */
     val bufferingAutoLimited: StateFlow<Boolean> = _bufferingAutoLimited.asStateFlow()
 
-    @Volatile
-    private var latestBufferingMode: BufferingQualityMode = BufferingQualityMode.Default
-    private val bufferingModeProvider: () -> BufferingQualityMode = { latestBufferingMode }
+    /** The title the controller's answer, notice and re-offer wait belong to. */
+    private var bufferingQualityContentId: String? = null
+
+    /** The mount that plays the controller's own replan, until it is adopted. */
+    private var bufferingReplanNonce: Long? = null
 
     /**
      * The adoption last handed to the controller. Every published plan that
@@ -2033,6 +2045,7 @@ class TvPlayerViewModel(
         )
         val mountNonce = nextTypedSubtitleMountNonce(adoption.committed.identity)
         rememberBufferingPlan(ready.session.playbackPlan, ready.plan)
+        bufferingReplanNonce = mountNonce.takeIf { adoption.bufferingQuality }
         _uiState.update { state ->
             state.copy(
                 error = null,
@@ -2249,7 +2262,7 @@ class TvPlayerViewModel(
         resetSeekRecoveryForContentChange()
         transportMountGate.beginLoad()
         introAutoSkipController.reset()
-        resetBufferingQuality()
+        beginBufferingQualityLoad()
         manualSubtitleSelectionApplied = false
         launchSubtitleSelectionApplied = false
         autoSelectedSubtitleIdentity = null
@@ -5801,15 +5814,20 @@ class TvPlayerViewModel(
 
     private fun startBufferingQuality() {
         // In a Watch Party the room's own lower-quality offer applies.
-        bufferingQualityController.setEnabled(bufferingQualityEnabled)
-        playbackSessionManager.bufferingQualityModeProvider = bufferingModeProvider
+        bufferingQualityController.setSuspended(roomId != null)
+        // The session manager reads the stored mode itself; the controller
+        // follows it here.
         viewModelScope.launch {
             playerSettingsStore.bufferingQualityModeFlow
                 .distinctUntilChanged()
-                .collect { mode ->
-                    latestBufferingMode = mode
-                    bufferingQualityController.setMode(mode)
-                }
+                .collect { mode -> bufferingQualityController.setMode(mode) }
+        }
+        // A failed plan's summary goes out when the error shows, not at Retry
+        // or exit.
+        viewModelScope.launch {
+            _uiState.map { it.error != null }
+                .distinctUntilChanged()
+                .collect { failed -> if (failed) bufferingQualityController.onPlaybackStopped() }
         }
         networkEvidence?.let { evidence ->
             viewModelScope.launch {
@@ -5852,6 +5870,8 @@ class TvPlayerViewModel(
     private fun adoptBufferingQualityPlan(nonce: Long) {
         val reload = pendingBufferingReloadNonce == nonce
         pendingBufferingReloadNonce = null
+        val controllerInitiated = bufferingReplanNonce == nonce
+        bufferingReplanNonce = null
         if (reload && bufferingAdoptionId != null) {
             bufferingQualityAdapter.reset()
             bufferingQualityAdapter.markReload()
@@ -5887,7 +5907,8 @@ class TvPlayerViewModel(
                 "bandwidth_limit_kbps=${plan.bandwidthLimit?.kbps}",
         )
         _bufferingAutoLimited.value = plan.bandwidthLimit != null && adopted.quality == PLAYBACK_QUALITY_AUTO
-        bufferingQualityController.onPlanAdopted(adopted)
+        if (!bufferingQualityController.hasPlan) playbackSessionManager.restartPlanThroughput()
+        bufferingQualityController.onPlanAdopted(adopted, controllerInitiated)
         // After adoption: re-announces the player's phase to the new plan.
         bufferingQualityAdapter.reset()
     }
@@ -5938,23 +5959,38 @@ class TvPlayerViewModel(
 
     private fun showBufferingQualityNotice(notice: BufferingQualityNotice) {
         Log.i(TAG, "buffering_quality notice key=${notice.key}")
-        bufferingNoticeJob?.cancel()
-        _bufferingNotice.value = notice
-        bufferingNoticeJob = viewModelScope.launch {
-            delay(BUFFERING_NOTICE_MS)
-            _bufferingNotice.value = null
+        bufferingNoticeSlot.show(notice)
+    }
+
+    /**
+     * A load of [contentId] starts. Another attempt at the same title keeps
+     * the controller's answer, notice and re-offer wait, which belong to the
+     * title; other content starts fresh.
+     */
+    private fun beginBufferingQualityLoad() {
+        if (contentId != bufferingQualityContentId) {
+            resetBufferingQuality()
+            bufferingQualityContentId = contentId
+            return
         }
+        bufferingQualityController.onNewAttempt()
+        forgetBufferingPlan()
     }
 
     /** Clears the controller and its notice for different content or an exit. */
     private fun resetBufferingQuality() {
         bufferingQualityController.reset()
+        bufferingQualityContentId = null
+        forgetBufferingPlan()
+        bufferingNoticeSlot.clear()
+    }
+
+    /** Forgets what this screen tracked about the controller's playing plan. */
+    private fun forgetBufferingPlan() {
         bufferingAdoptionId = null
         pendingBufferingReloadNonce = null
+        bufferingReplanNonce = null
         _bufferingAutoLimited.value = false
-        bufferingNoticeJob?.cancel()
-        bufferingNoticeJob = null
-        _bufferingNotice.value = null
     }
 
     /** "Lower quality" on the buffering prompt. */
@@ -5980,6 +6016,11 @@ class TvPlayerViewModel(
      */
     fun onOtherPillDisplayed(displayed: Boolean) {
         bufferingQualityController.setOtherPillVisible(displayed)
+    }
+
+    /** The screen reports picture in picture, where a buffering notice waits. */
+    fun onPlayerViewHiddenChanged(hidden: Boolean) {
+        playerViewHidden.value = hidden
     }
 
     /** Back while a buffering pill shows. True when the pill consumed it. */
@@ -6900,6 +6941,8 @@ class TvPlayerViewModel(
         // choice without switching anything.
         if (fileId == (state.selectedFileId ?: state.mediaFileId)) return
         if (state.fileVersions.none { it.fileId == fileId }) return
+        // To the buffering-quality controller the viewer's version is a quality change.
+        bufferingQualityController.onViewerQualityChange()
         restartSessionInPlace(fileId)
     }
 
@@ -7040,10 +7083,6 @@ class TvPlayerViewModel(
         nextUpCountdownJob?.cancel()
         introAutoSkipController.reset()
         resetBufferingQuality()
-        // Only ours: an incoming player may already have installed its own.
-        if (playbackSessionManager.bufferingQualityModeProvider === bufferingModeProvider) {
-            playbackSessionManager.bufferingQualityModeProvider = { BufferingQualityMode.Default }
-        }
     }
 
 }

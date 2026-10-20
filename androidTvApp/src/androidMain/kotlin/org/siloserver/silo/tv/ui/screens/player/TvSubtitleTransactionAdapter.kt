@@ -237,6 +237,8 @@ internal class TvSubtitlePlaybackAdoption internal constructor(
     val playback: TvSubtitleCommittedPlayback,
     val committed: CommittedSubtitle,
     val requestedSourcePositionSeconds: Double,
+    /** The request carried the buffering-quality controller's own replan. */
+    val bufferingQuality: Boolean = false,
     private val currentOwner: () -> Boolean,
     private val currentPendingIdentity: () -> SubtitleIdentity?,
 ) {
@@ -302,7 +304,7 @@ internal class TvSubtitleTransactionAdapter(
      * The buffering-quality replan waiting to ride the next quality request,
      * and the staged generation it went out on.
      */
-    private class BufferingQualityIntent(val replan: BufferingQualityReplan) {
+    private class BufferingQualityIntent(var replan: BufferingQualityReplan) {
         var generation: Long? = null
     }
 
@@ -1265,11 +1267,12 @@ internal class TvSubtitleTransactionAdapter(
             classification = when {
                 // The manager sends a buffering replan as quality_change, so
                 // it is named as one even when the quality is unchanged (Auto
-                // stepping down under an estimate).
-                bufferingQuality != null -> "quality_changed"
+                // stepping down under an estimate). A pick merged with an
+                // output change is a quality change too, which discards the
+                // kept step-down estimate.
+                bufferingQuality != null || qualityChanged -> "quality_changed"
                 desiredOutputRouteGeneration != committedOutputRouteGeneration ->
                     "output_route_changed"
-                qualityChanged -> "quality_changed"
                 requested.audioTrackIndex != transition.committed.audioTrackIndex ->
                     "audio_track_changed"
                 else -> "subtitle_track_changed"
@@ -1327,6 +1330,12 @@ internal class TvSubtitleTransactionAdapter(
             ),
         )
         if (validated.state == transition) {
+            // Superseded. A buffering lowering on this request has already
+            // reported its observation, so a later request that merges it
+            // repeats the estimate as a kept one, without the source.
+            bufferingQualityIntent?.takeIf { it.generation == requested.generation }?.let {
+                it.replan = it.replan.copy(bandwidthEstimateSource = null)
+            }
             discardCandidateBestEffort(candidate)
             return
         }
@@ -1396,6 +1405,7 @@ internal class TvSubtitleTransactionAdapter(
                     playback = playback,
                     committed = validatedState.committed,
                     requestedSourcePositionSeconds = adoptionContext.positionSeconds,
+                    bufferingQuality = request.bufferingQuality != null,
                     currentOwner = {
                         ownerGeneration == adoptionGeneration &&
                             !resetDuringCommit

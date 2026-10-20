@@ -752,17 +752,21 @@ class MobileSubtitleTransactionAdapterTest {
     fun `only a quality pick asks the port to change the quality`() = runTest {
         val harness = harness(backgroundScope)
 
-        // A track change keeps the session's quality and cap.
+        // A track change keeps the session's quality and cap, and the kept
+        // step-down estimate.
         harness.adapter.select(sidecar(4))
         runCurrent()
         assertFalse(harness.port.requests.last().qualityChanged)
+        assertEquals("subtitle_track_changed", harness.port.requests.last().replanClassification())
         harness.port.failStage(ApiResult.NetworkError(IllegalStateException("offline")))
         runCurrent()
 
-        // The harness commits "auto"; picking it again changes nothing.
+        // The harness commits "auto"; picking it again changes nothing. A
+        // pick goes out as a quality_change, which discards the estimate.
         harness.adapter.selectQuality("720p-medium")
         runCurrent()
         assertTrue(harness.port.requests.last().qualityChanged)
+        assertEquals("quality_changed", harness.port.requests.last().replanClassification())
     }
 
     @Test

@@ -488,7 +488,10 @@ class BufferingQualityController(
         pending = null
     }
 
-    /** The viewer picked a quality from the quality menu. */
+    /**
+     * A quality change: the viewer picked a quality or a version, or playback
+     * moved to the quality pair of the network it is now on.
+     */
     fun onViewerQualityChange(): Unit {
         if (!enabled) return
         hidePill()
