@@ -71,6 +71,7 @@ import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.EpisodeCardCaption
+import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
 import org.siloserver.silo.tv.ui.components.TvMediaCardContextMenu
@@ -510,13 +511,26 @@ private fun TvDetailEpisodeCard(
             )
             // Drawn even when empty: other episode rails take their height from
             // the cards on screen, so every card keeps both lines.
-            Text(
-                text = metadata.orEmpty(),
-                style = if (usesSeriesGeometry) SeriesCaptionMetadataStyle else CaptionMetadataStyle,
-                color = SiloOnSurface.copy(alpha = 0.7f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = metadata.orEmpty(),
+                    style = if (usesSeriesGeometry) SeriesCaptionMetadataStyle else CaptionMetadataStyle,
+                    color = SiloOnSurface.copy(alpha = 0.7f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                // Only these cards show the description, so only they mark a
+                // translated one.
+                if (!usesSeriesGeometry && visibleOverview != null &&
+                    hasMachineTranslatedOverview(episode.machineTranslatedFields)
+                ) {
+                    TvMachineTranslatedLabel(compact = true, iconSize = 12.dp)
+                }
+            }
             if (!usesSeriesGeometry) {
                 // Outside the Series page (a season or episode page kept when its
                 // series can't be loaded) the hero doesn't follow focus, so the
