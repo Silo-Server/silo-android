@@ -48,6 +48,20 @@ expires any session the lost request did open. Retained requests recorded under
 an origin, account or installation this server no longer reports can never be
 acted on again, so the next start drops them as well.
 
+Route events are journaled before they are sent and leave the journal when the
+server accepts them, or refuses one with HTTP 429. One whose send fails on the
+network stays, as does the phone's `plan_summary` for the playing plan, which
+it saves without `throughput_kbps` when the app leaves the foreground. If the
+plan then ends in that process, its real summary replaces the saved one under
+the same `event_id`. At launch, once the saved login is restored, and again
+whenever the signed-in profile changes, the app sends the retained events of
+earlier processes under the login, server, address, profile, account and
+installation that recorded them; the server records each
+`event_id` once per attempt. Events over 24 hours old are dropped, as are those
+the server refuses with any 4xx but 401 and 408. A network failure or any other
+error keeps the rest for the next launch. A settled attempt keeps its unsent
+events. Android TV sends a summary when its player closes, so it only replays.
+
 The app-private journal uses atomic writes and a process ownership lock and is
 excluded from Android backup. It stores request identities and bodies without
 credentials. Clearing application storage removes this recovery state. Existing
