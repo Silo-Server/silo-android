@@ -549,6 +549,154 @@ class SequencedPlaybackTest {
         } finally { c.close() }
     }
 
+    private val now = 1_800_000_000_000L
+    private val hour = 60L * 60 * 1000
+
+    private fun summaryEvent(played: Int) = PlaybackRouteEventV3(playbackAttemptId = "attempt-1", sessionId = "session-1",
+        event = "plan_summary", diagnostics = mapOf("played_ms" to "$played"))
+    private val summaryId = "33333333-3333-4333-8333-333333333333"
+    private fun JsonObject.eventId() = getValue("event_id").jsonPrimitive.content
+    private fun JsonObject.played() = getValue("diagnostics").jsonObject.getValue("played_ms").jsonPrimitive.content
+
+    /** An attempt an earlier process left with route events the server never accepted, journaled at those times. */
+    private fun unsent(attemptId: String, vararg events: Pair<String, Long?>) = entry().copy(
+        attemptId = attemptId, sessionId = "session-$attemptId",
+        routeEvents = events.map { (id, _) ->
+            PlaybackRouteEventV3(playbackAttemptId = attemptId, sessionId = "session-$attemptId", event = "plan_summary")
+                .v2Body(installation, id)
+        },
+        routeEventTimes = events.mapNotNull { (id, at) -> at?.let { id to it } }.toMap(),
+    )
+
+    /** Records each route event and answers with [outcomes] in turn (null: the network fails), then accepts. */
+    private fun routeEventServer(sent: MutableList<JsonObject>, outcomes: ArrayDeque<HttpStatusCode?> = ArrayDeque()) =
+        client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> reply(adoptedDecision, HttpStatusCode.Created)
+            "/api/v2/playback/session-1" -> reply("""{"outcome":"stopped","stop_id":"$stopId"}""")
+            "/api/v2/playback/route-events" -> {
+                val body = SiloJson.parseToJsonElement(req.body.toByteArray().decodeToString()).jsonObject
+                sent += body
+                val status = if (outcomes.isEmpty()) HttpStatusCode.Accepted
+                    else outcomes.removeFirst() ?: throw IllegalStateException("offline")
+                if (status == HttpStatusCode.Accepted) reply("""{"event_id":"${body.eventId()}","outcome":"accepted"}""", status)
+                else reply("{}", status)
+            }
+            else -> error("Unexpected request ${req.url}")
+        } }
+
+    @Test fun aSavedSummaryIsReplacedByTheRealOneUnderItsId() = runTest {
+        val identity = Identity(); val store = Store(); val sent = mutableListOf<JsonObject>()
+        val c = routeEventServer(sent)
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store,
+                wallClockMs = { now }) { stopId }
+            assertIs<ApiResult.Success<*>>(runtime.start(request()))
+            // Saved each time the app leaves the foreground; never sent then.
+            assertIs<ApiResult.Success<Unit>>(runtime.saveRouteEvent(summaryEvent(1), summaryId))
+            assertIs<ApiResult.Success<Unit>>(runtime.saveRouteEvent(summaryEvent(2), summaryId))
+            assertEquals(listOf("2"), store.entries.single().routeEvents.map { it.played() })
+            assertEquals(mapOf(summaryId to now), store.entries.single().routeEventTimes)
+            // This process's own attempt waits: its plan may still end here.
+            runtime.replayRouteEvents()
+            assertTrue(sent.isEmpty())
+            // The plan ends: the real summary takes the saved one's place, goes out once, and leaves the journal.
+            assertIs<ApiResult.Success<Unit>>(runtime.routeEvent(summaryEvent(3), summaryId))
+            assertEquals(listOf(summaryId to "3"), sent.map { it.eventId() to it.played() })
+            assertTrue(store.entries.single().routeEvents.isEmpty())
+            assertTrue(store.entries.single().routeEventTimes.isEmpty())
+        } finally { c.close() }
+    }
+
+    @Test fun aSummarySavedBeforeTheProcessDiedSurvivesTheStopAndGoesOutAtTheNextLaunch() = runTest {
+        val identity = Identity(); val store = Store(); val sent = mutableListOf<JsonObject>()
+        val c = routeEventServer(sent)
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store,
+                wallClockMs = { now }) { stopId }
+            assertIs<ApiResult.Success<*>>(runtime.start(request()))
+            assertIs<ApiResult.Success<Unit>>(runtime.saveRouteEvent(summaryEvent(1), summaryId))
+            // Settling the attempt keeps the unsent summary on its tombstone.
+            assertIs<ApiResult.Success<Unit>>(runtime.stop("session-1"))
+            assertTrue(store.entries.single().terminal)
+            assertEquals(listOf(summaryId), store.entries.single().routeEvents.map { it.eventId() })
+            // The next launch, under the same login, sends it.
+            SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store,
+                wallClockMs = { now + hour }) { stopId }.replayRouteEvents()
+            assertEquals(listOf(summaryId to "1"), sent.map { it.eventId() to it.played() })
+            assertTrue(store.entries.single().routeEvents.isEmpty())
+        } finally { c.close() }
+    }
+
+    @Test fun replaySendsOnlyTheLiveLoginsEventsFromTheLastDay() = runTest {
+        val store = Store().apply { entries = listOf(
+            unsent("mine", "a" to now - hour, "stale" to now - 25 * hour, "legacy" to null),
+            unsent("other-login", "b" to now - hour).copy(loginId = "login-2"),
+            unsent("other-profile", "c" to now - hour).copy(profileId = "profile-2"),
+            unsent("other-installation", "d" to now - hour).copy(installationId = "44444444-4444-4444-8444-444444444444"),
+        ) }
+        val sent = mutableListOf<JsonObject>()
+        val c = routeEventServer(sent)
+        fun pending(attemptId: String) = store.entries.single { it.attemptId == attemptId }.routeEvents.map { it.eventId() }
+        try {
+            val identity = Identity()
+            SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store,
+                wallClockMs = { now }) { stopId }.replayRouteEvents()
+            assertEquals(listOf("a"), sent.map { it.eventId() })
+            // Sent, over a day old, untimed, or never sendable from this installation: gone.
+            assertEquals(emptyList(), pending("mine"))
+            assertTrue(store.entries.single { it.attemptId == "mine" }.routeEventTimes.isEmpty())
+            assertEquals(emptyList(), pending("other-installation"))
+            // Another login's or profile's events wait for it.
+            assertEquals(listOf("b"), pending("other-login"))
+            assertEquals(listOf("c"), pending("other-profile"))
+        } finally { c.close() }
+    }
+
+    @Test fun replayKeepsWhatTheNetworkLostAndDropsWhatTheServerAcceptedOrRefused() = runTest {
+        val store = Store().apply { entries = listOf(unsent("earlier", "a" to now - hour, "b" to now - hour, "c" to now - hour)) }
+        val sent = mutableListOf<JsonObject>()
+        val c = routeEventServer(sent, ArrayDeque(listOf(null, HttpStatusCode.Accepted, HttpStatusCode.ServiceUnavailable,
+            HttpStatusCode.Forbidden, HttpStatusCode.Accepted)))
+        fun pending() = store.entries.single().routeEvents.map { it.eventId() }
+        val identity = Identity()
+        suspend fun relaunch() = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store,
+            wallClockMs = { now }) { stopId }.replayRouteEvents()
+        try {
+            // The network fails: the event stays, and the pass ends there.
+            relaunch()
+            assertEquals(listOf("a"), sent.map { it.eventId() }); assertEquals(listOf("a", "b", "c"), pending())
+            // Accepted leaves; a server error stays and ends the pass.
+            relaunch()
+            assertEquals(listOf("a", "a", "b"), sent.map { it.eventId() }); assertEquals(listOf("b", "c"), pending())
+            // A refusal the server would repeat leaves too.
+            relaunch()
+            assertEquals(listOf("a", "a", "b", "b", "c"), sent.map { it.eventId() }); assertEquals(emptyList(), pending())
+        } finally { c.close() }
+    }
+
+    @Test fun aTombstoneWithAnUnsentEventOutlivesTheTombstoneLimit() = runTest {
+        val identity = Identity()
+        val settled = (1..20).map { entry().copy(attemptId = "old-$it", sessionId = "old-session-$it", terminal = true) }
+        val store = Store().apply { entries = settled.mapIndexed { i, entry ->
+            when (i) {
+                0 -> unsent(entry.attemptId, "fresh" to now - hour).copy(sessionId = entry.sessionId, terminal = true)
+                1 -> unsent(entry.attemptId, "stale" to now - 25 * hour).copy(sessionId = entry.sessionId, terminal = true)
+                else -> entry
+            }
+        } }
+        val c = routeEventServer(mutableListOf())
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store,
+                wallClockMs = { now }) { stopId }
+            assertIs<ApiResult.Success<*>>(runtime.start(request()))
+            // The newest eight, plus the oldest while its event can still be sent.
+            assertEquals(listOf("old-1") + (13..20).map { "old-$it" }, store.entries.filter { it.terminal }.map { it.attemptId })
+            assertEquals(listOf("fresh"), store.entries.first().routeEvents.map { it.eventId() })
+        } finally { c.close() }
+    }
+
     @Test fun v2DecisionCannotSelectImplicitLegacyStreamMount() {
         val body = SiloJson.parseToJsonElement(adoptedDecision.replace("/api/v2/stream/", "/stream/")).jsonObject
         assertFailsWith<IllegalArgumentException> { decodePlaybackDecisionV2(body) }

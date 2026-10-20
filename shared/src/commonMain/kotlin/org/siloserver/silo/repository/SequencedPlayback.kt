@@ -14,6 +14,8 @@ import org.siloserver.silo.model.playback.PlaybackRouteEventV3
 import org.siloserver.silo.model.playback.gatedForBufferingQuality
 import org.siloserver.silo.network.*
 import org.siloserver.silo.network.apiv2.*
+import org.siloserver.silo.util.wallClockMillis
+import kotlin.math.abs
 
 /** Atomic durable writes must complete before returning; failure prevents dispatch. No credentials. */
 interface PlaybackJournalStore {
@@ -45,7 +47,14 @@ data class PlaybackJournalEntry(
     val stop: PlaybackStopV2? = null,
     val terminal: Boolean = false,
     val replans: List<PlaybackReplanIntent> = emptyList(),
+    /** Route event bodies not yet accepted, one per `event_id`. */
     val routeEvents: List<JsonObject> = emptyList(),
+    /**
+     * When each of [routeEvents] was journaled, in epoch milliseconds by
+     * `event_id`. An event without one, journaled by an older build, is never
+     * replayed.
+     */
+    val routeEventTimes: Map<String, Long> = emptyMap(),
 )
 
 /** One shared coordinator covers local, cast, candidate and orphan cleanup callers. */
@@ -56,11 +65,19 @@ class SequencedPlayback(
     private val store: PlaybackJournalStore,
     /** One-line request summaries for device logs. No URLs, tokens or identifiers. */
     private val log: (String) -> Unit = {},
+    /** Epoch milliseconds, for the age of journaled route events. */
+    private val wallClockMs: () -> Long = ::wallClockMillis,
     private val newId: () -> String,
 ) {
     private companion object {
         /** Settled attempts retained as tombstones. Bounds the journal's size. */
         const val SETTLED_TOMBSTONE_LIMIT = 8
+
+        /** Pending route events one attempt may hold. */
+        const val ROUTE_EVENT_LIMIT = 128
+
+        /** How long after it was journaled [replayRouteEvents] still sends a route event: 24 hours. */
+        const val ROUTE_EVENT_REPLAY_MS = 24L * 60 * 60 * 1000
 
         /** Login marker for attempts admitted under a temporary remote-playback identity. */
         const val TEMPORARY_LOGIN_PREFIX = "temporary:"
@@ -151,21 +168,70 @@ class SequencedPlayback(
      * arrives while it is still the current one, not hundreds of playbacks
      * later. Nothing that still needs recovery is settled, so nothing here can
      * drop an attempt the server may still know about.
+     *
+     * Route events the server has not accepted stay on the tombstone, and a
+     * tombstone past the limit survives while one of them is young enough for
+     * [replayRouteEvents]: settling an attempt must not lose the plan summary
+     * its process saved before it died. Accepted events leave the journal, so
+     * few remain.
      */
     private fun compactSettled(next: List<PlaybackJournalEntry>): List<PlaybackJournalEntry> {
         if (next.count { it.terminal } <= SETTLED_TOMBSTONE_LIMIT && next.none { it.terminal && it.hasHistory() }) return next
+        val now = wallClockMs()
         var settled = 0
         // Newest first: save() appends, so a later entry settled later.
         return next.asReversed().mapNotNull { entry ->
             if (!entry.terminal) return@mapNotNull entry
             settled += 1
-            if (settled > SETTLED_TOMBSTONE_LIMIT) null
-            else entry.copy(progress = null, stop = null, replans = emptyList(), routeEvents = emptyList())
+            if (settled > SETTLED_TOMBSTONE_LIMIT && entry.routeEvents.none { entry.isReplayable(it, now) }) null
+            else entry.copy(progress = null, stop = null, replans = emptyList())
         }.reversed()
     }
 
     private fun PlaybackJournalEntry.hasHistory(): Boolean =
-        progress != null || stop != null || replans.isNotEmpty() || routeEvents.isNotEmpty()
+        progress != null || stop != null || replans.isNotEmpty()
+
+    private val JsonObject.eventId: String? get() = (this["event_id"] as? JsonPrimitive)?.contentOrNull
+
+    /**
+     * Whether [body], one of this entry's route events, is young enough for
+     * [replayRouteEvents]. A clock set back counts like one set forward, so a
+     * clock change never stretches the window.
+     */
+    private fun PlaybackJournalEntry.isReplayable(body: JsonObject, now: Long): Boolean {
+        val journaledAt = routeEventTimes[body.eventId] ?: return false
+        return abs(now - journaledAt) < ROUTE_EVENT_REPLAY_MS
+    }
+
+    private fun PlaybackJournalEntry.keepingRouteEvents(keep: (JsonObject) -> Boolean): PlaybackJournalEntry {
+        val kept = routeEvents.filter(keep)
+        val ids = kept.mapNotNull { it.eventId }.toSet()
+        return copy(routeEvents = kept, routeEventTimes = routeEventTimes.filterKeys { it in ids })
+    }
+
+    private fun PlaybackJournalEntry.withoutRouteEvents(ids: Set<String>): PlaybackJournalEntry =
+        keepingRouteEvents { it.eventId !in ids }
+
+    /** [body], journaled at [at], in place of any route event with its `event_id`. */
+    private fun PlaybackJournalEntry.withRouteEvent(body: JsonObject, at: Long): PlaybackJournalEntry {
+        val id = requireNotNull(body.eventId)
+        val others = withoutRouteEvents(setOf(id))
+        return others.copy(routeEvents = others.routeEvents + body, routeEventTimes = others.routeEventTimes + (id to at))
+    }
+
+    /**
+     * Applies [change] to every durable entry where it stands. [save] moves the
+     * entry it writes to the end, which [compactSettled] reads as the newest
+     * settled; a replay touching old tombstones must not reorder them.
+     */
+    private suspend fun rewrite(change: (PlaybackJournalEntry) -> PlaybackJournalEntry) {
+        val current = load()
+        val next = current.map { if (it.isTemporary) it else change(it) }
+        if (next == current) return
+        store.write(next.filterNot { it.isTemporary })
+        entries = next
+        publish()
+    }
     private fun failure(code: String, message: String) = ApiResult.Error(0, code, message)
     private fun authorityChanged() = failure("identity_changed", "Playback authority changed.")
     private suspend fun scope(entry: PlaybackJournalEntry): AuthScopeSnapshot? {
@@ -405,30 +471,150 @@ class SequencedPlayback(
         }
     }
 
-    suspend fun routeEvent(request: PlaybackRouteEventV3): ApiResult<Unit> = mutex.withLock {
-        val entry = load().find { it.attemptId == request.playbackAttemptId }
-            ?: return@withLock failure("playback_unavailable", "Route telemetry has no v2 playback authority.")
-        if (request.sessionId != null && request.sessionId != entry.sessionId)
-            return@withLock failure("identity_changed", "The route event belongs to another session.")
-        val captured = scope(entry) ?: return@withLock authorityChanged()
-        if (entry.routeEvents.size >= 128) return@withLock failure("telemetry_pending", "Pending route telemetry is full.")
-        val eventId = newId()
-        val body = request.v2Body(entry.installationId, eventId)
-        val saved = entry.copy(routeEvents = entry.routeEvents + body)
-        save(saved)
+    /**
+     * Journals [request] and sends it. [eventId] names an event that may
+     * already be journaled, a plan summary [saveRouteEvent] wrote: this one
+     * replaces it. Without [eventId] the event gets a new id.
+     */
+    suspend fun routeEvent(request: PlaybackRouteEventV3, eventId: String? = null): ApiResult<Unit> = mutex.withLock {
+        val (saved, body, captured) = when (val journaled = journalRouteEvent(request, eventId)) {
+            is ApiResult.Success -> journaled.data
+            is ApiResult.Error -> return@withLock journaled
+            is ApiResult.NetworkError -> return@withLock journaled
+        }
         if (scope(saved) == null) return@withLock authorityChanged()
+        val sent = setOfNotNull(body.eventId)
         when (val result = api.routeEvent(captured, body)) {
             is ApiResult.Success -> {
-                save(saved.copy(routeEvents = entry.routeEvents))
+                save(saved.withoutRouteEvents(sent))
                 result
             }
             is ApiResult.Error -> {
-                if (result.code == 429) save(saved.copy(routeEvents = entry.routeEvents)) // Contract says drop.
+                if (result.code == 429) save(saved.withoutRouteEvents(sent)) // Contract says drop.
                 result
             }
-            is ApiResult.NetworkError -> result // Retained, never automatically replayed with new authority.
+            // Retained: [replayRouteEvents] sends it at the next launch, under the same login only.
+            is ApiResult.NetworkError -> result
         }
     }
+
+    /**
+     * Journals [request] under [eventId] without sending it, in place of any
+     * event already journaled under that id. It is the playing plan's
+     * `plan_summary` so far, written as the app leaves the foreground. If this
+     * process ends the plan, [routeEvent] sends the real summary under the same
+     * id, replacing this one; if the process dies first, [replayRouteEvents]
+     * sends this one at the next launch.
+     */
+    suspend fun saveRouteEvent(request: PlaybackRouteEventV3, eventId: String): ApiResult<Unit> = mutex.withLock {
+        // A temporary identity's attempts never reach the disk, so nothing could replay this.
+        if (load().any { it.attemptId == request.playbackAttemptId && it.isTemporary })
+            return@withLock failure("playback_unavailable", "Remote playback keeps no telemetry for later.")
+        when (val journaled = journalRouteEvent(request, eventId)) {
+            is ApiResult.Success -> ApiResult.Success(Unit)
+            is ApiResult.Error -> journaled
+            is ApiResult.NetworkError -> journaled
+        }
+    }
+
+    /**
+     * Journals [request] under [eventId], or a new id, in place of any event
+     * already journaled under that id. Answers the saved entry, the body, and
+     * the scope to send it under, or why nothing was journaled.
+     */
+    private suspend fun journalRouteEvent(request: PlaybackRouteEventV3, eventId: String?):
+        ApiResult<Triple<PlaybackJournalEntry, JsonObject, AuthScopeSnapshot>> {
+        val entry = load().find { it.attemptId == request.playbackAttemptId }
+            ?: return failure("playback_unavailable", "Route telemetry has no v2 playback authority.")
+        if (request.sessionId != null && request.sessionId != entry.sessionId)
+            return failure("identity_changed", "The route event belongs to another session.")
+        val captured = scope(entry) ?: return authorityChanged()
+        val others = if (eventId == null) entry else entry.withoutRouteEvents(setOf(eventId))
+        if (others.routeEvents.size >= ROUTE_EVENT_LIMIT) return failure("telemetry_pending", "Pending route telemetry is full.")
+        val body = request.v2Body(entry.installationId, eventId ?: newId())
+        val saved = entry.withRouteEvent(body, wallClockMs())
+        save(saved)
+        return ApiResult.Success(Triple(saved, body, captured))
+    }
+
+    /**
+     * Sends the route events earlier processes left in the journal: plan
+     * summaries [saveRouteEvent] wrote, and events whose send failed on the
+     * network. Call it at launch, once the saved login is restored. Attempts
+     * this process started are left alone; their events are still its own to
+     * send or replace.
+     *
+     * An attempt's events go only to the live durable login it was recorded
+     * under, matched as [scope] and [settleDurable] match: login, server,
+     * address, profile, account and installation. Attempts of another login,
+     * server or profile wait for it. Those under another address, account or
+     * installation of this login's server can never be sent, so their events
+     * are dropped.
+     *
+     * Only events journaled in the last [ROUTE_EVENT_REPLAY_MS] are sent;
+     * older ones are dropped. A sent event leaves the journal, as does one the
+     * server refuses for good: any 4xx but 401 and 408. A network failure or
+     * any other error keeps the event and ends the pass.
+     *
+     * The mutex is held to read and update the journal, never across a
+     * request, so the pass never holds up a playback start.
+     */
+    suspend fun replayRouteEvents() {
+        val live = authorities.snapshotDurableLoginAuthority()?.takeIf { it.scope.credentialGenerationId == null } ?: return
+        val pending = mutex.withLock {
+            val now = wallClockMs()
+            rewrite { entry -> if (entry.attemptId in adopted) entry else entry.keepingRouteEvents { entry.isReplayable(it, now) } }
+            load().filter {
+                it.routeEvents.isNotEmpty() && !it.isTemporary && it.attemptId !in adopted &&
+                    it.loginId == live.loginId && it.serverId == live.scope.serverId && it.profileId == live.scope.profileId &&
+                    // Existing process attempts remain fenced after any identity transition.
+                    scopes[it.attemptId]?.isSameIdentityAs(live.scope) != false
+            }
+        }
+        if (pending.isEmpty()) return
+        var sent = 0
+        var dropped = 0
+        suspend fun drop(attemptId: String, bodies: List<JsonObject>) = mutex.withLock {
+            val ids = bodies.mapNotNull { it.eventId }.toSet()
+            rewrite { if (it.attemptId == attemptId) it.withoutRouteEvents(ids) else it }
+        }
+        run pass@{
+            val installationId = api.capabilities(live.scope).getOrNull()?.installationId?.takeIf { it.isNotBlank() } ?: return@pass
+            val accountId = api.account(live.scope).getOrNull()?.id ?: return@pass
+            for (entry in pending) {
+                if (entry.origin != live.scope.serverUrl || entry.accountId != accountId || entry.installationId != installationId) {
+                    drop(entry.attemptId, entry.routeEvents)
+                    dropped += entry.routeEvents.size
+                    continue
+                }
+                for (body in entry.routeEvents) {
+                    // Checked before each send: the viewer can sign out or switch profiles meanwhile.
+                    val captured = stillLive(live) ?: return@pass
+                    when (val result = api.routeEvent(captured, body)) {
+                        is ApiResult.Success -> { drop(entry.attemptId, listOf(body)); sent += 1 }
+                        is ApiResult.Error -> if (result.isFinalRefusal()) { drop(entry.attemptId, listOf(body)); dropped += 1 } else return@pass
+                        is ApiResult.NetworkError -> return@pass
+                    }
+                }
+            }
+        }
+        log("route_event_replay pending=${pending.sumOf { it.routeEvents.size }} sent=$sent dropped=$dropped")
+    }
+
+    /**
+     * [live]'s scope while it is still the live durable login: [scope]'s check,
+     * for an attempt whose entry matched [live] and whose captured scope is
+     * [live]'s. Leaves [scopes] alone, which [settleDurable] fences on.
+     */
+    private suspend fun stillLive(live: DurableLoginAuthority): AuthScopeSnapshot? =
+        authorities.snapshotDurableLoginAuthority()?.takeIf {
+            it.loginId == live.loginId && it.scope.serverId == live.scope.serverId &&
+                it.scope.serverUrl == live.scope.serverUrl && it.scope.profileId == live.scope.profileId &&
+                live.scope.isSameIdentityAs(it.scope) && it.scope.credentialGenerationId == null
+        }?.scope
+
+    /** A refusal the server would repeat. A 401 can pass after a sign-in, and a 408 or 5xx on another try. */
+    private fun ApiResult.Error.isFinalRefusal(): Boolean = code in 400..499 && code != 401 && code != 408
 
     suspend fun progress(sessionId: String, position: Double, paused: Boolean): ApiResult<Unit>? = mutex.withLock {
         var entry = load().find { it.sessionId == sessionId } ?: return@withLock null

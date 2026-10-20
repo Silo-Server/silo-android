@@ -93,6 +93,17 @@ class SiloTvApplication : Application(), Configuration.Provider, SingletonImageL
         }.onFailure {
             android.util.Log.w("SiloTvApplication", "Bandwidth probe scheduler init failed: ${it::class.simpleName}")
         }
+        // Send the playback telemetry an earlier launch left unsent: route
+        // events whose send failed on the network. Off the main thread.
+        // Guarded — never load-bearing for cold start.
+        runCatching {
+            org.siloserver.silo.common.player.RouteEventReplayStarter(
+                registry = koinApp.koin.get(),
+                playback = koinApp.koin.get(),
+            ).start()
+        }.onFailure {
+            android.util.Log.w("SiloTvApplication", "Route event replay starter init failed: ${it::class.simpleName}")
+        }
         // Drain the user-state outbox (Track B) on launch + when connectivity
         // returns. Guarded — never load-bearing for cold start.
         runCatching {
