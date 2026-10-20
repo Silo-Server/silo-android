@@ -57,6 +57,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.Player
@@ -276,6 +277,18 @@ fun PlayerScreen(
         val observer = LifecycleEventObserver { _, _ -> report() }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    // The activity's stop, not this destination's: closing the player stops
+    // the destination too, and that exit sends the real plan summary itself.
+    DisposableEffect(activity) {
+        val activityLifecycle = (activity as? LifecycleOwner)?.lifecycle
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP && activity?.isChangingConfigurations != true) {
+                viewModel.onAppLeftForeground()
+            }
+        }
+        activityLifecycle?.addObserver(observer)
+        onDispose { activityLifecycle?.removeObserver(observer) }
     }
     val backendFactory: VideoPlaybackBackendFactory = koinInject()
     val audioCapabilityManager: AudioCapabilityManager = koinInject()

@@ -53,6 +53,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
@@ -340,6 +341,29 @@ open class PlaybackSessionManager(
     private fun takePlanIdentity(planId: String): PlanSummaryIdentity? = synchronized(recentPlans) {
         val identities = recentPlans[planId] ?: return null
         if (identities.size > 1) identities.removeFirst() else identities.firstOrNull()
+    }
+
+    /** The identity [takePlanIdentity] would return for [planId], left in place. */
+    private fun peekPlanIdentity(planId: String): PlanSummaryIdentity? = synchronized(recentPlans) {
+        recentPlans[planId]?.firstOrNull()
+    }
+
+    private val planSummaryWriteLock = Any()
+
+    /**
+     * The last plan summary write queued, sent or saved. Each waits for the
+     * one before, so the journal sees them in the order they were made: a
+     * summary saved as the app left the foreground never lands after the real
+     * one that replaces it. Guarded by [planSummaryWriteLock].
+     */
+    private var lastPlanSummaryWrite: Job? = null
+
+    private fun queuePlanSummaryWrite(write: suspend () -> Unit) = synchronized(planSummaryWriteLock) {
+        val previous = lastPlanSummaryWrite
+        lastPlanSummaryWrite = telemetryScope.launch {
+            previous?.join()
+            write()
+        }
     }
 
     private suspend fun modeLearnedLimit(): String? = LEARNED_LIMIT_IGNORE.takeIf {
@@ -2611,7 +2635,8 @@ open class PlaybackSessionManager(
      *
      * Sent only while the server advertises `playback_plan_summary_v1` for the
      * attempt; otherwise, or for a plan this manager no longer remembers, it
-     * is dropped.
+     * is dropped. It replaces any summary [savePlanSummary] saved for the same
+     * adoption.
      */
     fun emitPlanSummary(summary: BufferingPlanSummary) {
         // Taken first, so the next plan's count starts here even when this summary is dropped.
@@ -2623,29 +2648,66 @@ open class PlaybackSessionManager(
         if (PLAYBACK_PLAN_SUMMARY_V1_FEATURE !in playbackRepository.playbackServerFeatures(identity.playbackAttemptId)) {
             return
         }
-        emitRouteEvent(
-            PlaybackRouteEventV3(
-                playbackAttemptId = identity.playbackAttemptId,
-                sessionId = identity.sessionId,
-                planId = summary.planId,
-                planAttemptId = identity.planAttemptId,
-                planAttemptKey = identity.planAttemptKey,
-                event = "plan_summary",
-                outputContextId = identity.outputContextId,
-                diagnostics = buildMap {
-                    put("played_ms", summary.playedMs.toString())
-                    put("stall_count", summary.stallCount.toString())
-                    put("stall_total_ms", summary.stallTotalMs.toString())
-                    put("stall_longest_ms", summary.stallLongestMs.toString())
-                    summary.deliveredKbps?.takeIf { it > 0 }?.let { put("delivered_kbps", it.toString()) }
-                    throughput?.let { put("throughput_kbps", it.toString()) }
-                    put("buffering_mode", summary.mode.wireValue)
-                    put("buffering_action", summary.action.wireValue)
-                    identity.bandwidthEstimateKbps?.let { put("bandwidth_estimate_kbps", it.toString()) }
-                },
-            ),
-        )
+        val event = planSummaryEvent(summary, identity, throughput)
+        val eventId = planSummaryEventId(summary, identity)
+        queuePlanSummaryWrite { playbackRepository.reportRouteEventV3(event, eventId) }
     }
+
+    /**
+     * Saves the playing plan's summary so far to the playback journal without
+     * sending it, for when the app leaves the foreground and its process may
+     * die there. If the plan later ends in this process, [emitPlanSummary]
+     * sends the real summary under the same `event_id`, replacing this one;
+     * otherwise the next launch sends this one.
+     *
+     * It leaves the plan's identity and throughput count to the real summary,
+     * and so carries no `throughput_kbps`.
+     */
+    fun savePlanSummary(summary: BufferingPlanSummary) {
+        val identity = peekPlanIdentity(summary.planId) ?: return
+        if (PLAYBACK_PLAN_SUMMARY_V1_FEATURE !in playbackRepository.playbackServerFeatures(identity.playbackAttemptId)) {
+            return
+        }
+        val event = planSummaryEvent(summary, identity, throughputKbps = null)
+        val eventId = planSummaryEventId(summary, identity)
+        queuePlanSummaryWrite { playbackRepository.saveRouteEventV3(event, eventId) }
+    }
+
+    private fun planSummaryEvent(
+        summary: BufferingPlanSummary,
+        identity: PlanSummaryIdentity,
+        throughputKbps: Int?,
+    ) = PlaybackRouteEventV3(
+        playbackAttemptId = identity.playbackAttemptId,
+        sessionId = identity.sessionId,
+        planId = summary.planId,
+        planAttemptId = identity.planAttemptId,
+        planAttemptKey = identity.planAttemptKey,
+        event = "plan_summary",
+        outputContextId = identity.outputContextId,
+        diagnostics = buildMap {
+            put("played_ms", summary.playedMs.toString())
+            put("stall_count", summary.stallCount.toString())
+            put("stall_total_ms", summary.stallTotalMs.toString())
+            put("stall_longest_ms", summary.stallLongestMs.toString())
+            summary.deliveredKbps?.takeIf { it > 0 }?.let { put("delivered_kbps", it.toString()) }
+            throughputKbps?.let { put("throughput_kbps", it.toString()) }
+            put("buffering_mode", summary.mode.wireValue)
+            put("buffering_action", summary.action.wireValue)
+            identity.bandwidthEstimateKbps?.let { put("bandwidth_estimate_kbps", it.toString()) }
+        },
+    )
+
+    /**
+     * One `event_id` per adoption, the same for its saved and real summaries,
+     * so the journal keeps one of them and the server records one. A name-based
+     * UUID, because the server takes only a canonical UUID.
+     */
+    private fun planSummaryEventId(summary: BufferingPlanSummary, identity: PlanSummaryIdentity): String =
+        UUID.nameUUIDFromBytes(
+            "plan_summary\n${identity.playbackAttemptId}\n${identity.planAttemptId}\n${summary.adoptionId}"
+                .encodeToByteArray(),
+        ).toString()
 
     fun reportActiveVideoEvent(
         event: String,

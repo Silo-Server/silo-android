@@ -75,7 +75,8 @@ class PlaybackSessionManagerBufferingQualityTest {
     }
 
     private class Journal : PlaybackJournalStore {
-        private var entries = emptyList<PlaybackJournalEntry>()
+        @Volatile var entries = emptyList<PlaybackJournalEntry>()
+            private set
         override suspend fun read() = entries
         override suspend fun write(entries: List<PlaybackJournalEntry>) { this.entries = entries }
     }
@@ -135,9 +136,10 @@ class PlaybackSessionManagerBufferingQualityTest {
                 respond(reply.second, reply.first, headersOf(HttpHeaders.ContentType, "application/json"))
             },
         ) { install(ContentNegotiation) { json(SiloJson) } }
+        val journal = Journal()
         val manager = PlaybackSessionManager(
             playbackRepository = PlaybackRepository(
-                SequencedPlayback(PlaybackV2Api(client, ApiV2Gate.Unrestricted), identity, identity, Journal()) {
+                SequencedPlayback(PlaybackV2Api(client, ApiV2Gate.Unrestricted), identity, identity, journal) {
                     java.util.UUID.randomUUID().toString()
                 },
             ),
@@ -194,6 +196,14 @@ class PlaybackSessionManagerBufferingQualityTest {
             withTimeout(5_000) {
                 while (routeEvents.none { it.string("event") == event }) delay(10)
                 routeEvents.first { it.string("event") == event }
+            }
+        }
+
+        /** Waits until the journal holds exactly [count] unsent route events, and returns them. */
+        suspend fun awaitJournaledRouteEvents(count: Int): List<JsonObject> = withContext(Dispatchers.Default) {
+            withTimeout(5_000) {
+                while (journal.entries.sumOf { it.routeEvents.size } != count) delay(10)
+                journal.entries.flatMap { it.routeEvents }
             }
         }
     }
@@ -302,6 +312,31 @@ class PlaybackSessionManagerBufferingQualityTest {
         harness.routeEvents.clear()
         harness.manager.emitPlanSummary(summary(PLAN_2.planId, deliveredKbps = null))
         assertNull(harness.awaitRouteEvent("plan_summary").diagnostics()["throughput_kbps"])
+    }
+
+    @Test
+    fun aSummarySavedInTheBackgroundIsReplacedByTheRealOneUnderOneEventId() = runTest {
+        val harness = Harness(BUFFERING_QUALITY_SERVER + PLAYBACK_PLAN_SUMMARY_V1_FEATURE) { 52_000 }
+        harness.start()
+        // The start's own event goes out first.
+        harness.awaitRouteEvent("plan_selected")
+        harness.awaitJournaledRouteEvents(0)
+        fun summariesSent() = harness.routeEvents.filter { it.string("event") == "plan_summary" }
+
+        // Saved, not sent, and without the throughput the real summary takes.
+        harness.manager.savePlanSummary(summary(PLAN_1.planId, deliveredKbps = 63_000))
+        val saved = harness.awaitJournaledRouteEvents(1).single()
+        assertEquals("plan_summary", saved.string("event"))
+        assertNull(saved.diagnostics()["throughput_kbps"])
+        assertTrue(summariesSent().isEmpty())
+
+        // The plan ends: the real summary goes out under the saved one's id and clears it.
+        harness.manager.emitPlanSummary(summary(PLAN_1.planId, deliveredKbps = 63_000))
+        val sent = harness.awaitRouteEvent("plan_summary")
+        assertEquals(saved.string("event_id"), sent.string("event_id"))
+        assertEquals("52000", sent.diagnostics()["throughput_kbps"])
+        harness.awaitJournaledRouteEvents(0)
+        assertEquals(1, summariesSent().size)
     }
 
     @Test

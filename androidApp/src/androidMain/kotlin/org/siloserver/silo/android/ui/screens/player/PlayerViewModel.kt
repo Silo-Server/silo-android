@@ -3971,6 +3971,15 @@ class PlayerViewModel(
     }
 
     /**
+     * The app left the foreground with this player open, and its process may
+     * die there. Saves the playing plan's summary so far; the next launch sends
+     * it unless the plan ends here first and sends its own.
+     */
+    fun onAppLeftForeground() {
+        bufferingQualityController.runningSummary()?.let(playbackSessionManager::savePlanSummary)
+    }
+
+    /**
      * Sends the controller's replan as a `quality_change` of its own. A
      * lowering is never queued: a queued replan is re-driven without the
      * controller's fields, so while another replan, a seek recovery or a track

@@ -112,6 +112,12 @@ data class BufferingPlanSummary(
     val deliveredKbps: Int?,
     val mode: BufferingQualityMode,
     val action: BufferingAction,
+    /**
+     * The summarized adoption, [BufferingQualityPlan.planId]. A summary read
+     * early with [BufferingQualityController.runningSummary] and the final one
+     * share it, so they can go out as the same event.
+     */
+    val adoptionId: String = planId,
 )
 
 /**
@@ -341,6 +347,12 @@ class BufferingQualityController(
 
     /** A plan is playing, or loading, under this controller. */
     val hasPlan: Boolean get() = current != null
+
+    /**
+     * The playing plan's summary so far, without ending the plan: what
+     * [onPlanSummary] would get if the plan stopped now. Null without a plan.
+     */
+    fun runningSummary(): BufferingPlanSummary? = current?.let { summaryOf(it, clock()) }
 
     /**
      * A new adoption became the playing plan. [BufferingQualityPlan.planId]
@@ -789,26 +801,30 @@ class BufferingQualityController(
         state.stallLongestMs = max(state.stallLongestMs, durationMs)
     }
 
-    /**
-     * Emits [state]'s summary. A stall still in progress ends with its plan
-     * and counts like one that resumed, because a plan replaced mid-stall is
-     * usually the one that stalled.
-     */
+    /** Emits [state]'s summary. The plan is over, so its numbers are final. */
     private fun flushSummary(state: PlanState, now: Long) {
-        stopPlayedClock(state, now)
-        state.statsStallStartedAt?.let { recordStallStat(state, now - it) }
-        state.statsStallStartedAt = null
-        onPlanSummary(
-            BufferingPlanSummary(
-                planId = state.plan.serverPlanId,
-                playedMs = state.playedMs,
-                stallCount = state.stallCount,
-                stallTotalMs = state.stallTotalMs,
-                stallLongestMs = state.stallLongestMs,
-                deliveredKbps = state.plan.deliveredKbps,
-                mode = mode,
-                action = state.action,
-            ),
+        onPlanSummary(summaryOf(state, now))
+    }
+
+    /**
+     * [state]'s summary as of [now], leaving [state] as it is. Play still
+     * running counts up to [now]. A stall still in progress counts like one
+     * that resumed at [now], as [recordStallStat] would count it, because a
+     * plan replaced mid-stall is usually the one that stalled.
+     */
+    private fun summaryOf(state: PlanState, now: Long): BufferingPlanSummary {
+        val playingMs = state.playingSince?.let { (now - it).coerceAtLeast(0L) } ?: 0L
+        val stallMs = state.statsStallStartedAt?.let { now - it }?.takeIf { it > 0L } ?: 0L
+        return BufferingPlanSummary(
+            planId = state.plan.serverPlanId,
+            playedMs = state.playedMs + playingMs,
+            stallCount = state.stallCount + if (stallMs >= STALL_MIN_MS) 1 else 0,
+            stallTotalMs = state.stallTotalMs + stallMs,
+            stallLongestMs = max(state.stallLongestMs, stallMs),
+            deliveredKbps = state.plan.deliveredKbps,
+            mode = mode,
+            action = state.action,
+            adoptionId = state.plan.planId,
         )
     }
 

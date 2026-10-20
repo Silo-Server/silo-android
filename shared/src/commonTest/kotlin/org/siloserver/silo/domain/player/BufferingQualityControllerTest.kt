@@ -10,6 +10,8 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -281,6 +283,39 @@ class BufferingQualityControllerTest {
         assertEquals(1, first.stallCount)
         assertEquals(9_000L, first.stallTotalMs)
         assertEquals(BufferingAction.LOWERED, first.action)
+    }
+
+    @Test
+    fun `the running summary reads the playing plan without ending it`() = runTest {
+        val controller = newController(BufferingQualityMode.ASK)
+        assertNull(controller.runningSummary())
+        controller.onPlanAdopted(plan("p1#3", serverPlanId = "p1"))
+        controller.onPlaying()
+        at(20_000)
+        controller.onWaiting()
+        at(23_000)
+
+        // Mid-stall: the play so far, and the stall counted as if it ended now.
+        val early = assertNotNull(controller.runningSummary())
+        assertEquals("p1", early.planId)
+        assertEquals("p1#3", early.adoptionId)
+        assertEquals(20_000L, early.playedMs)
+        assertEquals(1, early.stallCount)
+        assertEquals(3_000L, early.stallTotalMs)
+        assertTrue(summaries.isEmpty())
+
+        // The read changed nothing: the stall it saw runs on to its real end.
+        at(25_000)
+        controller.onPlaying()
+        at(30_000)
+        controller.onPlaybackStopped()
+        val final = summaries.single()
+        assertEquals("p1#3", final.adoptionId)
+        assertEquals(25_000L, final.playedMs)
+        assertEquals(1, final.stallCount)
+        assertEquals(5_000L, final.stallTotalMs)
+        assertEquals(5_000L, final.stallLongestMs)
+        assertNull(controller.runningSummary())
     }
 
     @Test
