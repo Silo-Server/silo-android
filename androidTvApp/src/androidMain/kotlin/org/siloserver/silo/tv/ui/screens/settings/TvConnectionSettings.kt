@@ -20,8 +20,9 @@ import org.siloserver.silo.tv.R
  * Playback → Connection (the buffering-quality spec's *Reporting and
  * display*, phase 2): a focusable **Connection speed** row that runs Test
  * speed, the measured speed under it, then Auto's budget. Shown only while the
- * server measures speed. A TV has no cellular; on a metered network the row
- * is disabled and says speed tests are skipped. The copy is the spec's.
+ * server measures speed. A TV has no Cellular quality settings; on a metered
+ * network the note that speed tests are skipped replaces the speed, and Test
+ * speed and the budget line hide. The copy is the spec's.
  */
 @Composable
 internal fun TvConnectionSettingsGroup(state: ConnectionSpeedUiState, onTestSpeed: () -> Unit) {
@@ -33,23 +34,25 @@ internal fun TvConnectionSettingsGroup(state: ConnectionSpeedUiState, onTestSpee
         }
     }
     SettingsGroup(title = stringResource(R.string.settings_connection_title)) {
-        val skipped = state.skipped != null
-        // Stays enabled while a test runs, so focus never drops off it; a
-        // second press is ignored.
-        SettingsValueRow(
-            label = stringResource(R.string.settings_connection_speed),
-            value = stringResource(
-                if (state.testing) R.string.settings_connection_testing else R.string.settings_connection_test,
-            ),
-            onClick = onTestSpeed,
-            enabled = !skipped,
-        )
-        SettingsFooterText(
-            text = if (skipped) stringResource(R.string.settings_connection_skipped_metered)
-            else speedLabel(state.reading, now),
-        )
-        state.message?.takeIf { !skipped }?.let { SettingsFooterText(text = messageLabel(it)) }
-        state.autoBudgetKbps?.let { SettingsFooterText(text = stringResource(R.string.settings_connection_budget, rateLabel(it))) }
+        if (state.skipped != null) {
+            SettingsInfoRow(label = stringResource(R.string.settings_connection_speed), value = "")
+            SettingsFooterText(text = stringResource(R.string.settings_connection_skipped_metered))
+        } else {
+            // Stays enabled while a test runs, so focus never drops off it; a
+            // second press is ignored.
+            SettingsValueRow(
+                label = stringResource(R.string.settings_connection_speed),
+                value = stringResource(
+                    if (state.testing) R.string.settings_connection_testing else R.string.settings_connection_test,
+                ),
+                onClick = onTestSpeed,
+            )
+            SettingsFooterText(text = speedLabel(state.reading, now))
+            state.message?.let { SettingsFooterText(text = messageLabel(it)) }
+            state.autoBudgetKbps?.let {
+                SettingsFooterText(text = stringResource(R.string.settings_connection_budget, rateLabel(it)))
+            }
+        }
     }
 }
 

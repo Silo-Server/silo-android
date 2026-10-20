@@ -115,7 +115,6 @@ private fun rateLabel(rate: Double, unit: LearnedLimitText.RateUnit): String = s
 private fun skipLabel(skip: ConnectionSpeedSkip): String = stringResource(
     when (skip) {
         ConnectionSpeedSkip.CELLULAR -> R.string.settings_connection_skipped_cellular
-        ConnectionSpeedSkip.METERED_CELLULAR_QUALITY -> R.string.settings_connection_skipped_metered_cellular_quality
         ConnectionSpeedSkip.METERED -> R.string.settings_connection_skipped_metered
     },
 )

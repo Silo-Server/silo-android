@@ -39,16 +39,14 @@ data class ConnectionSpeedReading(
 
 /**
  * Why the speed test is not offered on the network in use: it is metered or
- * cellular by the rule that also picks the phone's Cellular quality.
+ * cellular by the rule that also picks the phone's Cellular quality. The note
+ * replaces the speed, and Test speed and the budget line hide.
  */
 enum class ConnectionSpeedSkip {
-    /** Mobile data: the phone's Cellular quality settings apply. */
+    /** Mobile data on a device with Cellular quality settings (the phone), which apply. */
     CELLULAR,
 
-    /** A metered network the phone plays at its Cellular quality on, such as a hotspot. */
-    METERED_CELLULAR_QUALITY,
-
-    /** A metered or cellular network on a device without Cellular quality settings (the TV). */
+    /** Any other metered network, or cellular on a device without Cellular quality settings. */
     METERED,
 }
 
@@ -185,9 +183,8 @@ class ConnectionSpeedSettingsModel(
 
     private fun skipFor(network: PlaybackNetworkSnapshot): ConnectionSpeedSkip? = when {
         !network.skipsBandwidthProbe -> null
-        !hasCellularQuality -> ConnectionSpeedSkip.METERED
-        network.cellular -> ConnectionSpeedSkip.CELLULAR
-        else -> ConnectionSpeedSkip.METERED_CELLULAR_QUALITY
+        hasCellularQuality && network.cellular -> ConnectionSpeedSkip.CELLULAR
+        else -> ConnectionSpeedSkip.METERED
     }
 
     private companion object {
