@@ -26,6 +26,9 @@ data class SiloCastTarget(
      *  controllable without a handoff; others need the v2 profile handoff. */
     val serverId: String? = null,
     val serverName: String? = null,
+    /** The deployment identity behind [serverId] (TXT `serverIdentity`), so a
+     *  phone signed in at another address of the same server still matches. */
+    val serverIdentity: String? = null,
     /** The receiver's advertised `playing` TXT flag. Drives the picker's
      *  "Playing now" badge and gates silent auto-resume (idle TVs must never
      *  be reattached — a bare connection flips them into standby takeover). */
@@ -209,6 +212,7 @@ class SiloCastNsdBrowser(context: Context) {
                 version = string("v")?.toIntOrNull() ?: 1,
                 serverId = string("server"),
                 serverName = string("serverName"),
+                serverIdentity = string("serverIdentity"),
                 isPlaying = string("playing") == "1",
             )
         }

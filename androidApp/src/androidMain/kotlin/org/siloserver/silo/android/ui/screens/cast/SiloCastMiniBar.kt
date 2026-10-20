@@ -120,7 +120,9 @@ fun SiloCastMiniBar(
                         strokeWidth = 2.dp,
                     )
                 } else {
-                    IconButton(onClick = { controller.playPause() }) {
+                    // Explicit, for what the bar shows: another controller may
+                    // have changed it since.
+                    IconButton(onClick = { controller.setPlaying(playback?.isPlaying != true) }) {
                         Icon(
                             if (playback?.isPlaying == true) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                             contentDescription = if (playback?.isPlaying == true) "Pause" else "Play",

@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import org.siloserver.silo.model.profile.ActiveProfileStore
 import org.siloserver.silo.common.downloads.DownloadEnqueuer
 import org.siloserver.silo.common.downloads.DownloadSubscriptionEvaluatorFactory
 import org.siloserver.silo.common.downloads.DownloadSubscriptionWorker
@@ -293,6 +294,7 @@ val androidModule = module {
     }
     single<SiloCastLastTargetStore> { SharedPrefsSiloCastLastTargetStore(androidContext()) }
     single {
+        val activeProfiles = get<ActiveProfileStore>()
         SiloCastController(
             browser = get(),
             serverRegistry = get(),
@@ -304,6 +306,9 @@ val androidModule = module {
                 android.os.Build.MODEL?.trim()?.ifBlank { null } ?: "Android Phone"
             },
             deviceIdProvider = { PairingDeviceId.stable(androidContext()) },
+            profileNameProvider = { profileId ->
+                activeProfiles.activeProfile.value?.takeIf { it.id == profileId }?.name
+            },
         )
     }
     single<AndroidPushTokenProvider> { FirebaseAndroidPushTokenProvider(androidContext()) }

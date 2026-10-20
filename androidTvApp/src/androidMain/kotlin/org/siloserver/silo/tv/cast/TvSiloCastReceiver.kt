@@ -796,6 +796,8 @@ class TvSiloCastReceiver(
             is SiloCastMessage.Ping -> session.send(SiloCastMessage.Pong())
             is SiloCastMessage.Pong -> session.missedHeartbeats = 0
             is SiloCastMessage.Close -> return false
+            // This receiver doesn't list `presence`, so controllers don't send it.
+            is SiloCastMessage.Presence,
             is SiloCastMessage.State,
             is SiloCastMessage.Error,
             is SiloCastMessage.HandoffChallenge,
