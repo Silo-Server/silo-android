@@ -2640,6 +2640,65 @@ class WatchTogetherRepositoryTest {
         } finally { connection.cancelAndJoin(); repository.reset() }
     }
 
+    @Test fun finalReviewFreshSeekUnderActionFloorIsUndeliveredAndNeverReplayed() = runTest {
+        val h = harness()
+        try {
+            h.binding.requestSeek(110.0); advance(250)
+            val refused = h.transports().single()
+            refuse(h, refused, 1_000)
+            h.notices.clear()
+            h.binding.requestSeek(140.0); runCurrent()
+            assertEquals(140.0, h.binding.pendingSeekSeconds.value)
+            advance(250)
+            assertEquals(listOf(refused), h.transports(), "The fresh seek is blocked before the wire attempt")
+            assertNull(h.binding.pendingSeekSeconds.value)
+            assertEquals(0L, h.repository.workUpdate.value.uncertaintySequence)
+            assertEquals(listOf<RoomPlaybackNotice>(RoomPlaybackNotice.Undelivered), h.notices)
+            advance(6_000)
+            assertEquals(listOf(refused), h.transports(), "Neither the superseded refusal nor the fresh unsent seek may replay")
+            h.binding.requestSeek(160.0); advance(250)
+            assertEquals(listOf(110.0, 160.0), h.transports().map { it.positionSeconds }, "A new explicit intent can send after the unchanged floor")
+        } finally { finish(h) }
+    }
+
+    @Test fun finalReviewAttemptedSeekSendFailureIsUncertainExactlyOnceAndNeverReplayed() = runTest {
+        val h = harness()
+        try {
+            h.wire.workSendResult = false
+            h.binding.requestSeek(140.0); advance(250)
+            val attempted = h.transports().single()
+            assertEquals(140.0, attempted.positionSeconds)
+            assertEquals(1L, h.repository.workUpdate.value.uncertaintySequence)
+            assertTrue(h.repository.workUpdate.value.uncertainPlaybackIntent === attempted.playbackIntent)
+            assertNull(h.binding.pendingSeekSeconds.value)
+            assertEquals(listOf<RoomPlaybackNotice>(RoomPlaybackNotice.Uncertain), h.notices)
+            assertEquals(1, h.api.count("get"), "Attempted send failure still reconciles")
+            advance(6_000)
+            assertEquals(listOf(attempted), h.transports())
+        } finally { finish(h) }
+    }
+
+    @Test fun finalReviewAppliedSeekKeepsItsNormalOrderedResponse() = runTest {
+        val h = harness()
+        try {
+            h.binding.requestSeek(140.0); advance(250)
+            val applied = h.transports().single()
+            h.wire.events.emit(RoomRealtimeEvent.SnapshotEvent(h.initial.copy(generation = 2, anchorPositionSeconds = 140.0)))
+            h.wire.events.emit(RoomRealtimeEvent.TransportCommandEvent(TransportCommand(
+                commandId = "fixture-applied-seek", sessionId = "session-1", selectionRevision = 1,
+                action = TransportAction.Seek, positionSeconds = 140.0,
+                executeAt = org.siloserver.silo.util.formatEpochMillisRfc3339(1_000_000L + testScheduler.currentTime + 350),
+                playbackState = RoomPlaybackState.Playing)))
+            h.wire.events.emit(RoomRealtimeEvent.ActionResult(applied.requestId, "transport_request", "applied"))
+            runCurrent(); advance(350)
+            assertNull(h.binding.pendingSeekSeconds.value)
+            assertTrue(h.notices.isEmpty())
+            assertEquals(0L, h.repository.workUpdate.value.uncertaintySequence)
+            advance(6_000)
+            assertEquals(listOf(applied), h.transports())
+        } finally { finish(h) }
+    }
+
     @Test fun backgroundQuietRoomSnapshotRestoresRenewalWithoutAnotherFrame() = runTest {
         val initial = initialPlaying(); val wire = FakeRealtime()
         val repository = repo(FakeApi(room(initial)), wire); val connection = open(repository, wire, initial)

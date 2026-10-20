@@ -499,7 +499,13 @@ class RoomPlaybackBinding(
             val target = sourceSeconds
             val currentAuthorization = room.currentTransportAuthorization() ?: return@dispatch false
             val sent = room.transportRequestForPlayback(currentAuthorization, RoomTransportIntent.Seek, TransportAction.Seek.wire, target, paused, localIntent)
-            if (!sent && pendingSeekIntent === localIntent) { clearPendingSeek(); _notices.tryEmit(RoomPlaybackNotice.Uncertain) }
+            if (!sent && pendingSeekIntent === localIntent) {
+                clearPendingSeek()
+                // Attempted-send uncertainty arrives through the correlated work update.
+                if (room.workUpdate.value.uncertainPlaybackIntent !== localIntent) {
+                    _notices.tryEmit(RoomPlaybackNotice.Undelivered)
+                }
+            }
             sent
         }
         queuedSeekDispatch = dispatch
