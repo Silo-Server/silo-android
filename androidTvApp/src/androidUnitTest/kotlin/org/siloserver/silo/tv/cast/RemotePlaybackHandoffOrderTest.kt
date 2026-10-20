@@ -84,6 +84,7 @@ class RemotePlaybackHandoffOrderTest {
         CONTROLLER,
         controllerDeviceName = null,
         receiverRun = 1L,
+        allowReuse = true,
         beforeActivation = beforeActivation,
     ) {}
 

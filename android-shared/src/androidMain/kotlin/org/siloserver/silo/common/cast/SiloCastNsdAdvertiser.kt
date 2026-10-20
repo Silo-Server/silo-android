@@ -11,7 +11,7 @@ import org.siloserver.silo.common.pairing.PairingDeviceId
 /**
  * Advertises the SiloCast receiver. TXT keys mirror silo-apple's
  * TVControlReceiver Bonjour record (`v`, `name`, `id`, `server`,
- * `serverName`, `playing`) so an iPhone browsing `_silocast._tcp` can filter
+ * `serverName`, `serverIdentity`, `playing`) so an iPhone browsing `_silocast._tcp` can filter
  * an Android TV by server the same way it filters an Apple TV — and the
  * Android browser can read Apple receivers. Android's NsdManager can't
  * mutate a live TXT record, so [updatePlaying] re-registers.
@@ -42,8 +42,14 @@ class SiloCastNsdAdvertiser(
     }
 
     @Synchronized
-    fun start(port: Int, serverId: String?, serverName: String?, playing: Boolean = false) {
-        register(Registration(port, serverId, serverName, playing))
+    fun start(
+        port: Int,
+        serverId: String?,
+        serverName: String?,
+        playing: Boolean = false,
+        serverIdentity: String? = null,
+    ) {
+        register(Registration(port, serverId, serverName, playing, serverIdentity))
     }
 
     /** Re-advertise with an updated `playing` flag (no-op when not started). */
@@ -76,6 +82,8 @@ class SiloCastNsdAdvertiser(
             put("id", deviceIdProvider())
             registration.serverId?.let { put("server", it) }
             registration.serverName?.let { put("serverName", it) }
+            // Lets a phone signed in at another address of the same deployment list this TV.
+            registration.serverIdentity?.let { put("serverIdentity", it) }
             put("playing", if (registration.playing) "1" else "0")
         }
         val serviceInfo = NsdServiceInfo().apply {
@@ -112,6 +120,7 @@ class SiloCastNsdAdvertiser(
         val serverId: String?,
         val serverName: String?,
         val playing: Boolean,
+        val serverIdentity: String?,
     )
 
     private companion object {

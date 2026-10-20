@@ -428,6 +428,7 @@ val androidTvModule = module {
     }
     single {
         val playbackLifecycle = get<org.siloserver.silo.common.player.PlaybackSessionLifecycle>()
+        val activeProfiles = get<org.siloserver.silo.model.profile.ActiveProfileStore>()
         TvSiloCastReceiver(
             advertiser = get(),
             serverRegistry = get(),
@@ -442,6 +443,7 @@ val androidTvModule = module {
             inWatchParty = {
                 get<org.siloserver.silo.repository.WatchTogetherRepository>().roomSnapshot.value != null
             },
+            ownProfileNameProvider = { activeProfiles.activeProfile.value?.name },
         )
     }
 

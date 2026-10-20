@@ -76,6 +76,12 @@ class EncryptedTokenManagerImpl(
     )
     override val sessionExpired: SharedFlow<Unit> = _sessionExpired.asSharedFlow()
 
+    private val _temporarySessionExpired = MutableSharedFlow<String>(
+        extraBufferCapacity = 4,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    override val temporarySessionExpired: SharedFlow<String> = _temporarySessionExpired.asSharedFlow()
+
     init {
         // Load initial cache for whichever server the registry made active
         // (post-migration / from disk).
@@ -304,9 +310,13 @@ class EncryptedTokenManagerImpl(
                 target = { currentSignOutTarget() },
             ) {
                 mutex.withLock {
-                    val wasTemporary = temporaryScope != null
+                    val expiredTemporary = temporaryScope?.generationId
                     clearCurrentScopeLocked()
-                    if (!wasTemporary) _sessionExpired.tryEmit(Unit)
+                    if (expiredTemporary == null) {
+                        _sessionExpired.tryEmit(Unit)
+                    } else {
+                        _temporarySessionExpired.tryEmit(expiredTemporary)
+                    }
                 }
             }
         }
@@ -925,9 +935,13 @@ class EncryptedTokenManagerImpl(
                     ) {
                         return@withLock false
                     }
-                    val wasTemporary = temporaryScope != null
+                    val expiredTemporary = temporaryScope?.generationId
                     clearCurrentScopeLocked()
-                    if (!wasTemporary) _sessionExpired.tryEmit(Unit)
+                    if (expiredTemporary == null) {
+                        _sessionExpired.tryEmit(Unit)
+                    } else {
+                        _temporarySessionExpired.tryEmit(expiredTemporary)
+                    }
                     true
                 }
             }

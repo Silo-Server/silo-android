@@ -33,6 +33,8 @@ class RemotePlaybackIdentityManager(
         val serverId: String,
         val serverUrl: String,
         val serverName: String?,
+        /** The deployment identity the phone verified for [serverId], when it sent one. */
+        val serverIdentity: String? = null,
         val profileId: String,
         val profileName: String?,
         val controllerDeviceId: String,
@@ -61,13 +63,17 @@ class RemotePlaybackIdentityManager(
      * the outgoing identity (the TV's own or an earlier phone's) still owns the
      * credentials, so whatever is playing can close its server session under the
      * identity it started with. An offer that fails or is denied leaves the
-     * current identity and playback alone.
+     * current identity and playback alone. [allowReuse] gates answering a
+     * matching offer from the active identity without a new approval; the
+     * receiver decides it ([TvSiloCastReceiverPolicy.mayReuseIdentity]),
+     * because the device ID in the match is self-reported.
      */
     suspend fun prepare(
         offer: SiloCastHandoffOffer,
         controllerDeviceId: String,
         controllerDeviceName: String?,
         receiverRun: Long,
+        allowReuse: Boolean,
         /** Called once the offer needs the full server exchange rather than a reuse. */
         onFullHandoff: () -> Unit = {},
         beforeActivation: suspend () -> Unit = {},
@@ -78,7 +84,7 @@ class RemotePlaybackIdentityManager(
         // An end in flight has already unpublished its identity (see
         // [endLocked]) and holds this lock, so an identity being ended is
         // never reused: this waits for it and takes the full path.
-        activeIdentity?.takeIf { matches(offer, controllerDeviceId) }?.let { active ->
+        activeIdentity?.takeIf { allowReuse && matches(offer, controllerDeviceId) }?.let { active ->
             val reclaimed = active.copy(receiverRun = receiverRun)
             activeIdentity = reclaimed
             return@withLock reclaimed.toReady(offer.requestId, reused = true)
@@ -156,6 +162,7 @@ class RemotePlaybackIdentityManager(
                                 serverId = offer.serverId,
                                 serverUrl = normalizedUrl(offer.serverURL),
                                 serverName = offer.serverName,
+                                serverIdentity = offer.serverIdentity?.trim()?.takeIf { it.isNotEmpty() },
                                 profileId = profileId,
                                 profileName = offer.profileName,
                                 controllerDeviceId = controllerDeviceId,

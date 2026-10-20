@@ -1,6 +1,8 @@
 package org.siloserver.silo.network
 
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 data class TemporaryAuthScope(
     val generationId: String,
@@ -132,6 +134,14 @@ interface TokenManager {
      * "tokens absent" case by routing to Login.
      */
     val sessionExpired: SharedFlow<Unit>
+
+    /**
+     * Emits the generation id of a temporary (remote playback) scope that
+     * ended involuntarily, its refresh refused, so the owner of that identity
+     * can stop what plays under it. [sessionExpired] stays reserved for the
+     * saved account. Implementations without temporary overlays never emit.
+     */
+    val temporarySessionExpired: SharedFlow<String> get() = NoTemporarySessionExpiry
 
     suspend fun getProfileId(): String?
     suspend fun setProfileId(profileId: String?)
@@ -320,3 +330,5 @@ interface TokenManager {
 
     suspend fun hasTemporaryScope(): Boolean = false
 }
+
+private val NoTemporarySessionExpiry: SharedFlow<String> = MutableSharedFlow<String>().asSharedFlow()
