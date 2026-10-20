@@ -377,8 +377,12 @@ class BandwidthProbeScheduler(
     private var timer: Job? = null
     private var inFlight: ProbeRun? = null
 
-    /** After a `429`: the server that sent it, and the time before which no automatic check tests it. */
-    private var rateLimit: Pair<String, Long>? = null
+    /**
+     * After a `429`, by the server that sent it: the time before which no
+     * automatic check tests it. Kept across profile, account and server
+     * changes for as long as the process runs.
+     */
+    private val rateLimits = mutableMapOf<String, Long>()
 
     private val _lastMeasurement = MutableStateFlow<BandwidthEstimate?>(null)
 
@@ -603,7 +607,7 @@ class BandwidthProbeScheduler(
             if (target.serverId != activeServer.value || networkKey(network.snapshot()) != networkKey) {
                 return ProbeOutcome.Interrupted
             }
-            rateLimit?.takeIf { it.first == target.serverId }?.let { (_, notBefore) ->
+            rateLimits[target.serverId]?.let { notBefore ->
                 val waitMs = notBefore - elapsedClock()
                 if (waitMs > 0) return ProbeOutcome.RateLimited(((waitMs + 999) / 1_000).toInt())
             }
@@ -618,7 +622,9 @@ class BandwidthProbeScheduler(
             is BandwidthProbeResult.Measured -> result.takeIf { it.kbps in READING_KBPS }
                 ?: return ProbeOutcome.TooLittleData
             is BandwidthProbeResult.RateLimited -> {
-                rateLimit = target.serverId to elapsedClock() + result.retryAfterSeconds * 1_000L
+                val now = elapsedClock()
+                rateLimits.values.removeAll { it <= now }
+                rateLimits[target.serverId] = now + result.retryAfterSeconds * 1_000L
                 return ProbeOutcome.RateLimited(result.retryAfterSeconds)
             }
             is BandwidthProbeResult.Unavailable -> return ProbeOutcome.Unavailable

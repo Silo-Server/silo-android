@@ -501,6 +501,29 @@ class BandwidthProbeSchedulerTest {
     }
 
     @Test
+    fun eachServerKeepsItsOwnRateLimit() = runTest {
+        val harness = Harness(this)
+        harness.server.answer = { read -> read(BandwidthProbeResponseV2.RateLimited(600)) }
+        harness.foreground()
+        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
+        assertEquals(1, harness.server.downloads)
+
+        harness.server.serve(probeTarget().let {
+            BandwidthProbeTarget("server-2", it.url, AuthScopeSnapshot("server-2", "profile-1", "https://two.example", null))
+        })
+        harness.activeServer.value = "server-2"
+        runCurrent()
+        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
+        assertEquals(2, harness.server.downloads, "server-2 answers with its own 429")
+
+        harness.server.serve(probeTarget())
+        harness.activeServer.value = "server-1"
+        runCurrent()
+        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
+        assertEquals(2, harness.server.downloads, "server-1 is still inside its Retry-After")
+    }
+
+    @Test
     fun aPlaybackStartCancelsARunningProbe() = runTest {
         val harness = Harness(this)
         val started = CompletableDeferred<Unit>()

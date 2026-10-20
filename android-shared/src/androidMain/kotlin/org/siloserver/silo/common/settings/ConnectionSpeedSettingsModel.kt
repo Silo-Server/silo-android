@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.settings
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -49,7 +50,7 @@ enum class ConnectionSpeedSkip {
 
 /** The answer to the last **Test speed**, until the next one. */
 sealed interface ConnectionSpeedMessage {
-    /** HTTP 429: "Try again in N seconds". */
+    /** HTTP 429: "Try again in N seconds", for those [seconds]. */
     data class TryAgainIn(val seconds: Int) : ConnectionSpeedMessage
 
     /** Media was playing or starting. */
@@ -144,7 +145,16 @@ class ConnectionSpeedSettingsModel(
                 if (outcome is ProbeOutcome.Measured) connection.settingsState()?.let { server.value = it }
             } finally {
                 local.update { Local(testing = false, message = message) }
+                (message as? ConnectionSpeedMessage.TryAgainIn)?.let(::expire)
             }
+        }
+    }
+
+    /** Hides [message] once its wait has passed, unless another answer replaced it. */
+    private fun expire(message: ConnectionSpeedMessage.TryAgainIn) {
+        scope.launch {
+            delay(message.seconds * 1_000L)
+            local.update { if (it.message === message) it.copy(message = null) else it }
         }
     }
 

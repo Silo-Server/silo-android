@@ -103,6 +103,20 @@ class PlaybackBandwidthProbeApiTest {
     }
 
     @Test
+    fun anUnreadableRetryAfterWaitsThirtySecondsAndOneUnderASecondWaitsOne() = runTest {
+        for ((header, seconds) in listOf("Wed, 21 Oct 2026 07:28:00 GMT" to 30, "1.5" to 30, "0" to 1, "-4" to 1)) {
+            val api = api(mutableListOf()) {
+                Triple(HttpStatusCode.TooManyRequests, "{}", mapOf(HttpHeaders.RetryAfter to header))
+            }
+            assertEquals(
+                BandwidthProbeResponseV2.RateLimited(seconds),
+                api.bandwidthProbe(scope, "https://silo.example/p", ::readAll),
+                header,
+            )
+        }
+    }
+
+    @Test
     fun anUnavailableMediaPathIsNotMeasured() = runTest {
         val seen = mutableListOf<Seen>()
         val api = api(seen) { Triple(HttpStatusCode.ServiceUnavailable, "{}", emptyMap()) }

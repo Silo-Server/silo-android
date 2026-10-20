@@ -21,7 +21,7 @@ const val SEQUENCED_PROGRESS_FEATURE = "sequenced_progress_v1"
 /** The redirects a bandwidth probe download follows once; the server sends 307. */
 private val PROBE_REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)
 
-/** The wait a 429 implies when it names none, as the web probe assumes. */
+/** The wait a 429 implies when its `Retry-After` is missing or unreadable (an HTTP date, say). */
 private const val DEFAULT_PROBE_RETRY_AFTER_SECONDS = 30
 
 /** `PlaybackCapabilities.state` on the wire. */
@@ -273,9 +273,11 @@ class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate)
                 val body = response.bodyAsChannel()
                 read(BandwidthProbeResponseV2.Body { buffer -> body.readAvailable(buffer, 0, buffer.size) })
             }
+            // A value under 1 second waits 1 second.
             HttpStatusCode.TooManyRequests -> read(
                 BandwidthProbeResponseV2.RateLimited(
-                    response.headers[HttpHeaders.RetryAfter]?.trim()?.toIntOrNull()?.takeIf { it > 0 }
+                    response.headers[HttpHeaders.RetryAfter]?.trim()?.toLongOrNull()
+                        ?.coerceIn(1L, Int.MAX_VALUE.toLong())?.toInt()
                         ?: DEFAULT_PROBE_RETRY_AFTER_SECONDS,
                 ),
             )
