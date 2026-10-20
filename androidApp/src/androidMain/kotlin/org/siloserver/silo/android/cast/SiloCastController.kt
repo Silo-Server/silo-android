@@ -66,6 +66,7 @@ import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.api.DeviceLoginApi
 import org.siloserver.silo.repository.CatalogRepository
+import org.siloserver.silo.repository.ServerIdentityRepository
 
 data class SiloCastControllerState(
     val targets: List<SiloCastTarget> = emptyList(),
@@ -138,6 +139,7 @@ class SiloCastController(
     private val deviceIdProvider: () -> String,
     /** Display name of [profileId] when it is the active profile; null otherwise. */
     private val profileNameProvider: (profileId: String) -> String? = { null },
+    private val serverIdentities: ServerIdentityRepository? = null,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json {
@@ -249,7 +251,26 @@ class SiloCastController(
     }
 
     fun startBrowsing() {
+        learnActiveServerIdentity()
         browser.start()
+    }
+
+    /** The server whose identity this process already tried to learn. */
+    @Volatile
+    private var identityLookupServerId: String? = null
+
+    /**
+     * A server signed in before the identity contract has no verified
+     * identity, so the picker can't recognise a TV that advertises another of
+     * its addresses, and hello and the offer can't name it. Learn it once, as
+     * silo-apple does on the server's next activation.
+     */
+    private fun learnActiveServerIdentity() {
+        val identities = serverIdentities ?: return
+        val entry = serverRegistry.activeEntry.value ?: return
+        if (entry.deploymentIdentity != null || identityLookupServerId == entry.id) return
+        identityLookupServerId = entry.id
+        scope.launch { runCatching { identities.identityOf(entry) } }
     }
 
     fun stopBrowsing() {
@@ -666,6 +687,7 @@ class SiloCastController(
 
         autoResumeJob = scope.launch {
             try {
+                learnActiveServerIdentity()
                 browser.start()
                 var match: SiloCastTarget? = null
                 var rounds = 0

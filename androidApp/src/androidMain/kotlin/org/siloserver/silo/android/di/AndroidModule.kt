@@ -309,6 +309,7 @@ val androidModule = module {
             profileNameProvider = { profileId ->
                 activeProfiles.activeProfile.value?.takeIf { it.id == profileId }?.name
             },
+            serverIdentities = get(),
         )
     }
     single<AndroidPushTokenProvider> { FirebaseAndroidPushTokenProvider(androidContext()) }
