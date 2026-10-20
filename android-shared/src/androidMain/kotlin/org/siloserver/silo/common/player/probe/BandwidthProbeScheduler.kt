@@ -284,8 +284,9 @@ class PlaybackV2BandwidthProbeServer(
  *
  * - **Readings**: a probe and a playback sample, per server and network,
  *   current while younger than [BandwidthProbeTarget.readingLifetimeMs]. The
- *   server's are kept only within the estimate's bounds, and a time the
- *   server dated ahead of this device's clock counts as now.
+ *   server's and this device's own are kept only within the estimate's
+ *   bounds, and a time the server dated ahead of this device's clock counts
+ *   as now.
  *   Playback starts send the highest current one. A settled probe proves the
  *   link; a lower bound proves it only while it is at least the current
  *   [BandwidthProbeTarget.targetKbps], and without a target any current reading
@@ -600,7 +601,9 @@ class BandwidthProbeScheduler(
         val measured = when (
             val result = probe.measure(mode, target.targetKbps) { read -> server.download(target, mode, read) }
         ) {
-            is BandwidthProbeResult.Measured -> result
+            // Never kept or sent outside the bounds a start may carry.
+            is BandwidthProbeResult.Measured -> result.takeIf { it.kbps in READING_KBPS }
+                ?: return ProbeOutcome.TooLittleData
             is BandwidthProbeResult.RateLimited -> {
                 rateLimit = target.serverId to elapsedClock() + result.retryAfterSeconds * 1_000L
                 return ProbeOutcome.RateLimited(result.retryAfterSeconds)

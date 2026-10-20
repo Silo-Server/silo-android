@@ -572,6 +572,19 @@ class BandwidthProbeSchedulerTest {
     }
 
     @Test
+    fun aTargetUnderTheEstimatesFloorMeasuresNothing() = runTest {
+        val harness = Harness(this)
+        // An admin cap of 50 kbps; a start would be refused for a 63 kbps reading.
+        harness.server.serve(probeTarget(targetKbps = 63))
+        harness.foreground()
+        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
+        assertEquals(1, harness.server.downloads)
+        assertTrue(harness.server.reports.isEmpty())
+        assertNull(harness.scheduler.freshEstimateKbps())
+        assertNull(harness.scheduler.lastMeasurement.value)
+    }
+
+    @Test
     fun aLowerBoundProvesTheLinkOnlyWhileItReachesTheTarget() = runTest {
         val harness = Harness(this)
         harness.server.serve(probeTarget(targetKbps = 50_000))

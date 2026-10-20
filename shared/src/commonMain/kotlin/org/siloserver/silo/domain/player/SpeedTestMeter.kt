@@ -106,11 +106,14 @@ class SpeedTestMeter(val mode: SpeedTestMode, targetKbps: Int?) {
      * rate over the last complete windows after window 0, else the
      * whole-transfer average ([wholeTransfer]). Null when the test measured
      * nothing: no complete window after window 0 and a transfer that ended
-     * short of [SpeedTestMode.requestBytes], or under [MIN_KBPS].
+     * short of [SpeedTestMode.requestBytes], or under [MIN_KBPS], a target
+     * under it included.
      */
     fun result(): SpeedTestResult? {
         targetWindowBytes?.let { bytes ->
-            return SpeedTestResult(checkNotNull(target), lowerBound = true, bytes = bytes, durationMs = WINDOW_MS.toInt())
+            val kbps = checkNotNull(target)
+            if (kbps < MIN_KBPS) return null
+            return SpeedTestResult(kbps.coerceAtMost(MAX_KBPS), lowerBound = true, bytes = bytes, durationMs = WINDOW_MS.toInt())
         }
         val counted = closed.drop(1).takeLast(mode.settleWindows)
         if (counted.isEmpty()) return wholeTransfer()
@@ -135,7 +138,7 @@ class SpeedTestMeter(val mode: SpeedTestMode, targetKbps: Int?) {
         val end = endMs ?: return null
         if (totalBytes < mode.requestBytes) return null
         val average = totalBytes * 8 / end.coerceAtLeast(1)
-        val kbps = if (target != null && average >= target) target.toLong() else average.coerceAtMost(MAX_KBPS.toLong())
+        val kbps = (if (target != null && average >= target) target.toLong() else average).coerceAtMost(MAX_KBPS.toLong())
         if (kbps < MIN_KBPS) return null
         return SpeedTestResult(kbps.toInt(), lowerBound = true, bytes = totalBytes, durationMs = end.toInt())
     }
