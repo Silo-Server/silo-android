@@ -19,6 +19,7 @@ class TvTypographyReadabilityTest {
         "org/siloserver/silo/tv/ui/screens/detail/TvDetailHero.kt|fontSize = 12.sp,",
         "org/siloserver/silo/tv/ui/components/TvSquaredButtons.kt|val titleStyle = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold)",
         "org/siloserver/silo/tv/ui/screens/detail/TvDetailEpisodeRail.kt|fontSize = 11.5.sp,",
+        "org/siloserver/silo/tv/ui/screens/detail/TvDetailEpisodeRail.kt|fontSize = 10.5.sp,",
         "org/siloserver/silo/tv/ui/screens/detail/TvItemDetailScreen.kt|fontSize = 11.5.sp,",
         "org/siloserver/silo/tv/ui/screens/detail/TvItemDetailScreen.kt|fontSize = 11.5.sp,",
         // First-run chrome at tvOS half scale: the SECURE/HTTP badge on the

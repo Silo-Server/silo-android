@@ -53,8 +53,6 @@ internal fun SeasonEpisodePager(
     showsSeasonSelector: Boolean = true,
     selectsCenteredEpisode: Boolean = false,
     allowsSeasonPaging: Boolean = true,
-    /** Tablet/fold rail cards show title, date/runtime, and overview. */
-    showsEpisodeDetails: Boolean = false,
     /** Tablet/fold rail selection follows taps rather than centre position. */
     tapToFocusEpisode: Boolean = false,
 ) {
@@ -67,7 +65,6 @@ internal fun SeasonEpisodePager(
             onEpisodeWatchedChange = onEpisodeWatchedChange,
             highlightContentId = highlightContentId,
             selectsCenteredEpisode = selectsCenteredEpisode,
-            showsEpisodeDetails = showsEpisodeDetails,
             tapToFocusEpisode = tapToFocusEpisode,
         )
         return
@@ -167,7 +164,6 @@ internal fun SeasonEpisodePager(
                     onEpisodeWatchedChange = onEpisodeWatchedChange,
                     highlightContentId = highlightContentId,
                     selectsCenteredEpisode = selectsCenteredEpisode,
-                    showsEpisodeDetails = showsEpisodeDetails,
                     tapToFocusEpisode = tapToFocusEpisode,
                     modifier = Modifier
                         .onSizeChanged { pageHeightsPx[page] = it.height }
@@ -191,16 +187,12 @@ private fun SeasonEpisodePage(
     onEpisodeWatchedChange: ((String, Boolean) -> Unit)?,
     highlightContentId: String?,
     selectsCenteredEpisode: Boolean,
-    showsEpisodeDetails: Boolean,
     tapToFocusEpisode: Boolean,
     modifier: Modifier = Modifier,
 ) {
     when {
         isLoading -> {
-            EpisodeListSkeleton(
-                showsEpisodeDetails = showsEpisodeDetails,
-                modifier = modifier,
-            )
+            EpisodeListSkeleton(modifier = modifier)
         }
         episodes.isEmpty() -> {
             Text(
@@ -218,7 +210,6 @@ private fun SeasonEpisodePage(
                 onEpisodeWatchedChange = onEpisodeWatchedChange,
                 highlightContentId = highlightContentId,
                 selectsCenteredEpisode = selectsCenteredEpisode,
-                showsEpisodeDetails = showsEpisodeDetails,
                 tapToFocusEpisode = tapToFocusEpisode,
                 modifier = modifier,
             )
