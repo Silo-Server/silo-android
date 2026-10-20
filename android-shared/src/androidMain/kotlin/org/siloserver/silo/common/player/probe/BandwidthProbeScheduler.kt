@@ -17,12 +17,12 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.siloserver.silo.common.diagnostics.SiloLog
@@ -39,6 +39,7 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.apiv2.BandwidthProbeResponseV2
 import org.siloserver.silo.network.apiv2.PlaybackBandwidthProbeResultV2
 import org.siloserver.silo.network.apiv2.PlaybackV2Api
+import org.siloserver.silo.network.localroute.LocalRoute
 import org.siloserver.silo.network.localroute.LocalRouteState
 import org.siloserver.silo.network.localroute.LocalRoutes
 import org.siloserver.silo.network.localroute.onSavedAddress
@@ -57,11 +58,14 @@ const val PLAYBACK_START_QUIET_MS = 60_000L
  */
 interface PlaybackBandwidthEstimates {
     /**
-     * The highest current reading's kbps for the active server on the network
-     * in use now, or null when there is none current, or the network is
-     * metered or cellular.
+     * The highest current reading's kbps for a start on [serverId]
+     * (`AuthScopeSnapshot.serverId`) whose media takes the local route only
+     * when [allowsLocalRoute], on the network in use now. Null when the
+     * readings belong to another server or route (a borrowed TV identity, a
+     * Watch Party start beside a local route), none is current, or the
+     * network is metered or cellular.
      */
-    fun freshEstimateKbps(): Int?
+    fun freshEstimateKbps(serverId: String?, allowsLocalRoute: Boolean): Int?
 
     /** Playback is starting: stop a running probe and hold off new ones while the media loads. */
     fun playbackStarting() = Unit
@@ -69,7 +73,7 @@ interface PlaybackBandwidthEstimates {
     companion object {
         /** No probe: playback requests carry no estimate. */
         val None: PlaybackBandwidthEstimates = object : PlaybackBandwidthEstimates {
-            override fun freshEstimateKbps(): Int? = null
+            override fun freshEstimateKbps(serverId: String?, allowsLocalRoute: Boolean): Int? = null
         }
     }
 }
@@ -295,17 +299,21 @@ class PlaybackV2BandwidthProbeServer(
  * speed test → When to test* in the server repo's
  * `docs/design/2026-10-17-buffering-quality.md`.
  *
- * - **Readings**: a probe and a playback sample, per server and network,
- *   current while younger than [BandwidthProbeTarget.readingLifetimeMs]. The
- *   server's and this device's own are kept only within the estimate's
- *   bounds, and a time the server dated ahead of this device's clock counts
- *   as now.
- *   Playback starts send the highest current one. A settled probe proves the
+ * - **Readings**: a probe and a playback sample, per server, network and
+ *   local route, current while younger than
+ *   [BandwidthProbeTarget.readingLifetimeMs]. The server's and this device's
+ *   own are kept only within the estimate's bounds, and a time the server
+ *   dated ahead of this device's clock counts as now.
+ *   Playback starts on that server whose media takes that route send the
+ *   highest current one. A settled probe proves the
  *   link; a lower bound proves it only while it is at least the current
  *   [BandwidthProbeTarget.targetKbps], and without a target any current reading
  *   proves it.
  * - **Checks**: when Silo returns to the foreground, a server is signed in,
- *   the profile changes or the network changes, and at no other time. A check
+ *   the profile changes, the network changes (another network or interface,
+ *   metering, VPN state, or this server's local route coming or going) or
+ *   the network is validated again, and at no other time. None runs under a
+ *   borrowed identity (a remote or Cast hand-off on the TV). A check
  *   reads the server's readings ([BandwidthProbeServer.storedReading]) at once,
  *   so a playback start in the first seconds already sends them. Only the
  *   quick test waits,
@@ -332,6 +340,7 @@ class PlaybackV2BandwidthProbeServer(
  *   profile, else null.
  * @param profileSwitches emits when the profile changes on the same server
  *   ([profileSwitches]).
+ * @param localRoute the local route requests take now ([LocalRouteState.active]).
  */
 class BandwidthProbeScheduler(
     private val server: BandwidthProbeServer,
@@ -340,12 +349,13 @@ class BandwidthProbeScheduler(
     private val activeServer: StateFlow<String?>,
     private val scope: CoroutineScope,
     private val profileSwitches: Flow<Unit> = emptyFlow(),
+    private val localRoute: StateFlow<LocalRoute?> = MutableStateFlow(null),
     private val probe: BandwidthProbe = BandwidthProbe(),
     private val elapsedClock: () -> Long = { SystemClock.elapsedRealtime() },
     private val wallClock: () -> Long = { System.currentTimeMillis() },
 ) : PlaybackBandwidthEstimates {
 
-    /** The readings for one server and network, with the schedule they are judged by. */
+    /** The readings for one server, network and route, with the schedule they are judged by. */
     private data class Cached(
         val serverId: String,
         val networkKey: String,
@@ -412,7 +422,19 @@ class BandwidthProbeScheduler(
 
     internal fun observe() {
         scope.launch {
-            network.updates.map { networkKey(it) }.distinctUntilChanged().drop(1).collect { onNetworkChanged() }
+            var last: Pair<String, Boolean>? = null
+            combine(network.updates, localRoute) { snapshot, route -> networkKey(snapshot, route) to snapshot.validated }
+                .distinctUntilChanged()
+                .collect { next ->
+                    val previous = last
+                    last = next
+                    when {
+                        previous == null -> Unit
+                        previous.first != next.first -> onNetworkChanged()
+                        // Validated again: a read that failed meanwhile can reach the server now.
+                        next.second && !previous.second -> onConnectivityReturned()
+                    }
+                }
         }
         scope.launch {
             activeServer.drop(1).collect(::onServerChanged)
@@ -425,8 +447,10 @@ class BandwidthProbeScheduler(
         }
     }
 
-    override fun freshEstimateKbps(): Int? {
-        val entry = cached?.takeIf { onThisNetwork(it, network.snapshot()) } ?: return null
+    override fun freshEstimateKbps(serverId: String?, allowsLocalRoute: Boolean): Int? {
+        val entry = cached?.takeIf { it.serverId == serverId && onThisNetwork(it, network.snapshot()) } ?: return null
+        // Read over the local route, which media on the saved address does not take.
+        if (!allowsLocalRoute && localRoute.value?.serverId == entry.serverId) return null
         return listOfNotNull(
             entry.probe?.takeIf { isCurrent(it.measuredAtEpochMs, entry) }?.kbps,
             entry.sample?.takeIf { isCurrent(it.measuredAtEpochMs, entry) }?.kbps,
@@ -465,6 +489,11 @@ class BandwidthProbeScheduler(
     private fun onNetworkChanged() {
         forget()
         cancelInFlight(ProbeOutcome.Interrupted)
+        if (activeServer.value != null) check()
+    }
+
+    /** The same network again, now validated: what it holds still applies. */
+    private fun onConnectivityReturned() {
         if (activeServer.value != null) check()
     }
 
@@ -528,10 +557,10 @@ class BandwidthProbeScheduler(
         }
     }
 
-    /** [entry] is for the active server and the network in use, and that network may be tested. */
+    /** [entry] is for the active server and the network and route in use, and that network may be tested. */
     private fun onThisNetwork(entry: Cached, snapshot: PlaybackNetworkSnapshot): Boolean =
         snapshot.connected && !snapshot.skipsBandwidthProbe &&
-            networkKey(snapshot) == entry.networkKey && activeServer.value == entry.serverId
+            networkKey(snapshot, localRoute.value) == entry.networkKey && activeServer.value == entry.serverId
 
     /** Younger than [Cached.lifetimeMs]; a reading from the future counts. */
     private fun isCurrent(measuredAtEpochMs: Long, entry: Cached): Boolean =
@@ -579,9 +608,13 @@ class BandwidthProbeScheduler(
             BandwidthProbeTargetLookup.NotSupported -> return ProbeOutcome.NotSupported
             is BandwidthProbeTargetLookup.Failed -> return ProbeOutcome.NetworkError(lookup.cause)
         }
-        if (target.serverId != activeServer.value) return ProbeOutcome.Interrupted
+        // A borrowed identity (a remote or Cast hand-off) holds its own
+        // account's readings, which are not this device's to keep.
+        if (target.serverId != activeServer.value || target.scope.credentialGenerationId != null) {
+            return ProbeOutcome.Interrupted
+        }
         val snapshot = network.snapshot()
-        val networkKey = networkKey(snapshot)
+        val networkKey = networkKey(snapshot, localRoute.value)
         if (!manual) {
             gate(manual = false)?.takeIf { it != ProbeOutcome.PlaybackActive }?.let { return it }
             val stored = when (val lookup = server.storedReading(target)) {
@@ -604,7 +637,7 @@ class BandwidthProbeScheduler(
             // Only the test waits, so the first screen can settle. Then it
             // checks again that it may run.
             delay(PROBE_START_DELAY_MS)
-            if (target.serverId != activeServer.value || networkKey(network.snapshot()) != networkKey) {
+            if (target.serverId != activeServer.value || networkKey(network.snapshot(), localRoute.value) != networkKey) {
                 return ProbeOutcome.Interrupted
             }
             rateLimits[target.serverId]?.let { notBefore ->
@@ -632,7 +665,7 @@ class BandwidthProbeScheduler(
             is BandwidthProbeResult.NetworkError -> return ProbeOutcome.NetworkError(result.cause)
         }
         // A change mid-probe cancels it; this catches one that raced its end.
-        if (networkKey(network.snapshot()) != networkKey || activeServer.value != target.serverId) {
+        if (networkKey(network.snapshot(), localRoute.value) != networkKey || activeServer.value != target.serverId) {
             return ProbeOutcome.Interrupted
         }
         val estimate = BandwidthEstimate(
@@ -696,9 +729,14 @@ class BandwidthProbeScheduler(
     private companion object {
         const val TAG = "BandwidthProbe"
 
-        /** Which network a measurement describes: another connection, transport or metering is another network. */
-        fun networkKey(snapshot: PlaybackNetworkSnapshot): String = with(snapshot) {
-            if (!connected) "none" else "$networkId|$transport|$cellular|$metered|$vpn"
+        /**
+         * Which network and route a measurement describes: another connection,
+         * transport, metering, VPN state or local route is another network.
+         */
+        fun networkKey(snapshot: PlaybackNetworkSnapshot, route: LocalRoute?): String {
+            if (!snapshot.connected) return "none"
+            val via = route?.let { "${it.serverId}@${LocalRoute.format(it.localOrigin)}" } ?: "saved"
+            return with(snapshot) { "$networkId|$transport|$cellular|$metered|$vpn|$via" }
         }
 
         /** The contract's transport names; a VPN reports what it runs over. */

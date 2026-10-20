@@ -81,7 +81,7 @@ class PlaybackSessionManagerProbeEstimateTest {
     /** The probe as a start sees it: [estimate] when fresh, and the starts it was told about. */
     private class Probe(var estimate: Int?) : PlaybackBandwidthEstimates {
         var starts = 0
-        override fun freshEstimateKbps(): Int? = estimate
+        override fun freshEstimateKbps(serverId: String?, allowsLocalRoute: Boolean): Int? = estimate
         override fun playbackStarting() { starts += 1 }
     }
 

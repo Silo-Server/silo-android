@@ -104,6 +104,7 @@ val playerInfraModule = module {
                 .map { it?.id to it?.profileId?.takeIf(String::isNotBlank) }
                 .distinctUntilChanged()
                 .profileSwitches(),
+            localRoute = org.siloserver.silo.network.localroute.LocalRoutes.state.active,
         )
     }
     single<PlaybackBandwidthEstimates> { get<BandwidthProbeScheduler>() }

@@ -495,8 +495,11 @@ open class PlaybackSessionManager(
                 return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
             val network = networkEvidenceProvider.snapshot()
             // Read before the probe hears of the start, which only stops a
-            // running probe; the cached estimate stays.
-            val probeEstimateKbps = bandwidthEstimates.freshEstimateKbps()
+            // running probe; the cached estimate stays. Only a reading for the
+            // server and route this start's media takes goes with it.
+            val probeEstimateKbps = bandwidthEstimates.freshEstimateKbps(
+                tokenManager.snapshotCurrentScope()?.serverId, allowsLocalRoute,
+            )
             bandwidthEstimates.playbackStarting()
             if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
                 return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")

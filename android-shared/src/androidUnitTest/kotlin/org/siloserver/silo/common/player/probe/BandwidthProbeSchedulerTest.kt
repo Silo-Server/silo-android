@@ -18,6 +18,8 @@ import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.PlaybackNetworkSnapshot
 import org.siloserver.silo.domain.player.SpeedTestMode
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.HttpOrigin
+import org.siloserver.silo.network.localroute.LocalRoute
 import org.siloserver.silo.network.apiv2.BandwidthProbeResponseV2
 import org.siloserver.silo.network.apiv2.PlaybackBandwidthProbeResultV2
 import kotlin.test.Test
@@ -26,6 +28,9 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+
+/** What a start on server-1 sends when its media may take the local route. */
+private fun BandwidthProbeScheduler.freshEstimateKbps(): Int? = freshEstimateKbps("server-1", allowsLocalRoute = true)
 
 class BandwidthProbeSchedulerTest {
     private class Network(initial: PlaybackNetworkSnapshot) : PlaybackNetworkEvidenceProvider {
@@ -81,6 +86,7 @@ class BandwidthProbeSchedulerTest {
         val media = MutableStateFlow(false)
         val activeServer = MutableStateFlow<String?>("server-1")
         val profileSwitches = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+        val route = MutableStateFlow<LocalRoute?>(null)
         val scheduler = BandwidthProbeScheduler(
             server = server,
             network = network,
@@ -88,6 +94,7 @@ class BandwidthProbeSchedulerTest {
             activeServer = activeServer,
             scope = test.backgroundScope,
             profileSwitches = profileSwitches,
+            localRoute = route,
             probe = BandwidthProbe(clock = { test.currentTime }),
             elapsedClock = { test.currentTime },
             wallClock = { 1_760_000_000_000 + test.currentTime },
@@ -289,6 +296,72 @@ class BandwidthProbeSchedulerTest {
         harness.network.state.value = WIFI.copy(bandwidthEstimateKbps = 12_000, linkDownstreamKbps = 400_000, validated = false)
         runCurrent()
         assertEquals(80_000, harness.scheduler.freshEstimateKbps())
+    }
+
+    @Test
+    fun aReadingTakenOverTheLocalRouteGoesOnlyWithStartsThatTakeIt() = runTest {
+        val harness = Harness(this)
+        harness.route.value = ROUTE
+        runCurrent()
+        assertIs<ProbeOutcome.Measured>(harness.scheduler.runNow())
+        assertEquals(80_000, harness.scheduler.freshEstimateKbps("server-1", allowsLocalRoute = true))
+        // A Watch Party start keeps its media on the saved address.
+        assertNull(harness.scheduler.freshEstimateKbps("server-1", allowsLocalRoute = false))
+    }
+
+    @Test
+    fun theLocalRouteComingOrGoingIsANetworkChange() = runTest {
+        val harness = Harness(this)
+        harness.server.stored = harness.storedReading(30_000, ageMs = 60_000)
+        harness.foreground()
+        assertEquals(30_000, harness.scheduler.freshEstimateKbps())
+
+        // The route comes back shortly after the network does: read again over it.
+        harness.server.stored = harness.storedReading(400_000, ageMs = 60_000)
+        harness.route.value = ROUTE
+        runCurrent()
+        assertEquals(2, harness.server.storedChecks)
+        assertEquals(400_000, harness.scheduler.freshEstimateKbps())
+
+        harness.route.value = null
+        runCurrent()
+        assertEquals(3, harness.server.storedChecks)
+    }
+
+    @Test
+    fun aNetworkValidatedAgainIsCheckedAgain() = runTest {
+        val harness = Harness(this, WIFI.copy(validated = false))
+        harness.server.stored = StoredReadingLookup.Failed(null)
+        harness.foreground()
+        assertEquals(1, harness.server.storedChecks)
+
+        harness.server.stored = harness.storedReading(30_000, ageMs = 60_000)
+        harness.network.state.value = WIFI
+        runCurrent()
+        assertEquals(2, harness.server.storedChecks)
+        assertEquals(30_000, harness.scheduler.freshEstimateKbps())
+    }
+
+    @Test
+    fun aStartOnAnotherServerSendsNoReading() = runTest {
+        val harness = Harness(this)
+        assertIs<ProbeOutcome.Measured>(harness.scheduler.runNow())
+        // A Cast hand-off from a phone signed in to another server.
+        assertNull(harness.scheduler.freshEstimateKbps("server-2", allowsLocalRoute = true))
+    }
+
+    @Test
+    fun nothingIsReadOrTestedUnderABorrowedIdentity() = runTest {
+        val harness = Harness(this)
+        harness.server.serve(probeTarget().let {
+            BandwidthProbeTarget(it.serverId, it.url, it.scope.copy(credentialGenerationId = "hand-off"))
+        })
+        harness.server.stored = harness.storedReading(30_000, ageMs = 60_000)
+        harness.foreground()
+        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
+        assertEquals(0, harness.server.storedChecks)
+        assertEquals(0, harness.server.downloads)
+        assertNull(harness.scheduler.freshEstimateKbps())
     }
 
     @Test
@@ -801,6 +874,12 @@ class BandwidthProbeSchedulerTest {
         )
 
         val WIFI = PlaybackNetworkSnapshot(connected = true, validated = true, transport = "wifi", networkId = 1)
+        val ROUTE = LocalRoute(
+            serverId = "server-1",
+            savedOrigin = HttpOrigin("https", "silo.example", 443),
+            localOrigin = HttpOrigin("https", "192.168.1.20", 8096),
+            generation = 1,
+        )
         val CELLULAR = PlaybackNetworkSnapshot(connected = true, validated = true, transport = "cellular", cellular = true, networkId = 3)
     }
 }
