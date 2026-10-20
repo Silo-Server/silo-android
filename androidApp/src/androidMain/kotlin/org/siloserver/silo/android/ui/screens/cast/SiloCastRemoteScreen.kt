@@ -64,6 +64,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -132,6 +133,13 @@ fun SiloCastRemoteScreen(
     DisposableEffect(controller) {
         controller.setRemoteScreenVisible(true)
         onDispose { controller.setRemoteScreenVisible(false) }
+    }
+
+    // The TV ended the session (its viewer took control back): close, as
+    // silo-apple's remote sheet does. AppNavigation shows the notice.
+    val latestOnBack by rememberUpdatedState(onBack)
+    LaunchedEffect(controller) {
+        controller.endedByTv.collect { latestOnBack() }
     }
 
     DisposableEffect(lifecycleOwner, context) {
