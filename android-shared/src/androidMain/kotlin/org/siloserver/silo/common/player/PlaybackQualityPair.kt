@@ -31,6 +31,11 @@ data class PlaybackQualityPair(val qualityPreference: String, val bandwidthCapKb
  * as a phone hotspot or Wi-Fi the user marked metered. A VPN's own metered
  * flag is ignored: Android marks most VPNs metered by default, which would
  * put a home Wi-Fi behind Tailscale on the cellular pair.
+ *
+ * This is the one metered rule: the speed test and the estimate a start
+ * sends use it too ([org.siloserver.silo.common.player.probe.skipsBandwidthProbe]).
+ * Data Saver needs no input of its own, since Android applies it only to
+ * networks it marks metered.
  */
 val PlaybackNetworkSnapshot.usesCellularQuality: Boolean
     get() = connected && (cellular || (!vpn && metered))

@@ -303,7 +303,7 @@ class BandwidthProbeSchedulerTest {
 
     @Test
     fun meteredAndCellularNetworksAreNeverProbed() = runTest {
-        for (snapshot in listOf(WIFI.copy(metered = true), CELLULAR, WIFI.copy(vpn = true, metered = true))) {
+        for (snapshot in listOf(WIFI.copy(metered = true), CELLULAR, CELLULAR.copy(vpn = true, metered = true))) {
             val harness = Harness(this, snapshot)
             harness.foreground()
             advanceTimeBy(IDLE_MS)
@@ -311,6 +311,14 @@ class BandwidthProbeSchedulerTest {
             assertEquals(0, harness.server.downloads, "$snapshot")
             assertEquals(0, harness.server.lookups, "$snapshot")
         }
+    }
+
+    @Test
+    fun aVpnsOwnMeteredFlagIsIgnoredAsForTheCellularQuality() = runTest {
+        // Android marks most VPNs metered; the phone plays its main quality here.
+        val harness = Harness(this, WIFI.copy(vpn = true, metered = true))
+        assertIs<ProbeOutcome.Measured>(harness.scheduler.runNow())
+        assertEquals(80_000, harness.scheduler.freshEstimateKbps())
     }
 
     @Test

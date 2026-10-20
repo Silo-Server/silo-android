@@ -28,6 +28,7 @@ import kotlinx.coroutines.withContext
 import org.siloserver.silo.common.diagnostics.SiloLog
 import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.PlaybackNetworkSnapshot
+import org.siloserver.silo.common.player.usesCellularQuality
 import org.siloserver.silo.domain.player.SpeedTestMeter
 import org.siloserver.silo.domain.player.SpeedTestMode
 import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
@@ -144,9 +145,13 @@ fun Flow<Pair<String?, String?>>.profileSwitches(): Flow<Unit> = flow {
     }
 }
 
-/** Speed tests are skipped on this network: it is metered or cellular. */
+/**
+ * Speed tests are skipped on this network, and starts send no estimate: it is
+ * metered or cellular by the rule that picks the phone's cellular quality, so
+ * a VPN's own metered flag does not count.
+ */
 val PlaybackNetworkSnapshot.skipsBandwidthProbe: Boolean
-    get() = metered || cellular
+    get() = usesCellularQuality
 
 /** The probe endpoint of the active server and its schedule, for one check or test and its report. */
 class BandwidthProbeTarget(

@@ -39,7 +39,6 @@ import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.NotificationsRepository
 import org.siloserver.silo.repository.PlaybackConnectionRepository
 import org.siloserver.silo.common.player.probe.BandwidthProbeScheduler
-import org.siloserver.silo.common.player.usesCellularQuality
 import org.siloserver.silo.common.settings.ConnectionSpeedSettingsModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -219,7 +218,7 @@ class SettingsViewModel(
      */
     val connectionSpeed: ConnectionSpeedSettingsModel? = bandwidthProbe?.let { probe ->
         playbackConnection?.let { connection ->
-            ConnectionSpeedSettingsModel(probe, connection, viewModelScope) { it.usesCellularQuality }
+            ConnectionSpeedSettingsModel(probe, connection, viewModelScope, hasCellularQuality = true)
         }
     }
 

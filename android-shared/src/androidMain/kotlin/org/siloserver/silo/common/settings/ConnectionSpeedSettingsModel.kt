@@ -32,7 +32,10 @@ data class ConnectionSpeedReading(
     val duringPlayback: Boolean = false,
 )
 
-/** Why the speed test is not offered on the network in use. */
+/**
+ * Why the speed test is not offered on the network in use: it is metered or
+ * cellular by the rule that also picks the phone's Cellular quality.
+ */
 enum class ConnectionSpeedSkip {
     /** Mobile data: the phone's Cellular quality settings apply. */
     CELLULAR,
@@ -40,7 +43,7 @@ enum class ConnectionSpeedSkip {
     /** A metered network the phone plays at its Cellular quality on, such as a hotspot. */
     METERED_CELLULAR_QUALITY,
 
-    /** Any other metered network, including a VPN Android marks metered. */
+    /** A metered or cellular network on a device without Cellular quality settings (the TV). */
     METERED,
 }
 
@@ -83,15 +86,15 @@ data class ConnectionSpeedUiState(
  * The view model reads the connection and hands it over through [update].
  *
  * @param wallClock epoch milliseconds: a server time ahead of it counts as now.
- * @param cellularQualityApplies whether this device plays at its Cellular
- *   quality on a network (the phone). The TV has none.
+ * @param hasCellularQuality whether this device has Cellular quality settings
+ *   (the phone). The TV has none.
  */
 class ConnectionSpeedSettingsModel(
     private val probe: BandwidthProbeScheduler,
     private val connection: PlaybackConnectionRepository,
     private val scope: CoroutineScope,
     private val wallClock: () -> Long = { System.currentTimeMillis() },
-    private val cellularQualityApplies: (PlaybackNetworkSnapshot) -> Boolean = { false },
+    private val hasCellularQuality: Boolean = false,
 ) {
     private data class Local(val testing: Boolean = false, val message: ConnectionSpeedMessage? = null)
 
@@ -147,9 +150,9 @@ class ConnectionSpeedSettingsModel(
 
     private fun skipFor(network: PlaybackNetworkSnapshot): ConnectionSpeedSkip? = when {
         !network.skipsBandwidthProbe -> null
-        cellularQualityApplies(network) ->
-            if (network.cellular) ConnectionSpeedSkip.CELLULAR else ConnectionSpeedSkip.METERED_CELLULAR_QUALITY
-        else -> ConnectionSpeedSkip.METERED
+        !hasCellularQuality -> ConnectionSpeedSkip.METERED
+        network.cellular -> ConnectionSpeedSkip.CELLULAR
+        else -> ConnectionSpeedSkip.METERED_CELLULAR_QUALITY
     }
 
     private companion object {
