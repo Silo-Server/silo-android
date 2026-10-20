@@ -365,6 +365,8 @@ private fun TvDetailEpisodeCard(
     val cardWidth = if (usesSeriesGeometry) tvEpisodeCardWidth() else 230.dp.cardScaled()
     val spoilers = LocalEpisodeSpoilerPrefs.current
     val unwatched = EpisodeSpoilers.isUnwatched(episode.userData)
+    val visibleOverview = episode.overview
+        ?.takeIf { it.isNotBlank() && !spoilers.hidesOverview(unwatched) }
     val stillHeight = if (usesSeriesGeometry) cardWidth * (9f / 16f) else 130.dp.cardScaled()
     val cornerRadius = if (usesSeriesGeometry) 8.dp else 5.dp
     val shape = RoundedCornerShape(cornerRadius)
@@ -486,10 +488,11 @@ private fun TvDetailEpisodeCard(
         }
 
         // The caption shared with tvOS: "S01E02 · Title" over the air date and
-        // runtime. The focused episode's description sits in the hero above the
-        // rail, so TV cards leave it out, and the current episode is marked by
-        // its still's border, as on tvOS. The card recomposes on every frame of
-        // its focus animation, so the text is built once per episode.
+        // runtime. On the Series page the focused episode's description sits in
+        // the hero above the rail, so those cards leave it out. The current
+        // episode is marked by its still's border, as on tvOS. The card
+        // recomposes on every frame of its focus animation, so the text is built
+        // once per episode.
         val title = remember(episode) { EpisodeCardCaption.title(episode) }
         val metadata = remember(episode) {
             EpisodeCardCaption.metadata(
@@ -514,6 +517,20 @@ private fun TvDetailEpisodeCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (!usesSeriesGeometry) {
+                // Outside the Series page (a season or episode page kept when its
+                // series can't be loaded) the hero doesn't follow focus, so the
+                // card keeps the description. Three lines are kept even when
+                // spoiler protection empties them, so the cards stay one height.
+                Text(
+                    text = visibleOverview.orEmpty(),
+                    style = CaptionOverviewStyle,
+                    color = SiloSecondaryText,
+                    minLines = 3,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
@@ -545,6 +562,12 @@ private val CaptionMetadataStyle = TextStyle(
     fontSize = 14.sp,
     lineHeight = 17.sp,
     fontWeight = FontWeight.Medium,
+)
+private val CaptionOverviewStyle = TextStyle(
+    fontFamily = InterFamily,
+    fontSize = 16.sp,
+    lineHeight = 20.sp,
+    fontWeight = FontWeight.Normal,
 )
 
 // Shared with the hero facts row (tvOS parity), so the card dates agree with it.
