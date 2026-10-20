@@ -141,7 +141,16 @@ data class BufferingPlanSummary(
  * When a trigger is suppressed only by time (the no-lower cooldown or the
  * re-offer delay) while a stall is still in progress, one re-evaluation is
  * scheduled for the moment the suppression lifts, and it runs only if that
- * stall is still in progress.
+ * stall is still in progress. The undo pill ending, by its timer or by Back,
+ * re-evaluates the same way when the stall in progress has reached
+ * [LONG_STALL_MS]. A suppression that ends during a shorter wait evaluates
+ * nothing; the stall's end does. Nothing evaluates during an outage.
+ *
+ * The answer, the once-per-title notice and the re-offer wait belong to the
+ * title: [onNewAttempt] keeps them, and only [reset] (different content) and a
+ * quality change clear them. Inside a Watch Party room the controller is
+ * [setSuspended]: it keeps timing stalls and summarizing plans, but nothing it
+ * would do happens.
  *
  * ### Pills
  *
@@ -205,6 +214,9 @@ class BufferingQualityController(
 
     private var mode: BufferingQualityMode = BufferingQualityMode.Default
     private var enabled = true
+
+    /** In a Watch Party room: plans are tracked and summarized, but no trigger acts. */
+    private var suspended = false
     private var otherPillVisible = false
 
     /** The viewer paused and has not resumed. Freezes a pill's timer. */
@@ -266,7 +278,10 @@ class BufferingQualityController(
         if (mode == BufferingQualityMode.NEVER) hidePill()
     }
 
-    /** False inside a Watch Party room: the pill hides and events are ignored. */
+    /**
+     * False when playback has no server plan (a downloaded file): the pill
+     * hides and events are ignored.
+     */
     fun setEnabled(enabled: Boolean): Unit {
         if (enabled == this.enabled) return
         if (!enabled) {
@@ -276,6 +291,29 @@ class BufferingQualityController(
             cancelPlanTimers()
         }
         this.enabled = enabled
+    }
+
+    /**
+     * True inside a Watch Party room, where the room's own lower-quality offer
+     * applies. No trigger lowers, prompts or reports `ignored`, and no pill or
+     * notice shows; stall tracking and plan summaries continue. Joining or
+     * leaving is not a plan boundary: on leaving, the playing plan's history
+     * starts fresh with the grace over.
+     */
+    fun setSuspended(suspended: Boolean): Unit {
+        if (suspended == this.suspended) return
+        this.suspended = suspended
+        if (!enabled) return
+        pending = null
+        rearmJob?.cancel()
+        rearmJob = null
+        reevaluateJob?.cancel()
+        reevaluateJob = null
+        if (suspended) {
+            hidePill()
+        } else {
+            current?.let { resetTracker(it, clock()) }
+        }
     }
 
     /**
@@ -301,11 +339,17 @@ class BufferingQualityController(
         }
     }
 
+    /** A plan is playing, or loading, under this controller. */
+    val hasPlan: Boolean get() = current != null
+
     /**
      * A new adoption became the playing plan. [BufferingQualityPlan.planId]
      * identifies the adoption; a repeat of the current one is ignored.
+     * [controllerInitiated] false means it answers a replan the controller did
+     * not send (a track change, a recovery): a pending lowering is dropped,
+     * with no notice or cooldown.
      */
-    fun onPlanAdopted(plan: BufferingQualityPlan): Unit {
+    fun onPlanAdopted(plan: BufferingQualityPlan, controllerInitiated: Boolean = true): Unit {
         if (!enabled) return
         if (current?.plan?.planId == plan.planId) return
         val now = clock()
@@ -317,6 +361,7 @@ class BufferingQualityController(
 
         val settled = pending ?: return
         pending = null
+        if (!controllerInitiated) return
         when (settled.kind) {
             PendingKind.RESTORE -> Unit
             PendingKind.AUTOMATIC, PendingKind.ACCEPTED -> {
@@ -383,7 +428,7 @@ class BufferingQualityController(
         if (!paused) thawPill()
         stopPlayedClock(state, now)
         if (cause != BufferingWaitCause.NETWORK) {
-            interrupt(state)
+            interrupt(state, now)
             return
         }
         val tracker = state.tracker
@@ -399,19 +444,21 @@ class BufferingQualityController(
         if (!enabled) return
         freezePill()
         val state = current ?: return
-        stopPlayedClock(state, clock())
-        interrupt(state)
+        val now = clock()
+        stopPlayedClock(state, now)
+        interrupt(state, now)
     }
 
     /** The viewer seeked. */
     fun onSeek(): Unit {
         if (!enabled) return
         val state = current ?: return
-        stopPlayedClock(state, clock())
-        interrupt(state)
+        val now = clock()
+        stopPlayedClock(state, now)
+        interrupt(state, now)
     }
 
-    /** Media requests started failing, or the device went offline. */
+    /** Media requests started failing, or the device went offline; the outage owns any wait until it ends. */
     fun onTransportErrorStart(): Unit {
         transportTrouble = true
         if (!enabled) return
@@ -455,6 +502,19 @@ class BufferingQualityController(
 
     /** The playing plan stopped (ended, closed or failed) without a successor. */
     fun onPlaybackStopped(): Unit {
+        if (!enabled) return
+        dropPlan(clock())
+        cancelPlanTimers()
+    }
+
+    /**
+     * A new playback attempt of the same title that the viewer did not choose
+     * (a renewal after a server restart, Retry). The playing plan ends; the
+     * answer, the once-per-title notice and the re-offer wait stay, because
+     * they belong to the title. A version switch the viewer chooses is a
+     * quality change as well: call [onViewerQualityChange] too.
+     */
+    fun onNewAttempt(): Unit {
         if (!enabled) return
         dropPlan(clock())
         cancelPlanTimers()
@@ -512,9 +572,11 @@ class BufferingQualityController(
     fun back(): Boolean = when (activePill) {
         // Back on the prompt is Keep quality.
         PillKind.PROMPT -> selectKeep()
-        // Back on the undo only hides it; the lower plan keeps playing.
+        // Back on the undo only hides it; the lower plan keeps playing. Its
+        // suppression ends as the timer's would.
         PillKind.UNDO -> {
             hidePill()
+            undoEnded()
             true
         }
         null -> false
@@ -533,7 +595,7 @@ class BufferingQualityController(
     // ---- Trigger -----------------------------------------------------------
 
     private fun evaluate(now: Long) {
-        if (!enabled) return
+        if (!enabled || suspended || transportTrouble) return
         val state = current ?: return
         if (!state.tracker.shouldTrigger(now)) return
         if (isBusy()) return
@@ -619,7 +681,9 @@ class BufferingQualityController(
         val lower = rungs.firstOrNull { it.bitrateKbps < ceiling } ?: return null
         return Lowering(
             replan = BufferingQualityReplan(qualityPreference = lower.label),
-            fromKbps = ceiling,
+            // "Lower" compares delivered bitrates: the plan the lowering left
+            // against the one adopted.
+            fromKbps = delivered,
         )
     }
 
@@ -678,10 +742,14 @@ class BufferingQualityController(
         reevaluateJob = null
     }
 
-    /** A seek, pause or reload: the wait in progress was not the network's. */
-    private fun interrupt(state: PlanState) {
+    /**
+     * A seek, pause or reload: the wait from here on is not the network's. A
+     * stall in progress ends uncounted, its time kept for the summary.
+     */
+    private fun interrupt(state: PlanState, now: Long) {
         state.tracker.stalled = false
         clearStallTiming(state)
+        state.statsStallStartedAt?.let { recordStallStat(state, now - it, count = false) }
         state.statsStallStartedAt = null
     }
 
@@ -692,6 +760,7 @@ class BufferingQualityController(
     private fun resetTracker(state: PlanState, now: Long) {
         val tracker = state.tracker
         tracker.firstPlayingAt = now - STARTUP_GRACE_MS
+        tracker.firstWaitingAt = null
         tracker.stallEnds.clear()
         tracker.longStallEndedAt = null
         clearStallTiming(state)
@@ -705,16 +774,22 @@ class BufferingQualityController(
         state.playingSince = null
     }
 
-    private fun recordStallStat(state: PlanState, durationMs: Long) {
-        if (durationMs < STALL_MIN_MS) return
-        state.stallCount += 1
+    /**
+     * Adds one stall to the summary: every stall's time counts in the total
+     * and the longest, and a [count]ed one of [STALL_MIN_MS] or more in the
+     * count.
+     */
+    private fun recordStallStat(state: PlanState, durationMs: Long, count: Boolean = true) {
+        if (durationMs <= 0L) return
+        if (count && durationMs >= STALL_MIN_MS) state.stallCount += 1
         state.stallTotalMs += durationMs
         state.stallLongestMs = max(state.stallLongestMs, durationMs)
     }
 
     /**
-     * Emits [state]'s summary. A stall still in progress counts up to now,
-     * because a plan replaced mid-stall is usually the one that stalled.
+     * Emits [state]'s summary. A stall still in progress ends with its plan
+     * and counts like one that resumed, because a plan replaced mid-stall is
+     * usually the one that stalled.
      */
     private fun flushSummary(state: PlanState, now: Long) {
         stopPlayedClock(state, now)
@@ -855,13 +930,27 @@ class BufferingQualityController(
     private fun pillTimedOut() {
         val kind = activePill ?: return
         hidePill()
-        if (kind != PillKind.PROMPT) return
+        if (kind == PillKind.UNDO) {
+            undoEnded()
+            return
+        }
         // The prompt withdraws without an answer: history clears and a new
         // trigger may offer again after REOFFER_MIN_MS.
         val state = current ?: return
         state.action = BufferingAction.TIMED_OUT
         reofferNotBefore = promptShownAt + REOFFER_MIN_MS
         resetTracker(state, clock())
+    }
+
+    /**
+     * The undo pill's suppression ended. A stall in progress that has reached
+     * [LONG_STALL_MS] is evaluated at once; a shorter one waits for its end.
+     */
+    private fun undoEnded() {
+        val state = current ?: return
+        val startedAt = state.tracker.stallStartedAt ?: return
+        val now = clock()
+        if (now - startedAt >= LONG_STALL_MS) evaluate(now)
     }
 
     private fun publishPill() {
@@ -928,8 +1017,12 @@ class BufferingQualityController(
             if (firstPlayingAt == null && firstWaitingAt == null) firstWaitingAt = now
         }
 
+        /**
+         * The grace runs from a wait before playback first runs, or else from
+         * that first run; a frame after the wait does not move it.
+         */
         fun graceEndsAt(now: Long): Long =
-            (firstPlayingAt ?: firstWaitingAt ?: now) + STARTUP_GRACE_MS
+            (firstWaitingAt ?: firstPlayingAt ?: now) + STARTUP_GRACE_MS
 
         fun shouldTrigger(now: Long): Boolean {
             val longEnded = longStallEndedAt

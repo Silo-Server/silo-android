@@ -15,7 +15,8 @@ import kotlin.test.assertTrue
 /**
  * Behaviour of [BufferingQualityController] that the vendored conformance
  * vectors do not reach: pause freezes, pill deferral, Back, quality changes,
- * disabling and `never`. `BufferingQualityVectorsTest` covers the rest.
+ * disabling, Watch Party suspension, summary stall numbers and `never`.
+ * `BufferingQualityVectorsTest` covers the rest.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class BufferingQualityControllerTest {
@@ -231,6 +232,122 @@ class BufferingQualityControllerTest {
         controller.onWaiting()
         at(406_000)
         assertEquals(BufferingQualityPill.Prompt(15), controller.pill.value)
+    }
+
+    @Test
+    fun `a summary counts every stall's time and only long enough ones in the count`() = runTest {
+        val controller = newController(BufferingQualityMode.ALWAYS)
+        controller.onPlanAdopted(plan("p1"))
+        controller.onPlaying()
+        at(20_000)
+        controller.onWaiting()
+        at(20_400)
+        controller.onPlaying() // 400 ms: time only
+        at(30_000)
+        controller.onWaiting()
+        at(31_500)
+        controller.onPlaying() // 1500 ms: counted
+        at(40_000)
+        controller.onWaiting()
+        at(42_000)
+        controller.onPause() // ended by a pause: time only
+        at(50_000)
+        controller.onPlaying()
+        controller.onWaiting()
+        at(52_000)
+        controller.onSeek() // ended by a seek: time only
+        at(60_000)
+        controller.onPlaying()
+        controller.onWaiting()
+        at(61_000)
+        controller.onTransportErrorStart() // the outage owns it from the start
+        at(70_000)
+        controller.onPlaybackStopped()
+
+        val summary = summaries.single()
+        assertEquals(1, summary.stallCount)
+        assertEquals(400L + 1_500L + 2_000L + 2_000L, summary.stallTotalMs)
+        assertEquals(2_000L, summary.stallLongestMs)
+    }
+
+    @Test
+    fun `a stall in progress when its plan is replaced ends then and counts`() = runTest {
+        val controller = newController(BufferingQualityMode.ALWAYS)
+        longStall(controller)
+        at(134_000)
+        controller.onPlanAdopted(plan("p2", deliveredKbps = 31_600))
+
+        val first = summaries.single()
+        assertEquals(1, first.stallCount)
+        assertEquals(9_000L, first.stallTotalMs)
+        assertEquals(BufferingAction.LOWERED, first.action)
+    }
+
+    @Test
+    fun `in a Watch Party room the controller tracks and summarizes but never acts`() = runTest {
+        val controller = newController(BufferingQualityMode.ALWAYS)
+        controller.setSuspended(true)
+        controller.onPlanAdopted(plan("p1"))
+        controller.onPlaying()
+        at(125_000)
+        controller.onWaiting()
+        at(140_000)
+        controller.onPlaying()
+        assertTrue(replans.isEmpty())
+        assertTrue(notices.isEmpty())
+        assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
+
+        // Leaving is not a plan boundary: the same plan plays on, with fresh
+        // history and no grace, so the stall from the room does not trigger.
+        controller.setSuspended(false)
+        controller.onWaiting()
+        at(145_000)
+        controller.onPlaying()
+        assertTrue(replans.isEmpty())
+        controller.onWaiting()
+        at(151_000)
+        assertEquals(44_100, replans.single().bandwidthEstimateKbps)
+
+        controller.onPlaybackStopped()
+        val summary = summaries.single()
+        assertEquals("p1", summary.planId)
+        assertEquals(3, summary.stallCount, "the room's stall, the 5 s one, and the one the plan ended in")
+    }
+
+    @Test
+    fun `joining a room drops a pending lowering and hides the pill`() = runTest {
+        val controller = newController(BufferingQualityMode.ALWAYS)
+        longStall(controller)
+        assertEquals(1, replans.size)
+        controller.setSuspended(true)
+        at(134_000)
+        controller.onPlanAdopted(plan("p2", deliveredKbps = 31_600))
+        assertEquals(BufferingQualityPill.Hidden, controller.pill.value, "no undo pill in the room")
+        assertTrue(notices.isEmpty())
+    }
+
+    @Test
+    fun `a new attempt ends the plan and keeps the title's answer`() = runTest {
+        val controller = newController(BufferingQualityMode.ASK)
+        longStall(controller)
+        assertTrue(controller.selectKeep())
+        controller.onNewAttempt()
+        assertEquals(1, summaries.size)
+
+        controller.onPlanAdopted(plan("p2"))
+        controller.onPlaying()
+        at(300_000)
+        controller.onWaiting()
+        at(306_000)
+        assertEquals(BufferingQualityPill.Hidden, controller.pill.value, "still answered at auto")
+
+        controller.reset()
+        controller.onPlanAdopted(plan("p3"))
+        controller.onPlaying()
+        at(500_000)
+        controller.onWaiting()
+        at(506_000)
+        assertEquals(BufferingQualityPill.Prompt(15), controller.pill.value, "other content starts unanswered")
     }
 
     @Test

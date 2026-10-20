@@ -12,6 +12,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.double
@@ -189,9 +190,8 @@ class BufferingQualityVectorsTest {
 
     /**
      * Applies one event, returning the replan it makes the client send for its
-     * own reasons, if any. `controllerInitiated` is ignored: the controller has
-     * no such input, and an adoption with no controller replan pending already
-     * reads as one the controller did not send.
+     * own reasons, if any. An adoption without `controllerInitiated` answers
+     * the controller's pending replan, if it has one.
      */
     private fun apply(
         controller: BufferingQualityController,
@@ -202,9 +202,16 @@ class BufferingQualityVectorsTest {
             "plan_adopted" -> {
                 val plan = planOf(event.getValue("plan").jsonObject)
                 replans.adoptedQuality = plan.quality
-                controller.onPlanAdopted(plan)
+                controller.onPlanAdopted(
+                    plan,
+                    controllerInitiated = event["controllerInitiated"]?.jsonPrimitive?.boolean ?: true,
+                )
             }
-            "client_replan" -> return replans.forClient(event.getValue("operation").jsonPrimitive.content)
+            "client_replan" -> {
+                val operation = event.getValue("operation").jsonPrimitive.content
+                if (operation !in CLIENT_REPLAN_OPERATIONS) fail("unknown client_replan operation $operation")
+                return replans.forClient(operation)
+            }
             "quality_changed" -> {
                 // The viewer's pick, as PlayerViewModel.onSelectQuality and
                 // the TV equivalent make it: the controller hears of it, and
@@ -214,8 +221,10 @@ class BufferingQualityVectorsTest {
                 replans.forClient(QUALITY_CHANGE_V3_OPERATION)
             }
             "new_attempt" -> {
-                // A fresh load resets the controller and mints a new attempt.
-                controller.reset()
+                // A same-title attempt the viewer did not choose, as the
+                // players' renewal and Retry paths make it: the plan ends and
+                // the kept estimate goes; the title's state stays.
+                controller.onNewAttempt()
                 replans.newAttempt()
             }
             "playing" -> controller.onPlaying()
@@ -324,6 +333,15 @@ class BufferingQualityVectorsTest {
     }
 
     private companion object {
+        /** The operations a vector's `client_replan` may name. */
+        val CLIENT_REPLAN_OPERATIONS = setOf(
+            "track_change",
+            "seek_reanchor",
+            "seek_failure_recovery",
+            "failure_recovery",
+            "output_change",
+        )
+
         val REPLAN_BODY_KEYS = setOf(
             "operation",
             "quality_preference",
