@@ -164,7 +164,7 @@ class ConnectionSpeedSettingsModel(
                     ProbeOutcome.Metered -> null
                     else -> ConnectionSpeedMessage.Failed
                 }
-                // The network has not changed, so a read that fails keeps the rows.
+                // A read that fails keeps the rows, so the answer stays under them.
                 connection.settingsState()?.let { server.value = it }
             } finally {
                 local.update { Local(testing = false, message = message) }
