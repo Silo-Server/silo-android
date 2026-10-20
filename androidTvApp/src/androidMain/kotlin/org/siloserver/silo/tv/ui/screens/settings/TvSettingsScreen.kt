@@ -194,8 +194,9 @@ fun TvSettingsScreen(
     var showSignOutConfirm by remember { mutableStateOf(false) }
 
     // This ViewModel outlives a visit to Settings, so each visit re-reads the
-    // learned limit and connection speed a playback may have changed.
-    LaunchedEffect(viewModel) { viewModel.refreshPlaybackConnection() }
+    // learned limit and connection speed a playback may have changed, and
+    // reads them again after a network change while it is open.
+    LaunchedEffect(viewModel) { viewModel.followPlaybackConnection() }
     LaunchedEffect(state.playbackOverridesReset) {
         val landed = state.playbackOverridesReset ?: return@LaunchedEffect
         Toast.makeText(context, UseProfileSettingsCopy.notice(landed), Toast.LENGTH_SHORT).show()

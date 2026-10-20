@@ -99,7 +99,7 @@ data class SettingsUiState(
     /**
      * The limit the server learned for this device on this connection after
      * buffering, or null when there is none or the server does not advertise
-     * the feature. Loaded when Settings opens and after a reset.
+     * the feature. Read with the connection ([ConnectionSpeedSettingsModel]).
      */
     val learnedLimit: PlaybackLearnedLimitV2? = null,
     /** True after a reset the server did not confirm, until the next attempt. */
@@ -220,6 +220,10 @@ class SettingsViewModel(
         playbackConnection?.let { connection ->
             ConnectionSpeedSettingsModel(probe, connection, viewModelScope, hasCellularQuality = true)
         }
+    }.also { model ->
+        model?.settings?.onEach { settings ->
+            _uiState.update { it.copy(learnedLimit = settings?.connection?.learnedLimit) }
+        }?.launchIn(viewModelScope)
     }
 
     init {
@@ -624,19 +628,14 @@ class SettingsViewModel(
 
     /**
      * Reads the learned limit for this device's connection, and the connection
-     * speed. The Playback page calls it on every visit: a playback since the
-     * last one can learn or clear a limit, and the page can stay in the back
-     * stack under the player. The limit row shows only when the server
-     * advertises `buffering_quality_v1` and has a limit stored; a failed read
-     * hides it.
+     * speed, now and after every network change until cancelled. The Playback
+     * page runs it while it is shown: a playback since the last visit can
+     * learn or clear a limit, and the page can stay in the back stack under
+     * the player. The limit row shows only when the server advertises
+     * `buffering_quality_v1` and has a limit stored; a failed read hides it.
      */
-    fun refreshPlaybackConnection() {
-        val repository = playbackConnection ?: return
-        viewModelScope.launch {
-            val settings = repository.settingsState()
-            _uiState.update { it.copy(learnedLimit = settings?.connection?.learnedLimit) }
-            connectionSpeed?.update(settings)
-        }
+    suspend fun followPlaybackConnection() {
+        connectionSpeed?.follow()
     }
 
     /** Settings → Playback → Connection → Test speed. */
@@ -657,9 +656,7 @@ class SettingsViewModel(
         viewModelScope.launch {
             try {
                 if (repository.resetLearnedLimit() is ApiResult.Success) {
-                    val settings = repository.settingsState()
-                    _uiState.update { it.copy(learnedLimit = settings?.connection?.learnedLimit) }
-                    connectionSpeed?.update(settings)
+                    connectionSpeed?.read()
                 } else {
                     _uiState.update { it.copy(learnedLimitResetFailed = true) }
                 }

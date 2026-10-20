@@ -13,9 +13,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -432,6 +435,11 @@ class BandwidthProbeScheduler(
     /** The network as the probe sees it, for Settings. */
     val networkUpdates: Flow<PlaybackNetworkSnapshot> get() = network.updates
 
+    private val _networkChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /** Each network change, and each return to validated connectivity, as the checks see them: for Settings. */
+    val networkChanges: Flow<Unit> = _networkChanges.asSharedFlow()
+
     /** Follows [lifecycle] (the process lifecycle) and the network, server and media signals. */
     fun start(lifecycle: Lifecycle) {
         observe()
@@ -517,11 +525,13 @@ class BandwidthProbeScheduler(
         forget()
         cancelInFlight(ProbeOutcome.Interrupted)
         if (activeServer.value != null) check()
+        _networkChanges.tryEmit(Unit)
     }
 
     /** The same network again, now validated: what it holds still applies. */
     private fun onConnectivityReturned() {
         if (activeServer.value != null) check()
+        _networkChanges.tryEmit(Unit)
     }
 
     private fun onServerChanged(serverId: String?) {

@@ -5,7 +5,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -87,7 +91,9 @@ data class ConnectionSpeedUiState(
  * this device's own last measurement, the network's skip reason, and
  * **Test speed** ([testSpeed]).
  *
- * The view model reads the connection and hands it over through [update].
+ * It reads the connection, for the learned-limit row ([settings]) as well:
+ * when Playback settings opens and after a network change while it is open
+ * ([follow]), after **Reset** ([read]) and after **Test speed**.
  *
  * @param wallClock epoch milliseconds: a server time ahead of it counts as now.
  * @param hasCellularQuality whether this device has Cellular quality settings
@@ -105,6 +111,9 @@ class ConnectionSpeedSettingsModel(
     private val server = MutableStateFlow<PlaybackConnectionSettings?>(null)
     private val local = MutableStateFlow(Local())
 
+    /** The server's state as last read: null before the first read, or when one failed. */
+    val settings: StateFlow<PlaybackConnectionSettings?> = server.asStateFlow()
+
     val state: StateFlow<ConnectionSpeedUiState> =
         combine(server, probe.lastMeasurement, probe.networkUpdates, local) { settings, own, network, local ->
             val skipped = skipFor(network)
@@ -120,9 +129,21 @@ class ConnectionSpeedSettingsModel(
             )
         }.stateIn(scope, SharingStarted.Eagerly, ConnectionSpeedUiState())
 
-    /** The server's state, as the view model last read it. */
-    fun update(settings: PlaybackConnectionSettings?) {
-        server.value = settings
+    /**
+     * While Playback settings is open: reads the connection now, and again
+     * after every network change, until cancelled. Each read replaces the
+     * last **Test speed** answer, which spoke of the connection before it.
+     */
+    suspend fun follow() {
+        merge(flowOf(Unit), probe.networkChanges).collectLatest {
+            local.update { it.copy(message = null) }
+            read()
+        }
+    }
+
+    /** Reads the connection; a failed read hides the rows it fed. */
+    suspend fun read() {
+        server.value = connection.settingsState()
     }
 
     /**
@@ -145,7 +166,8 @@ class ConnectionSpeedSettingsModel(
                     ProbeOutcome.Metered -> null
                     else -> ConnectionSpeedMessage.Failed
                 }
-                if (outcome is ProbeOutcome.Measured) connection.settingsState()?.let { server.value = it }
+                // The network has not changed, so a read that fails keeps the rows.
+                connection.settingsState()?.let { server.value = it }
             } finally {
                 local.update { Local(testing = false, message = message) }
                 (message as? ConnectionSpeedMessage.TryAgainIn)?.let(::expire)
