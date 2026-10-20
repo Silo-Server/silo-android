@@ -75,14 +75,16 @@ data class TvMediaCardActions(
     val onSetWatched: ((watched: Boolean) -> Unit)? = null,
     val onToggleFavorite: ((favorite: Boolean) -> Unit)? = null,
     val onToggleWatchlist: ((inWatchlist: Boolean) -> Unit)? = null,
-    val onRemoveFromContinueWatching: (() -> Unit)? = null,
+    /** Removes the card from its Home row; [removeFromHomeLabel] names the list it leaves. */
+    val onRemoveFromHome: (() -> Unit)? = null,
+    val removeFromHomeLabel: String = "Remove from Continue Watching",
 ) {
     val isEmpty: Boolean
         get() = onPlay == null &&
             onSetWatched == null &&
             onToggleFavorite == null &&
             onToggleWatchlist == null &&
-            onRemoveFromContinueWatching == null
+            onRemoveFromHome == null
 }
 
 /**
@@ -118,7 +120,7 @@ fun TvMediaCardContextMenu(
         actions.onSetWatched != null -> TvMenuAction.Watched
         actions.onToggleFavorite != null -> TvMenuAction.Favorite
         actions.onToggleWatchlist != null -> TvMenuAction.Watchlist
-        else -> TvMenuAction.RemoveFromContinueWatching
+        else -> TvMenuAction.RemoveFromHome
     }
 
     Box(
@@ -239,15 +241,15 @@ private fun TvMediaCardMenuRows(
             },
         )
     }
-    actions.onRemoveFromContinueWatching?.let { remove ->
+    actions.onRemoveFromHome?.let { remove ->
         TvMenuRow(
-            text = "Remove from Continue Watching",
+            text = actions.removeFromHomeLabel,
             icon = Icons.Default.Close,
             onClick = {
                 remove()
                 onDismiss()
             },
-            modifier = if (firstAction == TvMenuAction.RemoveFromContinueWatching) {
+            modifier = if (firstAction == TvMenuAction.RemoveFromHome) {
                 Modifier.focusRequester(firstRowFocus)
             } else {
                 Modifier
@@ -285,7 +287,7 @@ private enum class TvMenuAction {
     Watched,
     Favorite,
     Watchlist,
-    RemoveFromContinueWatching,
+    RemoveFromHome,
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
