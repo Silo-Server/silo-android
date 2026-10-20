@@ -50,7 +50,8 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
  *   [BufferingPlaybackEventSink.onWaiting], caused by [BufferingWaitCause.SEEK]
  *   after a seek, [BufferingWaitCause.RELOAD] after [markReload],
  *   [BufferingWaitCause.RENDERER] when more than [RENDERER_WAIT_BUFFER_MS] of
- *   media is buffered past the playhead, and otherwise
+ *   media is buffered past the playhead on a player that does not tunnel,
+ *   and otherwise
  *   [BufferingWaitCause.NETWORK]. Both flags clear when playback next runs. A
  *   new plan's first wait is a network wait; the controller applies the
  *   startup grace.
@@ -119,7 +120,12 @@ class BufferingQualityPlayerAdapter(
     /** Media buffered past the playhead, read from the attached player. */
     private var bufferedAheadMs: () -> Long = { 0L }
 
-    /** Whether the attached player renders tunneled, for the log only. */
+    /**
+     * Whether the attached player renders tunneled. A tunneled codec holds
+     * samples that `totalBufferedDuration` still counts, and it never falls
+     * behind the way a decoder that drops to a keyframe does, so its waits
+     * are network waits whatever is buffered.
+     */
     private var tunneling: () -> Boolean = { false }
 
     private var loadTrouble = false
@@ -326,7 +332,7 @@ class BufferingQualityPlayerAdapter(
                 when {
                     seekSinceRun -> BufferingWaitCause.SEEK
                     reloadMarked -> BufferingWaitCause.RELOAD
-                    bufferedAheadMs() > RENDERER_WAIT_BUFFER_MS -> BufferingWaitCause.RENDERER
+                    !tunneling() && bufferedAheadMs() > RENDERER_WAIT_BUFFER_MS -> BufferingWaitCause.RENDERER
                     else -> BufferingWaitCause.NETWORK
                 },
             )

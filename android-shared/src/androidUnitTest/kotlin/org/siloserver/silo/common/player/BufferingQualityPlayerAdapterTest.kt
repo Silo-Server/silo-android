@@ -82,6 +82,22 @@ class BufferingQualityPlayerAdapterTest {
     }
 
     @Test
+    fun aTunneledPlayerWaitIsANetworkWaitWhateverIsBuffered() {
+        // A tunneled codec's samples still count as buffered.
+        adapter.seed(
+            playWhenReady = true,
+            playbackState = Player.STATE_READY,
+            isPlaying = true,
+            tunneling = { true },
+        ) { 3_600L }
+        sink.events.clear()
+
+        starve()
+
+        assertEquals(listOf("waiting:network"), sink.events)
+    }
+
+    @Test
     fun aSeekMakesTheNextWaitASeekWaitUntilPlaybackRuns() {
         playing()
         adapter.onDiscontinuity(Player.DISCONTINUITY_REASON_SEEK)
