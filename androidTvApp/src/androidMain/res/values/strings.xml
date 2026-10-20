@@ -93,6 +93,8 @@
     </plurals>
     <string name="settings_connection_stop_playback">Stop playback before testing, then try again.</string>
     <string name="settings_connection_failed">Couldn\'t measure the connection speed. Try again.</string>
+    <!-- The test measured, but the server did not store the result; the row keeps the server's reading. -->
+    <string name="settings_connection_not_saved">Couldn\'t save the speed test. Try again.</string>
     <string name="settings_connection_skipped_metered">Speed tests are skipped on metered networks.</string>
 
     <!-- Common states -->

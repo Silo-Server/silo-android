@@ -71,9 +71,12 @@ class BandwidthProbeSchedulerTest {
             lookup = BandwidthProbeTargetLookup.Found(target)
         }
 
-        override suspend fun report(target: BandwidthProbeTarget, result: PlaybackBandwidthProbeResultV2): Boolean {
+        /** What a report answers; the server stores it by default. */
+        var report: suspend () -> ProbeReport = { ProbeReport.STORED }
+
+        override suspend fun report(target: BandwidthProbeTarget, result: PlaybackBandwidthProbeResultV2): ProbeReport {
             reports += result
-            return true
+            return report()
         }
 
         override suspend fun storedReading(target: BandwidthProbeTarget): StoredReadingLookup =
@@ -609,6 +612,45 @@ class BandwidthProbeSchedulerTest {
         harness.scheduler.playbackStarting()
         runCurrent()
         assertEquals(ProbeOutcome.PlaybackActive, outcome.await())
+    }
+
+    @Test
+    fun aResultTheServerRefusedIsNeverKept() = runTest {
+        val harness = Harness(this)
+        harness.server.report = { ProbeReport.REFUSED }
+        val measured = assertIs<ProbeOutcome.Measured>(harness.scheduler.runNow())
+        assertEquals(false, measured.saved)
+        assertNull(harness.scheduler.freshEstimateKbps())
+        assertNull(harness.scheduler.lastMeasurement.value)
+    }
+
+    @Test
+    fun aResultWhoseReportGotNoAnswerGoesWithStartsButNotToSettings() = runTest {
+        val harness = Harness(this)
+        harness.server.report = { ProbeReport.UNSENT }
+        val measured = assertIs<ProbeOutcome.Measured>(harness.scheduler.runNow())
+        assertEquals(false, measured.saved)
+        assertEquals(80_000, harness.scheduler.freshEstimateKbps())
+        assertNull(harness.scheduler.lastMeasurement.value, "Settings keeps the server's reading")
+    }
+
+    @Test
+    fun aStartOrLeavingTheForegroundLetsTheReportFinish() = runTest {
+        val harness = Harness(this)
+        val reporting = CompletableDeferred<Unit>()
+        val answer = CompletableDeferred<ProbeReport>()
+        harness.server.report = {
+            reporting.complete(Unit)
+            answer.await()
+        }
+        val outcome = async { harness.scheduler.runNow() }
+        reporting.await()
+        harness.scheduler.playbackStarting()
+        harness.scheduler.onBackground()
+        runCurrent()
+        answer.complete(ProbeReport.STORED)
+        assertEquals(true, assertIs<ProbeOutcome.Measured>(outcome.await()).saved)
+        assertEquals(80_000, harness.scheduler.lastMeasurement.value?.kbps)
     }
 
     @Test

@@ -58,6 +58,9 @@ sealed interface ConnectionSpeedMessage {
 
     /** The probe ran and measured nothing. */
     data object Failed : ConnectionSpeedMessage
+
+    /** The probe measured, but the server did not store the result: the row keeps the server's reading. */
+    data object NotSaved : ConnectionSpeedMessage
 }
 
 /** What the phone and TV Connection groups render. */
@@ -135,7 +138,7 @@ class ConnectionSpeedSettingsModel(
             try {
                 val outcome = probe.runNow()
                 message = when (outcome) {
-                    is ProbeOutcome.Measured -> null
+                    is ProbeOutcome.Measured -> if (outcome.saved) null else ConnectionSpeedMessage.NotSaved
                     is ProbeOutcome.RateLimited -> ConnectionSpeedMessage.TryAgainIn(outcome.retryAfterSeconds)
                     ProbeOutcome.PlaybackActive -> ConnectionSpeedMessage.StopPlayback
                     // The row already says speed tests are skipped here.

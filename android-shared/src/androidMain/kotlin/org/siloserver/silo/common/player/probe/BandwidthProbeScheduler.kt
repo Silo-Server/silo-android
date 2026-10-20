@@ -96,7 +96,12 @@ data class PlaybackSample(val kbps: Int, val measuredAtEpochMs: Long)
 
 /** What a probe request came to. */
 sealed interface ProbeOutcome {
-    data class Measured(val estimate: BandwidthEstimate) : ProbeOutcome
+    /**
+     * [estimate] was measured. With [saved] false the server did not store
+     * it: starts send it only when the report failed in transport, and
+     * Settings goes on showing the server's reading.
+     */
+    data class Measured(val estimate: BandwidthEstimate, val saved: Boolean = true) : ProbeOutcome
 
     /** A current reading the server held for this device proves the link: no test ran. */
     data object Stored : ProbeOutcome
@@ -190,6 +195,17 @@ sealed interface BandwidthProbeTargetLookup {
     data class Failed(val cause: Throwable?) : BandwidthProbeTargetLookup
 }
 
+/** What became of a result's `POST /api/v2/playback/bandwidth-probe/results`. */
+enum class ProbeReport {
+    STORED,
+
+    /** The server answered and did not store it. */
+    REFUSED,
+
+    /** The request got no answer: the connection failed. */
+    UNSENT,
+}
+
 /** The server side of a probe: discovery, the readings, the download and the report. */
 interface BandwidthProbeServer {
     /** The active profile's probe endpoint and schedule, read from the capability response. */
@@ -202,8 +218,8 @@ interface BandwidthProbeServer {
         read: suspend (BandwidthProbeResponseV2) -> BandwidthProbeResult,
     ): BandwidthProbeResult
 
-    /** POSTs [result]; true once the server stored it. */
-    suspend fun report(target: BandwidthProbeTarget, result: PlaybackBandwidthProbeResultV2): Boolean
+    /** POSTs [result]. */
+    suspend fun report(target: BandwidthProbeTarget, result: PlaybackBandwidthProbeResultV2): ProbeReport
 
     /**
      * The readings the server already holds for this device on the connection
@@ -264,8 +280,12 @@ class PlaybackV2BandwidthProbeServer(
         read: suspend (BandwidthProbeResponseV2) -> BandwidthProbeResult,
     ): BandwidthProbeResult = api.bandwidthProbe(target.scope, bandwidthProbeDownloadUrl(target.url, mode), read)
 
-    override suspend fun report(target: BandwidthProbeTarget, result: PlaybackBandwidthProbeResultV2): Boolean =
-        api.reportBandwidthProbe(target.scope, result) is ApiResult.Success
+    override suspend fun report(target: BandwidthProbeTarget, result: PlaybackBandwidthProbeResultV2): ProbeReport =
+        when (api.reportBandwidthProbe(target.scope, result)) {
+            is ApiResult.Success -> ProbeReport.STORED
+            is ApiResult.Error -> ProbeReport.REFUSED
+            is ApiResult.NetworkError -> ProbeReport.UNSENT
+        }
 
     override suspend fun storedReading(target: BandwidthProbeTarget): StoredReadingLookup =
         when (val result = api.connection(target.scope)) {
@@ -332,7 +352,10 @@ class PlaybackV2BandwidthProbeServer(
  *   media plays, since the next start needs them; media starting cancels a
  *   running test, not that read.
  * - **Reporting**: every result is POSTed with the transport it was taken on,
- *   and `lower_bound` when it is one.
+ *   and `lower_bound` when it is one. It is kept for starts once the server
+ *   stored it, or when the POST got no answer; a result the server refused
+ *   is never kept. Media starting or Silo leaving the foreground does not
+ *   cancel the POST.
  *
  * Everything runs on [scope], which must be single-threaded.
  *
@@ -372,6 +395,9 @@ class BandwidthProbeScheduler(
 
         /** Past reading the server's readings and the wait, and into the download. */
         @Volatile var testing = false
+
+        /** The test is over and its result is being POSTed. */
+        @Volatile var reporting = false
     }
 
     private val context = requireNotNull(scope.coroutineContext[ContinuationInterceptor]) {
@@ -397,9 +423,9 @@ class BandwidthProbeScheduler(
     private val _lastMeasurement = MutableStateFlow<BandwidthEstimate?>(null)
 
     /**
-     * The probe reading on the active server and network, measured here or
-     * taken from the server, kept past its lifetime so Settings can show it.
-     * Null once the network or server changes.
+     * The probe reading the server holds on the active server and network,
+     * read from it or measured here and stored, kept past its lifetime so
+     * Settings can show it. Null once the network or server changes.
      */
     val lastMeasurement: StateFlow<BandwidthEstimate?> = _lastMeasurement.asStateFlow()
 
@@ -483,7 +509,8 @@ class BandwidthProbeScheduler(
         foreground = false
         timer?.cancel()
         timer = null
-        cancelInFlight(ProbeOutcome.Interrupted)
+        // A result already measured still goes to the server.
+        if (inFlight?.reporting != true) cancelInFlight(ProbeOutcome.Interrupted)
     }
 
     private fun onNetworkChanged() {
@@ -676,8 +703,9 @@ class BandwidthProbeScheduler(
             measuredAtEpochMs = wallClock(),
             lowerBound = measured.lowerBound,
         )
-        remember(target, networkKey, estimate, sample = null)
-        val reported = try {
+        run.testing = false
+        run.reporting = true
+        val report = try {
             server.report(
                 target,
                 PlaybackBandwidthProbeResultV2(
@@ -691,38 +719,51 @@ class BandwidthProbeScheduler(
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (_: Exception) {
-            false
+            ProbeReport.UNSENT
+        }
+        when (report) {
+            ProbeReport.STORED -> remember(target, networkKey, estimate, sample = null)
+            // Starts may still send it; Settings shows only what the server holds.
+            ProbeReport.UNSENT -> remember(target, networkKey, estimate, sample = null, stored = false)
+            ProbeReport.REFUSED -> Unit
         }
         SiloLog.i(
             DiagnosticsLogCategory.PLAYBACK,
             TAG,
             "bandwidth probe: ${mode.name.lowercase()} test ${estimate.describe()} over ${estimate.durationMs} ms " +
-                "on ${estimate.transport}" + if (reported) "" else " (report failed)",
+                "on ${estimate.transport}" + when (report) {
+                    ProbeReport.STORED -> ""
+                    ProbeReport.REFUSED -> " (refused, not kept)"
+                    ProbeReport.UNSENT -> " (report failed)"
+                },
         )
-        return ProbeOutcome.Measured(estimate)
+        return ProbeOutcome.Measured(estimate, saved = report == ProbeReport.STORED)
     }
 
     /**
      * Keeps the readings for [target]'s server on [networkKey]: the newer of
      * [probe] and the probe already kept for it, and [sample] or the kept one.
+     * A [probe] the server does not hold ([stored] false) is kept for starts
+     * only, not for [lastMeasurement].
      */
     private fun remember(
         target: BandwidthProbeTarget,
         networkKey: String,
         probe: BandwidthEstimate?,
         sample: PlaybackSample?,
+        stored: Boolean = true,
     ): Cached {
         val kept = cached?.takeIf { it.serverId == target.serverId && it.networkKey == networkKey }
         val entry = Cached(
             serverId = target.serverId,
             networkKey = networkKey,
-            probe = listOfNotNull(kept?.probe, probe).maxByOrNull { it.measuredAtEpochMs },
+            probe = newer(kept?.probe, probe),
             sample = sample ?: kept?.sample,
             lifetimeMs = target.readingLifetimeMs,
             targetKbps = target.targetKbps,
         )
         cached = entry
-        _lastMeasurement.value = entry.probe
+        if (stored) _lastMeasurement.value = newer(_lastMeasurement.value.takeIf { kept != null }, probe)
         return entry
     }
 
@@ -746,6 +787,9 @@ class BandwidthProbeScheduler(
         }
 
         fun BandwidthEstimate.describe(): String = "$kbps kbps" + if (lowerBound) " (lower bound)" else ""
+
+        fun newer(a: BandwidthEstimate?, b: BandwidthEstimate?): BandwidthEstimate? =
+            listOfNotNull(a, b).maxByOrNull { it.measuredAtEpochMs }
 
         /**
          * The bounds of a reading playback can send as `bandwidth_estimate_kbps`.

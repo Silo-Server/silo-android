@@ -106,4 +106,5 @@ private fun messageLabel(message: ConnectionSpeedMessage): String = when (messag
         pluralStringResource(R.plurals.settings_connection_try_again, message.seconds, message.seconds)
     ConnectionSpeedMessage.StopPlayback -> stringResource(R.string.settings_connection_stop_playback)
     ConnectionSpeedMessage.Failed -> stringResource(R.string.settings_connection_failed)
+    ConnectionSpeedMessage.NotSaved -> stringResource(R.string.settings_connection_not_saved)
 }
