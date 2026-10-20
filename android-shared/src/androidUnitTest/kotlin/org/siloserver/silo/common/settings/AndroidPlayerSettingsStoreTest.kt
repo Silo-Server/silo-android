@@ -1311,6 +1311,45 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `the buffering mode follows the server only when its manifest has the setting`() = runTest {
+        var keys: Set<String> = setOf(PlaybackSettingsKeys.PreferredQuality)
+        var contract = capabilitiesAt(30)
+        val api = FakeSettingsApi(
+            effective = mapOf(stored(PlaybackSettingsKeys.BufferingQualityMode, JsonPrimitive("ask"))),
+        )
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            settingsRepository = SettingsRepository(api),
+            getDeviceId = { null },
+            // A later revision than the setting's, so only the key's presence can tell.
+            contractRevision = SettingsContractRevision({ contract }, { serverUrl }, { ApiResult.Success(keys) }),
+            dataStoreFactory = { id ->
+                PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_bq_$id.preferences_pb") })
+            },
+        )
+        store.setBufferingQualityMode(org.siloserver.silo.domain.player.BufferingQualityMode.NEVER)
+        assertEquals(org.siloserver.silo.domain.player.BufferingQualityMode.NEVER, store.bufferingQualityModeFlow.first(), "the last mode seen, until the manifest is read")
+
+        // A server without the setting: the row hides and nothing on this device stands in for it.
+        store.refreshFromServer()
+        assertTrue(api.requestedKeys.isNotEmpty())
+        assertFalse(PlaybackSettingsKeys.BufferingQualityMode in api.requestedKeys)
+        assertFalse(store.bufferingQualityModeSupportedFlow.first())
+        assertEquals(org.siloserver.silo.domain.player.BufferingQualityMode.ALWAYS, store.bufferingQualityModeFlow.first())
+
+        // The server upgrades to a contract with the setting.
+        keys = keys + PlaybackSettingsKeys.BufferingQualityMode
+        contract = capabilitiesAt(31)
+        store.refreshFromServer()
+        assertTrue(PlaybackSettingsKeys.BufferingQualityMode in api.requestedKeys)
+        assertTrue(store.bufferingQualityModeSupportedFlow.first())
+    }
+
+    @Test
     fun `cellular quality is left out of the batch while the server revision is unknown`() = runTest {
         val contractRevision = SettingsContractRevision(
             { ApiResult.NetworkError(IllegalStateException("offline")) },

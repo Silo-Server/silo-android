@@ -46,10 +46,18 @@ interface PlayerSettingsStore {
 
     /**
      * What the player does on Auto when playback keeps buffering —
-     * `playback.buffering_quality_mode`, contract revision 21. See the
-     * server's `docs/design/2026-10-17-buffering-quality.md`.
+     * `playback.buffering_quality_mode`. See the server's
+     * `docs/design/2026-10-17-buffering-quality.md`. The default (`always`)
+     * against a server whose manifest lacks the setting.
      */
     val bufferingQualityModeFlow: Flow<BufferingQualityMode>
+
+    /**
+     * True once the active server's manifest is known to define
+     * `playback.buffering_quality_mode`: Settings shows its row only then.
+     */
+    val bufferingQualityModeSupportedFlow: Flow<Boolean>
+        get() = flowOf(true)
 
     // Booleans
     /**

@@ -2,7 +2,6 @@ package org.siloserver.silo.common.settings
 
 import org.siloserver.silo.common.diagnostics.SiloLog
 import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
-import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SettingScopeIdentity
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -103,7 +102,7 @@ class DefaultServerSettingsFlusher(
      * UI and the flusher agree on what the server supports.
      */
     private val contractRevision: SettingsContractRevision =
-        SettingsContractRevision({ settingsApi.getContractCapabilities() }, getServerUrl),
+        SettingsContractRevision({ settingsApi.getContractCapabilities() }, getServerUrl, { settingsApi.getContractKeys() }),
 ) : ServerSettingsFlusher {
 
     private val lock = Any()
@@ -267,9 +266,9 @@ class DefaultServerSettingsFlusher(
         }
         return try {
             when (serverStores(key, op.serverUrl)) {
-                null -> failed("flush", key, "settings manifest revision unknown", retry = true)
+                null -> failed("flush", key, "settings manifest unknown", retry = true)
                 false -> {
-                    SiloLog.w(CATEGORY, TAG, "dropping $key: the server's settings manifest predates it; the value stays on this device")
+                    SiloLog.w(CATEGORY, TAG, "dropping $key: the server's settings manifest lacks it")
                     false
                 }
                 true -> when (op) {
@@ -314,18 +313,13 @@ class DefaultServerSettingsFlusher(
 
     /**
      * Whether the server at [serverUrl] stores [key], or null while that
-     * depends on a manifest revision not known yet. Only keys from a later
-     * revision than every server this app supports
-     * ([PlaybackSettingsKeys.minimumRevision]) are checked. A server that
-     * lacks one refuses it as unknown_setting, so the write is dropped and the
-     * value stays on the device; while the revision is unknown it is held and
-     * retried like a transient failure.
+     * depends on a manifest not known yet ([SettingsContractRevision.stores]).
+     * A server that lacks the key refuses it as unknown_setting, so the write
+     * is dropped; while the manifest is unknown it is held and retried like a
+     * transient failure.
      */
-    private suspend fun serverStores(key: String, serverUrl: String): Boolean? {
-        val needed = PlaybackSettingsKeys.minimumRevision(key) ?: return true
-        val revision = contractRevision.revisionFor(serverUrl) ?: return null
-        return revision >= needed
-    }
+    private suspend fun serverStores(key: String, serverUrl: String): Boolean? =
+        contractRevision.storesKey(serverUrl, key)
 
     /**
      * [encoded] in the shape the server at [serverUrl] accepts, or null when

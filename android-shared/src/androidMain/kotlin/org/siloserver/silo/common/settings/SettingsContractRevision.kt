@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.settings
 
+import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.network.ApiResult
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -10,7 +11,8 @@ import kotlinx.coroutines.sync.withLock
 
 /**
  * The settings manifest revision of the connected server, read from the
- * contract capabilities endpoint and cached per server URL.
+ * contract capabilities endpoint and cached per server URL, with the keys its
+ * manifest defines.
  *
  * The settings flusher asks for it before sending a write whose shape depends
  * on the revision, and the settings UI hides controls the server would
@@ -20,8 +22,19 @@ class SettingsContractRevision(
     private val fetchCapabilities: suspend () -> ApiResult<SettingsContractCapabilities>,
     /** The server requests currently address; null when it cannot be read. */
     private val getServerUrl: suspend () -> String? = { null },
+    /**
+     * The keys the server's manifest defines (`GET /settings/contract`), for
+     * [PlaybackSettingsKeys.ManifestDetectedKeys]. Null leaves them unknown.
+     */
+    private val fetchManifestKeys: (suspend () -> ApiResult<Set<String>>)? = null,
 ) {
-    data class Known(val serverUrl: String, val manifestRevision: Int)
+    data class Known(
+        val serverUrl: String,
+        val manifestRevision: Int,
+        /** The keys the manifest defines; null when they could not be read. */
+        val manifestKeys: Set<String>? = null,
+        val contractEtag: String = "",
+    )
 
     private val mutex = Mutex()
     private val _known = MutableStateFlow<Known?>(null)
@@ -50,22 +63,63 @@ class SettingsContractRevision(
         probe(serverUrl) ?: cachedFor(serverUrl)
     }
 
+    /**
+     * Whether the server at [serverUrl] stores [key], as last read, or null
+     * while that is unknown: by the manifest's keys for
+     * [PlaybackSettingsKeys.ManifestDetectedKeys], else by
+     * [PlaybackSettingsKeys.minimumRevision]. Every other key is stored.
+     */
+    fun stores(serverUrl: String, key: String): Boolean? {
+        val known = _known.value?.takeIf { it.serverUrl == serverUrl }
+        if (key in PlaybackSettingsKeys.ManifestDetectedKeys) return known?.manifestKeys?.let { key in it }
+        val needed = PlaybackSettingsKeys.minimumRevision(key) ?: return true
+        return known?.let { it.manifestRevision >= needed }
+    }
+
+    /** [stores], probing when it is not known yet. */
+    suspend fun storesKey(serverUrl: String, key: String): Boolean? {
+        stores(serverUrl, key)?.let { return it }
+        return mutex.withLock {
+            stores(serverUrl, key) ?: run {
+                probe(serverUrl)
+                stores(serverUrl, key)
+            }
+        }
+    }
+
     private fun cachedFor(serverUrl: String): Int? =
         _known.value?.takeIf { it.serverUrl == serverUrl }?.manifestRevision
 
     private suspend fun probe(serverUrl: String): Int? {
         if (!isActive(serverUrl)) return null
-        val revision = when (val result = fetchCapabilities()) {
-            is ApiResult.Success -> result.data.manifestRevision
+        val capabilities = when (val result = fetchCapabilities()) {
+            is ApiResult.Success -> result.data
             // No capabilities route: the server predates every revision gate.
-            is ApiResult.Error -> if (result.code == 404) 0 else null
-            is ApiResult.NetworkError -> null
-        } ?: return null
+            is ApiResult.Error -> if (result.code == 404) null else return null
+            is ApiResult.NetworkError -> return null
+        }
+        val revision = capabilities?.manifestRevision ?: 0
+        val etag = capabilities?.contractEtag.orEmpty()
+        val keys = if (capabilities == null) emptySet() else manifestKeys(serverUrl, revision, etag)
         // The request goes to whichever server is active when it is sent, so a
         // switch during the fetch means the answer describes another server.
         if (!isActive(serverUrl)) return null
-        _known.value = Known(serverUrl, revision)
+        _known.value = Known(serverUrl, revision, keys, etag)
         return revision
+    }
+
+    /** The keys already read for this server's contract, else read now; a manifest is fixed per contract. */
+    private suspend fun manifestKeys(serverUrl: String, revision: Int, etag: String): Set<String>? {
+        _known.value
+            ?.takeIf { it.serverUrl == serverUrl && it.manifestRevision == revision && it.contractEtag == etag }
+            ?.manifestKeys
+            ?.let { return it }
+        val fetch = fetchManifestKeys ?: return null
+        return when (val result = fetch()) {
+            is ApiResult.Success -> result.data
+            is ApiResult.Error -> if (result.code == 404) emptySet() else null
+            is ApiResult.NetworkError -> null
+        }
     }
 
     private suspend fun isActive(serverUrl: String): Boolean {

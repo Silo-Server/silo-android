@@ -1303,16 +1303,21 @@ private fun TvPlaybackSettingsPane(
                     label = "Maximum Bitrate",
                     value = QualityChoices.bitrateLabel(state.maxBitrateKbps),
                     onClick = { activePicker = PlaybackPicker.MaxBitrate },
+                    // Takes the learned-limit row's focus when the buffering row is hidden.
+                    focusRequester = bufferingQualityFocus.takeIf { !state.bufferingQualityModeSupported },
                 )
                 // Next to Maximum Bitrate, the manual cap on Auto it
-                // complements; the same value row and picker sheet as Skip Intros.
-                SettingsValueRow(
-                    label = stringResource(R.string.settings_buffering_quality_title),
-                    value = stringResource(bufferingQualityModeLabel(state.bufferingQualityMode)),
-                    onClick = { activePicker = PlaybackPicker.BufferingQualityMode },
-                    focusRequester = bufferingQualityFocus,
-                )
-                SettingsFooterText(text = stringResource(R.string.settings_buffering_quality_description))
+                // complements; the same value row and picker sheet as Skip
+                // Intros. Hidden against a server without the setting.
+                if (state.bufferingQualityModeSupported) {
+                    SettingsValueRow(
+                        label = stringResource(R.string.settings_buffering_quality_title),
+                        value = stringResource(bufferingQualityModeLabel(state.bufferingQualityMode)),
+                        onClick = { activePicker = PlaybackPicker.BufferingQualityMode },
+                        focusRequester = bufferingQualityFocus,
+                    )
+                    SettingsFooterText(text = stringResource(R.string.settings_buffering_quality_description))
+                }
                 state.learnedLimit?.let { limit ->
                     // Leaves once the reset lands, so, as with a switch's "Use
                     // Profile Setting" row, focus is handed to the row above it

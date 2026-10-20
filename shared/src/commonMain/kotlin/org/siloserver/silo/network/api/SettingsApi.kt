@@ -33,6 +33,9 @@ open class SettingsApi(
     /** What the connected server's settings contract supports. */
     open suspend fun getContractCapabilities(): ApiResult<SettingsContractCapabilities> = v2.capabilities()
 
+    /** The keys the connected server's settings manifest defines. */
+    open suspend fun getContractKeys(): ApiResult<Set<String>> = v2.contractKeys()
+
     /**
      * Resolve settings the way the server does, including the scope each
      * answer came from.

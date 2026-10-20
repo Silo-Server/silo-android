@@ -257,13 +257,35 @@ class AndroidPlayerSettingsStore(
                 )
         }
 
-    // No legacy boolean behind this one: an absent or unknown value is the
-    // contract default.
-    override val bufferingQualityModeFlow: Flow<BufferingQualityMode> =
-        profileScopedFlow(BufferingQualityMode.Default) { p, s ->
-            BufferingQualityMode.fromWire(p.stringFor(s, PlaybackSettingsKeys.BufferingQualityMode, ""))
-                ?: BufferingQualityMode.Default
+    /**
+     * Whether the active server's manifest defines
+     * `playback.buffering_quality_mode`: null until its manifest is read.
+     */
+    private val bufferingQualityModeDefined: Flow<Boolean?> =
+        if (contractRevision == null) {
+            flowOf(true)
+        } else {
+            combine(currentScopeFlow, contractRevision.known) { scope, _ ->
+                scope?.let { contractRevision.stores(it.serverUrl, PlaybackSettingsKeys.BufferingQualityMode) }
+            }.distinctUntilChanged()
         }
+
+    // No legacy boolean behind this one: an absent or unknown value is the
+    // contract default. Until the server's manifest is read, the last mode
+    // seen here applies; a server without the setting plays the default, and
+    // nothing on this device stands in for it.
+    override val bufferingQualityModeFlow: Flow<BufferingQualityMode> =
+        combine(
+            profileScopedFlow(BufferingQualityMode.Default) { p, s ->
+                BufferingQualityMode.fromWire(p.stringFor(s, PlaybackSettingsKeys.BufferingQualityMode, ""))
+                    ?: BufferingQualityMode.Default
+            },
+            bufferingQualityModeDefined,
+        ) { mode, defined -> if (defined == false) BufferingQualityMode.Default else mode }
+            .distinctUntilChanged()
+
+    override val bufferingQualityModeSupportedFlow: Flow<Boolean> =
+        bufferingQualityModeDefined.map { it == true }.distinctUntilChanged()
 
     // ---- Booleans ------------------------------------------------------
     override val autoSkipCreditsFlow: Flow<Boolean> =
@@ -474,12 +496,11 @@ class AndroidPlayerSettingsStore(
         writeString(PlaybackSettingsKeys.IntroSkipMode, value.wireValue)
 
     /**
-     * Like [setCellularQuality], the key is newer than some servers this app
-     * supports ([PlaybackSettingsKeys.BufferingQualityModeMinRevision]). The
-     * flusher drops the write for such a server and the local value still
-     * applies; marking it unconfirmed makes the first refresh from a server
-     * that stores it send the value again rather than replace it with the
-     * server's default.
+     * Settings offers this only while the server's manifest defines the key
+     * ([bufferingQualityModeSupportedFlow]). Like [setCellularQuality] it is
+     * marked unconfirmed, so a write the flusher held while the manifest was
+     * unknown is sent again by the first refresh rather than replaced with
+     * the server's default.
      */
     override suspend fun setBufferingQualityMode(value: BufferingQualityMode) {
         val key = PlaybackSettingsKeys.BufferingQualityMode
@@ -806,25 +827,21 @@ class AndroidPlayerSettingsStore(
     }
 
     /**
-     * [RemoteDeviceSettings] less the keys newer than the server at
-     * [serverUrl] is known to store. A server answers a batched read that
-     * names a key its contract lacks with 404 for the whole batch, so a key
-     * from a later revision ([PlaybackSettingsKeys.minimumRevision]) is asked
-     * for only once the revision is known to include it. Until then its local
-     * value stands.
+     * [RemoteDeviceSettings] less the keys the server at [serverUrl] is not
+     * known to store. A server answers a batched read that names a key its
+     * contract lacks with 404 for the whole batch, so a key some servers lack
+     * ([SettingsContractRevision.stores]) is asked for only once the server is
+     * known to have it. Until then its local value stands.
      */
     private suspend fun remoteKeysStoredBy(serverUrl: String): List<String> {
         val tracker = contractRevision ?: return RemoteDeviceSettings
-        val revision = runCatching { tracker.revisionFor(serverUrl) }.getOrNull()
-        return RemoteDeviceSettings.filter { key ->
-            val needed = PlaybackSettingsKeys.minimumRevision(key) ?: return@filter true
-            revision != null && revision >= needed
-        }
+        runCatching { tracker.revisionFor(serverUrl) }
+        return RemoteDeviceSettings.filter { key -> tracker.stores(serverUrl, key) == true }
     }
 
     /**
-     * Keys the server at [serverUrl] is not known to store: the revision last
-     * read for it is older than the key, or none has been read. "Use profile
+     * Keys the server at [serverUrl] is not known to store: what was last
+     * read for it lacks the key, or nothing has been read. "Use profile
      * setting" for one of them clears the local value, so the contract
      * default applies, as the setting would on a server that had no rows for
      * it. Kept, the value would outlive the reset: an older server drops the
@@ -836,11 +853,7 @@ class AndroidPlayerSettingsStore(
      */
     private fun keysUnstoredBy(serverUrl: String): Set<String> {
         val tracker = contractRevision ?: return emptySet()
-        val revision = tracker.known.value?.takeIf { it.serverUrl == serverUrl }?.manifestRevision
-        return RemoteDeviceSettings.filterTo(mutableSetOf()) { key ->
-            val needed = PlaybackSettingsKeys.minimumRevision(key) ?: return@filterTo false
-            revision == null || revision < needed
-        }
+        return RemoteDeviceSettings.filterTo(mutableSetOf()) { key -> tracker.stores(serverUrl, key) != true }
     }
 
     private fun removeLocalValue(
@@ -1307,10 +1320,10 @@ class AndroidPlayerSettingsStore(
          */
         const val DEVICE_OVERRIDE_KEYS = "device_override_keys"
         /**
-         * Local-only: keys from a later contract revision
-         * ([PlaybackSettingsKeys.minimumRevision]) this device set but no
-         * refresh has yet shown stored for it. The flusher drops them for an
-         * older server; this is what sends them once the server can store them.
+         * Local-only: keys some servers lack ([SettingsContractRevision.stores])
+         * this device set but no refresh has yet shown stored for it. The
+         * flusher drops them for an older server; this is what sends them once
+         * the server can store them.
          */
         const val UNCONFIRMED_GATED_KEYS = "unconfirmed_gated_keys"
         const val MIGRATION_SENTINEL_LEGACY = "migration_v1"

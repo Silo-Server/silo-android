@@ -41,14 +41,17 @@ object PlaybackSettingsKeys {
      * `never` | `ask` | `always` — see
      * [org.siloserver.silo.domain.player.BufferingQualityMode] and the server's
      * `docs/design/2026-10-17-buffering-quality.md`. Same scopes as
-     * [IntroSkipMode]. Introduced in contract revision
-     * [BufferingQualityModeMinRevision], so an older server neither stores nor
-     * answers it; see [minimumRevision].
+     * [IntroSkipMode]. An older server neither stores nor answers it; a
+     * client tells by the key's presence in the server's manifest
+     * ([ManifestDetectedKeys]), never by its revision.
      */
     const val BufferingQualityMode = "playback.buffering_quality_mode"
 
-    /** Contract revision that introduced [BufferingQualityMode]. */
-    const val BufferingQualityModeMinRevision = 21
+    /**
+     * Keys some supported servers lack, detected by their presence in the
+     * server's settings manifest rather than by its revision number.
+     */
+    val ManifestDetectedKeys: Set<String> = setOf(BufferingQualityMode)
     const val AutoSkipCredits = "playback.auto_skip_credits"
     const val AutoPlayNext = "playback.auto_play_next"
     // Renamed at the settings cutover: every other key carries a domain prefix
@@ -247,16 +250,13 @@ object PlaybackSettingsKeys {
 
     /**
      * The contract revision a server needs before it stores [key], or null for
-     * a key every server this app supports stores. A server older than that
-     * answers a batched read naming the key with 404 for the whole batch and
-     * refuses a write as unknown_setting, so the store and the flusher ask
-     * for, send, and clear such a key only once the revision is known to
-     * include it.
+     * a key every server this app supports stores or one in
+     * [ManifestDetectedKeys]. A server older than that answers a batched read
+     * naming the key with 404 for the whole batch and refuses a write as
+     * unknown_setting, so the store and the flusher ask for, send, and clear
+     * such a key only once the revision is known to include it.
      */
-    fun minimumRevision(key: String): Int? = when (key) {
-        BufferingQualityMode -> BufferingQualityModeMinRevision
-        else -> CellularQuality.minimumRevision(key)
-    }
+    fun minimumRevision(key: String): Int? = CellularQuality.minimumRevision(key)
 
     /**
      * The keys one control writes together, so going back to the profile's

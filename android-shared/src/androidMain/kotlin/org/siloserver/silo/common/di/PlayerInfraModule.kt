@@ -152,6 +152,7 @@ val playerInfraModule = module {
         SettingsContractRevision(
             fetchCapabilities = { settingsApi.getContractCapabilities() },
             getServerUrl = { get<TokenManager>().getServerUrl() },
+            fetchManifestKeys = { settingsApi.getContractKeys() },
         )
     }
 

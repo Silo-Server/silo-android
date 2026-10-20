@@ -146,6 +146,7 @@ fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit
                 dvProfile7HDR10Fallback = state.dvProfile7HDR10Fallback,
                 pictureInPictureEnabled = state.pictureInPictureEnabled,
                 bufferingQualityMode = state.bufferingQualityMode,
+                bufferingQualityModeSupported = state.bufferingQualityModeSupported,
                 learnedLimit = state.learnedLimit,
                 learnedLimitResetFailed = state.learnedLimitResetFailed,
                 deviceOverrides = state.deviceOverrides,

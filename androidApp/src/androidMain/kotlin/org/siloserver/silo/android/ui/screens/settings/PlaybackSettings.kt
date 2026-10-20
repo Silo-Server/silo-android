@@ -116,6 +116,8 @@ fun PlaybackStreamingSection(
     dvProfile7HDR10Fallback: Boolean,
     pictureInPictureEnabled: Boolean,
     bufferingQualityMode: BufferingQualityMode,
+    /** Whether the server has the setting; without it the row hides and Silo lowers automatically. */
+    bufferingQualityModeSupported: Boolean,
     /** Shown, with its Reset action, only while the server reports one. */
     learnedLimit: PlaybackLearnedLimitV2?,
     learnedLimitResetFailed: Boolean,
@@ -178,17 +180,19 @@ fun PlaybackStreamingSection(
 
         // Next to Maximum Bitrate, the manual cap on Auto it complements. The
         // copy is the spec's.
-        ProfileLayeredDropdownRow(
-            label = stringResource(R.string.settings_buffering_quality_title),
-            value = stringResource(bufferingQualityModeLabel(bufferingQualityMode)),
-            options = bufferingQualityOptions.map { it.second },
-            overridden = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, PlaybackSettingsKeys.BufferingQualityMode),
-            onOptionSelected = { label ->
-                bufferingQualityOptions.firstOrNull { it.second == label }?.let { onBufferingQualityModeChanged(it.first) }
-            },
-            onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.BufferingQualityMode) },
-            description = stringResource(R.string.settings_buffering_quality_description),
-        )
+        if (bufferingQualityModeSupported) {
+            ProfileLayeredDropdownRow(
+                label = stringResource(R.string.settings_buffering_quality_title),
+                value = stringResource(bufferingQualityModeLabel(bufferingQualityMode)),
+                options = bufferingQualityOptions.map { it.second },
+                overridden = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, PlaybackSettingsKeys.BufferingQualityMode),
+                onOptionSelected = { label ->
+                    bufferingQualityOptions.firstOrNull { it.second == label }?.let { onBufferingQualityModeChanged(it.first) }
+                },
+                onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.BufferingQualityMode) },
+                description = stringResource(R.string.settings_buffering_quality_description),
+            )
+        }
 
         if (learnedLimit != null) {
             SettingsRow(label = learnedLimitLabel(learnedLimit)) {

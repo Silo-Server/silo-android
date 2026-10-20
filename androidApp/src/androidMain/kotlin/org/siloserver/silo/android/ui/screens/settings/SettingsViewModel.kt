@@ -96,6 +96,8 @@ data class SettingsUiState(
     val audioLanguageSuggestions: List<String> = emptyList(),
     val introSkipMode: IntroSkipMode = IntroSkipMode.Default,
     val bufferingQualityMode: BufferingQualityMode = BufferingQualityMode.Default,
+    /** The server's settings manifest is known to define the buffering mode: its row shows only then. */
+    val bufferingQualityModeSupported: Boolean = false,
     /**
      * The limit the server learned for this device on this connection after
      * buffering, or null when there is none or the server does not advertise
@@ -329,6 +331,9 @@ class SettingsViewModel(
         }.launchIn(viewModelScope)
         playerSettingsStore.bufferingQualityModeFlow.onEach { mode ->
             _uiState.update { it.copy(bufferingQualityMode = mode) }
+        }.launchIn(viewModelScope)
+        playerSettingsStore.bufferingQualityModeSupportedFlow.onEach { supported ->
+            _uiState.update { it.copy(bufferingQualityModeSupported = supported) }
         }.launchIn(viewModelScope)
         combine(
             playerSettingsStore.cellularPreferredQualityFlow,
