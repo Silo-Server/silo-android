@@ -184,6 +184,7 @@ class BufferingQualityPlayerAdapterTest {
     fun aLoadErrorStartsTroubleAndBufferProgressEndsIt() {
         playing()
         adapter.onLoadFailed(wasCanceled = true)
+        adapter.onLoadFailed(wasCanceled = false, subtitle = true)
         assertFalse(adapter.transportTroubleActive)
 
         adapter.sampleBuffer(nowMs = 0, bufferedPositionMs = 10_000)

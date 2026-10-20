@@ -276,7 +276,7 @@ class BufferingQualityPlayerAdapter(
         error: java.io.IOException,
         wasCanceled: Boolean,
     ) {
-        onLoadFailed(wasCanceled)
+        onLoadFailed(wasCanceled, subtitle = mediaLoadData.trackType == C.TRACK_TYPE_TEXT)
     }
 
     override fun onLoadCompleted(
@@ -302,8 +302,9 @@ class BufferingQualityPlayerAdapter(
         if (phase == Phase.STARVED) announceWait(BufferingWaitCause.SEEK)
     }
 
-    internal fun onLoadFailed(wasCanceled: Boolean) {
-        if (wasCanceled) return
+    /** A failing subtitle load says nothing about the video's transport. */
+    internal fun onLoadFailed(wasCanceled: Boolean, subtitle: Boolean = false) {
+        if (wasCanceled || subtitle) return
         setTrouble(load = true, offline = offline)
     }
 
