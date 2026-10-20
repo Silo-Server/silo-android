@@ -983,15 +983,21 @@ class WatchTogetherRepository(
             val reconcile = stateMutex.withLock { workReconcileNeeded.also { workReconcileNeeded = false } }
             if (reconcile) reconcileRoom(lease)
             for ((client, connectionId, request) in due) {
+                var rejectedBeforeDispatch = false
                 val sent = client.sendWorkOnConnection(connectionId, request) {
                     stateMutex.withLock {
                         workRecovery.retryStillCurrent(request, workIdentityLocked(request.kind)).also {
+                            rejectedBeforeDispatch = !it
                             if (it) workRecovery.retryDispatched(request)
                             publishWorkUpdateLocked(wake = false)
                         }
                     }
                 }
-                if (!sent) stateMutex.withLock { workRecovery.failed(request.requestId); publishWorkUpdateLocked() }
+                // The final predicate already discarded or deferred a rejected intent.
+                if (!sent && !rejectedBeforeDispatch) stateMutex.withLock {
+                    workRecovery.failed(request.requestId)
+                    publishWorkUpdateLocked()
+                }
             }
         }
     }
@@ -1101,7 +1107,10 @@ class WatchTogetherRepository(
                             if (event is RoomRealtimeEvent.SnapshotEvent && event.room.roomId == lease.roomId) {
                                 sawSnapshot = true
                             }
-                            if (event is RoomRealtimeEvent.Error && event.code == "realtime_input_limited") shieldNotice = true
+                            if (event is RoomRealtimeEvent.Error && event.code == "realtime_input_limited") {
+                                shieldNotice = true
+                                workBackoff.markOverloaded()
+                            }
                             fold(lease, owner, event)
                         }
                     }
@@ -1116,6 +1125,9 @@ class WatchTogetherRepository(
                 // `end` records why.
             } catch (failure: Throwable) {
                 end = AttemptEnd.Transport(failure)
+            } finally {
+                // Evaluate quiet accepted health before the immediate-renewal decision.
+                workBackoff.endAttempt()
             }
             pings?.cancel()
             markNotWritable(lease, owner)

@@ -181,4 +181,51 @@ class RoomWorkRecoveryTest {
         assertEquals(1L, recovery.update.uncertaintySequence)
     }
 
+    @Test fun raisedClassFloorDiscardsSelectedUnsentTransportWithoutUncertainty() {
+        val recovery = controller()
+        val first = request().copy(action = "pause")
+        val second = first.copy(requestId = "intent-2", action = "play")
+        recovery.sent(first, identity); recovery.sent(second, identity)
+        recovery.refused(refused())
+        now = 250; assertEquals(listOf(first), recovery.due { identity })
+        recovery.refused(refused("intent-2", 1_000))
+        assertFalse(recovery.retryStillCurrent(first, identity))
+        recovery.failed(first.requestId)
+        assertEquals(1L, recovery.update.discardedTransportSequence)
+        assertEquals(0L, recovery.update.uncertaintySequence)
+        now = 1_249; assertTrue(recovery.due { identity }.isEmpty())
+        now = 1_250; assertEquals(listOf(second), recovery.due { identity })
+        assertTrue(recovery.retryStillCurrent(second, identity))
+        recovery.retryDispatched(second)
+        recovery.disconnect()
+        assertEquals(1L, recovery.update.uncertaintySequence)
+    }
+
+    @Test fun raisedClassFloorRetainsCurrentLobbyDesireUntilEligible() {
+        val recovery = controller()
+        val lobby = request(RoomWorkKind.Lobby).copy(isReady = true)
+        val other = request().copy(requestId = "other-action", action = "pause")
+        recovery.sent(lobby, identity); recovery.sent(other, identity)
+        recovery.refused(refused())
+        now = 250; assertEquals(listOf(lobby), recovery.due { identity })
+        recovery.refused(refused("other-action", 1_000))
+        assertFalse(recovery.retryStillCurrent(lobby, identity)) // predicate owns deferral, not a failed send
+        now = 1_249; assertTrue(recovery.due { identity }.isEmpty())
+        now = 1_250
+        assertTrue(lobby in recovery.due { identity })
+        assertTrue(recovery.retryStillCurrent(lobby, identity))
+        recovery.retryDispatched(lobby)
+        assertTrue(recovery.applied(lobby.requestId, "lobby_ready", identity))
+        assertEquals(0L, recovery.update.uncertaintySequence)
+    }
+
+    @Test fun downstreamLobbyErrorStillCancelsADeferredDesire() {
+        val recovery = controller()
+        val lobby = request(RoomWorkKind.Lobby).copy(isReady = true)
+        recovery.sent(lobby, identity); recovery.refused(refused())
+        assertFalse(recovery.refused(refused().copy(code = "operation_failed", workStarted = true)))
+        now = 250
+        assertTrue(recovery.due { identity }.isEmpty())
+    }
+
 }

@@ -83,6 +83,9 @@ internal class EventSelectionSession(
                             }
                             if (capability?.supported == true) workAdmission = true
                         }
+                        if (type == "error" && (obj?.get("code") as? JsonPrimitive)?.content == "realtime_input_limited") {
+                            recovery.markOverloaded()
+                        }
                         if (type == "error" && workAdmission) {
                             val refusal = runCatching { SiloJson.decodeFromJsonElement(RealtimeRefusal.serializer(), obj!!) }.getOrNull()
                             if (refusal?.preWork == true && refusal.requestId == requestId) {

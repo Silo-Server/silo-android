@@ -27,7 +27,9 @@ operations idempotent. A missing acknowledgement, failed send, timeout,
 downstream error or reconnect after dispatch is uncertain delivery. A known
 pre-work refusal, including a retry selected but never dispatched, remains
 undelivered. Selection does not reset the original five-second lifetime; the
-repository rechecks expiry and identity at the final client dispatch boundary.
+repository rechecks expiry, identity and the class floor at the final client
+dispatch boundary. A floor raised after selection visibly discards a known-refused
+transport; current lobby readiness waits for the new floor instead.
 For uncertain delivery, reconcile the room, explain the uncertainty and let the
 viewer decide whether to issue a new intent.
 
@@ -61,8 +63,12 @@ Retries add 0–250 ms jitter. Unavailability backs off through 2/4/8/16/30 seco
 opaque failures use 1/2/4/8/16/30 seconds. Only a 1008 close with reason
 `realtime input shield`, or its `realtime_input_limited` notice, selects the
 5/10/20/30-second shield sequence. Opening a socket does not clear overload
-backoff; it takes 30 seconds of useful accepted activity. A long-lived socket
-cannot use immediate renewal to bypass this delay.
+backoff; it takes 30 seconds of useful accepted operation. A single accepted
+subscription or room snapshot followed by quiet uptime qualifies at disconnect
+or before a subsequent refusal; no second frame is required. Refusals invalidate that health interval, and time
+after cancellation does not count. Health resets retry counters without clearing
+advertised admission floors. A long-lived socket cannot use immediate renewal
+to bypass a retained floor or a current shield/unavailable reason.
 
 The focused tests use fake time, stub APIs and mock sockets. They establish
 client state transitions and wire handling, not rendered UI recovery, real

@@ -60,7 +60,10 @@ class DefaultNotificationsRealtimeClient internal constructor(
 
     override fun connect(): Flow<NotificationRealtimeEvent> = frames(listOf(NotificationRealtime.Channel), recovery)
         .mapNotNull { decodeRealtimeFrame(json, it) }
-        .onCompletion { cause -> if (cause == null) emit(NotificationRealtimeEvent.Closed(retryAfterMs = recovery.disconnected())) }
+        .onCompletion { cause ->
+            recovery.endAttempt()
+            if (cause == null) emit(NotificationRealtimeEvent.Closed(retryAfterMs = recovery.disconnected()))
+        }
         .catch { error ->
             if (error is kotlinx.coroutines.CancellationException) throw error
             val reason = if (error is org.siloserver.silo.network.apiv2.EventsTicketFailure)

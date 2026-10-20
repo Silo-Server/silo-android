@@ -82,15 +82,31 @@ class RealtimeBackoff(
 
     fun useful() {
         val now = nowMs()
-        val since = usefulSince ?: now.also { usefulSince = it }
+        if (usefulSince == null) usefulSince = now
+        resetIfHealthy(now)
+    }
+
+    private fun resetIfHealthy(now: Long) {
+        val since = usefulSince ?: return
         if (now - since >= 30_000) {
             opaque = 0; unavailable = 0; shield = 0; overloaded = false
         }
     }
 
-    fun refused(code: String, minimumMs: Long, retainForAdmission: Boolean = false): Long {
+    /** Quiet accepted uptime qualifies too; no health carries across physical attempts. */
+    internal fun endAttempt() {
+        resetIfHealthy(nowMs())
+        usefulSince = null
+    }
+
+    internal fun markOverloaded() {
+        resetIfHealthy(nowMs())
         usefulSince = null
         overloaded = true
+    }
+
+    fun refused(code: String, minimumMs: Long, retainForAdmission: Boolean = false): Long {
+        markOverloaded()
         val base = if (code == "realtime_unavailable") {
             UNAVAILABLE[(unavailable++).coerceAtMost(UNAVAILABLE.lastIndex)]
         } else 0L
@@ -100,7 +116,7 @@ class RealtimeBackoff(
     }
 
     fun disconnected(minimumMs: Long = 0, unavailableFailure: Boolean = false, inputShield: Boolean = false): Long {
-        usefulSince = null
+        endAttempt()
         if (inputShield) {
             overloaded = true
             return maxOf(remainingAdmissionMs(), minimumMs, SHIELD[(shield++).coerceAtMost(SHIELD.lastIndex)]) + jitterMs().coerceIn(0, 250)

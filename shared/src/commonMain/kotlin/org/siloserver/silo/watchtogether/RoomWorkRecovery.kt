@@ -113,7 +113,8 @@ internal class RoomWorkRecovery(
     fun failed(id: String) {
         val entry = pending.values.firstOrNull { it.request.requestId == id } ?: return
         pending.remove(entry.request.requestId)
-        publish(entry, uncertain = entry.awaitingResponse && (entry.request.kind == RoomWorkKind.Transport || entry.request.kind == RoomWorkKind.Lobby))
+        publish(entry, uncertain = entry.awaitingResponse && (entry.request.kind == RoomWorkKind.Transport || entry.request.kind == RoomWorkKind.Lobby),
+            discarded = !entry.awaitingResponse && entry.request.kind == RoomWorkKind.Transport)
     }
 
     fun refused(refusal: RealtimeRefusal): Boolean {
@@ -207,7 +208,18 @@ internal class RoomWorkRecovery(
             publish(entry, uncertain = entry.awaitingResponse, discarded = !entry.awaitingResponse)
             return false
         }
-        return permitted(request.kind) && entry.identity == current && entry.request == request && entry.selected
+        if (entry.identity != current || entry.request != request || !entry.selected) return false
+        if (!permitted(request.kind)) {
+            if (request.kind == RoomWorkKind.Lobby) {
+                entry.selected = false
+                entry.retryAt = actionFloor
+            } else {
+                pending.remove(request.requestId)
+                publish(entry, discarded = true)
+            }
+            return false
+        }
+        return true
     }
 
     /** Selection is not dispatch. Call only immediately before handing this frame to the client. */

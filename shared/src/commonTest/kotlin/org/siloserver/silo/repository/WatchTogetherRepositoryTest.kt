@@ -2640,4 +2640,99 @@ class WatchTogetherRepositoryTest {
         } finally { connection.cancelAndJoin(); repository.reset() }
     }
 
+    @Test fun backgroundQuietRoomSnapshotRestoresRenewalWithoutAnotherFrame() = runTest {
+        val initial = initialPlaying(); val wire = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), wire); val connection = open(repository, wire, initial)
+        try {
+            wire.events.emit(RoomRealtimeEvent.TransportTerminated(RealtimeSocketClosed(1008, "realtime input shield")))
+            runCurrent(); advance(5_000); assertEquals(2, wire.connectCount)
+            wire.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+            wire.events.emit(RoomRealtimeEvent.Opened)
+            wire.events.emit(RoomRealtimeEvent.SnapshotEvent(initial)); runCurrent()
+            advance(30_000)
+            wire.events.emit(RoomRealtimeEvent.TransportTerminated()); runCurrent()
+            assertEquals(3, wire.connectCount, "A single accepted snapshot followed by quiet uptime qualifies")
+            wire.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+            wire.events.emit(RoomRealtimeEvent.Opened); runCurrent()
+            advance(30_000) // no accepted frame on this attempt
+            wire.events.emit(RoomRealtimeEvent.TransportTerminated(RealtimeSocketClosed(1008, "realtime input shield")))
+            runCurrent(); advance(4_999); assertEquals(3, wire.connectCount)
+            advance(1); assertEquals(4, wire.connectCount, "Prior accepted health resets shield to five seconds")
+        } finally { connection.cancelAndJoin(); repository.reset() }
+    }
+
+    @Test fun backgroundRaisedFloorAtFinalDispatchVisiblyDiscardsOnlySelectedTransport() = runTest {
+        val initial = initialPlaying(); val wire = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), wire); val connection = open(repository, wire, initial)
+        try {
+            assertTrue(repository.transportRequest("pause", 12.0, true))
+            assertTrue(repository.transportRequest("play", 12.0, false))
+            val first = wire.workRequests[0].second; val second = wire.workRequests[1].second
+            val gate = CompletableDeferred<Unit>(); val entered = CompletableDeferred<Unit>()
+            wire.beforeRetryDispatch = { entered.complete(Unit); gate.await() }
+            wire.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", first.requestId, 750, false))
+            runCurrent(); advance(750); assertTrue(entered.isCompleted)
+            wire.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", second.requestId, 2_000, false))
+            runCurrent(); gate.complete(Unit); runCurrent()
+            assertEquals(2, wire.workRequests.size)
+            assertEquals(0L, repository.workUpdate.value.uncertaintySequence)
+            assertEquals(1L, repository.workUpdate.value.discardedTransportSequence)
+            advance(1_999); assertEquals(2, wire.workRequests.size)
+            advance(1); assertEquals(listOf(first, second, second), wire.workRequests.map { it.second })
+            wire.events.emit(RoomRealtimeEvent.ActionResult(second.requestId, "transport_request", "applied")); runCurrent()
+            advance(5_000)
+            assertEquals(0L, repository.workUpdate.value.uncertaintySequence)
+        } finally { connection.cancelAndJoin(); repository.reset() }
+    }
+
+    @Test fun backgroundTimeAfterShieldNoticeDoesNotQualifyAsRoomHealth() = runTest {
+        val initial = initialPlaying(); val wire = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), wire); val connection = open(repository, wire, initial)
+        try {
+            wire.events.emit(RoomRealtimeEvent.TransportTerminated(RealtimeSocketClosed(1008, "realtime input shield")))
+            runCurrent(); advance(5_000); assertEquals(2, wire.connectCount)
+            wire.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+            wire.events.emit(RoomRealtimeEvent.Opened)
+            wire.events.emit(RoomRealtimeEvent.SnapshotEvent(initial)); runCurrent()
+            advance(1_000)
+            wire.events.emit(RoomRealtimeEvent.Error("realtime_input_limited", "shield")); runCurrent()
+            advance(30_000)
+            wire.events.emit(RoomRealtimeEvent.TransportTerminated()); runCurrent()
+            advance(9_999); assertEquals(2, wire.connectCount)
+            advance(1); assertEquals(3, wire.connectCount)
+        } finally { connection.cancelAndJoin(); repository.reset() }
+    }
+
+    @Test fun backgroundQuietAcceptedRoomResetsOutageBeforeTransportRefusal() = runTest {
+        val initial = initialPlaying(); val wire = FakeRealtime().apply {
+            connectBehavior = { count -> if (count <= 5) flow {
+                emit(RoomRealtimeEvent.TransportTerminated(RoomTicketRefusedException(503, "realtime_unavailable", 250)))
+            } else events.asSharedFlow() }
+        }
+        val repository = repo(FakeApi(room(initial)), wire)
+        repository.createRoom(create())
+        val connection = backgroundScope.launch { repository.connect("room-1") }; runCurrent()
+        try {
+            for ((index, delay) in listOf(2_000L, 4_000L, 8_000L, 16_000L, 30_000L).withIndex()) {
+                assertEquals(index + 1, wire.connectCount)
+                advance(delay)
+            }
+            assertEquals(6, wire.connectCount)
+            wire.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+            wire.events.emit(RoomRealtimeEvent.Opened)
+            wire.events.emit(RoomRealtimeEvent.SnapshotEvent(initial)); runCurrent()
+            advance(30_000) // quiet accepted room; pongs/open alone never supply health
+            assertTrue(repository.transportRequest("pause", 12.0, true))
+            val request = wire.workRequests.single().second
+            wire.events.emit(RoomRealtimeEvent.Error("realtime_unavailable", "wait", request.requestId, 250, false)); runCurrent()
+            assertEquals(0L, repository.workUpdate.value.discardedTransportSequence)
+            advance(1_999); assertEquals(1, wire.workRequests.size)
+            advance(1); assertEquals(listOf(request, request), wire.workRequests.map { it.second })
+            wire.events.emit(RoomRealtimeEvent.ActionResult(request.requestId, "transport_request", "applied")); runCurrent()
+            advance(5_000)
+            assertEquals(0L, repository.workUpdate.value.uncertaintySequence)
+            assertEquals(0L, repository.workUpdate.value.discardedTransportSequence)
+        } finally { connection.cancelAndJoin(); repository.reset() }
+    }
+
 }
