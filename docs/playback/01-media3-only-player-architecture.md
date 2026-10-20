@@ -201,21 +201,47 @@ buffering): `always`, the default, lowers Auto at once and offers **Restore
 quality**; `ask` asks first; `never` only detects and reports. A quality the
 viewer picked is always asked about. Lowering Auto is a `quality_change` replan
 with the step-down estimate (see 3.6); lowering a picked rung names the next
-rung's label and carries no estimate. The controller is off in a Watch Party.
+rung's label and carries no estimate. In a Watch Party the controller is
+suspended: it keeps timing stalls and summarizing plans, but never lowers,
+prompts or shows a notice; leaving the room starts fresh history with the
+startup grace over. A lowering is never queued: while another replan, seek
+recovery or track change is in flight it is refused and watched again later.
+The phone holds a **Restore quality** that meets one until it ends, dropping
+the kept estimate at once; TV merges it into the staged request. An adoption
+the controller did not ask for (a track change, a recovery) drops a pending
+lowering silently.
+
+The controller's answer (**Keep quality**, **Restore quality**), its "Can't
+lower quality" notice and its re-offer wait belong to the title. Another
+attempt at the same title (Retry, a 404 renewal, failure recovery) keeps them;
+other content resets them. A quality change clears them: a pick in the Quality
+menu, a version the viewer picks, or the phone's move to the quality pair of
+the network it is now on.
+
 When the server advertises `playback_plan_summary_v1`, each plan that stops
 playing is reported in a `plan_summary` route event: its stalls, delivered
 bitrate, the rate its media arrived at (`throughput_kbps`, see 3.6), mode,
-last buffering action, and the estimate it was requested with.
+last buffering action, and the estimate the request that made the plan carried
+(a seek reanchor's own, for its plan). Every stall's time counts in the total
+and the longest; only stalls of 1 s or more count in `stall_count`. A pause,
+seek or reload ends a stall uncounted, an outage drops its time, and a stall
+still running when its plan ends counts. A failed plan is reported when the
+error shows.
 
 Only running out of data is a stall. Media3 also reports `STATE_BUFFERING`
 when its decoder falls behind and drops to the next keyframe, with seconds of
 media still buffered. The adapter reports a wait that begins with more than
 `RENDERER_WAIT_BUFFER_MS` (1 s) buffered past the playhead as a renderer wait,
 which the controller does not count, and turns it into a stall if the buffer
-falls to that threshold before playback resumes. A buffering pill waits, its
-timer frozen, while an intro, recap, credits or Next Up pill shows, while the
-player is in picture in picture and, on the phone, while Silo is in the
-background.
+falls to that threshold before playback resumes, checking every 200 ms while
+the wait lasts. A tunneled player's waits are always network waits: its
+buffered duration includes samples already in the codec, which does not fall
+behind that way. A phone subtitle or cue refresh rebuilds the media item and
+marks a reload, which is not a stall. A buffering pill waits, its timer
+frozen, while an intro, recap, credits or Next Up pill shows, while the TV HUD
+is open, while the player is in picture in picture and, on the phone, while
+Silo is in the background. A display-only notice shows for 5 s of visible
+time, waiting while a lifecycle notice holds the slot or the player is hidden.
 
 The startup stall detector (section 8) treats a starved decoder, buffering with
 under 5 s buffered ahead, as a transport stall. While data still arrives, that
@@ -229,7 +255,11 @@ the last observation, and Auto plans under it. A plan the limit lowered carries
 `playback_plan.bandwidth_limit`, and the Quality menu labels Auto “Auto ·
 limited after buffering”. **Restore quality** sends `learned_limit: "clear"`,
 and `never` mode sends `learned_limit: "ignore"` on every start and replan, so
-a limit learned by another profile on this device does not reach it. Settings →
+a limit learned by another profile on this device does not reach it. The
+session manager reads the mode from the profile's stored setting on each
+request, so a start never goes out before the mode is known. Cast requests
+always send `learned_limit: "ignore"` and no estimate: this device's limits
+are not the receiver's. Settings →
 Playback shows the limit for the current connection with a **Reset**
 (`DELETE /api/v2/playback/connection/learned-limit`). Only a server that
 advertises `buffering_quality_v1` gets `buffering_quality_v1` in
@@ -336,8 +366,9 @@ receiving counts once. A short request on a warm connection, such as one HLS
 segment, arrives at the connection's burst rate, which on the sandbox was about
 twice what the speed test sustained. Each `plan_summary` sends the figure as
 `throughput_kbps` and resets it; with no counted request, or under 100 kbps,
-it sends nothing. The
-server keeps the highest as this device's `playback_sample`. A progressive
+it sends nothing. A plan adopted with no plan before it resets the figure
+first, so it counts only from its own adoption. The server keeps the highest
+as this device's `playback_sample`. A progressive
 request held open while the buffer is full reads low, which keeps the figure a
 lower bound.
 

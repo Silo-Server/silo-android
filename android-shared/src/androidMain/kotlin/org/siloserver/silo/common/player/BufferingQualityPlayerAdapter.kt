@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.player
 
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.C
@@ -59,8 +61,9 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
  *   next keyframe, with seconds of media still buffered. The spec's stall is
  *   running out of data, so that wait is [BufferingWaitCause.RENDERER], which
  *   the controller does not count. If the buffer then drains before playback
- *   resumes, [sampleBuffer] re-announces the wait as a network wait, from
- *   which the stall is timed.
+ *   resumes, the wait is re-announced as a network wait, from which the
+ *   stall is timed: the adapter checks every [RENDERER_DRAIN_CHECK_MS] while
+ *   such a wait lasts, and at each [sampleBuffer].
  * - `playWhenReady` false, `STATE_ENDED` or `STATE_IDLE` →
  *   [BufferingPlaybackEventSink.onPause].
  * - A seek discontinuity → [BufferingPlaybackEventSink.onSeek]. During a
@@ -98,6 +101,8 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
 class BufferingQualityPlayerAdapter(
     sink: BufferingPlaybackEventSink,
     private val clock: () -> Long = { SystemClock.elapsedRealtime() },
+    /** Runs an action on the main thread after a delay; returns its cancel. */
+    private val schedule: (delayMs: Long, action: () -> Unit) -> () -> Unit = ::scheduleOnMainThread,
 ) : Player.Listener, AnalyticsListener {
 
     private val sink: BufferingPlaybackEventSink = sink.logged {
@@ -116,6 +121,9 @@ class BufferingQualityPlayerAdapter(
 
     /** The cause of the wait in progress, while [phase] is [Phase.STARVED]. */
     private var waitCause: BufferingWaitCause? = null
+
+    /** Cancels the pending drain check of a renderer wait. */
+    private var cancelDrainCheck: (() -> Unit)? = null
 
     /** Media buffered past the playhead, read from the attached player. */
     private var bufferedAheadMs: () -> Long = { 0L }
@@ -185,12 +193,7 @@ class BufferingQualityPlayerAdapter(
             lastDataAtMs = nowMs
             setTrouble(load = false, offline = offline)
         }
-        if (phase == Phase.STARVED &&
-            waitCause == BufferingWaitCause.RENDERER &&
-            bufferedAheadMs() <= RENDERER_WAIT_BUFFER_MS
-        ) {
-            announceWait(BufferingWaitCause.NETWORK)
-        }
+        checkRendererDrain()
     }
 
     /** Media data arrived within the last [RECEIVING_DATA_WINDOW_MS]. */
@@ -320,7 +323,11 @@ class BufferingQualityPlayerAdapter(
         }
         if (next == phase) return
         phase = next
-        if (next != Phase.STARVED) waitCause = null
+        if (next != Phase.STARVED) {
+            waitCause = null
+            cancelDrainCheck?.invoke()
+            cancelDrainCheck = null
+        }
         when (next) {
             Phase.RUNNING -> {
                 seekSinceRun = false
@@ -343,6 +350,26 @@ class BufferingQualityPlayerAdapter(
     private fun announceWait(cause: BufferingWaitCause) {
         waitCause = cause
         sink.onWaiting(cause)
+        if (cause == BufferingWaitCause.RENDERER) scheduleDrainCheck()
+    }
+
+    /** A renderer wait whose buffer has drained has become a network wait. */
+    private fun checkRendererDrain() {
+        if (phase == Phase.STARVED &&
+            waitCause == BufferingWaitCause.RENDERER &&
+            bufferedAheadMs() <= RENDERER_WAIT_BUFFER_MS
+        ) {
+            announceWait(BufferingWaitCause.NETWORK)
+        }
+    }
+
+    private fun scheduleDrainCheck() {
+        cancelDrainCheck?.invoke()
+        cancelDrainCheck = schedule(RENDERER_DRAIN_CHECK_MS) {
+            cancelDrainCheck = null
+            checkRendererDrain()
+            if (phase == Phase.STARVED && waitCause == BufferingWaitCause.RENDERER) scheduleDrainCheck()
+        }
     }
 
     private fun setTrouble(load: Boolean, offline: Boolean) {
@@ -358,11 +385,22 @@ class BufferingQualityPlayerAdapter(
         /** How recent data must be for a slow plan to count as still receiving it. */
         const val RECEIVING_DATA_WINDOW_MS: Long = 5_000L
 
+        /** How often a renderer wait checks whether its buffer has drained. */
+        const val RENDERER_DRAIN_CHECK_MS: Long = 200L
+
         private const val TRANSPORT_STALL_CLASSIFICATION = "transport_stall"
     }
 }
 
 private const val TAG = "BufferingQuality"
+
+private val mainThread by lazy { Handler(Looper.getMainLooper()) }
+
+private fun scheduleOnMainThread(delayMs: Long, action: () -> Unit): () -> Unit {
+    val runnable = Runnable(action)
+    mainThread.postDelayed(runnable, delayMs)
+    return { mainThread.removeCallbacks(runnable) }
+}
 
 /** Logs each event; waits and resumes add [detail], the player's buffer and rendering mode. */
 private fun BufferingPlaybackEventSink.logged(detail: () -> String): BufferingPlaybackEventSink {

@@ -20,7 +20,20 @@ class BufferingQualityPlayerAdapterTest {
 
     private var now = 0L
     private val sink = RecordingSink()
-    private val adapter = BufferingQualityPlayerAdapter(sink, clock = { now })
+
+    /** Drain checks the adapter scheduled, run by the test. */
+    private val scheduled = mutableListOf<() -> Unit>()
+    private val adapter = BufferingQualityPlayerAdapter(
+        sink,
+        clock = { now },
+        schedule = { _, action -> scheduled += action; { scheduled -= action } },
+    )
+
+    private fun runScheduled() {
+        val due = scheduled.toList()
+        scheduled.clear()
+        due.forEach { it() }
+    }
 
     /** The callbacks Media3 sends as a stall begins on a playing player. */
     private fun starve() {
@@ -79,6 +92,23 @@ class BufferingQualityPlayerAdapterTest {
             ),
             sink.events,
         )
+    }
+
+    @Test
+    fun aRendererWaitBecomesANetworkWaitWhenItsBufferDrainsBetweenSamples() {
+        var aheadMs = 3_600L
+        adapter.seed(playWhenReady = true, playbackState = Player.STATE_READY, isPlaying = true) { aheadMs }
+        sink.events.clear()
+
+        starve()
+        runScheduled()
+        aheadMs = 400L
+        runScheduled()
+        // Nothing is left to check once it is a network wait.
+        runScheduled()
+
+        assertEquals(listOf("waiting:renderer", "waiting:network"), sink.events)
+        assertTrue(scheduled.isEmpty())
     }
 
     @Test
