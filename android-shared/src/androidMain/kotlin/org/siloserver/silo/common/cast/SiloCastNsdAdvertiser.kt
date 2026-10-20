@@ -33,12 +33,16 @@ class SiloCastNsdAdvertiser(
     private var lastRegistration: Registration? = null
     private var lastRecord: Map<String, String>? = null
 
-    /** The live advertisement's name, port and TXT record, for the debug adb hook. */
+    /** The service name NsdManager registered, which it may change to resolve a conflict; null until it confirms. */
+    private var registeredName: String? = null
+
+    /** The registered advertisement's name, port and TXT record, for the debug adb hook. */
     @Synchronized
     fun currentAdvertisement(): Triple<String, Int, Map<String, String>>? {
         val registration = lastRegistration ?: return null
         val record = lastRecord ?: return null
-        return Triple(record["name"].orEmpty(), registration.port, record)
+        val name = registeredName ?: return null
+        return Triple(name, registration.port, record)
     }
 
     @Synchronized
@@ -62,6 +66,7 @@ class SiloCastNsdAdvertiser(
         registrationListener = null
         lastRegistration = null
         lastRecord = null
+        registeredName = null
     }
 
     private fun register(registration: Registration) {
@@ -87,10 +92,16 @@ class SiloCastNsdAdvertiser(
         val listener = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(info: NsdServiceInfo) {
                 Log.i(TAG, "SiloCast registered on ${info.port}")
+                synchronized(this@SiloCastNsdAdvertiser) {
+                    if (registrationListener === this) registeredName = info.serviceName
+                }
             }
 
             override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {
                 Log.w(TAG, "SiloCast registration failed: $errorCode")
+                synchronized(this@SiloCastNsdAdvertiser) {
+                    if (registrationListener === this) registeredName = null
+                }
             }
 
             override fun onServiceUnregistered(info: NsdServiceInfo) {
@@ -104,6 +115,7 @@ class SiloCastNsdAdvertiser(
         registrationListener = listener
         lastRegistration = registration
         lastRecord = record
+        registeredName = null
         nsdManager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)
     }
 

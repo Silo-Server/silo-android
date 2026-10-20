@@ -49,18 +49,35 @@ class SiloCastNsdBrowser(context: Context) {
     /** Targets added by the debug adb hook; see [setDebugTargets]. */
     private var debugTargets: List<SiloCastTarget> = emptyList()
 
+    /** Discovered targets an injected one with the same id hides, restored when it goes. */
+    private var shadowedTargets: Map<String, SiloCastTarget> = emptyMap()
+
     /**
      * Debug builds only (PlaybackDebugReceiver): targets supplied over adb.
      * An emulator sits behind NAT that mDNS can't cross, so a test harness
      * resolves TVs on the host and hands them in; they merge with (and
      * survive a restart of) real discovery. An empty list removes them.
+     * Every write to [_targets] holds this monitor, so discovery can't
+     * overwrite an injected target.
      */
     @Synchronized
     fun setDebugTargets(targets: List<SiloCastTarget>) {
-        val replacedIds = debugTargets.map { it.deviceId }.toSet()
+        val previousIds = debugTargets.map { it.deviceId }.toSet()
+        val injectedIds = targets.map { it.deviceId }.toSet()
+        val discovered = _targets.value.filterNot { it.deviceId in previousIds } + shadowedTargets.values
+        shadowedTargets = discovered.filter { it.deviceId in injectedIds }.associateBy { it.deviceId }
         debugTargets = targets
+        _targets.value = (discovered.filterNot { it.deviceId in injectedIds } + targets).sortedBy { it.name.lowercase() }
+    }
+
+    /** Publishes a resolved mDNS record; a debug-injected target wins over one with its id. */
+    private fun publishDiscoveredLocked(target: SiloCastTarget) {
+        if (debugTargets.any { it.deviceId == target.deviceId }) {
+            shadowedTargets = shadowedTargets + (target.deviceId to target)
+            return
+        }
         _targets.update { current ->
-            (current.filterNot { it.deviceId in replacedIds || targets.any { t -> t.deviceId == it.deviceId } } + targets)
+            (current.filterNot { it.deviceId == target.deviceId } + target)
                 .sortedBy { it.name.lowercase() }
         }
     }
@@ -88,10 +105,11 @@ class SiloCastNsdBrowser(context: Context) {
                         ?.takeIf { it.serviceInfo.serviceName == lostName }
                         ?.cancelled = true
                     pendingResolutions.removeAll { it.serviceInfo.serviceName == lostName }
-                }
-                _targets.update { targets ->
-                    val injectedIds = synchronized(this@SiloCastNsdBrowser) { debugTargets.map { it.deviceId }.toSet() }
-                    targets.filterNot { it.serviceName == lostName && it.deviceId !in injectedIds }
+                    shadowedTargets = shadowedTargets.filterValues { it.serviceName != lostName }
+                    val injectedIds = debugTargets.map { it.deviceId }.toSet()
+                    _targets.update { targets ->
+                        targets.filterNot { it.serviceName == lostName && it.deviceId !in injectedIds }
+                    }
                 }
             }
 
@@ -120,6 +138,7 @@ class SiloCastNsdBrowser(context: Context) {
         discoveryListener = null
         pendingResolutions.clear()
         activeResolution = null
+        shadowedTargets = emptyMap()
         _targets.value = debugTargets
     }
 
@@ -154,16 +173,9 @@ class SiloCastNsdBrowser(context: Context) {
                 }
 
                 override fun onServiceResolved(info: NsdServiceInfo) {
-                    val mayPublish = synchronized(this@SiloCastNsdBrowser) {
-                        discoveryListener != null && activeResolution === pending && !pending.cancelled
-                    }
-                    if (mayPublish) {
-                        // A debug-injected target wins over an mDNS record with its id.
-                        info.toSiloCastTarget()?.takeIf { found -> debugTargets.none { it.deviceId == found.deviceId } }?.let { target ->
-                            _targets.update { current ->
-                                (current.filterNot { it.deviceId == target.deviceId } + target)
-                                    .sortedBy { it.name.lowercase() }
-                            }
+                    synchronized(this@SiloCastNsdBrowser) {
+                        if (discoveryListener != null && activeResolution === pending && !pending.cancelled) {
+                            info.toSiloCastTarget()?.let(::publishDiscoveredLocked)
                         }
                     }
                     finishResolution(pending)
