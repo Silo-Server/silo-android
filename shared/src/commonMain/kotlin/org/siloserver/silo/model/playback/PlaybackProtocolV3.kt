@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.Transient
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.descriptors.nullable
 import kotlinx.serialization.encoding.Decoder
@@ -30,6 +31,13 @@ const val NATIVE_HLS_PLAYBACK_V1_FEATURE = "native_hls_playback_v1"
  * `/api/v2` only, and attempt-sticky on the server.
  */
 const val HLS_SUBTITLE_RENDITIONS_V1_FEATURE = "hls_subtitle_renditions_v1"
+
+/**
+ * The decision's plan reports [PlaybackPlanV3.activeQuality], so an absent
+ * value means the plan delivers no menu entry. Without it, an absent value
+ * says nothing and the client infers the entry. `/api/v2` only.
+ */
+const val PLAN_ACTIVE_QUALITY_V1_FEATURE = "plan_active_quality_v1"
 
 /**
  * Failure classifications for a server subtitle decision the player selects
@@ -254,6 +262,18 @@ data class PlaybackPlanV3(
      * from the source resolution itself.
      */
     @SerialName("available_qualities") val availableQualities: List<PlaybackAvailableQualityV3> = emptyList(),
+    /**
+     * The [availableQualities] label this plan delivers, or null when it
+     * delivers none (the source plays unchanged, or an encode falls between
+     * two entries). Meaningful only when [activeQualityReported].
+     */
+    @SerialName("active_quality") val activeQuality: String? = null,
+    /**
+     * Whether the decision carrying this plan listed
+     * [PLAN_ACTIVE_QUALITY_V1_FEATURE]. Not on the wire: [validateForMedia3]
+     * sets it from the response's `server_features`.
+     */
+    @Transient val activeQualityReported: Boolean = false,
     @SerialName("degradation_warnings") val degradationWarnings: List<PlaybackDegradationWarning> = emptyList(),
     @SerialName("decision_reason") val decisionReason: String,
     @SerialName("requested_media_file_id") val requestedMediaFileId: Int? = null,
@@ -620,6 +640,7 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
         )
     }
     val plan = playbackPlan
+        ?.copy(activeQualityReported = PLAN_ACTIVE_QUALITY_V1_FEATURE in serverFeatures)
         ?: return PlaybackV3Validation.Terminal("invalid_playback_plan", "The server returned no executable playback plan.", false)
     val resolvedSessionId = plan.sessionId ?: sessionId
         ?: return PlaybackV3Validation.Terminal("invalid_playback_plan", "The server returned no playback session identity.", false)
