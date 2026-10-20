@@ -38,6 +38,9 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.apiv2.BandwidthProbeResponseV2
 import org.siloserver.silo.network.apiv2.PlaybackBandwidthProbeResultV2
 import org.siloserver.silo.network.apiv2.PlaybackV2Api
+import org.siloserver.silo.network.localroute.LocalRouteState
+import org.siloserver.silo.network.localroute.LocalRoutes
+import org.siloserver.silo.network.localroute.onSavedAddress
 import org.siloserver.silo.util.parseRfc3339ToEpochMillis
 
 /**
@@ -209,6 +212,7 @@ interface BandwidthProbeServer {
 class PlaybackV2BandwidthProbeServer(
     private val api: PlaybackV2Api,
     private val tokens: TokenManager,
+    private val localRoutes: LocalRouteState = LocalRoutes.state,
 ) : BandwidthProbeServer {
     override suspend fun target(): BandwidthProbeTargetLookup {
         // The report is profile-scoped, so a probe needs a chosen profile.
@@ -220,7 +224,11 @@ class PlaybackV2BandwidthProbeServer(
                 val advertised = capabilities.bandwidthProbeUrl?.takeIf {
                     it.isNotBlank() && CONNECTION_SPEED_V1_FEATURE in capabilities.features
                 } ?: return BandwidthProbeTargetLookup.NotSupported
+                // A lookup over the local route names the server's LAN
+                // address, which would go out without credentials. On the
+                // saved address it carries them, and still takes the route.
                 val url = runCatching { resolveBandwidthProbeUrl(scope.serverUrl, advertised) }.getOrNull()
+                    ?.let { localRoutes.onSavedAddress(it, scope.serverUrl) }
                     ?: return BandwidthProbeTargetLookup.NotSupported
                 BandwidthProbeTargetLookup.Found(
                     BandwidthProbeTarget(

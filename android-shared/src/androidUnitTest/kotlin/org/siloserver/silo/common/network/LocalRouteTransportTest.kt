@@ -51,6 +51,7 @@ import org.siloserver.silo.network.localroute.LocalRouteProbe
 import org.siloserver.silo.network.localroute.LocalRouteState
 import org.siloserver.silo.network.localroute.LocalRouteTls
 import org.siloserver.silo.network.localroute.localRoute
+import org.siloserver.silo.network.localroute.onSavedAddress
 
 /**
  * The local route's transport against real TLS: requests move only to a
@@ -164,6 +165,34 @@ class LocalRouteTransportTest {
 
         client().newCall(get("/api/v2/artwork/1").build()).execute().use { assertEquals("from saved", it.body!!.string()) }
         assertNull(state.active.value)
+    }
+
+    @Test
+    fun anUnbufferedBodyIsHandedOnAsItArrives() {
+        activate(pin = server.pin)
+        lan.enqueue(MockResponse().setBody("x".repeat(64 * 1024)).setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY))
+
+        val response = client().newCall(
+            get("/api/v2/playback/bandwidth-probe").header(LocalRouteHeaders.UNBUFFERED, "1").build(),
+        ).execute()
+        // Not read ahead, so the failure reaches the caller rather than a retry.
+        assertFailsWith<IOException> { response.use { it.body!!.string() } }
+        assertEquals(0, saved.requestCount)
+        assertNull(lan.takeRequest().getHeader(LocalRouteHeaders.UNBUFFERED))
+    }
+
+    @Test
+    fun aUrlTheServerBuiltOnTheLocalAddressGoesOutOnTheSavedAddress() {
+        activate(pin = server.pin)
+        // A capability lookup over the route names the bandwidth probe there.
+        val advertised = "https://127.0.0.1:${lan.port}/api/v2/playback/bandwidth-probe?media_path=true"
+        val moved = state.onSavedAddress(advertised, savedUrl(""))
+        assertEquals(savedUrl("/api/v2/playback/bandwidth-probe?media_path=true"), moved)
+        assertEquals("https://proxy.example/probe", state.onSavedAddress("https://proxy.example/probe", savedUrl("")))
+
+        lan.enqueue(MockResponse().setBody("probe"))
+        client().newCall(Request.Builder().url(moved).build()).execute().use { assertEquals("probe", it.body!!.string()) }
+        assertEquals(0, saved.requestCount)
     }
 
     @Test

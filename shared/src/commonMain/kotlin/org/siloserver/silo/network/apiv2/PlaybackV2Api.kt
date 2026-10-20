@@ -13,6 +13,7 @@ import org.siloserver.silo.model.playback.PlaybackStartRequestV3
 import org.siloserver.silo.model.playback.PlaybackReplanRequestV3
 import org.siloserver.silo.model.playback.PlaybackRouteEventV3
 import org.siloserver.silo.network.*
+import org.siloserver.silo.network.localroute.readBodyUnbuffered
 import org.siloserver.silo.network.localroute.stayOnSavedAddress
 
 const val SEQUENCED_PROGRESS_FEATURE = "sequenced_progress_v1"
@@ -261,6 +262,9 @@ class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate)
     private fun HttpRequestBuilder.acceptProbeBytes() {
         header(HttpHeaders.Accept, ContentType.Application.OctetStream.toString())
         header(HttpHeaders.CacheControl, "no-store")
+        // The probe's clock starts at the first body byte, so the local route
+        // must not read the body ahead first.
+        readBodyUnbuffered()
     }
 
     private suspend fun <T> probeAnswer(response: HttpResponse, read: suspend (BandwidthProbeResponseV2) -> T): T =
