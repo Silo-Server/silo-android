@@ -1220,6 +1220,7 @@ fun PlayerScreen(
                 playbackState = player.playbackState,
                 isPlaying = player.isPlaying,
                 bufferedAheadMs = { player.totalBufferedDuration },
+                tunneling = { player.isTunnelingEnabled },
             )
             onDispose {
                 player.removeListener(adapter)

@@ -87,7 +87,9 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
  *
  * Every event it sends is logged, because the controller keeps no log of its
  * own: these lines, with the players' `buffering_quality` plan and replan
- * lines, are how a device log replays its decisions.
+ * lines, are how a device log replays its decisions. Waits and resumes also
+ * log the media buffered past the playhead and whether the player tunnels, so
+ * one line shows why a wait got its cause.
  *
  * Main thread only, as Media3 delivers both listeners' callbacks.
  */
@@ -97,7 +99,9 @@ class BufferingQualityPlayerAdapter(
     private val clock: () -> Long = { SystemClock.elapsedRealtime() },
 ) : Player.Listener, AnalyticsListener {
 
-    private val sink: BufferingPlaybackEventSink = sink.logged()
+    private val sink: BufferingPlaybackEventSink = sink.logged {
+        "buffered_ahead_ms=${bufferedAheadMs()} tunneling=${tunneling()}"
+    }
 
     private enum class Phase { STOPPED, STARVED, RUNNING }
 
@@ -115,6 +119,9 @@ class BufferingQualityPlayerAdapter(
     /** Media buffered past the playhead, read from the attached player. */
     private var bufferedAheadMs: () -> Long = { 0L }
 
+    /** Whether the attached player renders tunneled, for the log only. */
+    private var tunneling: () -> Boolean = { false }
+
     private var loadTrouble = false
     private var offline = false
 
@@ -127,15 +134,17 @@ class BufferingQualityPlayerAdapter(
     /**
      * The player's state when the adapter attaches to it. Sends what a
      * callback would have. [bufferedAheadMs] reads the player's
-     * `totalBufferedDuration`.
+     * `totalBufferedDuration`, and [tunneling] its `isTunnelingEnabled`.
      */
     fun seed(
         playWhenReady: Boolean,
         playbackState: Int,
         isPlaying: Boolean,
+        tunneling: () -> Boolean = { false },
         bufferedAheadMs: () -> Long = { 0L },
     ) {
         this.bufferedAheadMs = bufferedAheadMs
+        this.tunneling = tunneling
         this.playWhenReady = playWhenReady
         this.playbackState = playbackState
         this.isPlaying = isPlaying
@@ -349,19 +358,20 @@ class BufferingQualityPlayerAdapter(
 
 private const val TAG = "BufferingQuality"
 
-private fun BufferingPlaybackEventSink.logged(): BufferingPlaybackEventSink {
+/** Logs each event; waits and resumes add [detail], the player's buffer and rendering mode. */
+private fun BufferingPlaybackEventSink.logged(detail: () -> String): BufferingPlaybackEventSink {
     val sink = this
     fun log(event: String) {
         Log.i(TAG, "buffering_quality event=$event")
     }
     return object : BufferingPlaybackEventSink {
         override fun onPlaying() {
-            log("playing")
+            log("playing ${detail()}")
             sink.onPlaying()
         }
 
         override fun onWaiting(cause: BufferingWaitCause) {
-            log("waiting cause=${cause.name.lowercase()}")
+            log("waiting cause=${cause.name.lowercase()} ${detail()}")
             sink.onWaiting(cause)
         }
 
