@@ -266,8 +266,11 @@ runs it, and `SpeedTestMeter` (`shared/`) holds its arithmetic, which
 - **Endpoint.** Only for a server whose capability `features` carry
   `connection_speed_v1` and that names a `bandwidth_probe_url`, the probe on the
   path this client's media takes. That URL is the server's own and goes out
-  with the app's normal auth. A redirect to a short-lived proxy URL is followed
-  once, without credentials. The same capability response names the target
+  with the app's normal auth. A lookup over the local route names the
+  server's LAN address, so the client moves that URL back onto the saved
+  address: there it carries the app's credentials, and the route still takes
+  it, without reading the body ahead. A redirect to a short-lived proxy URL is
+  followed once, without credentials. The same capability response names the target
   (`bandwidth_probe_target_kbps`), whether automatic tests are on
   (`bandwidth_probe_automatic`) and the reading lifetime
   (`bandwidth_probe_max_age_seconds`, 7 days when absent).
@@ -282,38 +285,48 @@ runs it, and `SpeedTestMeter` (`shared/`) holds its arithmetic, which
   window 0 completes (100 MB in under a second) reports the whole-transfer
   average instead, a lower bound, or the target when a quick test's average
   reaches it. A rate above 1 Gbps is reported as 1,000,000 kbps, a lower
-  bound. A probe with no byte in 10 s is abandoned.
+  bound. A result under 100 kbps, a target under 100 included, measured
+  nothing. A probe with no byte in 10 s is abandoned.
 - **When.** A check runs on sign-in, a return to the foreground, a switch to
-  another profile (its target follows the profile's libraries) or a network
-  change, and at no other time. It reads this device's readings for the
+  another profile (its target follows the profile's libraries), a network
+  change or the network being validated again, and at no other time. None
+  runs under a borrowed TV identity (a remote or Cast hand-off). It reads this device's readings for the
   connection (`probe` and `playback_sample` in
   `GET /api/v2/playback/connection`) at once, so a playback start in the first
   seconds already sends them. Only the quick test waits, 5 s, and then runs
   only if automatic tests are on, no current reading proves the link, and it
   still may (nothing plays or starts, and no `429` from that server is waiting
-  out its `Retry-After`). A settled rate proves the link; a lower bound proves
+  out its `Retry-After`). A `429` holds that server's automatic tests until
+  its `Retry-After` (30 s when missing or unreadable, at least 1 s), across
+  profile and account changes, while the process runs. A settled rate proves
+  the link; a lower bound proves
   it only while it is at least the current target, so a raised target makes the
   test due again; without a target any current reading proves it. A check that
   fails or is refused waits for the next one. **Test speed** always runs the
   accurate test. Leaving the foreground stops it.
-- **When not.** Never on a metered or cellular network (`metered || cellular`
-  in `PlaybackNetworkSnapshot`, so a VPN Android marks metered is skipped too),
-  and never while local media plays or loads. The process's one Media3 player
+- **When not.** Never on a metered or cellular network, by the rule that picks
+  the phone's cellular pair (`usesCellularQuality`, which ignores a VPN's own
+  metered flag), and never while local media plays or loads. The process's one Media3 player
   (`ActivePlayerHolder`) is the playing signal. A video start also tells the
   probe, which cancels a running test and holds off automatic tests for 60 s.
   A check still reads the server's readings while media plays, since the next
   start needs them, and **Test speed** runs as soon as nothing plays.
 - **Reading.** A probe and a playback sample, each current while younger than
-  the lifetime, for the server and network they were taken on. A server's
+  the lifetime, for the server, network and local route they were taken on. A
   reading outside 100–1,000,000 kbps, the bounds of `bandwidth_estimate_kbps`,
-  is ignored, and one dated ahead of the device's clock counts as now. Playback starts
-  send the highest current one. A network change (lost, or another network
-  handle, transport, or metering) or a server change discards the readings in
-  hand, and the next check looks for the new connection's.
+  is never kept, the server's or this device's, and one dated ahead of the
+  device's clock counts as now. A start sends the highest current one only to
+  that server, and only when its media takes that route (a Watch Party start
+  stays on the saved address). A network change (lost, or another network
+  handle, transport, metering, VPN state, or this server's local route coming
+  or going) or a server change discards the readings in hand, and the next
+  check looks for the new connection's.
 - **Reporting.** Each result goes to
   `POST /api/v2/playback/bandwidth-probe/results` with its transport
   (`wifi`, `ethernet`, `cellular` or `other`) and `lower_bound: true` when it
-  is one.
+  is one. It is kept for starts only once the server stored it, or when the
+  POST got no answer; a result the server refused is never kept. A playback
+  start or leaving the foreground does not cancel the POST.
 
 Playback measures the link too. `PlaybackThroughputMeter` listens to the
 player's video data sources. A request receives from its first read to its
@@ -330,12 +343,20 @@ lower bound.
 
 Settings → Playback → Connection, shown only while the server advertises
 `connection_speed_v1`, displays the latest probe from
-`GET /api/v2/playback/connection` or this device's own when newer, “Faster than
-115 Mbps” for a lower bound, and without a probe the playback sample (“Faster
-than 51 Mbps · seen during playback”). **Test speed** runs the accurate test in
-the foreground under the same gates, up to 10 s. It also shows the server's
-`auto_budget_kbps`, which the client displays and never computes. On cellular
-and metered networks it says speed tests are skipped instead.
+`GET /api/v2/playback/connection` or this device's own stored one when newer,
+“Faster than 115 Mbps” for a lower bound, and without a probe the playback
+sample (“Faster than 51 Mbps · seen during playback”). **Test speed** runs the
+accurate test in the foreground under the same gates, up to 10 s; when its
+report fails, the row says so and keeps the server's reading. It also shows the
+server's `auto_budget_kbps`, which the client displays and never computes. On
+cellular and metered networks the note that speed tests are skipped replaces
+the speed, and **Test speed** and the budget hide. Settings reads the
+connection when Playback settings opens, after a network change while it is
+open, and after **Reset** and **Test speed**. Rates round down: kbps below
+1 Mbps, one decimal below 10 Mbps, whole Mbps from there, with no digit
+grouping. Against a server whose settings manifest lacks
+`playback.buffering_quality_mode`, Settings hides its row and the players run
+`always`.
 
 The phone sends its cellular pair (`playback.cellular_preferred_quality` and
 `playback.cellular_max_bitrate_kbps`) as `quality_preference` and
