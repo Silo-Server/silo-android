@@ -785,6 +785,9 @@ class BandwidthProbeScheduler(
         /**
          * Which network and route a measurement describes: another connection,
          * transport, metering, VPN state or local route is another network.
+         * A VPN that stays up keeps its network id when the network under it
+         * changes, which shows only through transport and metering. Accepted:
+         * behind a full tunnel the server sees one connection either way.
          */
         fun networkKey(snapshot: PlaybackNetworkSnapshot, route: LocalRoute?): String {
             if (!snapshot.connected) return "none"
