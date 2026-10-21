@@ -57,7 +57,9 @@ the same `event_id`. At launch, once the saved login is restored, and again
 whenever the signed-in profile changes, the app sends the retained events of
 earlier processes under the login, server, address, profile, account and
 installation that recorded them; the server records each
-`event_id` once per attempt. Events over 24 hours old are dropped, as are those
+`event_id` once per attempt. A replayed event goes without `throughput_kbps`:
+the server files that sample under the connection of the request that delivers
+it, which may be another network. Events over 24 hours old are dropped, as are those
 the server refuses with any 4xx but 401 and 408. A network failure or any other
 error keeps the rest for the next launch. A settled attempt keeps its unsent
 events. Android TV sends a summary when its player closes, so it only replays.

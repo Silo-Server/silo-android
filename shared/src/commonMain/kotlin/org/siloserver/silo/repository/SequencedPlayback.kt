@@ -194,6 +194,18 @@ class SequencedPlayback(
     private val JsonObject.eventId: String? get() = (this["event_id"] as? JsonPrimitive)?.contentOrNull
 
     /**
+     * This route event without `diagnostics.throughput_kbps`. The server files
+     * a playback sample under the connection of the request that delivers it,
+     * so a summary sent at a later launch would credit that network with
+     * another's rate.
+     */
+    private fun JsonObject.withoutThroughput(): JsonObject {
+        val diagnostics = this["diagnostics"] as? JsonObject ?: return this
+        if ("throughput_kbps" !in diagnostics) return this
+        return JsonObject(this + ("diagnostics" to JsonObject(diagnostics - "throughput_kbps")))
+    }
+
+    /**
      * Whether [body], one of this entry's route events, is young enough for
      * [replayRouteEvents]. A clock set back counts like one set forward, so a
      * clock change never stretches the window.
@@ -590,7 +602,7 @@ class SequencedPlayback(
                 for (body in entry.routeEvents) {
                     // Checked before each send: the viewer can sign out or switch profiles meanwhile.
                     val captured = stillLive(live) ?: return@pass
-                    when (val result = api.routeEvent(captured, body)) {
+                    when (val result = api.routeEvent(captured, body.withoutThroughput())) {
                         is ApiResult.Success -> { drop(entry.attemptId, listOf(body)); sent += 1 }
                         is ApiResult.Error -> if (result.isFinalRefusal()) { drop(entry.attemptId, listOf(body)); dropped += 1 } else return@pass
                         is ApiResult.NetworkError -> return@pass

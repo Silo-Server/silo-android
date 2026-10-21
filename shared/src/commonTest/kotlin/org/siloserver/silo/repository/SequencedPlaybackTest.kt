@@ -676,6 +676,26 @@ class SequencedPlaybackTest {
         } finally { c.close() }
     }
 
+    @Test fun aLiveSummaryTheNetworkLostGoesOutAtTheNextLaunchWithoutItsThroughput() = runTest {
+        val identity = Identity(); val store = Store(); val sent = mutableListOf<JsonObject>()
+        val c = routeEventServer(sent, ArrayDeque(listOf(null)))
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store,
+                wallClockMs = { now }) { stopId }
+            assertIs<ApiResult.Success<*>>(runtime.start(request()))
+            val summary = summaryEvent(1).copy(diagnostics = mapOf("played_ms" to "1", "throughput_kbps" to "42000"))
+            assertIs<ApiResult.NetworkError>(runtime.routeEvent(summary, summaryId))
+            assertEquals("42000", sent.single().getValue("diagnostics").jsonObject["throughput_kbps"]?.jsonPrimitive?.content)
+            // The next launch may be on another network, which must not be credited with this rate.
+            SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store,
+                wallClockMs = { now + hour }) { stopId }.replayRouteEvents()
+            val replayed = sent.last()
+            assertEquals(summaryId to "1", replayed.eventId() to replayed.played())
+            assertTrue("throughput_kbps" !in replayed.getValue("diagnostics").jsonObject)
+            assertTrue(store.entries.single().routeEvents.isEmpty())
+        } finally { c.close() }
+    }
+
     @Test fun aTombstoneWithAnUnsentEventOutlivesTheTombstoneLimit() = runTest {
         val identity = Identity()
         val settled = (1..20).map { entry().copy(attemptId = "old-$it", sessionId = "old-session-$it", terminal = true) }
