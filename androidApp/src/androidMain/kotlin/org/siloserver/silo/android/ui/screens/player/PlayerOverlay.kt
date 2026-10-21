@@ -33,7 +33,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -291,6 +293,11 @@ fun PlayerOverlay(
             aiFailureNotice = null
         }
     }
+    // The buffering notice waits while this one holds the slot, so it keeps
+    // its full time for when it can show.
+    val aiFailureNoticeShown = aiFailureNotice != null
+    SideEffect { viewModel.onAiFailureNoticeChanged(aiFailureNoticeShown) }
+    DisposableEffect(viewModel) { onDispose { viewModel.onAiFailureNoticeChanged(false) } }
 
     // Lazy one-shot AI status probe on first TracksSheet open (web parity).
     LaunchedEffect(tracksSheetVisible) {

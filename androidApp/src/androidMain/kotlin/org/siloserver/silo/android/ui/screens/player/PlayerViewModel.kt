@@ -735,13 +735,19 @@ class PlayerViewModel(
     /** No pill can show: the player is in picture in picture or in the background. */
     private val playerViewHidden = MutableStateFlow(false)
 
+    /** The overlay holds an AI subtitle failure notice ([onAiFailureNoticeChanged]). */
+    private val aiFailureNoticeShown = MutableStateFlow(false)
+
     /**
      * The buffering notice. It waits while the player is out of view or a
-     * session notice holds the slot (the overlay ranks those first).
+     * session or AI subtitle failure notice holds the slot (the overlay ranks
+     * those first).
      */
     private val bufferingNoticeSlot = BufferingQualityNoticeSlot(
         scope = viewModelScope,
-        slotFree = combine(sessionLifecycle.notice, playerViewHidden) { other, hidden -> other == null && !hidden },
+        slotFree = combine(sessionLifecycle.notice, playerViewHidden, aiFailureNoticeShown) { other, hidden, aiFailure ->
+            other == null && !hidden && !aiFailure
+        },
         clock = { SystemClock.elapsedRealtime() },
     )
 
@@ -3969,6 +3975,11 @@ class PlayerViewModel(
     fun onPlayerViewHiddenChanged(hidden: Boolean) {
         if (playerViewHidden.value != hidden) Log.i(TAG, "buffering_quality player_view_hidden=$hidden")
         playerViewHidden.value = hidden
+    }
+
+    /** The overlay reports whether it holds an AI subtitle failure notice, which outranks the buffering notice. */
+    fun onAiFailureNoticeChanged(shown: Boolean) {
+        aiFailureNoticeShown.value = shown
     }
 
     /**
