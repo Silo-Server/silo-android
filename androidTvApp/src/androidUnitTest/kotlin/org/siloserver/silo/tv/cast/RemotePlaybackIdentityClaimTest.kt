@@ -124,6 +124,23 @@ class RemotePlaybackIdentityClaimTest {
         assertNotEquals(first.generationId, manager.activeIdentity?.generationId)
     }
 
+    /** A stale handoff can't grant readiness for a newer generation, even one with identical fields. */
+    @Test fun readinessIsGrantedOnlyForThePreparedGeneration() = runTest {
+        var prepared: String? = null
+        manager.prepare(offer(), CONTROLLER, controllerDeviceName = null, receiverRun = NEXT_RUN, allowReuse = false, onPrepared = { prepared = it }) {}
+        val first = assertNotNull(prepared)
+        assertEquals(first, manager.activeIdentity?.generationId)
+        assertEquals("granted", manager.whileActive(first) { "granted" })
+
+        // Same server, profile and phone, but a fresh approval: a new generation.
+        manager.prepare(offer(), CONTROLLER, controllerDeviceName = null, receiverRun = NEXT_RUN, allowReuse = false) {}
+        assertNotEquals(first, manager.activeIdentity?.generationId)
+        assertNull(manager.whileActive(first) { "granted" })
+
+        manager.end()
+        assertNull(manager.whileActive(first) { "granted" })
+    }
+
     private suspend fun prepare(offer: SiloCastHandoffOffer, run: Long) =
         manager.prepare(offer, CONTROLLER, controllerDeviceName = null, receiverRun = run, allowReuse = true) {}
 

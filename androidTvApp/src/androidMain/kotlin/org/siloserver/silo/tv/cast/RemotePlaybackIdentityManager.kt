@@ -77,6 +77,8 @@ class RemotePlaybackIdentityManager(
         /** Called once the offer needs the full server exchange rather than a reuse. */
         onFullHandoff: () -> Unit = {},
         beforeActivation: suspend () -> Unit = {},
+        /** The generation this call installed or reused, reported under the lock before it returns. */
+        onPrepared: (generationId: String) -> Unit = {},
         onChallenge: suspend (SiloCastHandoffChallenge) -> Unit,
     ): SiloCastHandoffReady = mutex.withLock {
         validateOffer(offer)
@@ -87,6 +89,7 @@ class RemotePlaybackIdentityManager(
         activeIdentity?.takeIf { allowReuse && matches(offer, controllerDeviceId) }?.let { active ->
             val reclaimed = active.copy(receiverRun = receiverRun)
             activeIdentity = reclaimed
+            onPrepared(reclaimed.generationId)
             return@withLock reclaimed.toReady(offer.requestId, reused = true)
         }
 
@@ -171,6 +174,7 @@ class RemotePlaybackIdentityManager(
                                 receiverRun = receiverRun,
                             )
                             activeIdentity = active
+                            onPrepared(generationId)
                             return@withLock active.toReady(offer.requestId, reused = false)
                         }
                         "denied" -> error("Remote playback handoff was denied.")
@@ -190,6 +194,15 @@ class RemotePlaybackIdentityManager(
     }
 
     suspend fun end() = mutex.withLock { endLocked() }
+
+    /**
+     * Runs [block] only while [generationId] is the active identity, under the
+     * lock [prepare] and [end] take, so nothing can replace or end it
+     * meanwhile. Null when it is no longer active. [block] must not suspend.
+     */
+    suspend fun <T> whileActive(generationId: String, block: () -> T): T? = mutex.withLock {
+        if (activeIdentity?.generationId != generationId) null else block()
+    }
 
     /**
      * Ends the identity only if [generationId] is still the active one. The
