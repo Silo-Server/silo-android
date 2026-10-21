@@ -6,6 +6,19 @@ import org.siloserver.silo.model.playback.QUALITY_REDUCTION_UNAVAILABLE_WARNING
 import org.siloserver.silo.model.playback.videoQualityPreference
 
 /**
+ * What an adopted plan plays at: its quality preference, its bandwidth cap
+ * and its file. The viewer's quality change (a pick, a version, the phone's
+ * Wi-Fi/cellular quality pair) is the adoption the controller did not ask for
+ * whose key differs from the last one; a change the server refused never
+ * produces that adoption, so it counts as none.
+ */
+data class BufferingQualityKey(val quality: String, val bandwidthCapKbps: Int?, val fileId: Int?)
+
+/** Whether adopting a plan at [next], after one at this key, is the viewer's quality change. */
+fun BufferingQualityKey?.isViewerChangeTo(next: BufferingQualityKey, controllerInitiated: Boolean): Boolean =
+    !controllerInitiated && this != null && this != next
+
+/**
  * What [BufferingQualityController.onPlanAdopted] needs from a plan the player
  * just started playing ([PlaybackExecutionPlan.sourceFile] is the wire plan's
  * `source`).

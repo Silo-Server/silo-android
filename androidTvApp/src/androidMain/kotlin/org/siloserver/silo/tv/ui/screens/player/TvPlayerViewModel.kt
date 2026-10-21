@@ -82,6 +82,8 @@ import org.siloserver.silo.common.player.BufferingQualityPlayerAdapter
 import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.asPlaybackEventSink
 import org.siloserver.silo.domain.player.BufferingQualityController
+import org.siloserver.silo.domain.player.BufferingQualityKey
+import org.siloserver.silo.domain.player.isViewerChangeTo
 import org.siloserver.silo.domain.player.BufferingQualityNotice
 import org.siloserver.silo.domain.player.BufferingQualityNoticeSlot
 import org.siloserver.silo.domain.player.BufferingQualityPill
@@ -1496,6 +1498,9 @@ class TvPlayerViewModel(
 
     /** The title the controller's answer, notice and re-offer wait belong to. */
     private var bufferingQualityContentId: String? = null
+
+    /** What the last adopted plan played at, for spotting the viewer's quality change. */
+    private var bufferingQualityKey: BufferingQualityKey? = null
 
     /** The mount that plays the controller's own replan, until it is adopted. */
     private var bufferingReplanNonce: Long? = null
@@ -5762,11 +5767,11 @@ class TvPlayerViewModel(
     fun switchQuality(wireValue: String): Boolean {
         val current = sessionQualityPreference() ?: PlaybackQuality.Auto.wireValue
         if (wireValue == current) return false
-        // The viewer's own pick (the HUD menu or a phone remote): any buffering
-        // pill hides and its answer clears. The controller's replans never come
-        // through here.
+        // The viewer's own pick (the HUD menu or a phone remote) replaces a
+        // waiting Restore. Once its plan plays it is a quality change
+        // (adoptBufferingQualityPlan); a refused pick is none. The
+        // controller's replans never come through here.
         cancelBufferingRestore()
-        bufferingQualityController.onViewerQualityChange()
         val state = _uiState.value
         playbackMutationFence.beginReplan()
         launchSubtitleTransaction(state) {
@@ -5889,6 +5894,15 @@ class TvPlayerViewModel(
                 "bandwidth_limit_kbps=${shown.bandwidthLimit?.kbps}",
         )
         _bufferingAutoLimited.value = shown.bandwidthLimit != null && adopted.quality == PLAYBACK_QUALITY_AUTO
+        val key = BufferingQualityKey(
+            adopted.quality,
+            playbackSessionManager.activeVideoQualityPair()?.bandwidthCapKbps,
+            state.mediaFileId,
+        )
+        if (bufferingQualityKey.isViewerChangeTo(key, controllerInitiated)) {
+            bufferingQualityController.onViewerQualityChange()
+        }
+        bufferingQualityKey = key
         if (!bufferingQualityController.hasPlan) playbackSessionManager.restartPlanThroughput()
         bufferingQualityController.onPlanAdopted(adopted, controllerInitiated)
         // After adoption: re-announces the player's phase to the new plan.
@@ -5998,6 +6012,7 @@ class TvPlayerViewModel(
     private fun resetBufferingQuality() {
         bufferingQualityController.reset()
         bufferingQualityContentId = null
+        bufferingQualityKey = null
         forgetBufferingPlan()
         bufferingNoticeSlot.clear()
     }
@@ -6949,9 +6964,8 @@ class TvPlayerViewModel(
         // choice without switching anything.
         if (fileId == (state.selectedFileId ?: state.mediaFileId)) return
         if (state.fileVersions.none { it.fileId == fileId }) return
-        // To the buffering-quality controller the viewer's version is a quality change.
+        // Replaces a waiting Restore; once the version plays it is a quality change.
         cancelBufferingRestore()
-        bufferingQualityController.onViewerQualityChange()
         restartSessionInPlace(fileId)
     }
 

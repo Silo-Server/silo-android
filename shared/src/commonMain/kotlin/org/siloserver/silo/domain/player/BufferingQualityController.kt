@@ -495,8 +495,9 @@ class BufferingQualityController(
     }
 
     /**
-     * A quality change: the viewer picked a quality or a version, or playback
-     * moved to the quality pair of the network it is now on.
+     * A quality change took effect: a quality or version the viewer picked, or
+     * the quality pair of the network playback moved to, now plays. Call it
+     * before adopting that plan. A change the server refused is none.
      */
     fun onViewerQualityChange(): Unit {
         if (!enabled) return

@@ -65,6 +65,8 @@ import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.common.player.BufferingQualityPlayerAdapter
 import org.siloserver.silo.common.player.asPlaybackEventSink
 import org.siloserver.silo.domain.player.BufferingQualityController
+import org.siloserver.silo.domain.player.BufferingQualityKey
+import org.siloserver.silo.domain.player.isViewerChangeTo
 import org.siloserver.silo.domain.player.BufferingQualityNotice
 import org.siloserver.silo.domain.player.BufferingQualityNoticeSlot
 import org.siloserver.silo.domain.player.BufferingQualityPill
@@ -759,6 +761,9 @@ class PlayerViewModel(
 
     /** The mount that plays the controller's own replan, until it is adopted. */
     private var bufferingReplanMount: Long? = null
+
+    /** What the last adopted plan played at, for spotting the viewer's quality change. */
+    private var bufferingQualityKey: BufferingQualityKey? = null
 
     /** A Restore quality waiting for the replan in flight. */
     private var bufferingRestoreJob: Job? = null
@@ -2623,8 +2628,8 @@ class PlayerViewModel(
             state = _uiState.value,
             qualityPair = pair,
         ) ?: return
-        // A move to the network's quality pair is a quality change, as a pick is.
-        noteBufferingQualityChange()
+        // The move replaces a waiting Restore; once its plan plays, it is a quality change.
+        cancelBufferingRestore()
         picksDuringNetworkMove.holdUntilDone(move)
         move.join()
     }
@@ -3925,9 +3930,9 @@ class PlayerViewModel(
         val menu = playbackQualityMenu(state.playbackPlan?.availableQualities.orEmpty())
         if (menu.none { it.id == id }) return@applyAfterMove
         if (id == state.activeQualityId(menu)) return@applyAfterMove
-        // The viewer's own pick: any buffering pill goes, and the title is no
-        // longer answered at the old quality.
-        noteBufferingQualityChange()
+        // The viewer's own pick replaces a waiting Restore. Once its plan plays
+        // it is a quality change (adoptBufferingQualityPlan); a refused pick is none.
+        cancelBufferingRestore()
         mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
         mobileSubtitleTransactions.selectQuality(id)
     }
@@ -4039,12 +4044,6 @@ class PlayerViewModel(
         bufferingRestoreJob = null
     }
 
-    /** A quality change: a pick, a version, or the network's quality pair. */
-    private fun noteBufferingQualityChange() {
-        cancelBufferingRestore()
-        bufferingQualityController.onViewerQualityChange()
-    }
-
     private fun showBufferingQualityNotice(notice: BufferingQualityNotice) {
         Log.i(TAG, "buffering_quality notice key=${notice.key}")
         bufferingNoticeSlot.show(notice)
@@ -4068,6 +4067,15 @@ class PlayerViewModel(
             bufferingQualityPreference(),
             adoptionId = "${plan.planId}#$generation",
         )
+        val key = BufferingQualityKey(
+            adopted.quality,
+            playbackSessionManager.activeVideoQualityPair()?.bandwidthCapKbps,
+            state.mediaFileId,
+        )
+        if (bufferingQualityKey.isViewerChangeTo(key, controllerInitiated)) {
+            bufferingQualityController.onViewerQualityChange()
+        }
+        bufferingQualityKey = key
         if (!bufferingQualityController.hasPlan) playbackSessionManager.restartPlanThroughput()
         bufferingQualityController.onPlanAdopted(adopted, controllerInitiated)
         // After the adoption: it re-announces the player's phase to the new plan.
@@ -4117,6 +4125,7 @@ class PlayerViewModel(
     private fun resetBufferingQuality() {
         bufferingQualityController.reset()
         bufferingQualityContentId = null
+        bufferingQualityKey = null
         bufferingReplanMount = null
         cancelBufferingRestore()
         bufferingNoticeSlot.clear()
@@ -5872,8 +5881,8 @@ class PlayerViewModel(
             // Choosing a file drops a picked quality: a quality served by
             // another version would move playback straight off this one.
             sessionQualityOverride = null
-            // To the buffering-quality controller it is a quality change.
-            noteBufferingQualityChange()
+            // Once its plan plays, it is a quality change (adoptBufferingQualityPlan).
+            cancelBufferingRestore()
         }
         val currentVersion = state.versions.getOrNull(state.selectedVersionIndex)
         val carriedAudioIndex = desiredAudio
