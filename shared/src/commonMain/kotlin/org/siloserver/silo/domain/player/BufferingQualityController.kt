@@ -427,10 +427,12 @@ class BufferingQualityController(
 
     /**
      * The player is waiting for [cause]; only a [BufferingWaitCause.NETWORK]
-     * wait can be a stall. Any wait but a [BufferingWaitCause.PAUSE] one means
-     * the player is trying to play, so the viewer has not paused: a pill
-     * frozen by a stop the viewer did not make, such as a player error, runs
-     * again.
+     * wait can be a stall. Until the plan's first frame or a pause, a reload
+     * or seek wait counts as one too: a start the viewer means to play is the
+     * plan's wait, whatever the start reopens or seeks on the way. Any wait
+     * but a [BufferingWaitCause.PAUSE] one means the player is trying to play,
+     * so the viewer has not paused: a pill frozen by a stop the viewer did not
+     * make, such as a player error, runs again.
      */
     fun onWaiting(cause: BufferingWaitCause = BufferingWaitCause.NETWORK): Unit {
         if (cause != BufferingWaitCause.PAUSE) paused = false
@@ -439,11 +441,13 @@ class BufferingQualityController(
         val now = clock()
         if (!paused) thawPill()
         stopPlayedClock(state, now)
-        if (cause != BufferingWaitCause.NETWORK) {
+        val tracker = state.tracker
+        val startWait = tracker.starting &&
+            (cause == BufferingWaitCause.RELOAD || cause == BufferingWaitCause.SEEK)
+        if (cause != BufferingWaitCause.NETWORK && !startWait) {
             interrupt(state, now)
             return
         }
-        val tracker = state.tracker
         tracker.stalled = true
         tracker.noteWaiting(now)
         if (transportTrouble) return
@@ -458,13 +462,15 @@ class BufferingQualityController(
         val state = current ?: return
         val now = clock()
         stopPlayedClock(state, now)
+        state.tracker.startPaused = true
         interrupt(state, now)
     }
 
-    /** The viewer seeked. */
+    /** The viewer seeked. A seek during the start leaves the start's wait running. */
     fun onSeek(): Unit {
         if (!enabled) return
         val state = current ?: return
+        if (state.tracker.starting) return
         val now = clock()
         stopPlayedClock(state, now)
         interrupt(state, now)
@@ -1019,6 +1025,12 @@ class BufferingQualityController(
 
         /** The first wait before any frame; a start that never gets going is timed from here. */
         var firstWaitingAt: Long? = null
+
+        /** The viewer paused before the first frame, which ends the start. */
+        var startPaused = false
+
+        /** The plan has not played and the viewer has not paused it: its waits are the start's. */
+        val starting: Boolean get() = firstPlayingAt == null && !startPaused
 
         /** When the stall being timed started counting, or null when none is. */
         var stallStartedAt: Long? = null

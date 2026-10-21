@@ -386,6 +386,33 @@ class BufferingQualityControllerTest {
     }
 
     @Test
+    fun `a slow start stays one timed wait through a reload or seek until a pause`() = runTest {
+        val controller = newController(BufferingQualityMode.ASK)
+        controller.onPlanAdopted(plan("p1"))
+        controller.onWaiting()
+        // The start reopens its media and seeks to the resume point.
+        at(4_000)
+        controller.onWaiting(BufferingWaitCause.RELOAD)
+        at(9_000)
+        controller.onSeek()
+        controller.onWaiting(BufferingWaitCause.SEEK)
+        at(15_999)
+        assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
+        at(16_000)
+        assertEquals(BufferingQualityPill.Prompt(15), controller.pill.value, "the grace and a long stall from the first wait")
+
+        // A pause before the first frame ends the start: a reload after it is not the plan's wait.
+        controller.reset()
+        controller.onPlanAdopted(plan("p2"))
+        controller.onWaiting()
+        at(20_000)
+        controller.onPause()
+        controller.onWaiting(BufferingWaitCause.RELOAD)
+        at(60_000)
+        assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
+    }
+
+    @Test
     fun `never hides a visible prompt and records ignored triggers`() = runTest {
         val controller = newController(BufferingQualityMode.ASK)
         longStall(controller)
