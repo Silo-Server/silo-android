@@ -591,9 +591,13 @@ class BandwidthProbeScheduler(
         run.result.cancel()
     }
 
-    /** Media is starting: cancels a run that is testing. One still reading the server's readings finishes them and then does not test. */
+    /**
+     * Media is starting: cancels a run that is testing, or a Test speed that
+     * has not reached its report. A check still reading the server's readings
+     * finishes them and then does not test.
+     */
     private fun cancelTest(reason: ProbeOutcome) {
-        if (inFlight?.testing == true) cancelInFlight(reason)
+        if (inFlight?.let { it.testing || (it.manual && !it.reporting) } == true) cancelInFlight(reason)
     }
 
     /** Starts a check now, in the foreground; its test waits inside it. */

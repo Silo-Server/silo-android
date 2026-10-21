@@ -58,7 +58,10 @@ class BandwidthProbeSchedulerTest {
             read(BandwidthProbeResponseV2.Body { delay(100); 1_000_000 })
         }
 
-        override suspend fun target(): BandwidthProbeTargetLookup = lookup.also { lookups += 1 }
+        /** How the capability read answers; [lookup] at once by default. */
+        var readTarget: suspend () -> BandwidthProbeTargetLookup = { lookup }
+
+        override suspend fun target(): BandwidthProbeTargetLookup = readTarget().also { lookups += 1 }
 
         override suspend fun download(
             target: BandwidthProbeTarget,
@@ -602,6 +605,21 @@ class BandwidthProbeSchedulerTest {
         harness.scheduler.playbackStarting()
         runCurrent()
         assertEquals(ProbeOutcome.PlaybackActive, outcome.await())
+    }
+
+    @Test
+    fun aStartBeforeTestSpeedDownloadsStopsIt() = runTest {
+        val harness = Harness(this)
+        val answered = CompletableDeferred<Unit>()
+        harness.server.readTarget = { answered.await(); harness.server.lookup }
+        val outcome = async { harness.scheduler.runNow() }
+        runCurrent()
+        // The start goes out before the player begins loading.
+        harness.scheduler.playbackStarting()
+        runCurrent()
+        answered.complete(Unit)
+        assertEquals(ProbeOutcome.PlaybackActive, outcome.await())
+        assertEquals(0, harness.server.downloads)
     }
 
     @Test
