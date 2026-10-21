@@ -234,6 +234,9 @@ class BufferingQualityController(
     /** Media requests are failing: any wait is an outage, not a stall. */
     private var transportTrouble = false
 
+    /** The viewer's quality pick is on its way; see [onQualityPickSent]. */
+    private var pickPending = false
+
     // ---- The playing plan --------------------------------------------------
 
     private var current: PlanState? = null
@@ -371,13 +374,18 @@ class BufferingQualityController(
         val delivered = plan.deliveredKbps?.takeIf { it > 0 }
         val noLower = plan.qualityReductionUnavailable ||
             (delivered != null && settled.fromKbps != null && delivered >= settled.fromKbps)
+        // The viewer's pick on its way replaces this plan: it shows nothing.
+        val quiet = pickPending
         when {
             noLower -> {
                 state.action = BufferingAction.CANT_LOWER
                 state.cooldownUntil = now + NO_LOWER_COOLDOWN_MS
-                cantLowerShown = true
-                onNotice(BufferingQualityNotice.CANT_LOWER)
+                if (!quiet) {
+                    cantLowerShown = true
+                    onNotice(BufferingQualityNotice.CANT_LOWER)
+                }
             }
+            quiet -> Unit
             settled.kind == PendingKind.AUTOMATIC -> showPill(PillKind.UNDO)
             else -> onNotice(BufferingQualityNotice.LOWERED)
         }
@@ -495,11 +503,29 @@ class BufferingQualityController(
     }
 
     /**
+     * The viewer picked a quality from the menu, and the pick is on its way.
+     * Any pill hides now. The pick counts as a quality change only when its
+     * plan is adopted ([onViewerQualityChange]), not at all if it is refused,
+     * and a lowering adopted meanwhile shows no undo pill and no notice.
+     */
+    fun onQualityPickSent(): Unit {
+        if (!enabled) return
+        pickPending = true
+        hidePill()
+    }
+
+    /** The pick's request ended, with its plan on the way or refused: nothing is pending. */
+    fun onQualityPickSettled(): Unit {
+        pickPending = false
+    }
+
+    /**
      * A quality change took effect: a quality or version the viewer picked, or
      * the quality pair of the network playback moved to, now plays. Call it
      * before adopting that plan. A change the server refused is none.
      */
     fun onViewerQualityChange(): Unit {
+        pickPending = false
         if (!enabled) return
         hidePill()
         answeredQuality = null
@@ -582,6 +608,7 @@ class BufferingQualityController(
 
     /** Clears all per-title state, for when playback moves to different content. */
     fun reset(): Unit {
+        pickPending = false
         dropPlan(clock())
         answeredQuality = null
         cantLowerShown = false

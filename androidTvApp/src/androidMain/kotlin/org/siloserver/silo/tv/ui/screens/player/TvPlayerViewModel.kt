@@ -1325,6 +1325,7 @@ class TvPlayerViewModel(
             }
         },
         onSnapshotChanged = { snapshot ->
+            settleQualityPickWhenIdle()
             val localMountIdentity = snapshot.localMountIdentity
             if (localMountIdentity != null && localMountIdentity != lastAdapterMountIdentity) {
                 subtitleMountGeneration += 1
@@ -5790,6 +5791,8 @@ class TvPlayerViewModel(
         val state = _uiState.value
         playbackMutationFence.beginReplan()
         launchSubtitleTransaction(state) {
+            // Any buffering pill hides as the pick is sent.
+            bufferingQualityController.onQualityPickSent()
             subtitleTransactions.selectQuality(wireValue)
         }
         return true
@@ -6041,6 +6044,11 @@ class TvPlayerViewModel(
         bufferingReplanNonce = null
         cancelBufferingRestore()
         _bufferingAutoLimited.value = false
+    }
+
+    /** A pick's request is over once no transaction is active: its plan is on the way, or it was refused. */
+    private fun settleQualityPickWhenIdle() {
+        if (!subtitleTransactions.hasActiveTransaction) bufferingQualityController.onQualityPickSettled()
     }
 
     /** "Lower quality" on the buffering prompt. */

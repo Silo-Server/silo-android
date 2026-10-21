@@ -3939,6 +3939,8 @@ class PlayerViewModel(
         // The viewer's own pick replaces a waiting Restore. Once its plan plays
         // it is a quality change (adoptBufferingQualityPlan); a refused pick is none.
         cancelBufferingRestore()
+        // Any buffering pill hides as the pick is sent.
+        bufferingQualityController.onQualityPickSent()
         mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
         mobileSubtitleTransactions.selectQuality(id)
     }
@@ -4389,6 +4391,8 @@ class PlayerViewModel(
         }
         noteQualityCommitted(snapshot.transition.committed.qualityPreference)
         if (!mobileSubtitleTransactions.hasActiveTransaction) {
+            // A pick's request is over: its plan is on the way, or it was refused.
+            bufferingQualityController.onQualityPickSettled()
             redriveQueuedInvalidationReplan()
         }
     }

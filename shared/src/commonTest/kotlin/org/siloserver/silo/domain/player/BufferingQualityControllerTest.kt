@@ -421,6 +421,32 @@ class BufferingQualityControllerTest {
     }
 
     @Test
+    fun `a pick hides the pill when sent, and a lowering adopted while it is pending shows nothing`() = runTest {
+        val controller = newController(BufferingQualityMode.ALWAYS)
+        longStall(controller)
+        assertEquals(1, replans.size, "Automatically lowers at once")
+
+        // The viewer picks while the lowering is in flight: nothing shows for it.
+        controller.onQualityPickSent()
+        controller.onPlanAdopted(plan("p2", deliveredKbps = 6_000))
+        assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
+        assertTrue(notices.isEmpty())
+
+        // Settled (the pick was refused): the next lowering's undo shows again.
+        controller.onQualityPickSettled()
+        controller.onPlaying()
+        at(300_000)
+        controller.onWaiting()
+        at(306_000)
+        controller.onPlanAdopted(plan("p3", deliveredKbps = 4_000))
+        assertTrue(controller.pill.value is BufferingQualityPill.Undo)
+
+        // A pick sent while a pill shows hides it, and keeps the title's answer until its plan plays.
+        controller.onQualityPickSent()
+        assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
+    }
+
+    @Test
     fun `never hides a visible prompt and records ignored triggers`() = runTest {
         val controller = newController(BufferingQualityMode.ASK)
         longStall(controller)
