@@ -10,12 +10,16 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.testTimeSource
 import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.PlaybackNetworkSnapshot
 import org.siloserver.silo.common.player.probe.BandwidthProbeResult
@@ -36,20 +40,21 @@ import org.siloserver.silo.network.apiv2.PlaybackBandwidthProbeResultV2
 import org.siloserver.silo.network.apiv2.PlaybackV2Api
 import org.siloserver.silo.repository.PlaybackConnectionRepository
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ConnectionSpeedSettingsModelTest {
-    /** The probe's server side: every download answers with [answer]. */
+    /** The probe's server side: every download is refused with a `429`. */
     private class ProbeServer : BandwidthProbeServer {
-        var answer: BandwidthProbeResponseV2 = BandwidthProbeResponseV2.RateLimited(30)
-
         override suspend fun target() = BandwidthProbeTargetLookup.Found(BandwidthProbeTarget(PROBE_URL, SCOPE))
 
         override suspend fun download(
             target: BandwidthProbeTarget,
             mode: SpeedTestMode,
             read: suspend (BandwidthProbeResponseV2) -> BandwidthProbeResult,
-        ): BandwidthProbeResult = read(answer)
+        ): BandwidthProbeResult = read(BandwidthProbeResponseV2.RateLimited(RETRY_AFTER_SECONDS))
 
         override suspend fun report(target: BandwidthProbeTarget, result: PlaybackBandwidthProbeResultV2) =
             ProbeReport.STORED
@@ -84,11 +89,9 @@ class ConnectionSpeedSettingsModelTest {
             override suspend fun snapshotCurrentScope() = SCOPE
         }
 
-        val probeServer = ProbeServer()
-
         val model = ConnectionSpeedSettingsModel(
             probe = BandwidthProbeScheduler(
-                server = probeServer,
+                server = ProbeServer(),
                 network = PlaybackNetworkEvidenceProvider { WIFI },
                 mediaActive = MutableStateFlow(false),
                 activeServer = MutableStateFlow(SCOPE.serverId),
@@ -97,9 +100,11 @@ class ConnectionSpeedSettingsModelTest {
             ),
             connection = PlaybackConnectionRepository(PlaybackV2Api(client, ApiV2Gate.Unrestricted), tokens),
             scope = test.backgroundScope,
+            timeSource = test.testTimeSource,
         )
 
         val learnedLimitKbps: Int? get() = model.settings.value?.connection?.learnedLimit?.kbps
+        val message: ConnectionSpeedMessage? get() = model.state.value.message
     }
 
     @Test
@@ -127,7 +132,36 @@ class ConnectionSpeedSettingsModelTest {
         assertNull(harness.learnedLimitKbps, "the older answer is dropped")
     }
 
+    @Test
+    fun tryAgainInHidesItsSecondsAfterThe429NotAfterTheReadThatFollows() = runTest {
+        val harness = Harness(this)
+        harness.connection = { delay(20_000); "{\"connection\":\"local\"}" }
+        harness.model.testSpeed()
+        advanceTimeBy(20_000)
+        runCurrent()
+        assertEquals(ConnectionSpeedMessage.TryAgainIn(RETRY_AFTER_SECONDS), harness.message, "N as the server sent it")
+
+        advanceTimeBy(9_999)
+        runCurrent()
+        assertEquals(ConnectionSpeedMessage.TryAgainIn(RETRY_AFTER_SECONDS), harness.message)
+        advanceTimeBy(1)
+        runCurrent()
+        assertNull(harness.message, "30 seconds after the 429")
+    }
+
+    @Test
+    fun aWaitThatPassedDuringTheReadShowsNoMessage() = runTest {
+        val harness = Harness(this)
+        harness.connection = { delay(31_000); "{\"connection\":\"local\"}" }
+        harness.model.testSpeed()
+        advanceTimeBy(31_000)
+        runCurrent()
+        assertFalse(harness.model.state.value.testing)
+        assertNull(harness.message)
+    }
+
     private companion object {
+        const val RETRY_AFTER_SECONDS = 30
         const val PROBE_URL = "https://silo.example/api/v2/playback/bandwidth-probe"
         val SCOPE = AuthScopeSnapshot("server-1", "profile-1", "https://silo.example", null)
         val WIFI = PlaybackNetworkSnapshot(connected = true, validated = true, transport = "wifi", networkId = 1)

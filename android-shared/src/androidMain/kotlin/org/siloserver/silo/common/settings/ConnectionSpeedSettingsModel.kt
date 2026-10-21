@@ -1,5 +1,8 @@
 package org.siloserver.silo.common.settings
 
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -52,7 +55,7 @@ enum class ConnectionSpeedSkip {
 
 /** The answer to the last **Test speed**, until the next one. */
 sealed interface ConnectionSpeedMessage {
-    /** HTTP 429: "Try again in N seconds", for those [seconds]. */
+    /** HTTP 429: "Try again in N seconds", until [seconds] have passed since the 429. */
     data class TryAgainIn(val seconds: Int) : ConnectionSpeedMessage
 
     /** Media was playing or starting. */
@@ -95,12 +98,14 @@ data class ConnectionSpeedUiState(
  *
  * @param hasCellularQuality whether this device has Cellular quality settings
  *   (the phone). The TV has none.
+ * @param timeSource times a `429`'s wait.
  */
 class ConnectionSpeedSettingsModel(
     private val probe: BandwidthProbeScheduler,
     private val connection: PlaybackConnectionRepository,
     private val scope: CoroutineScope,
     private val hasCellularQuality: Boolean = false,
+    private val timeSource: TimeSource = TimeSource.Monotonic,
 ) {
     private data class Local(val testing: Boolean = false, val message: ConnectionSpeedMessage? = null)
 
@@ -172,11 +177,16 @@ class ConnectionSpeedSettingsModel(
         local.value = Local(testing = true)
         scope.launch {
             var message: ConnectionSpeedMessage? = null
+            // The wait runs from the 429, not from the read after it.
+            var waitEnds: TimeMark? = null
             try {
                 val outcome = probe.runNow()
                 message = when (outcome) {
                     is ProbeOutcome.Measured -> if (outcome.saved) null else ConnectionSpeedMessage.NotSaved
-                    is ProbeOutcome.RateLimited -> ConnectionSpeedMessage.TryAgainIn(outcome.retryAfterSeconds)
+                    is ProbeOutcome.RateLimited -> {
+                        waitEnds = timeSource.markNow() + outcome.retryAfterSeconds.seconds
+                        ConnectionSpeedMessage.TryAgainIn(outcome.retryAfterSeconds)
+                    }
                     ProbeOutcome.PlaybackActive -> ConnectionSpeedMessage.StopPlayback
                     // The row already says speed tests are skipped here.
                     ProbeOutcome.Metered -> null
@@ -185,16 +195,17 @@ class ConnectionSpeedSettingsModel(
                 // A read that fails keeps the rows, so the answer stays under them.
                 readConnection(keepOnFailure = true)
             } finally {
+                if (waitEnds?.hasPassedNow() == true) message = null
                 local.update { Local(testing = false, message = message) }
-                (message as? ConnectionSpeedMessage.TryAgainIn)?.let(::expire)
+                waitEnds?.let { ends -> (message as? ConnectionSpeedMessage.TryAgainIn)?.let { expire(it, ends) } }
             }
         }
     }
 
-    /** Hides [message] once its wait has passed, unless another answer replaced it. */
-    private fun expire(message: ConnectionSpeedMessage.TryAgainIn) {
+    /** Hides [message] at [ends], unless another answer replaced it. */
+    private fun expire(message: ConnectionSpeedMessage.TryAgainIn, ends: TimeMark) {
         scope.launch {
-            delay(message.seconds * 1_000L)
+            delay(-ends.elapsedNow())
             local.update { if (it.message === message) it.copy(message = null) else it }
         }
     }
