@@ -865,7 +865,7 @@ class TvSiloCastReceiver(
                     }
                     return@launch
                 }
-                completeHandoff(session, ready, fullHandoff) { grantedGeneration = it }
+                completeHandoff(session, offer, controllerId, ready, fullHandoff) { grantedGeneration = it }
             } catch (e: CancellationException) {
                 throw e
             } catch (refusal: ReplaceConfirmationRequired) {
@@ -911,6 +911,8 @@ class TvSiloCastReceiver(
      */
     private suspend fun completeHandoff(
         session: ControllerSession,
+        offer: SiloCastHandoffOffer,
+        controllerId: String,
         ready: SiloCastHandoffReady,
         fullHandoff: Boolean,
         onGranted: (generation: String) -> Unit,
@@ -921,6 +923,11 @@ class TvSiloCastReceiver(
         val generation = identityManager.activeIdentity?.generationId
             ?: error("The TV handed the profile back. Try again.")
         val resumeToken = synchronized(this) {
+            // Readiness is granted only for the profile this offer prepared,
+            // never one another controller installed in the meantime.
+            check(identityManager.activeIdentity?.generationId == generation && identityManager.matches(offer, controllerId)) {
+                "The TV switched to another profile. Try again."
+            }
             controllers.values.filter { it !== session }.forEach {
                 it.readyGeneration = null
                 it.ownIdentityProfileId = null
@@ -1194,7 +1201,9 @@ class TvSiloCastReceiver(
         val error = SiloCastMessage.Error(
             SiloCastError(code = "temporary_session_expired", message = "The phone profile session expired."),
         )
-        authorizedControllers().forEach { runCatching { it.send(error) } }
+        // Notices are sent after teardown and off this coroutine: a controller
+        // that stopped reading must not hold up the stop or the hand-back.
+        val notified = authorizedControllers()
         activePlayer?.takeIf { it.identityGeneration == generationId }?.let { player ->
             withContext(Dispatchers.Main.immediate) {
                 player.adapter.handle(SiloCastControlCommand(name = SiloCastControlCommand.Stop))
@@ -1204,6 +1213,7 @@ class TvSiloCastReceiver(
             refreshAdvertisement()
             reconcileAuthorization()
         }
+        notified.forEach { session -> scope?.launch { runCatching { session.send(error) } } }
     }
 
     /**
