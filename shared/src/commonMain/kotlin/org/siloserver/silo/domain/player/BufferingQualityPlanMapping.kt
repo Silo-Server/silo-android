@@ -28,4 +28,5 @@ fun PlaybackExecutionPlan.toBufferingQualityPlan(qualityPreference: String, adop
         quality = videoQualityPreference(qualityPreference) ?: PLAYBACK_QUALITY_AUTO,
         availableQualities = availableQualities.map { BufferingQualityRung(it.label, it.bitrateKbps) },
         qualityReductionUnavailable = degradationWarnings.any { it.code == QUALITY_REDUCTION_UNAVAILABLE_WARNING },
+        activeQuality = activeQuality?.takeIf { activeQualityReported },
     )

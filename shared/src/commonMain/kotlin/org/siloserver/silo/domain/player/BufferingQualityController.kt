@@ -40,6 +40,12 @@ data class BufferingQualityPlan(
     val qualityReductionUnavailable: Boolean = false,
     /** The server `plan_id`, which can repeat across adoptions. Reported in [BufferingPlanSummary.planId]. */
     val serverPlanId: String = planId,
+    /**
+     * The `available_qualities` label the plan names in `active_quality`, from
+     * a server with `plan_active_quality_v1`; null otherwise. A cap can make it
+     * differ from the label the viewer picked.
+     */
+    val activeQuality: String? = null,
 )
 
 /**
@@ -663,9 +669,11 @@ class BufferingQualityController(
                 bandwidthEstimateSource = BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER,
             )
         }
-        val ceiling = rungs.firstOrNull { it.label == plan.quality }?.bitrateKbps
-            ?: delivered
-            ?: return null
+        // The spec's lower rung: below the lower of the rung the plan names and
+        // the delivered bitrate, or the delivered bitrate alone when the plan
+        // names no entry. The picked label does not set it.
+        val named = plan.activeQuality?.let { name -> rungs.firstOrNull { it.label == name } }?.bitrateKbps
+        val ceiling = listOfNotNull(named, delivered).minOrNull() ?: return null
         val lower = rungs.firstOrNull { it.bitrateKbps < ceiling } ?: return null
         return BufferingQualityReplan(qualityPreference = lower.label)
     }

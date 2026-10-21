@@ -14,6 +14,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.int
@@ -271,6 +272,7 @@ class BufferingQualityVectorsTest {
         },
         qualityReductionUnavailable = plan["degradation_warnings"]?.jsonArray.orEmpty()
             .any { it.jsonPrimitive.content == "quality_reduction_unavailable" },
+        activeQuality = plan["active_quality"]?.jsonPrimitive?.contentOrNull,
     )
 
     /** A sent replan as a vector output: its body is the wire request, cut to the fields the vectors cover. */
