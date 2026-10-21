@@ -37,6 +37,7 @@ import org.siloserver.silo.common.cast.SiloCastNsdAdvertiser
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStarter
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
+import org.siloserver.silo.tv.cast.SiloCastNowPlayingMetadataResolver
 import org.siloserver.silo.tv.cast.RemotePlaybackIdentityManager
 import org.siloserver.silo.tv.ui.screens.player.TvPlayerLaunchArgs
 import org.siloserver.silo.tv.ui.screens.auth.TvLoginViewModel
@@ -444,6 +445,7 @@ val androidTvModule = module {
                 get<org.siloserver.silo.repository.WatchTogetherRepository>().roomSnapshot.value != null
             },
             ownProfileNameProvider = { activeProfiles.activeProfile.value?.name },
+            nowPlayingMetadataLoader = SiloCastNowPlayingMetadataResolver.catalogLoader(get()),
         )
     }
 

@@ -108,6 +108,10 @@ class TvSiloCastReceiver(
     /** The TV's own active profile name, for the replace prompt on a title it plays on its own identity. */
     private val ownProfileNameProvider: () -> String? = { null },
     private val nowMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
+    /** Poster and synopsis for a content ID; see [SiloCastNowPlayingMetadataResolver]. */
+    nowPlayingMetadataLoader: suspend (contentId: String, allowCached: Boolean) -> SiloCastNowPlayingMetadata? =
+        { _, _ -> null },
+    wallClockMs: () -> Long = System::currentTimeMillis,
 ) {
     data class StandbyState(
         val controllerName: String?,
@@ -192,6 +196,19 @@ class TvSiloCastReceiver(
     // stop() cancels the receiver scope, so cleanup for a ready-but-unconsumed
     // temporary identity must have an owner that survives that cancellation.
     private val identityCleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Poster and synopsis for the playing title, sent with its state. */
+    private val metadataScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val nowPlayingMetadata = SiloCastNowPlayingMetadataResolver(
+        scope = metadataScope,
+        load = { contentId, allowCached ->
+            runCatching { nowPlayingMetadataLoader(contentId, allowCached) }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()
+        },
+        nowEpochMs = wallClockMs,
+        onChange = { metadataScope.launch { runRecovering("metadata state") { broadcastState() } } },
+    )
     // Bumped by every start(). Handoffs tag the identity with the run that
     // claimed it, so stop()'s deferred cleanup can tell a returning phone's
     // claim from one made by the session it is tearing down.
@@ -276,6 +293,7 @@ class TvSiloCastReceiver(
     fun stop() {
         DiagnosticsCastLogger.event("TV cast receiver stopped")
         advertiser.stop()
+        nowPlayingMetadata.track(null)
         val stoppedRun = receiverRun
         pendingLaunch = null
         // A launch navigation has not taken yet belongs to the session being
@@ -359,6 +377,7 @@ class TvSiloCastReceiver(
                 if (activePlayer === player) {
                     DiagnosticsCastLogger.event("TV cast player unregistered")
                     activePlayer = null
+                    nowPlayingMetadata.track(null)
                     advertiser.updatePlaying(false)
                     val generation = player.identityGeneration
                     if (generation != null) {
@@ -1305,7 +1324,11 @@ class TvSiloCastReceiver(
      * de-authorized.
      */
     private suspend fun broadcastState() {
-        if (authorizedControllers().isEmpty()) return
+        if (authorizedControllers().isEmpty()) {
+            // Nobody to send artwork to, so stop keeping its URL signed.
+            nowPlayingMetadata.track(null)
+            return
+        }
         val state = snapshotState()
         authorizedControllers().forEach { it.offerState(state) }
     }
@@ -1627,7 +1650,12 @@ class TvSiloCastReceiver(
 
     private suspend fun currentState(): SiloCastPlaybackState =
         withContext(Dispatchers.Main.immediate) {
-            activePlayer?.stateProvider?.invoke() ?: idleState()
+            val state = activePlayer?.stateProvider?.invoke()
+            // Follows the live content ID, so an autoplayed next episode drops
+            // the previous title's poster on its first tick.
+            nowPlayingMetadata.track(state?.contentId)
+            val metadata = nowPlayingMetadata.metadata(state?.contentId)
+            state?.copy(posterUrl = metadata?.posterUrl, overview = metadata?.overview) ?: idleState()
         }
 
     private fun idleState(): SiloCastPlaybackState = SiloCastPlaybackState(

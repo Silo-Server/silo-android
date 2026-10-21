@@ -324,6 +324,15 @@ data class SiloCastPlaybackState(
     val hasNextEpisode: Boolean,
     val nextEpisodeTitle: String? = null,
     val error: String? = null,
+    /**
+     * Absolute, signed poster URL for the playing title (the series poster for
+     * an episode), so an integration can fetch artwork without its own Silo
+     * sign-in. The TV re-signs it before it expires. Omitted when unknown;
+     * older peers ignore it, so it needs no feature flag.
+     */
+    val posterUrl: String? = null,
+    /** Synopsis of the playing title. Omitted when unknown. */
+    val overview: String? = null,
 )
 
 /**

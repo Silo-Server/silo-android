@@ -208,6 +208,33 @@ class SiloCastMessageTest {
     }
 
     @Test
+    fun stateCarriesPosterAndOverviewOnlyWhenKnown() {
+        val frame = { extra: String ->
+            """
+            {"type":"state","v":2,"state":{
+                "title":"Movie","isPlaying":true,"isLoading":false,"isBuffering":false,
+                "currentTime":1.0,"duration":2.0,"audioTracks":[],"subtitleTracks":[],
+                "qualityOptions":[],"activeQualityId":"auto","isQualitySwitching":false,
+                "playbackSpeed":1.0,"videoGravity":"fit","hdrEnabled":false,
+                "supportsVideoGravity":true,"supportsHDRToggle":false,$extra
+                "volume":1.0,"isMuted":false,"hasNextEpisode":false
+            }}
+            """
+        }
+        // A TV that predates the fields.
+        val old = assertIs<SiloCastMessage.State>(json.decodeFromString(SiloCastMessage.serializer(), frame(""))).state
+        assertNull(old.posterUrl)
+        assertNull(old.overview)
+        assertFalse("posterUrl" in json.encodeToString(SiloCastMessage.serializer(), SiloCastMessage.State(state = old)))
+
+        val withArt = old.copy(posterUrl = "https://silo.example/p.webp?exp=1&sig=x", overview = "Plot")
+        assertWireEquals(
+            frame(""""posterUrl":"https://silo.example/p.webp?exp=1&sig=x","overview":"Plot","""),
+            SiloCastMessage.State(state = withArt),
+        )
+    }
+
+    @Test
     fun errorMatchesAppleShape() {
         assertWireEquals(
             """{"type":"error","v":2,"error":{"code":"server_mismatch","message":"wrong server"}}""",
