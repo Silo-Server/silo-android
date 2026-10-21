@@ -255,13 +255,20 @@ class SequencedPlayback(
                     it.serverId == entry.serverId && it.serverUrl == entry.origin && it.profileId == entry.profileId
             }
         }
-        val live = authorities.snapshotDurableLoginAuthority() ?: return null
-        return live.scope.takeIf {
-            live.loginId == entry.loginId && it.serverId == entry.serverId &&
+        return authorities.snapshotDurableLoginAuthority()?.scopeFor(entry, captured)
+    }
+
+    /**
+     * This durable login's scope while it is still [entry]'s login, server,
+     * origin and profile, under [captured]'s identity. Leaves [scopes] alone,
+     * which [settleDurable] fences on.
+     */
+    private fun DurableLoginAuthority.scopeFor(entry: PlaybackJournalEntry, captured: AuthScopeSnapshot): AuthScopeSnapshot? =
+        scope.takeIf {
+            loginId == entry.loginId && it.serverId == entry.serverId &&
                 it.serverUrl == entry.origin && it.profileId == entry.profileId &&
                 captured.isSameIdentityAs(it) && it.credentialGenerationId == null
         }
-    }
 
     private class IdentityChanged : RuntimeException()
 
@@ -601,7 +608,7 @@ class SequencedPlayback(
                 }
                 for (body in entry.routeEvents) {
                     // Checked before each send: the viewer can sign out or switch profiles meanwhile.
-                    val captured = stillLive(live) ?: return@pass
+                    val captured = authorities.snapshotDurableLoginAuthority()?.scopeFor(entry, live.scope) ?: return@pass
                     when (val result = api.routeEvent(captured, body.withoutThroughput())) {
                         is ApiResult.Success -> { drop(entry.attemptId, listOf(body)); sent += 1 }
                         is ApiResult.Error -> if (result.isFinalRefusal()) { drop(entry.attemptId, listOf(body)); dropped += 1 } else return@pass
@@ -612,18 +619,6 @@ class SequencedPlayback(
         }
         log("route_event_replay pending=${pending.sumOf { it.routeEvents.size }} sent=$sent dropped=$dropped")
     }
-
-    /**
-     * [live]'s scope while it is still the live durable login: [scope]'s check,
-     * for an attempt whose entry matched [live] and whose captured scope is
-     * [live]'s. Leaves [scopes] alone, which [settleDurable] fences on.
-     */
-    private suspend fun stillLive(live: DurableLoginAuthority): AuthScopeSnapshot? =
-        authorities.snapshotDurableLoginAuthority()?.takeIf {
-            it.loginId == live.loginId && it.scope.serverId == live.scope.serverId &&
-                it.scope.serverUrl == live.scope.serverUrl && it.scope.profileId == live.scope.profileId &&
-                live.scope.isSameIdentityAs(it.scope) && it.scope.credentialGenerationId == null
-        }?.scope
 
     /** A refusal the server would repeat. A 401 can pass after a sign-in, and a 408 or 5xx on another try. */
     private fun ApiResult.Error.isFinalRefusal(): Boolean = code in 400..499 && code != 401 && code != 408
