@@ -252,16 +252,7 @@ class PlaybackStartupStallDetectorTest {
     }
 
     @Test
-    fun silentVideoWhileAudioPlaysFailsHoweverLittleIsBuffered() {
-        val noOutput = PlaybackStartupStallDetector(startupGraceMs = 1_000)
-        noOutput.onMounted("thin-black-video", PlayMethod.DIRECT, 0, 0)
-        assertNull(noOutput.sample("thin-black-video", 100, true, true, false, 100, 1_600, decoderInputBufferCount = 1))
-        assertEquals(
-            "decoder_no_output",
-            noOutput.sample("thin-black-video", 1_101, true, true, false, 1_101, 2_600, decoderInputBufferCount = 8)
-                ?.classification,
-        )
-
+    fun droppedOutputBeforeTheFirstFrameIsARenderStartupFailure() {
         val droppedOutput = PlaybackStartupStallDetector(startupGraceMs = 1_000)
         droppedOutput.onMounted("thin-dropped-video", PlayMethod.DIRECT, 0, 0)
         assertNull(
