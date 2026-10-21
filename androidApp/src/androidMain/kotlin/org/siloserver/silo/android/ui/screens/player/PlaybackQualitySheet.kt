@@ -8,11 +8,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.model.playback.PlaybackQualityOption
 import org.siloserver.silo.model.playback.activePlaybackQualityId
+import org.siloserver.silo.model.playback.reportedQuality
 
 /**
- * The [menu] row the session's preference selects, judged against what the
- * plan actually delivers, so a stored "1080p" that a bitrate cap held to
- * 720p marks the 720p entry, and one that plays the source marks no row.
+ * The [menu] row the session's preference selects: the entry the server
+ * reports the plan delivers, or on older servers the one inferred from what
+ * the plan delivers, so a stored "1080p" that a bitrate cap held to 720p
+ * marks the 720p entry, and one that plays the source marks no row.
  */
 internal fun PlayerViewModel.PlayerUiState.activeQualityId(menu: List<PlaybackQualityOption>): String? =
     activePlaybackQualityId(
@@ -20,6 +22,7 @@ internal fun PlayerViewModel.PlayerUiState.activeQualityId(menu: List<PlaybackQu
         qualityPreference,
         playbackPlan?.effectiveRecipe,
         playbackPlan?.sourceFile,
+        playbackPlan?.reportedQuality,
     )
 
 /** A quality the viewer picked, else the one the session plays at. */

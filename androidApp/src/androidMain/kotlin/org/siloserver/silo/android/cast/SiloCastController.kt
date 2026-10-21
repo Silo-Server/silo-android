@@ -189,6 +189,7 @@ class SiloCastController(
     val launchFeedback: SharedFlow<SiloCastLaunchFeedback> = _launchFeedback.asSharedFlow()
 
     private var session: SiloCastTlsClientSession? = null
+    @Volatile
     private var output: OutputStream? = null
     private var readJob: Job? = null
     private var heartbeatJob: Job? = null
@@ -255,22 +256,26 @@ class SiloCastController(
         browser.start()
     }
 
-    /** The server whose identity this process already tried to learn. */
+    /** The server whose identity lookup is running or has succeeded. */
     @Volatile
     private var identityLookupServerId: String? = null
 
     /**
      * A server signed in before the identity contract has no verified
      * identity, so the picker can't recognise a TV that advertises another of
-     * its addresses, and hello and the offer can't name it. Learn it once, as
-     * silo-apple does on the server's next activation.
+     * its addresses, and hello and the offer can't name it. Learn it, as
+     * silo-apple does on the server's next activation; a lookup that fails
+     * is tried again on the next browse.
      */
     private fun learnActiveServerIdentity() {
         val identities = serverIdentities ?: return
         val entry = serverRegistry.activeEntry.value ?: return
         if (entry.deploymentIdentity != null || identityLookupServerId == entry.id) return
         identityLookupServerId = entry.id
-        scope.launch { runCatching { identities.identityOf(entry) } }
+        scope.launch {
+            val identity = runCatching { identities.identityOf(entry) }.getOrNull()
+            if (identity == null && identityLookupServerId == entry.id) identityLookupServerId = null
+        }
     }
 
     fun stopBrowsing() {
@@ -751,8 +756,27 @@ class SiloCastController(
     /** Tells a TV that lists `presence` this passive connection is now active. */
     private fun sendPresenceIfEngaged() {
         if (!sessionPassive || sessionIsAutoResumed || SiloCastFeature.Presence !in tvFeatures) return
+        // The engagement belongs to this connection; a reconnect before the
+        // write must not hand it to the replacement.
+        val out = output ?: return
         sessionPassive = false
-        scope.launch { runCatching { send(SiloCastMessage.Presence(SiloCastPresence(passive = false))) } }
+        scope.launch {
+            runCatching {
+                val frame = SiloCastFrame.encode(
+                    json.encodeToString(
+                        SiloCastMessage.serializer(),
+                        SiloCastMessage.Presence(SiloCastPresence(passive = false)),
+                    ).encodeToByteArray(),
+                )
+                sendMutex.withLock {
+                    if (output !== out) return@withLock
+                    withContext(Dispatchers.IO) {
+                        out.write(frame)
+                        out.flush()
+                    }
+                }
+            }
+        }
     }
 
     private suspend fun ensureConnected(
@@ -787,8 +811,11 @@ class SiloCastController(
         }
         openSessionLocked(target, passive)
         if (targetsActiveServer) {
+            // Saved under the active server's key: a TV matched by deployment
+            // identity advertises another address's key, which auto-resume
+            // would no longer recognise as this server.
             lastTargetStore.save(
-                SiloCastPersistedTarget(deviceId = target.deviceId, name = target.name, serverId = target.serverId),
+                SiloCastPersistedTarget(deviceId = target.deviceId, name = target.name, serverId = activeServerId),
             )
         }
         Unit
