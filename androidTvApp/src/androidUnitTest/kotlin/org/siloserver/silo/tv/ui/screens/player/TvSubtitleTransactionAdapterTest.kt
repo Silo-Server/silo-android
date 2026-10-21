@@ -1853,13 +1853,13 @@ class TvSubtitleTransactionAdapterTest {
         runCurrent()
         confirmPendingPlayerBoundary(harness, "lowered-mounted")
         runCurrent()
-        harness.adapter.selectQuality("720p")
-        runCurrent()
-
-        assertNull(harness.port.requests.last().bufferingQuality)
         // Committed: nothing reports it as failed, a reset included.
         harness.adapter.resetContent(context(sessionId = "s-lowered"), committedIdentity = sidecar(3))
         assertEquals(0, failures)
+
+        harness.adapter.selectQuality("720p")
+        runCurrent()
+        assertNull(harness.port.requests.last().bufferingQuality)
     }
 
     @Test
