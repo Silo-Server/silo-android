@@ -51,7 +51,7 @@ import org.siloserver.silo.util.parseRfc3339ToEpochMillis
 /**
  * How long after a playback start a probe holds off. Media is still loading
  * for a while after a start, so the playing-media check alone would let a
- * timer that fires then probe during startup.
+ * check that runs then probe during startup.
  */
 const val PLAYBACK_START_QUIET_MS = 60_000L
 
@@ -409,7 +409,7 @@ class BandwidthProbeScheduler(
 
     // Confined to the scope.
     private var foreground = false
-    private var timer: Job? = null
+    private var checkJob: Job? = null
     private var inFlight: ProbeRun? = null
 
     /**
@@ -511,8 +511,8 @@ class BandwidthProbeScheduler(
 
     internal fun onBackground() {
         foreground = false
-        timer?.cancel()
-        timer = null
+        checkJob?.cancel()
+        checkJob = null
         // A result already measured still goes to the server.
         if (inFlight?.reporting != true) cancelInFlight(ProbeOutcome.Interrupted)
     }
@@ -533,7 +533,7 @@ class BandwidthProbeScheduler(
     private fun onServerChanged(serverId: String?) {
         if (cached?.serverId != serverId) forget()
         cancelInFlight(ProbeOutcome.Interrupted)
-        if (serverId != null) check() else timer?.cancel()
+        if (serverId != null) check() else checkJob?.cancel()
     }
 
     /** Another profile on the same server: its target and credentials apply now. */
@@ -565,9 +565,9 @@ class BandwidthProbeScheduler(
 
     /** Starts a check now, in the foreground; its test waits inside it. */
     private fun check() {
-        timer?.cancel()
+        checkJob?.cancel()
         if (!foreground) return
-        timer = scope.launch {
+        checkJob = scope.launch {
             if (activeServer.value == null) return@launch
             // Media playing still lets the check read the server's readings.
             gate(manual = false)?.takeIf { it != ProbeOutcome.PlaybackActive }?.let { return@launch }
