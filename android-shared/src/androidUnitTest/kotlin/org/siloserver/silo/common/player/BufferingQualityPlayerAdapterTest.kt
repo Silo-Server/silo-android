@@ -240,6 +240,26 @@ class BufferingQualityPlayerAdapterTest {
     }
 
     @Test
+    fun aPlaybackSuppressionStopsLikeAPauseUntilPlaybackRuns() {
+        playing()
+        // A transient audio-focus loss: Media3 keeps playWhenReady and READY.
+        adapter.onPlaybackSuppressionReasonChanged(Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS)
+        adapter.onIsPlayingChanged(false)
+        // Focus regained: nothing until playback actually runs.
+        adapter.onPlaybackSuppressionReasonChanged(Player.PLAYBACK_SUPPRESSION_REASON_NONE)
+        adapter.onIsPlayingChanged(true)
+        // During a stall, the suppression stops it; a regain that finds the buffer empty is a wait again.
+        starve()
+        adapter.onPlaybackSuppressionReasonChanged(Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS)
+        adapter.onPlaybackSuppressionReasonChanged(Player.PLAYBACK_SUPPRESSION_REASON_NONE)
+
+        assertEquals(
+            listOf("pause", "playing", "waiting:network", "pause", "waiting:network"),
+            sink.events,
+        )
+    }
+
+    @Test
     fun aNewPlanStartsWithNoTransportTrouble() {
         playing()
         adapter.onLoadFailed(wasCanceled = false)

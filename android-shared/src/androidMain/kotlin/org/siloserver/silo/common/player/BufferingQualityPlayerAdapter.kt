@@ -75,7 +75,7 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
  * `playWhenReady`, then `isPlaying`), so `STATE_READY` with `playWhenReady`
  * but not yet playing keeps the previous phase. Resuming from a stall then
  * reads as waiting → playing, never waiting → paused → playing. A playback
- * suppression (transient audio-focus loss, say) sends nothing.
+ * suppression (a transient audio-focus loss, say) is a stop, as a pause is.
  *
  * Data arrives when the buffered position advances between [sampleBuffer]
  * calls or a media load completes with bytes; [isReceivingData] and
@@ -118,6 +118,9 @@ class BufferingQualityPlayerAdapter(
     private var playWhenReady = false
     private var playbackState = Player.STATE_IDLE
     private var isPlaying = false
+
+    /** Playback is suppressed, such as by a transient audio-focus loss: stopped, as if paused. */
+    private var suppressed = false
     private var phase = Phase.STOPPED
 
     private var seekSinceRun = false
@@ -159,6 +162,7 @@ class BufferingQualityPlayerAdapter(
         playbackState: Int,
         isPlaying: Boolean,
         tunneling: () -> Boolean = { false },
+        suppressed: Boolean = false,
         bufferedAheadMs: () -> Long = { 0L },
     ) {
         this.bufferedAheadMs = bufferedAheadMs
@@ -166,6 +170,7 @@ class BufferingQualityPlayerAdapter(
         this.playWhenReady = playWhenReady
         this.playbackState = playbackState
         this.isPlaying = isPlaying
+        this.suppressed = suppressed
         updatePhase()
     }
 
@@ -182,6 +187,7 @@ class BufferingQualityPlayerAdapter(
             isPlaying = player.isPlaying,
             bufferedAheadMs = { player.totalBufferedDuration },
             tunneling = { player.isTunnelingEnabled },
+            suppressed = player.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE,
         )
         return {
             player.removeListener(this)
@@ -289,6 +295,11 @@ class BufferingQualityPlayerAdapter(
         updatePhase()
     }
 
+    override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
+        suppressed = playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE
+        updatePhase()
+    }
+
     override fun onPositionDiscontinuity(
         oldPosition: Player.PositionInfo,
         newPosition: Player.PositionInfo,
@@ -353,9 +364,10 @@ class BufferingQualityPlayerAdapter(
     private fun updatePhase() {
         val next = when {
             isPlaying -> Phase.RUNNING
+            suppressed -> Phase.STOPPED
             playWhenReady && playbackState == Player.STATE_BUFFERING -> Phase.STARVED
             !playWhenReady || playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE -> Phase.STOPPED
-            // READY with playWhenReady but not playing: mid-transition, or suppressed.
+            // READY with playWhenReady but not playing: mid-transition.
             else -> phase
         }
         if (next == phase) return
