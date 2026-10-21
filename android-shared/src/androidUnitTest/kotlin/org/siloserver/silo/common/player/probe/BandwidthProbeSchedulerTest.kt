@@ -115,7 +115,7 @@ class BandwidthProbeSchedulerTest {
 
         /** A probe the server holds, measured [ageMs] before now on the harness's wall clock. */
         fun storedReading(kbps: Int, ageMs: Long, lowerBound: Boolean = false) = StoredReadingLookup.Found(
-            probe = BandwidthEstimate(kbps, 0, 0, "wifi", measuredAt(ageMs), lowerBound),
+            probe = BandwidthEstimate(kbps, "wifi", measuredAt(ageMs), lowerBound),
             sample = null,
         )
 
@@ -746,7 +746,7 @@ class BandwidthProbeSchedulerTest {
     fun aSampleAndAProbeSendTheHigher() = runTest {
         val harness = Harness(this)
         harness.server.stored = StoredReadingLookup.Found(
-            probe = BandwidthEstimate(40_000, 0, 0, "wifi", 1_760_000_000_000 - 60_000),
+            probe = BandwidthEstimate(40_000, "wifi", 1_760_000_000_000 - 60_000),
             sample = PlaybackSample(90_000, 1_760_000_000_000 - 60_000),
         )
         harness.foreground()

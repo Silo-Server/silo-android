@@ -12,6 +12,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import org.siloserver.silo.domain.player.SpeedTestMeter
 import org.siloserver.silo.domain.player.SpeedTestMode
+import org.siloserver.silo.domain.player.SpeedTestResult
 import org.siloserver.silo.network.apiv2.BandwidthProbeResponseV2
 
 /*
@@ -35,16 +36,8 @@ private const val READ_BUFFER_BYTES = 64 * 1024
 
 /** One speed test, timed: a rate or why there is none. */
 sealed interface BandwidthProbeResult {
-    /**
-     * [kbps] measured from [bytes] over [durationMs], the windows the rate came
-     * from. With [lowerBound] the link is at least [kbps].
-     */
-    data class Measured(
-        val kbps: Int,
-        val bytes: Long,
-        val durationMs: Int,
-        val lowerBound: Boolean = false,
-    ) : BandwidthProbeResult
+    /** What the windows measured. */
+    data class Measured(val measurement: SpeedTestResult) : BandwidthProbeResult
 
     /** HTTP 429: the server allows another probe after [retryAfterSeconds]. */
     data class RateLimited(val retryAfterSeconds: Int) : BandwidthProbeResult
@@ -138,8 +131,7 @@ class BandwidthProbe(private val clock: () -> Long = { SystemClock.elapsedRealti
         is BandwidthProbeResponseV2.Unavailable -> BandwidthProbeResult.Unavailable(response.status)
         is BandwidthProbeResponseV2.Body -> {
             time(response.read, meter, firstByte)
-            meter.result()?.let { BandwidthProbeResult.Measured(it.kbps, it.bytes, it.durationMs, it.lowerBound) }
-                ?: BandwidthProbeResult.TooLittleData
+            meter.result()?.let(BandwidthProbeResult::Measured) ?: BandwidthProbeResult.TooLittleData
         }
     }
 

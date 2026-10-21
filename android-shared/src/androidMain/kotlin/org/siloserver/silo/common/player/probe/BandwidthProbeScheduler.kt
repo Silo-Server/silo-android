@@ -84,8 +84,6 @@ interface PlaybackBandwidthEstimates {
 /** One speed test result, as Settings shows it and the server stores it. */
 data class BandwidthEstimate(
     val kbps: Int,
-    val bytes: Long,
-    val durationMs: Int,
     /** `wifi`, `ethernet`, `cellular` or `other`, as reported to the server. */
     val transport: String,
     /** When it was measured, in epoch milliseconds. */
@@ -297,8 +295,6 @@ class PlaybackV2BandwidthProbeServer(
                     stored.measuredAt?.let(::parseRfc3339ToEpochMillis)?.let { measuredAt ->
                         BandwidthEstimate(
                             kbps = stored.kbps,
-                            bytes = 0,
-                            durationMs = 0,
                             transport = stored.transport ?: "other",
                             measuredAtEpochMs = measuredAt,
                             lowerBound = stored.lowerBound,
@@ -689,7 +685,7 @@ class BandwidthProbeScheduler(
             val result = probe.measure(mode, target.targetKbps) { read -> server.download(target, mode, read) }
         ) {
             // Never kept or sent outside the bounds a start may carry.
-            is BandwidthProbeResult.Measured -> result.takeIf { it.kbps in READING_KBPS }
+            is BandwidthProbeResult.Measured -> result.measurement.takeIf { it.kbps in READING_KBPS }
                 ?: return ProbeOutcome.TooLittleData
             is BandwidthProbeResult.RateLimited -> {
                 val now = elapsedClock()
@@ -707,8 +703,6 @@ class BandwidthProbeScheduler(
         }
         val estimate = BandwidthEstimate(
             kbps = measured.kbps,
-            bytes = measured.bytes,
-            durationMs = measured.durationMs,
             transport = reportedTransport(snapshot),
             measuredAtEpochMs = wallClock(),
             lowerBound = measured.lowerBound,
@@ -720,8 +714,8 @@ class BandwidthProbeScheduler(
                 target,
                 PlaybackBandwidthProbeResultV2(
                     kbps = estimate.kbps,
-                    bytes = estimate.bytes,
-                    durationMs = estimate.durationMs,
+                    bytes = measured.bytes,
+                    durationMs = measured.durationMs,
                     transport = estimate.transport,
                     lowerBound = true.takeIf { estimate.lowerBound },
                 ),
@@ -740,7 +734,7 @@ class BandwidthProbeScheduler(
         SiloLog.i(
             DiagnosticsLogCategory.PLAYBACK,
             TAG,
-            "bandwidth probe: ${mode.name.lowercase()} test ${estimate.describe()} over ${estimate.durationMs} ms " +
+            "bandwidth probe: ${mode.name.lowercase()} test ${estimate.describe()} over ${measured.durationMs} ms " +
                 "on ${estimate.transport}" + when (report) {
                     ProbeReport.STORED -> ""
                     ProbeReport.REFUSED -> " (refused, not kept)"

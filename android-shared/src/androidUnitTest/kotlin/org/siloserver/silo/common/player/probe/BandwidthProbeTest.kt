@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.domain.player.SpeedTestMeter
 import org.siloserver.silo.domain.player.SpeedTestMode
+import org.siloserver.silo.domain.player.SpeedTestResult
 import org.siloserver.silo.network.apiv2.BandwidthProbeResponseV2
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -66,7 +67,7 @@ class BandwidthProbeTest {
     fun aQuickTestStopsAtTheEndOfTheFirstWindowThatReachesTheTarget() = runTest {
         val result = probe().measure(SpeedTestMode.QUICK, targetKbps = 50_000) { read -> read(steady) }
         assertEquals(1_100L, currentTime, "window 1 ends 1000 ms after the first byte at 100")
-        assertEquals(BandwidthProbeResult.Measured(50_000, 5_000_000, 500, lowerBound = true), result)
+        assertEquals(BandwidthProbeResult.Measured(SpeedTestResult(50_000, lowerBound = true, bytes = 5_000_000, durationMs = 500)), result)
     }
 
     @Test
@@ -78,7 +79,7 @@ class BandwidthProbeTest {
         }
         assertEquals(3_100L, currentTime)
         // Window 4 had 5 MB; window 5 was silent.
-        assertEquals(BandwidthProbeResult.Measured(40_000, 5_000_000, 1_000), result)
+        assertEquals(BandwidthProbeResult.Measured(SpeedTestResult(40_000, lowerBound = false, bytes = 5_000_000, durationMs = 1_000)), result)
     }
 
     @Test
@@ -88,7 +89,7 @@ class BandwidthProbeTest {
         val result = probe().measure(SpeedTestMode.QUICK, targetKbps = null) { read ->
             read(body(chunks, hangAfter = false))
         }
-        assertEquals(BandwidthProbeResult.Measured(80_000, 5_000_000, 500), result)
+        assertEquals(BandwidthProbeResult.Measured(SpeedTestResult(80_000, lowerBound = false, bytes = 5_000_000, durationMs = 500)), result)
     }
 
     @Test
@@ -98,7 +99,7 @@ class BandwidthProbeTest {
         val result = probe().measure(SpeedTestMode.QUICK, targetKbps = null) { read ->
             read(body(chunks, hangAfter = false))
         }
-        assertEquals(BandwidthProbeResult.Measured(1_000_000, 100_000_000, 450, lowerBound = true), result)
+        assertEquals(BandwidthProbeResult.Measured(SpeedTestResult(1_000_000, lowerBound = true, bytes = 100_000_000, durationMs = 450)), result)
     }
 
     @Test
