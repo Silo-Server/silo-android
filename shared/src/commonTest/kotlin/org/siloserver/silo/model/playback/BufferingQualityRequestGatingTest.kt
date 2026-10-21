@@ -57,6 +57,12 @@ class BufferingQualityRequestGatingTest {
         assertEquals(BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER, gatedReplan.bandwidthEstimateSource)
         assertEquals(LEARNED_LIMIT_CLEAR, gatedReplan.learnedLimit)
         assertTrue(BUFFERING_QUALITY_V1_FEATURE in gatedReplan.clientFeatures)
+
+        val gatedProbe = probeStart().gatedForBufferingQuality(advertising)
+        assertEquals(48_000, gatedProbe.bandwidthEstimateKbps)
+        assertEquals(BANDWIDTH_ESTIMATE_SOURCE_PROBE, gatedProbe.bandwidthEstimateSource)
+        assertTrue(BUFFERING_QUALITY_V1_FEATURE in gatedProbe.clientFeatures)
+        assertEquals(gatedProbe, gatedProbe.gatedForBufferingQuality(advertising))
     }
 
     @Test
@@ -70,6 +76,11 @@ class BufferingQualityRequestGatingTest {
         assertNull(gatedReplan.bandwidthEstimateSource)
         assertNull(gatedReplan.learnedLimit)
         assertFalse(BUFFERING_QUALITY_V1_FEATURE in gatedReplan.clientFeatures)
+
+        val gatedProbe = probeStart().gatedForBufferingQuality(older)
+        assertEquals(48_000, gatedProbe.bandwidthEstimateKbps)
+        assertNull(gatedProbe.bandwidthEstimateSource)
+        assertFalse(BUFFERING_QUALITY_V1_FEATURE in gatedProbe.clientFeatures)
     }
 
     @Test
@@ -94,23 +105,6 @@ class BufferingQualityRequestGatingTest {
         bandwidthEstimateKbps = estimate,
         bandwidthEstimateSource = BANDWIDTH_ESTIMATE_SOURCE_PROBE,
     )
-
-    @Test
-    fun aProbeEstimateGoesOutWithItsSourceToAnAdvertisingServer() {
-        val gated = probeStart().gatedForBufferingQuality(advertising)
-        assertEquals(48_000, gated.bandwidthEstimateKbps)
-        assertEquals(BANDWIDTH_ESTIMATE_SOURCE_PROBE, gated.bandwidthEstimateSource)
-        assertTrue(BUFFERING_QUALITY_V1_FEATURE in gated.clientFeatures)
-        assertEquals(gated, gated.gatedForBufferingQuality(advertising))
-    }
-
-    @Test
-    fun anOlderServerGetsTheProbeEstimateWithoutItsSource() {
-        val gated = probeStart().gatedForBufferingQuality(older)
-        assertEquals(48_000, gated.bandwidthEstimateKbps)
-        assertNull(gated.bandwidthEstimateSource)
-        assertFalse(BUFFERING_QUALITY_V1_FEATURE in gated.clientFeatures)
-    }
 
     private companion object {
         const val SEQUENCED_PROGRESS = "sequenced_progress_v1"

@@ -151,9 +151,8 @@ class BandwidthProbeSchedulerTest {
         val harness = Harness(this)
         val measured = assertIs<ProbeOutcome.Measured>(harness.scheduler.runNow())
         assertEquals(80_000, measured.estimate.kbps)
-        val measuredAt = currentTime
 
-        advanceTimeBy(BANDWIDTH_READING_LIFETIME_MS - 1 - (currentTime - measuredAt))
+        advanceTimeBy(BANDWIDTH_READING_LIFETIME_MS - 1)
         runCurrent()
         assertEquals(80_000, harness.scheduler.freshEstimateKbps())
         advanceTimeBy(1)

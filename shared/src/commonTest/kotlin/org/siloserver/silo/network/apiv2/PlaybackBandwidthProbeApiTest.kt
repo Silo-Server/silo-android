@@ -89,24 +89,11 @@ class PlaybackBandwidthProbeApiTest {
     }
 
     @Test
-    fun aRateLimitCarriesItsRetryAfter() = runTest {
-        val api = api(mutableListOf()) {
-            Triple(HttpStatusCode.TooManyRequests, "{}", mapOf(HttpHeaders.RetryAfter to "42"))
-        }
-        assertEquals(BandwidthProbeResponseV2.RateLimited(42), api.bandwidthProbe(scope, "https://silo.example/p", ::readAll))
-    }
-
-    @Test
-    fun aRateLimitWithoutRetryAfterWaitsThirtySeconds() = runTest {
-        val api = api(mutableListOf()) { Triple(HttpStatusCode.TooManyRequests, "{}", emptyMap()) }
-        assertEquals(BandwidthProbeResponseV2.RateLimited(30), api.bandwidthProbe(scope, "https://silo.example/p", ::readAll))
-    }
-
-    @Test
-    fun anUnreadableRetryAfterWaitsThirtySecondsAndOneUnderASecondWaitsOne() = runTest {
-        for ((header, seconds) in listOf("Wed, 21 Oct 2026 07:28:00 GMT" to 30, "1.5" to 30, "0" to 1, "-4" to 1)) {
+    fun aRateLimitWaitsItsRetryAfterThirtySecondsWithoutAReadableOneAndAtLeastOne() = runTest {
+        val cases = listOf("42" to 42, null to 30, "Wed, 21 Oct 2026 07:28:00 GMT" to 30, "1.5" to 30, "0" to 1, "-4" to 1)
+        for ((header, seconds) in cases) {
             val api = api(mutableListOf()) {
-                Triple(HttpStatusCode.TooManyRequests, "{}", mapOf(HttpHeaders.RetryAfter to header))
+                Triple(HttpStatusCode.TooManyRequests, "{}", header?.let { mapOf(HttpHeaders.RetryAfter to it) }.orEmpty())
             }
             assertEquals(
                 BandwidthProbeResponseV2.RateLimited(seconds),

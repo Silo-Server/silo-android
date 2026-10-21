@@ -47,15 +47,18 @@ import kotlin.test.fail
  * file. Fix the controller, or fix the spec and the vectors on the server and
  * re-vendor; never edit the vendored copy.
  */
+/** The vendored vectors, which [BandwidthProbeVectorsTest] replays too. */
+internal fun bufferingQualityVectors(): JsonObject {
+    val raw = checkNotNull(
+        BufferingQualityVectorsTest::class.java.classLoader?.getResource("playback/buffering-quality/v1/vectors.json"),
+    ) { "Missing test resource playback/buffering-quality/v1/vectors.json" }.readText()
+    return Json.parseToJsonElement(raw).jsonObject
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class BufferingQualityVectorsTest {
 
-    private val vectors: JsonObject by lazy {
-        val raw = checkNotNull(
-            javaClass.classLoader?.getResource("playback/buffering-quality/v1/vectors.json"),
-        ) { "Missing test resource playback/buffering-quality/v1/vectors.json" }.readText()
-        Json.parseToJsonElement(raw).jsonObject
-    }
+    private val vectors: JsonObject by lazy { bufferingQualityVectors() }
 
     @Test
     fun constantsMatchTheVendoredVectors() {

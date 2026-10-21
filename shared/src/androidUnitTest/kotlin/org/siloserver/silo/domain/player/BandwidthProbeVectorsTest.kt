@@ -1,6 +1,5 @@
 package org.siloserver.silo.domain.player
 
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
@@ -21,12 +20,7 @@ import kotlin.test.fail
  */
 class BandwidthProbeVectorsTest {
 
-    private val vectors: JsonObject by lazy {
-        val raw = checkNotNull(
-            javaClass.classLoader?.getResource("playback/buffering-quality/v1/vectors.json"),
-        ) { "Missing test resource playback/buffering-quality/v1/vectors.json" }.readText()
-        Json.parseToJsonElement(raw).jsonObject
-    }
+    private val vectors: JsonObject by lazy { bufferingQualityVectors() }
 
     @Test
     fun constantsMatchTheVendoredVectors() {
