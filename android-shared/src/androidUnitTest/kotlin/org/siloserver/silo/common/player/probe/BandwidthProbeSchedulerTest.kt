@@ -490,8 +490,8 @@ class BandwidthProbeSchedulerTest {
     fun aCheckDuringPlaybackStillTakesTheServersReading() = runTest {
         val harness = Harness(this)
         harness.server.stored = harness.storedReading(48_000, ageMs = 60_000)
-        harness.foreground()
         harness.media.value = true
+        harness.foreground()
         advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
         assertEquals(1, harness.server.storedChecks)
         assertEquals(0, harness.server.downloads)
