@@ -21,11 +21,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,6 +33,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.common.ui.components.rememberNoticeCountdownFill
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroAutoSkipState
 import org.siloserver.silo.tv.R
@@ -91,32 +89,7 @@ fun TvIntroAutoSkipBanner(
         is IntroAutoSkipState.Asking -> 1
         is IntroAutoSkipState.Skipped -> 2
     }
-    // The fill shows time remaining, so it runs off the frame clock: Compose
-    // scales AnimationSpec durations by the device animation setting, which would
-    // let the bar disagree with the timer. Transitions below still honor it.
-    val fill = remember { mutableFloatStateOf(0f) }
-    val secondsRemaining = state.secondsRemainingOrNull
-    // Deliberately not keyed on `secondsRemaining`: a plain tick must not
-    // restart the sweep. `countdownRun` is what says the clock moved.
-    LaunchedEffect(countdownRun, timerRunning, totalSeconds, secondsRemaining == null) {
-        if (secondsRemaining == null || totalSeconds <= 0) {
-            fill.floatValue = 0f
-            return@LaunchedEffect
-        }
-        val remaining = secondsRemaining.coerceAtLeast(1)
-        val from = (1f - remaining.toFloat() / totalSeconds.toFloat()).coerceIn(0f, 1f)
-        fill.floatValue = from
-        // Frozen: the bar sits at the fraction the frozen number describes.
-        if (!timerRunning) return@LaunchedEffect
-        val durationMs = remaining * 1000f
-        val startedAt = withFrameMillis { it }
-        var progressed = 0f
-        while (progressed < 1f) {
-            val frameMs = withFrameMillis { it }
-            progressed = ((frameMs - startedAt) / durationMs).coerceIn(0f, 1f)
-            fill.floatValue = from + (1f - from) * progressed
-        }
-    }
+    val fill = rememberNoticeCountdownFill(state.secondsRemainingOrNull, totalSeconds, countdownRun, timerRunning)
 
     AnimatedContent(
         targetState = slot,

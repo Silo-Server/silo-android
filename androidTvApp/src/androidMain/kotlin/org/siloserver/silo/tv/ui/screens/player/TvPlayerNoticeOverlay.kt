@@ -36,14 +36,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -61,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.common.player.NoticeTone
 import org.siloserver.silo.common.player.PlayerNotice
+import org.siloserver.silo.common.ui.components.rememberNoticeCountdownFill
 import org.siloserver.silo.domain.player.BufferingQualityController
 import org.siloserver.silo.domain.player.BufferingQualityPill
 import org.siloserver.silo.tv.R
@@ -203,30 +201,7 @@ private fun TvBufferingQualityPill(
         is BufferingQualityPill.Prompt -> 1
         is BufferingQualityPill.Undo -> 2
     }
-    // Off the frame clock, as on the intro pill: Compose scales animation
-    // durations by the device setting, which would let the bar disagree
-    // with the 15 s timer.
-    val fill = remember { mutableFloatStateOf(0f) }
-    val secondsRemaining = pill.secondsRemainingOrNull
-    LaunchedEffect(countdownRun, timerRunning, totalSeconds, secondsRemaining == null) {
-        if (secondsRemaining == null || totalSeconds <= 0) {
-            fill.floatValue = 0f
-            return@LaunchedEffect
-        }
-        val remaining = secondsRemaining.coerceAtLeast(1)
-        val from = (1f - remaining.toFloat() / totalSeconds.toFloat()).coerceIn(0f, 1f)
-        fill.floatValue = from
-        // Frozen by a pause: the bar holds at the fraction the frozen number describes.
-        if (!timerRunning) return@LaunchedEffect
-        val durationMs = remaining * 1000f
-        val startedAt = withFrameMillis { it }
-        var progressed = 0f
-        while (progressed < 1f) {
-            val frameMs = withFrameMillis { it }
-            progressed = ((frameMs - startedAt) / durationMs).coerceIn(0f, 1f)
-            fill.floatValue = from + (1f - from) * progressed
-        }
-    }
+    val fill = rememberNoticeCountdownFill(pill.secondsRemainingOrNull, totalSeconds, countdownRun, timerRunning)
 
     AnimatedContent(
         targetState = slot,

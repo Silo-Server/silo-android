@@ -31,10 +31,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.R
 import org.siloserver.silo.common.player.NoticeTone
 import org.siloserver.silo.common.player.PlayerNotice
+import org.siloserver.silo.common.ui.components.rememberNoticeCountdownFill
 import org.siloserver.silo.domain.player.BufferingQualityController
 import org.siloserver.silo.domain.player.BufferingQualityPill
 
@@ -164,28 +161,7 @@ private fun BufferingQualityPillSlot(
     onRestore: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val fill = remember { mutableFloatStateOf(0f) }
-    val secondsRemaining = pill.secondsRemainingOrNull
-    // As IntroAutoSkipBanner: not keyed on `secondsRemaining`, so a tick does
-    // not restart the sweep. `countdownRun` is what says the clock moved.
-    LaunchedEffect(countdownRun, timerRunning, totalSeconds, secondsRemaining == null) {
-        if (secondsRemaining == null || totalSeconds <= 0) {
-            fill.floatValue = 0f
-            return@LaunchedEffect
-        }
-        val remaining = secondsRemaining.coerceAtLeast(1)
-        val from = (1f - remaining.toFloat() / totalSeconds.toFloat()).coerceIn(0f, 1f)
-        fill.floatValue = from
-        if (!timerRunning) return@LaunchedEffect
-        val durationMs = remaining * 1000f
-        val startedAt = withFrameMillis { it }
-        var progressed = 0f
-        while (progressed < 1f) {
-            val frameMs = withFrameMillis { it }
-            progressed = ((frameMs - startedAt) / durationMs).coerceIn(0f, 1f)
-            fill.floatValue = from + (1f - from) * progressed
-        }
-    }
+    val fill = rememberNoticeCountdownFill(pill.secondsRemainingOrNull, totalSeconds, countdownRun, timerRunning)
 
     // Keyed on the pill kind so per-second ticks recompose the slot rather
     // than recreating the subtree, which would restart the fill.
