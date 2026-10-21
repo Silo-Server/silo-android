@@ -2,6 +2,7 @@ package org.siloserver.silo.android.push
 
 import android.app.Application
 import kotlinx.coroutines.*
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -55,6 +56,7 @@ class AndroidPushRegistrarTest {
     private var retireStatus: Int? = 404
     /** Each retirement sent: server URL, key and generation. It carries no login at all. */
     private val retirements=mutableListOf<Triple<String,String,Long>>()
+    private var onRetire: suspend () -> Unit = {}
     private val api=object : PushRegistrationApi {
         override suspend fun available(owner: AuthScopeSnapshot): ApiResult<Boolean> { onAvailable(owner); return ApiResult.Success(available) }
         override suspend fun register(request: PushDeviceRegisterRequest,key:String,generation:Long,owner:AuthScopeSnapshot):ApiResult<PushDeviceRegisterResponse> {
@@ -76,7 +78,7 @@ class AndroidPushRegistrarTest {
             val record=store.entries.single { it.serverUrl==serverUrl }
             assertEquals(generation,record.retirement?.generation) // durable before dispatch
             assertNull(record.intent.registration); assertEquals("device",deviceId)
-            retirements+=Triple(serverUrl,key,generation)
+            retirements+=Triple(serverUrl,key,generation); onRetire()
             return when(val status=retireStatus) {
                 null -> ApiResult.NetworkError(IllegalStateException("no answer"))
                 200 -> ApiResult.Success(Unit)
@@ -363,6 +365,40 @@ class AndroidPushRegistrarTest {
         assertEquals(listOf(1L,3L,5L),generations)
         val record=store.entries.single(); assertNull(record.retirement); assertTrue(record.acknowledged)
         registrar().retryPendingRetirements(); assertEquals(2,retirements.size)
+    }
+    @Test fun aRemovalThatRanOutOfTimeWaitingOnARegistrationIsRetiredOnceTheLoginIsGone()=runTest {
+        val r=registrar(); r.registerToken(token)
+        // A registration holds the server's lock past the removal's budget.
+        val gate=CompletableDeferred<Unit>(); onAvailable={ gate.await() }
+        val registering=launch { r.registerToken(token) }; runCurrent()
+        assertFalse(r.unregisterDevice("server").result is ApiResult.Success)
+        assertNull(store.entries.single().retirement)
+        savedLogins.remove("server") // the sign-out goes ahead and clears the login
+        onAvailable={}; gate.complete(Unit); registering.join()
+        retireStatus=200
+        registrar().retryPendingRetirements()
+        assertEquals(listOf(Triple("https://example.invalid",proof,2L)),retirements)
+        val record=store.entries.single(); assertNull(record.intent.registration); assertTrue(record.acknowledged); assertNull(record.retirement)
+    }
+    @Test fun aRemovalAnOlderVersionCouldNotSendIsRetiredAtItsOwnGeneration()=runTest {
+        registrar().registerToken(token)
+        // What a failed session removal left behind before retirements existed.
+        store.entries=store.entries.map { it.copy(generation=2, intent=it.intent.copy(registration=null), acknowledged=false, receipt=null, ownerLeaving=true) }
+        savedLogins.remove("server")
+        retireStatus=200
+        registrar().retryPendingRetirements()
+        assertEquals(listOf(Triple("https://example.invalid",proof,2L)),retirements)
+        assertTrue(store.entries.single().acknowledged)
+    }
+    @Test fun aRetirementThatStallsWaitsOutTheBackOffLikeOneThatFailed()=runTest {
+        registrar().registerToken(token)
+        retireStatus=null; registrar().unregisterDevice("server"); savedLogins.remove("server")
+        val r=registrar() // a restart: no failures remembered
+        onRetire={ awaitCancellation() }
+        r.retryPendingRetirements(afterPush=true)
+        r.retryPendingRetirements(afterPush=true)
+        assertEquals(2,retirements.size) // the removal's and the stalled retry's; the next push waits
+        assertEquals(2L,store.entries.single().retirement?.generation)
     }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)

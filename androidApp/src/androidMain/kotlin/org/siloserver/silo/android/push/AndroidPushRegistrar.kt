@@ -227,6 +227,8 @@ class AndroidPushRegistrar internal constructor(
             val record = recordOf(found.serverUrl, device)?.takeIf { it.intent.serverId == serverId && it.refusal == null }
                 ?: return@withLock failure("push_not_registered")
             val owner = registeredOwnerOf(record) ?: return@withLock failure("push_authority_changed")
+            // A removal started while this waited owns the retirement now.
+            if (latestRequests[serverId] !== attempt) return@withLock failure("push_request_superseded")
             // The server stays saved and signed in, so its retirement must not go out.
             cancelRetirement(record, "restored")
             val token = tokenProvider.token()?.trim()?.takeIf { it.length in 64..512 }
@@ -293,14 +295,15 @@ class AndroidPushRegistrar internal constructor(
 
     /**
      * Sends the retirements still queued for removed or signed-out servers whose
-     * back-off has passed, a few at a time. They need no login, so this runs on
-     * app start and foreground, before anyone signs in, and when a push arrives:
+     * back-off has passed, a few at a time, and queues one for a removal that
+     * never got that far once its login is gone. They need no login, so this runs
+     * on app start and foreground, before anyone signs in, and when a push arrives:
      * [afterPush] skips the back-off, as a push from a retired server is the sign
      * it is still sending them. Never throws.
      */
     suspend fun retryPendingRetirements(afterPush: Boolean = false) {
         val pending = try {
-            installations().filter { it.retirement != null }
+            installations().filter { it.retirement != null || it.unqueuedRemoval }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -312,10 +315,12 @@ class AndroidPushRegistrar internal constructor(
             at - failed.atMs >= if (afterPush) RETIREMENT_MIN_RETRY_MS else retirementBackOffMs(failed.count)
         }
         if (due.isEmpty()) return
-        val permits = Semaphore(RETIREMENT_CONCURRENCY)
         coroutineScope {
             for (record in due) launch {
-                permits.withPermit { withTimeoutOrNull(PUSH_WORK_BUDGET_MS) { retryRetirement(record) } }
+                retirementPermits.withPermit {
+                    // Out of time is a failure like any other, so the next push waits out the back-off.
+                    withTimeoutOrNull(PUSH_WORK_BUDGET_MS) { retryRetirement(record) } ?: noteRetirementFailure(record.serverUrl)
+                }
             }
         }
     }
@@ -327,7 +332,14 @@ class AndroidPushRegistrar internal constructor(
         if (!lock.tryLock()) return
         try {
             val record = recordOf(found.serverUrl, found.deviceId) ?: return
-            val retirement = record.retirement ?: return
+            val retirement = record.retirement
+            if (retirement == null) {
+                // A removal that ran out of time before queueing its retirement, or one
+                // an older version could not send: with the login gone, nothing else will.
+                if (!record.unqueuedRemoval || registeredOwnerOf(record) != null) return
+                queueRetirement(record.serverUrl, record.deviceId, record.intent.serverId)?.let { sendRetirement(it) }
+                return
+            }
             if (record.generation != retirement.generation || record.intent.registration != null) {
                 cancelRetirement(record, "superseded")
                 return
@@ -347,6 +359,8 @@ class AndroidPushRegistrar internal constructor(
     private class RetirementFailure(val count: Int, val atMs: Long)
     /** Per server URL, in memory: failed retirements in a row and when the last one ran. A restart starts over. */
     private val retirementFailures = ConcurrentHashMap<String, RetirementFailure>()
+    /** Shared by every pass, so a foreground and a push retrying at once still send only a few. */
+    private val retirementPermits = Semaphore(RETIREMENT_CONCURRENCY)
     private val clock: () -> Long = System::currentTimeMillis
 
     /**
@@ -398,12 +412,14 @@ class AndroidPushRegistrar internal constructor(
                     } ?: stored
                 }
             }
-            RetirementOutcome.UNSUPPORTED, RetirementOutcome.KEPT -> retirementFailures.compute(record.serverUrl) { _, failed ->
-                RetirementFailure((failed?.count ?: 0) + 1, clock())
-            }
+            RetirementOutcome.UNSUPPORTED, RetirementOutcome.KEPT -> noteRetirementFailure(record.serverUrl)
         }
         recordRetirement(outcome.name.lowercase(), reason, record.generation)
         return SentRetirement(outcome, result)
+    }
+
+    private fun noteRetirementFailure(serverUrl: String) {
+        retirementFailures.compute(serverUrl) { _, failed -> RetirementFailure((failed?.count ?: 0) + 1, clock()) }
     }
 
     /** Drops [record]'s queued retirement while the store still holds it at that generation. */
@@ -432,6 +448,10 @@ class AndroidPushRegistrar internal constructor(
      */
     private val PushInstallation.removable: Boolean
         get() = refusal == null && (intent.registration != null || !acknowledged)
+
+    /** A removal began here ([markOwnerLeaving]) but queued no retirement. */
+    private val PushInstallation.unqueuedRemoval: Boolean
+        get() = ownerLeaving && retirement == null && removable
 
     /**
      * Marks [serverUrl]'s record as belonging to a login on its way out, so the

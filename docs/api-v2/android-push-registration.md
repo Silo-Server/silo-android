@@ -35,7 +35,10 @@ login. It is sent first. Only a server that answers 404 or 405 gets the session
 DELETE instead, at the same key and generation, while the registering login
 still exists. A retirement without a final answer stays queued and is sent again
 on app start, on every foreground and when an FCM message arrives, at most three
-at a time with an in-memory back-off. 200 naming the generation confirms the
+at a time with an in-memory back-off; an attempt that runs out of time counts as
+a failure. A removal that never queued its retirement, because it ran out of
+time waiting on that server or an older version made it, is queued then, once
+its login is gone. 200 naming the generation confirms the
 removal; 403, 409 and other refusals of the request drop the entry; 404 or 405
 keeps it for 30 days from queueing; anything else keeps it for up to 90 days.
 Signing in again, re-adding the server or undoing a sign-out that stopped
