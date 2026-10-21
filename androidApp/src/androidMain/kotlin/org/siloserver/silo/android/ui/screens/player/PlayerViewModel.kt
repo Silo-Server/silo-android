@@ -2634,10 +2634,13 @@ class PlayerViewModel(
             state = _uiState.value,
             qualityPair = pair,
         ) ?: return
-        // The move replaces a waiting Restore; once its plan plays, it is a quality change.
+        // The move is a pick: it replaces a waiting Restore, hides any pill and
+        // holds the controller until its plan plays (a quality change) or it fails.
         cancelBufferingRestore()
+        bufferingQualityController.onQualityPickSent()
         picksDuringNetworkMove.holdUntilDone(move)
         move.join()
+        if (playbackSessionManager.activeVideoQualityPair() != pair) bufferingQualityController.onQualityPickRefused()
     }
 
     /**
@@ -5895,8 +5898,9 @@ class PlayerViewModel(
             // Choosing a file drops a picked quality: a quality served by
             // another version would move playback straight off this one.
             sessionQualityOverride = null
-            // Once its plan plays, it is a quality change (adoptBufferingQualityPlan).
+            // A pick: once its plan plays, it is a quality change (adoptBufferingQualityPlan).
             cancelBufferingRestore()
+            bufferingQualityController.onQualityPickSent()
         }
         val currentVersion = state.versions.getOrNull(state.selectedVersionIndex)
         val carriedAudioIndex = desiredAudio
@@ -5954,6 +5958,8 @@ class PlayerViewModel(
             return
         }
         showVersionSwitchMessage(humanizeVersionSwitchFailure(rawReason))
+        // The pick failed; the restart below plays the version that was playing.
+        bufferingQualityController.onQualityPickRefused()
         val versions = _uiState.value.versions
         if (previousIndex in versions.indices) {
             startVersionPlayback(previousIndex, isRecovery = true)

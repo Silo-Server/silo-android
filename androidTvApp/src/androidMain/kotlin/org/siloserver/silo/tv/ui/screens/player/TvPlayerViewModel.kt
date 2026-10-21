@@ -2668,7 +2668,7 @@ class TvPlayerViewModel(
                                 message = result.message,
                             )
                         } else if (preserveCurrentPlaybackOnFailure) {
-                            _uiState.update { failTvReplacementLoad(it, result.message) }
+                            failReplacementLoad(result.message)
                         } else {
                             fail(result.message)
                         }
@@ -2677,11 +2677,11 @@ class TvPlayerViewModel(
                         episodeSelectionHandoffSlot.retainForRetry(
                             episodeSelectionHandoffLease,
                         )
-                        _uiState.update {
-                            if (preserveCurrentPlaybackOnFailure) {
-                                failTvReplacementLoad(it, SERVER_UNREACHABLE_MESSAGE)
-                            } else {
-                                nextUpTransitionGate.cancel()
+                        if (preserveCurrentPlaybackOnFailure) {
+                            failReplacementLoad(SERVER_UNREACHABLE_MESSAGE)
+                        } else {
+                            nextUpTransitionGate.cancel()
+                            _uiState.update {
                                 it.copy(
                                     isLoading = false,
                                     error = SERVER_UNREACHABLE_MESSAGE,
@@ -2704,12 +2704,21 @@ class TvPlayerViewModel(
                 episodeSelectionHandoffSlot.retainForRetry(episodeSelectionHandoffLease)
                 val message = "Unexpected error: ${e.message}"
                 if (preserveCurrentPlaybackOnFailure) {
-                    _uiState.update { failTvReplacementLoad(it, message) }
+                    failReplacementLoad(message)
                 } else {
                     fail(message)
                 }
             }
         }
+    }
+
+    /**
+     * A replacement load (a version switch) failed and the current version
+     * keeps playing: the viewer's pick was refused.
+     */
+    private fun failReplacementLoad(message: String) {
+        _uiState.update { failTvReplacementLoad(it, message) }
+        bufferingQualityController.onQualityPickRefused()
     }
 
     private fun startIntroAutoSkipObserver() {
@@ -6985,8 +6994,10 @@ class TvPlayerViewModel(
         // choice without switching anything.
         if (fileId == (state.selectedFileId ?: state.mediaFileId)) return
         if (state.fileVersions.none { it.fileId == fileId }) return
-        // Replaces a waiting Restore; once the version plays it is a quality change.
+        // A pick: it replaces a waiting Restore, hides any pill and holds the
+        // controller until the version plays (a quality change) or fails.
         cancelBufferingRestore()
+        bufferingQualityController.onQualityPickSent()
         restartSessionInPlace(fileId)
     }
 
