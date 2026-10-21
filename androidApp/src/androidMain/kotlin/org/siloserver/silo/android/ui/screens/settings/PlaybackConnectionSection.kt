@@ -15,7 +15,7 @@ import org.siloserver.silo.common.settings.ConnectionSpeedReading
 import org.siloserver.silo.common.settings.ConnectionSpeedSkip
 import org.siloserver.silo.common.settings.ConnectionSpeedText
 import org.siloserver.silo.common.settings.ConnectionSpeedUiState
-import org.siloserver.silo.common.settings.LearnedLimitText
+import org.siloserver.silo.common.settings.RateUnit
 import org.siloserver.silo.common.settings.formatRate
 import org.siloserver.silo.common.settings.connectionRate
 import org.siloserver.silo.common.settings.connectionSpeedText
@@ -72,8 +72,8 @@ fun PlaybackConnectionSection(
 @Composable
 private fun speedLabel(reading: ConnectionSpeedReading?, nowEpochMs: Long): String {
     reading ?: return stringResource(R.string.settings_connection_not_measured)
-    val text = connectionSpeedText(reading.kbps, reading.measuredAtEpochMs, nowEpochMs, reading.transport)
-    val rate = rateLabel(text.rate, text.unit)
+    val text = connectionSpeedText(reading.measuredAtEpochMs, nowEpochMs, reading.transport)
+    val rate = rateLabel(reading.kbps)
     val ago = text.age?.let { age ->
         when (age.unit) {
             ConnectionSpeedText.AgeUnit.JUST_NOW -> stringResource(R.string.settings_connection_age_just_now)
@@ -102,14 +102,15 @@ private fun speedLabel(reading: ConnectionSpeedReading?, nowEpochMs: Long): Stri
     }
 }
 
+/** [kbps] as Settings writes a rate: "850 kbps", "1.4 Mbps", "44 Mbps". */
 @Composable
-private fun rateLabel(kbps: Int): String = connectionRate(kbps).let { (rate, unit) -> rateLabel(rate, unit) }
-
-@Composable
-private fun rateLabel(rate: Double, unit: LearnedLimitText.RateUnit): String = stringResource(
-    if (unit == LearnedLimitText.RateUnit.MBPS) R.string.settings_rate_mbps else R.string.settings_rate_kbps,
-    formatRate(rate),
-)
+internal fun rateLabel(kbps: Int): String {
+    val (rate, unit) = connectionRate(kbps)
+    return stringResource(
+        if (unit == RateUnit.MBPS) R.string.settings_rate_mbps else R.string.settings_rate_kbps,
+        formatRate(rate),
+    )
+}
 
 @Composable
 private fun skipLabel(skip: ConnectionSpeedSkip): String = stringResource(

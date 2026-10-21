@@ -3,7 +3,7 @@ package org.siloserver.silo.common.settings
 import org.siloserver.silo.common.settings.ConnectionSpeedText.Age
 import org.siloserver.silo.common.settings.ConnectionSpeedText.AgeUnit
 import org.siloserver.silo.common.settings.ConnectionSpeedText.Transport
-import org.siloserver.silo.common.settings.LearnedLimitText.RateUnit
+import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -14,10 +14,19 @@ class ConnectionSpeedTextTest {
 
     @Test
     fun theSpecsExample() {
+        assertEquals(48.0 to RateUnit.MBPS, connectionRate(48_000))
         assertEquals(
-            ConnectionSpeedText(48.0, RateUnit.MBPS, Age(AgeUnit.MINUTES, 3), Transport.WIFI),
-            connectionSpeedText(48_000, minutesAgo(3), now, "wifi"),
+            ConnectionSpeedText(Age(AgeUnit.MINUTES, 3), Transport.WIFI),
+            connectionSpeedText(minutesAgo(3), now, "wifi"),
         )
+    }
+
+    @Test
+    fun ratesAreWrittenInTheLocaleWithoutGrouping() {
+        assertEquals("1.4", formatRate(1.4, Locale.US))
+        assertEquals("44", formatRate(44.0, Locale.US))
+        assertEquals("1000", formatRate(1000.0, Locale.US))
+        assertEquals("1,4", formatRate(1.4, Locale.GERMANY))
     }
 
     @Test
@@ -34,29 +43,29 @@ class ConnectionSpeedTextTest {
 
     @Test
     fun agesRoundDown() {
-        assertEquals(Age(AgeUnit.JUST_NOW, 0), connectionSpeedText(1, now - 59_999, now, null).age)
-        assertEquals(Age(AgeUnit.MINUTES, 1), connectionSpeedText(1, minutesAgo(1), now, null).age)
-        assertEquals(Age(AgeUnit.MINUTES, 59), connectionSpeedText(1, minutesAgo(60) + 1, now, null).age)
-        assertEquals(Age(AgeUnit.HOURS, 1), connectionSpeedText(1, minutesAgo(60), now, null).age)
-        assertEquals(Age(AgeUnit.HOURS, 23), connectionSpeedText(1, minutesAgo(24 * 60 - 1), now, null).age)
-        assertEquals(Age(AgeUnit.DAYS, 2), connectionSpeedText(1, minutesAgo(3 * 24 * 60 - 1), now, null).age)
+        assertEquals(Age(AgeUnit.JUST_NOW, 0), connectionSpeedText(now - 59_999, now, null).age)
+        assertEquals(Age(AgeUnit.MINUTES, 1), connectionSpeedText(minutesAgo(1), now, null).age)
+        assertEquals(Age(AgeUnit.MINUTES, 59), connectionSpeedText(minutesAgo(60) + 1, now, null).age)
+        assertEquals(Age(AgeUnit.HOURS, 1), connectionSpeedText(minutesAgo(60), now, null).age)
+        assertEquals(Age(AgeUnit.HOURS, 23), connectionSpeedText(minutesAgo(24 * 60 - 1), now, null).age)
+        assertEquals(Age(AgeUnit.DAYS, 2), connectionSpeedText(minutesAgo(3 * 24 * 60 - 1), now, null).age)
     }
 
     @Test
     fun aClockBehindTheMeasurementReadsJustNow() {
-        assertEquals(Age(AgeUnit.JUST_NOW, 0), connectionSpeedText(1, now + 120_000, now, null).age)
+        assertEquals(Age(AgeUnit.JUST_NOW, 0), connectionSpeedText(now + 120_000, now, null).age)
     }
 
     @Test
     fun anUnknownTimeHasNoAge() {
-        assertEquals(null, connectionSpeedText(48_000, null, now, "wifi").age)
+        assertEquals(null, connectionSpeedText(null, now, "wifi").age)
     }
 
     @Test
     fun transportsFollowTheContract() {
-        assertEquals(Transport.ETHERNET, connectionSpeedText(1, now, now, "ethernet").transport)
-        assertEquals(Transport.CELLULAR, connectionSpeedText(1, now, now, "cellular").transport)
-        assertEquals(Transport.OTHER, connectionSpeedText(1, now, now, "other").transport)
-        assertEquals(Transport.OTHER, connectionSpeedText(1, now, now, null).transport)
+        assertEquals(Transport.ETHERNET, connectionSpeedText(now, now, "ethernet").transport)
+        assertEquals(Transport.CELLULAR, connectionSpeedText(now, now, "cellular").transport)
+        assertEquals(Transport.OTHER, connectionSpeedText(now, now, "other").transport)
+        assertEquals(Transport.OTHER, connectionSpeedText(now, now, null).transport)
     }
 }

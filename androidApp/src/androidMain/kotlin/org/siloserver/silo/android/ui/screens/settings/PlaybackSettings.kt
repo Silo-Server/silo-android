@@ -15,10 +15,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
-import org.siloserver.silo.common.settings.LearnedLimitText
-import org.siloserver.silo.common.settings.formatRate
 import org.siloserver.silo.common.settings.UseProfileSettingsCopy
-import org.siloserver.silo.common.settings.learnedLimitText
+import org.siloserver.silo.common.settings.learnedLimitDate
 import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.settings.CellularQuality
@@ -415,11 +413,8 @@ private fun bufferingQualityModeLabel(mode: BufferingQualityMode): Int = when (m
 /** "Limited to 44 Mbps after buffering on Oct 17", in this device's locale and time zone. */
 @Composable
 private fun learnedLimitLabel(limit: PlaybackLearnedLimitV2): String {
-    val text = remember(limit) { learnedLimitText(limit.kbps, limit.observedAt) }
-    val rate = stringResource(
-        if (text.unit == LearnedLimitText.RateUnit.MBPS) R.string.settings_rate_mbps else R.string.settings_rate_kbps,
-        formatRate(text.rate),
-    )
-    return text.date?.let { stringResource(R.string.settings_learned_limit, rate, it) }
+    val rate = rateLabel(limit.kbps)
+    val date = remember(limit) { learnedLimitDate(limit.observedAt) }
+    return date?.let { stringResource(R.string.settings_learned_limit, rate, it) }
         ?: stringResource(R.string.settings_learned_limit_undated, rate)
 }
