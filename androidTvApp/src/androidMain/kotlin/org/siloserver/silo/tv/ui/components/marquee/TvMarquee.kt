@@ -52,6 +52,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -388,30 +389,41 @@ fun TvMarqueeServerCard(name: String, address: String, markUrl: String?, secure:
 /**
  * The code a person compares between the TV and their phone, large enough to
  * read from the couch. Plain text, no boxes: the space in `4821 7730` widens
- * to an en space to keep the groups apart. Inter's tabular, slashed-zero digits keep the columns even
- * and a 0 from passing for an O in older servers' letter codes; the system
- * monospace font has no slashed zero. Codes are server-generated and may be
- * longer, so the text shrinks to keep the row inside the card. Matches Apple
- * TV's `MarqueeCodeTiles` in rendered size (72pt there).
+ * to an en space to keep the groups apart. Inter's tabular, slashed-zero
+ * digits keep the columns even and a 0 from passing for an O in older
+ * servers' letter codes; the system monospace font has no slashed zero. Codes
+ * are server-generated and may be longer or wider, so the text shrinks to keep
+ * the row inside the card. Matches Apple TV's `MarqueeCodeTiles` in rendered
+ * size (72pt there).
  */
 @Composable
 fun TvMarqueeCodeTiles(code: String, modifier: Modifier = Modifier, maxWidth: Dp = 260.dp) {
     val text = code.uppercase()
-    // A character is at most about 0.7em wide; fontScale is dp per sp.
-    val fitSize = maxWidth.value / (text.length.coerceAtLeast(1) * 0.7f * LocalDensity.current.fontScale)
+    val shown = text.replace(' ', '\u2002')
+    val style = LocalTextStyle.current.copy(
+        color = MarqueeColors.Ink,
+        fontSize = 40.sp,
+        fontWeight = FontWeight.Bold,
+        fontFamily = InterFamily,
+        fontFeatureSettings = "tnum, zero",
+        textAlign = TextAlign.Center,
+    )
+    // Letters such as W and M are much wider than digits, so measure the code
+    // as drawn and scale it down to fit.
+    val measurer = rememberTextMeasurer()
+    val widthPx = with(LocalDensity.current) { maxWidth.toPx() }
+    val fontSize = remember(shown, style, widthPx) {
+        val measured = measurer.measure(shown, style, softWrap = false, maxLines = 1).size.width
+        if (measured <= widthPx) 40f else 40f * widthPx / measured
+    }
     // A code reads left to right in every locale.
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Text(
-            text.replace(' ', '\u2002'),
+            shown,
             modifier = modifier.clearAndSetSemantics { contentDescription = "Code: " + text.toList().joinToString(", ") },
-            color = MarqueeColors.Ink,
-            fontSize = minOf(40f, fitSize).sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = InterFamily,
             maxLines = 1,
             softWrap = false,
-            textAlign = TextAlign.Center,
-            style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum, zero"),
+            style = style.copy(fontSize = fontSize.sp),
         )
     }
 }
