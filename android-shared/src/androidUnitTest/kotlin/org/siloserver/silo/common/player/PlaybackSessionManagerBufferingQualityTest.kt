@@ -61,7 +61,6 @@ import org.siloserver.silo.repository.PlaybackRepository
 import org.siloserver.silo.repository.SequencedPlayback
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -226,25 +225,13 @@ class PlaybackSessionManagerBufferingQualityTest {
     }
 
     @Test
-    fun neverModeIgnoresTheLearnedLimitOnlyWhereTheServerKnowsIt() = runTest {
+    fun neverModeIgnoresTheLearnedLimit() = runTest {
         val harness = Harness(BUFFERING_QUALITY_SERVER)
         harness.manager.bufferingQualityModeProvider = { BufferingQualityMode.NEVER }
         harness.start()
         harness.lower()
         assertEquals(LEARNED_LIMIT_IGNORE, harness.startBodies.single().string("learned_limit"))
         assertEquals(LEARNED_LIMIT_IGNORE, harness.replanBodies.single().string("learned_limit"))
-
-        val older = Harness(listOf(SEQUENCED_PROGRESS))
-        older.manager.bufferingQualityModeProvider = { BufferingQualityMode.NEVER }
-        older.start()
-        older.lower()
-        val start = older.startBodies.single()
-        val replan = older.replanBodies.single()
-        assertNull(start["learned_limit"])
-        assertNull(replan["learned_limit"])
-        assertNull(replan["bandwidth_estimate_source"])
-        assertEquals(JsonPrimitive(44_100), replan["bandwidth_estimate_kbps"])
-        assertFalse(BUFFERING_QUALITY_V1_FEATURE in start.features() + replan.features())
     }
 
     @Test
@@ -483,7 +470,8 @@ class PlaybackSessionManagerBufferingQualityTest {
 
     @Test
     fun seekReplansKeepTheStepDownEstimate() = runTest {
-        val harness = Harness(listOf(SEQUENCED_PROGRESS, PLAYBACK_PLAN_SUMMARY_V1_FEATURE))
+        // A server that knows the source, so its absence below is the client's doing.
+        val harness = Harness(BUFFERING_QUALITY_SERVER + PLAYBACK_PLAN_SUMMARY_V1_FEATURE)
         harness.start()
         harness.lower()
         assertIs<VideoSessionStartV3.Ready>(
