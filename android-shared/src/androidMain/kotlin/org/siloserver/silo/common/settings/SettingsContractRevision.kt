@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.settings
 
+import org.siloserver.silo.model.settings.CellularQuality
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.network.ApiResult
@@ -67,12 +68,15 @@ class SettingsContractRevision(
      * Whether the server at [serverUrl] stores [key], as last read, or null
      * while that is unknown: by the manifest's keys for
      * [PlaybackSettingsKeys.ManifestDetectedKeys], else by
-     * [PlaybackSettingsKeys.minimumRevision]. Every other key is stored.
+     * [CellularQuality.minimumRevision]. Every other key is stored. A server
+     * that lacks a key answers a batched read naming it with 404 for the whole
+     * batch and refuses a write as unknown_setting, so the store and the
+     * flusher ask for, send, and clear such a key only once it is stored.
      */
     fun stores(serverUrl: String, key: String): Boolean? {
         val known = _known.value?.takeIf { it.serverUrl == serverUrl }
         if (key in PlaybackSettingsKeys.ManifestDetectedKeys) return known?.manifestKeys?.let { key in it }
-        val needed = PlaybackSettingsKeys.minimumRevision(key) ?: return true
+        val needed = CellularQuality.minimumRevision(key) ?: return true
         return known?.let { it.manifestRevision >= needed }
     }
 

@@ -73,9 +73,7 @@ class SettingsV2Api(
 
     /** The keys the server's settings manifest defines: `definitions[].key` of `GET /settings/contract`. */
     suspend fun contractKeys(): ApiResult<Set<String>> =
-        exchange<JsonObject, Set<String>>(block = { owner ->
-            client.get("/api/v2/settings/contract") { authScope(owner); requireSiloAuth() }
-        }) { manifest, _ ->
+        read("/api/v2/settings/contract") { manifest, _ ->
             requireNotNull(manifest["definitions"]).jsonArray
                 .mapTo(mutableSetOf()) { it.jsonObject.getValue("key").jsonPrimitive.content }
         }

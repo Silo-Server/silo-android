@@ -249,16 +249,6 @@ object PlaybackSettingsKeys {
     )
 
     /**
-     * The contract revision a server needs before it stores [key], or null for
-     * a key every server this app supports stores or one in
-     * [ManifestDetectedKeys]. A server older than that answers a batched read
-     * naming the key with 404 for the whole batch and refuses a write as
-     * unknown_setting, so the store and the flusher ask for, send, and clear
-     * such a key only once the revision is known to include it.
-     */
-    fun minimumRevision(key: String): Int? = CellularQuality.minimumRevision(key)
-
-    /**
      * The keys one control writes together, so going back to the profile's
      * value has to clear them together. Cellular quality is one preset picker
      * over two axes, and the intro-skip enum has the deprecated boolean the
