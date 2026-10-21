@@ -405,6 +405,35 @@ class PlaybackSessionManagerBufferingQualityTest {
     }
 
     @Test
+    fun anOwedRestoreClearRidesOnTheNextRequestOnce() = runTest {
+        val harness = Harness(BUFFERING_QUALITY_SERVER)
+        harness.start()
+        harness.lower()
+        // Restore met a replan in flight: its clear is owed, and a new attempt replaces it.
+        harness.manager.oweLearnedLimitClear()
+        assertTrue(harness.manager.learnedLimitClearOwed)
+        harness.start()
+        assertFalse(harness.manager.learnedLimitClearOwed)
+        harness.replan(classification = "subtitle_track_changed")
+        harness.start()
+
+        val (first, retried, later) = harness.startBodies.toList()
+        assertNull(first["learned_limit"])
+        assertEquals(LEARNED_LIMIT_CLEAR, retried.string("learned_limit"))
+        assertNull(later["learned_limit"])
+        assertNull(harness.replanBodies.last()["learned_limit"])
+
+        // Owed again, and the replan that replaces it carries it; a later Restore settles nothing twice.
+        harness.manager.oweLearnedLimitClear()
+        harness.replan(classification = "quality_changed", qualityPreference = "720p")
+        harness.replan(classification = "subtitle_track_changed")
+        val (pick, trackChange) = harness.replanBodies.takeLast(2)
+        assertEquals(LEARNED_LIMIT_CLEAR, pick.string("learned_limit"))
+        assertNull(trackChange["learned_limit"])
+        assertFalse(harness.manager.learnedLimitClearOwed)
+    }
+
+    @Test
     fun aQualityChangeTheControllerDidNotAskForDropsTheStepDownEstimate() = runTest {
         val harness = Harness(BUFFERING_QUALITY_SERVER)
         harness.start()

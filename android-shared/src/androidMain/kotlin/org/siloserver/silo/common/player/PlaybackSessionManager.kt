@@ -11,6 +11,7 @@ import org.siloserver.silo.domain.player.withKeptStepDownEstimate
 import org.siloserver.silo.common.player.probe.PlaybackBandwidthEstimates
 import org.siloserver.silo.model.playback.BANDWIDTH_ESTIMATE_SOURCE_PROBE
 import org.siloserver.silo.model.playback.BUFFERING_QUALITY_V1_FEATURE
+import org.siloserver.silo.model.playback.LEARNED_LIMIT_CLEAR
 import org.siloserver.silo.model.playback.LEARNED_LIMIT_IGNORE
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_SUMMARY_V1_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
@@ -366,6 +367,29 @@ open class PlaybackSessionManager(
         }
     }
 
+    /**
+     * The profile a Restore quality's `learned_limit: "clear"` is still owed
+     * for: the viewer undid a lowering, but its replan could not go out yet.
+     * The next start or replan of that profile carries it, once.
+     */
+    private val owedClearProfileId = AtomicReference<String?>()
+
+    /**
+     * Owes the playing profile a `learned_limit: "clear"`, for a Restore
+     * quality that must wait. The next start or replan carries it, and a
+     * Restore sent later settles it, so it goes out once whatever replaces it.
+     */
+    fun oweLearnedLimitClear() {
+        owedClearProfileId.set(activeVideoAttempt.get()?.profileId)
+    }
+
+    /** A `clear` is still owed: no request has carried it yet. */
+    val learnedLimitClearOwed: Boolean get() = owedClearProfileId.get() != null
+
+    /** The owed `clear`, taken: for a request of [profileId], else dropped. */
+    private fun takeOwedClear(profileId: String): String? =
+        LEARNED_LIMIT_CLEAR.takeIf { owedClearProfileId.getAndSet(null) == profileId }
+
     private suspend fun modeLearnedLimit(): String? = LEARNED_LIMIT_IGNORE.takeIf {
         ignoresLearnedLimits || bufferingQualityModeProvider() == BufferingQualityMode.NEVER
     }
@@ -555,7 +579,7 @@ open class PlaybackSessionManager(
                 // SequencedPlayback strips the source and learned_limit for a
                 // server without buffering_quality_v1; the estimate stays.
                 bandwidthEstimateSource = probeEstimateKbps?.let { BANDWIDTH_ESTIMATE_SOURCE_PROBE },
-                learnedLimit = modeLearnedLimit(),
+                learnedLimit = takeOwedClear(profileId) ?: modeLearnedLimit(),
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
                 allowAlternateVersions = allowAlternateVersions,
@@ -2610,8 +2634,14 @@ open class PlaybackSessionManager(
         sessionId: String,
         request: PlaybackReplanRequestV3,
     ): ApiResult<PlaybackDecisionResponseV3> {
+        val learnedLimit = when (request.learnedLimit) {
+            // A Restore sent itself: nothing is owed any more.
+            LEARNED_LIMIT_CLEAR -> LEARNED_LIMIT_CLEAR.also { owedClearProfileId.set(null) }
+            null -> activeVideoAttempt.get()?.profileId?.let(::takeOwedClear) ?: modeLearnedLimit()
+            else -> request.learnedLimit
+        }
         val outgoing = request
-            .copy(learnedLimit = request.learnedLimit ?: modeLearnedLimit())
+            .copy(learnedLimit = learnedLimit)
             .gatedForBufferingQuality(playbackRepository.playbackServerFeatures(request.playbackAttemptId))
         Log.i(
             TAG,

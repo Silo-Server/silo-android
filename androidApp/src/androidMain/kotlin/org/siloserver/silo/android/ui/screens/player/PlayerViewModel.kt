@@ -3984,8 +3984,10 @@ class PlayerViewModel(
      * lowering is never queued: a queued replan is re-driven without the
      * controller's fields, so while another replan, a seek recovery or a track
      * change is in flight it is refused, and the controller watches the plan
-     * again later. A Restore quality waits for that replan instead, and the
-     * kept estimate goes at once.
+     * again later. A Restore quality waits for that replan instead: the kept
+     * estimate goes at once, and the session manager owes its `clear` to the
+     * next request, so whatever replaces it (a pick, a version, Retry, the
+     * next title) carries it, once.
      */
     private fun requestBufferingQualityReplan(replan: BufferingQualityReplan) {
         Log.i(
@@ -4000,11 +4002,18 @@ class PlayerViewModel(
         if (busy && replan.learnedLimit == LEARNED_LIMIT_CLEAR && state.sessionId != null) {
             Log.i(TAG, "buffering_quality restore_waits_for_replan")
             playbackSessionManager.discardStepDownEstimate()
+            playbackSessionManager.oweLearnedLimitClear()
             bufferingRestoreJob?.cancel()
             bufferingRestoreJob = viewModelScope.launch {
                 while (bufferingReplanBlocked()) delay(BUFFERING_RESTORE_POLL_MS)
                 bufferingRestoreJob = null
-                requestBufferingQualityReplan(replan)
+                if (playbackSessionManager.learnedLimitClearOwed) {
+                    requestBufferingQualityReplan(replan)
+                } else {
+                    // A replan sent meanwhile carried the clear, and no estimate.
+                    Log.i(TAG, "buffering_quality restore_rode_on_replan")
+                    bufferingQualityController.onReplanFailed()
+                }
             }
             return
         }
@@ -4025,7 +4034,10 @@ class PlayerViewModel(
         recoveryJob?.isActive == true || serverSeekRecoveryInFlight ||
             mobileSubtitleTransactions.hasActiveTransaction
 
-    /** A quality change or other content supersedes a waiting Restore quality. */
+    /**
+     * A quality change or other content supersedes a waiting Restore quality;
+     * its owed `clear` rides on the request that replaces it.
+     */
     private fun cancelBufferingRestore() {
         bufferingRestoreJob?.cancel()
         bufferingRestoreJob = null
