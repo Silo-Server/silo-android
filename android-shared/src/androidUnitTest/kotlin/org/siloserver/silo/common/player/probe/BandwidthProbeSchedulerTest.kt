@@ -348,6 +348,25 @@ class BandwidthProbeSchedulerTest {
     }
 
     @Test
+    fun aNetworkValidatedAgainReadsAgainRatherThanJoinTheReadFromBefore() = runTest {
+        val harness = Harness(this, WIFI.copy(validated = false))
+        var reads = 0
+        harness.server.readStored = {
+            reads += 1
+            // The read sent before the network reached the server never answers.
+            if (reads == 1) awaitCancellation()
+            harness.storedReading(30_000, ageMs = 60_000)
+        }
+        harness.foreground()
+        assertEquals(1, reads)
+
+        harness.network.state.value = WIFI
+        runCurrent()
+        assertEquals(2, reads)
+        assertEquals(30_000, harness.scheduler.freshEstimateKbps())
+    }
+
+    @Test
     fun aStartOnAnotherServerSendsNoReading() = runTest {
         val harness = Harness(this)
         assertIs<ProbeOutcome.Measured>(harness.scheduler.runNow())

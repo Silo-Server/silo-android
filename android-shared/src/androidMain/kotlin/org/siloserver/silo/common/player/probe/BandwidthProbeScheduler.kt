@@ -536,6 +536,10 @@ class BandwidthProbeScheduler(
 
     /** The same network again, now validated: what it holds still applies. */
     private fun onConnectivityReturned() {
+        // A check still reading or waiting began before the network reached
+        // the server: read again rather than join it. Test speed, a running
+        // download and a result's POST carry on.
+        if (inFlight?.let { it.manual || it.testing || it.reporting } == false) cancelInFlight(ProbeOutcome.Interrupted)
         if (activeServer.value != null) check()
         _networkChanges.tryEmit(Unit)
     }
