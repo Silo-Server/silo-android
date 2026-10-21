@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
@@ -166,6 +167,26 @@ class BufferingQualityPlayerAdapter(
         this.playbackState = playbackState
         this.isPlaying = isPlaying
         updatePhase()
+    }
+
+    /**
+     * Listens to [player], both its state and its loads, seeded with where it
+     * already is. Returns the detach.
+     */
+    fun attach(player: ExoPlayer): () -> Unit {
+        player.addListener(this)
+        player.addAnalyticsListener(this)
+        seed(
+            playWhenReady = player.playWhenReady,
+            playbackState = player.playbackState,
+            isPlaying = player.isPlaying,
+            bufferedAheadMs = { player.totalBufferedDuration },
+            tunneling = { player.isTunnelingEnabled },
+        )
+        return {
+            player.removeListener(this)
+            player.removeAnalyticsListener(this)
+        }
     }
 
     /**

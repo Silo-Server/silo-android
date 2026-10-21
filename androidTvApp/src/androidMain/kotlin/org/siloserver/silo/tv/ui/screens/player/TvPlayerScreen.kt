@@ -1631,22 +1631,11 @@ fun TvPlayerScreen(
                 }
             }
             player.addAnalyticsListener(listener)
-            // The buffering-quality adapter hears the in-process player, both
-            // its state and its loads, seeded with where the player already is.
-            val bufferingAdapter = viewModel.bufferingQualityAdapter
-            player.addListener(bufferingAdapter)
-            player.addAnalyticsListener(bufferingAdapter)
-            bufferingAdapter.seed(
-                playWhenReady = player.playWhenReady,
-                playbackState = player.playbackState,
-                isPlaying = player.isPlaying,
-                bufferedAheadMs = { player.totalBufferedDuration },
-                tunneling = { player.isTunnelingEnabled },
-            )
+            // The buffering-quality adapter hears the in-process player.
+            val detachBuffering = viewModel.bufferingQualityAdapter.attach(player)
             onDispose {
                 player.removeAnalyticsListener(listener)
-                player.removeListener(bufferingAdapter)
-                player.removeAnalyticsListener(bufferingAdapter)
+                detachBuffering()
             }
         }
     }

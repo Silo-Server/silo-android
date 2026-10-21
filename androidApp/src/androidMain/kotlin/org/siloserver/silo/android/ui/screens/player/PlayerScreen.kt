@@ -1223,25 +1223,8 @@ fun PlayerScreen(
     // The buffering-quality controller reads the player that renders the plan:
     // its states for stalls, and its loads for whether data is still arriving.
     DisposableEffect(sessionPlayer) {
-        val player = sessionPlayer as? ExoPlayer
-        if (player == null) {
-            onDispose { }
-        } else {
-            val adapter = viewModel.bufferingQualityAdapter
-            player.addListener(adapter)
-            player.addAnalyticsListener(adapter)
-            adapter.seed(
-                playWhenReady = player.playWhenReady,
-                playbackState = player.playbackState,
-                isPlaying = player.isPlaying,
-                bufferedAheadMs = { player.totalBufferedDuration },
-                tunneling = { player.isTunnelingEnabled },
-            )
-            onDispose {
-                player.removeListener(adapter)
-                player.removeAnalyticsListener(adapter)
-            }
-        }
+        val detach = (sessionPlayer as? ExoPlayer)?.let(viewModel.bufferingQualityAdapter::attach)
+        onDispose { detach?.invoke() }
     }
 
     // Player event listener to feed state back to ViewModel + track video size for PiP
