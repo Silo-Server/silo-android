@@ -88,7 +88,7 @@ class SiloPlayerFactory(
     private val libassBridge: LibassBridge,
     private val playbackAnalytics: PlaybackAnalyticsListener,
     /** Times the video's requests for each plan's `throughput_kbps`. */
-    throughputMeter: PlaybackThroughputMeter? = null,
+    throughputMeter: PlaybackThroughputMeter,
 ) {
     val isTv: Boolean = TvModeDetector.isTv(context)
 

@@ -238,7 +238,7 @@ internal class TvSubtitlePlaybackAdoption internal constructor(
     val committed: CommittedSubtitle,
     val requestedSourcePositionSeconds: Double,
     /** The request carried the buffering-quality controller's own replan. */
-    val bufferingQuality: Boolean = false,
+    val bufferingQuality: Boolean,
     private val currentOwner: () -> Boolean,
     private val currentPendingIdentity: () -> SubtitleIdentity?,
 ) {

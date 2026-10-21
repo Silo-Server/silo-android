@@ -1229,7 +1229,6 @@ internal class PlaybackSessionManagerMobileSubtitleStagedReplanPort(
     ): ApiResult<MobileStagedSubtitleCandidate> = when (
         val result = manager.stageActiveVideoSessionReplan(
             classification = request.replanClassification(),
-            message = if (request.qualityChanged) "Changing quality." else "Applying subtitle selection.",
             positionSeconds = request.positionSeconds,
             audioTrackIndex = request.audioTrackIndex,
             subtitleTrackIndex = request.subtitleTrackIndex,
