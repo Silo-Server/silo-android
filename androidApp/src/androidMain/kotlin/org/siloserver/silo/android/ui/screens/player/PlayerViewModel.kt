@@ -4546,6 +4546,10 @@ class PlayerViewModel(
     private suspend fun recoverFromSubtitleAdoptionFailure(detail: String) {
         val state = _uiState.value
         showVersionSwitchMessage("Couldn't finish the subtitle change — restarting playback.")
+        // The restart ends this plan now, as any same-title restart does: the
+        // undo pill goes before the session stops, so a Restore can't replan
+        // the plan the stop is ending and lose its clear.
+        bufferingQualityController.onNewAttempt()
         val outgoingSession = retainedOwnedSessionId ?: state.sessionId
         if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) return
         loadContent(

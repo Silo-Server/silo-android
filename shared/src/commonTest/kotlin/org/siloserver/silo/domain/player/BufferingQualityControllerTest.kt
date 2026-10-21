@@ -482,6 +482,21 @@ class BufferingQualityControllerTest {
     }
 
     @Test
+    fun `a restart hides the undo pill so Restore cannot reach the plan it ends`() = runTest {
+        val controller = newController(BufferingQualityMode.ALWAYS)
+        longStall(controller)
+        controller.onPlanAdopted(plan("p2", deliveredKbps = 6_000))
+        assertTrue(controller.pill.value is BufferingQualityPill.Undo)
+        val sent = replans.size
+
+        controller.onNewAttempt()
+
+        assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
+        assertFalse(controller.selectRestore())
+        assertEquals(sent, replans.size)
+    }
+
+    @Test
     fun `never hides a visible prompt and records ignored triggers`() = runTest {
         val controller = newController(BufferingQualityMode.ASK)
         longStall(controller)
