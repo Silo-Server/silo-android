@@ -356,7 +356,7 @@ class BandwidthProbeSchedulerTest {
     }
 
     @Test
-    fun nothingIsReadOrTestedUnderABorrowedIdentity() = runTest {
+    fun noConnectionReadingOrTestUnderABorrowedIdentity() = runTest {
         val harness = Harness(this)
         harness.server.serve(probeTarget().let {
             BandwidthProbeTarget(it.url, it.scope.copy(credentialGenerationId = "hand-off"))

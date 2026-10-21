@@ -325,8 +325,8 @@ class PlaybackV2BandwidthProbeServer(
  * speed test → When to test* in the server repo's
  * `docs/design/2026-10-17-buffering-quality.md`.
  *
- * - **Readings**: a probe and a playback sample, per server, network and
- *   local route, current while younger than
+ * - **Readings**: a probe and a playback sample, kept for the active server,
+ *   network and local route, current while younger than
  *   [BandwidthProbeTarget.readingLifetimeMs]. The server's and this device's
  *   own are kept only within the estimate's bounds, and a time the server
  *   dated ahead of this device's clock counts as now.
@@ -338,8 +338,9 @@ class PlaybackV2BandwidthProbeServer(
  * - **Checks**: when Silo returns to the foreground, a server is signed in,
  *   the profile changes, the network changes (another network or interface,
  *   metering, VPN state, or this server's local route coming or going) or
- *   the network is validated again, and at no other time. None runs under a
- *   borrowed identity (a remote or Cast hand-off on the TV). A check
+ *   the network is validated again, and at no other time. Under a borrowed
+ *   identity (a remote or Cast hand-off on the TV) a check stops after the
+ *   capability read, before the server's readings or a test. A check
  *   reads the server's readings ([BandwidthProbeServer.storedReading]) at once,
  *   so a playback start in the first seconds already sends them. Only the
  *   quick test waits,
@@ -412,6 +413,8 @@ class BandwidthProbeScheduler(
 
     // Read from any thread by freshEstimateKbps; written on the scope.
     @Volatile private var cached: Cached? = null
+
+    // Written from any thread by playbackStarting; read on the scope.
     @Volatile private var lastPlaybackAtElapsedMs: Long? = null
 
     // Confined to the scope.

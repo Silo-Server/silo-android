@@ -65,9 +65,10 @@ fun bandwidthProbeDownloadUrl(probeUrl: String, mode: SpeedTestMode): String =
  *
  * A test that has not delivered its first byte within
  * [SpeedTestMeter.FIRST_BYTE_DEADLINE_MS] of being asked for is abandoned. From
- * the first byte on, each read waits at most until the current window ends, so
- * a window with no bytes still closes and counts. Returning from the body ends
- * the transfer: the download closes, and the server stops at its next write.
+ * the first byte on, a ticker closes each window on the clock while reads take
+ * bytes as they come, so a window with no bytes still closes and counts.
+ * Returning from the body ends the transfer: the download closes, and the
+ * server stops at its next write.
  */
 class BandwidthProbe(private val clock: () -> Long = { SystemClock.elapsedRealtime() }) {
 

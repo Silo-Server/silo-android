@@ -75,11 +75,11 @@ class SpeedTestMeter(private val mode: SpeedTestMode, targetKbps: Int?) {
             val bytes = openBytes
             closed += bytes
             openBytes = 0
-            val endMs = closed.size * WINDOW_MS
+            val windowEndMs = closed.size * WINDOW_MS
             if (closed.size > 1 && target != null && rateKbps(bytes, 1) >= target) {
                 targetWindowBytes = bytes
-                stopAtMs = endMs
-            } else if (endMs >= mode.maxMs) {
+                stopAtMs = windowEndMs
+            } else if (windowEndMs >= mode.maxMs) {
                 stopAtMs = mode.maxMs
             }
         }
