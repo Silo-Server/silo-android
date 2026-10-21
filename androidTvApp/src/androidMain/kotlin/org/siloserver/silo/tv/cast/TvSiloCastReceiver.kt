@@ -521,13 +521,15 @@ class TvSiloCastReceiver(
 
                 // The latest state only: a slow peer never holds up the others,
                 // and never receives a stale frame after a newer one.
-                // Authorization is checked again at the write: a state queued
-                // just before a handoff changed the TV's profile must not reach
-                // a controller that lost access.
+                // Checked again once the write is admitted: a state read
+                // under another profile, or queued before this controller lost
+                // access, is dropped instead of sent.
                 val stateWriter = launch {
-                    for (state in session.stateUpdates) {
-                        if (synchronized(this@TvSiloCastReceiver) { session.isAuthorized }) {
-                            session.send(SiloCastMessage.State(state))
+                    for (published in session.stateUpdates) {
+                        session.sendState(published.state) {
+                            synchronized(this@TvSiloCastReceiver) {
+                                session.isAuthorized && identityManager.activeIdentity?.generationId == published.generation
+                            }
                         }
                     }
                 }
@@ -728,7 +730,7 @@ class TvSiloCastReceiver(
             if (session.isAuthorized) "TV cast controller authorized" else "TV cast handoff required",
         )
         refreshStandbyState()
-        if (session.isAuthorized) session.offerState(currentState())
+        if (session.isAuthorized) session.offerState(snapshotState())
         return true
     }
 
@@ -828,7 +830,7 @@ class TvSiloCastReceiver(
                     session.ownIdentityProfileId = offer.profileId
                     DiagnosticsCastLogger.event("TV cast handoff skipped on own profile")
                     session.send(SiloCastMessage.HandoffReady(ready))
-                    session.offerState(currentState())
+                    session.offerState(snapshotState())
                     return@launch
                 }
                 var fullHandoff = false
@@ -950,7 +952,7 @@ class TvSiloCastReceiver(
         // other controllers.
         reconcileAuthorization()
         session.send(SiloCastMessage.HandoffReady(ready.copy(resumeToken = resumeToken)))
-        session.offerState(currentState())
+        session.offerState(snapshotState())
         // Replaces the old ready-without-launch timeout: with nothing playing,
         // the profile goes back after the idle limit. A player cancels this
         // when it opens.
@@ -1243,7 +1245,7 @@ class TvSiloCastReceiver(
         }
         refreshStandbyState()
         if (changes.isEmpty()) return
-        val state = currentState()
+        val state = snapshotState()
         changes.forEach { (controller, gained) ->
             if (gained) {
                 controller.offerState(state)
@@ -1291,9 +1293,17 @@ class TvSiloCastReceiver(
      */
     private suspend fun broadcastState() {
         if (authorizedControllers().isEmpty()) return
-        val state = currentState()
+        val state = snapshotState()
         authorizedControllers().forEach { it.offerState(state) }
     }
+
+    /** The playback state with the profile generation it was read under, checked again at the write. */
+    private suspend fun snapshotState(): PublishedState {
+        val generation = identityManager.activeIdentity?.generationId
+        return PublishedState(currentState(), generation)
+    }
+
+    private data class PublishedState(val state: SiloCastPlaybackState, val generation: String?)
 
     /**
      * Ends [generationId] after [delayMs]. With [keepIfLenderReturns] (the
@@ -1700,7 +1710,7 @@ class TvSiloCastReceiver(
         val commandBudget = TvSiloCastReceiverPolicy.CommandBudget()
 
         /** The latest state for this controller's writer; older frames are dropped. */
-        val stateUpdates = Channel<SiloCastPlaybackState>(Channel.CONFLATED)
+        val stateUpdates = Channel<PublishedState>(Channel.CONFLATED)
         var job: Job? = null
         var preparingClearJob: Job? = null
 
@@ -1715,8 +1725,22 @@ class TvSiloCastReceiver(
             isHandingOff = isHandingOff,
         )
 
-        fun offerState(state: SiloCastPlaybackState) {
+        fun offerState(state: PublishedState) {
             stateUpdates.trySend(state)
+        }
+
+        /** Writes [state] only if [admit] still holds once this connection's write lock is taken. */
+        suspend fun sendState(state: SiloCastPlaybackState, admit: () -> Boolean) {
+            val frame = SiloCastFrame.encode(
+                json.encodeToString(SiloCastMessage.serializer(), SiloCastMessage.State(state)).encodeToByteArray(),
+            )
+            writeMutex.withLock {
+                if (!admit()) return@withLock
+                withContext(Dispatchers.IO) {
+                    tls.output.write(frame)
+                    tls.output.flush()
+                }
+            }
         }
 
         suspend fun send(message: SiloCastMessage) {
