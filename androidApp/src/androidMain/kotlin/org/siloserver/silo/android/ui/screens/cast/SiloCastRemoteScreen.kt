@@ -896,7 +896,6 @@ private data class MenuEntry(
     val label: String,
     val selected: Boolean,
     val enabled: Boolean = true,
-    val isSectionHeader: Boolean = false,
     val onClick: () -> Unit = {},
 )
 
@@ -941,10 +940,9 @@ private fun RemoteSecondaryControls(
             )
         }
 
-        val hasSubtitleControls = playback.subtitleTracks.isNotEmpty() ||
-            playback.supportsSubtitleDelay == true ||
-            playback.supportsSubtitlePosition == true
-        if (hasSubtitleControls) {
+        // Subtitle delay and position stay on the TV's own player menu;
+        // from the couch the remote only switches the language.
+        if (playback.subtitleTracks.isNotEmpty()) {
             RemoteChipMenu(
                 icon = Icons.Outlined.ClosedCaption,
                 caption = "Subtitles",
@@ -972,52 +970,21 @@ private fun subtitleMenuEntries(
     playback: SiloCastPlaybackState,
     controller: SiloCastController,
 ): List<MenuEntry> = buildList {
-    if (playback.subtitleTracks.isNotEmpty()) {
-        add(MenuEntry(label = "Track", selected = false, isSectionHeader = true))
+    add(
+        MenuEntry(
+            label = "Off",
+            selected = playback.selectedSubtitleTrackId == null,
+            onClick = { controller.selectSubtitleTrack(null) },
+        ),
+    )
+    playback.subtitleTracks.forEach { track ->
         add(
             MenuEntry(
-                label = "Off",
-                selected = playback.selectedSubtitleTrackId == null,
-                onClick = { controller.selectSubtitleTrack(null) },
+                label = track.title,
+                selected = playback.selectedSubtitleTrackId == track.trackId,
+                onClick = { controller.selectSubtitleTrack(track.trackId) },
             ),
         )
-        playback.subtitleTracks.forEach { track ->
-            add(
-                MenuEntry(
-                    label = track.title,
-                    selected = playback.selectedSubtitleTrackId == track.trackId,
-                    onClick = { controller.selectSubtitleTrack(track.trackId) },
-                ),
-            )
-        }
-    }
-    if (playback.supportsSubtitleDelay == true) {
-        add(MenuEntry(label = "Delay", selected = false, isSectionHeader = true))
-        val presets = listOf(-2_000, -1_500, -1_000, -500, -250, 0, 250, 500, 1_000, 1_500, 2_000)
-        val current = playback.subtitleSyncMs ?: 0
-        val options = if (presets.contains(current)) presets else (presets + current).sorted()
-        options.forEach { ms ->
-            add(
-                MenuEntry(
-                    label = subtitleDelayLabel(ms),
-                    selected = current == ms,
-                    onClick = { controller.setSubtitleSyncMs(ms) },
-                ),
-            )
-        }
-    }
-    if (playback.supportsSubtitlePosition == true) {
-        add(MenuEntry(label = "Position", selected = false, isSectionHeader = true))
-        // tvOS SubtitlePositionPreset raw values; it rejects anything else.
-        listOf("bottom" to "Bottom", "lower-third" to "Lower Third", "top" to "Top").forEach { (id, label) ->
-            add(
-                MenuEntry(
-                    label = label,
-                    selected = playback.subtitlePosition == id,
-                    onClick = { controller.setSubtitlePosition(id) },
-                ),
-            )
-        }
     }
 }
 
@@ -1054,38 +1021,24 @@ private fun RemoteChipMenu(
         }
         SiloDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             entries.forEach { entry ->
-                if (entry.isSectionHeader) {
-                    Text(
-                        entry.label,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                    )
-                } else {
-                    SiloDropdownMenuItem(
-                        text = { Text(entry.label) },
-                        enabled = entry.enabled,
-                        leadingIcon = {
-                            if (entry.selected) {
-                                Icon(Icons.Filled.Check, contentDescription = "Selected", modifier = Modifier.size(18.dp))
-                            } else {
-                                Spacer(modifier = Modifier.size(18.dp))
-                            }
-                        },
-                        onClick = {
-                            expanded = false
-                            entry.onClick()
-                        },
-                    )
-                }
+                SiloDropdownMenuItem(
+                    text = { Text(entry.label) },
+                    enabled = entry.enabled,
+                    leadingIcon = {
+                        if (entry.selected) {
+                            Icon(Icons.Filled.Check, contentDescription = "Selected", modifier = Modifier.size(18.dp))
+                        } else {
+                            Spacer(modifier = Modifier.size(18.dp))
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        entry.onClick()
+                    },
+                )
             }
         }
     }
-}
-
-private fun subtitleDelayLabel(milliseconds: Int): String {
-    if (milliseconds == 0) return "0.0s"
-    return String.format(java.util.Locale.US, "%+.1fs", milliseconds / 1000.0)
 }
 
 private fun formatHMS(seconds: Double): String {
