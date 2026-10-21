@@ -87,6 +87,7 @@ import org.siloserver.silo.domain.player.BufferingQualityNoticeSlot
 import org.siloserver.silo.domain.player.BufferingQualityPill
 import org.siloserver.silo.domain.player.BufferingQualityReplan
 import org.siloserver.silo.domain.player.toBufferingQualityPlan
+import org.siloserver.silo.model.playback.LEARNED_LIMIT_CLEAR
 import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroAutoSkipState
@@ -811,6 +812,8 @@ class TvPlayerViewModel(
         // How long a coordinated source fallback may take before the original
         // refusal is shown after all.
         private const val ROOM_FALLBACK_WAIT_MS = 15_000L
+        // How often a waiting Restore quality looks again for its turn.
+        private const val BUFFERING_RESTORE_POLL_MS = 250L
         const val SHUFFLE_CONTINUE_FAILED = "Couldn't continue the shuffle."
         const val SHUFFLE_PICK_FAILED = "Couldn't pick another."
     }
@@ -1496,6 +1499,9 @@ class TvPlayerViewModel(
 
     /** The mount that plays the controller's own replan, until it is adopted. */
     private var bufferingReplanNonce: Long? = null
+
+    /** A Restore quality waiting for the replan or transaction in flight. */
+    private var bufferingRestoreJob: Job? = null
 
     /**
      * The adoption last handed to the controller. Every published plan that
@@ -5759,6 +5765,7 @@ class TvPlayerViewModel(
         // The viewer's own pick (the HUD menu or a phone remote): any buffering
         // pill hides and its answer clears. The controller's replans never come
         // through here.
+        cancelBufferingRestore()
         bufferingQualityController.onViewerQualityChange()
         val state = _uiState.value
         playbackMutationFence.beginReplan()
@@ -5893,7 +5900,9 @@ class TvPlayerViewModel(
      * transaction like a menu pick, so subtitle state survives it, but it is
      * not the viewer's quality change. A picked-rung lowering applies to this
      * playback only: the committed transaction moves [qualityOverride], and
-     * the saved preference never changes.
+     * the saved preference never changes. While another replan or
+     * transaction is in flight a lowering is refused, and the controller
+     * watches the plan again later; a Restore quality waits for its turn.
      */
     private fun requestBufferingQualityReplan(replan: BufferingQualityReplan) {
         Log.i(
@@ -5904,14 +5913,27 @@ class TvPlayerViewModel(
                 "learned_limit=${replan.learnedLimit}",
         )
         val state = _uiState.value
-        val blocked = when {
-            state.sessionId == null || state.playbackPlan == null -> "no_active_session"
-            state.isLoading || state.isNextUpTransitioning -> "load_in_flight"
-            transportMountGate.suppressPositionReports -> "mount_pending"
-            recoveryJob?.isActive == true -> "recovery_in_flight"
-            seekRecoveryQueue.hasInFlight -> "seek_recovery_in_flight"
-            subtitleTransactions.hasActiveTransaction -> "transaction_in_flight"
-            else -> null
+        val blocked = bufferingReplanBlockedReason(state)
+        if (blocked != null && replan.learnedLimit == LEARNED_LIMIT_CLEAR && state.sessionId != null) {
+            // A Restore quality waits for its turn, as on the phone: the kept
+            // estimate goes at once, and the session manager owes its `clear`
+            // to the next request, so whatever replaces it carries it, once.
+            Log.i(TAG, "buffering_quality restore_waits_for_replan reason=$blocked")
+            playbackSessionManager.discardStepDownEstimate()
+            playbackSessionManager.oweLearnedLimitClear()
+            bufferingRestoreJob?.cancel()
+            bufferingRestoreJob = viewModelScope.launch {
+                while (bufferingReplanBlockedReason(_uiState.value) != null) delay(BUFFERING_RESTORE_POLL_MS)
+                bufferingRestoreJob = null
+                if (playbackSessionManager.learnedLimitClearOwed) {
+                    requestBufferingQualityReplan(replan)
+                } else {
+                    // A replan sent meanwhile carried the clear, and no estimate.
+                    Log.i(TAG, "buffering_quality restore_rode_on_replan")
+                    bufferingQualityController.onReplanFailed()
+                }
+            }
+            return
         }
         if (blocked != null) {
             Log.i(TAG, "buffering_quality replan_not_sent reason=$blocked")
@@ -5930,6 +5952,26 @@ class TvPlayerViewModel(
             }
             subtitleTransactions.selectQuality(replan.qualityPreference, bufferingQuality = replan)
         }
+    }
+
+    /** Why the controller's replan can't go now, or null when it can. */
+    private fun bufferingReplanBlockedReason(state: UiState): String? = when {
+        state.sessionId == null || state.playbackPlan == null -> "no_active_session"
+        state.isLoading || state.isNextUpTransitioning -> "load_in_flight"
+        transportMountGate.suppressPositionReports -> "mount_pending"
+        recoveryJob?.isActive == true -> "recovery_in_flight"
+        seekRecoveryQueue.hasInFlight -> "seek_recovery_in_flight"
+        subtitleTransactions.hasActiveTransaction -> "transaction_in_flight"
+        else -> null
+    }
+
+    /**
+     * A quality change or other content supersedes a waiting Restore quality;
+     * its owed `clear` rides on the request that replaces it.
+     */
+    private fun cancelBufferingRestore() {
+        bufferingRestoreJob?.cancel()
+        bufferingRestoreJob = null
     }
 
     private fun showBufferingQualityNotice(notice: BufferingQualityNotice) {
@@ -5965,6 +6007,7 @@ class TvPlayerViewModel(
         bufferingAdoptionId = null
         pendingBufferingReloadNonce = null
         bufferingReplanNonce = null
+        cancelBufferingRestore()
         _bufferingAutoLimited.value = false
     }
 
@@ -6907,6 +6950,7 @@ class TvPlayerViewModel(
         if (fileId == (state.selectedFileId ?: state.mediaFileId)) return
         if (state.fileVersions.none { it.fileId == fileId }) return
         // To the buffering-quality controller the viewer's version is a quality change.
+        cancelBufferingRestore()
         bufferingQualityController.onViewerQualityChange()
         restartSessionInPlace(fileId)
     }
