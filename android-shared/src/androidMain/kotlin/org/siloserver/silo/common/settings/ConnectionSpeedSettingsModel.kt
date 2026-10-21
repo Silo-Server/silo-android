@@ -93,7 +93,6 @@ data class ConnectionSpeedUiState(
  * when Playback settings opens and after a network change while it is open
  * ([follow]), after **Reset** ([read]) and after **Test speed**.
  *
- * @param wallClock epoch milliseconds: a server time ahead of it counts as now.
  * @param hasCellularQuality whether this device has Cellular quality settings
  *   (the phone). The TV has none.
  */
@@ -101,7 +100,6 @@ class ConnectionSpeedSettingsModel(
     private val probe: BandwidthProbeScheduler,
     private val connection: PlaybackConnectionRepository,
     private val scope: CoroutineScope,
-    private val wallClock: () -> Long = { System.currentTimeMillis() },
     private val hasCellularQuality: Boolean = false,
 ) {
     private data class Local(val testing: Boolean = false, val message: ConnectionSpeedMessage? = null)
@@ -115,7 +113,8 @@ class ConnectionSpeedSettingsModel(
     val state: StateFlow<ConnectionSpeedUiState> =
         combine(server, probe.lastMeasurement, probe.networkUpdates, local) { settings, own, network, local ->
             val skipped = skipFor(network)
-            val now = wallClock()
+            // Epoch milliseconds: a server time ahead of it counts as now.
+            val now = System.currentTimeMillis()
             ConnectionSpeedUiState(
                 visible = settings?.connectionSpeed == true,
                 reading = newer(settings?.connection?.probe?.reading(now), own?.reading())

@@ -33,8 +33,8 @@ class SettingsContractRevision(
         val serverUrl: String,
         val manifestRevision: Int,
         /** The keys the manifest defines; null when they could not be read. */
-        val manifestKeys: Set<String>? = null,
-        val contractEtag: String = "",
+        val manifestKeys: Set<String>?,
+        val contractEtag: String,
     )
 
     private val mutex = Mutex()

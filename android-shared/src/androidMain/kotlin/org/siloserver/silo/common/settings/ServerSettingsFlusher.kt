@@ -265,7 +265,9 @@ class DefaultServerSettingsFlusher(
             return false
         }
         return try {
-            when (serverStores(key, op.serverUrl)) {
+            // Null while the manifest is unknown: held and retried. False: the
+            // server lacks the key and would refuse it as unknown_setting.
+            when (contractRevision.storesKey(op.serverUrl, key)) {
                 null -> failed("flush", key, "settings manifest unknown", retry = true)
                 false -> {
                     SiloLog.w(CATEGORY, TAG, "dropping $key: the server's settings manifest lacks it")
@@ -310,16 +312,6 @@ class DefaultServerSettingsFlusher(
                 failed("put", key, "network error: ${result.exception}", retry = true)
         }
     }
-
-    /**
-     * Whether the server at [serverUrl] stores [key], or null while that
-     * depends on a manifest not known yet ([SettingsContractRevision.stores]).
-     * A server that lacks the key refuses it as unknown_setting, so the write
-     * is dropped; while the manifest is unknown it is held and retried like a
-     * transient failure.
-     */
-    private suspend fun serverStores(key: String, serverUrl: String): Boolean? =
-        contractRevision.storesKey(serverUrl, key)
 
     /**
      * [encoded] in the shape the server at [serverUrl] accepts, or null when
