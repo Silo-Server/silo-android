@@ -150,11 +150,17 @@ open class PlaybackSessionManager(
      */
     private val throughputKbps: () -> Int? = { null },
     /**
-     * True for a manager whose plans play on another device (Cast): every
-     * request sends `learned_limit: ignore` in every mode, because the limits
-     * this device learned describe its own link, not the receiver's.
+     * The effective `playback.buffering_quality_mode`, read on every start and
+     * replan. In [BufferingQualityMode.NEVER] each request carries
+     * `learned_limit: ignore` (unless it names its own), so a limit learned by
+     * another profile on this device does not reach this one. Servers without
+     * `buffering_quality_v1` never see the field. Dependency injection passes
+     * the last mode this device saw for the active profile, so a start never
+     * goes out on the default while that mode is still loading. A manager
+     * whose plans play on another device (Cast) answers NEVER: the limits this
+     * device learned describe its own link, not the receiver's.
      */
-    private val ignoresLearnedLimits: Boolean = false,
+    private val bufferingQualityMode: suspend () -> BufferingQualityMode = { BufferingQualityMode.Default },
 ) {
     private data class ActiveVideoAttempt(
         val fileId: Int,
@@ -286,18 +292,6 @@ open class PlaybackSessionManager(
     private var pendingVideoPublication: PendingVideoPublication? = null
     private var contentResetInProgress = false
 
-    /**
-     * The effective `playback.buffering_quality_mode`, read on every start and
-     * replan. In [BufferingQualityMode.NEVER] each request carries
-     * `learned_limit: ignore` (unless it names its own), so a limit learned by
-     * another profile on this device does not reach this one. Servers without
-     * `buffering_quality_v1` never see the field. Dependency injection sets it
-     * to the last mode this device saw for the active profile, so a start
-     * never goes out on the default while that mode is still loading.
-     */
-    @Volatile
-    var bufferingQualityModeProvider: suspend () -> BufferingQualityMode = { BufferingQualityMode.Default }
-
     /** The plan identity a `plan_summary` names, kept after the plan stops being active. */
     private data class PlanSummaryIdentity(
         val playbackAttemptId: String,
@@ -390,9 +384,8 @@ open class PlaybackSessionManager(
     private fun takeOwedClear(profileId: String): String? =
         LEARNED_LIMIT_CLEAR.takeIf { owedClearProfileId.getAndSet(null) == profileId }
 
-    private suspend fun modeLearnedLimit(): String? = LEARNED_LIMIT_IGNORE.takeIf {
-        ignoresLearnedLimits || bufferingQualityModeProvider() == BufferingQualityMode.NEVER
-    }
+    private suspend fun modeLearnedLimit(): String? =
+        LEARNED_LIMIT_IGNORE.takeIf { bufferingQualityMode() == BufferingQualityMode.NEVER }
 
     /**
      * The step-down estimate the buffering-quality controller last lowered

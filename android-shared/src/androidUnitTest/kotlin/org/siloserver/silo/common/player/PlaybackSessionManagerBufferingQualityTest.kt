@@ -80,7 +80,11 @@ class PlaybackSessionManagerBufferingQualityTest {
         override suspend fun write(entries: List<PlaybackJournalEntry>) { this.entries = entries }
     }
 
-    private class Harness(capabilityFeatures: List<String>, throughputKbps: () -> Int? = { null }) {
+    private class Harness(
+        capabilityFeatures: List<String>,
+        mode: BufferingQualityMode = BufferingQualityMode.Default,
+        throughputKbps: () -> Int? = { null },
+    ) {
         val startBodies: MutableList<JsonObject> = CopyOnWriteArrayList()
         val replanBodies: MutableList<JsonObject> = CopyOnWriteArrayList()
         val routeEvents: MutableList<JsonObject> = CopyOnWriteArrayList()
@@ -144,6 +148,7 @@ class PlaybackSessionManagerBufferingQualityTest {
             ),
             tokenManager = identity,
             throughputKbps = throughputKbps,
+            bufferingQualityMode = { mode },
         )
 
         suspend fun start(): VideoSessionStartV3.Ready = assertIs(
@@ -226,8 +231,7 @@ class PlaybackSessionManagerBufferingQualityTest {
 
     @Test
     fun neverModeIgnoresTheLearnedLimit() = runTest {
-        val harness = Harness(BUFFERING_QUALITY_SERVER)
-        harness.manager.bufferingQualityModeProvider = { BufferingQualityMode.NEVER }
+        val harness = Harness(BUFFERING_QUALITY_SERVER, mode = BufferingQualityMode.NEVER)
         harness.start()
         harness.lower()
         assertEquals(LEARNED_LIMIT_IGNORE, harness.startBodies.single().string("learned_limit"))

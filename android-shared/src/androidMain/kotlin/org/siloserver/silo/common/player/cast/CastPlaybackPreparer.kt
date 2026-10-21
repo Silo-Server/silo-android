@@ -20,6 +20,7 @@ import org.siloserver.silo.common.player.seek.PlaybackSeekDecision
 import org.siloserver.silo.common.player.seek.decideSeek
 import org.siloserver.silo.common.player.seek.playerPositionForSource
 import org.siloserver.silo.common.player.seek.sourcePositionForPlayer
+import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.model.playback.CAPABILITY_EVIDENCE_DECLARED
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
@@ -81,8 +82,9 @@ class CastPlaybackPreparer(
             networkEvidenceProvider = networkEvidenceProvider,
             passthroughSuppression = PassthroughSuppressionScope.None,
             // The receiver is outside the buffering-quality controller: no
-            // estimate (the default), and none of this device's learned limits.
-            ignoresLearnedLimits = true,
+            // estimate (the default), and none of this device's learned limits,
+            // which every request ignores as in never mode.
+            bufferingQualityMode = { BufferingQualityMode.NEVER },
         )
 
         val result = castSession.startVideoSessionV3(
