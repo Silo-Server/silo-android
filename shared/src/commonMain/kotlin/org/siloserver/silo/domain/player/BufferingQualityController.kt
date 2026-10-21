@@ -288,7 +288,6 @@ class BufferingQualityController(
             // The playing plan's summary goes out now, because the controller
             // stops following it. Re-enabling starts from the next adoption.
             dropPlan(clock())
-            cancelPlanTimers()
         }
         this.enabled = enabled
     }
@@ -357,14 +356,12 @@ class BufferingQualityController(
         val now = clock()
         // An adopted plan starts with no outage: its transport is a new one.
         transportTrouble = false
-        current?.let { flushSummary(it, now) }
-        hidePill()
-        cancelPlanTimers()
+        val settled = pending
+        dropPlan(now)
         val state = PlanState(plan)
         current = state
 
-        val settled = pending ?: return
-        pending = null
+        settled ?: return
         if (!controllerInitiated) return
         when (settled.kind) {
             PendingKind.RESTORE -> Unit
@@ -517,7 +514,6 @@ class BufferingQualityController(
     fun onPlaybackStopped(): Unit {
         if (!enabled) return
         dropPlan(clock())
-        cancelPlanTimers()
     }
 
     /**
@@ -527,11 +523,7 @@ class BufferingQualityController(
      * they belong to the title. A version switch the viewer chooses is a
      * quality change as well: call [onViewerQualityChange] too.
      */
-    fun onNewAttempt(): Unit {
-        if (!enabled) return
-        dropPlan(clock())
-        cancelPlanTimers()
-    }
+    fun onNewAttempt(): Unit = onPlaybackStopped()
 
     /** "Lower quality" on the prompt. True when a prompt was answered. */
     fun selectLower(): Boolean {
@@ -598,7 +590,6 @@ class BufferingQualityController(
     /** Clears all per-title state, for when playback moves to different content. */
     fun reset(): Unit {
         dropPlan(clock())
-        cancelPlanTimers()
         answeredQuality = null
         cantLowerShown = false
         reofferNotBefore = null
@@ -799,11 +790,6 @@ class BufferingQualityController(
         state.stallLongestMs = max(state.stallLongestMs, durationMs)
     }
 
-    /** Emits [state]'s summary. The plan is over, so its numbers are final. */
-    private fun flushSummary(state: PlanState, now: Long) {
-        onPlanSummary(summaryOf(state, now))
-    }
-
     /**
      * [state]'s summary as of [now], leaving [state] as it is. Play still
      * running counts up to [now]. A stall still in progress counts like one
@@ -826,15 +812,15 @@ class BufferingQualityController(
         )
     }
 
-    /** Emits the playing plan's summary and forgets the plan and anything in flight. */
+    /**
+     * Emits the playing plan's summary, final now that the plan is over, and
+     * forgets the plan, anything in flight and its timers.
+     */
     private fun dropPlan(now: Long) {
-        current?.let { flushSummary(it, now) }
+        current?.let { onPlanSummary(summaryOf(it, now)) }
         current = null
         pending = null
         hidePill()
-    }
-
-    private fun cancelPlanTimers() {
         longStallJob?.cancel()
         longStallJob = null
         reevaluateJob?.cancel()
