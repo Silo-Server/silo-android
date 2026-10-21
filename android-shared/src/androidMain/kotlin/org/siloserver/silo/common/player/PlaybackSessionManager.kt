@@ -2154,7 +2154,6 @@ open class PlaybackSessionManager(
                             expected = active,
                             plan = validated.plan,
                             serverFeatures = result.data.serverFeatures,
-                            bandwidthEstimateKbps = request.bandwidthEstimateKbps,
                         )
                         if (next == null) {
                             return@withSettledVideoAttempt ApiResult.Error(
@@ -2163,6 +2162,7 @@ open class PlaybackSessionManager(
                                 message = "The active playback attempt changed while seek re-anchoring.",
                             )
                         }
+                        rememberPlan(next, request.bandwidthEstimateKbps)
                         emitRouteEvent(
                             PlaybackRouteEventV3(
                                 playbackAttemptId = next.playbackAttemptId,
@@ -2296,8 +2296,6 @@ open class PlaybackSessionManager(
         expected: ActiveVideoAttempt,
         plan: PlaybackPlanV3,
         serverFeatures: List<String>,
-        /** The estimate the reanchor request carried, for `plan_summary`. */
-        bandwidthEstimateKbps: Int?,
     ): ActiveVideoAttempt? {
         val current = activeVideoAttempt.get() ?: return null
         if (current.playbackAttemptId != expected.playbackAttemptId ||
@@ -2317,7 +2315,6 @@ open class PlaybackSessionManager(
             firstFrameReported = false,
         )
         return next.takeIf { activeVideoAttempt.compareAndSet(current, next) }
-            ?.also { rememberPlan(it, bandwidthEstimateKbps) }
     }
 
     /**
@@ -2473,7 +2470,6 @@ open class PlaybackSessionManager(
                             planAttemptKey = nextKey,
                             attemptedPlanKeys = attemptedKeys,
                             attemptCount = nextAttemptCount,
-                            bandwidthEstimateKbps = request.bandwidthEstimateKbps,
                         )
                         if (next == null) {
                             return@withSettledVideoAttempt ApiResult.Error(
@@ -2482,6 +2478,7 @@ open class PlaybackSessionManager(
                                 message = "The active playback attempt changed during seek recovery.",
                             )
                         }
+                        rememberPlan(next, request.bandwidthEstimateKbps)
                         passthroughSuppression.beginAttempt(nextKey)
                         emitRouteEvent(
                             PlaybackRouteEventV3(
@@ -2570,8 +2567,6 @@ open class PlaybackSessionManager(
         planAttemptKey: String,
         attemptedPlanKeys: List<String>,
         attemptCount: Int,
-        /** The estimate the recovery request carried, for `plan_summary`. */
-        bandwidthEstimateKbps: Int?,
     ): ActiveVideoAttempt? {
         val current = activeVideoAttempt.get() ?: return null
         if (current.playbackAttemptId != expected.playbackAttemptId ||
@@ -2596,7 +2591,6 @@ open class PlaybackSessionManager(
             firstFrameReported = false,
         )
         return next.takeIf { activeVideoAttempt.compareAndSet(current, next) }
-            ?.also { rememberPlan(it, bandwidthEstimateKbps) }
     }
 
     private fun mapOfNotNull(vararg values: Pair<String, String?>): Map<String, String> =
