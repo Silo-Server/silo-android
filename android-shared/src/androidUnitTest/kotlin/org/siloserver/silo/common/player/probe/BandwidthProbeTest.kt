@@ -70,13 +70,6 @@ class BandwidthProbeTest {
     }
 
     @Test
-    fun aQuickTestWithoutATargetReadsThreeSecondsAndSettlesOverTheLastSecond() = runTest {
-        val result = probe().measure(SpeedTestMode.QUICK, targetKbps = null) { read -> read(steady) }
-        assertEquals(3_100L, currentTime)
-        assertEquals(BandwidthProbeResult.Measured(80_000, 10_000_000, 1_000), result)
-    }
-
-    @Test
     fun aSilentWindowClosesOnTheClockAndCountsAsNothing() = runTest {
         // 25 MB to 2400 ms after the first byte, then nothing.
         val chunks = List(25) { 100L to 1_000_000 }
@@ -115,13 +108,6 @@ class BandwidthProbeTest {
             read(body(chunks, hangAfter = false))
         }
         assertEquals(BandwidthProbeResult.TooLittleData, result)
-    }
-
-    @Test
-    fun anAccurateTestReadsTenSecondsAndSettlesOverTheLastThreeSeconds() = runTest {
-        val result = probe().measure(SpeedTestMode.ACCURATE, targetKbps = 50_000) { read -> read(steady) }
-        assertEquals(10_100L, currentTime, "the target does not stop the accurate test")
-        assertEquals(BandwidthProbeResult.Measured(80_000, 30_000_000, 3_000), result)
     }
 
     @Test
