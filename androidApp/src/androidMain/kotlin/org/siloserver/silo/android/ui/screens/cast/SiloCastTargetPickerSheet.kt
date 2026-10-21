@@ -63,7 +63,9 @@ fun SiloCastTargetPickerSheet(
     serverRegistry: ServerRegistry = koinInject(),
 ) {
     val state by controller.state.collectAsState()
-    val activeServerId = serverRegistry.activeEntry.collectAsState().value?.id
+    val activeServer = serverRegistry.activeEntry.collectAsState().value
+    val activeServerId = activeServer?.id
+    val activeServerIdentity = activeServer?.verifiedServerId
     var searchTimedOut by remember { mutableStateOf(false) }
     // Remote-only mode keeps the sheet open through the connect (the row shows
     // a spinner, like Apple's picker) and dismisses once the session is up.
@@ -89,7 +91,7 @@ fun SiloCastTargetPickerSheet(
         state.targets
     } else {
         state.targets.filter {
-            AndroidServerRegistry.serverIdsMatch(it.serverId, activeServerId)
+            AndroidServerRegistry.serversMatch(it.serverId, it.serverIdentity, activeServerId, activeServerIdentity)
         }
     }
 
@@ -122,6 +124,7 @@ fun SiloCastTargetPickerSheet(
                             target = target,
                             launchRequest = launchRequest,
                             activeServerId = activeServerId,
+                            activeServerIdentity = activeServerIdentity,
                             isConnectingToThis = state.connectingDeviceId == target.deviceId,
                             onSelect = {
                                 if (launchRequest == null) {
@@ -202,12 +205,14 @@ private fun TargetRow(
     target: SiloCastTarget,
     launchRequest: SiloCastLaunchRequest?,
     activeServerId: String?,
+    activeServerIdentity: String?,
     isConnectingToThis: Boolean,
     onSelect: () -> Unit,
 ) {
     val needsUpdate = target.version < SiloCastProtocol.version
     val enabled = !needsUpdate
-    val targetsActiveServer = AndroidServerRegistry.serverIdsMatch(target.serverId, activeServerId)
+    val targetsActiveServer =
+        AndroidServerRegistry.serversMatch(target.serverId, target.serverIdentity, activeServerId, activeServerIdentity)
 
     Row(
         verticalAlignment = Alignment.CenterVertically,

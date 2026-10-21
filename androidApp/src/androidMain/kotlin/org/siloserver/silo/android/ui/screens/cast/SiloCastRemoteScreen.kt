@@ -222,6 +222,18 @@ fun SiloCastRemoteScreen(
         )
     }
 
+    state.pendingReplace?.let { pending ->
+        SiloConfirmDialog(
+            title = stringResource(R.string.remote_replace_title),
+            body = pending.message,
+            confirmLabel = pending.confirmLabel,
+            dismissLabel = stringResource(R.string.remote_replace_cancel),
+            destructive = false,
+            onConfirm = controller::confirmReplace,
+            onDismiss = controller::cancelReplace,
+        )
+    }
+
     if (showBatteryPrompt) {
         val dismissBatteryPrompt = {
             RemoteControlBatteryOptimization.markPromptShown(context)

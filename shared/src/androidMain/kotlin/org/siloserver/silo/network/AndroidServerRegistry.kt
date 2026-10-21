@@ -438,6 +438,18 @@ class AndroidServerRegistry(
          * are canonicalized; credentials and the remaining URL components are
          * retained exactly.
          */
+        /**
+         * Whether two server references name the same deployment: the same
+         * registry key, or the same verified deployment identity (silo-apple
+         * `ServerRegistry.serversMatch`).
+         */
+        fun serversMatch(lhsId: String?, lhsIdentity: String?, rhsId: String?, rhsIdentity: String?): Boolean {
+            if (serverIdsMatch(lhsId, rhsId)) return true
+            val lhs = lhsIdentity?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+            val rhs = rhsIdentity?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+            return lhs == rhs
+        }
+
         fun serverIdsMatch(lhs: String?, rhs: String?): Boolean {
             if (lhs.isNullOrEmpty() || rhs.isNullOrEmpty()) return false
             if (lhs == rhs) return true
