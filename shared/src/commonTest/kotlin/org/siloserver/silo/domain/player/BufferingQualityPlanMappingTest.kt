@@ -4,10 +4,9 @@ import org.siloserver.silo.model.playback.PlaybackAvailableQualityV3
 import org.siloserver.silo.model.playback.PlaybackDegradationWarning
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
-import org.siloserver.silo.model.playback.PlaybackPlanV3
+import org.siloserver.silo.model.playback.PlaybackExecutionPlan
+import org.siloserver.silo.model.playback.PlaybackRouteFamily
 import org.siloserver.silo.model.playback.PlaybackSourceDescriptorV3
-import org.siloserver.silo.model.playback.PlaybackStreamProtocol
-import org.siloserver.silo.model.playback.PlaybackStreamV3
 import org.siloserver.silo.model.playback.QUALITY_REDUCTION_UNAVAILABLE_WARNING
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -20,18 +19,17 @@ class BufferingQualityPlanMappingTest {
         recipeKbps: Int? = null,
         sourceKbps: Int = 0,
         warnings: List<String> = emptyList(),
-    ) = PlaybackPlanV3(
+    ) = PlaybackExecutionPlan(
         planId = "p1",
         delivery = PlaybackDelivery.ORIGINAL_HTTP,
-        stream = PlaybackStreamV3(url = "/api/v2/stream/s", protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE),
+        routeFamily = PlaybackRouteFamily.PLATFORM_NATIVE,
         effectiveRecipe = PlaybackEffectiveRecipeV3(bitrateKbps = recipeKbps),
-        source = PlaybackSourceDescriptorV3(bitrateKbps = sourceKbps),
+        sourceFile = PlaybackSourceDescriptorV3(bitrateKbps = sourceKbps),
         availableQualities = listOf(
             PlaybackAvailableQualityV3(label = "original", bitrateKbps = 63000, preservesSource = true),
             PlaybackAvailableQualityV3(label = "1080p-high", height = 1080, bitrateKbps = 10000),
         ),
         degradationWarnings = warnings.map { PlaybackDegradationWarning(code = it, message = it) },
-        decisionReason = "direct",
     )
 
     @Test
