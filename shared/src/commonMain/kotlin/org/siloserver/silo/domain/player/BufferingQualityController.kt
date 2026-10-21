@@ -254,9 +254,6 @@ class BufferingQualityController(
     /** The buffering pill waiting behind, or hidden by, a higher-priority pill. */
     private var deferredPill: PillKind? = null
 
-    /** The plan [deferredPill] belongs to; it is dropped if another plan is playing. */
-    private var deferredFor: PlanState? = null
-
     /** [deferredPill] was already shown, so it comes back with [pillRemainingMs]. */
     private var deferredResumes = false
 
@@ -333,13 +330,9 @@ class BufferingQualityController(
             obscurePill()
             return
         }
+        // A plan change hides the pill, so a deferred one is still this plan's.
         val kind = deferredPill ?: return
-        val owner = deferredFor
-        if (owner != null && owner === current) {
-            present(kind, resume = deferredResumes)
-        } else {
-            clearDeferred()
-        }
+        present(kind, resume = deferredResumes)
     }
 
     /** A plan is playing, or loading, under this controller. */
@@ -856,9 +849,7 @@ class BufferingQualityController(
     private fun showPill(kind: PillKind) {
         if (otherPillVisible) {
             deferredPill = kind
-            deferredFor = current
             deferredResumes = false
-            pillRemainingMs = PROMPT_SECONDS * 1000L
             return
         }
         present(kind, resume = false)
@@ -886,14 +877,12 @@ class BufferingQualityController(
         stopPillTimer()
         activePill = null
         deferredPill = kind
-        deferredFor = current
         deferredResumes = true
         if (_pill.value !is BufferingQualityPill.Hidden) _pill.value = BufferingQualityPill.Hidden
     }
 
     private fun clearDeferred() {
         deferredPill = null
-        deferredFor = null
         deferredResumes = false
     }
 
