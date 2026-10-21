@@ -25,10 +25,17 @@ import org.siloserver.silo.domain.player.SpeedTestMeter
  * which several counted requests were receiving counts once. Pauses inside a
  * request do count: a progressive request held open while the buffer is full
  * reads low, which keeps the figure a lower bound.
+ *
+ * A rate belongs to one network: the server files it under the connection of
+ * the request that reports it. So when the default network ([networkId])
+ * changes while a count runs, as seen at a transfer or at [takeKbps], that
+ * count reports nothing.
  */
 @OptIn(UnstableApi::class)
 class PlaybackThroughputMeter(
     private val clock: () -> Long = { SystemClock.elapsedRealtime() },
+    /** The default network, `PlaybackNetworkSnapshot.networkId`. */
+    private val networkId: () -> Long? = { null },
 ) : TransferListener {
     private class Request(var firstMs: Long) {
         var lastMs = firstMs
@@ -44,6 +51,14 @@ class PlaybackThroughputMeter(
     private val counted = mutableListOf<LongRange>()
     private var countedBytes = 0L
 
+    /** The network this count started on, and whether another was seen since. */
+    private var countNetwork: Long? = networkId()
+    private var networkChanged = false
+
+    private fun noteNetwork() {
+        if (networkId() != countNetwork) networkChanged = true
+    }
+
     override fun onTransferInitializing(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) = Unit
 
     override fun onTransferStart(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) = Unit
@@ -52,6 +67,7 @@ class PlaybackThroughputMeter(
         if (!isNetwork || bytesTransferred <= 0) return
         val now = clock()
         synchronized(lock) {
+            noteNetwork()
             val request = receiving[source]
             if (request == null) {
                 receiving[source] = Request(now)
@@ -71,10 +87,11 @@ class PlaybackThroughputMeter(
     /**
      * The rate since the last call, then starts over: kbps, at most
      * [SpeedTestMeter.MAX_KBPS], or null when no request received for
-     * [MIN_RECEIVING_MS] or the rate is under [SpeedTestMeter.MIN_KBPS], the
-     * bounds the server accepts, as for a speed test.
+     * [MIN_RECEIVING_MS], the rate is under [SpeedTestMeter.MIN_KBPS] (the
+     * bounds the server accepts, as for a speed test), or the network changed.
      */
     fun takeKbps(): Int? = synchronized(lock) {
+        noteNetwork()
         // A long request still open counts what it has so far and carries on
         // into the next count from its last byte.
         for (request in receiving.values) {
@@ -87,6 +104,10 @@ class PlaybackThroughputMeter(
         val kbps = if (ms < MIN_RECEIVING_MS) null else countedBytes * 8 / ms
         counted.clear()
         countedBytes = 0
+        val changed = networkChanged
+        countNetwork = networkId()
+        networkChanged = false
+        if (changed) return@synchronized null
         kbps?.takeIf { it >= SpeedTestMeter.MIN_KBPS }?.coerceAtMost(SpeedTestMeter.MAX_KBPS.toLong())?.toInt()
     }
 

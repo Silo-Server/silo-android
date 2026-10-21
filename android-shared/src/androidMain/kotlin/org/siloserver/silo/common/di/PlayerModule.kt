@@ -69,7 +69,10 @@ val playerModule = module {
     single { DefaultBandwidthMeter.Builder(androidContext()).build() }
 
     // Each plan's throughput_kbps: the player's video requests feed it, plan summaries read it.
-    single { org.siloserver.silo.common.player.PlaybackThroughputMeter() }
+    single {
+        val network = get<PlaybackNetworkEvidenceProvider>()
+        org.siloserver.silo.common.player.PlaybackThroughputMeter(networkId = { network.snapshot().networkId })
+    }
 
     @OptIn(UnstableApi::class)
     single<PlaybackNetworkEvidenceProvider> {

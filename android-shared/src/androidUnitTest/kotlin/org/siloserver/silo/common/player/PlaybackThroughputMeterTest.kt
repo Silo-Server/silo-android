@@ -85,6 +85,27 @@ class PlaybackThroughputMeterTest {
     }
 
     @Test
+    fun aCountThatSawTheNetworkChangeGivesNothing() {
+        var network: Long? = 1L
+        val meter = PlaybackThroughputMeter(clock = { now }, networkId = { network })
+        val progressive = Source()
+        fun bytes(atMs: Long, count: Int) { now = atMs; meter.onBytesTransferred(progressive, spec, true, count) }
+
+        // Wi-Fi to cellular and back while the plan plays: the rate is two networks'.
+        bytes(0, 1)
+        bytes(1_000, 1_000_000)
+        network = 2L
+        bytes(2_000, 1_000_000)
+        network = 1L
+        bytes(3_000, 1_000_000)
+        assertNull(meter.takeKbps())
+
+        // The next count is this network's alone.
+        bytes(5_000, 2_000_000)
+        assertEquals(8_000, meter.takeKbps())
+    }
+
+    @Test
     fun shortRequestsDoNotCountEvenWhenTheyAddUp() {
         // Three segments, each 4 MB in 500 ms: the burst rate, 64 Mbps.
         for (start in listOf(0L, 2_000L, 4_000L)) {
