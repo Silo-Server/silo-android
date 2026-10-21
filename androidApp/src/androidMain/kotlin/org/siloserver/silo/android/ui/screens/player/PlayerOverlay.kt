@@ -218,7 +218,7 @@ fun PlayerOverlay(
     val bufferingPill by viewModel.bufferingPill.collectAsState()
     val bufferingCountdownRun by viewModel.bufferingCountdownRun.collectAsState()
     val bufferingTimerRunning by viewModel.bufferingTimerRunning.collectAsState()
-    val bufferingNoticeKey by viewModel.bufferingNotice.collectAsState()
+    val bufferingNoticeKind by viewModel.bufferingNotice.collectAsState()
     // Hidden under Next Up, as the intro pill is.
     val bufferingPillShown = bufferingPill.isVisible && !state.showUpNext
     // Back on a buffering pill is consumed: Keep quality on the prompt, hide
@@ -227,10 +227,10 @@ fun PlayerOverlay(
     BackHandler(enabled = bufferingPillShown && !(introSkipState.isVisible && introPillAllowed)) {
         viewModel.onBufferingBack()
     }
-    val bufferingNotice = bufferingNoticeKey?.let { key ->
+    val bufferingNotice = bufferingNoticeKind?.let { kind ->
         PlayerNotice(
             stringResource(
-                when (key) {
+                when (kind) {
                     BufferingQualityNotice.LOWERED -> R.string.buffering_quality_lowered
                     BufferingQualityNotice.CANT_LOWER -> R.string.buffering_quality_cant_lower
                 },

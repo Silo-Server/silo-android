@@ -564,7 +564,7 @@ internal fun TvPlayerHud(
                     HudTab.Stats -> HudPaneViewport { HudStatsPane(stats) }
                     HudTab.Video -> HudVideoPane(
                         videoQualities = if (autoQualityLimited) {
-                            val limitedAuto = stringResource(R.string.player_quality_auto_limited)
+                            val limitedAuto = stringResource(R.string.buffering_quality_auto_limited)
                             videoQualities.map { option ->
                                 if (option.id == PLAYBACK_QUALITY_AUTO) option.copy(label = limitedAuto) else option
                             }

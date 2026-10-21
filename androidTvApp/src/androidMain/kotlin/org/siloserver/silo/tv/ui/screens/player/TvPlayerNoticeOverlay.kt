@@ -254,8 +254,8 @@ private fun TvBufferingQualityPill(
             )
             else -> TvBufferingPillCard(
                 title = null,
-                caption = stringResource(R.string.buffering_quality_undo_caption),
-                primaryLabel = stringResource(R.string.buffering_quality_undo_restore),
+                caption = stringResource(R.string.buffering_quality_lowered),
+                primaryLabel = stringResource(R.string.buffering_quality_restore),
                 primaryAction = TvBufferingPillAction.Restore,
                 onPrimary = onRestore,
                 secondaryLabel = null,

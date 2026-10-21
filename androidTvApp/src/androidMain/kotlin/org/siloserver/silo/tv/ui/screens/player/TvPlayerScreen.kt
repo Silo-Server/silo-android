@@ -381,7 +381,7 @@ fun TvPlayerScreen(
     val bufferingPill by viewModel.bufferingPill.collectAsState()
     val bufferingCountdownRun by viewModel.bufferingCountdownRun.collectAsState()
     val bufferingTimerRunning by viewModel.bufferingTimerRunning.collectAsState()
-    val bufferingNoticeKey by viewModel.bufferingNotice.collectAsState()
+    val bufferingNoticeKind by viewModel.bufferingNotice.collectAsState()
     val bufferingAutoLimited by viewModel.bufferingAutoLimited.collectAsState()
     // The buffering pill's focused action, if any: root Select acts on it.
     var bufferingPillFocusedAction by remember { mutableStateOf<TvBufferingPillAction?>(null) }
@@ -2635,11 +2635,11 @@ fun TvPlayerScreen(
             state.isLoading -> TvLoadingScreen()
         }
 
-        val bufferingPlayerNotice = when (bufferingNoticeKey) {
+        val bufferingPlayerNotice = when (bufferingNoticeKind) {
             BufferingQualityNotice.LOWERED ->
-                PlayerNotice(stringResource(R.string.buffering_quality_notice_lowered), NoticeTone.Info)
+                PlayerNotice(stringResource(R.string.buffering_quality_lowered), NoticeTone.Info)
             BufferingQualityNotice.CANT_LOWER ->
-                PlayerNotice(stringResource(R.string.buffering_quality_notice_cant_lower), NoticeTone.Info)
+                PlayerNotice(stringResource(R.string.buffering_quality_cant_lower), NoticeTone.Info)
             null -> null
         }
         TvPlayerOverlays(
