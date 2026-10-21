@@ -863,7 +863,7 @@ class TvSiloCastReceiver(
                     // fresh identity nobody can launch under is handed back; a
                     // reused one may still be playing.
                     if (!ready.reused) {
-                        identityManager.activeIdentity?.let { identityManager.end(it.generationId) }
+                        preparedGeneration?.let { identityManager.end(it) }
                         refreshAdvertisement()
                         reconcileAuthorization()
                     }
@@ -1211,21 +1211,22 @@ class TvSiloCastReceiver(
         )
         // Notices are sent after teardown and off this coroutine: a controller
         // that stopped reading must not hold up the stop or the hand-back.
-        // Each is dropped if a new handoff completed before its write.
+        // They go out only if this expiry ended its own profile, and each is
+        // dropped if a new handoff completed before its write.
         val notified = authorizedControllers()
         activePlayer?.takeIf { it.identityGeneration == generationId }?.let { player ->
             withContext(Dispatchers.Main.immediate) {
                 player.adapter.handle(SiloCastControlCommand(name = SiloCastControlCommand.Stop))
             }
         }
-        if (identityManager.end(generationId)) {
-            refreshAdvertisement()
-            reconcileAuthorization()
-        }
-        val after = identityManager.activeIdentity?.generationId
+        // A handoff that replaced the profile while playback stopped owns the
+        // TV now; nobody hears about the old profile.
+        if (!identityManager.end(generationId)) return
+        refreshAdvertisement()
+        reconcileAuthorization()
         notified.forEach { session ->
             scope?.launch {
-                runCatching { session.sendIf(error) { identityManager.activeIdentity?.generationId == after } }
+                runCatching { session.sendIf(error) { identityManager.activeIdentity == null } }
             }
         }
     }
