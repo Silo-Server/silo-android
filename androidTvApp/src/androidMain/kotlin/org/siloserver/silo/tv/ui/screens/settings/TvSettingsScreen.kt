@@ -105,7 +105,8 @@ import org.siloserver.silo.common.settings.CardPresentationSupport
 import org.siloserver.silo.common.settings.ConnectionSpeedSettingsModel
 import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.common.settings.UseProfileSettingsCopy
-import org.siloserver.silo.common.settings.learnedLimitDate
+import org.siloserver.silo.common.settings.bufferingQualityModeLabel
+import org.siloserver.silo.common.settings.learnedLimitLabel
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.CardCaption
 import org.siloserver.silo.model.settings.CardPosterSize
@@ -114,7 +115,6 @@ import org.siloserver.silo.model.settings.CardPresentationPreset
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.IntroSkipMode
-import org.siloserver.silo.network.apiv2.PlaybackLearnedLimitV2
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.settings.QualityChoices
 import org.siloserver.silo.model.settings.QualityPresets
@@ -126,6 +126,7 @@ import org.siloserver.silo.model.settings.SubtitlePositionPreset
 import org.siloserver.silo.model.settings.pointSize
 import org.siloserver.silo.tv.BuildConfig
 import org.siloserver.silo.tv.R
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvPrivacyPolicyDialog
 import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -1309,12 +1310,12 @@ private fun TvPlaybackSettingsPane(
                 // Intros. Hidden against a server without the setting.
                 if (state.bufferingQualityModeSupported) {
                     SettingsValueRow(
-                        label = stringResource(R.string.settings_buffering_quality_title),
+                        label = stringResource(CommonR.string.settings_buffering_quality_title),
                         value = stringResource(bufferingQualityModeLabel(state.bufferingQualityMode)),
                         onClick = { activePicker = PlaybackPicker.BufferingQualityMode },
                         focusRequester = bufferingQualityFocus,
                     )
-                    SettingsFooterText(text = stringResource(R.string.settings_buffering_quality_description))
+                    SettingsFooterText(text = stringResource(CommonR.string.settings_buffering_quality_description))
                 }
                 state.learnedLimit?.let { limit ->
                     // Leaves once the reset lands, so, as with a switch's "Use
@@ -1322,14 +1323,14 @@ private fun TvPlaybackSettingsPane(
                     // rather than lost.
                     SettingsValueRow(
                         label = learnedLimitLabel(limit),
-                        value = stringResource(R.string.settings_learned_limit_reset),
+                        value = stringResource(CommonR.string.settings_learned_limit_reset),
                         onClick = {
                             bufferingQualityFocus.requestFocus()
                             onResetLearnedLimit()
                         },
                     )
                     if (state.learnedLimitResetFailed) {
-                        SettingsFooterText(text = stringResource(R.string.settings_learned_limit_reset_failed))
+                        SettingsFooterText(text = stringResource(CommonR.string.settings_learned_limit_reset_failed))
                     }
                 }
                 SettingsValueRow(
@@ -1636,7 +1637,7 @@ private fun TvPlaybackSettingsPane(
                 state.bufferingQualityMode.wireValue,
             )
             TvSettingsPickerSheet(
-                title = stringResource(R.string.settings_buffering_quality_title),
+                title = stringResource(CommonR.string.settings_buffering_quality_title),
                 options = options,
                 selectedId = selectedId,
                 onSelect = { id ->
@@ -2370,23 +2371,6 @@ private fun introSkipModeLabel(mode: IntroSkipMode): Int = when (mode) {
     IntroSkipMode.NEVER -> R.string.settings_intro_skip_never
     IntroSkipMode.ASK -> R.string.settings_intro_skip_ask
     IntroSkipMode.ALWAYS -> R.string.settings_intro_skip_always
-}
-
-/** The label each buffering-quality mode is offered under. The copy is the spec's. */
-@StringRes
-private fun bufferingQualityModeLabel(mode: BufferingQualityMode): Int = when (mode) {
-    BufferingQualityMode.NEVER -> R.string.settings_buffering_quality_never
-    BufferingQualityMode.ASK -> R.string.settings_buffering_quality_ask
-    BufferingQualityMode.ALWAYS -> R.string.settings_buffering_quality_always
-}
-
-/** "Limited to 44 Mbps after buffering on Oct 17", in this TV's locale and time zone. */
-@Composable
-private fun learnedLimitLabel(limit: PlaybackLearnedLimitV2): String {
-    val rate = rateLabel(limit.kbps)
-    val date = remember(limit) { learnedLimitDate(limit.observedAt) }
-    return date?.let { stringResource(R.string.settings_learned_limit, rate, it) }
-        ?: stringResource(R.string.settings_learned_limit_undated, rate)
 }
 
 private enum class SubtitlePicker {

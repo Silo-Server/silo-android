@@ -4,21 +4,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import kotlinx.coroutines.delay
-import org.siloserver.silo.android.R
-import org.siloserver.silo.common.settings.ConnectionSpeedMessage
-import org.siloserver.silo.common.settings.ConnectionSpeedReading
-import org.siloserver.silo.common.settings.ConnectionSpeedSkip
-import org.siloserver.silo.common.settings.ConnectionSpeedText
+import org.siloserver.silo.common.R
 import org.siloserver.silo.common.settings.ConnectionSpeedUiState
-import org.siloserver.silo.common.settings.RateUnit
-import org.siloserver.silo.common.settings.formatRate
-import org.siloserver.silo.common.settings.connectionRate
-import org.siloserver.silo.common.settings.connectionSpeedText
+import org.siloserver.silo.common.settings.connectionRateLabel
+import org.siloserver.silo.common.settings.connectionSpeedLabel
+import org.siloserver.silo.common.settings.connectionSpeedMessageLabel
+import org.siloserver.silo.common.settings.connectionSpeedSkipLabel
+import org.siloserver.silo.common.settings.rememberMinuteClock
 
 /**
  * Playback → Connection (the buffering-quality spec's *Reporting and
@@ -33,22 +27,16 @@ fun PlaybackConnectionSection(
     onTestSpeed: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // "measured 3 minutes ago" moves on while the page is open.
-    val now by produceState(System.currentTimeMillis()) {
-        while (true) {
-            delay(60_000)
-            value = System.currentTimeMillis()
-        }
-    }
+    val now by rememberMinuteClock()
     SettingsSection(
         title = stringResource(R.string.settings_connection_title),
-        footer = state.autoBudgetKbps?.let { stringResource(R.string.settings_connection_budget, rateLabel(it)) },
+        footer = state.autoBudgetKbps?.let { stringResource(R.string.settings_connection_budget, connectionRateLabel(it)) },
         modifier = modifier,
     ) {
         val skipped = state.skipped
         SettingsRow(
             label = stringResource(R.string.settings_connection_speed),
-            description = if (skipped != null) skipLabel(skipped) else speedLabel(state.reading, now),
+            description = if (skipped != null) connectionSpeedSkipLabel(skipped) else connectionSpeedLabel(state.reading, now),
         ) {
             if (skipped == null) {
                 TextButton(onClick = onTestSpeed, enabled = !state.testing) {
@@ -60,71 +48,6 @@ fun PlaybackConnectionSection(
                 }
             }
         }
-        state.message?.takeIf { skipped == null }?.let { SettingsProse(body = messageLabel(it)) }
+        state.message?.takeIf { skipped == null }?.let { SettingsProse(body = connectionSpeedMessageLabel(it)) }
     }
-}
-
-/**
- * "48 Mbps · measured 3 minutes ago on Wi-Fi", "Faster than 115 Mbps · …" for
- * a lower bound, "Faster than 51 Mbps · seen during playback 2 hours ago" for
- * a playback sample, or "Not measured yet".
- */
-@Composable
-private fun speedLabel(reading: ConnectionSpeedReading?, nowEpochMs: Long): String {
-    reading ?: return stringResource(R.string.settings_connection_not_measured)
-    val text = connectionSpeedText(reading.measuredAtEpochMs, nowEpochMs, reading.transport)
-    val rate = rateLabel(reading.kbps)
-    val ago = text.age?.let { age ->
-        when (age.unit) {
-            ConnectionSpeedText.AgeUnit.JUST_NOW -> stringResource(R.string.settings_connection_age_just_now)
-            ConnectionSpeedText.AgeUnit.MINUTES -> pluralStringResource(R.plurals.settings_connection_age_minutes, age.count, age.count)
-            ConnectionSpeedText.AgeUnit.HOURS -> pluralStringResource(R.plurals.settings_connection_age_hours, age.count, age.count)
-            ConnectionSpeedText.AgeUnit.DAYS -> pluralStringResource(R.plurals.settings_connection_age_days, age.count, age.count)
-        }
-    }
-    if (reading.duringPlayback) {
-        return if (ago == null) stringResource(R.string.settings_connection_seen_during_playback_undated, rate)
-        else stringResource(R.string.settings_connection_seen_during_playback, rate, ago)
-    }
-    val transport = stringResource(
-        when (text.transport) {
-            ConnectionSpeedText.Transport.WIFI -> R.string.settings_connection_transport_wifi
-            ConnectionSpeedText.Transport.ETHERNET -> R.string.settings_connection_transport_ethernet
-            ConnectionSpeedText.Transport.CELLULAR -> R.string.settings_connection_transport_cellular
-            ConnectionSpeedText.Transport.OTHER -> R.string.settings_connection_transport_other
-        },
-    )
-    return when {
-        ago == null && reading.lowerBound -> stringResource(R.string.settings_connection_measured_lower_bound_undated, rate, transport)
-        ago == null -> stringResource(R.string.settings_connection_measured_undated, rate, transport)
-        reading.lowerBound -> stringResource(R.string.settings_connection_measured_lower_bound, rate, ago, transport)
-        else -> stringResource(R.string.settings_connection_measured, rate, ago, transport)
-    }
-}
-
-/** [kbps] as Settings writes a rate: "850 kbps", "1.4 Mbps", "44 Mbps". */
-@Composable
-internal fun rateLabel(kbps: Int): String {
-    val (rate, unit) = connectionRate(kbps)
-    return stringResource(
-        if (unit == RateUnit.MBPS) R.string.settings_rate_mbps else R.string.settings_rate_kbps,
-        formatRate(rate),
-    )
-}
-
-@Composable
-private fun skipLabel(skip: ConnectionSpeedSkip): String = stringResource(
-    when (skip) {
-        ConnectionSpeedSkip.CELLULAR -> R.string.settings_connection_skipped_cellular
-        ConnectionSpeedSkip.METERED -> R.string.settings_connection_skipped_metered
-    },
-)
-
-@Composable
-private fun messageLabel(message: ConnectionSpeedMessage): String = when (message) {
-    is ConnectionSpeedMessage.TryAgainIn ->
-        pluralStringResource(R.plurals.settings_connection_try_again, message.seconds, message.seconds)
-    ConnectionSpeedMessage.StopPlayback -> stringResource(R.string.settings_connection_stop_playback)
-    ConnectionSpeedMessage.Failed -> stringResource(R.string.settings_connection_failed)
-    ConnectionSpeedMessage.NotSaved -> stringResource(R.string.settings_connection_not_saved)
 }

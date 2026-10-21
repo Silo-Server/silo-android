@@ -5,8 +5,8 @@ import java.util.Locale
 
 /**
  * The parts of the Settings → Connection speed line, "48 Mbps · measured
- * 3 minutes ago on Wi-Fi", besides its rate ([connectionRate]). Each app
- * assembles the sentence from its own string resources.
+ * 3 minutes ago on Wi-Fi", besides its rate ([connectionRate]).
+ * [connectionSpeedLabel] assembles the sentence.
  */
 data class ConnectionSpeedText(
     /** How long ago it was measured; null when the time is unknown. */
