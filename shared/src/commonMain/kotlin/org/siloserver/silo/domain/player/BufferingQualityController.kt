@@ -268,7 +268,6 @@ class BufferingQualityController(
 
     /** The visible or deferred pill's time left. */
     private var pillRemainingMs: Long = 0L
-    private var pillStepMs: Long = 0L
     private var pillStepStartedAt: Long = 0L
     private var pillJob: Job? = null
 
@@ -876,10 +875,10 @@ class BufferingQualityController(
             while (pillRemainingMs > 0L) {
                 publishPill()
                 val step = pillRemainingMs - (secondsFor(pillRemainingMs) - 1) * 1000L
-                pillStepMs = step
                 pillStepStartedAt = clock()
                 delay(step)
-                pillRemainingMs -= step
+                // The time that passed, which a late resume makes longer than the step.
+                pillRemainingMs -= (clock() - pillStepStartedAt).coerceIn(0L, pillRemainingMs)
             }
             pillJob = null
             _timerRunning.value = false
@@ -898,8 +897,7 @@ class BufferingQualityController(
     private fun stopPillTimer() {
         val job = pillJob
         if (job != null && job.isActive) {
-            val elapsed = (clock() - pillStepStartedAt).coerceIn(0L, pillStepMs)
-            pillRemainingMs = (pillRemainingMs - elapsed).coerceAtLeast(0L)
+            pillRemainingMs -= (clock() - pillStepStartedAt).coerceIn(0L, pillRemainingMs)
             job.cancel()
         }
         pillJob = null
