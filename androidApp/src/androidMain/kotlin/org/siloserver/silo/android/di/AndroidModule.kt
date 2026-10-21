@@ -4,7 +4,6 @@ package org.siloserver.silo.android.di
 
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -30,7 +29,6 @@ import org.siloserver.silo.common.pairing.TlsPskPairingClientTransport
 import org.siloserver.silo.common.player.AudioCapabilityManager
 import org.siloserver.silo.common.player.AudioTrackManager
 import org.siloserver.silo.common.player.AndroidSubtitlePresentation
-import org.siloserver.silo.common.player.SiloPlayerFactory
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.audio.PassthroughSuppressionScope
@@ -47,7 +45,6 @@ import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.common.network.DataStoreCleartextConsentStore
 import org.siloserver.silo.common.settings.AndroidServerSettingsCache
-import org.siloserver.silo.common.settings.PlayerSettingsStore
 import android.content.SharedPreferences
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.EncryptedTokenManagerImpl
@@ -352,35 +349,6 @@ val androidModule = module {
     }
     single { AudioCapabilityManager(androidContext()) }
     single { PlaybackCapabilityDetector(androidContext(), get(), get(), get()) }
-    single {
-        SiloPlayerFactory(
-            context = androidContext(),
-            tokenManager = get(),
-            subtitleManager = get(),
-            httpDataSourceFactory = get(org.siloserver.silo.common.di.PLAYER_HTTP_DATA_SOURCE_FACTORY_QUALIFIER),
-            mediaAuthSession = get(),
-            bandwidthMeter = get(),
-            delayProcessor = get(),
-            subtitleOffsetHolder = get(),
-            libassBridge = get(),
-            playbackAnalytics = get(),
-            throughputMeter = get(),
-        )
-    }
-    // Video starts send the bandwidth probe's estimate, and plan summaries the
-    // video's throughput; the audiobook manager below does neither.
-    single {
-        val playerSettings = get<PlayerSettingsStore>()
-        PlaybackSessionManager(
-            get(), get(), get(),
-            bandwidthEstimates = get(),
-            throughputKbps = get<org.siloserver.silo.common.player.PlaybackThroughputMeter>()::takeKbps,
-        ).apply {
-            // The profile's mode as last stored on this device, which the
-            // store answers locally, so no start goes out before it is known.
-            bufferingQualityModeProvider = { playerSettings.bufferingQualityModeFlow.first() }
-        }
-    }
     single(AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER) {
         PlaybackSessionManager(
             playbackRepository = get(),

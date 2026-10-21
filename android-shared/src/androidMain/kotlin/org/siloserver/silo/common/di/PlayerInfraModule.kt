@@ -1,3 +1,5 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package org.siloserver.silo.common.di
 
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
@@ -49,6 +51,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.koin.android.ext.koin.androidContext
@@ -108,6 +111,37 @@ val playerInfraModule = module {
         )
     }
     single<PlaybackBandwidthEstimates> { get<BandwidthProbeScheduler>() }
+    // The video player and its session manager, the same on phone and TV: the
+    // subtitle manager each app registers carries the form factor's policy.
+    single {
+        org.siloserver.silo.common.player.SiloPlayerFactory(
+            context = androidContext(),
+            tokenManager = get(),
+            subtitleManager = get(),
+            httpDataSourceFactory = get(PLAYER_HTTP_DATA_SOURCE_FACTORY_QUALIFIER),
+            mediaAuthSession = get(),
+            bandwidthMeter = get(),
+            delayProcessor = get(),
+            subtitleOffsetHolder = get(),
+            libassBridge = get(),
+            playbackAnalytics = get(),
+            throughputMeter = get(),
+        )
+    }
+    // Video starts send the bandwidth probe's estimate, and plan summaries the
+    // video's throughput; the audiobook managers the apps register do neither.
+    single {
+        val playerSettings = get<PlayerSettingsStore>()
+        org.siloserver.silo.common.player.PlaybackSessionManager(
+            get(), get(), get(),
+            bandwidthEstimates = get(),
+            throughputKbps = get<org.siloserver.silo.common.player.PlaybackThroughputMeter>()::takeKbps,
+        ).apply {
+            // The profile's mode as last stored on this device, which the
+            // store answers locally, so no start goes out before it is known.
+            bufferingQualityModeProvider = { playerSettings.bufferingQualityModeFlow.first() }
+        }
+    }
     single {
         org.siloserver.silo.repository.SequencedPlayback(
             get(), get(), get(), get(),
