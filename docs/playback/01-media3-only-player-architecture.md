@@ -225,11 +225,12 @@ last buffering action, and the estimate the request that made the plan carried
 (a seek reanchor's own, for its plan). Every stall's time counts in the total
 and the longest; only stalls of 1 s or more count in `stall_count`. A pause,
 seek or reload ends a stall uncounted, an outage drops its time, and a stall
-still running when its plan ends counts. Before the plan's first frame or a
-pause, a reload or seek is part of the start's wait, which is timed from the
-first wait. An outage ends only when the plan's media data arrives again or
-playback runs; a playlist or subtitle load that succeeds, or the network
-coming back, does not end it. A failed plan is reported when the error shows.
+still running when its plan ends counts. Until the plan first plays, a reload
+or seek is part of the start's wait, which is timed from the first wait; a
+pause before then ends the current wait uncounted without ending that. An
+outage ends only when the plan's media data arrives again or playback runs; a
+playlist or subtitle load that succeeds, or the network coming back, does not
+end it, and an adopted plan starts with none. A failed plan is reported when the error shows.
 
 Only running out of data is a stall. Media3 also reports `STATE_BUFFERING`
 when its decoder falls behind and drops to the next keyframe, with seconds of
