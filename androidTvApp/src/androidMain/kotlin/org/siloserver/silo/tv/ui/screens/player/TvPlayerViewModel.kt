@@ -88,7 +88,6 @@ import org.siloserver.silo.domain.player.BufferingQualityPill
 import org.siloserver.silo.domain.player.BufferingQualityReplan
 import org.siloserver.silo.domain.player.toBufferingQualityPlan
 import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
-import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroAutoSkipState
 import org.siloserver.silo.domain.player.IntroSkipMode
@@ -814,8 +813,6 @@ class TvPlayerViewModel(
         private const val ROOM_FALLBACK_WAIT_MS = 15_000L
         const val SHUFFLE_CONTINUE_FAILED = "Couldn't continue the shuffle."
         const val SHUFFLE_PICK_FAILED = "Couldn't pick another."
-        // Published plans remembered for mount adoption (current, predecessors, rollbacks).
-        private const val BUFFERING_PLAN_MEMORY = 8
     }
 
     // Up-Next auto-play countdown ticker. Cancelled on dismiss / Play Now /
@@ -1512,27 +1509,6 @@ class TvPlayerViewModel(
      */
     private var pendingBufferingReloadNonce: Long? = null
 
-    /** A published protocol-v3 plan and the UI projection it was shown as. */
-    private class PublishedBufferingPlan(val shown: PlaybackExecutionPlan?, val plan: PlaybackPlanV3)
-
-    /** Recently published plans, newest last, so a mount can map the plan it shows. */
-    private val bufferingPlans = ArrayDeque<PublishedBufferingPlan>()
-
-    private fun rememberBufferingPlan(shown: PlaybackExecutionPlan?, plan: PlaybackPlanV3?) {
-        plan ?: return
-        bufferingPlans.addLast(PublishedBufferingPlan(shown, plan))
-        while (bufferingPlans.size > BUFFERING_PLAN_MEMORY) bufferingPlans.removeFirst()
-    }
-
-    /**
-     * The protocol-v3 plan behind the projection now in UI state: by
-     * instance first (a rollback restores the predecessor's own), then the
-     * newest publication with its plan_id.
-     */
-    private fun publishedBufferingPlan(shown: PlaybackExecutionPlan): PlaybackPlanV3? =
-        bufferingPlans.lastOrNull { it.shown === shown }?.plan
-            ?: bufferingPlans.lastOrNull { it.plan.planId == shown.planId }?.plan
-
     private val seekRequestChannel = Channel<Double>(capacity = Channel.BUFFERED)
     val seekRequests: Flow<Double> = seekRequestChannel.receiveAsFlow()
 
@@ -2044,7 +2020,6 @@ class TvPlayerViewModel(
             adoption.requestedSourcePositionSeconds,
         )
         val mountNonce = nextTypedSubtitleMountNonce(adoption.committed.identity)
-        rememberBufferingPlan(ready.session.playbackPlan, ready.plan)
         bufferingReplanNonce = mountNonce.takeIf { adoption.bufferingQuality }
         _uiState.update { state ->
             state.copy(
@@ -2500,7 +2475,6 @@ class TvPlayerViewModel(
                                 // invariant that lets exitSessionId read it
                                 // first.
                                 result.sessionId?.let { lastAdoptedSessionId = it }
-                                rememberBufferingPlan(result.playbackPlan, result.playbackPlanV3)
                                 if (requestRoom != null) {
                                     // A room session starts paused; only the
                                     // room's command after attach plays it.
@@ -3028,7 +3002,6 @@ class TvPlayerViewModel(
                         if (recoveryContentGeneration != contentLoadGeneration) return@launch
                         val transportMountNonce = nextTypedSubtitleMountNonce(returnedSubtitleIdentity)
                         val previousFileId = _uiState.value.mediaFileId
-                        rememberBufferingPlan(decision.session.playbackPlan, decision.plan)
                         _uiState.update {
                             it.copy(
                                 error = null,
@@ -4179,7 +4152,6 @@ class TvPlayerViewModel(
         lastAdoptedSessionId = decision.session.sessionId
         if (!isCurrentSeekRecovery(request)) return
         val transportMountNonce = nextTypedSubtitleMountNonce(returnedSubtitleIdentity)
-        rememberBufferingPlan(decision.session.playbackPlan, decision.plan)
         _uiState.update {
             if (!isCurrentSeekRecovery(request)) return@update it
             it.copy(
@@ -5893,15 +5865,6 @@ class TvPlayerViewModel(
         val shown = state.playbackPlan ?: return
         val adoptionId = "${shown.planId}#$nonce"
         bufferingAdoptionId = adoptionId
-        val plan = publishedBufferingPlan(shown)
-        if (plan == null) {
-            // Not a protocol-v3 plan this screen published: nothing to lower
-            // from, and the previous plan's stalls must not carry over.
-            Log.w(TAG, "buffering_quality plan_unmapped adoption_id=$adoptionId")
-            _bufferingAutoLimited.value = false
-            bufferingQualityController.onPlaybackStopped()
-            return
-        }
         // What the mounted plan was requested at, session pick included. The
         // session manager's pair comes first because it also carries a fixed
         // rung saved in Settings, which must never be treated as Auto.
@@ -5911,14 +5874,14 @@ class TvPlayerViewModel(
                 ?: state.videoQualityPreference
                 ?: sessionQualityPreference(),
         ) ?: PLAYBACK_QUALITY_AUTO
-        val adopted = plan.toBufferingQualityPlan(quality, adoptionId)
+        val adopted = shown.toBufferingQualityPlan(quality, adoptionId)
         Log.i(
             TAG,
-            "buffering_quality plan_adopted adoption_id=$adoptionId plan_id=${plan.planId} " +
+            "buffering_quality plan_adopted adoption_id=$adoptionId plan_id=${shown.planId} " +
                 "delivered_kbps=${adopted.deliveredKbps} quality=${adopted.quality} " +
-                "bandwidth_limit_kbps=${plan.bandwidthLimit?.kbps}",
+                "bandwidth_limit_kbps=${shown.bandwidthLimit?.kbps}",
         )
-        _bufferingAutoLimited.value = plan.bandwidthLimit != null && adopted.quality == PLAYBACK_QUALITY_AUTO
+        _bufferingAutoLimited.value = shown.bandwidthLimit != null && adopted.quality == PLAYBACK_QUALITY_AUTO
         if (!bufferingQualityController.hasPlan) playbackSessionManager.restartPlanThroughput()
         bufferingQualityController.onPlanAdopted(adopted, controllerInitiated)
         // After adoption: re-announces the player's phase to the new plan.
