@@ -1074,6 +1074,10 @@ fun TvPlayerScreen(
     }
 
     DisposableEffect(viewModel, watchParty) {
+        // The downTime of the Back press a pill answered. The rest of that
+        // press is the pill's, even after the hidden pill has recomposed: its
+        // UP must not reach the transport's Back below.
+        var pillBackDownTime = -1L
         val handler: (KeyEvent) -> Boolean = handler@{ event ->
             val playerState = viewModel.uiState.value
             if (event.keyCode == KeyEvent.KEYCODE_BACK) {
@@ -1081,6 +1085,10 @@ fun TvPlayerScreen(
                     "player bridge BACK action=${event.action} hudOpen=${playerState.hudOpen} " +
                         "showControls=${playerState.showControls} paused=${playerState.isPaused} " +
                         "quickSubs=$latestShowQuickSubtitlePicker cleanSeek=$cleanSeekRate"
+                }
+                if (event.downTime == pillBackDownTime) {
+                    if (event.action == KeyEvent.ACTION_UP) pillBackDownTime = -1L
+                    return@handler true
                 }
             }
             if (playerState.streamUrl == null || playerState.isLoading || playerState.error != null) {
@@ -1234,24 +1242,30 @@ fun TvPlayerScreen(
                 !state.isScrubbing
             ) {
                 // Both phases are consumed: a leaked ACTION_UP would reach the
-                // activity's back dispatcher.
+                // activity's back dispatcher. The latch keeps the UP once the
+                // pill has gone.
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                     viewModel.onDismissIntroPrompt()
+                    pillBackDownTime = event.downTime
                 }
                 return@handler true
             }
 
             // The buffering pill takes Back at the same rank: Keep quality on
             // the prompt, hide on the undo. The DOWN is consumed only when the
-            // pill took it; the rest of the press stays with the pill so it
-            // cannot reach the activity's back dispatcher.
+            // pill took it; the rest of the press stays with the pill, through
+            // the latch once the pill has gone, so it cannot hide the controls
+            // or reach the activity's back dispatcher.
             if (bufferingPill.isVisible &&
                 event.keyCode == KeyEvent.KEYCODE_BACK &&
                 cleanSeekRate == 0 &&
                 !state.isScrubbing
             ) {
                 if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return@handler true
-                if (viewModel.onBufferingBack()) return@handler true
+                if (viewModel.onBufferingBack()) {
+                    pillBackDownTime = event.downTime
+                    return@handler true
+                }
             }
 
             // D-pad directions deliberately do NOT touch the pill: the contract
