@@ -228,8 +228,9 @@ class BufferingQualityPlayerAdapter(
     /**
      * A new plan or mount. Forgets the seek and reload flags and the
      * data-arrival history; for a same-plan remount call [markReload] after
-     * this. Player state and transport trouble are kept, so the controller's
-     * view stays in step; [seed] again when the player instance changes.
+     * this. Transport trouble ends too: a new plan's transport starts with no
+     * outage. Player state is kept, so the controller's view stays in step;
+     * [seed] again when the player instance changes.
      *
      * Call it after `BufferingQualityController.onPlanAdopted`: it re-announces
      * the player's current phase to the new plan. A player that was already
@@ -242,6 +243,7 @@ class BufferingQualityPlayerAdapter(
         reloadMarked = false
         lastBufferedPositionMs = null
         lastDataAtMs = null
+        setTrouble(load = false, offline = false)
         when (phase) {
             Phase.STARVED -> announceWait(BufferingWaitCause.NETWORK)
             Phase.RUNNING -> sink.onPlaying()

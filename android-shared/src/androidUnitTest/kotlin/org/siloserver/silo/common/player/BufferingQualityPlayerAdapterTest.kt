@@ -240,6 +240,19 @@ class BufferingQualityPlayerAdapterTest {
     }
 
     @Test
+    fun aNewPlanStartsWithNoTransportTrouble() {
+        playing()
+        adapter.onLoadFailed(wasCanceled = false)
+        adapter.onNetworkAvailable(connected = false)
+        assertTrue(adapter.transportTroubleActive)
+
+        adapter.reset()
+
+        assertFalse(adapter.transportTroubleActive)
+        assertEquals(listOf("transport_start", "transport_end", "playing"), sink.events)
+    }
+
+    @Test
     fun aSlowLinkStillReceivingDataOwnsItsTransportStall() {
         adapter.sampleBuffer(nowMs = 0, bufferedPositionMs = 1_000)
         assertFalse(adapter.ownsStartupStall(stalled(), nowMs = 1_000, controllerEnabled = true))

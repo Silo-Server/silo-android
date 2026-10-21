@@ -386,7 +386,7 @@ class BufferingQualityControllerTest {
     }
 
     @Test
-    fun `a slow start stays one timed wait through a reload or seek until a pause`() = runTest {
+    fun `a slow start stays one timed wait through a reload or seek until the plan plays`() = runTest {
         val controller = newController(BufferingQualityMode.ASK)
         controller.onPlanAdopted(plan("p1"))
         controller.onWaiting()
@@ -401,15 +401,39 @@ class BufferingQualityControllerTest {
         at(16_000)
         assertEquals(BufferingQualityPill.Prompt(15), controller.pill.value, "the grace and a long stall from the first wait")
 
-        // A pause before the first frame ends the start: a reload after it is not the plan's wait.
+        // A pause before the first frame ends the current wait uncounted, but a
+        // seek and play after it are still the start's: timed from the first wait.
         controller.reset()
+        at(100_000)
         controller.onPlanAdopted(plan("p2"))
         controller.onWaiting()
-        at(20_000)
+        at(105_000)
         controller.onPause()
-        controller.onWaiting(BufferingWaitCause.RELOAD)
-        at(60_000)
+        at(108_000)
+        controller.onSeek()
+        controller.onWaiting(BufferingWaitCause.SEEK)
+        at(115_999)
         assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
+        at(116_000)
+        assertEquals(BufferingQualityPill.Prompt(15), controller.pill.value)
+    }
+
+    @Test
+    fun `an adopted plan starts with no outage`() = runTest {
+        val controller = newController(BufferingQualityMode.ASK)
+        controller.onPlanAdopted(plan("p1"))
+        controller.onPlaying()
+        at(125_000)
+        controller.onTransportErrorStart()
+        controller.onWaiting()
+        // A recovery replaces the plan; its transport has no outage.
+        at(130_000)
+        controller.onPlanAdopted(plan("p2"))
+        controller.onPlaying()
+        at(250_000)
+        controller.onWaiting()
+        at(256_000)
+        assertEquals(BufferingQualityPill.Prompt(15), controller.pill.value)
     }
 
     @Test

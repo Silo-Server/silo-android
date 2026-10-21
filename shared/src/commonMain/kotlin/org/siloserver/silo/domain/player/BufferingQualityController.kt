@@ -365,6 +365,8 @@ class BufferingQualityController(
         if (!enabled) return
         if (current?.plan?.planId == plan.planId) return
         val now = clock()
+        // An adopted plan starts with no outage: its transport is a new one.
+        transportTrouble = false
         current?.let { flushSummary(it, now) }
         hidePill()
         cancelPlanTimers()
@@ -427,9 +429,10 @@ class BufferingQualityController(
 
     /**
      * The player is waiting for [cause]; only a [BufferingWaitCause.NETWORK]
-     * wait can be a stall. Until the plan's first frame or a pause, a reload
-     * or seek wait counts as one too: a start the viewer means to play is the
-     * plan's wait, whatever the start reopens or seeks on the way. Any wait
+     * wait can be a stall. Until the plan first plays, a reload or seek wait
+     * counts as one too: a start the viewer means to play is the plan's wait,
+     * whatever the start reopens or seeks on the way, and a pause before then
+     * ends the current wait without ending that. Any wait
      * but a [BufferingWaitCause.PAUSE] one means the player is trying to play,
      * so the viewer has not paused: a pill frozen by a stop the viewer did not
      * make, such as a player error, runs again.
@@ -462,11 +465,10 @@ class BufferingQualityController(
         val state = current ?: return
         val now = clock()
         stopPlayedClock(state, now)
-        state.tracker.startPaused = true
         interrupt(state, now)
     }
 
-    /** The viewer seeked. A seek during the start leaves the start's wait running. */
+    /** The viewer seeked. A seek before the plan first plays leaves the start's wait running. */
     fun onSeek(): Unit {
         if (!enabled) return
         val state = current ?: return
@@ -1026,11 +1028,8 @@ class BufferingQualityController(
         /** The first wait before any frame; a start that never gets going is timed from here. */
         var firstWaitingAt: Long? = null
 
-        /** The viewer paused before the first frame, which ends the start. */
-        var startPaused = false
-
-        /** The plan has not played and the viewer has not paused it: its waits are the start's. */
-        val starting: Boolean get() = firstPlayingAt == null && !startPaused
+        /** The plan has not played yet: its reload and seek waits are the start's. */
+        val starting: Boolean get() = firstPlayingAt == null
 
         /** When the stall being timed started counting, or null when none is. */
         var stallStartedAt: Long? = null
