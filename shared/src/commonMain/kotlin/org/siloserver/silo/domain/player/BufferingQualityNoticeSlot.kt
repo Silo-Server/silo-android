@@ -12,7 +12,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The player's buffering notice: a display-only line that stays on screen for
- * [shownMs] in all. It waits while [slotFree] is false (the player is hidden,
+ * [NOTICE_MS] in all. It waits while [slotFree] is false (the player is hidden,
  * or a notice that outranks it holds the slot) and then shows for the time it
  * has left. A newer notice replaces it.
  */
@@ -20,7 +20,6 @@ class BufferingQualityNoticeSlot(
     private val scope: CoroutineScope,
     private val slotFree: Flow<Boolean>,
     private val clock: () -> Long,
-    private val shownMs: Long = NOTICE_MS,
 ) {
     private val _notice = MutableStateFlow<BufferingQualityNotice?>(null)
 
@@ -33,7 +32,7 @@ class BufferingQualityNoticeSlot(
         job?.cancel()
         _notice.value = null
         job = scope.launch {
-            var remaining = shownMs
+            var remaining = NOTICE_MS
             while (remaining > 0) {
                 slotFree.first { it }
                 _notice.value = notice

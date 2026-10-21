@@ -180,8 +180,7 @@ class BufferingQualityController(
     private val clock: () -> Long,
     private val onReplan: (BufferingQualityReplan) -> Unit,
     private val onNotice: (BufferingQualityNotice) -> Unit,
-    private val onPlanSummary: (BufferingPlanSummary) -> Unit = {},
-    private val promptSeconds: Int = PROMPT_SECONDS,
+    private val onPlanSummary: (BufferingPlanSummary) -> Unit,
 ) {
     companion object {
         const val STARTUP_GRACE_MS: Long = 10_000L
@@ -213,8 +212,6 @@ class BufferingQualityController(
     /** False while a pill is up but its timer is frozen by a pause. */
     private val _timerRunning = MutableStateFlow(false)
     val timerRunning: StateFlow<Boolean> = _timerRunning.asStateFlow()
-
-    val totalCountdownSeconds: Int get() = promptSeconds
 
     // ---- Settings and player state ----------------------------------------
 
@@ -861,7 +858,7 @@ class BufferingQualityController(
             deferredPill = kind
             deferredFor = current
             deferredResumes = false
-            pillRemainingMs = promptSeconds * 1000L
+            pillRemainingMs = PROMPT_SECONDS * 1000L
             return
         }
         present(kind, resume = false)
@@ -876,7 +873,7 @@ class BufferingQualityController(
         clearDeferred()
         activePill = kind
         if (!resume) {
-            pillRemainingMs = promptSeconds * 1000L
+            pillRemainingMs = PROMPT_SECONDS * 1000L
             if (kind == PillKind.PROMPT) promptShownAt = clock()
         }
         publishPill()

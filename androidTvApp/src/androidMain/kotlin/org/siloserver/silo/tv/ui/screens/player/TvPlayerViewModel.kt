@@ -1472,9 +1472,6 @@ class TvPlayerViewModel(
     /** False while the pill is up but its timer is frozen by a pause. */
     val bufferingTimerRunning: StateFlow<Boolean> = bufferingQualityController.timerRunning
 
-    /** Total seconds a fresh buffering pill runs for, for the fill's arithmetic. */
-    val bufferingTotalSeconds: Int = bufferingQualityController.totalCountdownSeconds
-
     /** Picture in picture: no pill or notice shows. */
     private val playerViewHidden = MutableStateFlow(false)
 

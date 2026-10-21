@@ -71,7 +71,6 @@ fun PlayerNoticeOverlay(
     notice: PlayerNotice?,
     modifier: Modifier = Modifier,
     bufferingPill: BufferingQualityPill = BufferingQualityPill.Hidden,
-    bufferingTotalSeconds: Int = BufferingQualityController.PROMPT_SECONDS,
     /** Bumped by the controller when the pill's timer (re)starts; re-anchors the fill. */
     bufferingCountdownRun: Int = 0,
     /** False while the timer is frozen by a pause — the fill holds where it is. */
@@ -101,7 +100,7 @@ fun PlayerNoticeOverlay(
         }
         BufferingQualityPillSlot(
             pill = bufferingPill,
-            totalSeconds = bufferingTotalSeconds,
+            totalSeconds = BufferingQualityController.PROMPT_SECONDS,
             countdownRun = bufferingCountdownRun,
             timerRunning = bufferingTimerRunning,
             onLower = onBufferingLower,

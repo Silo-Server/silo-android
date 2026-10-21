@@ -394,7 +394,6 @@ fun PlayerOverlay(
             PlayerNoticeOverlay(
                 notice = notice ?: aiFailureNotice ?: bufferingNotice,
                 bufferingPill = if (bufferingPillShown) bufferingPill else BufferingQualityPill.Hidden,
-                bufferingTotalSeconds = viewModel.bufferingTotalSeconds,
                 bufferingCountdownRun = bufferingCountdownRun,
                 bufferingTimerRunning = bufferingTimerRunning,
                 onBufferingLower = viewModel::onBufferingLower,

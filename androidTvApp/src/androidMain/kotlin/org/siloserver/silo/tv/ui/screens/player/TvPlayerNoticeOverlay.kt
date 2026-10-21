@@ -97,7 +97,6 @@ fun TvPlayerNoticeOverlay(
     bufferingCountdownRun: Int = 0,
     /** False while the pill is up but its timer is frozen by a pause. */
     bufferingTimerRunning: Boolean = false,
-    bufferingTotalSeconds: Int = BufferingQualityController.PROMPT_SECONDS,
     /** False while a scrub owns focus — see TvIntroAutoSkipBanner.mayTakeFocus. */
     bufferingPillMayTakeFocus: Boolean = true,
     onBufferingLower: () -> Unit = {},
@@ -129,7 +128,7 @@ fun TvPlayerNoticeOverlay(
             pill = bufferingPill,
             countdownRun = bufferingCountdownRun,
             timerRunning = bufferingTimerRunning,
-            totalSeconds = bufferingTotalSeconds,
+            totalSeconds = BufferingQualityController.PROMPT_SECONDS,
             mayTakeFocus = bufferingPillMayTakeFocus,
             onLower = onBufferingLower,
             onKeep = onBufferingKeep,

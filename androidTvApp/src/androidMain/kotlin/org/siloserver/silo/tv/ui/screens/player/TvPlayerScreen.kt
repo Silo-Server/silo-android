@@ -2654,7 +2654,6 @@ fun TvPlayerScreen(
             bufferingPill = bufferingPill,
             bufferingCountdownRun = bufferingCountdownRun,
             bufferingTimerRunning = bufferingTimerRunning,
-            bufferingTotalSeconds = viewModel.bufferingTotalSeconds,
             onBufferingLower = viewModel::onBufferingLower,
             onBufferingKeep = viewModel::onBufferingKeep,
             onBufferingRestore = viewModel::onBufferingRestore,
@@ -4186,7 +4185,6 @@ private fun TvPlayerOverlays(
     bufferingPill: BufferingQualityPill = BufferingQualityPill.Hidden,
     bufferingCountdownRun: Int = 0,
     bufferingTimerRunning: Boolean = false,
-    bufferingTotalSeconds: Int = 0,
     onBufferingLower: () -> Unit = {},
     onBufferingKeep: () -> Unit = {},
     onBufferingRestore: () -> Unit = {},
@@ -4208,7 +4206,6 @@ private fun TvPlayerOverlays(
                     bufferingPill = if (hudOpen || showNextUp) BufferingQualityPill.Hidden else bufferingPill,
                     bufferingCountdownRun = bufferingCountdownRun,
                     bufferingTimerRunning = bufferingTimerRunning,
-                    bufferingTotalSeconds = bufferingTotalSeconds,
                     // The same rule as the intro pill: the scrubber commits
                     // its seek on focus loss.
                     bufferingPillMayTakeFocus = introBannerMayTakeFocus,
