@@ -196,16 +196,16 @@ class PlaybackSessionManagerBufferingQualityTest {
         }
 
         /** Route events go out on the manager's IO scope. */
-        suspend fun awaitRouteEvent(event: String): JsonObject = withContext(Dispatchers.Default) {
-            withTimeout(5_000) {
+        suspend fun awaitRouteEvent(event: String): JsonObject = withContext(Dispatchers.IO) {
+            withTimeout(AWAIT_POLL_TIMEOUT_MS) {
                 while (routeEvents.none { it.string("event") == event }) delay(10)
                 routeEvents.first { it.string("event") == event }
             }
         }
 
         /** Waits until the journal holds exactly [count] unsent route events, and returns them. */
-        suspend fun awaitJournaledRouteEvents(count: Int): List<JsonObject> = withContext(Dispatchers.Default) {
-            withTimeout(5_000) {
+        suspend fun awaitJournaledRouteEvents(count: Int): List<JsonObject> = withContext(Dispatchers.IO) {
+            withTimeout(AWAIT_POLL_TIMEOUT_MS) {
                 while (journal.entries.sumOf { it.routeEvents.size } != count) delay(10)
                 journal.entries.flatMap { it.routeEvents }
             }
@@ -335,7 +335,8 @@ class PlaybackSessionManagerBufferingQualityTest {
         val harness = Harness(BUFFERING_QUALITY_SERVER)
         harness.start()
         harness.manager.emitPlanSummary(summary(PLAN_1.planId, deliveredKbps = 63_000))
-        // A later event: a summary, had one been sent, would have been launched first.
+        // A later event. Each goes out on its own IO launch, so this catches a
+        // summary the gate let through on most runs, not every run.
         harness.manager.reportActiveVideoEvent("marker")
         harness.awaitRouteEvent("marker")
         assertTrue(harness.routeEvents.none { it.string("event") == "plan_summary" })
@@ -556,3 +557,9 @@ class PlaybackSessionManagerBufferingQualityTest {
             getValue("diagnostics").jsonObject.mapValues { it.value.jsonPrimitive.content }
     }
 }
+
+/**
+ * Wall-clock backstop for the polling waits above. It turns a hang into a
+ * failure, not a latency assertion: a passing test settles in milliseconds.
+ */
+private const val AWAIT_POLL_TIMEOUT_MS = 30_000L
