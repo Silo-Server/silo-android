@@ -529,11 +529,7 @@ class SequencedPlayback(
         // A temporary identity's attempts never reach the disk, so nothing could replay this.
         if (load().any { it.attemptId == request.playbackAttemptId && it.isTemporary })
             return@withLock failure("playback_unavailable", "Remote playback keeps no telemetry for later.")
-        when (val journaled = journalRouteEvent(request, eventId)) {
-            is ApiResult.Success -> ApiResult.Success(Unit)
-            is ApiResult.Error -> journaled
-            is ApiResult.NetworkError -> journaled
-        }
+        journalRouteEvent(request, eventId).map { }
     }
 
     /**
