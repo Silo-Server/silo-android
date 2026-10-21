@@ -16,8 +16,10 @@ import kotlin.test.assertTrue
 
 /**
  * Behaviour of [BufferingQualityController] that the vendored conformance
- * vectors do not reach: pause freezes, pill deferral, Back, quality changes,
- * disabling, Watch Party suspension, summary stall numbers and `never`.
+ * vectors do not pin: the pill timer's exact remainder and its flows, the
+ * return values the UI routes on, a quality change clearing the answer,
+ * adoption identity, disabling and Watch Party suspension, a mode change on a
+ * showing prompt, summary stall numbers and `reset`.
  * `BufferingQualityVectorsTest` covers the rest.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -131,18 +133,6 @@ class BufferingQualityControllerTest {
         at(154_999)
         assertTrue(controller.pill.value.isVisible)
         at(155_000)
-        assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
-    }
-
-    @Test
-    fun `a deferred prompt is dropped when a new plan is adopted meanwhile`() = runTest {
-        val controller = newController(BufferingQualityMode.ASK)
-        controller.setOtherPillVisible(true)
-        longStall(controller)
-
-        at(135_000)
-        controller.onPlanAdopted(plan("p2"))
-        controller.setOtherPillVisible(false)
         assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
     }
 
@@ -362,7 +352,7 @@ class BufferingQualityControllerTest {
     }
 
     @Test
-    fun `a new attempt ends the plan and keeps the title's answer`() = runTest {
+    fun `a new attempt ends the plan and reset clears the title's answer`() = runTest {
         val controller = newController(BufferingQualityMode.ASK)
         longStall(controller)
         assertTrue(controller.selectKeep())
@@ -370,12 +360,6 @@ class BufferingQualityControllerTest {
         assertEquals(1, summaries.size)
 
         controller.onPlanAdopted(plan("p2"))
-        controller.onPlaying()
-        at(300_000)
-        controller.onWaiting()
-        at(306_000)
-        assertEquals(BufferingQualityPill.Hidden, controller.pill.value, "still answered at auto")
-
         controller.reset()
         controller.onPlanAdopted(plan("p3"))
         controller.onPlaying()
