@@ -107,6 +107,13 @@ class ConnectionSpeedSettingsModel(
     private val server = MutableStateFlow<PlaybackConnectionSettings?>(null)
     private val local = MutableStateFlow(Local())
 
+    /**
+     * Reads started, and the latest of them whose answer was shown (see
+     * [readConnection]). Confined to the main thread, where every caller runs.
+     */
+    private var readsStarted = 0
+    private var lastShownRead = 0
+
     /** The server's state as last read: null before the first read, or when one failed. */
     val settings: StateFlow<PlaybackConnectionSettings?> = server.asStateFlow()
 
@@ -139,8 +146,20 @@ class ConnectionSpeedSettingsModel(
     }
 
     /** Reads the connection; a failed read hides the rows it fed. */
-    suspend fun read() {
-        server.value = connection.settingsState()
+    suspend fun read() = readConnection(keepOnFailure = false)
+
+    /**
+     * Reads the connection and shows the answer, unless a read that started
+     * after this one was shown already, so a slow answer from before a Reset
+     * can't bring the limit back. With [keepOnFailure], a failed read keeps
+     * the rows.
+     */
+    private suspend fun readConnection(keepOnFailure: Boolean) {
+        val request = ++readsStarted
+        val settings = connection.settingsState()
+        if (request <= lastShownRead || (settings == null && keepOnFailure)) return
+        lastShownRead = request
+        server.value = settings
     }
 
     /**
@@ -164,7 +183,7 @@ class ConnectionSpeedSettingsModel(
                     else -> ConnectionSpeedMessage.Failed
                 }
                 // A read that fails keeps the rows, so the answer stays under them.
-                connection.settingsState()?.let { server.value = it }
+                readConnection(keepOnFailure = true)
             } finally {
                 local.update { Local(testing = false, message = message) }
                 (message as? ConnectionSpeedMessage.TryAgainIn)?.let(::expire)
