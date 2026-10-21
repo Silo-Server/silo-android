@@ -632,23 +632,6 @@ class SettingsViewModel(
     }
 
     /**
-     * Reads the learned limit for this device's connection, and the connection
-     * speed, now and after every network change until cancelled. The Playback
-     * page runs it while it is shown: a playback since the last visit can
-     * learn or clear a limit, and the page can stay in the back stack under
-     * the player. The limit row shows only when the server advertises
-     * `buffering_quality_v1` and has a limit stored; a failed read hides it.
-     */
-    suspend fun followPlaybackConnection() {
-        connectionSpeed?.follow()
-    }
-
-    /** Settings → Playback → Connection → Test speed. */
-    fun testConnectionSpeed() {
-        connectionSpeed?.testSpeed()
-    }
-
-    /**
      * Forgets the learned limit, then reads the connection again so the row
      * goes and the Connection group's Auto budget, which the limit capped,
      * catches up.

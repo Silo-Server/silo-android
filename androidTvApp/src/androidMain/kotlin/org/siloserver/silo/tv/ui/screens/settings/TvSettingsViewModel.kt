@@ -818,17 +818,6 @@ class TvSettingsViewModel(
     }
 
     /**
-     * Reads the learned limit for this device's connection, and the connection
-     * speed, now and after every network change until cancelled. The screen
-     * runs it while it is shown: a playback since the last visit can learn or
-     * clear a limit. The limit row shows only when the server advertises
-     * `buffering_quality_v1` and has a limit stored; a failed read hides it.
-     */
-    suspend fun followPlaybackConnection() {
-        connectionSpeed?.follow()
-    }
-
-    /**
      * Forgets the learned limit, then reads the connection again so the row
      * goes and the Connection group's Auto budget, which the limit capped,
      * catches up.

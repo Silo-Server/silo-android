@@ -128,7 +128,10 @@ fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit
     val seekIntervals by viewModel.seekIntervals.state.collectAsState()
     val connectionSpeed = viewModel.connectionSpeed?.state?.collectAsState()?.value
     val context = LocalContext.current
-    LaunchedEffect(viewModel) { viewModel.followPlaybackConnection() }
+    // Re-reads the learned limit and connection speed while the page shows, and
+    // after a network change: a playback since the last visit can change them,
+    // and the page can stay in the back stack under the player.
+    LaunchedEffect(viewModel) { viewModel.connectionSpeed?.follow() }
     LaunchedEffect(state.playbackOverridesReset) {
         val landed = state.playbackOverridesReset ?: return@LaunchedEffect
         Toast.makeText(context, UseProfileSettingsCopy.notice(landed), Toast.LENGTH_SHORT).show()
@@ -164,7 +167,7 @@ fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit
         // Under Streaming, whose buffering and learned-limit rows it explains.
         if (connectionSpeed?.visible == true) {
             item(key = "connection") {
-                PlaybackConnectionSection(state = connectionSpeed, onTestSpeed = viewModel::testConnectionSpeed)
+                PlaybackConnectionSection(state = connectionSpeed, onTestSpeed = { viewModel.connectionSpeed?.testSpeed() })
             }
         }
         item(key = "cellular") {
