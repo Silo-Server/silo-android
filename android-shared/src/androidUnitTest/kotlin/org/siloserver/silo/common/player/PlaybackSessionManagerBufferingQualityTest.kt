@@ -305,6 +305,35 @@ class PlaybackSessionManagerBufferingQualityTest {
     }
 
     @Test
+    fun aForgottenReplacementLendsNoIdentityToTheNextAdoptionOfItsPlanId() = runTest {
+        val harness = Harness(BUFFERING_QUALITY_SERVER + PLAYBACK_PLAN_SUMMARY_V1_FEATURE)
+        harness.start()
+        // A TV pick commits PLAN_2 without publishing it and rolls it back before it mounts.
+        val staged = assertIs<ApiResult.Success<StagedVideoReplan>>(
+            harness.manager.stageActiveVideoSessionReplan(
+                classification = "quality_changed",
+                positionSeconds = 125.0,
+                audioTrackIndex = null,
+                subtitleTrackIndex = null,
+            ),
+        ).data
+        val abandoned = assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
+            harness.manager.commitStagedVideoReplan(staged, deferPublication = true),
+        ).data
+        assertEquals(PLAN_2.planId, abandoned.plan.planId)
+        assertTrue(harness.manager.rollbackUnpublishedVideoSession(abandoned.session.sessionId))
+        harness.manager.forgetPlanIdentity(abandoned.plan.planId, abandoned.planAttemptId)
+
+        // The same pick again returns the same plan id, and this one plays.
+        harness.nextReplanPlan = plan(PLAN_2.planId, "v3:00000000000000c2")
+        val adopted = harness.replan(classification = "quality_changed")
+        assertEquals(PLAN_2.planId, adopted.plan.planId)
+
+        harness.manager.emitPlanSummary(summary(PLAN_2.planId, deliveredKbps = 44_000))
+        assertEquals(adopted.planAttemptId, harness.awaitRouteEvent("plan_summary").string("plan_attempt_id"))
+    }
+
+    @Test
     fun aPlanSummaryCarriesThePlansThroughput() = runTest {
         val readings = ArrayDeque(listOf(52_000, null))
         val harness = Harness(BUFFERING_QUALITY_SERVER + PLAYBACK_PLAN_SUMMARY_V1_FEATURE) { readings.removeFirst() }

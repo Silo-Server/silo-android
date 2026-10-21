@@ -1283,6 +1283,9 @@ class TvPlayerViewModel(
     /** True from issuing an automatic selection until the adapter commits it. */
     private var autoSubtitleSelectionInFlight = false
     private val unpublishedSubtitleUi = mutableMapOf<String, UiState>()
+
+    /** The mount nonce of each subtitle publication not yet confirmed, by session. */
+    private val unpublishedSubtitleMounts = mutableMapOf<String, Long>()
     private val unpublishedTvLoadUi =
         TvUnpublishedLoadUiOwnership<UiState, TvSubtitlePlaybackContext>()
 
@@ -1513,6 +1516,9 @@ class TvPlayerViewModel(
      * mounts is a new adoption, even when the server repeats its plan_id.
      */
     private var bufferingAdoptionId: String? = null
+
+    /** The mount that made [bufferingAdoptionId]. */
+    private var bufferingAdoptedMountNonce: Long? = null
 
     /**
      * The mount nonce of a client-side same-plan remount (a `client_retry`
@@ -2031,6 +2037,7 @@ class TvPlayerViewModel(
             adoption.requestedSourcePositionSeconds,
         )
         val mountNonce = nextTypedSubtitleMountNonce(adoption.committed.identity)
+        unpublishedSubtitleMounts[ready.session.sessionId] = mountNonce
         bufferingReplanNonce = mountNonce.takeIf { adoption.bufferingQuality }
         _uiState.update { state ->
             state.copy(
@@ -2076,6 +2083,7 @@ class TvPlayerViewModel(
         playback: TvSubtitleCommittedPlayback,
     ): Boolean {
         unpublishedSubtitleUi.remove(playback.sessionId)
+        unpublishedSubtitleMounts.remove(playback.sessionId)
         return true
     }
 
@@ -2084,6 +2092,13 @@ class TvPlayerViewModel(
         restoreUi: Boolean,
     ): Boolean {
         val predecessor = unpublishedSubtitleUi.remove(playback.sessionId)
+        // A replacement the controller adopted sends its summary when the
+        // predecessor's remount ends it. One it never adopted sends none, and
+        // its identity would go to a later adoption that repeats its plan id.
+        val mountNonce = unpublishedSubtitleMounts.remove(playback.sessionId)
+        if (mountNonce == null || mountNonce != bufferingAdoptedMountNonce) {
+            playback.ready?.let { playbackSessionManager.forgetPlanIdentity(it.plan.planId, it.planAttemptId) }
+        }
         // The token follows lifecycle ownership in BOTH directions. Rollback
         // hands ownership back to the predecessor, so leaving the token on the
         // discarded replacement would make teardown name a session the
@@ -5877,6 +5892,7 @@ class TvPlayerViewModel(
         val shown = state.playbackPlan ?: return
         val adoptionId = "${shown.planId}#$nonce"
         bufferingAdoptionId = adoptionId
+        bufferingAdoptedMountNonce = nonce
         // What the mounted plan was requested at, session pick included. The
         // session manager's pair comes first because it also carries a fixed
         // rung saved in Settings, which must never be treated as Auto.
@@ -6020,6 +6036,7 @@ class TvPlayerViewModel(
     /** Forgets what this screen tracked about the controller's playing plan. */
     private fun forgetBufferingPlan() {
         bufferingAdoptionId = null
+        bufferingAdoptedMountNonce = null
         pendingBufferingReloadNonce = null
         bufferingReplanNonce = null
         cancelBufferingRestore()

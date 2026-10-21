@@ -343,6 +343,20 @@ open class PlaybackSessionManager(
         recentPlans[planId]?.firstOrNull()
     }
 
+    /**
+     * Drops the identity a commit remembered for a plan the player never
+     * adopted, such as a TV replacement rolled back before it mounted. No
+     * summary names that plan, and a later adoption that repeats [planId]
+     * would otherwise send its summary under this one's ids.
+     */
+    fun forgetPlanIdentity(planId: String, planAttemptId: String) {
+        synchronized(recentPlans) {
+            val identities = recentPlans[planId] ?: return
+            identities.removeAll { it.planAttemptId == planAttemptId }
+            if (identities.isEmpty()) recentPlans.remove(planId)
+        }
+    }
+
     private val planSummaryWriteLock = Any()
 
     /**

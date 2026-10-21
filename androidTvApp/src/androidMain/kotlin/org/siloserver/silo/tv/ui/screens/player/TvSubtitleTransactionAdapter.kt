@@ -167,6 +167,9 @@ internal interface TvSubtitleStagedReplanPort {
     suspend fun confirmCommitted(playback: TvSubtitleCommittedPlayback) = Unit
 
     suspend fun abandonCommitted(playback: TvSubtitleCommittedPlayback)
+
+    /** [playback] was abandoned before the player adopted it, so no plan summary will name its plan. */
+    fun forgetCommitted(playback: TvSubtitleCommittedPlayback) = Unit
 }
 
 internal interface TvSubtitlePersistencePort {
@@ -1719,11 +1722,16 @@ internal class TvSubtitleTransactionAdapter(
         return true
     }
 
+    /**
+     * Rolls back a committed playback the view model never saw: a reset or a
+     * lost context took it before adoption.
+     */
     private suspend fun abandonCommittedPlayback(
         playback: TvSubtitleCommittedPlayback,
     ): Boolean = withContext(NonCancellable) {
             try {
                 stagedPort.abandonCommitted(playback)
+                stagedPort.forgetCommitted(playback)
                 true
             } catch (_: Exception) {
                 // The manager owns authoritative cleanup; a cleanup transport
@@ -2583,6 +2591,10 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
         ) {
             "The staged subtitle session was no longer awaiting rollback."
         }
+    }
+
+    override fun forgetCommitted(playback: TvSubtitleCommittedPlayback) {
+        playback.ready?.let { manager.forgetPlanIdentity(it.plan.planId, it.planAttemptId) }
     }
 }
 
