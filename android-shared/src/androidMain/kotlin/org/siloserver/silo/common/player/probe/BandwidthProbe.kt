@@ -21,16 +21,6 @@ import org.siloserver.silo.network.apiv2.BandwidthProbeResponseV2
  * arithmetic; this file times one download over one connection.
  */
 
-/** Let the first screen settle before spending bandwidth on a probe. */
-const val PROBE_START_DELAY_MS = 5_000L
-
-/**
- * How long a reading stands when the server names no
- * `bandwidth_probe_max_age_seconds`: playback starts send it, and nothing
- * measures that connection again, until it is this old.
- */
-const val BANDWIDTH_READING_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000L
-
 /** How much one read asks for. */
 private const val READ_BUFFER_BYTES = 64 * 1024
 

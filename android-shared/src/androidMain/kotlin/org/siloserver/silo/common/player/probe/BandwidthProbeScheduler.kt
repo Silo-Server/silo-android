@@ -48,6 +48,16 @@ import org.siloserver.silo.network.localroute.LocalRoutes
 import org.siloserver.silo.network.localroute.onSavedAddress
 import org.siloserver.silo.util.parseRfc3339ToEpochMillis
 
+/** Let the first screen settle before spending bandwidth on a probe. */
+const val PROBE_START_DELAY_MS = 5_000L
+
+/**
+ * How long a reading stands when the server names no
+ * `bandwidth_probe_max_age_seconds`: playback starts send it, and nothing
+ * measures that connection again, until it is this old.
+ */
+const val BANDWIDTH_READING_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000L
+
 /**
  * How long after a playback start a probe holds off. Media is still loading
  * for a while after a start, so the playing-media check alone would let a
@@ -102,7 +112,7 @@ sealed interface ProbeOutcome {
      * it: starts send it only when the report failed in transport, and
      * Settings goes on showing the server's reading.
      */
-    data class Measured(val estimate: BandwidthEstimate, val saved: Boolean = true) : ProbeOutcome
+    data class Measured(val estimate: BandwidthEstimate, val saved: Boolean) : ProbeOutcome
 
     /** A current reading the server held for this device proves the link: no test ran. */
     data object Stored : ProbeOutcome
@@ -165,8 +175,6 @@ val PlaybackNetworkSnapshot.skipsBandwidthProbe: Boolean
 
 /** The probe endpoint of the active server and its schedule, for one check or test and its report. */
 class BandwidthProbeTarget(
-    /** `ServerEntry.id` of the server the probe measures. */
-    val serverId: String,
     /** `bandwidth_probe_url`, resolved; [bandwidthProbeDownloadUrl] adds the size. */
     val url: String,
     val scope: AuthScopeSnapshot,
@@ -176,7 +184,10 @@ class BandwidthProbeTarget(
     val automatic: Boolean = true,
     /** `bandwidth_probe_max_age_seconds`, or [BANDWIDTH_READING_LIFETIME_MS] when the server sends none. */
     val readingLifetimeMs: Long = BANDWIDTH_READING_LIFETIME_MS,
-)
+) {
+    /** `ServerEntry.id` of the server the probe measures. */
+    val serverId: String get() = scope.serverId
+}
 
 /** The readings the server holds for this device on its current connection ([BandwidthProbeServer.storedReading]). */
 sealed interface StoredReadingLookup {
@@ -258,7 +269,6 @@ class PlaybackV2BandwidthProbeServer(
                     ?: return BandwidthProbeTargetLookup.NotSupported
                 BandwidthProbeTargetLookup.Found(
                     BandwidthProbeTarget(
-                        serverId = scope.serverId,
                         url = url,
                         scope = scope,
                         targetKbps = capabilities.bandwidthProbeTargetKbps?.takeIf { it > 0 },
@@ -390,13 +400,13 @@ class BandwidthProbeScheduler(
     /** One check or test, and the outcome it ends with when something cancels it. */
     private class ProbeRun(val manual: Boolean) {
         lateinit var result: Deferred<ProbeOutcome>
-        @Volatile var cancelledFor: ProbeOutcome? = null
+        var cancelledFor: ProbeOutcome? = null
 
         /** Past reading the server's readings and the wait, and into the download. */
-        @Volatile var testing = false
+        var testing = false
 
         /** The test is over and its result is being POSTed. */
-        @Volatile var reporting = false
+        var reporting = false
     }
 
     private val context = requireNotNull(scope.coroutineContext[ContinuationInterceptor]) {

@@ -359,7 +359,7 @@ class BandwidthProbeSchedulerTest {
     fun nothingIsReadOrTestedUnderABorrowedIdentity() = runTest {
         val harness = Harness(this)
         harness.server.serve(probeTarget().let {
-            BandwidthProbeTarget(it.serverId, it.url, it.scope.copy(credentialGenerationId = "hand-off"))
+            BandwidthProbeTarget(it.url, it.scope.copy(credentialGenerationId = "hand-off"))
         })
         harness.server.stored = harness.storedReading(30_000, ageMs = 60_000)
         harness.foreground()
@@ -535,7 +535,7 @@ class BandwidthProbeSchedulerTest {
         assertEquals(1, harness.server.downloads)
 
         harness.server.serve(probeTarget().let {
-            BandwidthProbeTarget("server-2", it.url, AuthScopeSnapshot("server-2", "profile-1", "https://two.example", null))
+            BandwidthProbeTarget(it.url, AuthScopeSnapshot("server-2", "profile-1", "https://two.example", null))
         })
         harness.activeServer.value = "server-2"
         runCurrent()
@@ -857,7 +857,6 @@ class BandwidthProbeSchedulerTest {
             automatic: Boolean = true,
             lifetimeMs: Long = BANDWIDTH_READING_LIFETIME_MS,
         ) = BandwidthProbeTarget(
-            serverId = "server-1",
             url = "https://silo.example/probe",
             scope = AuthScopeSnapshot("server-1", "profile-1", "https://silo.example", null),
             targetKbps = targetKbps,

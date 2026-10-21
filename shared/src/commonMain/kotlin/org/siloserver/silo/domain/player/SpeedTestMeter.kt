@@ -45,7 +45,7 @@ data class SpeedTestResult(
  *
  * @param targetKbps `bandwidth_probe_target_kbps`; the accurate test ignores it.
  */
-class SpeedTestMeter(val mode: SpeedTestMode, targetKbps: Int?) {
+class SpeedTestMeter(private val mode: SpeedTestMode, targetKbps: Int?) {
     private val target: Int? = targetKbps.takeIf { mode == SpeedTestMode.QUICK }
 
     /** Bytes of each window closed so far, by window number. */
