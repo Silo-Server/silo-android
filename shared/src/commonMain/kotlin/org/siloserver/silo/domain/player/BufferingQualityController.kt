@@ -362,25 +362,19 @@ class BufferingQualityController(
         current = state
 
         settled ?: return
-        if (!controllerInitiated) return
-        when (settled.kind) {
-            PendingKind.RESTORE -> Unit
-            PendingKind.AUTOMATIC, PendingKind.ACCEPTED -> {
-                val delivered = plan.deliveredKbps?.takeIf { it > 0 }
-                val from = settled.fromKbps?.takeIf { it > 0 }
-                val noLower = plan.qualityReductionUnavailable ||
-                    (delivered != null && from != null && delivered >= from)
-                when {
-                    noLower -> {
-                        state.action = BufferingAction.CANT_LOWER
-                        state.cooldownUntil = now + NO_LOWER_COOLDOWN_MS
-                        cantLowerShown = true
-                        onNotice(BufferingQualityNotice.CANT_LOWER)
-                    }
-                    settled.kind == PendingKind.AUTOMATIC -> showPill(PillKind.UNDO)
-                    else -> onNotice(BufferingQualityNotice.LOWERED)
-                }
+        if (!controllerInitiated || settled.kind == PendingKind.RESTORE) return
+        val delivered = plan.deliveredKbps?.takeIf { it > 0 }
+        val noLower = plan.qualityReductionUnavailable ||
+            (delivered != null && settled.fromKbps != null && delivered >= settled.fromKbps)
+        when {
+            noLower -> {
+                state.action = BufferingAction.CANT_LOWER
+                state.cooldownUntil = now + NO_LOWER_COOLDOWN_MS
+                cantLowerShown = true
+                onNotice(BufferingQualityNotice.CANT_LOWER)
             }
+            settled.kind == PendingKind.AUTOMATIC -> showPill(PillKind.UNDO)
+            else -> onNotice(BufferingQualityNotice.LOWERED)
         }
     }
 
@@ -529,17 +523,10 @@ class BufferingQualityController(
     fun selectLower(): Boolean {
         if (activePill != PillKind.PROMPT) return false
         val state = current ?: return false
-        val now = clock()
+        // A prompt shows only for a plan with a lower rung, and adoption hides it.
+        val replan = loweringFor(state.plan) ?: return false
         hidePill()
-        val lowering = loweringFor(state.plan)
-        if (lowering == null) {
-            // Unreachable while the prompt's plan is still playing (adoption
-            // hides the prompt), but never send a replan that cannot lower.
-            showCantLower(state)
-            resetTracker(state, now)
-            return true
-        }
-        sendLowering(state, lowering, PendingKind.ACCEPTED, BufferingAction.ACCEPTED)
+        sendLowering(state, replan, PendingKind.ACCEPTED)
         return true
     }
 
@@ -623,7 +610,7 @@ class BufferingQualityController(
             return
         }
         if (plan.quality == PLAYBACK_QUALITY_AUTO && mode == BufferingQualityMode.ALWAYS) {
-            sendLowering(state, lowering, PendingKind.AUTOMATIC, BufferingAction.LOWERED)
+            sendLowering(state, lowering, PendingKind.AUTOMATIC)
             return
         }
         reofferNotBefore?.let { notBefore ->
@@ -659,7 +646,7 @@ class BufferingQualityController(
     }
 
     /** The replan that lowers [plan] one step, or null when nothing is lower. */
-    private fun loweringFor(plan: BufferingQualityPlan): Lowering? {
+    private fun loweringFor(plan: BufferingQualityPlan): BufferingQualityReplan? {
         val rungs = plan.availableQualities
             .filter { it.bitrateKbps > 0 }
             .sortedByDescending { it.bitrateKbps }
@@ -670,37 +657,27 @@ class BufferingQualityController(
             // The exact integer floor of delivered × 7 / 10; see STEP_DOWN_RATIO.
             val estimate = (delivered.toLong() * 7L / 10L).toInt()
             if (estimate < MIN_ESTIMATE_KBPS) return null
-            return Lowering(
-                replan = BufferingQualityReplan(
-                    qualityPreference = PLAYBACK_QUALITY_AUTO,
-                    bandwidthEstimateKbps = estimate,
-                    bandwidthEstimateSource = BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER,
-                ),
-                fromKbps = delivered,
+            return BufferingQualityReplan(
+                qualityPreference = PLAYBACK_QUALITY_AUTO,
+                bandwidthEstimateKbps = estimate,
+                bandwidthEstimateSource = BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER,
             )
         }
         val ceiling = rungs.firstOrNull { it.label == plan.quality }?.bitrateKbps
             ?: delivered
             ?: return null
         val lower = rungs.firstOrNull { it.bitrateKbps < ceiling } ?: return null
-        return Lowering(
-            replan = BufferingQualityReplan(qualityPreference = lower.label),
-            // "Lower" compares delivered bitrates: the plan the lowering left
-            // against the one adopted.
-            fromKbps = delivered,
-        )
+        return BufferingQualityReplan(qualityPreference = lower.label)
     }
 
-    private fun sendLowering(
-        state: PlanState,
-        lowering: Lowering,
-        kind: PendingKind,
-        action: BufferingAction,
-    ) {
-        pending = Pending(kind, lowering.fromKbps)
-        state.action = action
+    private fun sendLowering(state: PlanState, replan: BufferingQualityReplan, kind: PendingKind) {
+        // "Lower" compares delivered bitrates: the plan the lowering left
+        // against the one adopted.
+        pending = Pending(kind, fromKbps = state.plan.deliveredKbps?.takeIf { it > 0 })
+        state.action =
+            if (kind == PendingKind.AUTOMATIC) BufferingAction.LOWERED else BufferingAction.ACCEPTED
         startRearm()
-        onReplan(lowering.replan)
+        onReplan(replan)
     }
 
     private fun showCantLower(state: PlanState) {
@@ -990,8 +967,6 @@ class BufferingQualityController(
     }
 
     private class Pending(val kind: PendingKind, val fromKbps: Int?)
-
-    private class Lowering(val replan: BufferingQualityReplan, val fromKbps: Int?)
 
     /** One plan's stall history: the web player's `createStallTracker`. */
     private class StallTracker {
