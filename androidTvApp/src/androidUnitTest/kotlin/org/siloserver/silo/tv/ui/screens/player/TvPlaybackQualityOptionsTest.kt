@@ -3,6 +3,7 @@ package org.siloserver.silo.tv.ui.screens.player
 import org.siloserver.silo.model.playback.PlaybackAvailableQualityV3
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
 import org.siloserver.silo.model.playback.PlaybackSourceDescriptorV3
+import org.siloserver.silo.model.playback.ReportedPlaybackQuality
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -92,6 +93,30 @@ class TvPlaybackQualityOptionsTest {
 
         val auto = authoritativePlaybackQualityOptions(available, selectedLabel = "auto", delivered = sourcePlays, source = source)
         assertEquals(listOf("auto"), auto.filter { it.isSelected }.map { it.id })
+    }
+
+    @Test
+    fun siloCastReportsNoRowWhenTheServerNamesNone() {
+        val available = listOf(
+            PlaybackAvailableQualityV3("1080p-low", 1080, 3_000),
+            PlaybackAvailableQualityV3("720p-medium", 720, 2_000),
+        )
+
+        // A fixed preference whose plan delivers no entry: remotes check
+        // nothing, not Auto (whose row id is "auto", legacy "-1").
+        val none = authoritativePlaybackQualityOptions(
+            available,
+            selectedLabel = "1080p",
+            reported = ReportedPlaybackQuality(null),
+        )
+        assertEquals("", siloCastActiveQualityId(none))
+
+        val reported = authoritativePlaybackQualityOptions(
+            available,
+            selectedLabel = "1080p",
+            reported = ReportedPlaybackQuality("720p-medium"),
+        )
+        assertEquals("720p-medium", siloCastActiveQualityId(reported))
     }
 
     @Test

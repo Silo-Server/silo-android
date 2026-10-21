@@ -95,24 +95,51 @@ fun playbackQualityValueLabel(
     ?: QualityChoices.resolutionLabel(videoQualityPreference(preference))
 
 /**
+ * The server's report of the menu entry a plan delivers: [label] is
+ * [PlaybackPlanV3.activeQuality], null when the plan delivers none.
+ */
+data class ReportedPlaybackQuality(val label: String?)
+
+/** The plan's [ReportedPlaybackQuality], or null when its server did not report one. */
+val PlaybackPlanV3.reportedQuality: ReportedPlaybackQuality?
+    get() = if (activeQualityReported) ReportedPlaybackQuality(activeQuality) else null
+
+/** The plan's [ReportedPlaybackQuality], or null when its server did not report one. */
+val PlaybackExecutionPlan.reportedQuality: ReportedPlaybackQuality?
+    get() = if (activeQualityReported) ReportedPlaybackQuality(activeQuality) else null
+
+/**
  * The id of the [options] row that [preference], the session's preference,
  * selects, or null when none does. Auto lights only for an "auto" preference
- * (also a missing one, "original" and its aliases); a picked rung lights its
- * own row. A resolution-only preference such as "1080p" resolves the way the
- * planner applies it: to no row when the [source] fits under it and nothing
- * reduced it, since the source plays as-is and the viewer can still choose
- * Auto, otherwise to the delivered resolution class's Medium entry.
- * [delivered] shows a reduction as a lower bitrate or a shorter frame than
- * the source's.
+ * (also a missing one, "original" and its aliases). Otherwise a [reported]
+ * entry lights its row, and a reported plan that delivers no entry lights
+ * none.
+ *
+ * Without a report (servers before [PLAN_ACTIVE_QUALITY_V1_FEATURE]) the row
+ * is inferred: a picked rung lights its own row. A resolution-only
+ * preference such as "1080p" resolves the way the planner applies it: to no
+ * row when the [source] fits under it and nothing reduced it, since the
+ * source plays as-is and the viewer can still choose Auto, otherwise to the
+ * delivered resolution class's Medium entry. [delivered] shows a reduction
+ * as a lower bitrate or a shorter frame than the source's.
  */
 fun activePlaybackQualityId(
     options: List<PlaybackQualityOption>,
     preference: String?,
     delivered: PlaybackEffectiveRecipeV3? = null,
     source: PlaybackSourceDescriptorV3? = null,
+    reported: ReportedPlaybackQuality? = null,
 ): String? {
     if (options.isEmpty()) return null
     val normalized = videoQualityPreference(preference) ?: PLAYBACK_QUALITY_AUTO
+    if (reported != null) {
+        val id = if (normalized == PLAYBACK_QUALITY_AUTO) {
+            PLAYBACK_QUALITY_AUTO
+        } else {
+            reported.label?.takeUnless { it == PLAYBACK_QUALITY_AUTO }
+        }
+        return options.firstOrNull { it.id == id }?.id
+    }
     options.firstOrNull { it.id.lowercase() == normalized }?.let { return it.id }
     val aliasHeight = qualityPreferenceHeight(normalized) ?: return null
 
