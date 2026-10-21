@@ -541,10 +541,10 @@ data class PlaybackStartRequestV3(
     val metered: Boolean = false,
     @SerialName("bandwidth_cap_kbps") val bandwidthCapKbps: Int? = null,
     /**
-     * Only the bandwidth probe's fresh measurement for this server and
-     * network, a hint Auto uses to rule out a source the link clearly cannot
-     * carry. Absent without one, and on metered or cellular networks, which
-     * are never probed. Media3's bandwidth meter is never sent: it times
+     * The highest current reading for this server and network, a speed test
+     * or a playback sample: a hint Auto uses to rule out a source the link
+     * clearly cannot carry. Absent without one, and on metered or cellular
+     * networks. Media3's bandwidth meter is never sent: it times
      * loads that stall on a full buffer or wait on a live transcode, so its
      * figure can understate the link and make Auto convert.
      */
@@ -556,8 +556,8 @@ data class PlaybackStartRequestV3(
     @SerialName("bandwidth_estimate_source") val bandwidthEstimateSource: String? = null,
     /**
      * `ignore` in `never` mode, so a limit learned by another profile on this
-     * device does not reach this one. Sent only to a server advertising
-     * [BUFFERING_QUALITY_V1_FEATURE].
+     * device does not reach this one, and on every Cast request. Sent only to
+     * a server advertising [BUFFERING_QUALITY_V1_FEATURE].
      */
     @SerialName("learned_limit") val learnedLimit: String? = null,
     @SerialName("client_capabilities") val capabilities: ClientCodecCapabilities,
@@ -604,9 +604,10 @@ data class PlaybackReplanRequestV3(
     val metered: Boolean = false,
     @SerialName("bandwidth_cap_kbps") val bandwidthCapKbps: Int? = null,
     /**
-     * Only the buffering-quality step-down estimate, on the `quality_change`
-     * replan that lowers Auto after repeated rebuffering. Media3's bandwidth
-     * meter is never sent.
+     * The buffering-quality step-down estimate: on the `quality_change` replan
+     * that lowers Auto after repeated rebuffering, then without a source on
+     * later Auto replans the client sends for its own reasons. Media3's
+     * bandwidth meter is never sent.
      */
     @SerialName("bandwidth_estimate_kbps") val bandwidthEstimateKbps: Int? = null,
     /** Valid only alongside [bandwidthEstimateKbps]; needs [BUFFERING_QUALITY_V1_FEATURE]. */
