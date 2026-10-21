@@ -521,8 +521,15 @@ class TvSiloCastReceiver(
 
                 // The latest state only: a slow peer never holds up the others,
                 // and never receives a stale frame after a newer one.
+                // Authorization is checked again at the write: a state queued
+                // just before a handoff changed the TV's profile must not reach
+                // a controller that lost access.
                 val stateWriter = launch {
-                    for (state in session.stateUpdates) session.send(SiloCastMessage.State(state))
+                    for (state in session.stateUpdates) {
+                        if (synchronized(this@TvSiloCastReceiver) { session.isAuthorized }) {
+                            session.send(SiloCastMessage.State(state))
+                        }
+                    }
                 }
                 val heartbeatJob = launch {
                     while (isActive) {
@@ -806,6 +813,8 @@ class TvSiloCastReceiver(
         session.ownIdentityProfileId = null
         val run = receiverRun
         pending.job = scope?.launch {
+            // The generation this attempt's completeHandoff installed, if it got that far.
+            var grantedGeneration: String? = null
             try {
                 // The hello may have been judged against a phone's identity that
                 // is gone now; with none installed, the TV's own server decides.
@@ -856,7 +865,7 @@ class TvSiloCastReceiver(
                     }
                     return@launch
                 }
-                completeHandoff(session, ready, fullHandoff)
+                completeHandoff(session, ready, fullHandoff) { grantedGeneration = it }
             } catch (e: CancellationException) {
                 throw e
             } catch (refusal: ReplaceConfirmationRequired) {
@@ -868,11 +877,14 @@ class TvSiloCastReceiver(
             } catch (t: Throwable) {
                 clearPreparing(session)
                 // Readiness was granted but `handoff_ready` never reached the
-                // phone: hand back that generation only, and re-check the
-                // controllers its activation judged.
-                val granted = session.readyGeneration
+                // phone: hand back the generation this attempt granted (a
+                // newer handoff from the same phone may own the session's
+                // readiness by now), and re-check the controllers it judged.
+                val granted = grantedGeneration
                 if (granted != null && activePlayer == null) {
-                    session.readyGeneration = null
+                    synchronized(this@TvSiloCastReceiver) {
+                        if (session.readyGeneration == granted) session.readyGeneration = null
+                    }
                     runRecovering("handoff rollback") {
                         identityManager.end(granted)
                         refreshAdvertisement()
@@ -897,7 +909,12 @@ class TvSiloCastReceiver(
      * must never play under this profile. Issues the resume token and tells
      * the others the TV now plays as someone else.
      */
-    private suspend fun completeHandoff(session: ControllerSession, ready: SiloCastHandoffReady, fullHandoff: Boolean) {
+    private suspend fun completeHandoff(
+        session: ControllerSession,
+        ready: SiloCastHandoffReady,
+        fullHandoff: Boolean,
+        onGranted: (generation: String) -> Unit,
+    ) {
         // The identity was handed back in the moment after prepare() returned
         // (idle end, expiry, server switch): fail the handoff so the phone
         // hears it instead of waiting out its timeout.
@@ -919,6 +936,7 @@ class TvSiloCastReceiver(
             issuedIdentity = IssuedIdentity(generation = generation, connectionId = session.id, resumeToken = token)
             token
         }
+        onGranted(generation)
         DiagnosticsCastLogger.event("TV cast handoff authorized")
         refreshAdvertisement()
         // A cross-server identity changes the effective server under the
@@ -1255,12 +1273,16 @@ class TvSiloCastReceiver(
     private fun authorizedControllers(): List<ControllerSession> =
         synchronized(this) { controllers.values.filter { it.isAuthorized } }
 
-    /** Built once and handed to every authorized controller's latest-state slot. */
+    /**
+     * Built once and handed to every authorized controller's latest-state
+     * slot. The recipients are chosen after the state is read, so a handoff
+     * during the read can't send the new profile's state to a controller it
+     * de-authorized.
+     */
     private suspend fun broadcastState() {
-        val targets = authorizedControllers()
-        if (targets.isEmpty()) return
+        if (authorizedControllers().isEmpty()) return
         val state = currentState()
-        targets.forEach { it.offerState(state) }
+        authorizedControllers().forEach { it.offerState(state) }
     }
 
     /**
