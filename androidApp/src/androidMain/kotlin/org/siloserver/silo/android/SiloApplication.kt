@@ -129,7 +129,7 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
         // without it playback sends no estimate.
         runCatching {
             koinApp.koin.get<org.siloserver.silo.common.player.probe.BandwidthProbeScheduler>()
-                .start(androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle)
+                .start(androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle, phoneOrTablet = true)
         }.onFailure {
             android.util.Log.w("SiloApplication", "Bandwidth probe scheduler init failed: ${it::class.simpleName}")
         }

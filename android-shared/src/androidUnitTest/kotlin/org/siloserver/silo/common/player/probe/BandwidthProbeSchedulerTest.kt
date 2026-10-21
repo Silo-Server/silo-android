@@ -86,7 +86,11 @@ class BandwidthProbeSchedulerTest {
             readStored().also { storedChecks += 1 }
     }
 
-    private class Harness(val test: TestScope, snapshot: PlaybackNetworkSnapshot = WIFI) {
+    private class Harness(
+        val test: TestScope,
+        snapshot: PlaybackNetworkSnapshot = WIFI,
+        phoneOrTablet: Boolean = false,
+    ) {
         val network = Network(snapshot)
         val server = Server()
         val media = MutableStateFlow(false)
@@ -104,7 +108,7 @@ class BandwidthProbeSchedulerTest {
             probe = BandwidthProbe(clock = { test.currentTime }),
             elapsedClock = { test.currentTime },
             wallClock = { 1_760_000_000_000 + test.currentTime },
-        ).also { it.observe() }
+        ).also { it.observe(phoneOrTablet) }
 
         fun foreground() {
             scheduler.onForeground()
@@ -416,6 +420,23 @@ class BandwidthProbeSchedulerTest {
         val harness = Harness(this, WIFI.copy(vpn = true, metered = true))
         assertIs<ProbeOutcome.Measured>(harness.scheduler.runNow())
         assertEquals(80_000, harness.scheduler.freshEstimateKbps())
+    }
+
+    @Test
+    fun aPhoneRunsNoAutomaticTestOnALinkOfUnknownType() = runTest {
+        val phone = Harness(this, VPN_ONLY, phoneOrTablet = true)
+        phone.foreground()
+        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
+        assertEquals(1, phone.server.storedChecks, "it still reads the server")
+        assertEquals(0, phone.server.downloads)
+        // Unmetered for Test speed and for starts.
+        assertIs<ProbeOutcome.Measured>(phone.scheduler.runNow())
+        assertEquals(80_000, phone.scheduler.freshEstimateKbps())
+
+        val tv = Harness(this, VPN_ONLY)
+        tv.foreground()
+        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
+        assertEquals(listOf(SpeedTestMode.QUICK), tv.server.modes, "a TV tests as usual")
     }
 
     @Test
@@ -891,5 +912,10 @@ class BandwidthProbeSchedulerTest {
             generation = 1,
         )
         val CELLULAR = PlaybackNetworkSnapshot(connected = true, validated = true, transport = "cellular", cellular = true, networkId = 3)
+
+        /** A VPN that names no network under it, marked metered as Android marks most VPNs. */
+        val VPN_ONLY = PlaybackNetworkSnapshot(
+            connected = true, validated = true, metered = true, transport = "vpn", vpn = true, networkId = 4,
+        )
     }
 }

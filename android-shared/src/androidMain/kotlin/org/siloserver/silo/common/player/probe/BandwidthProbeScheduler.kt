@@ -116,7 +116,8 @@ sealed interface ProbeOutcome {
 
     /**
      * An automatic check ended without a test: a current reading proves the
-     * link, the admin turned automatic tests off, or a 429 still holds.
+     * link, the admin turned automatic tests off, a phone's link type is
+     * unknown, or a 429 still holds.
      */
     data object NotTested : ProbeOutcome
 
@@ -172,6 +173,15 @@ fun Flow<Pair<String?, String?>>.profileSwitches(): Flow<Unit> = flow {
  */
 val PlaybackNetworkSnapshot.skipsBandwidthProbe: Boolean
     get() = usesCellularQuality
+
+/**
+ * Android reports no link type that tells metered from unmetered: a VPN that
+ * runs over no Wi-Fi, Ethernet or cellular network it names, whose own
+ * metered flag does not count. Such a link counts as unmetered, but a phone or
+ * tablet runs no automatic test on it.
+ */
+val PlaybackNetworkSnapshot.linkTypeUnknown: Boolean
+    get() = connected && transport == "vpn"
 
 /** The probe endpoint of the active server and its schedule, for one check or test and its report. */
 class BandwidthProbeTarget(
@@ -355,9 +365,10 @@ class PlaybackV2BandwidthProbeServer(
  * - **Not**: no test while media plays or starts ([mediaActive],
  *   [playbackStarting], then [PLAYBACK_START_QUIET_MS] for checks), on a
  *   metered or cellular network, or for a server without
- *   `connection_speed_v1`. A check still reads the server's readings while
- *   media plays, since the next start needs them; media starting cancels a
- *   running test, not that read.
+ *   `connection_speed_v1`. On a phone or tablet, no automatic test on a link
+ *   of unknown type ([linkTypeUnknown]), where Test speed still runs. A check
+ *   still reads the server's readings while media plays, since the next start
+ *   needs them; media starting cancels a running test, not that read.
  * - **Reporting**: every result is POSTed with the transport it was taken on,
  *   and `lower_bound` when it is one. It is kept for starts once the server
  *   stored it, or when the POST got no answer; a result the server refused
@@ -417,6 +428,9 @@ class BandwidthProbeScheduler(
     // Written from any thread by playbackStarting; read on the scope.
     @Volatile private var lastPlaybackAtElapsedMs: Long? = null
 
+    // Set by observe before anything runs on the scope.
+    private var phoneOrTablet = false
+
     // Confined to the scope.
     private var foreground = false
     private var checkJob: Job? = null
@@ -446,9 +460,13 @@ class BandwidthProbeScheduler(
     /** Each network change, and each return to validated connectivity, as the checks see them: for Settings. */
     val networkChanges: Flow<Unit> = _networkChanges.asSharedFlow()
 
-    /** Follows [lifecycle] (the process lifecycle) and the network, server and media signals. */
-    fun start(lifecycle: Lifecycle) {
-        observe()
+    /**
+     * Follows [lifecycle] (the process lifecycle) and the network, server and
+     * media signals. [phoneOrTablet] is true in the phone app, which runs no
+     * automatic test on a link of unknown type.
+     */
+    fun start(lifecycle: Lifecycle, phoneOrTablet: Boolean = false) {
+        observe(phoneOrTablet)
         lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
                 scope.launch { onForeground() }
@@ -460,7 +478,8 @@ class BandwidthProbeScheduler(
         })
     }
 
-    internal fun observe() {
+    internal fun observe(phoneOrTablet: Boolean = false) {
+        this.phoneOrTablet = phoneOrTablet
         scope.launch {
             var last: Pair<String, Boolean>? = null
             combine(network.updates, localRoute) { snapshot, route -> networkKey(snapshot, route) to snapshot.validated }
@@ -680,6 +699,9 @@ class BandwidthProbeScheduler(
                 return ProbeOutcome.NotTested
             }
             if (!target.automatic) return ProbeOutcome.NotTested
+            // Under a link Android does not name, a phone could be on mobile
+            // data, so it tests only when the viewer asks.
+            if (phoneOrTablet && snapshot.linkTypeUnknown) return ProbeOutcome.NotTested
             // Only the test waits, so the first screen can settle. Then it
             // checks again that it may run.
             delay(PROBE_START_DELAY_MS)
