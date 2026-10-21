@@ -114,11 +114,11 @@ sealed interface ProbeOutcome {
      */
     data class Measured(val estimate: BandwidthEstimate, val saved: Boolean) : ProbeOutcome
 
-    /** A current reading the server held for this device proves the link: no test ran. */
-    data object Stored : ProbeOutcome
-
-    /** The admin turned automatic tests off and nothing current proves the link: no test ran. */
-    data object AutomaticOff : ProbeOutcome
+    /**
+     * An automatic check ended without a test: a current reading proves the
+     * link, the admin turned automatic tests off, or a 429 still holds.
+     */
+    data object NotTested : ProbeOutcome
 
     /** HTTP 429: try again after [retryAfterSeconds]. */
     data class RateLimited(val retryAfterSeconds: Int) : ProbeOutcome
@@ -191,11 +191,8 @@ class BandwidthProbeTarget(
 
 /** The readings the server holds for this device on its current connection ([BandwidthProbeServer.storedReading]). */
 sealed interface StoredReadingLookup {
-    /** At least one of [probe] and [sample], current or not. */
+    /** The [probe] and [sample] held for this device on this connection, current or not; null when none has a time. */
     data class Found(val probe: BandwidthEstimate?, val sample: PlaybackSample?) : StoredReadingLookup
-
-    /** No reading for this device on this connection, or none with a time. */
-    data object None : StoredReadingLookup
 
     data class Failed(val cause: Throwable?) : StoredReadingLookup
 }
@@ -314,9 +311,9 @@ class PlaybackV2BandwidthProbeServer(
                 val sample = result.data.playbackSample?.let { stored ->
                     stored.measuredAt?.let(::parseRfc3339ToEpochMillis)?.let { PlaybackSample(stored.kbps, it) }
                 }
-                if (probe == null && sample == null) StoredReadingLookup.None else StoredReadingLookup.Found(probe, sample)
+                StoredReadingLookup.Found(probe, sample)
             }
-            is ApiResult.Error -> if (result.code == 404) StoredReadingLookup.None else StoredReadingLookup.Failed(null)
+            is ApiResult.Error -> if (result.code == 404) StoredReadingLookup.Found(null, null) else StoredReadingLookup.Failed(null)
             is ApiResult.NetworkError -> StoredReadingLookup.Failed(result.exception)
         }
 }
@@ -662,11 +659,10 @@ class BandwidthProbeScheduler(
             gate(manual = false)?.takeIf { it != ProbeOutcome.PlaybackActive }?.let { return it }
             val stored = when (val lookup = server.storedReading(target)) {
                 is StoredReadingLookup.Found -> lookup
-                StoredReadingLookup.None -> null
                 is StoredReadingLookup.Failed -> return ProbeOutcome.NetworkError(lookup.cause)
             }
             val now = wallClock()
-            val entry = remember(target, networkKey, stored?.probe?.fromServer(now), stored?.sample?.fromServer(now))
+            val entry = remember(target, networkKey, stored.probe?.fromServer(now), stored.sample?.fromServer(now))
             if (provesTheLink(entry)) {
                 SiloLog.i(
                     DiagnosticsLogCategory.PLAYBACK,
@@ -674,9 +670,9 @@ class BandwidthProbeScheduler(
                     "bandwidth probe: current reading proves the link (probe ${entry.probe?.describe()}, " +
                         "sample ${entry.sample?.kbps} kbps, target ${target.targetKbps} kbps)",
                 )
-                return ProbeOutcome.Stored
+                return ProbeOutcome.NotTested
             }
-            if (!target.automatic) return ProbeOutcome.AutomaticOff
+            if (!target.automatic) return ProbeOutcome.NotTested
             // Only the test waits, so the first screen can settle. Then it
             // checks again that it may run.
             delay(PROBE_START_DELAY_MS)
@@ -685,7 +681,7 @@ class BandwidthProbeScheduler(
             }
             rateLimits[target.serverId]?.let { notBefore ->
                 val waitMs = notBefore - elapsedClock()
-                if (waitMs > 0) return ProbeOutcome.RateLimited(((waitMs + 999) / 1_000).toInt())
+                if (waitMs > 0) return ProbeOutcome.NotTested
             }
         }
         gate(manual)?.let { return it }

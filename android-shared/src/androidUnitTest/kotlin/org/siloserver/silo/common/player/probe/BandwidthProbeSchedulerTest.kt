@@ -48,7 +48,7 @@ class BandwidthProbeSchedulerTest {
         val reports = mutableListOf<PlaybackBandwidthProbeResultV2>()
 
         /** What `GET /api/v2/playback/connection` holds for this device; none by default. */
-        var stored: StoredReadingLookup = StoredReadingLookup.None
+        var stored: StoredReadingLookup = StoredReadingLookup.Found(null, null)
 
         /** How that read answers; [stored] at once by default. */
         var readStored: suspend () -> StoredReadingLookup = { stored }
@@ -227,7 +227,7 @@ class BandwidthProbeSchedulerTest {
         advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
         assertEquals(0, harness.server.downloads)
 
-        harness.server.stored = StoredReadingLookup.None
+        harness.server.stored = StoredReadingLookup.Found(null, null)
         advanceTimeBy(IDLE_MS)
         assertEquals(1, harness.server.storedChecks, "no retry on a timer")
         harness.network.state.value = WIFI.copy(networkId = 2)
@@ -275,7 +275,7 @@ class BandwidthProbeSchedulerTest {
         assertEquals(30_000, harness.scheduler.freshEstimateKbps())
 
         // A network the server has no reading for is measured.
-        harness.server.stored = StoredReadingLookup.None
+        harness.server.stored = StoredReadingLookup.Found(null, null)
         harness.network.state.value = WIFI.copy(networkId = 3)
         runCurrent()
         advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
