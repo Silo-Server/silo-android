@@ -3,8 +3,8 @@ package org.siloserver.silo.repository
 import org.siloserver.silo.model.playback.BUFFERING_QUALITY_V1_FEATURE
 import org.siloserver.silo.model.playback.CONNECTION_SPEED_V1_FEATURE
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.getOrNull
 import org.siloserver.silo.network.apiv2.PlaybackConnectionV2
 import org.siloserver.silo.network.apiv2.PlaybackV2Api
 
@@ -26,33 +26,14 @@ data class PlaybackConnectionSettings(
  *
  * `GET /api/v2/playback/connection` and its reset exist only on a server whose
  * `/api/v2/playback/capabilities` `features` carry
- * [BUFFERING_QUALITY_V1_FEATURE], so [connection] checks that first and treats
- * every other server as having no state to show. Each call reads the active
+ * [BUFFERING_QUALITY_V1_FEATURE], so [settingsState] checks that first and
+ * treats every other server as having no state to show. Each call reads the active
  * profile's scope once and uses it for every request it makes.
  */
 class PlaybackConnectionRepository(
     private val api: PlaybackV2Api,
     private val tokens: TokenManager,
 ) {
-    /**
-     * Whether the server advertises [BUFFERING_QUALITY_V1_FEATURE] to the
-     * active profile. False when signed out or the capability read fails.
-     */
-    suspend fun isBufferingQualityAdvertised(): Boolean {
-        val scope = tokens.snapshotCurrentScope() ?: return false
-        return advertises(scope)
-    }
-
-    /**
-     * The connection state, or null when the server does not advertise the
-     * feature, nobody is signed in, or a read fails.
-     */
-    suspend fun connection(): PlaybackConnectionV2? {
-        val scope = tokens.snapshotCurrentScope() ?: return null
-        if (!advertises(scope)) return null
-        return (api.connection(scope) as? ApiResult.Success)?.data
-    }
-
     /**
      * One read for Settings: the connection state (when the server advertises
      * [BUFFERING_QUALITY_V1_FEATURE]) and whether the server measures
@@ -61,14 +42,9 @@ class PlaybackConnectionRepository(
      */
     suspend fun settingsState(): PlaybackConnectionSettings? {
         val scope = tokens.snapshotCurrentScope() ?: return null
-        val capabilities = (api.capabilities(scope) as? ApiResult.Success)?.data ?: return null
-        val connection = if (BUFFERING_QUALITY_V1_FEATURE in capabilities.features) {
-            (api.connection(scope) as? ApiResult.Success)?.data
-        } else {
-            null
-        }
+        val capabilities = api.capabilities(scope).getOrNull() ?: return null
         return PlaybackConnectionSettings(
-            connection = connection,
+            connection = if (BUFFERING_QUALITY_V1_FEATURE in capabilities.features) api.connection(scope).getOrNull() else null,
             connectionSpeed = CONNECTION_SPEED_V1_FEATURE in capabilities.features &&
                 !capabilities.bandwidthProbeUrl.isNullOrBlank(),
         )
@@ -80,8 +56,4 @@ class PlaybackConnectionRepository(
             ?: return ApiResult.Error(0, "identity_unavailable", "Resetting the limit needs an authenticated profile.")
         return api.resetLearnedLimit(scope)
     }
-
-    private suspend fun advertises(scope: AuthScopeSnapshot): Boolean =
-        (api.capabilities(scope) as? ApiResult.Success)?.data?.features
-            ?.contains(BUFFERING_QUALITY_V1_FEATURE) == true
 }
