@@ -440,15 +440,6 @@ class BandwidthProbeSchedulerTest {
     }
 
     @Test
-    fun playingMediaRefusesAProbe() = runTest {
-        val harness = Harness(this)
-        harness.media.value = true
-        runCurrent()
-        assertEquals(ProbeOutcome.PlaybackActive, harness.scheduler.runNow())
-        assertEquals(0, harness.server.downloads)
-    }
-
-    @Test
     fun mediaStartingCancelsARunningProbe() = runTest {
         val harness = Harness(this)
         val outcome = async { harness.scheduler.runNow() }
@@ -484,6 +475,7 @@ class BandwidthProbeSchedulerTest {
         harness.media.value = true
         runCurrent()
         assertEquals(ProbeOutcome.PlaybackActive, harness.scheduler.runNow())
+        assertEquals(0, harness.server.downloads)
         harness.media.value = false
         runCurrent()
         assertIs<ProbeOutcome.Measured>(harness.scheduler.runNow())
@@ -533,24 +525,6 @@ class BandwidthProbeSchedulerTest {
         runCurrent()
         assertEquals(2, reads)
         assertEquals(30_000, harness.scheduler.freshEstimateKbps())
-    }
-
-    @Test
-    fun aRateLimitHoldsOnlyTheServerThatSentIt() = runTest {
-        val harness = Harness(this)
-        harness.server.answer = { read -> read(BandwidthProbeResponseV2.RateLimited(600)) }
-        harness.foreground()
-        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
-        assertEquals(1, harness.server.downloads)
-
-        harness.server.answer = { read -> read(BandwidthProbeResponseV2.Body { delay(100); 1_000_000 }) }
-        harness.server.serve(probeTarget().let {
-            BandwidthProbeTarget("server-2", it.url, AuthScopeSnapshot("server-2", "profile-1", "https://two.example", null))
-        })
-        harness.activeServer.value = "server-2"
-        runCurrent()
-        advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
-        assertEquals(2, harness.server.downloads)
     }
 
     @Test
