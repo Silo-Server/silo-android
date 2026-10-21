@@ -218,7 +218,10 @@ class BufferingQualityPlayerAdapterTest {
         starve()
         resume()
         assertTrue(adapter.transportTroubleActive)
+        // Back online is not data arriving either; the media's next bytes are.
         adapter.onNetworkAvailable(connected = true)
+        assertTrue(adapter.transportTroubleActive)
+        adapter.onLoadFinished(bytesLoaded = 4_096)
         assertFalse(adapter.transportTroubleActive)
         assertEquals(listOf("transport_start", "waiting:network", "playing", "transport_end"), sink.events)
 
@@ -226,8 +229,13 @@ class BufferingQualityPlayerAdapterTest {
         adapter.onNetworkAvailable(connected = false)
         adapter.onLoadFailed(wasCanceled = false)
         adapter.onNetworkAvailable(connected = true)
-        assertTrue(adapter.transportTroubleActive)
+        // An empty load or a playlist refresh that succeeds ends nothing.
         adapter.onLoadFinished(bytesLoaded = 0)
+        adapter.onLoadFinished(bytesLoaded = 2_048, carriesMedia = false)
+        assertTrue(adapter.transportTroubleActive)
+        adapter.sampleBuffer(nowMs = 0, bufferedPositionMs = 10_000)
+        adapter.sampleBuffer(nowMs = 1_000, bufferedPositionMs = 12_000)
+        assertFalse(adapter.transportTroubleActive)
         assertEquals(listOf("transport_start", "transport_end"), sink.events)
     }
 

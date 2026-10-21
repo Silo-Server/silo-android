@@ -84,10 +84,13 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
  * device being offline. The sink hears
  * [BufferingPlaybackEventSink.onTransportErrorStart] when either becomes
  * active and [BufferingPlaybackEventSink.onTransportErrorEnd] once both have
- * cleared. Load trouble clears on a completed load, on buffered-position
- * progress, or when playback runs; offline trouble clears only through
- * [onNetworkAvailable]. If playback runs and that clears the last trouble, the
- * end is sent first, so the controller re-times the stall before it ends.
+ * cleared. Load trouble clears only when the plan's media data arrives again
+ * (a media load that completes with bytes, or buffered-position progress) or
+ * when playback runs; a playlist or subtitle load that succeeds clears
+ * nothing. Offline trouble lasts while the device is offline, and coming back
+ * online turns it into load trouble. If playback runs and that clears the last
+ * trouble, the end is sent first, so the controller re-times the stall before
+ * it ends.
  *
  * Every event it sends is logged, because the controller keeps no log of its
  * own: these lines, with the players' `buffering_quality` plan and replan
@@ -175,9 +178,13 @@ class BufferingQualityPlayerAdapter(
         if (phase == Phase.STARVED) announceWait(BufferingWaitCause.RELOAD)
     }
 
-    /** The default network came or went; feed it `PlaybackNetworkSnapshot.connected`. */
+    /**
+     * The default network came or went; feed it `PlaybackNetworkSnapshot.connected`.
+     * Coming back is not the plan's data arriving, so the outage carries on as
+     * load trouble until it does or playback runs.
+     */
     fun onNetworkAvailable(connected: Boolean) {
-        setTrouble(load = loadTrouble, offline = !connected)
+        setTrouble(load = loadTrouble || (connected && offline), offline = !connected)
     }
 
     /**
@@ -284,10 +291,12 @@ class BufferingQualityPlayerAdapter(
         loadEventInfo: LoadEventInfo,
         mediaLoadData: MediaLoadData,
     ) {
+        // A subtitle segment says nothing about the video's transport, either way.
+        if (mediaLoadData.trackType == C.TRACK_TYPE_TEXT) return
         onLoadFinished(
             bytesLoaded = loadEventInfo.bytesLoaded,
-            // A playlist refresh or a subtitle segment says nothing about the video arriving.
-            carriesMedia = mediaLoadData.dataType == C.DATA_TYPE_MEDIA && mediaLoadData.trackType != C.TRACK_TYPE_TEXT,
+            // A playlist refresh says nothing about the video arriving.
+            carriesMedia = mediaLoadData.dataType == C.DATA_TYPE_MEDIA,
         )
     }
 
@@ -308,9 +317,13 @@ class BufferingQualityPlayerAdapter(
         setTrouble(load = true, offline = offline)
     }
 
-    /** Any completed load ends load trouble; only media bytes count as data arriving. */
+    /**
+     * A completed media load with bytes is the plan's data arriving, which
+     * ends load trouble. A playlist refresh or an empty load ends nothing.
+     */
     internal fun onLoadFinished(bytesLoaded: Long, carriesMedia: Boolean = true) {
-        if (carriesMedia && bytesLoaded > 0) lastDataAtMs = clock()
+        if (!carriesMedia || bytesLoaded <= 0) return
+        lastDataAtMs = clock()
         setTrouble(load = false, offline = offline)
     }
 
