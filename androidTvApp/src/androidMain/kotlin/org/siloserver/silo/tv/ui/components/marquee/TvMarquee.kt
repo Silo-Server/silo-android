@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,6 +43,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -52,10 +55,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
+import androidx.tv.material3.LocalTextStyle
 import androidx.tv.material3.Text
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material3.CircularProgressIndicator
@@ -65,6 +70,7 @@ import org.siloserver.silo.common.ui.marquee.MarqueeScrimStyle
 import org.siloserver.silo.common.ui.marquee.MarqueeServerMark
 import org.siloserver.silo.common.ui.marquee.rememberReduceMotion
 import org.siloserver.silo.tv.R
+import org.siloserver.silo.tv.ui.theme.InterFamily
 
 /**
  * First-run sizes on Android TV: the Apple TV values at half scale, since
@@ -380,46 +386,32 @@ fun TvMarqueeServerCard(name: String, address: String, markUrl: String?, secure:
 }
 
 /**
- * The code a person compares between the TV and their phone. Codes are
- * server-generated and may be longer than eight characters, so tiles shrink
- * to keep the row inside the card.
+ * The code a person compares between the TV and their phone, large enough to
+ * read from the couch. Plain text, no boxes: the space in `4821 7730` widens
+ * to an en space to keep the groups apart. Inter's tabular, slashed-zero digits keep the columns even
+ * and a 0 from passing for an O in older servers' letter codes; the system
+ * monospace font has no slashed zero. Codes are server-generated and may be
+ * longer, so the text shrinks to keep the row inside the card. Matches Apple
+ * TV's `MarqueeCodeTiles` in rendered size (72pt there).
  */
 @Composable
 fun TvMarqueeCodeTiles(code: String, modifier: Modifier = Modifier, maxWidth: Dp = 260.dp) {
-    val characters = code.uppercase().toList()
-    val gap = 7.dp
-    val tileWidth = minOf(42.dp, (maxWidth - gap * (characters.size - 1).coerceAtLeast(0)) / characters.size.coerceAtLeast(1))
-    Row(
-        modifier.clearAndSetSemantics { contentDescription = "Code: " + characters.joinToString(", ") },
-        horizontalArrangement = Arrangement.spacedBy(gap),
-    ) {
-        characters.forEach { character ->
-            val separator = character == '-' || character == ' '
-            Box(
-                Modifier
-                    .width(if (separator) tileWidth * 0.45f else tileWidth)
-                    .height(tileWidth * 1.24f)
-                    .then(
-                        if (separator) {
-                            Modifier
-                        } else {
-                            Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MarqueeColors.GlassFill)
-                                .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
-                        },
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    if (character == '-') "–" else character.toString(),
-                    color = if (separator) MarqueeColors.InkTertiary else MarqueeColors.Ink,
-                    fontSize = (tileWidth.value * 0.66f).sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
+    val text = code.uppercase()
+    // A character is at most about 0.7em wide; fontScale is dp per sp.
+    val fitSize = maxWidth.value / (text.length.coerceAtLeast(1) * 0.7f * LocalDensity.current.fontScale)
+    // A code reads left to right in every locale.
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Text(
+            text.replace(' ', '\u2002'),
+            modifier = modifier.clearAndSetSemantics { contentDescription = "Code: " + text.toList().joinToString(", ") },
+            color = MarqueeColors.Ink,
+            fontSize = minOf(40f, fitSize).sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = InterFamily,
+            maxLines = 1,
+            softWrap = false,
+            textAlign = TextAlign.Center,
+            style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum, zero"),
+        )
     }
 }
