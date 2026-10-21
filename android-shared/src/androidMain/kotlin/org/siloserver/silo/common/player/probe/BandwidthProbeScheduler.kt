@@ -684,9 +684,8 @@ class BandwidthProbeScheduler(
         val measured = when (
             val result = probe.measure(mode, target.targetKbps) { read -> server.download(target, mode, read) }
         ) {
-            // Never kept or sent outside the bounds a start may carry.
-            is BandwidthProbeResult.Measured -> result.measurement.takeIf { it.kbps in READING_KBPS }
-                ?: return ProbeOutcome.TooLittleData
+            // SpeedTestMeter keeps it within the bounds a start may carry.
+            is BandwidthProbeResult.Measured -> result.measurement
             is BandwidthProbeResult.RateLimited -> {
                 val now = elapsedClock()
                 rateLimits.values.removeAll { it <= now }

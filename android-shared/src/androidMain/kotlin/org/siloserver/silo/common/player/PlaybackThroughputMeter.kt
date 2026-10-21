@@ -7,6 +7,7 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
 import java.util.IdentityHashMap
+import org.siloserver.silo.domain.player.SpeedTestMeter
 
 /**
  * `throughput_kbps` for a plan's `plan_summary`: the rate the player's long
@@ -69,8 +70,9 @@ class PlaybackThroughputMeter(
 
     /**
      * The rate since the last call, then starts over: kbps, at most
-     * [MAX_THROUGHPUT_KBPS], or null when no request received for
-     * [MIN_RECEIVING_MS] or the rate is under [MIN_THROUGHPUT_KBPS].
+     * [SpeedTestMeter.MAX_KBPS], or null when no request received for
+     * [MIN_RECEIVING_MS] or the rate is under [SpeedTestMeter.MIN_KBPS], the
+     * bounds the server accepts, as for a speed test.
      */
     fun takeKbps(): Int? = synchronized(lock) {
         // A long request still open counts what it has so far and carries on
@@ -85,7 +87,7 @@ class PlaybackThroughputMeter(
         val kbps = if (ms < MIN_RECEIVING_MS) null else countedBytes * 8 / ms
         counted.clear()
         countedBytes = 0
-        kbps?.takeIf { it >= MIN_THROUGHPUT_KBPS }?.coerceAtMost(MAX_THROUGHPUT_KBPS.toLong())?.toInt()
+        kbps?.takeIf { it >= SpeedTestMeter.MIN_KBPS }?.coerceAtMost(SpeedTestMeter.MAX_KBPS.toLong())?.toInt()
     }
 
     /** Counts [request] if it received for [MIN_RECEIVING_MS]; true when it did. */
@@ -99,10 +101,6 @@ class PlaybackThroughputMeter(
     companion object {
         /** A request that received for less than this does not count, and neither does less than this in all. */
         const val MIN_RECEIVING_MS = 1_000L
-
-        /** The bounds the server accepts, as for a speed test and `bandwidth_estimate_kbps`. */
-        const val MIN_THROUGHPUT_KBPS = 100
-        const val MAX_THROUGHPUT_KBPS = 1_000_000
 
         /** How long [spans] cover between them, overlaps once. */
         private fun unionMs(spans: List<LongRange>): Long {

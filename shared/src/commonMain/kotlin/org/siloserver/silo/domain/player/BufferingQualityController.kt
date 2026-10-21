@@ -199,7 +199,7 @@ class BufferingQualityController(
          * kbps low (22120 must give 15484).
          */
         const val STEP_DOWN_RATIO: Double = 0.7
-        const val MIN_ESTIMATE_KBPS: Int = 100
+        const val MIN_ESTIMATE_KBPS: Int = SpeedTestMeter.MIN_KBPS
     }
 
     private val _pill = MutableStateFlow<BufferingQualityPill>(BufferingQualityPill.Hidden)
