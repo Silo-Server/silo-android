@@ -23,11 +23,13 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.siloserver.silo.common.player.probe.PlaybackBandwidthEstimates
 import org.siloserver.silo.domain.player.BufferingAction
 import org.siloserver.silo.domain.player.BufferingPlanSummary
 import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.BufferingQualityReplan
 import org.siloserver.silo.model.playback.BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER
+import org.siloserver.silo.model.playback.BANDWIDTH_ESTIMATE_SOURCE_PROBE
 import org.siloserver.silo.model.playback.BUFFERING_QUALITY_V1_FEATURE
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
@@ -61,6 +63,7 @@ import org.siloserver.silo.repository.PlaybackRepository
 import org.siloserver.silo.repository.SequencedPlayback
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -80,11 +83,20 @@ class PlaybackSessionManagerBufferingQualityTest {
         override suspend fun write(entries: List<PlaybackJournalEntry>) { this.entries = entries }
     }
 
+    /** The probe as a start sees it: [estimate] when fresh, and the starts it was told about. */
+    private class Probe(var estimate: Int?) : PlaybackBandwidthEstimates {
+        var starts = 0
+        override fun freshEstimateKbps(serverId: String?, allowsLocalRoute: Boolean): Int? = estimate
+        override fun playbackStarting() { starts += 1 }
+    }
+
     private class Harness(
         capabilityFeatures: List<String>,
         mode: BufferingQualityMode = BufferingQualityMode.Default,
+        estimate: Int? = null,
         throughputKbps: () -> Int? = { null },
     ) {
+        val probe = Probe(estimate)
         val startBodies: MutableList<JsonObject> = CopyOnWriteArrayList()
         val replanBodies: MutableList<JsonObject> = CopyOnWriteArrayList()
         val routeEvents: MutableList<JsonObject> = CopyOnWriteArrayList()
@@ -147,6 +159,7 @@ class PlaybackSessionManagerBufferingQualityTest {
                 },
             ),
             tokenManager = identity,
+            bandwidthEstimates = probe,
             throughputKbps = throughputKbps,
             bufferingQualityMode = { mode },
         )
@@ -504,6 +517,72 @@ class PlaybackSessionManagerBufferingQualityTest {
         // The recovered plan (plan-3) remembers the estimate it was requested with.
         harness.manager.emitPlanSummary(summary("plan-3", deliveredKbps = null))
         assertEquals("44100", harness.awaitRouteEvent("plan_summary").diagnostics()["bandwidth_estimate_kbps"])
+    }
+
+    // A video start sends the bandwidth probe's fresh estimate, with source
+    // `probe`, and only a start does (the buffering-quality spec's *Trust model*).
+
+    @Test
+    fun aStartSendsTheFreshProbeEstimateWithItsSource() = runTest {
+        val harness = Harness(BUFFERING_QUALITY_SERVER, estimate = 48_000)
+        harness.start()
+
+        val body = harness.startBodies.single()
+        assertEquals(JsonPrimitive(48_000), body["bandwidth_estimate_kbps"])
+        assertEquals(BANDWIDTH_ESTIMATE_SOURCE_PROBE, body.string("bandwidth_estimate_source"))
+        assertTrue(BUFFERING_QUALITY_V1_FEATURE in body.features())
+        assertEquals(1, harness.probe.starts)
+    }
+
+    @Test
+    fun aStartWithoutAFreshEstimateSendsNone() = runTest {
+        val harness = Harness(BUFFERING_QUALITY_SERVER, estimate = null)
+        harness.start()
+
+        val body = harness.startBodies.single()
+        assertNull(body["bandwidth_estimate_kbps"])
+        assertNull(body["bandwidth_estimate_source"])
+        assertEquals(1, harness.probe.starts)
+    }
+
+    @Test
+    fun anOlderServerGetsTheEstimateWithoutItsSource() = runTest {
+        val harness = Harness(listOf(SEQUENCED_PROGRESS), estimate = 48_000)
+        harness.start()
+
+        val body = harness.startBodies.single()
+        assertEquals(JsonPrimitive(48_000), body["bandwidth_estimate_kbps"])
+        assertNull(body["bandwidth_estimate_source"])
+        assertFalse(BUFFERING_QUALITY_V1_FEATURE in body.features())
+    }
+
+    @Test
+    fun aReplanNeverCarriesTheProbeEstimate() = runTest {
+        val harness = Harness(BUFFERING_QUALITY_SERVER, estimate = 48_000)
+        harness.start()
+        harness.replan(classification = "quality_changed")
+        val replan = harness.replanBodies.single()
+        assertNull(replan["bandwidth_estimate_kbps"])
+        assertNull(replan["bandwidth_estimate_source"])
+        assertEquals(1, harness.probe.starts)
+    }
+
+    @Test
+    fun aLoweringReplanCarriesItsOwnStepDownEstimate() = runTest {
+        val harness = Harness(BUFFERING_QUALITY_SERVER, estimate = 48_000)
+        harness.start()
+        harness.lower()
+        val lowering = harness.replanBodies.single()
+        assertEquals(JsonPrimitive(44_100), lowering["bandwidth_estimate_kbps"])
+        assertEquals(BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER, lowering.string("bandwidth_estimate_source"))
+    }
+
+    @Test
+    fun thePlanSummaryReportsTheEstimateTheStartWasRequestedWith() = runTest {
+        val harness = Harness(BUFFERING_QUALITY_SERVER + PLAYBACK_PLAN_SUMMARY_V1_FEATURE, estimate = 48_000)
+        harness.start()
+        harness.manager.emitPlanSummary(summary(PLAN_1.planId, deliveredKbps = 31_600))
+        assertEquals("48000", harness.awaitRouteEvent("plan_summary").diagnostics()["bandwidth_estimate_kbps"])
     }
 
     private fun summary(planId: String, deliveredKbps: Int?) = BufferingPlanSummary(
