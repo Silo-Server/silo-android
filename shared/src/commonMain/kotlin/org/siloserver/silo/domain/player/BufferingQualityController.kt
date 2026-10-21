@@ -7,6 +7,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import org.siloserver.silo.model.playback.BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER
+import org.siloserver.silo.model.playback.LEARNED_LIMIT_CLEAR
+import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import kotlin.math.max
 
 /** One rung of the plan's quality menu, as far as the controller needs it. */
@@ -198,9 +201,6 @@ class BufferingQualityController(
          */
         const val STEP_DOWN_RATIO: Double = 0.7
         const val MIN_ESTIMATE_KBPS: Int = 100
-        const val QUALITY_AUTO: String = "auto"
-        const val ESTIMATE_SOURCE_OBSERVED_REBUFFER: String = "observed_rebuffer"
-        const val LEARNED_LIMIT_CLEAR: String = "clear"
     }
 
     private val _pill = MutableStateFlow<BufferingQualityPill>(BufferingQualityPill.Hidden)
@@ -577,10 +577,10 @@ class BufferingQualityController(
         val state = current ?: return false
         hidePill()
         state.action = BufferingAction.RESTORED
-        answeredQuality = QUALITY_AUTO
+        answeredQuality = PLAYBACK_QUALITY_AUTO
         pending = Pending(PendingKind.RESTORE, fromKbps = null)
         startRearm()
-        onReplan(BufferingQualityReplan(qualityPreference = QUALITY_AUTO, learnedLimit = LEARNED_LIMIT_CLEAR))
+        onReplan(BufferingQualityReplan(qualityPreference = PLAYBACK_QUALITY_AUTO, learnedLimit = LEARNED_LIMIT_CLEAR))
         return true
     }
 
@@ -641,7 +641,7 @@ class BufferingQualityController(
             resetTracker(state, now)
             return
         }
-        if (plan.quality == QUALITY_AUTO && mode == BufferingQualityMode.ALWAYS) {
+        if (plan.quality == PLAYBACK_QUALITY_AUTO && mode == BufferingQualityMode.ALWAYS) {
             sendLowering(state, lowering, PendingKind.AUTOMATIC, BufferingAction.LOWERED)
             return
         }
@@ -683,7 +683,7 @@ class BufferingQualityController(
             .filter { it.bitrateKbps > 0 }
             .sortedByDescending { it.bitrateKbps }
         val delivered = plan.deliveredKbps?.takeIf { it > 0 }
-        if (plan.quality == QUALITY_AUTO) {
+        if (plan.quality == PLAYBACK_QUALITY_AUTO) {
             delivered ?: return null
             if (rungs.none { it.bitrateKbps < delivered }) return null
             // The exact integer floor of delivered × 7 / 10; see STEP_DOWN_RATIO.
@@ -691,9 +691,9 @@ class BufferingQualityController(
             if (estimate < MIN_ESTIMATE_KBPS) return null
             return Lowering(
                 replan = BufferingQualityReplan(
-                    qualityPreference = QUALITY_AUTO,
+                    qualityPreference = PLAYBACK_QUALITY_AUTO,
                     bandwidthEstimateKbps = estimate,
-                    bandwidthEstimateSource = ESTIMATE_SOURCE_OBSERVED_REBUFFER,
+                    bandwidthEstimateSource = BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER,
                 ),
                 fromKbps = delivered,
             )

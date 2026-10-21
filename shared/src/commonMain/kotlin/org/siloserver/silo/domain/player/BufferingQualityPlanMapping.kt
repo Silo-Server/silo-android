@@ -1,15 +1,18 @@
 package org.siloserver.silo.domain.player
 
+import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.QUALITY_REDUCTION_UNAVAILABLE_WARNING
+import org.siloserver.silo.model.playback.videoQualityPreference
 
 /**
  * What [BufferingQualityController.onPlanAdopted] needs from a plan the player
  * just started playing.
  *
  * [qualityPreference] is the preference the plan was requested with: `auto`,
- * or the rung label the viewer picked. Blank reads as `auto`.
+ * or the rung label the viewer picked, normalized as [videoQualityPreference]
+ * normalizes it. Blank reads as `auto`.
  *
  * [adoptionId] identifies this adoption and must be unique per adoption: the
  * server `plan_id` can repeat across replans, so it is kept separately as
@@ -22,7 +25,7 @@ fun PlaybackPlanV3.toBufferingQualityPlan(qualityPreference: String, adoptionId:
         // The spec's delivered bitrate: effective_recipe.bitrate_kbps, else source.bitrate_kbps.
         deliveredKbps = effectiveRecipe.bitrateKbps?.takeIf { it > 0 }
             ?: source.bitrateKbps.takeIf { it > 0 },
-        quality = qualityPreference.trim().lowercase().ifBlank { BufferingQualityController.QUALITY_AUTO },
+        quality = videoQualityPreference(qualityPreference) ?: PLAYBACK_QUALITY_AUTO,
         availableQualities = availableQualities.map { BufferingQualityRung(it.label, it.bitrateKbps) },
         qualityReductionUnavailable = degradationWarnings.any { it.code == QUALITY_REDUCTION_UNAVAILABLE_WARNING },
     )
@@ -41,7 +44,7 @@ fun PlaybackExecutionPlan.toBufferingQualityPlan(qualityPreference: String, adop
         // Delivered bitrate: effective_recipe.bitrate_kbps, else source.bitrate_kbps.
         deliveredKbps = effectiveRecipe?.bitrateKbps?.takeIf { it > 0 }
             ?: sourceFile.bitrateKbps.takeIf { it > 0 },
-        quality = qualityPreference.trim().lowercase().ifBlank { BufferingQualityController.QUALITY_AUTO },
+        quality = videoQualityPreference(qualityPreference) ?: PLAYBACK_QUALITY_AUTO,
         availableQualities = availableQualities.map { BufferingQualityRung(it.label, it.bitrateKbps) },
         qualityReductionUnavailable = degradationWarnings.any { it.code == QUALITY_REDUCTION_UNAVAILABLE_WARNING },
     )
