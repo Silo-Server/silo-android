@@ -83,6 +83,7 @@ import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.asPlaybackEventSink
 import org.siloserver.silo.domain.player.BufferingQualityController
 import org.siloserver.silo.domain.player.BufferingQualityKey
+import org.siloserver.silo.domain.player.BufferingQualityPicks
 import org.siloserver.silo.domain.player.isViewerChangeTo
 import org.siloserver.silo.domain.player.BufferingQualityNotice
 import org.siloserver.silo.domain.player.BufferingQualityNoticeSlot
@@ -1325,8 +1326,7 @@ class TvPlayerViewModel(
             }
         },
         onSnapshotChanged = { snapshot ->
-            // The transaction carrying a pick failed: the server refused the pick.
-            if (snapshot.failureMessage != null) bufferingQualityController.onQualityPickRefused()
+            if (snapshot.failureMessage != null) refuseMenuPickWhenIdle()
             val localMountIdentity = snapshot.localMountIdentity
             if (localMountIdentity != null && localMountIdentity != lastAdapterMountIdentity) {
                 subtitleMountGeneration += 1
@@ -1506,6 +1506,11 @@ class TvPlayerViewModel(
 
     /** What the last adopted plan played at, for spotting the viewer's quality change. */
     private var bufferingQualityKey: BufferingQualityKey? = null
+
+    /** The viewer's picks, so only the latest one settles the controller's pending pick. */
+    private val bufferingPicks = BufferingQualityPicks(bufferingQualityController)
+    private var lastMenuPick: BufferingQualityPicks.Pick? = null
+    private var lastVersionPick: BufferingQualityPicks.Pick? = null
 
     /** The mount that plays the controller's own replan, until it is adopted. */
     private var bufferingReplanNonce: Long? = null
@@ -2713,12 +2718,20 @@ class TvPlayerViewModel(
     }
 
     /**
+     * The transaction carrying a pick failed, and no newer pick is queued in
+     * it: the server refused the latest pick.
+     */
+    private fun refuseMenuPickWhenIdle() {
+        if (!subtitleTransactions.hasActiveTransaction) bufferingPicks.refused(lastMenuPick)
+    }
+
+    /**
      * A replacement load (a version switch) failed and the current version
      * keeps playing: the viewer's pick was refused.
      */
     private fun failReplacementLoad(message: String) {
         _uiState.update { failTvReplacementLoad(it, message) }
-        bufferingQualityController.onQualityPickRefused()
+        bufferingPicks.refused(lastVersionPick)
     }
 
     private fun startIntroAutoSkipObserver() {
@@ -5802,7 +5815,11 @@ class TvPlayerViewModel(
         playbackMutationFence.beginReplan()
         launchSubtitleTransaction(state) {
             // Any buffering pill hides as the pick is sent.
-            bufferingQualityController.onQualityPickSent()
+            val wanted = videoQualityPreference(wireValue) ?: PLAYBACK_QUALITY_AUTO
+            lastMenuPick = bufferingPicks.sent(
+                matches = { it.quality == wanted },
+                outstanding = { subtitleTransactions.hasActiveTransaction },
+            )
             subtitleTransactions.selectQuality(wireValue)
         }
         return true
@@ -5928,12 +5945,13 @@ class TvPlayerViewModel(
             playbackSessionManager.activeVideoQualityPair()?.bandwidthCapKbps,
             state.mediaFileId,
         )
+        val pickStillPending = bufferingPicks.stillPendingAfter(key)
         if (bufferingQualityKey.isViewerChangeTo(key, controllerInitiated)) {
             bufferingQualityController.onViewerQualityChange()
         }
         bufferingQualityKey = key
         if (!bufferingQualityController.hasPlan) playbackSessionManager.restartPlanThroughput()
-        bufferingQualityController.onPlanAdopted(adopted, controllerInitiated)
+        bufferingQualityController.onPlanAdopted(adopted, controllerInitiated, pickStillPending)
         // After adoption: re-announces the player's phase to the new plan.
         bufferingQualityAdapter.reset()
     }
@@ -6042,6 +6060,7 @@ class TvPlayerViewModel(
         bufferingQualityController.reset()
         bufferingQualityContentId = null
         bufferingQualityKey = null
+        bufferingPicks.clear()
         forgetBufferingPlan()
         bufferingNoticeSlot.clear()
     }
@@ -6997,7 +7016,10 @@ class TvPlayerViewModel(
         // A pick: it replaces a waiting Restore, hides any pill and holds the
         // controller until the version plays (a quality change) or fails.
         cancelBufferingRestore()
-        bufferingQualityController.onQualityPickSent()
+        lastVersionPick = bufferingPicks.sent(
+            matches = { it.fileId == fileId },
+            outstanding = { versionSwitchJob?.isActive == true || _uiState.value.isLoading },
+        )
         restartSessionInPlace(fileId)
     }
 

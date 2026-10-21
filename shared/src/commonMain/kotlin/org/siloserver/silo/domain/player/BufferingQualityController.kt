@@ -356,9 +356,14 @@ class BufferingQualityController(
      * identifies the adoption; a repeat of the current one is ignored.
      * [controllerInitiated] false means it answers a replan the controller did
      * not send (a track change, a recovery): a pending lowering is dropped,
-     * with no notice or cooldown.
+     * with no notice or cooldown, and a pending pick ends unless
+     * [pickStillPending] says a newer pick still waits.
      */
-    fun onPlanAdopted(plan: BufferingQualityPlan, controllerInitiated: Boolean = true): Unit {
+    fun onPlanAdopted(
+        plan: BufferingQualityPlan,
+        controllerInitiated: Boolean = true,
+        pickStillPending: Boolean = false,
+    ): Unit {
         if (!enabled) return
         if (current?.plan?.planId == plan.planId) return
         val now = clock()
@@ -368,8 +373,13 @@ class BufferingQualityController(
         dropPlan(now)
         val state = PlanState(plan)
         current = state
-        // A plan the controller did not ask for ends a pending pick: it is the pick's, or replaces it.
-        if (!controllerInitiated) pickPending = false
+        // A plan the controller did not ask for ends a pending pick (it is the
+        // pick's, or replaces it) unless a newer pick still waits.
+        if (pickStillPending) {
+            pickPending = true
+        } else if (!controllerInitiated) {
+            pickPending = false
+        }
 
         settled ?: return
         if (!controllerInitiated || settled.kind == PendingKind.RESTORE) return

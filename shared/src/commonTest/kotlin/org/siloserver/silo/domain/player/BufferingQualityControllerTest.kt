@@ -447,6 +447,41 @@ class BufferingQualityControllerTest {
     }
 
     @Test
+    fun `only the latest pick settles the pending pick`() = runTest {
+        val controller = newController(BufferingQualityMode.ASK)
+        val picks = BufferingQualityPicks(controller)
+        controller.onPlanAdopted(plan("p1"))
+        controller.onPlaying()
+
+        // Pick A, then pick B replaces it while A still waits behind a replan.
+        val pickA = picks.sent(matches = { it.quality == "720p-high" }, outstanding = { true })
+        var bOutstanding = true
+        val pickB = picks.sent(matches = { it.quality == "1080p-medium" }, outstanding = { bOutstanding })
+
+        // A's refusal settles nothing: a long stall still prompts nothing.
+        picks.refused(pickA)
+        at(125_000)
+        controller.onWaiting()
+        at(131_000)
+        assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
+
+        // A's plan adopted while B waits leaves B pending.
+        val keyA = BufferingQualityKey("720p-high", null, 1)
+        assertTrue(picks.stillPendingAfter(keyA))
+        controller.onPlanAdopted(plan("p2"), controllerInitiated = false, pickStillPending = true)
+        controller.onPlaying()
+        at(260_000)
+        controller.onWaiting()
+        at(266_000)
+        assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
+
+        // B refused: the long stall in progress is evaluated at once.
+        bOutstanding = false
+        picks.refused(pickB)
+        assertEquals(BufferingQualityPill.Prompt(15), controller.pill.value)
+    }
+
+    @Test
     fun `never hides a visible prompt and records ignored triggers`() = runTest {
         val controller = newController(BufferingQualityMode.ASK)
         longStall(controller)

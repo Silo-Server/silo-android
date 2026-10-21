@@ -66,6 +66,7 @@ import org.siloserver.silo.common.player.BufferingQualityPlayerAdapter
 import org.siloserver.silo.common.player.asPlaybackEventSink
 import org.siloserver.silo.domain.player.BufferingQualityController
 import org.siloserver.silo.domain.player.BufferingQualityKey
+import org.siloserver.silo.domain.player.BufferingQualityPicks
 import org.siloserver.silo.domain.player.isViewerChangeTo
 import org.siloserver.silo.domain.player.BufferingQualityNotice
 import org.siloserver.silo.domain.player.BufferingQualityNoticeSlot
@@ -770,6 +771,11 @@ class PlayerViewModel(
 
     /** What the last adopted plan played at, for spotting the viewer's quality change. */
     private var bufferingQualityKey: BufferingQualityKey? = null
+
+    /** The viewer's picks, so only the latest one settles the controller's pending pick. */
+    private val bufferingPicks = BufferingQualityPicks(bufferingQualityController)
+    private var lastMenuPick: BufferingQualityPicks.Pick? = null
+    private var lastVersionPick: BufferingQualityPicks.Pick? = null
 
     /** A Restore quality waiting for the replan in flight. */
     private var bufferingRestoreJob: Job? = null
@@ -2637,10 +2643,14 @@ class PlayerViewModel(
         // The move is a pick: it replaces a waiting Restore, hides any pill and
         // holds the controller until its plan plays (a quality change) or it fails.
         cancelBufferingRestore()
-        bufferingQualityController.onQualityPickSent()
+        val wanted = videoQualityPreference(pair.qualityPreference) ?: PLAYBACK_QUALITY_AUTO
+        val pick = bufferingPicks.sent(
+            matches = { it.quality == wanted && it.bandwidthCapKbps == pair.bandwidthCapKbps },
+            outstanding = { move.isActive },
+        )
         picksDuringNetworkMove.holdUntilDone(move)
         move.join()
-        if (playbackSessionManager.activeVideoQualityPair() != pair) bufferingQualityController.onQualityPickRefused()
+        if (playbackSessionManager.activeVideoQualityPair() != pair) bufferingPicks.refused(pick)
     }
 
     /**
@@ -3943,7 +3953,11 @@ class PlayerViewModel(
         // it is a quality change (adoptBufferingQualityPlan); a refused pick is none.
         cancelBufferingRestore()
         // Any buffering pill hides as the pick is sent.
-        bufferingQualityController.onQualityPickSent()
+        val wanted = videoQualityPreference(id) ?: PLAYBACK_QUALITY_AUTO
+        lastMenuPick = bufferingPicks.sent(
+            matches = { it.quality == wanted },
+            outstanding = { mobileSubtitleTransactions.hasActiveTransaction },
+        )
         mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
         mobileSubtitleTransactions.selectQuality(id)
     }
@@ -4088,12 +4102,13 @@ class PlayerViewModel(
             playbackSessionManager.activeVideoQualityPair()?.bandwidthCapKbps,
             state.mediaFileId,
         )
+        val pickStillPending = bufferingPicks.stillPendingAfter(key)
         if (bufferingQualityKey.isViewerChangeTo(key, controllerInitiated)) {
             bufferingQualityController.onViewerQualityChange()
         }
         bufferingQualityKey = key
         if (!bufferingQualityController.hasPlan) playbackSessionManager.restartPlanThroughput()
-        bufferingQualityController.onPlanAdopted(adopted, controllerInitiated)
+        bufferingQualityController.onPlanAdopted(adopted, controllerInitiated, pickStillPending)
         // After the adoption: it re-announces the player's phase to the new plan.
         bufferingQualityAdapter.reset()
         Log.i(
@@ -4142,6 +4157,7 @@ class PlayerViewModel(
         bufferingQualityController.reset()
         bufferingQualityContentId = null
         bufferingQualityKey = null
+        bufferingPicks.clear()
         bufferingReplanMount = null
         cancelBufferingRestore()
         bufferingNoticeSlot.clear()
@@ -4393,7 +4409,10 @@ class PlayerViewModel(
             )
         }
         noteQualityCommitted(snapshot.transition.committed.qualityPreference)
-        if (snapshot.qualityChangeFailed) bufferingQualityController.onQualityPickRefused()
+        // A failure while a newer pick is queued is the older pick's, which settles nothing.
+        if (snapshot.qualityChangeFailed && !mobileSubtitleTransactions.hasActiveTransaction) {
+            bufferingPicks.refused(lastMenuPick)
+        }
         if (!mobileSubtitleTransactions.hasActiveTransaction) {
             redriveQueuedInvalidationReplan()
         }
@@ -5900,7 +5919,10 @@ class PlayerViewModel(
             sessionQualityOverride = null
             // A pick: once its plan plays, it is a quality change (adoptBufferingQualityPlan).
             cancelBufferingRestore()
-            bufferingQualityController.onQualityPickSent()
+            lastVersionPick = bufferingPicks.sent(
+                matches = { it.fileId == version.fileId },
+                outstanding = { loadJob?.isActive == true || _uiState.value.isLoading },
+            )
         }
         val currentVersion = state.versions.getOrNull(state.selectedVersionIndex)
         val carriedAudioIndex = desiredAudio
@@ -5959,7 +5981,7 @@ class PlayerViewModel(
         }
         showVersionSwitchMessage(humanizeVersionSwitchFailure(rawReason))
         // The pick failed; the restart below plays the version that was playing.
-        bufferingQualityController.onQualityPickRefused()
+        bufferingPicks.refused(lastVersionPick)
         val versions = _uiState.value.versions
         if (previousIndex in versions.indices) {
             startVersionPlayback(previousIndex, isRecovery = true)
