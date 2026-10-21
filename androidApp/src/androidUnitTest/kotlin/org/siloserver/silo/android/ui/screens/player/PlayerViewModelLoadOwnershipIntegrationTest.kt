@@ -870,6 +870,13 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     /** A shuffle server whose answers each test scripts; it records every request. */
     private class FakeShuffleServer(testDispatcher: CoroutineDispatcher? = null) {
         val requests: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf())
+
+        /**
+         * The requests so far. The engine records them on its own thread, so
+         * read a copy taken under the list's lock: iterating the live list
+         * while a request lands throws ConcurrentModificationException.
+         */
+        fun seen(): List<String> = synchronized(requests) { requests.toList() }
         var read: String = shuffle(current = EPISODE_A, next = MOVIE_B)
         var advance: String = shuffle(current = MOVIE_B, next = EPISODE_C)
         var skip: String = shuffle(current = EPISODE_A, next = EPISODE_C)
@@ -962,7 +969,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             assertEquals(2, starter.startedRequestCount)
             assertEquals(
                 1,
-                server.requests.count { it == """POST /api/v2/shuffles/sh1/advance {"from_content_id":"episode-a"}""" },
+                server.seen().count { it == """POST /api/v2/shuffles/sh1/advance {"from_content_id":"episode-a"}""" },
             )
 
             starter.complete(1, ready(successor, "session-b"))
@@ -996,13 +1003,14 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             // Play Now while Pick Another is still waiting for the server.
             viewModel.playUpNextNow()
             runCurrent()
-            assertTrue(server.requests.none { it.contains("/advance") })
+            assertTrue(server.seen().none { it.contains("/advance") })
 
             requireNotNull(server.skipGate).complete(Unit)
             starter.awaitRequestCount(2)
             assertEquals("episode-c", starter.request(1).contentId)
-            val skip = server.requests.indexOfFirst { it.contains("/skip") }
-            val advance = server.requests.indexOfFirst { it.contains("/advance") }
+            val seen = server.seen()
+            val skip = seen.indexOfFirst { it.contains("/skip") }
+            val advance = seen.indexOfFirst { it.contains("/advance") }
             assertTrue(skip in 0 until advance)
         } finally {
             store.clear()
@@ -1027,7 +1035,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             // The card's re-read fails like every read here.
             withContext(Dispatchers.Default) {
                 withTimeout(5_000) {
-                    while (server.requests.toList().none { it == "GET /api/v2/shuffles/sh1" }) delay(10)
+                    while (server.seen().none { it == "GET /api/v2/shuffles/sh1" }) delay(10)
                 }
             }
             runCurrent()
@@ -1059,7 +1067,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             testScheduler.advanceTimeBy(30_000)
             runCurrent()
             assertEquals(1, starter.startedRequestCount)
-            assertTrue(server.requests.none { it.contains("/advance") })
+            assertTrue(server.seen().none { it.contains("/advance") })
         } finally {
             store.clear()
         }
@@ -1105,7 +1113,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             // Returning through Dispatchers.Default lets virtual time tick
             // between publication of the full countdown and this assertion.
             withTimeout(30_000) { viewModel.uiState.first { it.nextEpisode?.contentId == "episode-c" } }
-            assertTrue(server.requests.contains("""POST /api/v2/shuffles/sh1/skip {"next_content_id":"movie-b"}"""))
+            assertTrue(server.seen().contains("""POST /api/v2/shuffles/sh1/skip {"next_content_id":"movie-b"}"""))
             assertEquals(PlayerViewModel.UP_NEXT_COUNTDOWN_SECONDS, viewModel.uiState.value.upNextCountdownSeconds)
 
             viewModel.stopShuffling()
