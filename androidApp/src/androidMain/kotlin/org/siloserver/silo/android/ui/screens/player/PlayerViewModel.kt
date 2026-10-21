@@ -751,8 +751,7 @@ class PlayerViewModel(
      * only times them because the room's own lower-quality offer applies, and
      * not for a downloaded file, which has no server plan to replan.
      */
-    var bufferingQualityEnabled: Boolean = true
-        private set
+    val bufferingQualityEnabled: Boolean get() = !inRoom && !bufferingQualityLocalPlayback
     private var bufferingQualityLocalPlayback = false
 
     /** The title the controller's answer, notice and re-offer wait belong to. */
@@ -4093,7 +4092,6 @@ class PlayerViewModel(
         ) ?: PLAYBACK_QUALITY_AUTO
 
     private fun syncBufferingQualityEnabled() {
-        bufferingQualityEnabled = !inRoom && !bufferingQualityLocalPlayback
         bufferingQualityController.setEnabled(!bufferingQualityLocalPlayback)
         bufferingQualityController.setSuspended(inRoom)
         if (inRoom) cancelBufferingRestore()

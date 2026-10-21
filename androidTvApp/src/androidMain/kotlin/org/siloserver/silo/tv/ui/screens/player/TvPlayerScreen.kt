@@ -1833,7 +1833,13 @@ fun TvPlayerScreen(
                     decoderDroppedBufferCount = decoderCounters?.droppedBufferCount ?: 0,
                 )
                 if (reason != null) {
-                    if (viewModel.bufferingOwnsStartupStall(reason, SystemClock.elapsedRealtime())) {
+                    if (
+                        viewModel.bufferingQualityAdapter.ownsStartupStall(
+                            reason = reason,
+                            nowMs = SystemClock.elapsedRealtime(),
+                            controllerEnabled = viewModel.bufferingQualityEnabled,
+                        )
+                    ) {
                         // A slow plan that is still receiving data belongs to
                         // the buffering-quality controller: no same-plan reopen
                         // and no failure replan, and the loop keeps sampling.

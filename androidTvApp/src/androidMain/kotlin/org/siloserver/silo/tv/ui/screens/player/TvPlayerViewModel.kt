@@ -6042,16 +6042,6 @@ class TvPlayerViewModel(
     fun onBufferingSelectPrimary(): Boolean = bufferingQualityController.selectPrimary()
 
     /**
-     * Whether a startup-stall report belongs to the buffering-quality
-     * controller (a slow plan still receiving data) rather than the
-     * same-plan reopen.
-     */
-    fun bufferingOwnsStartupStall(
-        reason: org.siloserver.silo.common.player.Playability,
-        nowMs: Long,
-    ): Boolean = bufferingQualityAdapter.ownsStartupStall(reason, nowMs, bufferingQualityEnabled)
-
-    /**
      * HUD Chapters pane picked a row. Returns the seek target in seconds;
      * the screen owns the MediaController and performs the actual seek.
      * Returns null when the supplied index is out of range (shouldn't
