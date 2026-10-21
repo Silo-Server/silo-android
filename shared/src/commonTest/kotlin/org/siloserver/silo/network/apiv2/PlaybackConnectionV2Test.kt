@@ -7,27 +7,14 @@ import kotlin.test.assertNull
 
 /** `GET /api/v2/playback/connection`, from the buffering-quality spec's *Reporting and display*. */
 class PlaybackConnectionV2Test {
-    @Test fun phaseOneBodyCarriesOnlyTheConnectionAndItsLimit() {
-        val body = """{"connection":"remote",
-            "learned_limit":{"kbps":44100,"observed_at":"2026-10-17T16:21:40Z","expires_at":"2026-10-24T16:21:40Z"}}"""
-        val decoded = SiloJson.decodeFromString(PlaybackConnectionV2.serializer(), body)
-        assertEquals(
-            PlaybackConnectionV2(
-                connection = "remote",
-                learnedLimit = PlaybackLearnedLimitV2(44100, "2026-10-17T16:21:40Z", "2026-10-24T16:21:40Z"),
-            ),
-            decoded,
-        )
+    @Test fun aConnectionOnlyBodyDecodes() {
+        val decoded = SiloJson.decodeFromString(PlaybackConnectionV2.serializer(), """{"connection":"local"}""")
+        assertEquals(PlaybackConnectionV2(connection = "local"), decoded)
         assertNull(decoded.probe)
         assertNull(decoded.autoBudgetKbps)
     }
 
-    @Test fun phaseOneBodyWithoutALimit() {
-        val decoded = SiloJson.decodeFromString(PlaybackConnectionV2.serializer(), """{"connection":"local"}""")
-        assertEquals(PlaybackConnectionV2(connection = "local"), decoded)
-    }
-
-    @Test fun phaseTwoBodyAddsTheProbeAndBudgetAndIgnoresUnknownFields() {
+    @Test fun aBodyWithAProbeAndBudgetIgnoresUnknownFields() {
         val body = """{
             "connection":"remote",
             "probe":{"kbps":48000,"measured_at":"2026-10-17T19:02:11Z","transport":"wifi","bytes":40000000},
@@ -46,7 +33,7 @@ class PlaybackConnectionV2Test {
         )
     }
 
-    @Test fun theSpeedTestRedesignAddsLowerBoundsAndThePlaybackSample() {
+    @Test fun aBodyWithALowerBoundAndPlaybackSampleDecodes() {
         val body = """{
             "connection":"remote",
             "probe":{"kbps":115000,"lower_bound":true,"measured_at":"2026-10-17T19:02:11Z","transport":"wifi"},
