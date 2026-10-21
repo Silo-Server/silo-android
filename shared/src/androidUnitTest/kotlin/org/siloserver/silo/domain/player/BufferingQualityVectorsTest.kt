@@ -231,6 +231,8 @@ class BufferingQualityVectorsTest {
                 controller.onNewAttempt()
                 replans.newAttempt()
             }
+            "pick_sent" -> controller.onQualityPickSent()
+            "pick_refused" -> controller.onQualityPickRefused()
             "playing" -> controller.onPlaying()
             "waiting" -> controller.onWaiting(causeOf(event["cause"]?.jsonPrimitive?.content))
             "pause" -> controller.onPause()

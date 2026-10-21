@@ -368,6 +368,8 @@ class BufferingQualityController(
         dropPlan(now)
         val state = PlanState(plan)
         current = state
+        // A plan the controller did not ask for ends a pending pick: it is the pick's, or replaces it.
+        if (!controllerInitiated) pickPending = false
 
         settled ?: return
         if (!controllerInitiated || settled.kind == PendingKind.RESTORE) return
@@ -504,9 +506,10 @@ class BufferingQualityController(
 
     /**
      * The viewer picked a quality from the menu, and the pick is on its way.
-     * Any pill hides now. The pick counts as a quality change only when its
-     * plan is adopted ([onViewerQualityChange]), not at all if it is refused,
-     * and a lowering adopted meanwhile shows no undo pill and no notice.
+     * Any pill hides now, and nothing prompts or lowers until the pick is
+     * settled. It counts as a quality change only when its plan is adopted
+     * ([onViewerQualityChange]); a lowering adopted meanwhile shows no undo
+     * pill and no notice.
      */
     fun onQualityPickSent(): Unit {
         if (!enabled) return
@@ -514,9 +517,14 @@ class BufferingQualityController(
         hidePill()
     }
 
-    /** The pick's request ended, with its plan on the way or refused: nothing is pending. */
-    fun onQualityPickSettled(): Unit {
+    /**
+     * The server refused the pick: nothing changes but the hidden pill, and a
+     * long stall in progress is evaluated at once.
+     */
+    fun onQualityPickRefused(): Unit {
+        if (!pickPending) return
         pickPending = false
+        evaluate(clock())
     }
 
     /**
@@ -619,7 +627,7 @@ class BufferingQualityController(
     // ---- Trigger -----------------------------------------------------------
 
     private fun evaluate(now: Long) {
-        if (!enabled || suspended || transportTrouble) return
+        if (!enabled || suspended || transportTrouble || pickPending) return
         val state = current ?: return
         if (!state.tracker.shouldTrigger(now)) return
         if (isBusy()) return

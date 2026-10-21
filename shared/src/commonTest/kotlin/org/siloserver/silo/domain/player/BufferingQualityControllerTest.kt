@@ -432,8 +432,8 @@ class BufferingQualityControllerTest {
         assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
         assertTrue(notices.isEmpty())
 
-        // Settled (the pick was refused): the next lowering's undo shows again.
-        controller.onQualityPickSettled()
+        // The pick refused: the next lowering's undo shows again.
+        controller.onQualityPickRefused()
         controller.onPlaying()
         at(300_000)
         controller.onWaiting()

@@ -4390,9 +4390,8 @@ class PlayerViewModel(
             )
         }
         noteQualityCommitted(snapshot.transition.committed.qualityPreference)
+        if (snapshot.qualityChangeFailed) bufferingQualityController.onQualityPickRefused()
         if (!mobileSubtitleTransactions.hasActiveTransaction) {
-            // A pick's request is over: its plan is on the way, or it was refused.
-            bufferingQualityController.onQualityPickSettled()
             redriveQueuedInvalidationReplan()
         }
     }

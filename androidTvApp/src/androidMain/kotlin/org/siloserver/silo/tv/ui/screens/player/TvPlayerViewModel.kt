@@ -1325,7 +1325,8 @@ class TvPlayerViewModel(
             }
         },
         onSnapshotChanged = { snapshot ->
-            settleQualityPickWhenIdle()
+            // The transaction carrying a pick failed: the server refused the pick.
+            if (snapshot.failureMessage != null) bufferingQualityController.onQualityPickRefused()
             val localMountIdentity = snapshot.localMountIdentity
             if (localMountIdentity != null && localMountIdentity != lastAdapterMountIdentity) {
                 subtitleMountGeneration += 1
@@ -6044,11 +6045,6 @@ class TvPlayerViewModel(
         bufferingReplanNonce = null
         cancelBufferingRestore()
         _bufferingAutoLimited.value = false
-    }
-
-    /** A pick's request is over once no transaction is active: its plan is on the way, or it was refused. */
-    private fun settleQualityPickWhenIdle() {
-        if (!subtitleTransactions.hasActiveTransaction) bufferingQualityController.onQualityPickSettled()
     }
 
     /** "Lower quality" on the buffering prompt. */
