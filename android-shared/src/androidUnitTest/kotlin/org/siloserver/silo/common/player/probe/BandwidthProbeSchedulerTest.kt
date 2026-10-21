@@ -50,6 +50,9 @@ class BandwidthProbeSchedulerTest {
         /** What `GET /api/v2/playback/connection` holds for this device; none by default. */
         var stored: StoredReadingLookup = StoredReadingLookup.None
 
+        /** How that read answers; [stored] at once by default. */
+        var readStored: suspend () -> StoredReadingLookup = { stored }
+
         /** What a download answers; by default 1 MB every 100 ms, which times at 80 Mbps. */
         var answer: suspend (suspend (BandwidthProbeResponseV2) -> BandwidthProbeResult) -> BandwidthProbeResult = { read ->
             read(BandwidthProbeResponseV2.Body { delay(100); 1_000_000 })
@@ -80,7 +83,7 @@ class BandwidthProbeSchedulerTest {
         }
 
         override suspend fun storedReading(target: BandwidthProbeTarget): StoredReadingLookup =
-            stored.also { storedChecks += 1 }
+            readStored().also { storedChecks += 1 }
     }
 
     private class Harness(val test: TestScope, snapshot: PlaybackNetworkSnapshot = WIFI) {
@@ -502,60 +505,34 @@ class BandwidthProbeSchedulerTest {
     fun aStartDuringTheCheckLetsItFinishReadingButNotTest() = runTest {
         val harness = Harness(this)
         val reading = CompletableDeferred<StoredReadingLookup>()
-        val server = object : BandwidthProbeServer by harness.server {
-            override suspend fun storedReading(target: BandwidthProbeTarget) = reading.await()
-        }
-        val scheduler = BandwidthProbeScheduler(
-            server = server,
-            network = harness.network,
-            mediaActive = harness.media,
-            activeServer = harness.activeServer,
-            scope = backgroundScope,
-            probe = BandwidthProbe(clock = { currentTime }),
-            elapsedClock = { currentTime },
-            wallClock = { 1_760_000_000_000 + currentTime },
-        ).also { it.observe() }
+        harness.server.readStored = { reading.await() }
         harness.server.serve(probeTarget(targetKbps = 50_000))
-        scheduler.onForeground()
-        runCurrent()
-        scheduler.playbackStarting()
+        harness.foreground()
+        harness.scheduler.playbackStarting()
         runCurrent()
         reading.complete(harness.storedReading(30_000, ageMs = 60_000, lowerBound = true))
         advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
         assertEquals(0, harness.server.downloads)
-        assertEquals(30_000, scheduler.freshEstimateKbps())
+        assertEquals(30_000, harness.scheduler.freshEstimateKbps())
     }
 
     @Test
     fun aNetworkChangeDuringTheServerReadStartsItsOwnCheck() = runTest {
         val harness = Harness(this)
         var reads = 0
-        val server = object : BandwidthProbeServer by harness.server {
-            override suspend fun storedReading(target: BandwidthProbeTarget): StoredReadingLookup {
-                reads += 1
-                // The first network's read never answers.
-                if (reads == 1) awaitCancellation()
-                return harness.storedReading(30_000, ageMs = 60_000)
-            }
+        harness.server.readStored = {
+            reads += 1
+            // The first network's read never answers.
+            if (reads == 1) awaitCancellation()
+            harness.storedReading(30_000, ageMs = 60_000)
         }
-        val scheduler = BandwidthProbeScheduler(
-            server = server,
-            network = harness.network,
-            mediaActive = harness.media,
-            activeServer = harness.activeServer,
-            scope = backgroundScope,
-            probe = BandwidthProbe(clock = { currentTime }),
-            elapsedClock = { currentTime },
-            wallClock = { 1_760_000_000_000 + currentTime },
-        ).also { it.observe() }
-        scheduler.onForeground()
-        runCurrent()
+        harness.foreground()
         assertEquals(1, reads)
 
         harness.network.state.value = WIFI.copy(networkId = 2)
         runCurrent()
         assertEquals(2, reads)
-        assertEquals(30_000, scheduler.freshEstimateKbps())
+        assertEquals(30_000, harness.scheduler.freshEstimateKbps())
     }
 
     @Test
