@@ -110,8 +110,10 @@ import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackAvailableQualityV3
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
 import org.siloserver.silo.model.playback.PlaybackSourceDescriptorV3
+import org.siloserver.silo.model.playback.ReportedPlaybackQuality
 import org.siloserver.silo.model.playback.activePlaybackQualityId
 import org.siloserver.silo.model.playback.playbackQualityMenu
+import org.siloserver.silo.model.playback.reportedQuality
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
@@ -228,9 +230,10 @@ internal fun authoritativePlaybackQualityOptions(
     selectedLabel: String?,
     delivered: PlaybackEffectiveRecipeV3? = null,
     source: PlaybackSourceDescriptorV3? = null,
+    reported: ReportedPlaybackQuality? = null,
 ): List<VideoQualityOption> {
     val menu = playbackQualityMenu(available)
-    val activeId = activePlaybackQualityId(menu, selectedLabel, delivered, source)
+    val activeId = activePlaybackQualityId(menu, selectedLabel, delivered, source, reported)
     return menu.map { option ->
         VideoQualityOption(
             id = option.id,
@@ -2065,6 +2068,7 @@ class TvPlayerViewModel(
                     selectedLabel = adoption.committed.qualityPreference ?: sessionQualityPreference(),
                     delivered = ready.plan.effectiveRecipe,
                     source = ready.plan.source,
+                    reported = ready.plan.reportedQuality,
                 ),
                 videoQualityPreference = adoption.committed.qualityPreference ?: sessionQualityPreference(),
                 container = ready.plan.stream.container ?: version?.container ?: state.container,
@@ -2539,6 +2543,7 @@ class TvPlayerViewModel(
                                     selectedLabel = sessionQualityPreference(),
                                     delivered = result.playbackPlanV3?.effectiveRecipe,
                                     source = result.playbackPlanV3?.source,
+                                    reported = result.playbackPlanV3?.reportedQuality,
                                 ),
                                 videoQualityPreference = sessionQualityPreference(),
                                 mediaFileId = result.mediaFileId,
@@ -3045,6 +3050,7 @@ class TvPlayerViewModel(
                                     selectedLabel = qualityPreference ?: sessionQualityPreference(),
                                     delivered = decision.plan.effectiveRecipe,
                                     source = decision.plan.source,
+                                    reported = decision.plan.reportedQuality,
                                 ),
                                 videoQualityPreference = qualityPreference ?: sessionQualityPreference(),
                                 container = effectiveContainer,
@@ -4190,6 +4196,15 @@ class TvPlayerViewModel(
                 transportMountNonce = transportMountNonce,
                 requestHeaders = decision.plan.stream.effectiveRequestHeaders,
                 container = decision.plan.stream.container ?: it.container,
+                // A recovered seek can land on another recipe (an HEVC encode
+                // falling back to H.264), so the lit row follows its plan.
+                videoQualities = authoritativePlaybackQualityOptions(
+                    available = decision.plan.availableQualities,
+                    selectedLabel = it.videoQualityPreference ?: sessionQualityPreference(),
+                    delivered = decision.plan.effectiveRecipe,
+                    source = decision.plan.source,
+                    reported = decision.plan.reportedQuality,
+                ),
                 startPosition = decision.plan.timeline.playerStartSeconds,
                 position = sourcePosition,
                 subtitleUrls = effectiveSubtitleUrls,

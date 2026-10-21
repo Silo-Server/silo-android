@@ -43,6 +43,8 @@ import androidx.tv.material3.LocalTextStyle
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import org.siloserver.silo.common.cards.LocalCardPresentation
+import org.siloserver.silo.model.settings.CardPosterSize
 import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.R
@@ -91,7 +93,15 @@ internal fun TvDetailHero(
     // tvOS 690pt on a 1080pt canvas. Android TV's 1920×1080 emulator reports
     // a 960×540dp layout canvas, so the same fraction produces 345dp.
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
-    val heroHeight = screenHeight * HERO_HEIGHT_FRACTION + extraHeight
+    // At the Large card size the Series episode rail's two-line caption runs
+    // past the bottom of the pinned first screen, so the Series hero gives up
+    // that much of its empty top inset; the rest of the page moves up with it.
+    val seriesLift = if (compactSeries && LocalCardPresentation.current.posterSize == CardPosterSize.Large) {
+        SERIES_LARGE_CARD_LIFT
+    } else {
+        0.dp
+    }
+    val heroHeight = screenHeight * HERO_HEIGHT_FRACTION + extraHeight - seriesLift
 
     BoxWithConstraints(
         modifier = modifier
@@ -147,7 +157,7 @@ internal fun TvDetailHero(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = HERO_TOP_INSET, start = TvDetailHorizontalInset, end = TvDetailHorizontalInset),
+                .padding(top = HERO_TOP_INSET - seriesLift, start = TvDetailHorizontalInset, end = TvDetailHorizontalInset),
             horizontalAlignment = Alignment.Start,
             verticalArrangement = Arrangement.spacedBy(if (compactSeries) 2.dp else HERO_CONTENT_SPACING),
         ) {
@@ -537,6 +547,7 @@ private const val HERO_HEIGHT_FRACTION = 690f / 1080f
 private const val ARTWORK_WIDTH_FRACTION = 0.64f
 private const val ARTWORK_HEIGHT_FRACTION = 0.70f
 private val HERO_TOP_INSET = 58.dp
+private val SERIES_LARGE_CARD_LIFT = 16.dp
 private val HERO_CONTENT_MAX_WIDTH = 540.dp
 private val HERO_CONTENT_SPACING = 9.dp
 private val EDITORIAL_SPACING = 7.dp

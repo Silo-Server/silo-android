@@ -13,11 +13,23 @@ sealed interface TrailerRailEntry {
     val title: String
     val kind: String
 
+    /**
+     * Card image: YouTube's still for a remote video, or the extra's own image
+     * (a sidecar beside its file, or a frame the server took). Null while a
+     * local extra has none.
+     */
+    val thumbnailUrl: String?
+
+    /** Placeholder hash shown while a local extra's image loads. */
+    val thumbhash: String?
+
     data class Remote(val video: ItemVideo) : TrailerRailEntry {
         override val key = "remote:${video.site}:${video.siteKey}"
         override val title = video.name?.trim()?.takeIf { it.isNotEmpty() }
             ?: extraKindLabel(video.kind)
         override val kind = video.kind
+        override val thumbnailUrl = youtubeThumbnailUrl(video.siteKey)
+        override val thumbhash: String? = null
     }
 
     data class Local(val extra: ItemExtra) : TrailerRailEntry {
@@ -25,22 +37,25 @@ sealed interface TrailerRailEntry {
         override val title = extra.title?.trim()?.takeIf { it.isNotEmpty() }
             ?: extraKindLabel(extra.kind)
         override val kind = extra.kind
+        override val thumbnailUrl = extra.stillUrl
+        override val thumbhash = extra.stillThumbhash
     }
 }
 
 /**
  * Merge an item's remote videos and local extras into one ordered rail.
  *
- * Remote videos come first in server order (the server already sorts
- * trailers and official uploads first), then local extras in server order.
+ * Local extras come first in server order, because they play in Silo while
+ * remote videos hand off to YouTube. Remote videos follow in server order
+ * (the server already sorts trailers and official uploads first).
  * YouTube is the only remote site the clients can open, so other sites are
  * dropped rather than rendered as cards that do nothing.
  */
 fun trailerRailEntries(detail: ItemDetail): List<TrailerRailEntry> = buildList {
+    detail.extras.orEmpty().forEach { add(TrailerRailEntry.Local(it)) }
     detail.videos.orEmpty()
         .filter { it.site.equals("youtube", ignoreCase = true) && it.siteKey.isNotBlank() }
         .forEach { add(TrailerRailEntry.Remote(it)) }
-    detail.extras.orEmpty().forEach { add(TrailerRailEntry.Local(it)) }
 }.distinctBy(TrailerRailEntry::key)
 
 /** YouTube's still for a video. `hqdefault` exists for every upload. */

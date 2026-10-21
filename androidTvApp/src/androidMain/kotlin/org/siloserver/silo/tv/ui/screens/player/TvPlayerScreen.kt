@@ -3969,9 +3969,18 @@ data class VideoQualityOption(
 
 /**
  * Silo Cast's Auto id from before the menu carried its own `auto` row: still
- * accepted from remotes, and reported when no row is selected.
+ * accepted from remotes, never reported.
  */
 internal const val VIDEO_QUALITY_AUTO_ID = "-1"
+
+/**
+ * The quality id Silo Cast reports: the selected row's, or empty when none is.
+ * No row is selected when a fixed preference plays something no row names,
+ * such as the source unchanged, so the remote must check nothing rather than
+ * Auto. The wire field is a non-optional string, hence empty over null.
+ */
+internal fun siloCastActiveQualityId(videoQualities: List<VideoQualityOption>): String =
+    videoQualities.firstOrNull { it.isSelected }?.id.orEmpty()
 
 internal fun resizeModeForVideoFillMode(mode: VideoFillMode): Int = when (mode) {
     VideoFillMode.Fit -> AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -4010,7 +4019,6 @@ private fun TvPlayerViewModel.UiState.toSiloCastPlaybackState(
     subtitleAppearance: SubtitleAppearance,
     volumeState: SiloCastVolumeState,
 ): SiloCastPlaybackState {
-    val activeQualityId = videoQualities.firstOrNull { it.isSelected }?.id ?: VIDEO_QUALITY_AUTO_ID
     return SiloCastPlaybackState(
         contentId = contentId,
         sessionId = sessionId,
@@ -4031,7 +4039,7 @@ private fun TvPlayerViewModel.UiState.toSiloCastPlaybackState(
         selectedAudioTrackId = audioTracks.firstOrNull { it.isSelected }?.index?.toLong(),
         selectedSubtitleTrackId = subtitleTracks.firstOrNull { it.isSelected }?.index?.toLong(),
         qualityOptions = videoQualities.map { it.toSiloCastQualityOption() },
-        activeQualityId = activeQualityId,
+        activeQualityId = siloCastActiveQualityId(videoQualities),
         isQualitySwitching = false,
         playbackSpeed = playbackSpeed,
         // Wire values are tvOS VideoGravity raw values: fit, fill, stretch.

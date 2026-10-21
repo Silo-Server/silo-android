@@ -457,11 +457,7 @@ fun HomeScreen(
                                 onSetWatched = viewModel::setWatched,
                                 onToggleFavorite = viewModel::toggleFavorite,
                                 onToggleWatchlist = viewModel::toggleWatchlist,
-                                onDismissContinueWatching = { item ->
-                                    item.progressUpdatedAt?.let { ts ->
-                                        viewModel.dismissContinueWatching(item.contentId, ts)
-                                    }
-                                },
+                                onRemoveFromHome = viewModel::dismissFromHome,
                             )
                         }
 

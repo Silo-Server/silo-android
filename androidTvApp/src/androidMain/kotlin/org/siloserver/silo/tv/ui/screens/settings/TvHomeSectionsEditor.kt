@@ -136,6 +136,14 @@ internal fun TvHomeSectionsEditor(
 
     BackHandler(onBack = ::close)
 
+    // The editor lists Home's rows, so realtime and language updates reach
+    // them while it is open, as they do on Home itself.
+    androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) {
+        viewModel.onShown()
+        viewModel.runPendingRealtimeRefresh()
+        onPauseOrDispose { viewModel.onHidden() }
+    }
+
     LaunchedEffect(preferences, viewModel) {
         preferences.refresh()
         // The shell normally already owns populated Home state. A direct

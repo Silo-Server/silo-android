@@ -267,6 +267,9 @@ data class ItemExtra(
     val title: String? = null,
     @SerialName("duration_seconds") val durationSeconds: Int? = null,
     @SerialName("file_id") val fileId: Int? = null,
+    /** 16:9 image: a sidecar beside the file or a frame of the video. */
+    @SerialName("still_url") val stillUrl: String? = null,
+    @SerialName("still_thumbhash") val stillThumbhash: String? = null,
 )
 
 @Serializable

@@ -5,9 +5,11 @@ import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.ItemExtra
 import org.siloserver.silo.model.catalog.ItemVideo
 import org.siloserver.silo.model.catalog.SubtitleInfo
 import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.model.catalog.TrailerRailEntry
 import org.siloserver.silo.model.catalog.VideoTrack
 import org.siloserver.silo.model.catalog.selectedMediaRuntimeMinutes
 import org.siloserver.silo.model.catalog.trailerRailEntries
@@ -16,6 +18,7 @@ import org.siloserver.silo.tv.ui.components.TvHeroFactToken
 import java.time.ZoneId
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 class TvDetailMetadataTest {
     @Test
@@ -87,6 +90,46 @@ class TvDetailMetadataTest {
     }
 
     @Test
+    fun trailerEntriesPutLocalExtrasBeforeRemoteVideos() {
+        val detail = ItemDetail(
+            contentId = "m1",
+            type = "movie",
+            title = "Movie",
+            videos = listOf(ItemVideo(kind = "trailer", site = "youtube", siteKey = "abc")),
+            extras = listOf(
+                ItemExtra(contentId = "extra:1", kind = "featurette"),
+                ItemExtra(contentId = "extra:2", kind = "trailer"),
+            ),
+        )
+
+        assertEquals(
+            listOf("local:extra:1", "local:extra:2", "remote:youtube:abc"),
+            trailerRailEntries(detail).map { it.key },
+        )
+    }
+
+    @Test
+    fun trailerEntryThumbnailIsTheYouTubeStillOrTheExtrasOwnImage() {
+        val remote = TrailerRailEntry.Remote(ItemVideo(kind = "trailer", site = "youtube", siteKey = "abc"))
+        assertEquals("https://i.ytimg.com/vi/abc/hqdefault.jpg", remote.thumbnailUrl)
+        assertNull(remote.thumbhash)
+
+        val withImage = TrailerRailEntry.Local(
+            ItemExtra(
+                contentId = "extra:1",
+                kind = "featurette",
+                stillUrl = "https://silo.example/still.webp",
+                stillThumbhash = "hash",
+            ),
+        )
+        assertEquals("https://silo.example/still.webp", withImage.thumbnailUrl)
+        assertEquals("hash", withImage.thumbhash)
+
+        // An extra the server has no image for keeps the placeholder.
+        assertNull(TrailerRailEntry.Local(ItemExtra(contentId = "extra:2", kind = "featurette")).thumbnailUrl)
+    }
+
+    @Test
     fun episodeFactsPutAirDateBeforeRuntime() {
         val detail = ItemDetail(
             contentId = "e1",
@@ -107,10 +150,9 @@ class TvDetailMetadataTest {
     }
 
     @Test
-    fun airDateRendersInViewerZoneLikeTvOs() {
-        // tvOS parses the timestamp as a UTC instant and formats the LOCAL
-        // calendar date, so a midnight-UTC air date shows the previous day for
-        // viewers west of UTC. The Android hero mirrors that.
+    fun airDateKeepsCalendarDayLikeTvOs() {
+        // A timestamp converts to the viewer's zone, so a midnight-UTC instant
+        // is the previous day west of UTC.
         assertEquals(
             "Mar 29, 2026",
             TvDetailMetadata.abbreviatedDate(
@@ -118,10 +160,10 @@ class TvDetailMetadataTest {
                 zone = ZoneId.of("America/Los_Angeles"),
             ),
         )
-        // Bare full dates are parsed at UTC midnight too (Apple's
-        // `.withFullDate` ISO8601 parser defaults to GMT).
+        // A bare calendar date has no zone and shows the same day everywhere,
+        // like tvOS `DetailDateFormatting`.
         assertEquals(
-            "Mar 29, 2026",
+            "Mar 30, 2026",
             TvDetailMetadata.abbreviatedDate(
                 "2026-03-30",
                 zone = ZoneId.of("America/Los_Angeles"),

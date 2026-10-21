@@ -23,9 +23,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.TimeSource
 
 data class HomeUiState(
@@ -69,9 +73,24 @@ class HomeViewModel(
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
     private val diagnostics: HomeDiagnosticsObserver = HomeDiagnosticsObserver.None,
     private val catalogLanguage: org.siloserver.silo.domain.settings.CatalogLanguageRevision? = null,
+    /**
+     * Whether Home starts on screen. Android TV keeps one Home for the whole
+     * shell, which can come back on another tab, so it starts hidden and the
+     * screens that show its rows report [onShown] and [onHidden]; the phone
+     * never reports and stays shown.
+     */
+    startShown: Boolean = true,
 ) : ViewModel() {
 
     private var displayedOwner: AuthScopeSnapshot? = null
+
+    /**
+     * Realtime and language refreshes run only while Home is on screen; one
+     * that comes while it is hidden waits in [realtimeRefreshPending]. A full
+     * read of a large Home takes tens of megabytes, and on Android TV the
+     * player covering Home holds up to half the heap.
+     */
+    private var shown = startShown
 
     private suspend fun mayPublish(owner: AuthScopeSnapshot, generation: Int): Boolean {
         val valid = sectionRepository.isHomeAuthorityCurrent(owner)
@@ -100,9 +119,15 @@ class HomeViewModel(
         catalogLanguage?.let { language ->
             viewModelScope.launch {
                 // A metadata-language change re-localizes every card: re-read
-                // quietly. Unlike refreshFromRealtime this never skips, since a
-                // fetch already in flight still asked for the old language.
-                language.revision.drop(1).collectLatest {
+                // quietly. Unlike refreshFromRealtime this doesn't wait for a
+                // fetch already in flight, which still asked for the old
+                // language. A hidden Home re-reads when it is shown; that
+                // change is held back before collectLatest, so it never
+                // cancels a read that may be the one filling Home.
+                language.revision.drop(1).filter {
+                    if (!shown) realtimeRefreshPending = true
+                    shown
+                }.collectLatest {
                     val generation = fetchSections(HomeLoadTrigger.REALTIME)
                     if (generation == fetchGeneration) {
                         _uiState.update { it.copy(isRefreshing = false) }
@@ -118,13 +143,40 @@ class HomeViewModel(
         }
     }
 
+    /**
+     * Home's rows are on screen. A refresh that waited while they were hidden
+     * runs on [runPendingRealtimeRefresh] or the next [refreshFromRealtime].
+     */
+    fun onShown() {
+        shown = true
+    }
+
+    /**
+     * Home's rows left the screen. Realtime and language refreshes wait for
+     * [onShown], and a realtime refresh still reading is dropped and waits too,
+     * unless Home is still empty: that read may be the one that fills it.
+     */
+    fun onHidden() {
+        shown = false
+        if (realtimeRefreshInFlight && !_uiState.value.isLoading) {
+            realtimeRefreshJob?.cancel()
+            realtimeRefreshInFlight = false
+            realtimeRefreshPending = true
+        }
+    }
+
     private var realtimeRefreshInFlight = false
+    private var realtimeRefreshJob: Job? = null
+
+    /** Bumped per realtime refresh, so a dropped one cannot clear its successor's in-flight flag. */
+    private var realtimeRefreshRun = 0
 
     /**
      * A realtime signal arrived while a fetch was running. That fetch may have
      * been answered before the event behind the signal (an access change made
      * after the request went out), so one more realtime refresh runs when it
-     * finishes.
+     * finishes. Also set by a realtime or language refresh that came while
+     * Home was hidden.
      */
     private var realtimeRefreshPending = false
 
@@ -145,9 +197,10 @@ class HomeViewModel(
      * Debounced realtime refetch: quiet (no spinner) and single-flight.
      * Signals that arrive while a realtime or manual refresh is running are
      * not raced against it; they collapse into one follow-up refresh after it.
+     * While Home is hidden they wait for it to be shown.
      */
     fun refreshFromRealtime() {
-        if (realtimeRefreshInFlight || _uiState.value.isRefreshing) {
+        if (!shown || realtimeRefreshInFlight || _uiState.value.isRefreshing) {
             realtimeRefreshPending = true
             diagnostics.completed(
                 HomeLoadObservation(
@@ -163,18 +216,26 @@ class HomeViewModel(
             return
         }
         realtimeRefreshInFlight = true
-        viewModelScope.launch {
+        // This read starts after every signal that is waiting.
+        realtimeRefreshPending = false
+        val run = ++realtimeRefreshRun
+        realtimeRefreshJob = viewModelScope.launch {
             try {
                 fetchSections(HomeLoadTrigger.REALTIME)
             } finally {
-                realtimeRefreshInFlight = false
+                if (run == realtimeRefreshRun) realtimeRefreshInFlight = false
             }
             runPendingRealtimeRefresh()
         }
     }
 
-    private fun runPendingRealtimeRefresh() {
-        if (!realtimeRefreshPending) return
+    /**
+     * Runs the realtime refresh that is waiting, if any. While the first load
+     * is still filling an empty Home it keeps waiting: that load runs it when
+     * it ends, instead of a second full read beside it.
+     */
+    fun runPendingRealtimeRefresh() {
+        if (!realtimeRefreshPending || _uiState.value.isLoading) return
         realtimeRefreshPending = false
         refreshFromRealtime()
     }
@@ -191,6 +252,7 @@ class HomeViewModel(
             val owner = sectionRepository.captureHomeAuthority()
             if (owner == null) {
                 if (fetchGeneration == bootstrapGeneration) fetchSections(HomeLoadTrigger.INITIAL)
+                runPendingRealtimeRefresh()
                 return@launch
             }
             if (!mayPublish(owner, bootstrapGeneration)) return@launch
@@ -233,6 +295,8 @@ class HomeViewModel(
                 _uiState.update { it.copy(isLoading = true, error = null) }
             }
             fetchSections(HomeLoadTrigger.INITIAL)
+            // A refresh that waited during the first load runs after it, not beside it.
+            runPendingRealtimeRefresh()
         }
     }
 
@@ -437,7 +501,8 @@ class HomeViewModel(
             val result = mediaActions.performPersonalWrite(writeIntent)
             if (!mediaActions.isCurrent(writeIntent)) return@launch
             when (result) {
-                is ApiResult.Success -> refresh()
+                // A hidden Home re-reads when it is shown, not beside the player.
+                is ApiResult.Success -> if (shown) refresh() else realtimeRefreshPending = true
                 else -> _uiState.update { it.copy(sections = previous) }
             }
         }
@@ -455,6 +520,18 @@ class HomeViewModel(
 
     private val pendingDismissals = mutableSetOf<String>()
 
+    /** Serializes the cached-Home rewrites, so one dismissal cannot write back a card another removed. */
+    private val dismissalCacheWrites = Mutex()
+
+    /** A dismissal succeeded and Home has not re-read since. */
+    private var reloadAfterDismissals = false
+
+    /** Removes a Continue Watching or Next Up card on the list [HomeDismissal] picks for it. */
+    fun dismissFromHome(item: SectionItem) {
+        val dismissal = HomeDismissal.of(item) ?: return
+        dismissHomeProgressItem(dismissal.surface, item.contentId, dismissal.anchor)
+    }
+
     fun dismissContinueWatching(itemId: String, progressUpdatedAt: String) =
         dismissHomeProgressItem("continue_watching", itemId, progressUpdatedAt)
 
@@ -467,30 +544,66 @@ class HomeViewModel(
         val observed = _uiState.value.sections
         fun SectionItem.matches() = contentId == itemId &&
             (if (surface == "continue_watching") progressUpdatedAt == anchor else seriesId == anchor)
-        fun ResolvedSection.progressRow() = sectionType in setOf("continue_watching", "in_progress", "next_up", "up_next")
-        fun List<ResolvedSection>.targetRows() = filter { it.progressRow() }.flatMap { section ->
+        fun List<ResolvedSection>.targetRows() = filter { it.isProgressRow() }.flatMap { section ->
             section.items.filter { it.contentId == itemId }.map { section.id to it }
         }
         val targets = observed.targetRows()
-        if (anchor.isBlank() || targets.none { it.second.matches() }) return
+        val dismissed = targets.firstOrNull { it.second.matches() }?.second
+        if (anchor.isBlank() || dismissed == null) return
         if (!pendingDismissals.add(itemId)) return
+        // On /api/v2, dismissing an episode or a series drops the whole show,
+        // so every card of that series leaves the progress rows with it.
+        val droppedSeries = dismissed.droppedSeriesId()
+        fun SectionItem.removed() = matches() ||
+            (droppedSeries != null && (contentId == droppedSeries || seriesId == droppedSeries))
         fun observationCurrent() = generation == fetchGeneration && displayedOwner == owner &&
             _uiState.value.sections.targetRows() == targets
         viewModelScope.launch {
             try {
                 if (!mayPublish(owner, generation) || !observationCurrent()) return@launch
                 val result = sectionRepository.dismissHomeItem(surface, itemId, anchor, owner)
+                // The server dropped the show even if this screen moved on while
+                // the request ran, so re-read either way, for the same profile.
+                if (result is ApiResult.Success && displayedOwner == owner && sectionRepository.isHomeAuthorityCurrent(owner)) {
+                    reloadAfterDismissals = true
+                }
                 if (!mayPublish(owner, generation) || !observationCurrent()) return@launch
                 if (result is ApiResult.Success) {
-                    _uiState.update { state -> state.copy(sections = state.sections.map { section ->
-                        if (section.progressRow()) section.copy(items = section.items.filterNot { it.matches() }) else section
-                    }.filter { it.items.isNotEmpty() }) }
+                    _uiState.update { state -> state.copy(sections = state.sections.removingFromProgressRows { it.removed() }) }
+                    // The next cold start shows the cached Home before it re-reads;
+                    // without this the dismissed cards come back until then.
+                    dismissalCacheWrites.withLock {
+                        val artworkFingerprint = homeCache.artworkFingerprint()
+                        val cached = homeCache.getCachedHomeV2(owner) ?: return@withLock
+                        homeCache.cacheHomeV2(cached.sections.removingFromProgressRows { it.removed() }, owner, artworkFingerprint) {
+                            generation == fetchGeneration && displayedOwner == owner
+                        }
+                    }
                 }
-            } finally { pendingDismissals.remove(itemId) }
+            } finally {
+                pendingDismissals.remove(itemId)
+                // Then re-read Home from the server, as Mark as Watched does; a
+                // failed read keeps the local removal. It waits for the last
+                // dismissal in flight, because a read that starts sooner would
+                // make that one's observation stale and skip its removal.
+                if (pendingDismissals.isEmpty() && reloadAfterDismissals) {
+                    reloadAfterDismissals = false
+                    if (shown) refresh() else realtimeRefreshPending = true
+                }
+            }
         }
     }
 
 }
+
+/** Rows built from playback state. Next Up appears as its own row and merged into Continue Watching. */
+private fun ResolvedSection.isProgressRow() = sectionType in setOf("continue_watching", "in_progress", "next_up", "up_next")
+
+/** Drops [isRemoved] cards from the progress rows; a row left empty goes too. */
+private fun List<ResolvedSection>.removingFromProgressRows(isRemoved: (SectionItem) -> Boolean): List<ResolvedSection> =
+    map { section ->
+        if (section.isProgressRow()) section.copy(items = section.items.filterNot(isRemoved)) else section
+    }.filter { it.items.isNotEmpty() }
 
 private fun List<ResolvedSection>.duplicateSectionKeyCount(): Int =
     size - distinctBy(ResolvedSection::id).size

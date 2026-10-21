@@ -2241,7 +2241,6 @@ private fun EpisodesSection(
                             // Up returns to the hero only when the season chips aren't above
                             // the rail (the chips own the Up traversal when present).
                             onDirectionUp = if (showsSeasonChips) null else onReturnToHero,
-                            hidesEpisodeTitle = isSeries,
                             usesSeriesGeometry = isSeries,
                             carouselJump = state.carouselJump.takeIf { isSeries },
                             hasPreviousEpisodes = isSeries && state.carouselPreviousSeason != null,

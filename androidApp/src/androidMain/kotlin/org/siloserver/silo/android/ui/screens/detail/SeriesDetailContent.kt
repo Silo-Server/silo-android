@@ -247,7 +247,6 @@ fun SeriesDetailContent(
                 showsSeasonSelector = false,
                 selectsCenteredEpisode = !showsEpisodeDetails,
                 allowsSeasonPaging = false,
-                showsEpisodeDetails = showsEpisodeDetails,
                 tapToFocusEpisode = showsEpisodeDetails,
             )
         }

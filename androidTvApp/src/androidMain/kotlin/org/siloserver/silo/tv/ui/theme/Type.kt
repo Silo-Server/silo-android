@@ -168,17 +168,6 @@ val sectionEyebrow = TextStyle(
     letterSpacing = 0.sp,
 )
 
-// Tiny tracked-caps capsule label (e.g. the episode-rail "NOW VIEWING" badge).
-// Smallest readable 10-foot caps token — keeps the badge compact while staying
-// above the readability floor.
-val capsuleCaps = TextStyle(
-    fontFamily = InterFamily,
-    fontWeight = FontWeight.Black,
-    fontSize = 16.sp,
-    lineHeight = 18.sp,
-    letterSpacing = 1.6.sp,
-)
-
 // Mono uppercase group header (e.g. the grouped-collections grid header).
 // Wide tracking, monospace; smallest readable 10-foot size.
 val monoGroupHeader = TextStyle(

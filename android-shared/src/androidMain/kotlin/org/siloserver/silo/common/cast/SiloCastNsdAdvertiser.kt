@@ -31,6 +31,19 @@ class SiloCastNsdAdvertiser(
 
     private var registrationListener: NsdManager.RegistrationListener? = null
     private var lastRegistration: Registration? = null
+    private var lastRecord: Map<String, String>? = null
+
+    /** The service name NsdManager registered, which it may change to resolve a conflict; null until it confirms. */
+    private var registeredName: String? = null
+
+    /** The registered advertisement's name, port and TXT record, for the debug adb hook. */
+    @Synchronized
+    fun currentAdvertisement(): Triple<String, Int, Map<String, String>>? {
+        val registration = lastRegistration ?: return null
+        val record = lastRecord ?: return null
+        val name = registeredName ?: return null
+        return Triple(name, registration.port, record)
+    }
 
     @Synchronized
     fun start(port: Int, serverId: String?, serverName: String?, playing: Boolean = false) {
@@ -52,6 +65,8 @@ class SiloCastNsdAdvertiser(
         }
         registrationListener = null
         lastRegistration = null
+        lastRecord = null
+        registeredName = null
     }
 
     private fun register(registration: Registration) {
@@ -60,24 +75,33 @@ class SiloCastNsdAdvertiser(
         }
         registrationListener = null
         val name = nameProvider()
+        val record = buildMap {
+            put("v", SiloCastProtocol.version.toString())
+            put("name", name)
+            put("id", deviceIdProvider())
+            registration.serverId?.let { put("server", it) }
+            registration.serverName?.let { put("serverName", it) }
+            put("playing", if (registration.playing) "1" else "0")
+        }
         val serviceInfo = NsdServiceInfo().apply {
             serviceName = name
             serviceType = SiloCastProtocol.serviceType
             port = registration.port
-            setAttribute("v", SiloCastProtocol.version.toString())
-            setAttribute("name", name)
-            setAttribute("id", deviceIdProvider())
-            registration.serverId?.let { setAttribute("server", it) }
-            registration.serverName?.let { setAttribute("serverName", it) }
-            setAttribute("playing", if (registration.playing) "1" else "0")
+            record.forEach { (key, value) -> setAttribute(key, value) }
         }
         val listener = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(info: NsdServiceInfo) {
                 Log.i(TAG, "SiloCast registered on ${info.port}")
+                synchronized(this@SiloCastNsdAdvertiser) {
+                    if (registrationListener === this) registeredName = info.serviceName
+                }
             }
 
             override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {
                 Log.w(TAG, "SiloCast registration failed: $errorCode")
+                synchronized(this@SiloCastNsdAdvertiser) {
+                    if (registrationListener === this) registeredName = null
+                }
             }
 
             override fun onServiceUnregistered(info: NsdServiceInfo) {
@@ -90,6 +114,8 @@ class SiloCastNsdAdvertiser(
         }
         registrationListener = listener
         lastRegistration = registration
+        lastRecord = record
+        registeredName = null
         nsdManager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)
     }
 

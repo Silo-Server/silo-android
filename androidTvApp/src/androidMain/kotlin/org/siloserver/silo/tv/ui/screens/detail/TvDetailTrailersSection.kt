@@ -52,7 +52,6 @@ import org.siloserver.silo.model.catalog.ItemExtra
 import org.siloserver.silo.model.catalog.ItemVideo
 import org.siloserver.silo.model.catalog.TrailerRailEntry
 import org.siloserver.silo.model.catalog.trailerRailDurationLabel
-import org.siloserver.silo.model.catalog.youtubeThumbnailUrl
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
@@ -163,14 +162,17 @@ private fun TvDetailTrailerCard(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            when (entry) {
-                is TrailerRailEntry.Remote -> AsyncImage(
-                    model = youtubeThumbnailUrl(entry.video.siteKey),
-                    contentDescription = entry.title,
+            val thumbnailUrl = entry.thumbnailUrl
+            if (thumbnailUrl != null) {
+                AsyncImage(
+                    model = thumbnailUrl,
+                    // The card's title text already names it.
+                    contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
-                is TrailerRailEntry.Local -> Icon(
+            } else {
+                Icon(
                     imageVector = Icons.Filled.Movie,
                     contentDescription = null,
                     tint = SiloSecondaryText,

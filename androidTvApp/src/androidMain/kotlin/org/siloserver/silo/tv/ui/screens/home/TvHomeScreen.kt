@@ -43,6 +43,7 @@ import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.viewmodel.HomeDismissal
 import org.siloserver.silo.viewmodel.HomeViewModel
 
 internal fun shouldShowHomeEmptyState(
@@ -96,21 +97,24 @@ fun TvHomeScreen(
 
     // TV has no pull-to-refresh, so ON_RESUME is the only manual freshness
     // path — refresh quietly whenever the user returns to Home (e.g. after
-    // finishing playback), complementing the realtime socket.
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                // The observer gets ON_RESUME as soon as it is added. On a new
-                // ViewModel that is while its own first load is still running,
-                // and a second full Home read would only supersede it.
-                if (shouldRefreshOnResume() && !viewModel.uiState.value.isLoading) {
-                    viewModel.refreshFromRealtime()
-                }
-            }
+    // finishing playback), complementing the realtime socket. While Home is
+    // paused (the player, a detail page or another tab covers it) realtime
+    // updates wait, so a large Home is not re-read beside the player's buffer.
+    androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) {
+        viewModel.onShown()
+        // The effect runs as soon as it is added. On a new ViewModel that is
+        // while its own first load is still running, and a second full Home
+        // read would only supersede it; the first load runs a waiting update.
+        if (shouldRefreshOnResume() && !viewModel.uiState.value.isLoading) {
+            viewModel.refreshFromRealtime()
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        onPauseOrDispose { viewModel.onHidden() }
+    }
+    // A return from a detail page skips the resume refresh until the shell has
+    // restored focus. An update that waited while Home was hidden runs then.
+    val refreshAllowed = shouldRefreshOnResume()
+    LaunchedEffect(refreshAllowed) {
+        if (refreshAllowed) viewModel.runPendingRealtimeRefresh()
     }
 
     when {
@@ -151,8 +155,7 @@ fun TvHomeScreen(
                 onMarqueeTranslated = viewModel::refreshFromRealtime,
                 onToggleFavorite = viewModel::toggleFavorite,
                 onToggleWatchlist = viewModel::toggleWatchlist,
-                onDismissContinueWatching = viewModel::dismissContinueWatching,
-                onDismissNextUp = viewModel::dismissNextUp,
+                onRemoveFromHome = viewModel::dismissFromHome,
             )
         }
     }
@@ -240,8 +243,7 @@ private fun TvHomeContent(
     onSetWatched: (String, Boolean) -> Unit = { _, _ -> },
     onToggleFavorite: (String, Boolean) -> Unit = { _, _ -> },
     onToggleWatchlist: (String, Boolean) -> Unit = { _, _ -> },
-    onDismissContinueWatching: (String, String) -> Unit = { _, _ -> },
-    onDismissNextUp: (String, String) -> Unit = { _, _ -> },
+    onRemoveFromHome: (SectionItem) -> Unit = {},
     sectionsFullyResolved: Boolean = true,
     onMarqueeTranslated: () -> Unit = {},
 ) {
@@ -295,10 +297,8 @@ private fun TvHomeContent(
             }
         },
         cardActions = { section, item ->
-            val isProgressRow = section.isTvProgressRow()
             val isContinueWatching = section.isTvContinueWatchingRow()
-            val progressUpdatedAt = item.progressUpdatedAt
-            val seriesId = item.seriesId
+            val dismissal = if (section.isTvProgressRow()) HomeDismissal.of(item) else null
             TvMediaCardActions(
                 onPlay = if (isContinueWatching) {
                     {
@@ -315,16 +315,8 @@ private fun TvHomeContent(
                 onSetWatched = { watched -> onSetWatched(item.contentId, watched) },
                 onToggleFavorite = { fav -> onToggleFavorite(item.contentId, fav) },
                 onToggleWatchlist = { wl -> onToggleWatchlist(item.contentId, wl) },
-                onRemoveFromContinueWatching = when {
-                    !isProgressRow -> null
-                    progressUpdatedAt != null -> {
-                        { onDismissContinueWatching(item.contentId, progressUpdatedAt) }
-                    }
-                    seriesId != null -> {
-                        { onDismissNextUp(item.contentId, seriesId) }
-                    }
-                    else -> null
-                },
+                onRemoveFromHome = dismissal?.let { { onRemoveFromHome(item) } },
+                removeFromHomeLabel = dismissal?.menuLabel.orEmpty(),
             )
         },
     )
