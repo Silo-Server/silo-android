@@ -4,11 +4,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R
 import org.siloserver.silo.common.settings.connectionRateLabel
-import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_REASON_LINE_MAX_CHARS
-import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_REASON_SEPARATOR
 import org.siloserver.silo.model.playback.PlaybackQualityReasonText
 import org.siloserver.silo.model.playback.PlaybackQualityReasonV3
 import org.siloserver.silo.model.playback.menuReasonTexts
+import org.siloserver.silo.model.playback.playbackQualityReasonLine
 import org.siloserver.silo.model.playback.text
 
 /*
@@ -26,9 +25,8 @@ import org.siloserver.silo.model.playback.text
 fun qualityReasonMenuLine(reasons: List<PlaybackQualityReasonV3>): String? {
     val texts = reasons.menuReasonTexts()
     val primary = texts.firstOrNull()?.let { qualityReasonLabel(it, rawUnknown = false) } ?: return null
-    val second = texts.getOrNull(1)?.let { qualityReasonLabel(it, rawUnknown = false) } ?: return primary
-    val joined = primary + PLAYBACK_QUALITY_REASON_SEPARATOR + second
-    return if (joined.length <= PLAYBACK_QUALITY_REASON_LINE_MAX_CHARS) joined else primary
+    val second = texts.getOrNull(1)?.let { qualityReasonLabel(it, rawUnknown = false) }
+    return playbackQualityReasonLine(primary, second)
 }
 
 /** Every reason for the stats' Reason row, one per line; an unknown code shows as itself. Null with none. */

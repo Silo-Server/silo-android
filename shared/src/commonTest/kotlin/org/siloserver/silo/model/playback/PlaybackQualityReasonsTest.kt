@@ -63,6 +63,16 @@ class PlaybackQualityReasonsTest {
     }
 
     @Test
+    fun theSecondReasonJoinsOnlyWithinSeventyTwoCharacters() {
+        val primary = "a".repeat(40)
+        // 40 + " · " (3) + 29 = 72 characters: joined.
+        assertEquals("$primary · ${"b".repeat(29)}", playbackQualityReasonLine(primary, "b".repeat(29)))
+        // 73: the primary alone.
+        assertEquals(primary, playbackQualityReasonLine(primary, "b".repeat(30)))
+        assertEquals(primary, playbackQualityReasonLine(primary, null))
+    }
+
+    @Test
     fun resolutionLabelsByFrame() {
         val cases = listOf(
             (3840 to 2160) to "4K",

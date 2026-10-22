@@ -77,8 +77,8 @@ fun PlaybackQualityReasonV3.text(): PlaybackQualityReasonText {
 
 /**
  * The reasons the Quality menu's line names: the primary one, then the
- * second when it is a compatibility change. Whether the second fits is the
- * caller's call, once both are worded.
+ * second when it is a compatibility change. Whether the second fits is
+ * [playbackQualityReasonLine]'s call, once both are worded.
  */
 fun List<PlaybackQualityReasonV3>.menuReasonTexts(): List<PlaybackQualityReasonText> {
     val primary = firstOrNull()?.text() ?: return emptyList()
@@ -86,11 +86,21 @@ fun List<PlaybackQualityReasonV3>.menuReasonTexts(): List<PlaybackQualityReasonT
     return listOfNotNull(primary, second)
 }
 
+/**
+ * The Quality menu's reason line from the worded [menuReasonTexts]: [primary],
+ * with [second] joined on only while the line stays within 72 characters.
+ */
+fun playbackQualityReasonLine(primary: String, second: String?): String {
+    if (second == null) return primary
+    val joined = primary + PLAYBACK_QUALITY_REASON_SEPARATOR + second
+    return if (joined.length <= PLAYBACK_QUALITY_REASON_LINE_MAX_CHARS) joined else primary
+}
+
 /** The longest the menu's reason line gets before it drops its second reason. */
-const val PLAYBACK_QUALITY_REASON_LINE_MAX_CHARS = 72
+private const val PLAYBACK_QUALITY_REASON_LINE_MAX_CHARS = 72
 
 /** What joins two reasons on one line. */
-const val PLAYBACK_QUALITY_REASON_SEPARATOR = " · "
+private const val PLAYBACK_QUALITY_REASON_SEPARATOR = " · "
 
 /**
  * A frame's resolution class: "4K", "1080p", "720p", "480p" or "360p", null
