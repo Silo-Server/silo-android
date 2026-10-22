@@ -40,6 +40,12 @@ const val HLS_SUBTITLE_RENDITIONS_V1_FEATURE = "hls_subtitle_renditions_v1"
 const val PLAN_ACTIVE_QUALITY_V1_FEATURE = "plan_active_quality_v1"
 
 /**
+ * The decision's plan lists [PlaybackPlanV3.qualityReasons]: why it plays at
+ * the quality it does. Without it the client shows no reason. `/api/v2` only.
+ */
+const val PLAN_QUALITY_REASONS_V1_FEATURE = "plan_quality_reasons_v1"
+
+/**
  * The server keeps learned bandwidth limits and accepts
  * `bandwidth_estimate_source` and `learned_limit` on start and replan. The
  * server advertises it in the `/api/v2` capability `features`; only then does
@@ -309,6 +315,27 @@ data class PlaybackPlanV3(
     @SerialName("subtitle_fidelity_policy") val subtitleFidelityPolicy: String? = null,
     /** Present only when a learned limit lowered this plan. */
     @SerialName("bandwidth_limit") val bandwidthLimit: PlaybackBandwidthLimitV3? = null,
+    /**
+     * Why the plan plays at this quality, the primary reason first, then the
+     * other changes it makes. [validateForMedia3] empties it unless the
+     * decision listed [PLAN_QUALITY_REASONS_V1_FEATURE].
+     */
+    @SerialName("quality_reasons") val qualityReasons: List<PlaybackQualityReasonV3> = emptyList(),
+)
+
+/**
+ * One entry of [PlaybackPlanV3.qualityReasons]. [code] is an open set; each
+ * code carries only the figures it needs. `alternate_version`'s
+ * `media_file_id` is not decoded: no text names it.
+ */
+@Serializable
+data class PlaybackQualityReasonV3(
+    val code: String,
+    val kbps: Int? = null,
+    @SerialName("expires_at") val expiresAt: String? = null,
+    val height: Int? = null,
+    val from: String? = null,
+    val to: String? = null,
 )
 
 /** A learned bandwidth limit that lowered Auto for this plan. */
@@ -709,7 +736,12 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
         )
     }
     val plan = playbackPlan
-        ?.copy(activeQualityReported = PLAN_ACTIVE_QUALITY_V1_FEATURE in serverFeatures)
+        ?.let { plan ->
+            plan.copy(
+                activeQualityReported = PLAN_ACTIVE_QUALITY_V1_FEATURE in serverFeatures,
+                qualityReasons = plan.qualityReasons.takeIf { PLAN_QUALITY_REASONS_V1_FEATURE in serverFeatures }.orEmpty(),
+            )
+        }
         ?: return PlaybackV3Validation.Terminal("invalid_playback_plan", "The server returned no executable playback plan.", false)
     val resolvedSessionId = plan.sessionId ?: sessionId
         ?: return PlaybackV3Validation.Terminal("invalid_playback_plan", "The server returned no playback session identity.", false)

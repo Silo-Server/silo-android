@@ -290,6 +290,8 @@ data class PlaybackExecutionPlan(
     @SerialName("active_quality") val activeQuality: String? = null,
     /** [PlaybackPlanV3.activeQualityReported]; never read from the wire. */
     @Transient val activeQualityReported: Boolean = false,
+    /** [PlaybackPlanV3.qualityReasons]. */
+    @SerialName("quality_reasons") val qualityReasons: List<PlaybackQualityReasonV3> = emptyList(),
 )
 
 /**

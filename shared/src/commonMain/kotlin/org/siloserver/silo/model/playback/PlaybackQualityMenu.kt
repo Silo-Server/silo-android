@@ -84,15 +84,20 @@ fun formatPlaybackQualityBitrate(kbps: Int): String? {
 }
 
 /**
- * The Quality control's value: the lit row's name, or with none lit (a
+ * The Quality control's value: the lit row's name, with Auto naming what it
+ * plays ([playbackAutoQualityLabel] of [autoResolution]), or with none lit (a
  * saved resolution the source plays under) that resolution, such as "1080p".
  */
 fun playbackQualityValueLabel(
     options: List<PlaybackQualityOption>,
     activeId: String?,
     preference: String?,
-): String = options.firstOrNull { it.id == activeId }?.name
-    ?: QualityChoices.resolutionLabel(videoQualityPreference(preference))
+    autoResolution: String? = null,
+): String {
+    val active = options.firstOrNull { it.id == activeId }
+        ?: return QualityChoices.resolutionLabel(videoQualityPreference(preference))
+    return if (active.id == PLAYBACK_QUALITY_AUTO) playbackAutoQualityLabel(autoResolution) else active.name
+}
 
 /**
  * The server's report of the menu entry a plan delivers: [label] is

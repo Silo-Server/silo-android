@@ -198,6 +198,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
         bandwidthLimit = bandwidthLimit,
         activeQuality = activeQuality,
         activeQualityReported = activeQualityReported,
+        qualityReasons = qualityReasons,
     )
     return PlaybackSessionResponse(
         sessionId = sessionId,
