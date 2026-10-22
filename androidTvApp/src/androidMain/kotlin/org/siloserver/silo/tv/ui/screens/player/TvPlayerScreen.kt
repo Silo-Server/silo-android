@@ -2466,6 +2466,7 @@ fun TvPlayerScreen(
                             subtitlePresentation = subtitlePresentation,
                             stats = state.stats,
                             playbackPlan = state.playbackPlan,
+                            qualitySwitching = state.qualitySwitching,
                             desiredAudioOrdinal = state.desiredAudioOrdinal,
                             desiredAudioConfirmed = state.desiredAudioConfirmed,
                             videoFillMode = state.videoFillMode,

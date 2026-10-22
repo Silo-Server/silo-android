@@ -93,6 +93,7 @@ import org.siloserver.silo.domain.player.BufferingQualityReplan
 import org.siloserver.silo.domain.player.toBufferingQualityPlan
 import org.siloserver.silo.model.playback.LEARNED_LIMIT_CLEAR
 import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
+import org.siloserver.silo.model.playback.qualityChangePending
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroAutoSkipState
 import org.siloserver.silo.domain.player.IntroSkipMode
@@ -1188,6 +1189,8 @@ class TvPlayerViewModel(
         val committedSubtitleIdentity: SubtitleIdentity = SubtitleIdentity.Off,
         val pendingSubtitleIdentity: SubtitleIdentity? = null,
         val subtitleApplying: Boolean = false,
+        /** A quality pick waits for its plan; the HUD hides what the playing one says. */
+        val qualitySwitching: Boolean = false,
         val subtitleFailureMessage: String? = null,
         /** Distinguishes two failures that happen to read the same. */
         val subtitleFailureId: Long = 0L,
@@ -1393,6 +1396,7 @@ class TvPlayerViewModel(
                     committedSubtitleIdentity = snapshot.committedIdentity,
                     pendingSubtitleIdentity = snapshot.pendingIdentity,
                     subtitleApplying = snapshot.subtitleApplying,
+                    qualitySwitching = snapshot.transition.qualityChangePending,
                     subtitleFailureMessage = snapshot.failureMessage,
                     subtitleFailureId = when {
                         snapshot.failureMessage == null -> state.subtitleFailureId
