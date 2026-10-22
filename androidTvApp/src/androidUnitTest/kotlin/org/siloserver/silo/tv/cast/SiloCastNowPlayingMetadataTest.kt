@@ -2,8 +2,10 @@ package org.siloserver.silo.tv.cast
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -28,14 +30,20 @@ class SiloCastNowPlayingMetadataTest {
         assertEquals("Episode plot", metadata?.overview)
     }
 
+    /** The episode's own poster is its still, which may be a spoiler. */
     @Test
-    fun episodeFallsBackWhenTheSeriesHasNoPosterOrTheEpisodeNoOverview() {
-        val metadata = SiloCastNowPlayingMetadata.from(
-            item("ep", "episode", poster = "https://silo.example/still.webp", overview = " ", seriesId = "show"),
-            item("show", "series", poster = null, overview = "Series plot"),
-        )
-        assertEquals("https://silo.example/still.webp", metadata.posterUrl)
+    fun episodeNeverSendsItsStill() {
+        val episode = item("ep", "episode", poster = "https://silo.example/still.webp", overview = " ", seriesId = "show")
+        val metadata = SiloCastNowPlayingMetadata.from(episode, item("show", "series", poster = null, overview = "Series plot"))
+        assertNull(metadata.posterUrl)
         assertEquals("Series plot", metadata.overview)
+        assertNull(SiloCastNowPlayingMetadata.from(episode, null).posterUrl)
+    }
+
+    @Test
+    fun failedSeriesLookupFailsTheLoadSoItIsRetried() = runTest {
+        val episode = item("ep", "episode", poster = "https://silo.example/still.webp", overview = "Plot", seriesId = "show")
+        assertNull(SiloCastNowPlayingMetadataResolver.loadFromCatalog("ep") { if (it == "ep") episode else null })
     }
 
     @Test
@@ -152,6 +160,38 @@ class SiloCastNowPlayingMetadataTest {
         now += 120_000
         assertNull(resolver.metadata("a")?.posterUrl)
         assertEquals("Plot", resolver.metadata("a")?.overview)
+        resolver.track(null)
+        runCurrent()
+    }
+
+    @Test
+    fun cancelledLoadCannotPublishAfterTheTitleComesBack() = runTest {
+        val firstLoad = CompletableDeferred<Unit>()
+        var calls = 0
+        val resolver = SiloCastNowPlayingMetadataResolver(
+            scope = this,
+            load = { _, _ ->
+                calls += 1
+                if (calls == 1) {
+                    withContext(NonCancellable) { firstLoad.await() }
+                    SiloCastNowPlayingMetadata("https://silo.example/old.webp", "old")
+                } else {
+                    SiloCastNowPlayingMetadata("https://silo.example/new.webp", "new")
+                }
+            },
+            nowEpochMs = { 0L },
+            sleep = { CompletableDeferred<Unit>().await() },
+        )
+        resolver.track("a")
+        runCurrent()
+        resolver.track("b")
+        resolver.track("a")
+        runCurrent()
+        assertEquals("new", resolver.metadata("a")?.overview)
+
+        firstLoad.complete(Unit)
+        runCurrent()
+        assertEquals("new", resolver.metadata("a")?.overview)
         resolver.track(null)
         runCurrent()
     }

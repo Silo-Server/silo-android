@@ -29,12 +29,13 @@ data class SiloCastNowPlayingMetadata(
 ) {
     companion object {
         /**
-         * 2:3 artwork: an episode's own poster is its 16:9 still, so episodes
-         * use the series poster, and the series synopsis when theirs is missing.
+         * 2:3 artwork: an episode's own poster is its 16:9 still, which spoiler
+         * protection may hide, so episodes send only the series poster. The
+         * synopsis falls back to the series when the episode has none.
          */
         fun from(item: ItemDetail, series: ItemDetail?): SiloCastNowPlayingMetadata =
             SiloCastNowPlayingMetadata(
-                posterUrl = series?.posterUrl.nonBlank() ?: item.posterUrl.nonBlank(),
+                posterUrl = if (isEpisodeItemType(item.type)) series?.posterUrl.nonBlank() else item.posterUrl.nonBlank(),
                 overview = item.overview.nonBlank() ?: series?.overview.nonBlank(),
             )
 
@@ -137,12 +138,16 @@ class SiloCastNowPlayingMetadataResolver(
 
     private suspend fun run(contentId: String) {
         var allowCached = true
-        while (currentCoroutineContext().isActive) {
+        val context = currentCoroutineContext()
+        while (context.isActive) {
             val fetched = load(contentId, allowCached)
             val changed: Boolean
             val delayMs: Long?
             synchronized(this) {
-                if (this.contentId != contentId) return
+                // track() cancels under this lock, so a load that ignored
+                // cancellation can't publish after the title changed, even
+                // if it changed back to this one.
+                if (!context.isActive || this.contentId != contentId) return
                 // A failed refresh keeps the last URL; it may still have time left.
                 changed = fetched != null && fetched != resolved
                 if (changed) resolved = fetched
@@ -168,7 +173,11 @@ class SiloCastNowPlayingMetadataResolver(
         ): SiloCastNowPlayingMetadata? {
             val item = loadDetail(contentId) ?: return null
             val seriesId = item.seriesId?.takeIf { isEpisodeItemType(item.type) && it.isNotEmpty() }
-            return SiloCastNowPlayingMetadata.from(item, seriesId?.let { loadDetail(it) })
+            // A failed series lookup counts as a failed load, so the resolver
+            // retries it (or keeps the last result) instead of settling for an
+            // episode without its poster.
+            val series = seriesId?.let { loadDetail(it) ?: return null }
+            return SiloCastNowPlayingMetadata.from(item, series)
         }
 
         /**
