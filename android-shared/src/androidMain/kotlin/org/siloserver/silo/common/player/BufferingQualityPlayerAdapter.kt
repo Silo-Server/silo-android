@@ -277,20 +277,22 @@ class BufferingQualityPlayerAdapter(
     }
 
     /**
-     * Whether the buffering-quality controller owns this startup-stall
-     * report: the spec's rule that "a slow plan that is still receiving data
-     * belongs to this controller". When true, the caller must neither reopen
-     * the same plan nor send a failure replan for it; the controller lowers
-     * quality if the stalls warrant it. When false (no data recently, failing
-     * loads or offline, a non-transport classification, or the controller is
-     * off), the existing recovery keeps it.
+     * Whether this startup-stall report is not the stall fallback's to act
+     * on. A slow plan that is still receiving data belongs to the
+     * buffering-quality controller, which lowers quality if the stalls
+     * warrant it. During an outage (failing or silent loads, or offline) the
+     * reconnect path owns it: Media3's own retries reopen the requests, and
+     * a player error waits for the network before reopening the route. When
+     * true, the caller must neither reopen the same plan nor send a failure
+     * replan for it. When false (no data recently and no outage, a
+     * non-transport classification, or the controller is off), the existing
+     * recovery keeps it.
      */
     fun ownsStartupStall(reason: Playability, nowMs: Long, controllerEnabled: Boolean): Boolean =
         controllerEnabled &&
             reason is Playability.StartupStalled &&
             reason.classification == TRANSPORT_STALL_CLASSIFICATION &&
-            isReceivingData(nowMs) &&
-            !transportTroubleActive
+            (transportTroubleActive || isReceivingData(nowMs))
 
     /**
      * A new plan or mount, delivered as [delivery]. Forgets the seek and

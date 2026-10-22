@@ -384,7 +384,7 @@ class BufferingQualityPlayerAdapterTest {
     }
 
     @Test
-    fun aSlowLinkStillReceivingDataOwnsItsTransportStall() {
+    fun aSlowLinkStillReceivingDataOrAnOutageOwnsItsTransportStall() {
         adapter.sampleBuffer(nowMs = 0, bufferedPositionMs = 1_000)
         assertFalse(adapter.ownsStartupStall(stalled(), nowMs = 1_000, controllerEnabled = true))
         adapter.sampleBuffer(nowMs = 2_000, bufferedPositionMs = 3_000)
@@ -406,12 +406,13 @@ class BufferingQualityPlayerAdapterTest {
         assertFalse(adapter.ownsStartupStall(Playability.Supported, nowMs = 12_000, controllerEnabled = true))
         assertFalse(adapter.ownsStartupStall(stalled(), nowMs = 12_000, controllerEnabled = false))
 
-        // Not while loads fail or the device is offline.
+        // An outage owns it whether or not data arrived lately: no reopen, no failure replan.
         adapter.onLoadFailed(wasCanceled = false)
-        assertFalse(adapter.ownsStartupStall(stalled(), nowMs = 12_000, controllerEnabled = true))
+        assertTrue(adapter.ownsStartupStall(stalled(), nowMs = 60_000, controllerEnabled = true))
         adapter.onLoadFinished(bytesLoaded = 65_536)
         adapter.onNetworkAvailable(connected = false)
-        assertFalse(adapter.ownsStartupStall(stalled(), nowMs = 12_000, controllerEnabled = true))
+        assertTrue(adapter.ownsStartupStall(stalled(), nowMs = 60_000, controllerEnabled = true))
+        assertFalse(adapter.ownsStartupStall(stalled("decoder_no_output"), nowMs = 60_000, controllerEnabled = true))
     }
 
     @Test

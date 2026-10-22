@@ -1855,11 +1855,13 @@ fun TvPlayerScreen(
                         )
                     ) {
                         // A slow plan that is still receiving data belongs to
-                        // the buffering-quality controller: no same-plan reopen
+                        // the buffering-quality controller, and one in an
+                        // outage to the reconnect path: no same-plan reopen
                         // and no failure replan, and the loop keeps sampling.
                         Log.i(
                             TAG,
-                            "startup_stall owned_by=buffering_quality classification=${reason.classification} " +
+                            "startup_stall owned_by=${if (viewModel.bufferingQualityAdapter.transportTroubleActive) "outage" else "buffering_quality"} " +
+                                "classification=${reason.classification} " +
                                 "stalled_for_ms=${reason.stalledForMs}",
                         )
                         startupStallDetector.onStallHandedOff(SystemClock.elapsedRealtime())

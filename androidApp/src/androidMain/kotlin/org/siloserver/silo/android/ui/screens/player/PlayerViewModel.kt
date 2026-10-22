@@ -2075,15 +2075,6 @@ class PlayerViewModel(
             reopenSameRoute(state, "client_retry=transport_reopen")
             return
         }
-        if (reason is Playability.StartupStalled &&
-            reason.classification == "transport_stall" &&
-            state.playbackPlan != null &&
-            bufferingQualityAdapter.transportTroubleActive &&
-            !reopenedAfterOutage
-        ) {
-            waitOutOutage()
-            return
-        }
 
         startProtocolV3Replan(
             classification = reason.failureClassification(),

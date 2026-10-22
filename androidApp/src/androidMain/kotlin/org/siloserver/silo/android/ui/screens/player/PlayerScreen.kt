@@ -1482,7 +1482,8 @@ fun PlayerScreen(
                 ) {
                     Log.i(
                         TAG,
-                        "startup_stall owned_by=buffering_quality classification=${reason.classification} " +
+                        "startup_stall owned_by=${if (viewModel.bufferingQualityAdapter.transportTroubleActive) "outage" else "buffering_quality"} " +
+                            "classification=${reason.classification} " +
                             "stalled_for_ms=${reason.stalledForMs}",
                     )
                     startupStallDetector.onStallHandedOff(SystemClock.elapsedRealtime())
