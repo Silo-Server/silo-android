@@ -390,6 +390,23 @@ class AndroidPushRegistrarTest {
         assertEquals(listOf(Triple("https://example.invalid",proof,2L)),retirements)
         assertTrue(store.entries.single().acknowledged)
     }
+    @Test fun aDroppedRetirementIsNotQueuedAgain()=runTest {
+        val day=24*60*60*1000L
+        for (aged in listOf(false,true)) {
+            store.entries=emptyList(); retirements.clear(); savedLogins["server"]="login"
+            registrar().registerToken(token)
+            retireStatus=if (aged) null else 403
+            registrar().unregisterDevice("server"); savedLogins.remove("server")
+            if (aged) {
+                store.entries=store.entries.map { it.copy(retirement=it.retirement!!.copy(queuedAtMs=it.retirement!!.queuedAtMs-91*day)) }
+                registrar().retryPendingRetirements() // expires unsent
+            }
+            assertNull(store.entries.single().retirement,"aged=$aged")
+            val sent=retirements.size
+            registrar().retryPendingRetirements()
+            assertEquals(sent,retirements.size,"aged=$aged"); assertNull(store.entries.single().retirement,"aged=$aged")
+        }
+    }
     @Test fun aRetirementThatStallsWaitsOutTheBackOffLikeOneThatFailed()=runTest {
         registrar().registerToken(token)
         retireStatus=null; registrar().unregisterDevice("server"); savedLogins.remove("server")

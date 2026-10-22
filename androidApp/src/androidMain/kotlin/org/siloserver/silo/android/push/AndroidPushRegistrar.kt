@@ -408,7 +408,10 @@ class AndroidPushRegistrar internal constructor(
                     stored?.takeIf { it.generation == record.generation && it.key == record.key && it.retirement != null }?.let {
                         if (outcome == RetirementOutcome.RETIRED) {
                             it.copy(acknowledged = true, receipt = null, ownerLeaving = false, retirement = null)
-                        } else it.copy(retirement = null)
+                        } else {
+                            // Settled for good: no later retry may take it for a removal never queued.
+                            it.copy(ownerLeaving = false, retirement = null)
+                        }
                     } ?: stored
                 }
             }
