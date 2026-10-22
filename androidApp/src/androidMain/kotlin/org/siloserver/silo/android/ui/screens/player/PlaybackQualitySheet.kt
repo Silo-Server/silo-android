@@ -44,7 +44,8 @@ fun PlaybackQualitySheet(
     activeId: String?,
     // Auto plays under a limit learned from buffering; its row says so.
     autoLimitedAfterBuffering: Boolean = false,
-    // Why the checked row plays, under it; null on servers that don't say.
+    // Why the plan plays at its quality: under the checked row, or above the
+    // rows when none is checked. Null on servers that don't say.
     reasonLine: String? = null,
     // A Watch Party keeps every member on the room's file; quality still
     // applies to this device's stream.
@@ -54,6 +55,7 @@ fun PlaybackQualitySheet(
     tabletopPaneHeight: Dp? = null,
 ) {
     val controller = rememberPlayerMenuController(onDismiss)
+    val hasCheckedRow = options.any { it.id == activeId }
 
     PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
         PlayerPanelHeader(title = "Quality", onClose = { controller.dismiss() })
@@ -64,6 +66,8 @@ fun PlaybackQualitySheet(
                         "You can adjust your streaming quality below.",
                 )
             }
+            // No row checked (a saved resolution the source plays under).
+            if (!hasCheckedRow && reasonLine != null) PlayerFootnote(reasonLine)
             Spacer(Modifier.height(8.dp))
             PlayerGroup {
                 val autoLimitedLabel = stringResource(R.string.buffering_quality_auto_limited)
