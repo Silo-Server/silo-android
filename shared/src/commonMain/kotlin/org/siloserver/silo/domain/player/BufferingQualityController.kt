@@ -579,6 +579,7 @@ class BufferingQualityController(
         // The rearm timer keeps running: the current plan is watched again
         // REARM_AFTER_UNADOPTED_MS after the replan was sent.
         pending = null
+        runDeadlineFailurePath()
     }
 
     /**
@@ -652,8 +653,12 @@ class BufferingQualityController(
      * in the no-lower cooldown, while a pick or a replan of ours is in flight
      * or waits out its rearm (refused or never adopted), or with nothing
      * lower to play.
+     *
+     * After it returns true, [failurePath] runs if the lowering fails or its
+     * rearm passes while this plan is still current and has not played, so a
+     * start never ends on a dead player.
      */
-    fun onStartDeadlineMissed(observedKbps: Int?): Boolean {
+    fun onStartDeadlineMissed(observedKbps: Int?, failurePath: () -> Unit): Boolean {
         if (!enabled || suspended || pickPending || pending != null || rearmJob?.isActive == true) return false
         val now = clock()
         val recentOutage = transportTroubleEndedAt?.let { now - it < LONG_STALL_MS } == true
@@ -668,6 +673,7 @@ class BufferingQualityController(
         if (observedKbps == null || observedKbps >= delivered) return false
         val lowering = loweringFor(plan) ?: return false
         hidePill()
+        state.deadlineFailurePath = failurePath
         sendLowering(state, lowering, PendingKind.AUTOMATIC)
         return true
     }
@@ -850,8 +856,22 @@ class BufferingQualityController(
             delay(REARM_AFTER_UNADOPTED_MS)
             rearmJob = null
             pending = null
+            // Before the reset, which treats the plan's grace as over.
+            runDeadlineFailurePath()
             current?.let { resetTracker(it, clock()) }
         }
+    }
+
+    /**
+     * The lowering sent for a missed start deadline came to nothing: the
+     * plan still current has not played, so the start's own failure path
+     * runs now. An adoption ends the plan, and its failure path with it.
+     */
+    private fun runDeadlineFailurePath() {
+        val state = current ?: return
+        val failurePath = state.deadlineFailurePath ?: return
+        state.deadlineFailurePath = null
+        if (state.tracker.starting) failurePath()
     }
 
     // ---- Stall tracker -----------------------------------------------------
@@ -1177,6 +1197,9 @@ class BufferingQualityController(
 
         /** No trigger acts on this plan before this time ("can't lower" result). */
         var cooldownUntil: Long? = null
+
+        /** The caller's failure path for a missed start deadline whose lowering is out. */
+        var deadlineFailurePath: (() -> Unit)? = null
 
         var playingSince: Long? = null
         var playedMs: Long = 0L

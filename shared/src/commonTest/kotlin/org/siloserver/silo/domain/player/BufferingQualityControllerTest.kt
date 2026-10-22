@@ -208,11 +208,40 @@ class BufferingQualityControllerTest {
             case.setup(this, controller, testScheduler.currentTime)
             replans.clear()
 
-            assertEquals(case.lowersTo != null, controller.onStartDeadlineMissed(case.observedKbps), case.name)
+            assertEquals(case.lowersTo != null, controller.onStartDeadlineMissed(case.observedKbps) {}, case.name)
             val expected = case.lowersTo
                 ?.let { listOf(BufferingQualityReplan("auto", it, BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER)) }
                 .orEmpty()
             assertEquals(expected, replans, case.name)
+            controller.reset()
+        }
+    }
+
+    @Test
+    fun `a deadline lowering that comes to nothing runs the start's failure path once`() = runTest {
+        data class Case(
+            val name: String,
+            val failurePaths: Int,
+            val after: TestScope.(BufferingQualityController) -> Unit,
+        )
+        val cases = listOf(
+            Case("the replan fails", failurePaths = 1) { it.onReplanFailed() },
+            Case("its plan is never adopted", failurePaths = 1) { },
+            Case("its plan is adopted", failurePaths = 0) { it.onPlanAdopted(plan("p-low", deliveredKbps = 10_000)) },
+            Case("the plan plays meanwhile", failurePaths = 0) { it.onPlaying() },
+            Case("playback stops", failurePaths = 0) { it.onPlaybackStopped() },
+        )
+        for (case in cases) {
+            val controller = newController(BufferingQualityMode.ALWAYS)
+            controller.onPlanAdopted(plan("p1"))
+            controller.onWaiting()
+            var failurePaths = 0
+            assertTrue(controller.onStartDeadlineMissed(2_000) { failurePaths++ }, case.name)
+            case.after(this, controller)
+            // The rearm passes too.
+            at(testScheduler.currentTime + BufferingQualityController.REARM_AFTER_UNADOPTED_MS)
+            controller.onReplanFailed()
+            assertEquals(case.failurePaths, failurePaths, case.name)
             controller.reset()
         }
     }

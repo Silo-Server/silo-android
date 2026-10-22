@@ -2063,20 +2063,39 @@ class PlayerViewModel(
         // quality. A decoder or renderer failure keeps its failure path, and
         // so does a stall with no such evidence; the controller keeps it for
         // a renderer wait and for an outage, which the reconnect path owns.
-        val observedKbps = playbackSessionManager.observedPlanThroughputKbps()
         if (reason is Playability.StartupStalled &&
             reason.classification == "transport_stall" &&
-            bufferingQualityEnabled &&
-            bufferingQualityController.onStartDeadlineMissed(observedKbps)
+            bufferingQualityEnabled
         ) {
-            Log.i(
-                TAG,
-                "buffering_quality start_deadline_missed action=lower observed_kbps=$observedKbps " +
-                    "classification=${reason.classification} buffered_ahead_ms=${reason.bufferedAheadMs}",
-            )
-            return
+            val observedKbps = playbackSessionManager.observedPlanThroughputKbps()
+            val mount = state.mediaMountGeneration
+            val generation = playbackRecoveryGeneration
+            val lowering = bufferingQualityController.onStartDeadlineMissed(observedKbps) {
+                // The lowering came to nothing: fail this load as before, if it is still the one mounted.
+                val current = _uiState.value
+                if (generation == playbackRecoveryGeneration && current.mediaMountGeneration == mount) {
+                    Log.i(TAG, "buffering_quality start_deadline_lowering_failed action=failure_path")
+                    runStartFailurePath(reason, notice, current)
+                }
+            }
+            if (lowering) {
+                Log.i(
+                    TAG,
+                    "buffering_quality start_deadline_missed action=lower observed_kbps=$observedKbps " +
+                        "classification=${reason.classification} buffered_ahead_ms=${reason.bufferedAheadMs}",
+                )
+                return
+            }
         }
+        runStartFailurePath(reason, notice, state)
+    }
 
+    /**
+     * The failure path of a plan that cannot play here: one same-route reopen
+     * of a stalled transport, else a replan that reports the failure.
+     */
+    private fun runStartFailurePath(reason: Playability, notice: String, state: PlayerUiState) {
+        state.sessionId ?: return
         if (reason is Playability.StartupStalled &&
             reason.classification == "transport_stall" &&
             state.playbackPlan != null &&
