@@ -103,26 +103,37 @@ class BufferingQualityControllerTest {
     }
 
     @Test
-    fun `a missed start deadline lowers only on Auto in always mode and not after Keep`() = runTest {
-        data class Case(val name: String, val mode: BufferingQualityMode, val quality: String = "auto", val kept: Boolean = false)
+    fun `a missed start deadline lowers only on unanswered Auto in always mode`() = runTest {
+        data class Case(val name: String, val mode: BufferingQualityMode, val quality: String = "auto", val answer: String? = null)
         val cases = listOf(
             Case("always on Auto", BufferingQualityMode.ALWAYS) to true,
             Case("ask on Auto", BufferingQualityMode.ASK) to false,
             Case("never on Auto", BufferingQualityMode.NEVER) to false,
             Case("always on a picked quality", BufferingQualityMode.ALWAYS, quality = "1080p-high") to false,
-            Case("always after Keep", BufferingQualityMode.ALWAYS, kept = true) to false,
+            Case("always after Keep", BufferingQualityMode.ALWAYS, answer = "keep") to false,
+            Case("always after Restore", BufferingQualityMode.ALWAYS, answer = "restore") to false,
         )
         for ((case, lowers) in cases) {
             replans.clear()
-            val controller = newController(if (case.kept) BufferingQualityMode.ASK else case.mode)
-            if (case.kept) {
-                longStall(controller)
-                assertTrue(controller.selectKeep(), case.name)
-                controller.setMode(case.mode)
-                controller.onPlanAdopted(plan("p2"), controllerInitiated = false)
-            } else {
-                controller.onPlanAdopted(plan("p1").copy(quality = case.quality))
+            val controller = newController(if (case.answer == "keep") BufferingQualityMode.ASK else case.mode)
+            if (case.answer != null) {
+                // A long stall on p1, timed from now: each case runs later on the same clock.
+                val t0 = testScheduler.currentTime
+                controller.onPlanAdopted(plan("p1"))
+                controller.onPlaying()
+                at(t0 + 125_000)
+                controller.onWaiting()
+                at(t0 + 131_000)
+                if (case.answer == "keep") {
+                    assertTrue(controller.selectKeep(), case.name)
+                    controller.setMode(case.mode)
+                } else {
+                    controller.onPlanAdopted(plan("p-low", deliveredKbps = 10_000))
+                    assertTrue(controller.selectRestore(), case.name)
+                }
             }
+            controller.onPlanAdopted(plan("p2").copy(quality = case.quality), controllerInitiated = case.answer == "restore")
+            replans.clear()
 
             assertEquals(lowers, controller.onStartDeadlineMissed(), case.name)
             val expected = if (lowers) {

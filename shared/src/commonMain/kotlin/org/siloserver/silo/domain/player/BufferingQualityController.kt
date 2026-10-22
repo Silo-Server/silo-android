@@ -268,9 +268,6 @@ class BufferingQualityController(
     /** The quality the viewer answered at (Keep or Restore), until they change quality. */
     private var answeredQuality: String? = null
 
-    /** The quality the viewer answered at with Keep, until they change quality. */
-    private var keptQuality: String? = null
-
     /** "Can't lower quality" from a trigger shows once per title. */
     private var cantLowerShown = false
 
@@ -593,7 +590,6 @@ class BufferingQualityController(
         if (!enabled) return
         hidePill()
         answeredQuality = null
-        keptQuality = null
         reofferNotBefore = null
         pending = null
         rearmJob?.cancel()
@@ -619,19 +615,18 @@ class BufferingQualityController(
     /**
      * The playing plan missed the player's own start deadline before its
      * first frame. On Auto in `always` mode it lowers as a long stall would:
-     * the step-down replan, and the undo pill when a lower plan arrives. A
-     * Restore answer does not stop it, because a plan that never starts is
-     * not the buffering the viewer accepted. Returns false, leaving the
-     * caller's failure recovery to run, in Ask first or Never, on a quality
-     * the viewer picked or kept, inside a Watch Party room, while a pick or
-     * a replan of ours is in flight, or with nothing lower to play.
+     * the step-down replan, and the undo pill when a lower plan arrives.
+     * Returns false, leaving the caller's failure recovery to run, in Ask
+     * first or Never, on a quality the viewer picked, on a title answered
+     * at this quality (Keep or Restore), inside a Watch Party room, while a
+     * pick or a replan of ours is in flight, or with nothing lower to play.
      */
     fun onStartDeadlineMissed(): Boolean {
         if (!enabled || suspended || pickPending || pending != null) return false
         val state = current ?: return false
         val plan = state.plan
         if (plan.quality != PLAYBACK_QUALITY_AUTO || mode != BufferingQualityMode.ALWAYS) return false
-        if (keptQuality == plan.quality) return false
+        if (answeredQuality == plan.quality) return false
         val lowering = loweringFor(plan) ?: return false
         hidePill()
         sendLowering(state, lowering, PendingKind.AUTOMATIC)
@@ -655,7 +650,6 @@ class BufferingQualityController(
         val state = current ?: return false
         hidePill()
         answeredQuality = state.plan.quality
-        keptQuality = state.plan.quality
         state.action = BufferingAction.KEPT
         return true
     }
@@ -699,7 +693,6 @@ class BufferingQualityController(
         pickPending = false
         dropPlan(clock())
         answeredQuality = null
-        keptQuality = null
         cantLowerShown = false
         reofferNotBefore = null
         promptShownAt = 0L
