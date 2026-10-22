@@ -699,7 +699,10 @@ class BandwidthProbeSchedulerTest {
         assertEquals(10_100L, currentTime, "the target does not stop it")
         assertEquals(listOf(SpeedTestMode.ACCURATE), harness.server.modes)
         assertEquals(80_000, measured.estimate.kbps)
-        assertEquals(listOf(PlaybackBandwidthProbeResultV2(80_000, 30_000_000, 3_000, "wifi")), harness.server.reports)
+        assertEquals(
+            listOf(PlaybackBandwidthProbeResultV2(80_000, 30_000_000, 3_000, "wifi", manual = true)),
+            harness.server.reports,
+        )
     }
 
     @Test

@@ -756,6 +756,7 @@ class BandwidthProbeScheduler(
                     durationMs = measured.durationMs,
                     transport = estimate.transport,
                     lowerBound = true.takeIf { estimate.lowerBound },
+                    manual = true.takeIf { manual },
                 ),
             )
         } catch (cancellation: CancellationException) {

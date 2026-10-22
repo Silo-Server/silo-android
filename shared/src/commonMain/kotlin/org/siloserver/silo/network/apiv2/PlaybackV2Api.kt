@@ -83,6 +83,12 @@ data class PlaybackBandwidthProbeResultV2(
      * the server reads absent as false.
      */
     @SerialName("lower_bound") val lowerBound: Boolean? = null,
+    /**
+     * True when the viewer ran this test with **Test speed**; null, and so
+     * omitted, for an automatic test. A manual result above the learned limit
+     * on this connection clears the limit, as Settings → Reset does.
+     */
+    val manual: Boolean? = null,
 )
 
 /** How a bandwidth probe download answered ([PlaybackV2Api.bandwidthProbe]). */
