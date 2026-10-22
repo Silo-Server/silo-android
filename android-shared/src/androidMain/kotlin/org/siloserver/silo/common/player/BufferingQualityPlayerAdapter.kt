@@ -232,7 +232,8 @@ class BufferingQualityPlayerAdapter(
 
     /**
      * Listens to [player], both its state and its loads, seeded with where it
-     * already is. Returns the detach.
+     * already is. Returns the detach, after which the adapter watches nothing
+     * until it is seeded again.
      */
     fun attach(player: ExoPlayer): () -> Unit {
         player.addListener(this)
@@ -249,6 +250,7 @@ class BufferingQualityPlayerAdapter(
         return {
             player.removeListener(this)
             player.removeAnalyticsListener(this)
+            onDetached()
         }
     }
 
@@ -415,6 +417,15 @@ class BufferingQualityPlayerAdapter(
 
     // The callbacks' bodies, reachable from JVM tests without Media3 event objects.
 
+    /**
+     * The player is gone: its wait is no longer watched, and the next [seed]
+     * starts from stopped, so a wait it finds is announced afresh.
+     */
+    internal fun onDetached() {
+        phase = Phase.STOPPED
+        endWait()
+    }
+
     internal fun onDiscontinuity(reason: Int) {
         if (reason != Player.DISCONTINUITY_REASON_SEEK && reason != Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) return
         seekSinceRun = true
@@ -462,12 +473,7 @@ class BufferingQualityPlayerAdapter(
         }
         if (next == phase) return
         phase = next
-        if (next != Phase.STARVED) {
-            waitCause = null
-            ampleWait = false
-            cancelWaitCheck?.invoke()
-            cancelWaitCheck = null
-        }
+        if (next != Phase.STARVED) endWait()
         when (next) {
             Phase.RUNNING -> {
                 seekSinceRun = false
@@ -492,6 +498,13 @@ class BufferingQualityPlayerAdapter(
             }
             Phase.STOPPED -> sink.onPause()
         }
+    }
+
+    private fun endWait() {
+        waitCause = null
+        ampleWait = false
+        cancelWaitCheck?.invoke()
+        cancelWaitCheck = null
     }
 
     private fun announceWait(cause: BufferingWaitCause) {

@@ -332,6 +332,17 @@ class BufferingQualityPlayerAdapterTest {
     }
 
     @Test
+    fun aDetachedPlayersWaitIsNoLongerWatchedAndANewOneIsAnnounced() {
+        playing()
+        starve()
+        adapter.onDetached()
+        assertTrue(scheduled.isEmpty())
+
+        adapter.seed(playWhenReady = true, playbackState = Player.STATE_BUFFERING, isPlaying = false)
+        assertEquals(listOf("waiting:network", "waiting:network"), sink.events)
+    }
+
+    @Test
     fun aLoadErrorStartsTroubleAndBufferProgressEndsIt() {
         playing()
         adapter.onLoadFailed(wasCanceled = true)
