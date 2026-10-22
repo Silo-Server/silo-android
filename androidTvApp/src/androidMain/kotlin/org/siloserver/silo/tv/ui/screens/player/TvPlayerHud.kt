@@ -113,12 +113,11 @@ import org.siloserver.silo.common.player.qualityReasonMenuLine
 import org.siloserver.silo.common.player.qualityReasonStatsValue
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.domain.player.IntroSkipMode
-import org.siloserver.silo.model.settings.QualityChoices
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.deliveredResolutionLabel
-import org.siloserver.silo.model.playback.playbackAutoQualityLabel
+import org.siloserver.silo.model.playback.playbackQualityValueLabel
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -1188,13 +1187,12 @@ private fun HudVideoPane(
                     val selectedQuality = videoQualities.firstOrNull { it.isSelected }
                     HudFocusedSettingRow(
                         label = "Quality",
-                        // Auto names what it plays; no row lit: a saved
-                        // resolution the source plays under.
-                        value = when {
-                            selectedQuality == null -> QualityChoices.resolutionLabel(videoQualityPreference)
-                            selectedQuality.id == PLAYBACK_QUALITY_AUTO -> playbackAutoQualityLabel(autoQualityResolution)
-                            else -> selectedQuality.label
-                        },
+                        value = playbackQualityValueLabel(
+                            selectedQuality?.id,
+                            selectedQuality?.label,
+                            videoQualityPreference,
+                            autoQualityResolution,
+                        ),
                         enabled = enabled,
                         entryFocusRequester = entryFocusRequester.takeIf { entryRow == "quality" },
                         onActivate = {

@@ -95,8 +95,19 @@ fun playbackQualityValueLabel(
     autoResolution: String? = null,
 ): String {
     val active = options.firstOrNull { it.id == activeId }
-        ?: return QualityChoices.resolutionLabel(videoQualityPreference(preference))
-    return if (active.id == PLAYBACK_QUALITY_AUTO) playbackAutoQualityLabel(autoResolution) else active.name
+    return playbackQualityValueLabel(active?.id, active?.name, preference, autoResolution)
+}
+
+/** [playbackQualityValueLabel] from the lit row's [activeId] and [activeName], both null with none lit. */
+fun playbackQualityValueLabel(
+    activeId: String?,
+    activeName: String?,
+    preference: String?,
+    autoResolution: String?,
+): String = when {
+    activeId == null || activeName == null -> QualityChoices.resolutionLabel(videoQualityPreference(preference))
+    activeId == PLAYBACK_QUALITY_AUTO -> playbackAutoQualityLabel(autoResolution)
+    else -> activeName
 }
 
 /**
