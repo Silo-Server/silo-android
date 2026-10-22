@@ -136,6 +136,25 @@ class BufferingQualityPlayerAdapterTest {
     }
 
     @Test
+    fun aWaitThatBuffersMoreThanFiveSecondsBecomesARendererWait() {
+        var aheadMs = 0L
+        adapter.seed(playWhenReady = true, playbackState = Player.STATE_READY, isPlaying = true) { aheadMs }
+        sink.events.clear()
+
+        starve()
+        aheadMs = 5_000L
+        runScheduled()
+        aheadMs = 5_001L
+        runScheduled()
+        // It stays the renderer's, as the buffer only grows while waiting.
+        now = 10_000L
+        runScheduled()
+        resume()
+
+        assertEquals(listOf("waiting:network", "waiting:renderer", "playing"), sink.events)
+    }
+
+    @Test
     fun aWaitWithNoMediaBytesForFourSecondsIsAnOutage() {
         playing()
         adapter.noteLoading(true)

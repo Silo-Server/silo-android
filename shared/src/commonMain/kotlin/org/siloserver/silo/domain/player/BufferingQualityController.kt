@@ -206,6 +206,9 @@ class BufferingQualityController(
          */
         const val RENDERER_WAIT_MAX_MS: Long = 3_000L
 
+        /** A wait with more than this buffered past the playhead is the renderer's, however it began. */
+        const val RENDERER_WAIT_AMPLE_MS: Long = 5_000L
+
         /** A wait in which no media request has received data for this long is an outage. */
         const val OUTAGE_NO_DATA_MS: Long = 4_000L
 

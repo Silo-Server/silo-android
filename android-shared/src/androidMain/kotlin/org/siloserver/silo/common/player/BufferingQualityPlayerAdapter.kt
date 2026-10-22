@@ -14,6 +14,7 @@ import androidx.media3.exoplayer.source.MediaLoadData
 import org.siloserver.silo.domain.player.BufferingQualityController
 import org.siloserver.silo.domain.player.BufferingQualityController.Companion.OUTAGE_NO_DATA_MS
 import org.siloserver.silo.domain.player.BufferingQualityController.Companion.OUTAGE_NO_DATA_SEGMENTED_MS
+import org.siloserver.silo.domain.player.BufferingQualityController.Companion.RENDERER_WAIT_AMPLE_MS
 import org.siloserver.silo.domain.player.BufferingQualityController.Companion.RENDERER_WAIT_BUFFER_MS
 import org.siloserver.silo.domain.player.BufferingQualityController.Companion.RENDERER_WAIT_MAX_MS
 import org.siloserver.silo.domain.player.BufferingWaitCause
@@ -70,8 +71,12 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
  *   with less buffered than the player needs to resume
  *   ([resumeAfterRebufferMs]), the wait is re-announced as a network wait,
  *   from which the stall is timed: a decoder hiccup on a link too slow to
- *   rebuild that amount soon is the network's stall. The adapter checks every
- *   [WAIT_CHECK_MS] while a wait lasts, and at each [sampleBuffer].
+ *   rebuild that amount soon is the network's stall. Any other wait, a
+ *   start's included, becomes a renderer wait once more than
+ *   [RENDERER_WAIT_AMPLE_MS] is buffered: the data is there and the player
+ *   still does not run, so its own start and decoder failure handling owns
+ *   it. The adapter checks every [WAIT_CHECK_MS] while a wait lasts, and at
+ *   each [sampleBuffer].
  * - `playWhenReady` false, `STATE_ENDED` or `STATE_IDLE` →
  *   [BufferingPlaybackEventSink.onPause].
  * - A seek discontinuity → [BufferingPlaybackEventSink.onSeek]. During a
@@ -481,10 +486,16 @@ class BufferingQualityPlayerAdapter(
     /**
      * A renderer wait whose buffer has drained, or that has lasted
      * [RENDERER_WAIT_MAX_MS] still short of what playback needs to resume,
-     * has become a network wait.
+     * has become a network wait; any other wait with more than
+     * [RENDERER_WAIT_AMPLE_MS] buffered has become a renderer wait.
      */
     private fun checkRendererDrain() {
-        if (phase != Phase.STARVED || waitCause != BufferingWaitCause.RENDERER) return
+        if (phase != Phase.STARVED) return
+        if (waitCause != BufferingWaitCause.RENDERER) {
+            // Ample media buffered and still waiting: not the network, whatever began the wait.
+            if (!tunneling() && bufferedAheadMs() > RENDERER_WAIT_AMPLE_MS) announceWait(BufferingWaitCause.RENDERER)
+            return
+        }
         val buffered = bufferedAheadMs()
         val drained = buffered <= RENDERER_WAIT_BUFFER_MS
         val stuck = clock() - rendererWaitStartedAt >= RENDERER_WAIT_MAX_MS && buffered < resumeAfterRebufferMs
