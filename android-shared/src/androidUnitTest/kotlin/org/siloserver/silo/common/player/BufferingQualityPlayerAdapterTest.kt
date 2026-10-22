@@ -138,22 +138,57 @@ class BufferingQualityPlayerAdapterTest {
     }
 
     @Test
-    fun aWaitThatBuffersMoreThanFiveSecondsBecomesARendererWait() {
-        var aheadMs = 0L
-        adapter.seed(playWhenReady = true, playbackState = Player.STATE_READY, isPlaying = true) { aheadMs }
-        sink.events.clear()
+    fun aWaitWithMoreThanTwiceTheResumeAmountBufferedIsTheRenderersUntilPlaybackRuns() {
+        for (tunneled in listOf(false, true)) {
+            val sink = RecordingSink()
+            val scheduled = mutableListOf<() -> Unit>()
+            val adapter = BufferingQualityPlayerAdapter(
+                sink,
+                clock = { now },
+                schedule = { _, action -> scheduled += action; { scheduled -= action } },
+            )
+            fun check() = scheduled.toList().also { scheduled.clear() }.forEach { it() }
+            var aheadMs = 0L
+            adapter.seed(
+                playWhenReady = true,
+                playbackState = Player.STATE_READY,
+                isPlaying = true,
+                tunneling = { tunneled },
+            ) { aheadMs }
 
-        starve()
-        aheadMs = 5_000L
-        runScheduled()
-        aheadMs = 5_001L
-        runScheduled()
-        // It stays the renderer's, as the buffer only grows while waiting.
-        now = 10_000L
-        runScheduled()
-        resume()
+            adapter.onPlaybackStateChanged(Player.STATE_BUFFERING)
+            adapter.onIsPlayingChanged(false)
+            aheadMs = 10_000L
+            check()
+            aheadMs = 10_001L
+            check()
+            // It stays the renderer's even if the buffer then falls.
+            aheadMs = 400L
+            now += 10_000L
+            check()
+            adapter.onPlaybackStateChanged(Player.STATE_READY)
+            adapter.onIsPlayingChanged(true)
+            // A tunneled codec's held samples count as buffered: only the ample
+            // threshold makes its wait the renderer's from the start.
+            aheadMs = 3_600L
+            adapter.onPlaybackStateChanged(Player.STATE_BUFFERING)
+            adapter.onIsPlayingChanged(false)
+            adapter.onPlaybackStateChanged(Player.STATE_READY)
+            adapter.onIsPlayingChanged(true)
+            aheadMs = 10_001L
+            adapter.onPlaybackStateChanged(Player.STATE_BUFFERING)
+            adapter.onIsPlayingChanged(false)
 
-        assertEquals(listOf("waiting:network", "waiting:renderer", "playing"), sink.events)
+            val begins = if (tunneled) "waiting:network" else "waiting:renderer"
+            assertEquals(
+                listOf(
+                    "playing", "waiting:network", "waiting:renderer", "playing",
+                    begins, "playing", "waiting:renderer",
+                ),
+                sink.events,
+                "tunneled=$tunneled",
+            )
+        }
     }
 
     @Test
@@ -241,22 +276,6 @@ class BufferingQualityPlayerAdapterTest {
             assertEquals(expected, sink.events, "$row")
             resume()
         }
-    }
-
-    @Test
-    fun aTunneledPlayerWaitIsANetworkWaitWhateverIsBuffered() {
-        // A tunneled codec's samples still count as buffered.
-        adapter.seed(
-            playWhenReady = true,
-            playbackState = Player.STATE_READY,
-            isPlaying = true,
-            tunneling = { true },
-        ) { 3_600L }
-        sink.events.clear()
-
-        starve()
-
-        assertEquals(listOf("waiting:network"), sink.events)
     }
 
     @Test
