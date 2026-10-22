@@ -387,8 +387,10 @@ class SequencedPlaybackTest {
         assertTrue(BUFFERING_QUALITY_V1_FEATURE in lateReplan.features())
     }
 
-    @Test fun uncertainReplanIsDurableAndCannotReplayOrRebase() = runTest {
+    @Test fun uncertainReplanIsDurableResendsOnlyItsOwnBodyAndCannotRebase() = runTest {
         val identity = Identity(); val store = Store(); var replans = 0
+        // A terminal outcome names no session.
+        val terminal = """{"protocol_version":3,"server_features":["playback_plan_v3"],"outcome":"adaptation_unavailable","terminal":{"reason":"no_route","message":"No validated playback route is available.","retryable":false}}"""
         val c = client { req -> when (req.url.encodedPath) {
             "/api/v2/playback/capabilities" -> reply(caps())
             "/api/v2/account/me" -> reply(account)
@@ -397,7 +399,7 @@ class SequencedPlaybackTest {
                 replans++
                 assertTrue(req.attributes[SingleAttemptAttributeKey])
                 assertEquals(store.entries.single().replans.single().body.toString(), req.body.toByteArray().decodeToString())
-                throw IllegalStateException("lost response")
+                if (replans < 3) throw IllegalStateException("lost response") else reply(terminal)
             }
             else -> error("Unexpected transport")
         } }
@@ -405,13 +407,17 @@ class SequencedPlaybackTest {
             val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             assertIs<ApiResult.Success<*>>(runtime.start(request()))
             assertIs<ApiResult.NetworkError>(runtime.replan("session-1", replanRequest()))
-            assertEquals("replan_pending", assertIs<ApiResult.Error>(runtime.replan("session-1", replanRequest())).error)
             assertEquals("replan_conflict", assertIs<ApiResult.Error>(runtime.replan("session-1", replanRequest().copy(positionSeconds = 9.0))).error)
             assertEquals("replan_pending", assertIs<ApiResult.Error>(runtime.replan("session-1", replanRequest().copy(replanRequestId = "replan-0002"))).error)
             val restarted = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             assertEquals("identity_changed", assertIs<ApiResult.Error>(restarted.replan("session-1", replanRequest())).error)
-            assertEquals(1, replans)
+            assertIs<ApiResult.NetworkError>(runtime.replan("session-1", replanRequest()))
             assertNull(store.entries.single().replans.single().response)
+            // Resent with its original body, the request settles on the server's terminal answer.
+            val settled = assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.replan("session-1", replanRequest()))
+            assertEquals("no_route", settled.data.terminal?.reason)
+            assertEquals(3, replans)
+            assertNotNull(store.entries.single().replans.single().response)
         } finally { c.close() }
     }
 
@@ -453,7 +459,6 @@ class SequencedPlaybackTest {
             val retained = store.entries.single()
             assertNull(retained.replans.last().response)
             assertNull(retained.replans.last().rejectedCode)
-            assertEquals("replan_pending", assertIs<ApiResult.Error>(runtime.replan("session-1", reanchor(13))).error)
             assertEquals("replan_pending", assertIs<ApiResult.Error>(runtime.replan("session-1", reanchor(14))).error)
             assertEquals("replan_conflict", assertIs<ApiResult.Error>(runtime.replan("session-1", reanchor(13).copy(positionSeconds = 99.0))).error)
             val restarted = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }

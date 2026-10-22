@@ -460,20 +460,24 @@ class SequencedPlayback(
                 return@withLock ApiResult.Success(decision)
             }
             previous.rejectedCode?.let { return@withLock ApiResult.Error(it, "replan_rejected", previous.rejectedMessage ?: "Replan is unavailable.") }
+            // The same request again after it got no response: resend its exact body, which the
+            // server either answers for the first time or replays its decision for.
+            if (previous !== entry.replans.last()) return@withLock failure("stale_replan", "A newer replan superseded this decision.")
+        } else if (entry.replans.any { it.response == null && it.rejectedCode == null }) {
             return@withLock failure("replan_pending", "The previous replan outcome is uncertain. Stop this session before starting again.")
         }
-        if (entry.replans.any { it.response == null && it.rejectedCode == null })
-            return@withLock failure("replan_pending", "The previous replan outcome is uncertain. Stop this session before starting again.")
         // Settled history fences old request IDs; it is not a lifetime reanchor budget.
-        val intent = PlaybackReplanIntent(body)
-        entry = entry.copy(replans = entry.replans + intent)
-        save(entry) // A crash or lost response leaves this exact intent pending; never rebase it.
+        val intent = previous ?: PlaybackReplanIntent(body).also {
+            entry = entry.copy(replans = entry.replans + it)
+            save(entry) // A crash or lost response leaves this exact intent pending; never rebase it.
+        }
         if (scope(entry) == null) return@withLock authorityChanged()
         var sentHeaders: Map<String, String> = emptyMap()
         when (val result = api.replan(captured, sessionId, body) { sentHeaders = it }) {
             is ApiResult.Success -> {
                 val decision = decodePlaybackDecisionV2(result.data)
-                if (decision.sessionId != sessionId || (decision.playbackPlan?.sessionId?.let { it != sessionId } == true))
+                // A terminal decision names no session; only one that names another is foreign.
+                if (listOfNotNull(decision.sessionId, decision.playbackPlan?.sessionId).any { it != sessionId })
                     return@withLock failure("invalid_decision", "The replacement plan belongs to another session.")
                 save(entry.copy(replans = entry.replans.dropLast(1) + intent.copy(response = result.data)))
                 recordFeatures(entry.attemptId, decision.serverFeatures)
