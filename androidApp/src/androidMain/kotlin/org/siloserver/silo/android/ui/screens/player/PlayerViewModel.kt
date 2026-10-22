@@ -785,6 +785,9 @@ class PlayerViewModel(
     /** The mount that plays the controller's own replan, until it is adopted. */
     private var bufferingReplanMount: Long? = null
 
+    /** The mount of a same-plan reopen ([reopenSameRoute]), until it is applied: a reload, not a new plan. */
+    private var bufferingReloadMount: Long? = null
+
     /** What the last adopted plan played at, for spotting the viewer's quality change. */
     private var bufferingQualityKey: BufferingQualityKey? = null
 
@@ -2150,25 +2153,11 @@ class PlayerViewModel(
             if (mime != null && plan != null &&
                 playbackSessionManager.trySingleLocalPcmRetry(mime, track?.channels ?: 0)
             ) {
-                _uiState.update {
+                reopenSameRoute(state, "client_retry=pcm_decode:$mime:${track?.channels ?: 0}", endLoading = false) {
                     it.copy(
-                        error = null,
-                        playbackPlan = plan.copy(
-                            timeline = plan.timeline.copy(
-                                playerStartSeconds = plan.timeline.playerPositionForSource(state.position)
-                                    ?: plan.timeline.playerStartSeconds,
-                            ),
-                            claims = plan.claims.copy(
-                                audio = plan.claims.audio.copy(
-                                    passthrough = false,
-                                    reason = "client_pcm_retry",
-                                ),
-                            ),
-                            decisionTrace = plan.decisionTrace +
-                                "client_retry=pcm_decode:$mime:${track?.channels ?: 0}",
+                        claims = it.claims.copy(
+                            audio = it.claims.audio.copy(passthrough = false, reason = "client_pcm_retry"),
                         ),
-                        startPosition = plan.timeline.playerPositionForSource(state.position)
-                            ?: plan.timeline.playerStartSeconds,
                     )
                 }
                 return
@@ -2256,13 +2245,21 @@ class PlayerViewModel(
     }
 
     /**
-     * Reopens the playing plan at the current position. Appending [trace] to
-     * the decision trace produces a new plan object, which re-runs the
-     * screen's mount effect: a same-route remount, without a server round-trip.
+     * Reopens the playing plan at the current position, [edit]ed, with
+     * [trace] appended to its decision trace: a same-route remount on a new
+     * mount generation, without a server round-trip. The buffering controller
+     * reads it as a reload of the plan it already has.
      */
-    private fun reopenSameRoute(state: PlayerUiState, trace: String, endLoading: Boolean = true) {
-        val plan = state.playbackPlan ?: return
+    private fun reopenSameRoute(
+        state: PlayerUiState,
+        trace: String,
+        endLoading: Boolean = true,
+        edit: (PlaybackExecutionPlan) -> PlaybackExecutionPlan = { it },
+    ) {
+        val plan = state.playbackPlan?.let(edit) ?: return
         val start = plan.timeline.playerPositionForSource(state.position) ?: plan.timeline.playerStartSeconds
+        val mountGeneration = expectNextMediaMount()
+        bufferingReloadMount = mountGeneration
         _uiState.update {
             it.copy(
                 isLoading = it.isLoading && !endLoading,
@@ -2272,6 +2269,7 @@ class PlayerViewModel(
                     decisionTrace = plan.decisionTrace + trace,
                 ),
                 startPosition = start,
+                mediaMountGeneration = mountGeneration,
             )
         }
     }
@@ -4174,9 +4172,16 @@ class PlayerViewModel(
         syncBufferingQualityEnabled()
         val controllerInitiated = bufferingReplanMount == generation
         bufferingReplanMount = null
+        val reload = bufferingReloadMount == generation
+        bufferingReloadMount = null
         if (bufferingQualityLocalPlayback) return
         val plan = state.playbackPlan ?: return
-        // Every applied mount is a new adoption: phone same-plan retries never remount.
+        if (reload && bufferingQualityController.hasPlan) {
+            bufferingQualityAdapter.reset(plan.delivery)
+            bufferingQualityAdapter.markReload()
+            return
+        }
+        // Any other applied mount is a new adoption, even of a repeated plan_id.
         val adopted = plan.toBufferingQualityPlan(
             bufferingQualityPreference(),
             adoptionId = "${plan.planId}#$generation",

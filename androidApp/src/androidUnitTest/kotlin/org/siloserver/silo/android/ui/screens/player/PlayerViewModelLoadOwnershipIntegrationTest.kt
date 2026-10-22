@@ -597,6 +597,34 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
+    fun outageEndReopenRemountsTheSamePlan() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope, serverReachable = true)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.loadContent("movie", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a").copy(playbackPlan = executionPlan()))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            val firstMount = viewModel.uiState.value.mediaMountGeneration
+            viewModel.onMediaMountApplied(firstMount)
+
+            // No attempt to record a transport reopen on, so the error is an
+            // outage at once: wait for the network and the server, then reopen.
+            viewModel.onPlayerError(connectionFailed())
+            viewModel.awaitState { it.mediaMountGeneration != firstMount }
+            val reopened = viewModel.uiState.value
+            // The screen's mount effect applies only an awaited generation.
+            assertTrue(viewModel.shouldApplyMediaMount(reopened.mediaMountGeneration))
+            assertEquals("client_retry=outage_end", reopened.playbackPlan?.decisionTrace?.last())
+            assertNull(reopened.error)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
     fun roomStartStreamsTheRoomFilePausedAndEveryRestartKeepsTheRoom() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
         val fixture = playerViewModel(starter, backgroundScope)
@@ -811,6 +839,8 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
         shufflesApi: org.siloserver.silo.network.apiv2.ShufflesV2Api? = null,
         shuffleStore: org.siloserver.silo.model.feature.ShuffleFeatureStore? =
             shufflesApi?.let { org.siloserver.silo.model.feature.ShuffleFeatureStore(it) },
+        /** The reachability probe answers; otherwise it has no server to probe. */
+        serverReachable: Boolean = false,
     ): PlayerFixture {
         val client = noOpClient()
         val tokenManager = FakeTokenManager()
@@ -841,7 +871,11 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                     LegacyDownloadImporter(tmp.newFolder(), db),
                 ),
                 serverRegistry = FakeServerRegistry(),
-                serverReachabilityMonitor = ServerReachabilityMonitor(org.siloserver.silo.network.apiv2.ApiV2Probe(client)::probeFresh, scope, { null }),
+                serverReachabilityMonitor = if (serverReachable) {
+                    reachableServerMonitor(scope)
+                } else {
+                    ServerReachabilityMonitor(org.siloserver.silo.network.apiv2.ApiV2Probe(client)::probeFresh, scope, { null })
+                },
                 playerSettingsStore = FakePlayerSettingsStore(),
                 introAutoSkipController = IntroAutoSkipController(scope),
                 sessionLifecycle = lifecycle,
@@ -1184,6 +1218,34 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
         startPositionSeconds = 0.0,
         sessionId = sessionId,
         mediaFileId = request.preferredFileId,
+    )
+
+    private fun executionPlan() = org.siloserver.silo.model.playback.PlaybackExecutionPlan(
+        planId = "plan-a",
+        delivery = PlaybackDelivery.ORIGINAL_HTTP,
+        routeFamily = org.siloserver.silo.model.playback.PlaybackRouteFamily.PLATFORM_NATIVE,
+    )
+
+    /** A reachability monitor whose probe always finds the server. */
+    private fun reachableServerMonitor(scope: CoroutineScope) = ServerReachabilityMonitor(
+        {
+            org.siloserver.silo.network.apiv2.ApiV2ProbeResult.V2(
+                org.siloserver.silo.network.apiv2.SystemInfo(
+                    "test",
+                    2,
+                    "digest",
+                    org.siloserver.silo.network.apiv2.SystemInfoLinks("/openapi", "/capabilities"),
+                ),
+            )
+        },
+        scope,
+        { org.siloserver.silo.common.network.ReachabilityTarget(SERVER_ID, "https://silo.test", 1) },
+    )
+
+    private fun connectionFailed() = androidx.media3.common.PlaybackException(
+        "connection failed",
+        null,
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
     )
 
     private data class PlayerFixture(
