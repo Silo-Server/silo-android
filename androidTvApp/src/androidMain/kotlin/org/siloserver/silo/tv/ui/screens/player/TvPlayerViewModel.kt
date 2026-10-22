@@ -3796,7 +3796,9 @@ class TvPlayerViewModel(
     }
 
     fun onBufferingChanged(isBuffering: Boolean) {
-        _uiState.update { it.copy(isBuffering = isBuffering) }
+        // Media3 reports a player error before it goes idle, so the idle state
+        // would hide what [waitOutOutage] just showed: the viewer still waits.
+        _uiState.update { it.copy(isBuffering = isBuffering || outageRecoveryJob?.isActive == true) }
     }
 
     /** Toggle user-intent pause state. Screen mirrors this to player.play/pause. */

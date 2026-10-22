@@ -3096,7 +3096,9 @@ class PlayerViewModel(
 
     /** Called when buffering state changes. */
     fun onBufferingChanged(isBuffering: Boolean) {
-        _uiState.update { it.copy(isBuffering = isBuffering) }
+        // Media3 reports a player error before it goes idle, so the idle state
+        // would hide what [waitOutOutage] just showed: the viewer still waits.
+        _uiState.update { it.copy(isBuffering = isBuffering || outageRecoveryJob?.isActive == true) }
     }
 
     /** Toggle play/pause — tracks user intent; PlayerScreen mirrors this to playWhenReady. */
