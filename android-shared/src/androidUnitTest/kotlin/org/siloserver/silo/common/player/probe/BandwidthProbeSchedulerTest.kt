@@ -815,6 +815,30 @@ class BandwidthProbeSchedulerTest {
     }
 
     @Test
+    fun aTestSpeedResultReplacesAHigherPlaybackSample() = runTest {
+        data class Case(val name: String, val manual: Boolean, val report: ProbeReport, val sends: Int)
+        for (case in listOf(
+            Case("Test speed", manual = true, ProbeReport.STORED, sends = 80_000),
+            Case("Test speed whose report got no answer", manual = true, ProbeReport.UNSENT, sends = 80_000),
+            Case("automatic test", manual = false, ProbeReport.STORED, sends = 90_000),
+        )) {
+            val harness = Harness(this)
+            // Below the target, the sample does not prove the link, so the check tests too.
+            harness.server.serve(probeTarget(targetKbps = 100_000))
+            harness.server.stored = harness.storedSample(90_000, ageMs = 60_000)
+            harness.server.report = { case.report }
+            harness.foreground()
+            if (case.manual) {
+                assertIs<ProbeOutcome.Measured>(harness.scheduler.runNow())
+            } else {
+                advanceThrough(PROBE_START_DELAY_MS + QUICK_TEST_MS)
+            }
+            assertEquals(1, harness.server.reports.size, case.name)
+            assertEquals(case.sends, harness.scheduler.freshEstimateKbps(), case.name)
+        }
+    }
+
+    @Test
     fun anExpiredSampleIsNotSent() = runTest {
         val harness = Harness(this)
         harness.server.serve(probeTarget(targetKbps = 50_000, automatic = false))

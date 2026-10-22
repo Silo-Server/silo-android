@@ -341,7 +341,8 @@ class PlaybackV2BandwidthProbeServer(
  *   own are kept only within the estimate's bounds, and a time the server
  *   dated ahead of this device's clock counts as now.
  *   Playback starts on that server whose media takes that route send the
- *   highest current one. A settled probe proves the
+ *   highest current one, except that a Test speed result replaces the
+ *   sample, as it does on the server. A settled probe proves the
  *   link; a lower bound proves it only while it is at least the current
  *   [BandwidthProbeTarget.targetKbps], and without a target any current reading
  *   proves it.
@@ -764,10 +765,12 @@ class BandwidthProbeScheduler(
         } catch (_: Exception) {
             ProbeReport.UNSENT
         }
+        // A Test speed result replaces the playback sample, as the server's
+        // copy does, so an older, higher sample does not outvote it.
         when (report) {
-            ProbeReport.STORED -> remember(target, networkKey, estimate, sample = null)
+            ProbeReport.STORED -> remember(target, networkKey, estimate, sample = null, keepSample = !manual)
             // Starts may still send it; Settings shows only what the server holds.
-            ProbeReport.UNSENT -> remember(target, networkKey, estimate, sample = null, stored = false)
+            ProbeReport.UNSENT -> remember(target, networkKey, estimate, sample = null, stored = false, keepSample = !manual)
             ProbeReport.REFUSED -> Unit
         }
         SiloLog.i(
@@ -785,9 +788,9 @@ class BandwidthProbeScheduler(
 
     /**
      * Keeps the readings for [target]'s server on [networkKey]: the newer of
-     * [probe] and the probe already kept for it, and [sample] or the kept one.
-     * A [probe] the server does not hold ([stored] false) is kept for starts
-     * only, not for [lastMeasurement].
+     * [probe] and the probe already kept for it, and [sample] or, with
+     * [keepSample], the kept one. A [probe] the server does not hold ([stored]
+     * false) is kept for starts only, not for [lastMeasurement].
      */
     private fun remember(
         target: BandwidthProbeTarget,
@@ -795,13 +798,14 @@ class BandwidthProbeScheduler(
         probe: BandwidthEstimate?,
         sample: PlaybackSample?,
         stored: Boolean = true,
+        keepSample: Boolean = true,
     ): Cached {
         val kept = cached?.takeIf { it.serverId == target.serverId && it.networkKey == networkKey }
         val entry = Cached(
             serverId = target.serverId,
             networkKey = networkKey,
             probe = newer(kept?.probe, probe),
-            sample = sample ?: kept?.sample,
+            sample = sample ?: kept?.sample?.takeIf { keepSample },
             lifetimeMs = target.readingLifetimeMs,
             targetKbps = target.targetKbps,
         )
