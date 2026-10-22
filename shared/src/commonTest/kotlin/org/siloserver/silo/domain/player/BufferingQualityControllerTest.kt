@@ -269,6 +269,24 @@ class BufferingQualityControllerTest {
     }
 
     @Test
+    fun `a replacement adopted before the attempt played carries on the start's wait under its grace`() = runTest {
+        val controller = newController(BufferingQualityMode.ALWAYS)
+        controller.onPlanAdopted(plan("p1"))
+        // The start's wait begins the grace, which ends at 10 s.
+        controller.onWaiting()
+        at(4_000)
+        // A failure recovery before the first frame: not a source reload.
+        controller.onPlanAdopted(plan("p2"), controllerInitiated = false)
+        controller.onWaiting()
+        assertFalse(controller.loadingReplacement)
+        // Its wait is timed from the attempt's grace end, not a grace of its own.
+        at(15_999)
+        assertEquals(emptyList(), replans)
+        at(16_000)
+        assertEquals(1, replans.size)
+    }
+
+    @Test
     fun `pause freezes the prompt timer and play resumes it from the exact remainder`() = runTest {
         val controller = newController(BufferingQualityMode.ASK)
         longStall(controller)

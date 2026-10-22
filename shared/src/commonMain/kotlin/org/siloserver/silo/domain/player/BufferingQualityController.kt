@@ -161,9 +161,12 @@ data class BufferingPlanSummary(
  * [LONG_STALL_MS]. A suppression that ends during a shorter wait evaluates
  * nothing; the stall's end does. Nothing evaluates during an outage.
  *
- * A plan adopted while another was current (a lowering, a pick, a track
- * change, a recovery) is a source reload until it first plays: its waits
- * never count, and only [onStartDeadlineMissed] lowers it.
+ * A plan adopted after a plan of the attempt has played (a lowering, a pick,
+ * a track change, a recovery) is a source reload until it first plays: its
+ * waits never count, and only [onStartDeadlineMissed] lowers it. One adopted
+ * before any plan of the attempt has played (a recovery before the first
+ * frame, a lowering during the start's wait) continues the start's wait: its
+ * waits are timed under the grace the attempt's first wait began.
  *
  * The answer, the once-per-title notice and the re-offer wait belong to the
  * title: [onNewAttempt] keeps them, and only [reset] (different content) and a
@@ -396,9 +399,9 @@ class BufferingQualityController(
     val hasPlan: Boolean get() = current != null
 
     /**
-     * The playing plan replaced another and has not played yet. Its waits are
-     * a source reload, which never counts as a stall, so only the start
-     * deadline ([onStartDeadlineMissed]) can lower it.
+     * The playing plan replaced another after the attempt had played, and has
+     * not played yet. Its waits are a source reload, which never counts as a
+     * stall, so only the start deadline ([onStartDeadlineMissed]) can lower it.
      */
     val loadingReplacement: Boolean get() = current?.let { it.replacement && it.tracker.starting } == true
 
@@ -427,9 +430,13 @@ class BufferingQualityController(
         // An adopted plan starts with no outage: its transport is a new one.
         transportTrouble = false
         val settled = pending
-        val replacement = current != null
+        val previous = current
         dropPlan(now)
-        val state = PlanState(plan, replacement)
+        // Only a replacement of a source that has played is a source reload;
+        // an earlier one carries on the start's wait, under its grace.
+        val reload = previous != null && previous.attemptStarted
+        val state = PlanState(plan, replacement = reload)
+        if (previous != null && !reload) state.tracker.firstWaitingAt = previous.tracker.firstWaitingAt
         current = state
         // A plan the controller did not ask for ends a pending pick (it is the
         // pick's, or replaces it) unless a newer pick still waits.
@@ -469,6 +476,7 @@ class BufferingQualityController(
         val state = current ?: return
         val now = clock()
         thawPill()
+        state.played = true
         if (state.playingSince == null) state.playingSince = now
         val tracker = state.tracker
         if (tracker.firstPlayingAt == null) tracker.firstPlayingAt = now
@@ -1189,10 +1197,19 @@ class BufferingQualityController(
     /** Everything the controller tracks about the playing plan. */
     private class PlanState(
         val plan: BufferingQualityPlan,
-        /** Adopted while another plan was playing or loading: a quality, track or recovery change. */
+        /**
+         * Replaced another plan after the attempt had played (a quality,
+         * track or recovery change): its load is a source reload.
+         */
         val replacement: Boolean,
     ) {
         val tracker = StallTracker()
+
+        /** The plan has played, which a stall-history reset does not stand in for. */
+        var played = false
+
+        /** A plan of the attempt, this one or one it replaced, has played. */
+        val attemptStarted: Boolean get() = replacement || played
         var action: BufferingAction = BufferingAction.NONE
 
         /** No trigger acts on this plan before this time ("can't lower" result). */
