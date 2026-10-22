@@ -2057,18 +2057,21 @@ class PlayerViewModel(
         }
         Log.i(TAG, "Preflight fallback: $notice")
 
-        // A plan, first or replacement, that missed the start deadline on a
-        // link that may be too slow lowers on Auto, as a long stall would,
-        // instead of replanning the same quality. The controller keeps the
-        // failure path for a renderer wait (the decoder is stuck, not the
-        // link) and for an outage, which belongs to the reconnect path.
+        // A plan, first or replacement, whose transport stalled past the
+        // start deadline on a link measurably slower than its bitrate lowers
+        // on Auto, as a long stall would, instead of replanning the same
+        // quality. A decoder or renderer failure keeps its failure path, and
+        // so does a stall with no such evidence; the controller keeps it for
+        // a renderer wait and for an outage, which the reconnect path owns.
+        val observedKbps = playbackSessionManager.observedPlanThroughputKbps()
         if (reason is Playability.StartupStalled &&
+            reason.classification == "transport_stall" &&
             bufferingQualityEnabled &&
-            bufferingQualityController.onStartDeadlineMissed()
+            bufferingQualityController.onStartDeadlineMissed(observedKbps)
         ) {
             Log.i(
                 TAG,
-                "buffering_quality start_deadline_missed action=lower " +
+                "buffering_quality start_deadline_missed action=lower observed_kbps=$observedKbps " +
                     "classification=${reason.classification} buffered_ahead_ms=${reason.bufferedAheadMs}",
             )
             return

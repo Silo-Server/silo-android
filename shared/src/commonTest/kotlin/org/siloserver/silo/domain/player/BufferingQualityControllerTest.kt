@@ -103,12 +103,14 @@ class BufferingQualityControllerTest {
     }
 
     @Test
-    fun `a missed start deadline lowers only on unanswered Auto in always mode after a fair start`() = runTest {
+    fun `a missed start deadline lowers only on unanswered Auto in always mode after a fair start on a slow link`() = runTest {
         // Each setup leaves a plan waiting before it first played, from t0 on the shared clock.
         data class Case(
             val name: String,
             val lowersTo: Int?,
             val mode: BufferingQualityMode = BufferingQualityMode.ALWAYS,
+            /** The plan's measured throughput: below every delivered bitrate here unless a row says otherwise. */
+            val observedKbps: Int? = 2_000,
             val setup: TestScope.(BufferingQualityController, Long) -> Unit,
         )
         fun TestScope.longStallOnP1(controller: BufferingQualityController, t0: Long) {
@@ -124,6 +126,8 @@ class BufferingQualityControllerTest {
         }
         val cases = listOf(
             Case("the attempt's first plan", lowersTo = 44_100, setup = start),
+            Case("no throughput measured", lowersTo = null, observedKbps = null, setup = start),
+            Case("media arriving at the delivered bitrate", lowersTo = null, observedKbps = 63_000, setup = start),
             Case("ask on Auto", lowersTo = null, mode = BufferingQualityMode.ASK, setup = start),
             Case("never on Auto", lowersTo = null, mode = BufferingQualityMode.NEVER, setup = start),
             Case("a picked quality", lowersTo = null) { controller, _ ->
@@ -204,7 +208,7 @@ class BufferingQualityControllerTest {
             case.setup(this, controller, testScheduler.currentTime)
             replans.clear()
 
-            assertEquals(case.lowersTo != null, controller.onStartDeadlineMissed(), case.name)
+            assertEquals(case.lowersTo != null, controller.onStartDeadlineMissed(case.observedKbps), case.name)
             val expected = case.lowersTo
                 ?.let { listOf(BufferingQualityReplan("auto", it, BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER)) }
                 .orEmpty()

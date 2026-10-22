@@ -444,6 +444,14 @@ open class PlaybackSessionManager(
     }
 
     /**
+     * The playing plan's throughput so far, which a lowering sends as
+     * `observed_throughput_kbps`; null when it has not measured one or the
+     * network changed. A missed start deadline lowers only below the plan's
+     * delivered bitrate.
+     */
+    fun observedPlanThroughputKbps(): Int? = playingPlanThroughputKbps()
+
+    /**
      * Starts the next plan's `throughput_kbps` count now, when the controller
      * adopts a plan with no plan before it: whatever the meter counted since
      * the last summary was not this plan's.
