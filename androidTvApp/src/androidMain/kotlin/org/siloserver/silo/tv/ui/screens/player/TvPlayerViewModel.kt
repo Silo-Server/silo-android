@@ -79,6 +79,7 @@ import org.siloserver.silo.common.player.video.serverTerminalUserMessage
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.common.player.BufferingQualityPlayerAdapter
+import org.siloserver.silo.common.player.awaitNetworkRetry
 import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.asPlaybackEventSink
 import org.siloserver.silo.domain.player.BufferingQualityController
@@ -184,6 +185,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -802,6 +804,12 @@ class TvPlayerViewModel(
         // A transient network blip retries the same route this many times before
         // demoting to a server transcode (resets once playback progresses).
         private const val MAX_TRANSIENT_NETWORK_RETRIES = 1
+        // How long an outage's check that the server answers again may take.
+        private const val SERVER_CHECK_TIMEOUT_MS = 10_000L
+        // Error screens say what happened in plain words; the request URL and
+        // the library's exception text go to the log only.
+        private const val PLAYBACK_FAILED_MESSAGE = "Playback failed. Please try again."
+        private const val SEEK_FAILED_MESSAGE = "Couldn't seek. Please try again."
         private const val SEEK_SETTLE_DEADLINE_MS = 15_000L
         /** How long a Dolby Vision toggle may claim "Applying…" before the cue gives up. */
         private const val OUTPUT_SWITCH_FEEDBACK_TIMEOUT_MS = 20_000L
@@ -931,6 +939,15 @@ class TvPlayerViewModel(
 
     /** Guards [startServerRecoveryFallback] against concurrent fallbacks racing the same session. */
     private var recoveryJob: Job? = null
+
+    /** An outage's wait for the network and the server; see [waitOutOutage]. */
+    private var outageRecoveryJob: Job? = null
+
+    /**
+     * The same route was reopened once the outage ended and has not played
+     * since: a transport failure now is the route's, so it is replanned.
+     */
+    private var reopenedAfterOutage = false
 
     private data class QueuedRecoveryReplan(
         val classification: String,
@@ -2203,10 +2220,13 @@ class TvPlayerViewModel(
     private fun resetSeekRecoveryForContentChange() {
         recoveryJob?.cancel()
         recoveryJob = null
+        outageRecoveryJob?.cancel()
+        outageRecoveryJob = null
         queuedRecoveryReplan = null
         // A budget exhausted on the previous content/version must not leak
         // into the next one (phone parity: resetPlaybackRecoveryState).
         transientNetworkRetries = 0
+        reopenedAfterOutage = false
         seekRecoveryQueue.reset()
         cancelPendingQuickSkip()
         seekPresentationGuard.cancel()
@@ -2713,7 +2733,7 @@ class TvPlayerViewModel(
                 Log.e(TAG, "Error loading content", e)
                 if (generation != contentLoadGeneration || !loadOwners.owns(loadOwner)) return@launch
                 episodeSelectionHandoffSlot.retainForRetry(episodeSelectionHandoffLease)
-                val message = "Unexpected error: ${e.message}"
+                val message = PLAYBACK_FAILED_MESSAGE
                 if (preserveCurrentPlaybackOnFailure) {
                     failReplacementLoad(message)
                 } else {
@@ -2844,25 +2864,16 @@ class TvPlayerViewModel(
             playbackSessionManager.recordTransportReopen()
         ) {
             transientNetworkRetries++
-            val plan = state.playbackPlan
-            val transportMountNonce = nextTransportMountNonce(selectedSubtitleTrackIndex(state))
-            // The same plan, reopened: a reload for the buffering controller.
-            pendingBufferingReloadNonce = transportMountNonce
-            _uiState.update {
-                it.copy(
-                    error = null,
-                    playbackPlan = plan.copy(
-                        timeline = plan.timeline.copy(
-                            playerStartSeconds = plan.timeline.playerPositionForSource(state.position)
-                                ?: plan.timeline.playerStartSeconds,
-                        ),
-                        decisionTrace = plan.decisionTrace + "client_retry=transport_reopen",
-                    ),
-                    startPosition = plan.timeline.playerPositionForSource(state.position)
-                        ?: plan.timeline.playerStartSeconds,
-                    transportMountNonce = transportMountNonce,
-                )
-            }
+            reopenSameRoute(state, "client_retry=transport_reopen")
+            return
+        }
+        if (reason is org.siloserver.silo.common.player.Playability.StartupStalled &&
+            reason.classification == "transport_stall" &&
+            state.playbackPlan != null &&
+            bufferingQualityAdapter.transportTroubleActive &&
+            !reopenedAfterOutage
+        ) {
+            waitOutOutage()
             return
         }
 
@@ -3178,7 +3189,7 @@ class TvPlayerViewModel(
                 }
                 is ApiResult.NetworkError -> {
                     cancelPendingCatalogSubtitle()
-                    onReplanRequestFailed(classification, notice, result.exception.message)
+                    onReplanRequestFailed(classification, notice, result.exception.message, unreachable = true)
                 }
             }
         }.also { job ->
@@ -3210,16 +3221,23 @@ class TvPlayerViewModel(
      * still mounted and healthy, so a benign 409 or a network blip must not
      * tear playback down with a fatal error banner.
      */
-    private fun onReplanRequestFailed(classification: String, notice: String, detail: String?) {
+    private fun onReplanRequestFailed(
+        classification: String,
+        notice: String,
+        detail: String?,
+        /** The request got no response. */
+        unreachable: Boolean = false,
+    ) {
         if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS ||
             classification in SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS
         ) {
             Log.w(TAG, "Invalidation replan failed ($classification): $detail")
             _uiState.update { it.copy(isLoading = false, isBuffering = false) }
         } else {
+            Log.w(TAG, "Recovery replan failed ($classification): $notice ($detail)")
             _uiState.update {
                 it.copy(
-                    error = "$notice ($detail)",
+                    error = if (unreachable) SERVER_UNREACHABLE_MESSAGE else PLAYBACK_FAILED_MESSAGE,
                     isLoading = false,
                     isBuffering = false,
                 )
@@ -3379,6 +3397,7 @@ class TvPlayerViewModel(
     }
 
     fun onPlayingChanged(isPlaying: Boolean) {
+        if (isPlaying) reopenedAfterOutage = false
         _uiState.update { it.copy(isPlaying = isPlaying) }
         if (!isPlaying) {
             maybeRecordPosition(_uiState.value.position, _uiState.value.duration, force = true)
@@ -4009,11 +4028,7 @@ class TvPlayerViewModel(
                     "Seek recovery failed unexpectedly for seek_id=${request.seekId}",
                     error,
                 )
-                handleSeekRecoveryFailure(
-                    request,
-                    error.localizedMessage?.takeIf(String::isNotBlank)
-                        ?: "Unable to seek. Please try again.",
-                )
+                handleSeekRecoveryFailure(request, SEEK_FAILED_MESSAGE)
             }
             request = seekRecoveryQueue.complete(request)
         }
@@ -4119,10 +4134,10 @@ class TvPlayerViewModel(
                         before = before,
                         requestedSourcePosition = targetSourceSec,
                     )
-                    is VideoSessionStartV3.Terminal -> handleSeekRecoveryFailure(
-                        request,
-                        "Unable to seek (${decision.reason}): ${decision.message}",
-                    )
+                    is VideoSessionStartV3.Terminal -> {
+                        Log.w(TAG, "Seek recovery ended: ${decision.reason}: ${decision.message}")
+                        handleSeekRecoveryFailure(request, SEEK_FAILED_MESSAGE)
+                    }
                     VideoSessionStartV3.ServerUpgradeRequired -> handleSeekRecoveryFailure(
                         request,
                         "This Silo server does not support reliable seeking.",
@@ -4134,16 +4149,14 @@ class TvPlayerViewModel(
                 val message = if (result.error == "seek_reanchor_not_supported") {
                     "This Silo server does not support reliable seeking."
                 } else {
-                    "Unable to seek (${result.message})"
+                    SEEK_FAILED_MESSAGE.also { Log.w(TAG, "Seek recovery failed: ${result.message}") }
                 }
                 handleSeekRecoveryFailure(request, message)
             }
             is ApiResult.NetworkError -> {
                 if (!isCurrentSeekRecovery(request)) return
-                handleSeekRecoveryFailure(
-                    request,
-                    "Unable to seek (${result.exception.message})",
-                )
+                Log.w(TAG, "Seek recovery failed: ${result.exception.message}")
+                handleSeekRecoveryFailure(request, SEEK_FAILED_MESSAGE)
             }
         }
     }
@@ -6951,27 +6964,11 @@ class TvPlayerViewModel(
         ) {
             transientNetworkRetries++
             Log.i(TAG, "Transient network error; retrying same route ($transientNetworkRetries/$MAX_TRANSIENT_NETWORK_RETRIES)")
-            val plan = state.playbackPlan
-            val transportMountNonce = nextTransportMountNonce(selectedSubtitleTrackIndex(state))
-            // The same plan, reopened: a reload for the buffering controller.
-            pendingBufferingReloadNonce = transportMountNonce
-            _uiState.update {
-                it.copy(
-                    isLoading = false,
-                    error = null,
-                    playbackPlan = plan.copy(
-                        timeline = plan.timeline.copy(
-                            playerStartSeconds = plan.timeline.playerPositionForSource(state.position)
-                                ?: plan.timeline.playerStartSeconds,
-                        ),
-                        decisionTrace = plan.decisionTrace +
-                            "client_retry=transient_network:$transientNetworkRetries",
-                    ),
-                    startPosition = plan.timeline.playerPositionForSource(state.position)
-                        ?: plan.timeline.playerStartSeconds,
-                    transportMountNonce = transportMountNonce,
-                )
-            }
+            reopenSameRoute(state, "client_retry=transient_network:$transientNetworkRetries")
+            return
+        }
+        if (isTransientNetwork && state.sessionId != null && state.playbackPlan != null && !reopenedAfterOutage) {
+            waitOutOutage()
             return
         }
         if (state.sessionId != null) {
@@ -6998,13 +6995,69 @@ class TvPlayerViewModel(
             }
             return
         }
+        Log.w(TAG, "Player error without a session: $message")
         _uiState.update {
             it.copy(
                 isLoading = false,
-                error = message,
+                error = PLAYBACK_FAILED_MESSAGE,
             )
         }
     }
+
+    /**
+     * Reopens the playing plan at the current position, a reload for the
+     * buffering controller. Appending [trace] to the decision trace produces a
+     * new plan object, which re-runs the screen's mount effect: a same-route
+     * remount, without a server round-trip.
+     */
+    private fun reopenSameRoute(state: UiState, trace: String) {
+        val plan = state.playbackPlan ?: return
+        val start = plan.timeline.playerPositionForSource(state.position) ?: plan.timeline.playerStartSeconds
+        val transportMountNonce = nextTransportMountNonce(selectedSubtitleTrackIndex(state))
+        pendingBufferingReloadNonce = transportMountNonce
+        _uiState.update {
+            it.copy(
+                isLoading = false,
+                error = null,
+                playbackPlan = plan.copy(
+                    timeline = plan.timeline.copy(playerStartSeconds = start),
+                    decisionTrace = plan.decisionTrace + trace,
+                ),
+                startPosition = start,
+                transportMountNonce = transportMountNonce,
+            )
+        }
+    }
+
+    /**
+     * Media requests failed, or went silent, and the player gave up: an
+     * outage. It never ends playback by itself, and a failure replan sent
+     * into it would tell the server the route failed (the server then has
+     * nothing left to plan). So nothing is sent: once the device is online
+     * and the server answers again, the same route reopens. Only if that
+     * reopen fails on its transport too, before playing, is the failure the
+     * route's, and the next error replans as usual.
+     */
+    private fun waitOutOutage() {
+        if (outageRecoveryJob?.isActive == true) return
+        Log.i(TAG, "outage: waiting for the network and the server before reopening the same route")
+        _uiState.update { it.copy(isLoading = false, isBuffering = true, error = null) }
+        outageRecoveryJob = viewModelScope.launch {
+            var attempt = 0
+            do {
+                awaitNetworkRetry(networkEvidence?.updates ?: emptyFlow(), attempt++)
+            } while (!serverAnswers())
+            Log.i(TAG, "outage: over after $attempt checks; reopening the same route")
+            reopenedAfterOutage = true
+            reopenSameRoute(_uiState.value, "client_retry=outage_end")
+        }
+    }
+
+    private suspend fun serverAnswers(): Boolean =
+        withTimeoutOrNull(SERVER_CHECK_TIMEOUT_MS) {
+            runCatching { serverReachabilityMonitor.retryNow() }.getOrNull()?.status ==
+                org.siloserver.silo.common.network.ServerReachabilityStatus.Reachable
+        } == true
 
     /**
      * In-player version switch (QA 2026-07-08 / tvOS parity): restart the

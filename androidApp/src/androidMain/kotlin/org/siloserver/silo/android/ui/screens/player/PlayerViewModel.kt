@@ -63,6 +63,7 @@ import org.siloserver.silo.common.settings.LetterboxExpansion
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.common.player.BufferingQualityPlayerAdapter
+import org.siloserver.silo.common.player.awaitNetworkRetry
 import org.siloserver.silo.common.player.asPlaybackEventSink
 import org.siloserver.silo.domain.player.BufferingQualityController
 import org.siloserver.silo.domain.player.BufferingQualityKey
@@ -161,6 +162,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -370,11 +372,17 @@ class PlayerViewModel(
         private const val TAG = "PlayerViewModel"
         const val SERVER_UNREACHABLE_MESSAGE =
             "Can't reach server — check your connection."
+        // Error screens say what happened in plain words; the request URL and
+        // the library's exception text go to the log only.
+        private const val PLAYBACK_FAILED_MESSAGE = "Playback failed. Please try again."
+        private const val SEEK_FAILED_MESSAGE = "Couldn't seek. Please try again."
         private const val CONTROLS_AUTO_HIDE_MS = 3_000L
         // Record a durable position roughly every 10s of content time (matches the
         // server reporter cadence) to bound DB/outbox churn.
         private const val POSITION_RECORD_INTERVAL_SEC = 10.0
         private const val MAX_TRANSIENT_NETWORK_RETRIES = 1
+        // How long an outage's check that the server answers again may take.
+        private const val SERVER_CHECK_TIMEOUT_MS = 10_000L
         private const val SEEK_SETTLE_DEADLINE_MS = 15_000L
         // How often a Restore quality checks whether the replan in flight has ended.
         private const val BUFFERING_RESTORE_POLL_MS = 250L
@@ -952,6 +960,13 @@ class PlayerViewModel(
     // network failure gets one same-route reopen before server replanning.
     private var transientNetworkRetries = 0
     private var recoveryJob: Job? = null
+
+    // An outage's wait for the network and the server; see [waitOutOutage].
+    private var outageRecoveryJob: Job? = null
+
+    // The same route was reopened once the outage ended and has not played
+    // since: a transport failure now is the route's, so it is replanned.
+    private var reopenedAfterOutage = false
 
     // Latest user change or embedded-subtitle failure that
     // arrived while a recovery held the replan single-flight guard. Re-driven
@@ -1618,7 +1633,7 @@ class PlayerViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = "Unexpected error: ${e.message}",
+                            error = PLAYBACK_FAILED_MESSAGE,
                             showUpNext = false,
                             isNextUpTransitioning = false,
                         )
@@ -2035,21 +2050,16 @@ class PlayerViewModel(
             playbackSessionManager.recordTransportReopen()
         ) {
             transientNetworkRetries++
-            val plan = state.playbackPlan
-            _uiState.update {
-                it.copy(
-                    error = null,
-                    playbackPlan = plan.copy(
-                        timeline = plan.timeline.copy(
-                            playerStartSeconds = plan.timeline.playerPositionForSource(state.position)
-                                ?: plan.timeline.playerStartSeconds,
-                        ),
-                        decisionTrace = plan.decisionTrace + "client_retry=transport_reopen",
-                    ),
-                    startPosition = plan.timeline.playerPositionForSource(state.position)
-                        ?: plan.timeline.playerStartSeconds,
-                )
-            }
+            reopenSameRoute(state, "client_retry=transport_reopen")
+            return
+        }
+        if (reason is Playability.StartupStalled &&
+            reason.classification == "transport_stall" &&
+            state.playbackPlan != null &&
+            bufferingQualityAdapter.transportTroubleActive &&
+            !reopenedAfterOutage
+        ) {
+            waitOutOutage()
             return
         }
 
@@ -2087,7 +2097,7 @@ class PlayerViewModel(
             return
         }
         val message = error.localizedMessage?.takeIf { msg -> msg.isNotBlank() }
-            ?: "Playback failed. Please try again."
+            ?: PLAYBACK_FAILED_MESSAGE
         val pendingSeekTarget = activeSeekTargetSec
         if (pendingSeekTarget != null &&
             (serverSeekRecoveryInFlight ||
@@ -2185,25 +2195,11 @@ class PlayerViewModel(
         ) {
             transientNetworkRetries++
             Log.i(TAG, "Transient network error; retrying same route ($transientNetworkRetries/$MAX_TRANSIENT_NETWORK_RETRIES)")
-            // Appending to the decision trace produces a new plan object, which
-            // re-runs the screen's mount effect — a same-route remount at the
-            // current position, without a server round-trip.
-            _uiState.update {
-                it.copy(
-                    isLoading = false,
-                    error = null,
-                    playbackPlan = plan.copy(
-                        timeline = plan.timeline.copy(
-                            playerStartSeconds = plan.timeline.playerPositionForSource(state.position)
-                                ?: plan.timeline.playerStartSeconds,
-                        ),
-                        decisionTrace = plan.decisionTrace +
-                            "client_retry=transient_network:$transientNetworkRetries",
-                    ),
-                    startPosition = plan.timeline.playerPositionForSource(state.position)
-                        ?: plan.timeline.playerStartSeconds,
-                )
-            }
+            reopenSameRoute(state, "client_retry=transient_network:$transientNetworkRetries")
+            return
+        }
+        if (isTransientNetwork && state.sessionId != null && plan != null && !reopenedAfterOutage) {
+            waitOutOutage()
             return
         }
         if (state.sessionId != null) {
@@ -2233,12 +2229,63 @@ class PlayerViewModel(
         _uiState.update {
             it.copy(
                 isLoading = false,
-                error = message,
+                error = PLAYBACK_FAILED_MESSAGE,
                 isPlaying = false,
                 isBuffering = false,
             )
         }
     }
+
+    /**
+     * Reopens the playing plan at the current position. Appending [trace] to
+     * the decision trace produces a new plan object, which re-runs the
+     * screen's mount effect: a same-route remount, without a server round-trip.
+     */
+    private fun reopenSameRoute(state: PlayerUiState, trace: String) {
+        val plan = state.playbackPlan ?: return
+        val start = plan.timeline.playerPositionForSource(state.position) ?: plan.timeline.playerStartSeconds
+        _uiState.update {
+            it.copy(
+                isLoading = false,
+                error = null,
+                playbackPlan = plan.copy(
+                    timeline = plan.timeline.copy(playerStartSeconds = start),
+                    decisionTrace = plan.decisionTrace + trace,
+                ),
+                startPosition = start,
+            )
+        }
+    }
+
+    /**
+     * Media requests failed, or went silent, and the player gave up: an
+     * outage. It never ends playback by itself, and a failure replan sent
+     * into it would tell the server the route failed (the server then has
+     * nothing left to plan). So nothing is sent: once the device is online
+     * and the server answers again, the same route reopens. Only if that
+     * reopen fails on its transport too, before playing, is the failure the
+     * route's, and the next error replans as usual.
+     */
+    private fun waitOutOutage() {
+        if (outageRecoveryJob?.isActive == true) return
+        Log.i(TAG, "outage: waiting for the network and the server before reopening the same route")
+        _uiState.update { it.copy(isLoading = false, isBuffering = true, error = null) }
+        outageRecoveryJob = viewModelScope.launch {
+            var attempt = 0
+            do {
+                awaitNetworkRetry(networkEvidenceProvider.updates, attempt++)
+            } while (!serverAnswers())
+            Log.i(TAG, "outage: over after $attempt checks; reopening the same route")
+            reopenedAfterOutage = true
+            reopenSameRoute(_uiState.value, "client_retry=outage_end")
+        }
+    }
+
+    private suspend fun serverAnswers(): Boolean =
+        withTimeoutOrNull(SERVER_CHECK_TIMEOUT_MS) {
+            runCatching { serverReachabilityMonitor.retryNow() }.getOrNull()?.status ==
+                org.siloserver.silo.common.network.ServerReachabilityStatus.Reachable
+        } == true
 
     private fun startProtocolV3Replan(
         classification: String,
@@ -2581,6 +2628,7 @@ class PlayerViewModel(
                         notice,
                         result.exception.message,
                         quiet = qualityPair != null || bufferingQuality != null,
+                        unreachable = true,
                     )
             }
         }.also { job ->
@@ -2671,16 +2719,19 @@ class PlayerViewModel(
         detail: String?,
         /** The viewer made no change (a network move), so nothing is shown. */
         quiet: Boolean = false,
+        /** The request got no response. */
+        unreachable: Boolean = false,
     ) {
         if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS) {
             Log.w(TAG, "Invalidation replan failed ($classification): $detail")
             if (!quiet) showVersionSwitchMessage("Couldn't apply the change — playback continues unchanged.")
             _uiState.update { it.copy(isLoading = false, isBuffering = false) }
         } else {
+            Log.w(TAG, "Recovery replan failed ($classification): $notice ($detail)")
             nextUpTransitionGate.cancel()
             _uiState.update {
                 it.copy(
-                    error = "$notice ($detail)",
+                    error = if (unreachable) SERVER_UNREACHABLE_MESSAGE else PLAYBACK_FAILED_MESSAGE,
                     isLoading = false,
                     isBuffering = false,
                     showUpNext = false,
@@ -2749,11 +2800,14 @@ class PlayerViewModel(
         sameRouteSeekRecoveryAttempted = false
         hasRenderedFirstFrame = false
         transientNetworkRetries = 0
+        reopenedAfterOutage = false
     }
 
     private fun cancelRecoveryJob() {
         recoveryJob?.cancel()
         recoveryJob = null
+        outageRecoveryJob?.cancel()
+        outageRecoveryJob = null
     }
 
     private fun clearBufferedSeekCommands() {
@@ -2948,6 +3002,7 @@ class PlayerViewModel(
      * otherwise a buffering glitch flips the pause icon and defeats scheduleControlsHide.
      */
     fun onPlayingChanged(isPlaying: Boolean) {
+        if (isPlaying) reopenedAfterOutage = false
         if (inRoom) roomEngineIsPlaying = isPlaying
         _uiState.update { it.copy(isPlaying = isPlaying) }
         if (isPlaying && !_uiState.value.isPaused && _uiState.value.showControls) {
@@ -3412,7 +3467,9 @@ class PlayerViewModel(
                             publishSeekFailure(
                                 request,
                                 recoveryGeneration,
-                                "Unable to seek (${decision.reason}): ${decision.message}",
+                                SEEK_FAILED_MESSAGE.also {
+                                    Log.w(TAG, "Seek recovery ended: ${decision.reason}: ${decision.message}")
+                                },
                             )
                             currentRoomContext?.let { room ->
                                 publishRoomRefusal(room, room.fileId, decision.reason)
@@ -3430,13 +3487,15 @@ class PlayerViewModel(
                         if (fallbackResult.error == "seek_reanchor_not_supported") {
                             "This Silo server does not support reliable seeking."
                         } else {
-                            "Unable to seek (${fallbackResult.message})"
+                            SEEK_FAILED_MESSAGE.also { Log.w(TAG, "Seek recovery failed: ${fallbackResult.message}") }
                         },
                     )
                     is ApiResult.NetworkError -> publishSeekFailure(
                         request,
                         recoveryGeneration,
-                        "Unable to seek (${fallbackResult.exception.message})",
+                        SEEK_FAILED_MESSAGE.also {
+                            Log.w(TAG, "Seek recovery failed: ${fallbackResult.exception.message}")
+                        },
                     )
                 }
 
