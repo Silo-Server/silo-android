@@ -5933,6 +5933,11 @@ class TvPlayerViewModel(
                 .distinctUntilChanged()
                 .collect { failed -> if (failed) bufferingQualityController.onPlaybackStopped() }
         }
+        // Picture in picture shows no pill: a prompt waits, and an undo pill
+        // runs on unseen so it never holds off a later lowering.
+        viewModelScope.launch {
+            playerViewHidden.collect { bufferingQualityController.setViewHidden(it) }
+        }
         networkEvidence?.let { evidence ->
             viewModelScope.launch {
                 // Connected, not validated: a captive or unvalidated network
@@ -6156,14 +6161,13 @@ class TvPlayerViewModel(
     /**
      * At most one actionable pill: the intro, recap and credits skip pills
      * and Next Up outrank the buffering pill. The screen reports them as
-     * displayed, since only it knows which are on screen, and reports picture
-     * in picture the same way, because it shows no pills either.
+     * displayed, since only it knows which are on screen.
      */
     fun onOtherPillDisplayed(displayed: Boolean) {
         bufferingQualityController.setOtherPillVisible(displayed)
     }
 
-    /** The screen reports picture in picture, where a buffering notice waits. */
+    /** The screen reports picture in picture, where no buffering pill or notice shows. */
     fun onPlayerViewHiddenChanged(hidden: Boolean) {
         playerViewHidden.value = hidden
     }
