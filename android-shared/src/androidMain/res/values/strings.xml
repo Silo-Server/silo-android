@@ -62,4 +62,27 @@
     <string name="settings_connection_not_saved">Couldn\'t save the speed test. Try again.</string>
     <string name="settings_connection_skipped_metered">Speed tests are skipped on metered networks.</string>
     <string name="settings_connection_skipped_cellular">Speed tests are skipped on cellular, and the Cellular Quality settings apply.</string>
+
+    <!-- Why the player plays at its quality (the plan's quality_reasons). The
+         Quality menu shows one line under the checked row; Playback stats
+         list every reason. %1$s rates are settings_rate_mbps or settings_rate_kbps. -->
+    <string name="quality_reason_original">Original quality</string>
+    <string name="quality_reason_user_selected">Quality you picked</string>
+    <string name="quality_reason_network_learned_limit">Limited to %1$s after buffering</string>
+    <string name="quality_reason_network_estimate">Your connection measured %1$s</string>
+    <string name="quality_reason_client_cap">Limited to %1$s by this device\'s settings</string>
+    <string name="quality_reason_server_cap">Limited to %1$s by the server</string>
+    <!-- %1$s is a resolution such as 1080p or 4K. -->
+    <string name="quality_reason_device_resolution_limit">This device plays up to %1$s</string>
+    <string name="quality_reason_alternate_version">Playing another version that fits</string>
+    <!-- %1$s is a video codec such as HEVC or AV1. -->
+    <string name="quality_reason_video_codec_unsupported">Converted: this device can\'t play %1$s video</string>
+    <!-- %1$s and %2$s are dynamic ranges such as Dolby Vision and HDR10. -->
+    <string name="quality_reason_dynamic_range_converted">%1$s shown as %2$s</string>
+    <!-- %1$s and %2$s are audio codecs such as TrueHD and AAC. -->
+    <string name="quality_reason_audio_converted">%1$s audio converted to %2$s</string>
+    <string name="quality_reason_subtitle_burn_in">Subtitles burned into the video</string>
+    <string name="quality_reason_container_unsupported">Repackaged for this device</string>
+    <!-- A reason this app version doesn't know yet. -->
+    <string name="quality_reason_unknown">Adjusted for this device</string>
 </resources>
