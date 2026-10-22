@@ -21,6 +21,7 @@ class BufferingQualityPlayerAdapterTest {
 
     private var now = 0L
     private var lastByteAt: Long? = null
+    private var loadingReplacement = false
     private val sink = RecordingSink()
 
     /** Drain checks the adapter scheduled, run by the test. */
@@ -30,6 +31,7 @@ class BufferingQualityPlayerAdapterTest {
         clock = { now },
         schedule = { _, action -> scheduled += action; { scheduled -= action } },
         lastMediaByteAtMs = { lastByteAt },
+        loadingReplacement = { loadingReplacement },
     )
 
     private fun runScheduled() {
@@ -419,6 +421,10 @@ class BufferingQualityPlayerAdapterTest {
         assertFalse(adapter.ownsStartupStall(stalled(), nowMs = 10_000, controllerEnabled = true))
         adapter.onLoadFinished(bytesLoaded = 65_536)
         assertTrue(adapter.ownsStartupStall(stalled(), nowMs = 12_000, controllerEnabled = true))
+        // A replacement still loading is not timed by the controller: its deadline is the fallback's.
+        loadingReplacement = true
+        assertFalse(adapter.ownsStartupStall(stalled(), nowMs = 12_000, controllerEnabled = true))
+        loadingReplacement = false
 
         // Not for another classification, another reason, or a controller that is off.
         assertFalse(adapter.ownsStartupStall(stalled("decoder_no_output"), nowMs = 12_000, controllerEnabled = true))

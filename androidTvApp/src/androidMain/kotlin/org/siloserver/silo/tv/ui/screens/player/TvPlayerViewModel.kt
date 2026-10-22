@@ -1491,6 +1491,7 @@ class TvPlayerViewModel(
     val bufferingQualityAdapter = BufferingQualityPlayerAdapter(
         bufferingQualityController.asPlaybackEventSink(),
         lastMediaByteAtMs = { throughputMeter?.lastByteAtMs() },
+        loadingReplacement = { bufferingQualityController.loadingReplacement },
     )
 
     /** The buffering pill. The screen consumes this directly. */

@@ -214,6 +214,28 @@ class BufferingQualityControllerTest {
     }
 
     @Test
+    fun `a replacement's load never counts as a stall, however long`() = runTest {
+        val controller = newController(BufferingQualityMode.ALWAYS)
+        controller.onPlanAdopted(plan("p1"))
+        controller.onPlaying()
+        // An audio track change: its plan loads for 30 s.
+        at(60_000)
+        controller.onPlanAdopted(plan("p2"), controllerInitiated = false)
+        controller.onWaiting()
+        assertTrue(controller.loadingReplacement)
+        at(90_000)
+        assertEquals(emptyList(), replans)
+
+        // Once it plays, its stalls count after its own grace.
+        controller.onPlaying()
+        assertFalse(controller.loadingReplacement)
+        at(110_000)
+        controller.onWaiting()
+        at(116_000)
+        assertEquals(1, replans.size)
+    }
+
+    @Test
     fun `pause freezes the prompt timer and play resumes it from the exact remainder`() = runTest {
         val controller = newController(BufferingQualityMode.ASK)
         longStall(controller)

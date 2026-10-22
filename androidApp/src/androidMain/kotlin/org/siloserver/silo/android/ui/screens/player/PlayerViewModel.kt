@@ -736,6 +736,7 @@ class PlayerViewModel(
     val bufferingQualityAdapter = BufferingQualityPlayerAdapter(
         bufferingQualityController.asPlaybackEventSink(),
         lastMediaByteAtMs = { throughputMeter?.lastByteAtMs() },
+        loadingReplacement = { bufferingQualityController.loadingReplacement },
     )
 
     /** The buffering pill: the prompt, the undo, or nothing. */

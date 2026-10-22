@@ -62,7 +62,8 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
  *   and otherwise
  *   [BufferingWaitCause.NETWORK]. Both flags clear when playback next runs. A
  *   new plan's first wait is a network wait; the controller applies the
- *   startup grace.
+ *   startup grace, or treats it as a source reload when the plan replaced
+ *   another.
  * - Media3 also buffers when its decoder falls behind and it drops to the
  *   next keyframe, with seconds of media still buffered. The spec's stall is
  *   running out of data, so that wait is [BufferingWaitCause.RENDERER], which
@@ -133,6 +134,8 @@ class BufferingQualityPlayerAdapter(
     private val lastMediaByteAtMs: () -> Long? = { null },
     /** Media3's `bufferForPlaybackAfterRebufferMs`: what a wait must rebuild before playback resumes. */
     private val resumeAfterRebufferMs: Long = PlaybackBufferPolicy.REBUFFER_MS.toLong(),
+    /** [BufferingQualityController.loadingReplacement]: the controller does not time this plan's waits. */
+    private val loadingReplacement: () -> Boolean = { false },
 ) : Player.Listener, AnalyticsListener {
 
     private val sink: BufferingPlaybackEventSink = sink.logged {
@@ -285,7 +288,9 @@ class BufferingQualityPlayerAdapter(
      * Whether this startup-stall report is not the stall fallback's to act
      * on. A slow plan that is still receiving data belongs to the
      * buffering-quality controller, which lowers quality if the stalls
-     * warrant it. During an outage (failing or silent loads, or offline) the
+     * warrant it, unless it is a replacement still loading, whose waits the
+     * controller does not time: the fallback's start deadline lowers that
+     * one. During an outage (failing or silent loads, or offline) the
      * reconnect path owns it: Media3's own retries reopen the requests, and
      * a player error waits for the network before reopening the route. When
      * true, the caller must neither reopen the same plan nor send a failure
@@ -297,7 +302,7 @@ class BufferingQualityPlayerAdapter(
         controllerEnabled &&
             reason is Playability.StartupStalled &&
             reason.classification == TRANSPORT_STALL_CLASSIFICATION &&
-            (transportTroubleActive || isReceivingData(nowMs))
+            (transportTroubleActive || (isReceivingData(nowMs) && !loadingReplacement()))
 
     /**
      * A new plan or mount, delivered as [delivery]. Forgets the seek and

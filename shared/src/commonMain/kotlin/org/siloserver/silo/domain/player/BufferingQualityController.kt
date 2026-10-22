@@ -161,6 +161,10 @@ data class BufferingPlanSummary(
  * [LONG_STALL_MS]. A suppression that ends during a shorter wait evaluates
  * nothing; the stall's end does. Nothing evaluates during an outage.
  *
+ * A plan adopted while another was current (a lowering, a pick, a track
+ * change, a recovery) is a source reload until it first plays: its waits
+ * never count, and only [onStartDeadlineMissed] lowers it.
+ *
  * The answer, the once-per-title notice and the re-offer wait belong to the
  * title: [onNewAttempt] keeps them, and only [reset] (different content) and a
  * quality change clear them. Inside a Watch Party room the controller is
@@ -395,6 +399,13 @@ class BufferingQualityController(
     val hasPlan: Boolean get() = current != null
 
     /**
+     * The playing plan replaced another and has not played yet. Its waits are
+     * a source reload, which never counts as a stall, so only the start
+     * deadline ([onStartDeadlineMissed]) can lower it.
+     */
+    val loadingReplacement: Boolean get() = current?.let { it.replacement && it.tracker.starting } == true
+
+    /**
      * The playing plan's summary so far, without ending the plan: what
      * [onPlanSummary] would get if the plan stopped now. Null without a plan.
      */
@@ -419,8 +430,9 @@ class BufferingQualityController(
         // An adopted plan starts with no outage: its transport is a new one.
         transportTrouble = false
         val settled = pending
+        val replacement = current != null
         dropPlan(now)
-        val state = PlanState(plan)
+        val state = PlanState(plan, replacement)
         current = state
         // A plan the controller did not ask for ends a pending pick (it is the
         // pick's, or replaces it) unless a newer pick still waits.
@@ -502,6 +514,11 @@ class BufferingQualityController(
         if (!paused) thawPill()
         stopPlayedClock(state, now)
         val tracker = state.tracker
+        if (state.replacement && tracker.starting) {
+            // A replacement's load is a source reload, however long it takes.
+            interrupt(state, now)
+            return
+        }
         val startWait = tracker.starting &&
             (cause == BufferingWaitCause.RELOAD || cause == BufferingWaitCause.SEEK)
         if (cause != BufferingWaitCause.NETWORK && !startWait) {
@@ -1147,7 +1164,11 @@ class BufferingQualityController(
     }
 
     /** Everything the controller tracks about the playing plan. */
-    private class PlanState(val plan: BufferingQualityPlan) {
+    private class PlanState(
+        val plan: BufferingQualityPlan,
+        /** Adopted while another plan was playing or loading: a quality, track or recovery change. */
+        val replacement: Boolean,
+    ) {
         val tracker = StallTracker()
         var action: BufferingAction = BufferingAction.NONE
 
