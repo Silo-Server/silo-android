@@ -12,10 +12,15 @@ import org.siloserver.silo.model.playback.playbackQualityReasonLine
 import org.siloserver.silo.model.playback.text
 
 /*
- * The words of the plan's quality reasons, the same on phone and TV. Each
- * app places them: a line under the Quality menu's checked row, and a Reason
- * row in its stats.
+ * The words of what the plan plays and why, the same on phone and TV. Each
+ * app places them: the Playing line then the reason line under the Quality
+ * menu's checked row (or atop the menu when none is checked), and Playing
+ * and Reason rows in its stats.
  */
+
+/** "Playing 1080p · 6 Mbps" from a plan's [playing] value, which stats show bare; null with none. */
+@Composable
+fun qualityPlayingLine(playing: String?): String? = playing?.let { stringResource(R.string.quality_playing, it) }
 
 /**
  * The Quality menu's reason line: the primary reason, with the second added

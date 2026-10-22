@@ -63,6 +63,10 @@
     <string name="settings_connection_skipped_metered">Speed tests are skipped on metered networks.</string>
     <string name="settings_connection_skipped_cellular">Speed tests are skipped on cellular, and the Cellular Quality settings apply.</string>
 
+    <!-- What the player plays now, first under the Quality menu's checked row.
+         %1$s is a resolution and bitrate such as "1080p · 6 Mbps", or a resolution alone. -->
+    <string name="quality_playing">Playing %1$s</string>
+
     <!-- Why the player plays at its quality (the plan's quality_reasons). The
          Quality menu shows one line under the checked row; Playback stats
          list every reason. %1$s rates are settings_rate_mbps or settings_rate_kbps. -->

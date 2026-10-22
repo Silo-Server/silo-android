@@ -87,6 +87,25 @@ class PlaybackQualityReasonsTest {
     }
 
     @Test
+    fun playingNamesTheDeliveredVideoElseTheSource() {
+        val source = PlaybackSourceDescriptorV3(width = 3840, height = 2160, bitrateKbps = 40_000)
+        val cases = listOf(
+            // The recipe's frame counts its width: a scope 1080p encode.
+            Triple(PlaybackEffectiveRecipeV3(width = 1920, height = 800, bitrateKbps = 5_950), source, "1080p · 6 Mbps"),
+            Triple(null, PlaybackSourceDescriptorV3(width = 3840, height = 1600, bitrateKbps = 25_000), "4K · 25 Mbps"),
+            // Each figure falls back on its own.
+            Triple(PlaybackEffectiveRecipeV3(width = 1280, height = 720), source, "720p · 40 Mbps"),
+            Triple(PlaybackEffectiveRecipeV3(bitrateKbps = 6_000), source, "4K · 6 Mbps"),
+            // No rate anywhere: the resolution alone. No size anywhere: no line.
+            Triple(null, PlaybackSourceDescriptorV3(width = 1920, height = 1080), "1080p"),
+            Triple(PlaybackEffectiveRecipeV3(bitrateKbps = 6_000), PlaybackSourceDescriptorV3(bitrateKbps = 8_000), null),
+        )
+        for ((recipe, file, expected) in cases) {
+            assertEquals(expected, playbackPlayingValue(recipe, file), "$recipe $file")
+        }
+    }
+
+    @Test
     fun reasonsReachThePlanOnlyWhenTheDecisionAdvertisesThem() {
         fun decision(features: String) = SiloJson.decodeFromString<PlaybackDecisionResponseV3>(
             """

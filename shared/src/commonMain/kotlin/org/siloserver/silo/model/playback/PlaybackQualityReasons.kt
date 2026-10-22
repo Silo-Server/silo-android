@@ -136,8 +136,26 @@ fun playbackResolutionLabel(width: Int? = null, height: Int?): String? {
 
 /** The delivered video's resolution class, else the source's. */
 val PlaybackExecutionPlan.deliveredResolutionLabel: String?
-    get() = playbackResolutionLabel(effectiveRecipe?.width, effectiveRecipe?.height)
-        ?: playbackResolutionLabel(sourceFile.width, sourceFile.height)
+    get() = deliveredResolutionLabel(effectiveRecipe, sourceFile)
+
+/** [playbackPlayingValue] of this plan. */
+val PlaybackExecutionPlan.playingValue: String?
+    get() = playbackPlayingValue(effectiveRecipe, sourceFile)
+
+/**
+ * What a plan plays now, for the Quality menu's "Playing" line: the delivered
+ * video's resolution class and bitrate, each the source's when the recipe
+ * lacks it. "1080p · 6 Mbps", or "1080p" with no rate; null with no size.
+ */
+fun playbackPlayingValue(recipe: PlaybackEffectiveRecipeV3?, source: PlaybackSourceDescriptorV3): String? {
+    val resolution = deliveredResolutionLabel(recipe, source) ?: return null
+    val kbps = recipe?.bitrateKbps?.takeIf { it > 0 } ?: source.bitrateKbps
+    val rate = formatPlaybackQualityBitrate(kbps) ?: return resolution
+    return resolution + PLAYBACK_QUALITY_REASON_SEPARATOR + rate
+}
+
+private fun deliveredResolutionLabel(recipe: PlaybackEffectiveRecipeV3?, source: PlaybackSourceDescriptorV3): String? =
+    playbackResolutionLabel(recipe?.width, recipe?.height) ?: playbackResolutionLabel(source.width, source.height)
 
 /** The Quality control's Auto value: "Auto · 1080p", or "Auto" when the resolution is unknown. */
 fun playbackAutoQualityLabel(resolution: String?): String =
