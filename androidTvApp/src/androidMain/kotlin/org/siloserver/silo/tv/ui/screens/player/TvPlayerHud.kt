@@ -1024,6 +1024,9 @@ private fun HudStatsPane(stats: PlayerStatsSnapshot, modifier: Modifier = Modifi
     // with each value 500dp from its label.
     val split = (rows.size + 1) / 2
     Column(modifier = modifier.fillMaxWidth()) {
+        // Full width above the grid, wrapping as it needs: a reason runs
+        // longer than a stat, and the card's bottom would clip it.
+        qualityReason?.let { HudReadOnlyRow(label = "Reason", value = it, maxLines = Int.MAX_VALUE) }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(HudPaneColumnGap),
@@ -1034,8 +1037,6 @@ private fun HudStatsPane(stats: PlayerStatsSnapshot, modifier: Modifier = Modifi
                 }
             }
         }
-        // Full width under the grid: a reason runs longer than a stat.
-        qualityReason?.let { HudReadOnlyRow(label = "Reason", value = it, maxLines = Int.MAX_VALUE) }
     }
 }
 
