@@ -31,9 +31,10 @@ is sent; a removal not yet confirmed keeps its generation. The retirement,
 `POST /api/v2/notifications/push/devices/{device_id}/retire`
 (`retirePushDevice`), carries only the installation key and generation headers,
 with no session, so it still works after sign-out or removal has cleared the
-login. It is sent first. Only a server that answers 404 or 405 gets the session
-DELETE instead, at the same key and generation, while the registering login
-still exists. A retirement without a final answer stays queued and is sent again
+login. It is sent first and given at most 2 of the removal's 8 seconds. A server
+that answers 404 or 405, or does not answer in time (no answer, 429, 5xx), also
+gets the session DELETE, at the same key and generation, while the registering
+login still exists. A retirement without a final answer stays queued and is sent again
 on app start, on every foreground and when an FCM message arrives, at most three
 at a time with an in-memory back-off; an attempt that runs out of time counts as
 a failure. A removal that never queued its retirement, because it ran out of

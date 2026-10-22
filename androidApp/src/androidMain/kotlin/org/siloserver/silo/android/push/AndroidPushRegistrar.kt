@@ -173,10 +173,11 @@ class AndroidPushRegistrar internal constructor(
      *
      * The removal takes the record's next generation and is persisted as a
      * pending retirement before anything is sent. A retirement needs only the
-     * installation key, so it needs no login and is sent first. Only a server
-     * without the retirement route (404 or 405) gets the session removal instead,
-     * at the same key and generation, as the login and profile it was registered
-     * for. A retirement the server does not answer for good stays queued and
+     * installation key, so it needs no login and is sent first, for at most
+     * [RETIREMENT_FIRST_ATTEMPT_MS]. A server without the retirement route (404 or
+     * 405), or one that has not answered it, also gets the session removal, at the
+     * same key and generation, as the login and profile it was registered for.
+     * A retirement the server does not answer for good stays queued and
      * [retryPendingRetirements] sends it again after the login is gone.
      *
      * Bounded so an unreachable server cannot hold up the sign-out or removal
@@ -251,13 +252,20 @@ class AndroidPushRegistrar internal constructor(
             // Read again under the server's lock, as a registration finishing first
             // changes the record: the removal is allocated over whatever it left.
             val retiring = queueRetirement(found.serverUrl, device, serverId) ?: return@withLock failure("push_not_registered")
-            val retired = sendRetirement(retiring)
-            if (retired.outcome != RetirementOutcome.UNSUPPORTED) return@withLock retired.result
-            // A server without the retirement route takes only the session removal,
-            // at the same generation, from the profile that registered: it refuses
-            // one from any other profile, for good. Unless that removal lands, the
-            // retirement stays queued for when the server is updated.
-            val owner = registeredOwnerOf(retiring) ?: return@withLock retired.result
+            // Capped, so a slow server still leaves the session removal time to run
+            // before the credentials are cleared. One cut off here stays queued.
+            val retired = withTimeoutOrNull(RETIREMENT_FIRST_ATTEMPT_MS) { sendRetirement(retiring) }
+            if (retired == null) noteRetirementFailure(retiring.serverUrl)
+            if (retired != null && retired.outcome in setOf(RetirementOutcome.RETIRED, RetirementOutcome.DROPPED)) {
+                return@withLock retired.result
+            }
+            // A server without the retirement route, or one that did not answer it,
+            // gets the session removal while the login still exists, at the same
+            // generation, from the profile that registered: the server refuses one
+            // from any other profile, for good. Unless that removal lands, the
+            // retirement stays queued and is sent again after the login is gone.
+            val unanswered = retired?.result ?: failure("push_retirement_unanswered")
+            val owner = registeredOwnerOf(retiring) ?: return@withLock unanswered
             val removed = applyOnServer(owner, null, attempt, mayReconcile = false).map { Unit }
             if (removed is ApiResult.Success) recordRetirement("cancelled", "session_removed", retiring.generation)
             removed
@@ -569,6 +577,8 @@ class AndroidPushRegistrar internal constructor(
 
     private companion object {
         const val UNREGISTER_BUDGET_MS = 8_000L
+        /** The removal's first retirement attempt, leaving the session removal most of [UNREGISTER_BUDGET_MS]. */
+        const val RETIREMENT_FIRST_ATTEMPT_MS = 2_000L
         const val DAY_MS = 24 * 60 * 60 * 1000L
         /** The contract's limit for a server without the retirement route. */
         const val RETIREMENT_UNSUPPORTED_LIFETIME_MS = 30 * DAY_MS
