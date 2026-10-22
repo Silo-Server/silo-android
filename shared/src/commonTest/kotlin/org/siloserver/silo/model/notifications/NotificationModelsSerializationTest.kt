@@ -70,6 +70,23 @@ class NotificationModelsSerializationTest {
     }
 
     @Test
+    fun `decodes watchlist_available row with tmdb reason flags`() {
+        val payload = """
+            {"id":"dlv-3","type":"watchlist.available","profile_id":"prof-7",
+             "series_id":"movie-1","series_title":"Dune",
+             "reason_flags":{"tmdb_id":438631,"media_type":"movie"},
+             "created_at":"2026-06-12T09:31:00Z"}
+        """.trimIndent()
+
+        val row = json.decodeFromString(NotificationRow.serializer(), payload)
+
+        assertEquals(NotificationType.WatchlistAvailable, row.type)
+        assertEquals("movie-1", row.seriesId)
+        assertEquals("movie", (row.reasonFlags["media_type"] as JsonPrimitive).content)
+        assertFalse(row.reasonFlagsTyped.any)
+    }
+
+    @Test
     fun `unknown type decodes to a renderable row, never throws`() {
         val payload = """
             {"id":"dlv-2","type":"webhook.auto_disabled","profile_id":"prof-7",
@@ -147,21 +164,19 @@ class NotificationModelsSerializationTest {
     }
 
     @Test
-    fun `preferences default all-enabled and round-trip`() {
+    fun `preferences decode and partial update sends only set fields`() {
         val prefs = json.decodeFromString(
             NotificationPreferences.serializer(),
-            """{"profile_id":"p","enabled":true,"notify_favorites":true,
-                "notify_watchlist":false,"notify_continue_watching":true,"notify_next_up":true}""",
+            """{"profile_id":"p","enabled":true,"notify_next_up":false}""",
         )
         assertTrue(prefs.enabled)
-        assertFalse(prefs.notifyWatchlist)
+        assertFalse(prefs.notifyNextUp)
         // partial PUT body omits nulls (encodeDefaults+explicitNulls=false → only set fields)
         val body = json.encodeToString(
             NotificationPreferencesUpdate.serializer(),
-            NotificationPreferencesUpdate(notifyWatchlist = true),
+            NotificationPreferencesUpdate(notifyNextUp = true),
         )
-        assertTrue("notify_watchlist" in body)
-        assertFalse("enabled" in body)
+        assertEquals("""{"notify_next_up":true}""", body)
     }
 
     @Test
