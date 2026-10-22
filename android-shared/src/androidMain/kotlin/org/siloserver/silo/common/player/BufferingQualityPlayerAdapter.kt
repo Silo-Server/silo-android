@@ -105,7 +105,8 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
  * [BufferingPlaybackEventSink.onTransportErrorStart] when either becomes
  * active and [BufferingPlaybackEventSink.onTransportErrorEnd] once both have
  * cleared. Load trouble clears only when the plan's media data arrives again
- * (a media load that completes with bytes, or buffered-position progress) or
+ * (a byte a media request receives after the trouble began, however slowly,
+ * a media load that completes with bytes, or buffered-position progress) or
  * when playback runs; a playlist or subtitle load that succeeds clears
  * nothing. Offline trouble lasts while the device is offline, and coming back
  * online turns it into load trouble. If playback runs and that clears the last
@@ -199,6 +200,9 @@ class BufferingQualityPlayerAdapter(
 
     private var loadTrouble = false
     private var offline = false
+
+    /** When [loadTrouble] began: a media byte received after it ends the trouble. */
+    private var loadTroubleSinceMs = 0L
 
     private var lastBufferedPositionMs: Long? = null
     private var lastDataAtMs: Long? = null
@@ -534,10 +538,20 @@ class BufferingQualityPlayerAdapter(
         if (drained || stuck) announceWait(BufferingWaitCause.NETWORK)
     }
 
-    /** The player is waiting and loading, and no media request has received a byte for [outageNoDataMs]. */
+    /**
+     * During a wait: a media request that received a byte since load trouble
+     * began ends it, and otherwise, while the player loads, no byte for
+     * [outageNoDataMs] starts it.
+     */
     private fun checkSilence() {
-        if (phase != Phase.STARVED || !loading || loadTrouble) return
-        val silentSince = maxOf(silenceFloorMs, lastDataAtMs ?: Long.MIN_VALUE, lastMediaByteAtMs() ?: Long.MIN_VALUE)
+        if (phase != Phase.STARVED) return
+        val lastByteAt = lastMediaByteAtMs()
+        if (loadTrouble) {
+            if (lastByteAt != null && lastByteAt > loadTroubleSinceMs) setTrouble(load = false, offline = offline)
+            return
+        }
+        if (!loading) return
+        val silentSince = maxOf(silenceFloorMs, lastDataAtMs ?: Long.MIN_VALUE, lastByteAt ?: Long.MIN_VALUE)
         if (clock() - silentSince >= outageNoDataMs) setTrouble(load = true, offline = offline)
     }
 
@@ -554,6 +568,7 @@ class BufferingQualityPlayerAdapter(
 
     private fun setTrouble(load: Boolean, offline: Boolean) {
         val wasActive = transportTroubleActive
+        if (load && !loadTrouble) loadTroubleSinceMs = clock()
         loadTrouble = load
         this.offline = offline
         val active = transportTroubleActive

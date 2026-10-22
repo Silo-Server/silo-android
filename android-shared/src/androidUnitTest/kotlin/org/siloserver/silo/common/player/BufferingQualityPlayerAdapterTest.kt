@@ -5,6 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.siloserver.silo.common.player.BufferingQualityPlayerAdapter.Companion.WAIT_CHECK_MS
 import org.siloserver.silo.domain.player.BufferingWaitCause
 import org.siloserver.silo.model.playback.PlaybackDelivery
 
@@ -274,6 +275,52 @@ class BufferingQualityPlayerAdapterTest {
             assertEquals(row.outage, adapter.transportTroubleActive, "$row")
             val expected = listOf("waiting:network") + if (row.outage) listOf("transport_start") else emptyList()
             assertEquals(expected, sink.events, "$row")
+            resume()
+        }
+    }
+
+    @Test
+    fun aTrickleOfMediaBytesEndsAnOutageAndTheWaitCountsAgain() {
+        // No load completes and the buffer has not moved yet: a slow request's
+        // bytes are the plan's data arriving all the same.
+        data class Row(val delivery: PlaybackDelivery, val outageAfterMs: Long, val byLoadError: Boolean)
+        val rows = listOf(
+            Row(PlaybackDelivery.ORIGINAL_HTTP, outageAfterMs = 4_000L, byLoadError = false),
+            Row(PlaybackDelivery.SERVER_TRANSCODE_HLS, outageAfterMs = 15_000L, byLoadError = false),
+            Row(PlaybackDelivery.ORIGINAL_HTTP, outageAfterMs = 4_000L, byLoadError = true),
+        )
+        playing()
+        adapter.noteLoading(true)
+        for (row in rows) {
+            adapter.reset(row.delivery)
+            lastByteAt = now
+            sink.events.clear()
+            starve()
+            if (row.byLoadError) {
+                adapter.onLoadFailed(wasCanceled = false)
+            } else {
+                now += row.outageAfterMs + 1_000L
+                runScheduled()
+            }
+            // Still nothing since it began.
+            now += 1_000L
+            runScheduled()
+            assertTrue(adapter.transportTroubleActive, "$row")
+
+            val trickleAt = now
+            lastByteAt = trickleAt
+            now += WAIT_CHECK_MS
+            runScheduled()
+            assertFalse(adapter.transportTroubleActive, "$row")
+            // The trickle stops: a new silence is timed from its last byte.
+            now = trickleAt + row.outageAfterMs
+            runScheduled()
+
+            assertEquals(
+                listOf("waiting:network", "transport_start", "transport_end", "transport_start"),
+                sink.events,
+                "$row",
+            )
             resume()
         }
     }
