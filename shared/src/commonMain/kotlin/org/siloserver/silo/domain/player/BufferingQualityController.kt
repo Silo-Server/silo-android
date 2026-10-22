@@ -584,6 +584,11 @@ class BufferingQualityController(
     /** The controller's last replan failed or will never be adopted. */
     fun onReplanFailed(): Unit {
         if (!enabled) return
+        // A lowering made without asking that never took effect is not its
+        // plan's action; the viewer's answers stand.
+        pending?.let { failed ->
+            if (failed.kind == PendingKind.AUTOMATIC) failed.from?.action = failed.actionBefore
+        }
         // The rearm timer keeps running: the current plan is watched again
         // REARM_AFTER_UNADOPTED_MS after the replan was sent.
         pending = null
@@ -843,7 +848,12 @@ class BufferingQualityController(
     private fun sendLowering(state: PlanState, replan: BufferingQualityReplan, kind: PendingKind) {
         // "Lower" compares delivered bitrates: the plan the lowering left
         // against the one adopted.
-        pending = Pending(kind, fromKbps = state.plan.deliveredKbps?.takeIf { it > 0 })
+        pending = Pending(
+            kind,
+            fromKbps = state.plan.deliveredKbps?.takeIf { it > 0 },
+            from = state,
+            actionBefore = state.action,
+        )
         state.action =
             if (kind == PendingKind.AUTOMATIC) BufferingAction.LOWERED else BufferingAction.ACCEPTED
         startRearm()
@@ -1149,7 +1159,13 @@ class BufferingQualityController(
         RESTORE,
     }
 
-    private class Pending(val kind: PendingKind, val fromKbps: Int?)
+    private class Pending(
+        val kind: PendingKind,
+        val fromKbps: Int?,
+        /** The plan a lowering left, and its action before it. */
+        val from: PlanState? = null,
+        val actionBefore: BufferingAction = BufferingAction.NONE,
+    )
 
     /** One plan's stall history: the web player's `createStallTracker`. */
     private class StallTracker {

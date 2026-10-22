@@ -487,6 +487,27 @@ class BufferingQualityControllerTest {
     }
 
     @Test
+    fun `a failed lowering made without asking is not its plan's action, the viewer's answer is`() = runTest {
+        for (mode in listOf(BufferingQualityMode.ALWAYS, BufferingQualityMode.ASK)) {
+            summaries.clear()
+            val controller = newController(mode)
+            val t0 = testScheduler.currentTime
+            controller.onPlanAdopted(plan("p1"))
+            controller.onPlaying()
+            at(t0 + 125_000)
+            controller.onWaiting()
+            at(t0 + 131_000)
+            if (mode == BufferingQualityMode.ASK) assertTrue(controller.selectLower())
+            // Not sent (another transaction in flight), or the server failed it.
+            controller.onReplanFailed()
+            controller.onPlaybackStopped()
+
+            val expected = if (mode == BufferingQualityMode.ASK) BufferingAction.ACCEPTED else BufferingAction.NONE
+            assertEquals(expected, summaries.single().action, "$mode")
+        }
+    }
+
+    @Test
     fun `the running summary reads the playing plan without ending it`() = runTest {
         val controller = newController(BufferingQualityMode.ASK)
         assertNull(controller.runningSummary())
