@@ -136,6 +136,7 @@ val playerInfraModule = module {
             get(), get(), get(),
             bandwidthEstimates = get(),
             throughputKbps = get<org.siloserver.silo.common.player.PlaybackThroughputMeter>()::takeKbps,
+            playingPlanThroughputKbps = get<org.siloserver.silo.common.player.PlaybackThroughputMeter>()::peekKbps,
             // The profile's mode as last stored on this device, which the
             // store answers locally, so no start goes out before it is known.
             bufferingQualityMode = { playerSettings.bufferingQualityModeFlow.first() },

@@ -73,10 +73,11 @@ class PlaybackThroughputMeterTest {
     }
 
     @Test
-    fun eachTakeStartsOver() {
+    fun aPeekLeavesTheCountAndEachTakeStartsOver() {
         val progressive = Source()
         bytes(progressive, 0, 1)
         bytes(progressive, 2_000, 2_000_000)
+        assertEquals(8_000, meter.peekKbps())
         assertEquals(8_000, meter.takeKbps())
         bytes(progressive, 3_000, 2_000_000)
         end(progressive, 3_000)

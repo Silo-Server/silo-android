@@ -56,5 +56,8 @@ fun PlaybackReplanRequestV3.withKeptStepDownEstimate(
             bandwidthEstimateKbps == null &&
             videoQualityPreference(qualityPreference) == PLAYBACK_QUALITY_AUTO
     } ?: return KeptEstimateReplan(this, kept)
-    return KeptEstimateReplan(copy(bandwidthEstimateKbps = repeated.kbps, bandwidthEstimateSource = null), kept)
+    return KeptEstimateReplan(
+        copy(bandwidthEstimateKbps = repeated.kbps, bandwidthEstimateSource = null, observedThroughputKbps = null),
+        kept,
+    )
 }

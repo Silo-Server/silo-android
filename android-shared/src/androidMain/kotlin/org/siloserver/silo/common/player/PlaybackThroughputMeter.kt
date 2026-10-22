@@ -101,32 +101,48 @@ class PlaybackThroughputMeter(
      * bounds the server accepts, as for a speed test), or the network changed.
      */
     fun takeKbps(): Int? = synchronized(lock) {
-        noteNetwork()
-        // A long request still open counts what it has so far and carries on
+        val kbps = kbpsSoFar()
+        // A long request still open has been counted so far and carries on
         // into the next count from its last byte.
         for (request in receiving.values) {
-            if (count(request)) {
+            if (counts(request)) {
                 request.firstMs = request.lastMs
                 request.bytes = 0
             }
         }
-        val ms = unionMs(counted)
-        val kbps = if (ms < MIN_RECEIVING_MS) null else countedBytes * 8 / ms
         counted.clear()
         countedBytes = 0
-        val changed = networkChanged
         countNetwork = networkId()
         networkChanged = false
-        if (changed) return@synchronized null
-        kbps?.takeIf { it >= SpeedTestMeter.MIN_KBPS }?.coerceAtMost(SpeedTestMeter.MAX_KBPS.toLong())?.toInt()
+        kbps
     }
 
-    /** Counts [request] if it received for [MIN_RECEIVING_MS]; true when it did. */
-    private fun count(request: Request): Boolean {
-        if (request.lastMs - request.firstMs < MIN_RECEIVING_MS) return false
+    /**
+     * What [takeKbps] would answer now, without starting over: the playing
+     * plan's throughput so far, which a lowering sends as
+     * `observed_throughput_kbps`.
+     */
+    fun peekKbps(): Int? = synchronized(lock) { kbpsSoFar() }
+
+    /** The rate of the counted requests and the long ones still open; see [takeKbps]. Under [lock]. */
+    private fun kbpsSoFar(): Int? {
+        noteNetwork()
+        if (networkChanged) return null
+        val open = receiving.values.filter(::counts)
+        val ms = unionMs(counted + open.map { it.firstMs..it.lastMs })
+        if (ms < MIN_RECEIVING_MS) return null
+        val kbps = (countedBytes + open.sumOf { it.bytes }) * 8 / ms
+        return kbps.takeIf { it >= SpeedTestMeter.MIN_KBPS }?.coerceAtMost(SpeedTestMeter.MAX_KBPS.toLong())?.toInt()
+    }
+
+    /** [request] received for [MIN_RECEIVING_MS], so it counts. */
+    private fun counts(request: Request): Boolean = request.lastMs - request.firstMs >= MIN_RECEIVING_MS
+
+    /** Counts a finished [request] if it received long enough. */
+    private fun count(request: Request) {
+        if (!counts(request)) return
         counted += request.firstMs..request.lastMs
         countedBytes += request.bytes
-        return true
     }
 
     companion object {

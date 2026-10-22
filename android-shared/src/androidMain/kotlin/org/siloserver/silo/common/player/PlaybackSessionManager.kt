@@ -9,6 +9,7 @@ import org.siloserver.silo.domain.player.BufferingQualityReplan
 import org.siloserver.silo.domain.player.KeptStepDownEstimate
 import org.siloserver.silo.domain.player.withKeptStepDownEstimate
 import org.siloserver.silo.common.player.probe.PlaybackBandwidthEstimates
+import org.siloserver.silo.model.playback.BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER
 import org.siloserver.silo.model.playback.BANDWIDTH_ESTIMATE_SOURCE_PROBE
 import org.siloserver.silo.model.playback.BUFFERING_QUALITY_V1_FEATURE
 import org.siloserver.silo.model.playback.LEARNED_LIMIT_CLEAR
@@ -149,6 +150,12 @@ open class PlaybackSessionManager(
      * manager whose plans play in this process's player, else none.
      */
     private val throughputKbps: () -> Int? = { null },
+    /**
+     * The playing plan's throughput so far without ending its count, which a
+     * lowering sends as `observed_throughput_kbps`:
+     * [PlaybackThroughputMeter.peekKbps], under the same rule as [throughputKbps].
+     */
+    private val playingPlanThroughputKbps: () -> Int? = { null },
     /**
      * The effective `playback.buffering_quality_mode`, read on every start and
      * replan. In [BufferingQualityMode.NEVER] each request carries
@@ -1178,6 +1185,9 @@ open class PlaybackSessionManager(
             },
             bandwidthEstimateKbps = bufferingQuality?.bandwidthEstimateKbps,
             bandwidthEstimateSource = bufferingQuality?.bandwidthEstimateSource,
+            // A lowering also reports what the plan it leaves actually received.
+            observedThroughputKbps = playingPlanThroughputKbps()
+                .takeIf { bufferingQuality?.bandwidthEstimateSource == BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER },
             learnedLimit = bufferingQuality?.learnedLimit,
             selectedTracks = SelectedPlaybackTracksV3(
                 audio = selectedTrackIdentity(active, "audio", audioTrackIndex, active.plan.selectedTracks.audio),
@@ -2650,6 +2660,7 @@ open class PlaybackSessionManager(
                 "quality_preference=${outgoing.qualityPreference} " +
                 "bandwidth_estimate_kbps=${outgoing.bandwidthEstimateKbps} " +
                 "bandwidth_estimate_source=${outgoing.bandwidthEstimateSource} " +
+                "observed_throughput_kbps=${outgoing.observedThroughputKbps} " +
                 "learned_limit=${outgoing.learnedLimit} " +
                 "bandwidth_cap_kbps=${outgoing.bandwidthCapKbps} " +
                 "failure=${outgoing.failure?.classification} " +

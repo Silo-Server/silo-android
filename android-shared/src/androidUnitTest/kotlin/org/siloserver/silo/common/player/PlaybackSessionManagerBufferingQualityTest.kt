@@ -94,6 +94,7 @@ class PlaybackSessionManagerBufferingQualityTest {
         capabilityFeatures: List<String>,
         mode: BufferingQualityMode = BufferingQualityMode.Default,
         estimate: Int? = null,
+        playingPlanThroughputKbps: () -> Int? = { null },
         throughputKbps: () -> Int? = { null },
     ) {
         val probe = Probe(estimate)
@@ -161,6 +162,7 @@ class PlaybackSessionManagerBufferingQualityTest {
             tokenManager = identity,
             bandwidthEstimates = probe,
             throughputKbps = throughputKbps,
+            playingPlanThroughputKbps = playingPlanThroughputKbps,
             bufferingQualityMode = { mode },
         )
 
@@ -227,7 +229,7 @@ class PlaybackSessionManagerBufferingQualityTest {
 
     @Test
     fun aBufferingQualityReplanIsAQualityChangeCarryingItsEstimate() = runTest {
-        val harness = Harness(BUFFERING_QUALITY_SERVER)
+        val harness = Harness(BUFFERING_QUALITY_SERVER, playingPlanThroughputKbps = { 8_806 })
         harness.start()
         harness.lower()
 
@@ -236,6 +238,7 @@ class PlaybackSessionManagerBufferingQualityTest {
         assertEquals("auto", body.string("quality_preference"))
         assertEquals(JsonPrimitive(44_100), body["bandwidth_estimate_kbps"])
         assertEquals(BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER, body.string("bandwidth_estimate_source"))
+        assertEquals(JsonPrimitive(8_806), body["observed_throughput_kbps"])
         assertNull(body["learned_limit"])
         assertNull(body["failure"])
         assertTrue(BUFFERING_QUALITY_V1_FEATURE in body.features())

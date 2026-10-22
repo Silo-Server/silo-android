@@ -612,6 +612,13 @@ data class PlaybackReplanRequestV3(
     @SerialName("bandwidth_estimate_kbps") val bandwidthEstimateKbps: Int? = null,
     /** Valid only alongside [bandwidthEstimateKbps]; needs [BUFFERING_QUALITY_V1_FEATURE]. */
     @SerialName("bandwidth_estimate_source") val bandwidthEstimateSource: String? = null,
+    /**
+     * The playing plan's throughput so far, measured as `plan_summary`'s
+     * `throughput_kbps`. Valid only on a lowering, with
+     * [BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER]; the server plans with the
+     * lower of this and [bandwidthEstimateKbps]. Needs [BUFFERING_QUALITY_V1_FEATURE].
+     */
+    @SerialName("observed_throughput_kbps") val observedThroughputKbps: Int? = null,
     /** `ignore` or `clear`; needs [BUFFERING_QUALITY_V1_FEATURE]. */
     @SerialName("learned_limit") val learnedLimit: String? = null,
     @SerialName("selected_tracks") val selectedTracks: SelectedPlaybackTracksV3,

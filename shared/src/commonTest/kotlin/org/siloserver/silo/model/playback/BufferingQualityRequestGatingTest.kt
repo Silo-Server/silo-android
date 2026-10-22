@@ -24,6 +24,7 @@ class BufferingQualityRequestGatingTest {
         estimate: Int? = 44100,
         source: String? = BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER,
         learnedLimit: String? = null,
+        observed: Int? = null,
     ) = PlaybackReplanRequestV3(
         clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
         operation = QUALITY_CHANGE_V3_OPERATION,
@@ -37,6 +38,7 @@ class BufferingQualityRequestGatingTest {
         positionSeconds = 12.0,
         bandwidthEstimateKbps = estimate,
         bandwidthEstimateSource = source,
+        observedThroughputKbps = observed,
         learnedLimit = learnedLimit,
         selectedTracks = SelectedPlaybackTracksV3(),
         capabilities = ClientCodecCapabilities(),
@@ -99,6 +101,15 @@ class BufferingQualityRequestGatingTest {
         // The server answers 400 to a source without an estimate.
         assertNull(replan(estimate = null).gatedForBufferingQuality(advertising).bandwidthEstimateSource)
         assertNull(probeStart(estimate = null).gatedForBufferingQuality(advertising).bandwidthEstimateSource)
+    }
+
+    @Test
+    fun anObservedThroughputGoesOnlyWithALowering() {
+        assertEquals(8_806, replan(observed = 8_806).gatedForBufferingQuality(advertising).observedThroughputKbps)
+        // The server answers 422 to one without the observed_rebuffer source.
+        assertNull(replan(source = null, observed = 8_806).gatedForBufferingQuality(advertising).observedThroughputKbps)
+        assertNull(replan(estimate = null, observed = 8_806).gatedForBufferingQuality(advertising).observedThroughputKbps)
+        assertNull(replan(observed = 8_806).gatedForBufferingQuality(older).observedThroughputKbps)
     }
 
     private fun probeStart(estimate: Int? = 48_000) = start(learnedLimit = null).copy(
