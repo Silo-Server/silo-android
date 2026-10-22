@@ -96,9 +96,11 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -1194,6 +1196,7 @@ private fun HudVideoPane(
                             autoQualityResolution,
                         ),
                         enabled = enabled,
+                        stateDescription = qualityReasonLine,
                         entryFocusRequester = entryFocusRequester.takeIf { entryRow == "quality" },
                         onActivate = {
                             onPresentPicker(
@@ -1213,9 +1216,15 @@ private fun HudVideoPane(
                             )
                         },
                     )
-                    // Never focused: it says why the row's value plays.
+                    // Never focused: it says why the row's value plays, and
+                    // the row reads it out, so it is silent itself.
                     qualityReasonLine?.let {
-                        HudTimingText(it, modifier = Modifier.padding(horizontal = HudRowPadding, vertical = 4.dp))
+                        HudTimingText(
+                            it,
+                            modifier = Modifier
+                                .clearAndSetSemantics {}
+                                .padding(horizontal = HudRowPadding, vertical = 4.dp),
+                        )
                     }
                 }
 
@@ -2769,6 +2778,8 @@ internal fun HudFocusedSettingRow(
      * drill-in to advertise. Mirrors tvOS HUDToggleRow (showsChevron: false).
      */
     showsChevron: Boolean = true,
+    /** Read after the value, such as the reason shown under the Quality row. */
+    stateDescription: String? = null,
     modifier: Modifier = Modifier,
     onActivate: () -> Unit,
 ) {
@@ -2799,6 +2810,13 @@ internal fun HudFocusedSettingRow(
                 registerPickerReturnFocus?.invoke(selfFocusRequester)
                 onActivate()
             }
+            .then(
+                if (stateDescription != null) {
+                    Modifier.semantics { this.stateDescription = stateDescription }
+                } else {
+                    Modifier
+                },
+            )
             .padding(horizontal = HudRowPadding, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
