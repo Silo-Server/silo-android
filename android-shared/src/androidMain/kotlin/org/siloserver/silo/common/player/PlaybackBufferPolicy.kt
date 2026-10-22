@@ -80,7 +80,7 @@ data class PlaybackBufferPolicy(
          * After a stall the viewer is watching a spinner, so the cushion we
          * rebuild before resuming is deliberately small.
          */
-        private const val REBUFFER_MS = 5_000
+        const val REBUFFER_MS = 5_000
 
         fun forConditions(
             deviceProfile: PlaybackBufferDeviceProfile = PlaybackBufferDeviceProfile.Unknown,

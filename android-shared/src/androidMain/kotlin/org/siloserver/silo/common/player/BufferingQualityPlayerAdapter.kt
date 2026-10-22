@@ -15,6 +15,7 @@ import org.siloserver.silo.domain.player.BufferingQualityController
 import org.siloserver.silo.domain.player.BufferingQualityController.Companion.OUTAGE_NO_DATA_MS
 import org.siloserver.silo.domain.player.BufferingQualityController.Companion.OUTAGE_NO_DATA_SEGMENTED_MS
 import org.siloserver.silo.domain.player.BufferingQualityController.Companion.RENDERER_WAIT_BUFFER_MS
+import org.siloserver.silo.domain.player.BufferingQualityController.Companion.RENDERER_WAIT_MAX_MS
 import org.siloserver.silo.domain.player.BufferingWaitCause
 import org.siloserver.silo.model.playback.PlaybackDelivery
 
@@ -65,9 +66,12 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
  *   next keyframe, with seconds of media still buffered. The spec's stall is
  *   running out of data, so that wait is [BufferingWaitCause.RENDERER], which
  *   the controller does not count. If the buffer then drains before playback
- *   resumes, the wait is re-announced as a network wait, from which the
- *   stall is timed: the adapter checks every [WAIT_CHECK_MS] while a wait
- *   lasts, and at each [sampleBuffer].
+ *   resumes, or the wait is still going [RENDERER_WAIT_MAX_MS] after it began
+ *   with less buffered than the player needs to resume
+ *   ([resumeAfterRebufferMs]), the wait is re-announced as a network wait,
+ *   from which the stall is timed: a decoder hiccup on a link too slow to
+ *   rebuild that amount soon is the network's stall. The adapter checks every
+ *   [WAIT_CHECK_MS] while a wait lasts, and at each [sampleBuffer].
  * - `playWhenReady` false, `STATE_ENDED` or `STATE_IDLE` →
  *   [BufferingPlaybackEventSink.onPause].
  * - A seek discontinuity → [BufferingPlaybackEventSink.onSeek]. During a
@@ -122,6 +126,8 @@ class BufferingQualityPlayerAdapter(
      * [clock]'s timeline: [PlaybackThroughputMeter.lastByteAtMs]. Any thread.
      */
     private val lastMediaByteAtMs: () -> Long? = { null },
+    /** Media3's `bufferForPlaybackAfterRebufferMs`: what a wait must rebuild before playback resumes. */
+    private val resumeAfterRebufferMs: Long = PlaybackBufferPolicy.REBUFFER_MS.toLong(),
 ) : Player.Listener, AnalyticsListener {
 
     private val sink: BufferingPlaybackEventSink = sink.logged {
@@ -143,6 +149,9 @@ class BufferingQualityPlayerAdapter(
 
     /** The cause of the wait in progress, while [phase] is [Phase.STARVED]. */
     private var waitCause: BufferingWaitCause? = null
+
+    /** When the renderer wait in progress began. */
+    private var rendererWaitStartedAt = 0L
 
     /** Cancels the pending check of the wait in progress. */
     private var cancelWaitCheck: (() -> Unit)? = null
@@ -463,17 +472,21 @@ class BufferingQualityPlayerAdapter(
 
     private fun announceWait(cause: BufferingWaitCause) {
         waitCause = cause
+        if (cause == BufferingWaitCause.RENDERER) rendererWaitStartedAt = clock()
         sink.onWaiting(cause)
     }
 
-    /** A renderer wait whose buffer has drained has become a network wait. */
+    /**
+     * A renderer wait whose buffer has drained, or that has lasted
+     * [RENDERER_WAIT_MAX_MS] still short of what playback needs to resume,
+     * has become a network wait.
+     */
     private fun checkRendererDrain() {
-        if (phase == Phase.STARVED &&
-            waitCause == BufferingWaitCause.RENDERER &&
-            bufferedAheadMs() <= RENDERER_WAIT_BUFFER_MS
-        ) {
-            announceWait(BufferingWaitCause.NETWORK)
-        }
+        if (phase != Phase.STARVED || waitCause != BufferingWaitCause.RENDERER) return
+        val buffered = bufferedAheadMs()
+        val drained = buffered <= RENDERER_WAIT_BUFFER_MS
+        val stuck = clock() - rendererWaitStartedAt >= RENDERER_WAIT_MAX_MS && buffered < resumeAfterRebufferMs
+        if (drained || stuck) announceWait(BufferingWaitCause.NETWORK)
     }
 
     /** The player is waiting and loading, and no media request has received a byte for [outageNoDataMs]. */

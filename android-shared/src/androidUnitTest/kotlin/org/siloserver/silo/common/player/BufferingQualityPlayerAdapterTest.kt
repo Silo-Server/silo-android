@@ -115,6 +115,27 @@ class BufferingQualityPlayerAdapterTest {
     }
 
     @Test
+    fun aRendererWaitStillShortOfTheResumeAmountAfterThreeSecondsIsAStall() {
+        var aheadMs = 2_000L
+        adapter.seed(playWhenReady = true, playbackState = Player.STATE_READY, isPlaying = true) { aheadMs }
+        sink.events.clear()
+
+        starve()
+        now = 2_999L
+        runScheduled()
+        now = 3_000L
+        runScheduled()
+        resume()
+        // Enough to resume buffered, yet still waiting: the renderer's own wait.
+        aheadMs = 5_000L
+        starve()
+        now = 10_000L
+        runScheduled()
+
+        assertEquals(listOf("waiting:renderer", "waiting:network", "playing", "waiting:renderer"), sink.events)
+    }
+
+    @Test
     fun aWaitWithNoMediaBytesForFourSecondsIsAnOutage() {
         playing()
         adapter.noteLoading(true)

@@ -200,6 +200,12 @@ class BufferingQualityController(
         const val REARM_AFTER_UNADOPTED_MS: Long = 60_000L
         const val RENDERER_WAIT_BUFFER_MS: Long = 1_000L
 
+        /**
+         * A renderer wait still in progress this long after it began, with
+         * less buffered than the player needs to resume, is a stall.
+         */
+        const val RENDERER_WAIT_MAX_MS: Long = 3_000L
+
         /** A wait in which no media request has received data for this long is an outage. */
         const val OUTAGE_NO_DATA_MS: Long = 4_000L
 
