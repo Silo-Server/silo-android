@@ -44,6 +44,8 @@ fun PlaybackQualitySheet(
     activeId: String?,
     // Auto plays under a limit learned from buffering; its row says so.
     autoLimitedAfterBuffering: Boolean = false,
+    // Why the checked row plays, under it; null on servers that don't say.
+    reasonLine: String? = null,
     // A Watch Party keeps every member on the room's file; quality still
     // applies to this device's stream.
     inRoom: Boolean,
@@ -73,6 +75,7 @@ fun PlaybackQualitySheet(
                             option.name
                         },
                         detail = option.bitrateLabel,
+                        note = reasonLine?.takeIf { option.id == activeId },
                         selected = option.id == activeId,
                         onClick = {
                             onSelect(option.id)

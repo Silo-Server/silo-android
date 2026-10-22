@@ -686,6 +686,8 @@ internal fun PlayerCheckRow(
     separator: Boolean = false,
     detail: String? = null,
     labelColor: Color = PlayerChrome.Paper,
+    // A line under the detail, such as why the checked quality plays.
+    note: String? = null,
 ) {
     PlayerGroupRow(
         modifier = Modifier.selectable(selected = selected, role = Role.RadioButton, onClick = onClick),
@@ -704,6 +706,9 @@ internal fun PlayerCheckRow(
             )
             if (!detail.isNullOrBlank()) {
                 Text(text = detail, style = PlayerType.RowDetail, modifier = Modifier.padding(top = 1.dp))
+            }
+            if (!note.isNullOrBlank()) {
+                Text(text = note, style = PlayerType.RowDetail, modifier = Modifier.padding(top = 1.dp))
             }
         }
         if (selected) {

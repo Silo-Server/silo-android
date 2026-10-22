@@ -56,6 +56,8 @@ import org.siloserver.silo.common.player.video.ManualMarkerKind
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.android.R
 import org.siloserver.silo.common.player.NoticeTone
+import org.siloserver.silo.common.player.qualityReasonMenuLine
+import org.siloserver.silo.common.player.qualityReasonStatsValue
 import org.siloserver.silo.common.player.PlayerNotice
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerState
@@ -64,6 +66,7 @@ import org.siloserver.silo.domain.player.BufferingQualityPill
 import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.PlaybackQualityOption
 import org.siloserver.silo.model.playback.playbackQualityMenu
+import org.siloserver.silo.model.playback.deliveredResolutionLabel
 import org.siloserver.silo.model.playback.playbackQualityValueLabel
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
@@ -163,6 +166,13 @@ fun PlayerOverlay(
         playbackQualityMenu(state.playbackPlan?.availableQualities.orEmpty())
     }
     val activeQualityId = state.activeQualityId(qualityOptions)
+    val qualityValue = playbackQualityValueLabel(
+        qualityOptions,
+        activeQualityId,
+        state.qualityPreference,
+        autoResolution = state.playbackPlan?.deliveredResolutionLabel,
+    )
+    val qualityReasons = state.playbackPlan?.qualityReasons.orEmpty()
     val hasQualityMenu = qualityOptions.isNotEmpty()
     // A party plays exactly the room's file: no version picker.
     val hasVersionMenu = state.versions.size > 1 && !inRoom
@@ -495,7 +505,7 @@ fun PlayerOverlay(
                 eyebrow = playerEyebrow(state),
                 tracksValue = playerTracksValue(state),
                 chapterValue = chapterTitleAt(state.chapters, shownPosition),
-                qualityValue = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference),
+                qualityValue = qualityValue,
                 pictureInPictureAvailable = pictureInPictureAvailable,
                 onEnterPictureInPicture = onEnterPictureInPicture,
                 isPlaying = state.isPlaying,
@@ -755,6 +765,7 @@ fun PlayerOverlay(
                 // A learned limit holds this Auto plan down.
                 autoLimitedAfterBuffering = state.playbackPlan?.bandwidthLimit != null &&
                     activeQualityId == PLAYBACK_QUALITY_AUTO,
+                reasonLine = qualityReasonMenuLine(qualityReasons),
                 inRoom = inRoom,
                 onSelect = viewModel::onSelectQuality,
                 onDismiss = { qualitySheetVisible = false },
@@ -793,7 +804,7 @@ fun PlayerOverlay(
             // A party hides speed (session-only 1x) and the version picker.
             showPlaybackSpeed = !inRoom,
             showQuality = hasQualityMenu,
-            qualityLabel = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference),
+            qualityLabel = qualityValue,
             onOpenQuality = {
                 settingsSheetVisible = false
                 qualitySheetVisible = true
@@ -837,6 +848,7 @@ fun PlayerOverlay(
         PlaybackStatsSheet(
             isVisible = statsSheetVisible,
             stats = state.stats,
+            qualityReason = qualityReasonStatsValue(qualityReasons),
             onDismiss = { statsSheetVisible = false },
             onBack = {
                 statsSheetVisible = false
