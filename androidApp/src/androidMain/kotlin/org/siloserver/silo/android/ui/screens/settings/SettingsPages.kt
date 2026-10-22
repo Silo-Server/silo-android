@@ -29,6 +29,7 @@ import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.common.settings.UseProfileSettingsCopy
+import org.siloserver.silo.common.settings.shownIn
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
 import org.siloserver.silo.model.settings.SeekMedia
@@ -150,7 +151,7 @@ fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit
                 pictureInPictureEnabled = state.pictureInPictureEnabled,
                 bufferingQualityMode = state.bufferingQualityMode,
                 bufferingQualityModeSupported = state.bufferingQualityModeSupported,
-                learnedLimit = state.learnedLimit,
+                learnedLimit = state.learnedLimit.shownIn(state.bufferingQualityMode),
                 learnedLimitResetFailed = state.learnedLimitResetFailed,
                 deviceOverrides = state.deviceOverrides,
                 onResolutionSelected = viewModel::setPreferredQuality,
@@ -167,7 +168,10 @@ fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit
         // Under Streaming, whose buffering and learned-limit rows it explains.
         if (connectionSpeed?.visible == true) {
             item(key = "connection") {
-                PlaybackConnectionSection(state = connectionSpeed, onTestSpeed = { viewModel.connectionSpeed?.testSpeed() })
+                PlaybackConnectionSection(
+                    state = connectionSpeed.shownIn(state.bufferingQualityMode, state.learnedLimit),
+                    onTestSpeed = { viewModel.connectionSpeed?.testSpeed() },
+                )
             }
         }
         item(key = "cellular") {

@@ -107,6 +107,7 @@ import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.common.settings.UseProfileSettingsCopy
 import org.siloserver.silo.common.settings.bufferingQualityModeLabel
 import org.siloserver.silo.common.settings.learnedLimitLabel
+import org.siloserver.silo.common.settings.shownIn
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.CardCaption
 import org.siloserver.silo.model.settings.CardPosterSize
@@ -1317,7 +1318,7 @@ private fun TvPlaybackSettingsPane(
                     )
                     SettingsFooterText(text = stringResource(CommonR.string.settings_buffering_quality_description))
                 }
-                state.learnedLimit?.let { limit ->
+                state.learnedLimit.shownIn(state.bufferingQualityMode)?.let { limit ->
                     // Leaves once the reset lands, so, as with a switch's "Use
                     // Profile Setting" row, focus is handed to the row above it
                     // rather than lost.
@@ -1392,7 +1393,10 @@ private fun TvPlaybackSettingsPane(
         // Under Streaming, whose buffering and learned-limit rows it explains.
         if (connectionState?.visible == true) {
             item {
-                TvConnectionSettingsGroup(state = connectionState, onTestSpeed = { connectionSpeed?.testSpeed() })
+                TvConnectionSettingsGroup(
+                    state = connectionState.shownIn(state.bufferingQualityMode, state.learnedLimit),
+                    onTestSpeed = { connectionSpeed?.testSpeed() },
+                )
             }
         }
         item {

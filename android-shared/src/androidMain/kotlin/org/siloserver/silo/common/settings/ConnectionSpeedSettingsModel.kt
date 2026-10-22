@@ -21,6 +21,8 @@ import org.siloserver.silo.common.player.probe.BandwidthEstimate
 import org.siloserver.silo.common.player.probe.BandwidthProbeScheduler
 import org.siloserver.silo.common.player.probe.ProbeOutcome
 import org.siloserver.silo.common.player.probe.skipsBandwidthProbe
+import org.siloserver.silo.domain.player.BufferingQualityMode
+import org.siloserver.silo.network.apiv2.PlaybackLearnedLimitV2
 import org.siloserver.silo.network.apiv2.PlaybackConnectionProbeV2
 import org.siloserver.silo.network.apiv2.PlaybackConnectionSampleV2
 import org.siloserver.silo.repository.PlaybackConnectionRepository
@@ -84,6 +86,21 @@ data class ConnectionSpeedUiState(
     /** Non-null while the network is metered or cellular: no speed test, and no budget line. */
     val skipped: ConnectionSpeedSkip? = null,
 )
+
+/**
+ * The learned limit Settings shows in [mode]: none in Never, which ignores
+ * the limit.
+ */
+fun PlaybackLearnedLimitV2?.shownIn(mode: BufferingQualityMode): PlaybackLearnedLimitV2? =
+    takeUnless { mode == BufferingQualityMode.NEVER }
+
+/**
+ * The Connection group as Settings shows it in [mode]: in Never, Auto's
+ * budget line hides while a [learnedLimit] exists, because the server's
+ * budget counts the limit that Never ignores.
+ */
+fun ConnectionSpeedUiState.shownIn(mode: BufferingQualityMode, learnedLimit: PlaybackLearnedLimitV2?): ConnectionSpeedUiState =
+    if (mode == BufferingQualityMode.NEVER && learnedLimit != null) copy(autoBudgetKbps = null) else this
 
 /**
  * Settings → Playback → Connection, for the phone and TV view models: the
