@@ -6985,31 +6985,35 @@ class TvPlayerViewModel(
             reopenSameRoute(state, "client_retry=transient_network:$transientNetworkRetries")
             return
         }
-        if (isTransientNetwork && state.sessionId != null && state.playbackPlan != null && !reopenedAfterOutage) {
-            waitOutOutage()
-            return
-        }
         if (state.sessionId != null) {
             val diagnostics = mapOf(
                 "error_code" to error.errorCode.toString(),
                 "error_code_name" to error.errorCodeName,
                 "error_cause" to (error.cause?.javaClass?.simpleName ?: "unknown"),
             )
-            if (pendingSeekTarget != null) {
-                startSeekFailureRecovery(
-                    targetSourceSec = pendingSeekTarget,
-                    classification = error.failureClassification(),
-                    notice = message,
-                    diagnostics = diagnostics,
-                )
+            val failedTrackType = error.failedRendererTrackType(servicePlayer)
+            fun recover() {
+                if (pendingSeekTarget != null) {
+                    startSeekFailureRecovery(
+                        targetSourceSec = pendingSeekTarget,
+                        classification = error.failureClassification(),
+                        notice = message,
+                        diagnostics = diagnostics,
+                    )
+                } else {
+                    startProtocolV3Replan(
+                        error.failureClassification(),
+                        message,
+                        _uiState.value,
+                        diagnostics = diagnostics,
+                        failedTrackType = failedTrackType,
+                    )
+                }
+            }
+            if (isTransientNetwork && state.playbackPlan != null) {
+                waitOutOutage(routeFailed = if (reopenedAfterOutage) ::recover else null)
             } else {
-                startProtocolV3Replan(
-                    error.failureClassification(),
-                    message,
-                    state,
-                    diagnostics = diagnostics,
-                    failedTrackType = error.failedRendererTrackType(servicePlayer),
-                )
+                recover()
             }
             return
         }
@@ -7052,15 +7056,24 @@ class TvPlayerViewModel(
      * outage. It never ends playback by itself, and a failure replan sent
      * into it would tell the server the route failed (the server then has
      * nothing left to plan). So nothing is sent: once the device is online
-     * and the server answers again, the same route reopens. Only if that
-     * reopen fails on its transport too, before playing, is the failure the
-     * route's, and the next error replans as usual.
+     * and the server answers again, the same route reopens.
+     *
+     * [routeFailed] is the failure recovery of an error after that reopen,
+     * before playing. It runs only while no outage is in progress: the
+     * device is online and the server answers, so the route itself fails.
+     * The media loads' own trouble cannot tell, because the failed request
+     * that raised the error is one. Otherwise the wait goes on.
      */
-    private fun waitOutOutage() {
+    private fun waitOutOutage(routeFailed: (() -> Unit)? = null) {
         if (outageRecoveryJob?.isActive == true) return
         Log.i(TAG, "outage: waiting for the network and the server before reopening the same route")
         _uiState.update { it.copy(isLoading = false, isBuffering = true, error = null) }
         outageRecoveryJob = viewModelScope.launch {
+            if (routeFailed != null && networkEvidence?.snapshot()?.connected != false && serverAnswers()) {
+                Log.i(TAG, "outage: the reopened route failed while the server answers; recovering")
+                routeFailed()
+                return@launch
+            }
             var attempt = 0
             do {
                 awaitNetworkRetry(networkEvidence?.updates ?: emptyFlow(), attempt++)

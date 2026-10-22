@@ -69,6 +69,7 @@ import org.siloserver.silo.common.player.Playability
 import org.siloserver.silo.common.player.PlaybackAnalyticsListener
 import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
+import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.PlaybackNetworkSnapshot
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackSessionManager
@@ -597,9 +598,14 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
-    fun outageEndReopenRemountsTheSamePlan() = runTest(dispatcher) {
+    fun outageEndReopenRemountsAndRecoversOnlyOnlineWithTheServerAnswering() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
-        val fixture = playerViewModel(starter, backgroundScope, serverReachable = true)
+        val network = MutableStateFlow(PlaybackNetworkSnapshot(connected = false))
+        val evidence = object : PlaybackNetworkEvidenceProvider {
+            override fun snapshot() = network.value
+            override val updates get() = network
+        }
+        val fixture = playerViewModel(starter, backgroundScope, serverReachable = true, network = evidence)
         val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
         try {
             val viewModel = fixture.viewModel
@@ -607,18 +613,35 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             starter.awaitRequestCount(1)
             starter.complete(0, ready(starter.request(0), "session-a").copy(playbackPlan = executionPlan()))
             viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
-            val firstMount = viewModel.uiState.value.mediaMountGeneration
-            viewModel.onMediaMountApplied(firstMount)
+            var mount = viewModel.uiState.value.mediaMountGeneration
+            viewModel.onMediaMountApplied(mount)
 
             // No attempt to record a transport reopen on, so the error is an
             // outage at once: wait for the network and the server, then reopen.
             viewModel.onPlayerError(connectionFailed())
-            viewModel.awaitState { it.mediaMountGeneration != firstMount }
+            viewModel.awaitState { it.mediaMountGeneration != mount }
             val reopened = viewModel.uiState.value
             // The screen's mount effect applies only an awaited generation.
             assertTrue(viewModel.shouldApplyMediaMount(reopened.mediaMountGeneration))
             assertEquals("client_retry=outage_end", reopened.playbackPlan?.decisionTrace?.last())
             assertNull(reopened.error)
+
+            // The reopened route fails while the device is offline: still an
+            // outage, so it waits and reopens again rather than replanning.
+            mount = reopened.mediaMountGeneration
+            viewModel.onMediaMountApplied(mount)
+            viewModel.onPlayerError(connectionFailed())
+            viewModel.awaitState { it.mediaMountGeneration != mount }
+            assertNull(viewModel.uiState.value.error)
+
+            // Online, with the server answering, the failure is the route's:
+            // failure recovery runs (and fails against this fake server).
+            mount = viewModel.uiState.value.mediaMountGeneration
+            viewModel.onMediaMountApplied(mount)
+            network.value = PlaybackNetworkSnapshot(connected = true)
+            viewModel.onPlayerError(connectionFailed())
+            viewModel.awaitState { it.error != null }
+            assertEquals(mount, viewModel.uiState.value.mediaMountGeneration)
         } finally {
             store.clear()
         }
@@ -839,6 +862,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
         shufflesApi: org.siloserver.silo.network.apiv2.ShufflesV2Api? = null,
         shuffleStore: org.siloserver.silo.model.feature.ShuffleFeatureStore? =
             shufflesApi?.let { org.siloserver.silo.model.feature.ShuffleFeatureStore(it) },
+        network: PlaybackNetworkEvidenceProvider = PlaybackNetworkEvidenceProvider.None,
         /** The reachability probe answers; otherwise it has no server to probe. */
         serverReachable: Boolean = false,
     ): PlayerFixture {
@@ -895,6 +919,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                     write = {},
                 ),
                 shuffleFeatureStore = shuffleStore,
+                networkEvidenceProvider = network,
             ),
             manager = manager,
             lifecycle = lifecycle,
