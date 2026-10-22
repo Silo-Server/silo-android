@@ -21,6 +21,8 @@ import org.siloserver.silo.common.player.PlayerStatsSnapshot
 fun PlaybackStatsSheet(
     isVisible: Boolean,
     stats: PlayerStatsSnapshot,
+    // What the plan plays, such as "1080p · 6 Mbps"; null with no known size.
+    qualityPlaying: String? = null,
     // Why the plan plays at its quality, one reason per line; null when the server doesn't say.
     qualityReason: String? = null,
     onDismiss: () -> Unit,
@@ -50,6 +52,7 @@ fun PlaybackStatsSheet(
                         StatsRow(label = label, value = value, separator = index > 0)
                     }
                 }
+                qualityPlaying?.let { StatsRow(label = "Playing", value = it, separator = true) }
                 qualityReason?.let { reason ->
                     StatsRow(label = "Reason", value = reason, separator = true, maxLines = Int.MAX_VALUE)
                 }

@@ -56,6 +56,7 @@ import org.siloserver.silo.common.player.video.ManualMarkerKind
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.android.R
 import org.siloserver.silo.common.player.NoticeTone
+import org.siloserver.silo.common.player.qualityPlayingLine
 import org.siloserver.silo.common.player.qualityReasonMenuLine
 import org.siloserver.silo.common.player.qualityReasonStatsValue
 import org.siloserver.silo.common.player.PlayerNotice
@@ -67,6 +68,7 @@ import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.PlaybackQualityOption
 import org.siloserver.silo.model.playback.playbackQualityMenu
 import org.siloserver.silo.model.playback.deliveredResolutionLabel
+import org.siloserver.silo.model.playback.playingValue
 import org.siloserver.silo.model.playback.playbackQualityValueLabel
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
@@ -173,6 +175,8 @@ fun PlayerOverlay(
         autoResolution = state.playbackPlan?.deliveredResolutionLabel,
     )
     val qualityReasons = state.playbackPlan?.qualityReasons.orEmpty()
+    // A pick waiting for its plan hides what the playing plan says.
+    val qualityPlaying = state.playbackPlan?.playingValue?.takeUnless { state.qualitySwitching }
     val hasQualityMenu = qualityOptions.isNotEmpty()
     // A party plays exactly the room's file: no version picker.
     val hasVersionMenu = state.versions.size > 1 && !inRoom
@@ -765,7 +769,8 @@ fun PlayerOverlay(
                 // A learned limit holds this Auto plan down.
                 autoLimitedAfterBuffering = state.playbackPlan?.bandwidthLimit != null &&
                     activeQualityId == PLAYBACK_QUALITY_AUTO,
-                reasonLine = qualityReasonMenuLine(qualityReasons),
+                playingLine = qualityPlayingLine(qualityPlaying),
+                reasonLine = qualityReasonMenuLine(qualityReasons).takeUnless { state.qualitySwitching },
                 inRoom = inRoom,
                 onSelect = viewModel::onSelectQuality,
                 onDismiss = { qualitySheetVisible = false },
@@ -848,6 +853,7 @@ fun PlayerOverlay(
         PlaybackStatsSheet(
             isVisible = statsSheetVisible,
             stats = state.stats,
+            qualityPlaying = qualityPlaying,
             qualityReason = qualityReasonStatsValue(qualityReasons),
             onDismiss = { statsSheetVisible = false },
             onBack = {

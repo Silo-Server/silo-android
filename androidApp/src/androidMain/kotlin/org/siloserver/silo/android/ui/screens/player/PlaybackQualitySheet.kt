@@ -44,8 +44,10 @@ fun PlaybackQualitySheet(
     activeId: String?,
     // Auto plays under a limit learned from buffering; its row says so.
     autoLimitedAfterBuffering: Boolean = false,
-    // Why the plan plays at its quality: under the checked row, or above the
-    // rows when none is checked. Null on servers that don't say.
+    // What the plan plays ("Playing 1080p · 6 Mbps"), then why: in place of
+    // the checked row's detail, or above the rows when none is checked. The
+    // reason is null on servers that don't say; both are null mid-switch.
+    playingLine: String? = null,
     reasonLine: String? = null,
     // A Watch Party keeps every member on the room's file; quality still
     // applies to this device's stream.
@@ -66,8 +68,12 @@ fun PlaybackQualitySheet(
                         "You can adjust your streaming quality below.",
                 )
             }
-            // No row checked (a saved resolution the source plays under).
-            if (!hasCheckedRow && reasonLine != null) PlayerFootnote(reasonLine)
+            // No row checked (a saved resolution the source plays under). One
+            // footnote, so TalkBack reads both lines together.
+            if (!hasCheckedRow) {
+                listOfNotNull(playingLine, reasonLine).takeIf { it.isNotEmpty() }
+                    ?.let { PlayerFootnote(it.joinToString("\n")) }
+            }
             Spacer(Modifier.height(8.dp))
             PlayerGroup {
                 val autoLimitedLabel = stringResource(R.string.buffering_quality_auto_limited)
@@ -78,7 +84,7 @@ fun PlaybackQualitySheet(
                         } else {
                             option.name
                         },
-                        detail = option.bitrateLabel,
+                        detail = playingLine?.takeIf { option.id == activeId } ?: option.bitrateLabel,
                         note = reasonLine?.takeIf { option.id == activeId },
                         selected = option.id == activeId,
                         onClick = {

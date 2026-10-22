@@ -96,6 +96,7 @@ import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.CommittedSubtitle
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
+import org.siloserver.silo.model.playback.qualityChangePending
 import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
@@ -492,6 +493,8 @@ class PlayerViewModel(
         val playbackPlan: PlaybackExecutionPlan? = null,
         /** The quality preference the playing plan was built for; null is Auto. */
         val committedQualityPreference: String? = null,
+        /** A quality pick waits for its plan; the Quality menu hides what the playing one says. */
+        val qualitySwitching: Boolean = false,
         /**
          * The preference the session plays at when the viewer picked none:
          * the route's, or the saved settings for the connection it started
@@ -4519,6 +4522,7 @@ class PlayerViewModel(
                 localSubtitleMountIdentity = snapshot.localMountIdentity,
                 subtitleApplying = snapshot.subtitleApplying,
                 committedQualityPreference = snapshot.transition.committed.qualityPreference,
+                qualitySwitching = snapshot.transition.qualityChangePending,
             )
         }
         val state = _uiState.value
@@ -6434,6 +6438,7 @@ class PlayerViewModel(
                 pendingSubtitleIdentity = null,
                 localSubtitleMountIdentity = null,
                 subtitleApplying = false,
+                qualitySwitching = false,
                 offlineAudioByPosition = offlineAudioByPosition,
                 intro = localVersion?.intro,
                 credits = localVersion?.credits,

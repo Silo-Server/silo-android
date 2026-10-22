@@ -100,6 +100,10 @@ data class SubtitleTransitionState(
     }
 }
 
+/** A quality pick waits for its plan: the menu's lines would still name the playing one. */
+val SubtitleTransitionState.qualityChangePending: Boolean
+    get() = pending?.qualityPreferenceSpecified == true
+
 data class StagedSubtitleCandidate(val id: String)
 
 sealed interface SubtitleTransitionEvent
