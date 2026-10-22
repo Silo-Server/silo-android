@@ -126,7 +126,8 @@ fun ItemDetailScreen(
     openingArtworkUrl: String? = null,
     openingArtworkThumbhash: String? = null,
     onBackClick: () -> Unit,
-    onPlayClick: (String, Int?, Int?, Int?, Double?) -> Unit,
+    /** Content, file, whether the viewer picked that file's version, audio, subtitle, resume position. */
+    onPlayClick: (String, Int?, Boolean, Int?, Int?, Double?) -> Unit,
     onItemDetailClick: (String) -> Unit,
     onEpisodeDetailClick: (String) -> Unit = onItemDetailClick,
     onPersonClick: (String) -> Unit,
@@ -183,9 +184,10 @@ fun ItemDetailScreen(
     // D5: while this device is in a Watch Party, detail Play, extras, and
     // audiobook play ask to leave the party first (the player is shared).
     val soloGuard = rememberWatchPartySoloGuard()
-    val guardedPlay: (String, Int?, Int?, Int?, Double?) -> Unit = { contentId, fileId, audio, subtitle, resume ->
-        soloGuard.run { onPlayClick(contentId, fileId, audio, subtitle, resume) }
-    }
+    val guardedPlay: (String, Int?, Boolean, Int?, Int?, Double?) -> Unit =
+        { contentId, fileId, versionChosen, audio, subtitle, resume ->
+            soloGuard.run { onPlayClick(contentId, fileId, versionChosen, audio, subtitle, resume) }
+        }
     val guardedAudiobookPlay: (String, Int?, Boolean, Double?) -> Unit = { contentId, fileId, fromStart, start ->
         soloGuard.run { onAudiobookPlayClick(contentId, fileId, fromStart, start) }
     }
@@ -744,15 +746,17 @@ fun ItemDetailScreen(
                                     guardedPlay(
                                         it.contentId,
                                         selectedEpisodeFileId,
+                                        state.hasExplicitVersionSelection,
                                         state.selectedAudioIndex.takeIf { state.hasExplicitAudioSelection },
                                         state.selectedSubtitleIndex.takeIf { state.hasExplicitSubtitleSelection },
                                         selectedEpisodeResume,
                                     )
                                 } ?: nextEpisode?.let {
-                                    guardedPlay(it.contentId, null, null, null, playbackResumePosition(it))
+                                    guardedPlay(it.contentId, null, false, null, null, playbackResumePosition(it))
                                 } ?: guardedPlay(
                                     detail.contentId,
                                     null,
+                                    false,
                                     null,
                                     null,
                                     playbackResumePosition(detail.userData),
@@ -764,18 +768,19 @@ fun ItemDetailScreen(
                                         guardedPlay(
                                             ep.contentId,
                                             selectedEpisodeFileId,
+                                            state.hasExplicitVersionSelection,
                                             state.selectedAudioIndex.takeIf { state.hasExplicitAudioSelection },
                                             state.selectedSubtitleIndex.takeIf { state.hasExplicitSubtitleSelection },
                                             0.0,
                                         )
                                     } ?: nextEpisode?.let { ep ->
-                                        guardedPlay(ep.contentId, null, null, null, 0.0)
-                                    } ?: guardedPlay(detail.contentId, null, null, null, 0.0)
+                                        guardedPlay(ep.contentId, null, false, null, null, 0.0)
+                                    } ?: guardedPlay(detail.contentId, null, false, null, null, 0.0)
                                 }
                             },
                             resumeStoppedAtLabel = activeSeriesResume?.let { formatResumeStoppedAt(it) },
                             onEpisodePlayClick = { contentId, resumePositionSeconds ->
-                                guardedPlay(contentId, null, null, null, resumePositionSeconds)
+                                guardedPlay(contentId, null, false, null, null, resumePositionSeconds)
                             },
                             onEpisodeDetailClick = { viewModel.selectSeriesEpisode(it) },
                             onEpisodeWatchedChange = { episodeContentId, watched ->
@@ -815,7 +820,7 @@ fun ItemDetailScreen(
                             onPersonClick = onPersonClick,
                             onItemDetailClick = onItemDetailClick,
                             onPlayExtra = { extra ->
-                                guardedPlay(extra.contentId, extra.fileId, null, null, 0.0)
+                                guardedPlay(extra.contentId, extra.fileId, false, null, null, 0.0)
                             },
                             onSeriesDownloadClick = {
                                 // Series/season batches are Original-only server-side
@@ -955,6 +960,7 @@ fun ItemDetailScreen(
                                 guardedPlay(
                                     detail.contentId,
                                     playbackFileId,
+                                    explicitFileId != null,
                                     explicitAudioIndex,
                                     explicitSubtitleIndex,
                                     movieResume,
@@ -965,6 +971,7 @@ fun ItemDetailScreen(
                                     guardedPlay(
                                         detail.contentId,
                                         playbackFileId,
+                                        explicitFileId != null,
                                         explicitAudioIndex,
                                         explicitSubtitleIndex,
                                         0.0,
@@ -987,7 +994,7 @@ fun ItemDetailScreen(
                             onPersonClick = onPersonClick,
                             onItemDetailClick = onItemDetailClick,
                             onPlayExtra = { extra ->
-                                guardedPlay(extra.contentId, extra.fileId, null, null, 0.0)
+                                guardedPlay(extra.contentId, extra.fileId, false, null, null, 0.0)
                             },
                             onSeriesClick = seriesId?.let { resolvedSeriesId ->
                                 { onSeriesClick(resolvedSeriesId) }

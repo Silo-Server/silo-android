@@ -101,6 +101,8 @@ sealed class TvRoute(val route: String) {
     data class Player(
         val contentId: String,
         val fileId: Int? = null,
+        /** The viewer picked [fileId] in a version picker: the start pins it. */
+        val versionChosen: Boolean = false,
         val quality: String? = null,
         val roomId: String? = null,
         val resumePositionSeconds: Double? = null,
@@ -137,6 +139,7 @@ sealed class TvRoute(val route: String) {
             val query = buildList {
                 libraryId?.let { add("libraryId=$it") }
                 if (fileId != null) add("fileId=$fileId")
+                if (fileId != null && versionChosen) add("$ARG_VERSION_CHOSEN=true")
                 VideoPlayerRouteArgs.normalizeQuality(quality)?.let { value ->
                     add("quality=${value.routeEncode()}")
                 }
@@ -161,7 +164,8 @@ sealed class TvRoute(val route: String) {
         },
     ) {
         companion object {
-            const val ROUTE = "player/{contentId}?libraryId={libraryId}&fileId={fileId}&quality={quality}&roomId={roomId}" +
+            const val ROUTE = "player/{contentId}?libraryId={libraryId}&fileId={fileId}&versionChosen={versionChosen}" +
+                "&quality={quality}&roomId={roomId}" +
                 "&audioTrackIndex={audioTrackIndex}&audioPicked={audioPicked}" +
                 "&subtitleTrackIndex={subtitleTrackIndex}" +
                 "&subtitleAutoResolved={subtitleAutoResolved}" +
@@ -171,6 +175,7 @@ sealed class TvRoute(val route: String) {
                 "&castLaunch={castLaunch}"
             const val ARG_CONTENT_ID = "contentId"
             const val ARG_FILE_ID = "fileId"
+            const val ARG_VERSION_CHOSEN = "versionChosen"
             const val ARG_QUALITY = "quality"
             const val ARG_ROOM_ID = "roomId"
             const val ARG_AUDIO_TRACK_INDEX = "audioTrackIndex"

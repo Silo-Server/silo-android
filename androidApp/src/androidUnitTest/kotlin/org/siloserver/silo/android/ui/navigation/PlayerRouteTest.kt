@@ -40,6 +40,15 @@ class PlayerRouteTest {
     }
 
     @Test
+    fun playerRoutePinsOnlyAChosenVersionOfAFile() {
+        assertEquals(
+            "player/movie-1?fileId=7&versionChosen=true",
+            Route.Player(contentId = "movie-1", fileId = 7, versionChosen = true).route,
+        )
+        assertEquals("player/movie-1", Route.Player(contentId = "movie-1", versionChosen = true).route)
+    }
+
+    @Test
     fun playerRouteCarriesNormalizedQuality() {
         assertEquals(
             "player/movie-1?fileId=7&quality=1080p",

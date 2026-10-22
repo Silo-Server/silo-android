@@ -122,13 +122,7 @@ class TvVideoPlaybackStarter(
                     diagnosticsCode = PlaybackDiagnosticsCode.NO_VERSIONS,
                 )
             }
-            // Room starts keep the file through every replan; renewals keep
-            // whatever the original start chose.
-            val allowAlternateVersions = if (room != null) {
-                false
-            } else {
-                request.recoveryStartParams?.allowAlternateVersions
-            }
+            val allowAlternateVersions = request.allowAlternateVersions()
             val resolvedEpisodeSelection = resolveTvPlaybackStartSelection(
                 // A room plays exactly its file; never a preferred or remembered one.
                 preferredFileId = room?.fileId ?: request.preferredFileId,

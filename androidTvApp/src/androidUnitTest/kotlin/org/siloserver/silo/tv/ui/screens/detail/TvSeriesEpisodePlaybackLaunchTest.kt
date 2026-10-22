@@ -75,8 +75,14 @@ class TvSeriesEpisodePlaybackLaunchTest {
         val launch = seriesEpisodePlaybackLaunch(state, episode)
 
         assertEquals(11, launch.fileId)
+        assertEquals(true, launch.versionChosen)
         assertEquals(0, launch.audioTrackIndex)
         assertEquals(true, launch.audioPickedThisSession)
         assertEquals(TvSubtitleLaunchSelection(-1, autoResolved = false), launch.subtitleSelection)
+
+        // A track pick alone sends the automatic version's file, which is not a version choice.
+        val trackOnly = seriesEpisodePlaybackLaunch(state.copy(selectedNextUpFileId = null), episode)
+        assertEquals(11, trackOnly.fileId)
+        assertFalse(trackOnly.versionChosen)
     }
 }

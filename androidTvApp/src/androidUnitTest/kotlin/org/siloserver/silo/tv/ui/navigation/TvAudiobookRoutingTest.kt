@@ -38,6 +38,21 @@ class TvAudiobookRoutingTest {
     }
 
     @Test
+    fun aChosenVersionIsPinnedOnTheVideoRoute() {
+        val route = tvPlayDestinationFor(
+            itemType = "movie",
+            contentId = "m-1",
+            fileId = 3,
+            resumePositionSeconds = null,
+            audioTrackIndex = null,
+            audioPickedThisSession = false,
+            subtitleSelection = null,
+            versionChosen = true,
+        )
+        assertEquals("player/m-1?fileId=3&versionChosen=true", route)
+    }
+
+    @Test
     fun nullTypeRoutesToVideoPlayer() {
         assertEquals(
             TvRoute.Player("x-1", fileId = null).route,

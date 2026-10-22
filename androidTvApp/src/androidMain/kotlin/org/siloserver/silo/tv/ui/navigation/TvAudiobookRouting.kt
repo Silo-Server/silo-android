@@ -55,6 +55,8 @@ fun tvPlayDestinationFor(
     subtitleSelection: TvSubtitleLaunchSelection?,
     quality: String? = null,
     libraryId: Int? = null,
+    /** The viewer picked [fileId]'s version: the start pins it. */
+    versionChosen: Boolean = false,
 ): String =
     if (isAudiobookItemType(itemType)) {
         // Audiobooks have no audio/subtitle track selection — ignore the indexes.
@@ -68,6 +70,7 @@ fun tvPlayDestinationFor(
         TvRoute.Player(
             contentId = contentId,
             fileId = fileId,
+            versionChosen = versionChosen,
             quality = quality,
             libraryId = libraryId,
             resumePositionSeconds = resumePositionSeconds,

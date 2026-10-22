@@ -206,6 +206,12 @@ data class SiloCastPlaybackRequest(
     val startFromBeginning: Boolean,
     val resumePosition: Double? = null,
     val libraryId: Int? = null,
+    /**
+     * True when the viewer picked [fileId]'s version on the phone, so the TV
+     * pins it (`allow_alternate_versions: false`). Omitted otherwise; older
+     * peers ignore it, as Apple's do.
+     */
+    val pinsVersion: Boolean? = null,
 )
 
 @Serializable

@@ -357,6 +357,7 @@ class PlayerViewModel(
     private data class LoadArgs(
         val contentId: String,
         val preferredFileId: Int?,
+        val versionChosen: Boolean,
         val preferredQuality: String?,
         val initialAudioTrackIndex: Int?,
         val initialSubtitleTrackIndex: Int?,
@@ -1390,6 +1391,9 @@ class PlayerViewModel(
     fun loadContent(
         contentId: String,
         preferredFileId: Int? = null,
+        // The viewer picked preferredFileId's version (a picker or the version
+        // switch): the start pins it, so no replan moves to another version.
+        versionChosen: Boolean = false,
         preferredQuality: String? = null,
         initialAudioTrackIndex: Int? = null,
         initialSubtitleTrackIndex: Int? = null,
@@ -1480,6 +1484,8 @@ class PlayerViewModel(
         lastLoadArgs = LoadArgs(
             contentId = contentId,
             preferredFileId = preferredFileId,
+            // A renewal of a pinned start stays pinned when retried.
+            versionChosen = versionChosen || recoveryStartParams?.allowAlternateVersions == false,
             preferredQuality = effectivePreferredQuality,
             initialAudioTrackIndex = initialAudioTrackIndex,
             initialSubtitleTrackIndex = initialSubtitleTrackIndex,
@@ -1552,6 +1558,7 @@ class PlayerViewModel(
                         libraryId = libraryId,
                         contentId = contentId,
                         preferredFileId = preferredFileId,
+                        versionChosen = versionChosen,
                         preferredQualityOverride = loadQuality,
                         roomId = room?.roomId,
                         resumePositionOverride = resumePositionOverride,
@@ -1675,6 +1682,7 @@ class PlayerViewModel(
         loadContent(
             contentId = args.contentId,
             preferredFileId = args.preferredFileId,
+            versionChosen = args.versionChosen,
             preferredQuality = args.preferredQuality,
             initialAudioTrackIndex = args.initialAudioTrackIndex,
             initialSubtitleTrackIndex = args.initialSubtitleTrackIndex,
@@ -4631,6 +4639,7 @@ class PlayerViewModel(
         loadContent(
             contentId = state.contentId,
             preferredFileId = state.mediaFileId,
+            versionChosen = lastLoadArgs?.versionChosen == true,
             initialAudioTrackIndex = state.selectedAudioIndex,
             initialSubtitleTrackIndex = state.selectedSubtitleIndex,
             resumePositionOverride = state.position,
@@ -6022,6 +6031,8 @@ class PlayerViewModel(
             loadContent(
                 contentId = state.contentId,
                 preferredFileId = version.fileId,
+                // The viewer's pick, or the exact file it was switching from.
+                versionChosen = true,
                 // A catalog ordinal belongs to one file. Carry only an
                 // explicit choice that semantically resolves on the target;
                 // otherwise let that file's persisted/language/default chain

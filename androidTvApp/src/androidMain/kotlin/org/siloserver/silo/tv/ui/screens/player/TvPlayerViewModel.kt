@@ -679,6 +679,8 @@ data class TvPlayerLaunchArgs(
     val contentId: String,
     val libraryId: Int? = null,
     val preferredFileId: Int? = null,
+    /** The viewer picked [preferredFileId]'s version: the start pins it. */
+    val versionChosen: Boolean = false,
     val preferredQuality: String? = null,
     val roomId: String? = null,
     val resumePositionOverride: Double? = null,
@@ -874,6 +876,9 @@ class TvPlayerViewModel(
      * resolution file because of the server's version sort order.
      */
     private var preferredFileId: Int? = launchArgs.preferredFileId
+
+    /** The viewer picked [preferredFileId]'s version, so starts of it pin it. */
+    private var versionChosen: Boolean = launchArgs.versionChosen
     // A legacy "original" route reads as Auto, which plays the source when it can.
     private var preferredQuality: String? = videoQualityPreference(launchArgs.preferredQuality)
     // Explicit session-level video-quality intent chosen in the player's
@@ -2241,6 +2246,8 @@ class TvPlayerViewModel(
     private fun loadContent(
         startPositionOverride: Double? = null,
         preferredFileIdOverride: Int? = null,
+        // Pins the file this start plays: the viewer's pick, or an in-place restart's exact file.
+        versionChosen: Boolean = this.versionChosen,
         audioTrackIndexOverride: Int? = null,
         audioTrackIndexOverrideSpecified: Boolean = false,
         // A missing server session is a renewal, not a new route. Use the
@@ -2360,6 +2367,7 @@ class TvPlayerViewModel(
                         episodeSelectionHandoff = episodeSelectionHandoff,
                         recoveryStartParams = recoveryStartParams,
                         room = requestRoom,
+                        versionChosen = versionChosen,
                     )
                 val result = loadOwners.withOwner(loadOwner) {
                     videoPlaybackCoordinator.start(request)
@@ -5085,6 +5093,7 @@ class TvPlayerViewModel(
             lastAdoptedSessionId = null
             contentId = targetContentId
             preferredFileId = targetFileId
+            versionChosen = false
             preferredQuality = null
             qualityOverride = null
             initialAudioTrackIndex = null
@@ -7130,6 +7139,8 @@ class TvPlayerViewModel(
             loadContent(
                 startPositionOverride = resumeAt,
                 preferredFileIdOverride = fileId,
+                // A version switch or Dolby Vision restart plays exactly this file.
+                versionChosen = fileId != null,
                 audioTrackIndexOverride = audioTrackIndexOverride,
                 audioTrackIndexOverrideSpecified = fileId != null,
                 suppressResumeRewind = true,

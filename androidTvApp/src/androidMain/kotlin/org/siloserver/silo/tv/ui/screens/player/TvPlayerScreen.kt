@@ -278,6 +278,8 @@ fun TvPlayerScreen(
     // Up Next On Deck pick: replace this player with one for that item.
     onPlayOnDeckItem: (contentId: String, itemType: String) -> Unit = { _, _ -> },
     preferredFileId: Int? = null,
+    // The viewer picked preferredFileId's version: the start pins it.
+    versionChosen: Boolean = false,
     preferredQuality: String? = null,
     // Watch Party room. When non-null, [WatchPartyPlayback] binds this player
     // to the room for the lifetime of the screen and the room's playback
@@ -313,13 +315,14 @@ fun TvPlayerScreen(
     // the detail screen and replaying actually spins up a fresh player
     // session instead of reusing the cached one bound to the first fileId.
     viewModel: TvPlayerViewModel = koinViewModel(
-        key = "tv-player-$contentId-$libraryId-${preferredFileId ?: "auto"}-${preferredQuality ?: "quality-auto"}-${roomId ?: "solo"}-${resumePositionOverride ?: "server"}-${initialAudioTrackIndex ?: "a"}-${initialSubtitleTrackIndex ?: "s"}-${shuffleId ?: "in-order"}",
+        key = "tv-player-$contentId-$libraryId-${preferredFileId ?: "auto"}${if (versionChosen) "-chosen" else ""}-${preferredQuality ?: "quality-auto"}-${roomId ?: "solo"}-${resumePositionOverride ?: "server"}-${initialAudioTrackIndex ?: "a"}-${initialSubtitleTrackIndex ?: "s"}-${shuffleId ?: "in-order"}",
         parameters = {
             parametersOf(
                 TvPlayerLaunchArgs(
                     libraryId = libraryId,
                     contentId = contentId,
                     preferredFileId = preferredFileId,
+                    versionChosen = versionChosen,
                     preferredQuality = preferredQuality,
                     roomId = roomId,
                     resumePositionOverride = resumePositionOverride,

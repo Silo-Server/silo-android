@@ -77,7 +77,8 @@ class SiloCastMessageTest {
                     "fileId":7,
                     "audioTrackIndex":1,
                     "startFromBeginning":false,
-                    "resumePosition":120.5
+                    "resumePosition":120.5,
+                    "pinsVersion":true
                 }
             }}
             """,
@@ -91,6 +92,7 @@ class SiloCastMessageTest {
                         subtitleTrackIndex = null,
                         startFromBeginning = false,
                         resumePosition = 120.5,
+                        pinsVersion = true,
                     ),
                 ),
             ),
@@ -126,6 +128,7 @@ class SiloCastMessageTest {
             """{"type":"launch","v":2,"launch":{"serverId":"srv-1","playback":{"contentId":"movie-42","startFromBeginning":true}}}""",
         )
         assertNull(assertIs<SiloCastMessage.Launch>(decoded).launch.playback.libraryId)
+        assertNull(assertIs<SiloCastMessage.Launch>(decoded).launch.playback.pinsVersion)
     }
 
     @Test

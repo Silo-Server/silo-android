@@ -249,13 +249,7 @@ internal class MobileVideoPlaybackStarter(
                         }
                     }
             }
-            // Room starts keep the file through every replan; renewals keep
-            // whatever the original start chose.
-            val allowAlternateVersions = if (room != null) {
-                false
-            } else {
-                request.recoveryStartParams?.allowAlternateVersions
-            }
+            val allowAlternateVersions = request.allowAlternateVersions()
             val persistedTrackSelection = if (
                 userItemStatePort != null &&
                 (request.audioTrackIndex == null || request.subtitleTrackIndex == null)

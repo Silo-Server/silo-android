@@ -51,7 +51,7 @@ internal fun TvAudiobookDetailHero(
     detail: ItemDetail,
     state: TvItemDetailUiState,
     playFocus: FocusRequester,
-    onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
+    onPlay: (contentId: String, fileId: Int?, versionChosen: Boolean, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     overview: String?,
     modifier: Modifier = Modifier,
 ) {
@@ -175,6 +175,7 @@ internal fun TvAudiobookDetailHero(
                             onPlay(
                                 detail.contentId,
                                 null,
+                                false,
                                 state.selectedAudioIndex,
                                 state.audioPickedThisSession,
                                 explicitTvSubtitleLaunchSelection(state.selectedSubtitleIndex),
@@ -190,6 +191,7 @@ internal fun TvAudiobookDetailHero(
                             onPlay(
                                 detail.contentId,
                                 null,
+                                false,
                                 state.selectedAudioIndex,
                                 state.audioPickedThisSession,
                                 explicitTvSubtitleLaunchSelection(state.selectedSubtitleIndex),

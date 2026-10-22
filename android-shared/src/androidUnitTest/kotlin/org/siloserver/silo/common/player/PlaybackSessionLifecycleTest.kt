@@ -387,6 +387,9 @@ class PlaybackSessionLifecycleTest {
         backgroundScope.launch { lifecycle.missingSessionEvents.collect { renewals += it } }
         advanceUntilIdle()
 
+        val pinnedStart = defaultStartParams(startPosition = 0.0).copy(allowAlternateVersions = false)
+        lifecycle.adoptActiveSession(params = pinnedStart, session = makeSession("sess-original"))
+        // A replan of the same session rebuilds its params without the pin; the session keeps it.
         val startParams = defaultStartParams(startPosition = 0.0).copy(
             audioTrackIndex = 2,
             subtitleTrackIndex = 8,
@@ -418,7 +421,7 @@ class PlaybackSessionLifecycleTest {
         assertEquals(1, renewals.size)
         assertEquals("sess-original", renewals.single().staleSessionId)
         assertEquals(42.5, renewals.single().positionSeconds, 0.0)
-        assertEquals(startParams, renewals.single().startParams)
+        assertEquals(startParams.copy(allowAlternateVersions = false), renewals.single().startParams)
 
         lifecycle.stop()
     }

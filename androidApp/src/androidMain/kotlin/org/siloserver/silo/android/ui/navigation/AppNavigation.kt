@@ -1518,7 +1518,8 @@ fun AppNavigation(
                 openingArtworkUrl = openingArtworkUrl,
                 openingArtworkThumbhash = openingArtworkThumbhash,
                 onBackClick = { navController.popBackStack() },
-                onPlayClick = { contentId, fileId, audioTrackIndex, subtitleTrackIndex, resumePositionSeconds ->
+                onPlayClick = {
+                        contentId, fileId, versionChosen, audioTrackIndex, subtitleTrackIndex, resumePositionSeconds ->
                     val launchedRemotely = siloCastController.launchOnConnectedTarget(
                         SiloCastPlaybackRequest(
                             contentId = contentId,
@@ -1528,6 +1529,7 @@ fun AppNavigation(
                             subtitleTrackIndex = subtitleTrackIndex,
                             startFromBeginning = resumePositionSeconds == null,
                             resumePosition = resumePositionSeconds,
+                            pinsVersion = true.takeIf { versionChosen && fileId != null },
                         ),
                     )
                     if (launchedRemotely) {
@@ -1538,6 +1540,7 @@ fun AppNavigation(
                                 libraryId = libraryId,
                                 contentId = contentId,
                                 fileId = fileId,
+                                versionChosen = versionChosen,
                                 audioTrackIndex = audioTrackIndex,
                                 subtitleTrackIndex = subtitleTrackIndex,
                                 resumePositionSeconds = resumePositionSeconds,
@@ -1770,6 +1773,11 @@ fun AppNavigation(
                     nullable = true
                     defaultValue = null
                 },
+                navArgument("versionChosen") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
         ) { backStackEntry ->
             val playerViewModel = koinViewModel<PlayerViewModel>()
@@ -1789,6 +1797,7 @@ fun AppNavigation(
                 libraryId = backStackEntry.arguments?.getString("libraryId")?.toIntOrNull(),
                 contentId = backStackEntry.arguments?.getString("contentId") ?: "",
                 initialFileId = backStackEntry.arguments?.getString("fileId")?.toIntOrNull(),
+                initialVersionChosen = backStackEntry.arguments?.getString("versionChosen") == "true",
                 initialQuality = VideoPlayerRouteArgs.normalizeQuality(
                     backStackEntry.arguments?.getString("quality"),
                 ),

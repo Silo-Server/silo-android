@@ -229,7 +229,8 @@ private fun SubtitleIdentity.requiresMountedMobileSelection(): Boolean =
  * is [PlayerOverlay].
  *
  * @param contentId The content ID to play (passed via navigation argument)
- * @param initialFileId Optional explicit file selection from the detail screen
+ * @param initialFileId Optional file from the detail screen
+ * @param initialVersionChosen The viewer picked [initialFileId]'s version, so the start pins it
  * @param initialQuality Optional explicit playback-quality ceiling from a deep link
  * @param initialAudioTrackIndex Optional explicit audio selection from the detail screen
  * @param initialSubtitleTrackIndex Optional explicit subtitle selection from the detail screen
@@ -242,6 +243,7 @@ fun PlayerScreen(
     contentId: String,
     libraryId: Int? = null,
     initialFileId: Int? = null,
+    initialVersionChosen: Boolean = false,
     initialQuality: String? = null,
     initialAudioTrackIndex: Int? = null,
     initialSubtitleTrackIndex: Int? = null,
@@ -879,7 +881,15 @@ fun PlayerScreen(
     }
 
     // Load content on first composition
-    LaunchedEffect(contentId, initialFileId, initialQuality, initialAudioTrackIndex, initialSubtitleTrackIndex, resumePositionOverride) {
+    LaunchedEffect(
+        contentId,
+        initialFileId,
+        initialVersionChosen,
+        initialQuality,
+        initialAudioTrackIndex,
+        initialSubtitleTrackIndex,
+        resumePositionOverride,
+    ) {
         // A party starts from the room's playback context (above), never from
         // the route, so nothing plays solo first.
         if (inRoom) return@LaunchedEffect
@@ -889,6 +899,7 @@ fun PlayerScreen(
             libraryId = libraryId,
             contentId = contentId,
             preferredFileId = initialFileId,
+            versionChosen = initialVersionChosen,
             preferredQuality = initialQuality,
             initialAudioTrackIndex = initialAudioTrackIndex,
             initialSubtitleTrackIndex = initialSubtitleTrackIndex,

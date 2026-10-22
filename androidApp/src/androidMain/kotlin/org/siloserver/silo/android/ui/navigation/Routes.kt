@@ -220,12 +220,15 @@ sealed class Route(val route: String) {
         val libraryId: Int? = null,
         /** The running shuffle this item is a pick of; picks play from the beginning. */
         val shuffleId: String? = null,
+        /** The viewer picked [fileId] in a version picker: the start pins it. */
+        val versionChosen: Boolean = false,
     ) : Route(
         buildString {
             append("player/${contentId.routeEncode()}")
             val queryParams = listOfNotNull(
                 libraryId?.let { "libraryId=$it" },
                 fileId?.let { "fileId=$it" },
+                "versionChosen=true".takeIf { versionChosen && fileId != null },
                 // normalizeQuality is a closed wire-value set, so no URI
                 // escaping (or Android framework dependency) is needed here.
                 VideoPlayerRouteArgs.normalizeQuality(quality)?.let { "quality=$it" },
@@ -244,7 +247,7 @@ sealed class Route(val route: String) {
     ) {
         companion object {
             const val ROUTE =
-                "player/{contentId}?libraryId={libraryId}&fileId={fileId}&quality={quality}&audioTrackIndex={audioTrackIndex}&subtitleTrackIndex={subtitleTrackIndex}&resumePosition={resumePosition}&roomId={roomId}&shuffleId={shuffleId}"
+                "player/{contentId}?libraryId={libraryId}&fileId={fileId}&versionChosen={versionChosen}&quality={quality}&audioTrackIndex={audioTrackIndex}&subtitleTrackIndex={subtitleTrackIndex}&resumePosition={resumePosition}&roomId={roomId}&shuffleId={shuffleId}"
         }
     }
 

@@ -196,7 +196,7 @@ fun TvItemDetailScreen(
     seasonNumber: Int? = null,
     libraryId: Int? = null,
     initialEpisodeContentId: String? = null,
-    onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
+    onPlay: (contentId: String, fileId: Int?, versionChosen: Boolean, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
     onItemDetailReplace: (contentId: String) -> Unit = onItemDetail,
     onSeriesDetailReplace: (
@@ -242,10 +242,10 @@ fun TvItemDetailScreen(
     // D5: while this TV is in a Watch Party, Play (and extras) first asks to
     // leave the party; leaving is never hidden behind a solo start.
     val watchPartyPlayGuard = rememberTvWatchPartyPlayGuard()
-    val guardedOnPlay: (String, Int?, Int?, Boolean, TvSubtitleLaunchSelection?, String?, Double?) -> Unit =
-        { playContentId, fileId, audioTrackIndex, audioPicked, subtitleSelection, itemType, resumePositionSeconds ->
+    val guardedOnPlay: (String, Int?, Boolean, Int?, Boolean, TvSubtitleLaunchSelection?, String?, Double?) -> Unit =
+        { playContentId, fileId, versionChosen, audioTrackIndex, audioPicked, subtitleSelection, itemType, resume ->
             watchPartyPlayGuard.requestPlay {
-                onPlay(playContentId, fileId, audioTrackIndex, audioPicked, subtitleSelection, itemType, resumePositionSeconds)
+                onPlay(playContentId, fileId, versionChosen, audioTrackIndex, audioPicked, subtitleSelection, itemType, resume)
             }
         }
     TvWatchPartyPlayGuardDialog(watchPartyPlayGuard)
@@ -367,7 +367,7 @@ private fun TvDetailContent(
     initialEpisodeContentId: String?,
     viewModel: TvItemDetailViewModel,
     libraryId: Int?,
-    onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
+    onPlay: (contentId: String, fileId: Int?, versionChosen: Boolean, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
     onItemDetailReplace: (contentId: String) -> Unit,
     onSeriesClick: (seriesId: String) -> Unit,
@@ -997,6 +997,7 @@ private fun TvDetailContent(
                                     onPlay(
                                         detail.contentId,
                                         null,
+                                        false,
                                         state.selectedAudioIndex,
                                         state.audioPickedThisSession,
                                         explicitTvSubtitleLaunchSelection(state.selectedSubtitleIndex),
@@ -1150,6 +1151,7 @@ private fun TvDetailContent(
                                         onPlay(
                                             episode.contentId,
                                             launch.fileId,
+                                            launch.versionChosen,
                                             launch.audioTrackIndex,
                                             launch.audioPickedThisSession,
                                             launch.subtitleSelection,
@@ -1164,6 +1166,7 @@ private fun TvDetailContent(
                                         onPlay(
                                             episode.contentId,
                                             launch.fileId,
+                                            launch.versionChosen,
                                             launch.audioTrackIndex,
                                             launch.audioPickedThisSession,
                                             launch.subtitleSelection,
@@ -1241,6 +1244,7 @@ private fun TvDetailContent(
                                     onPlay(
                                         extra.contentId,
                                         extra.fileId,
+                                        false,
                                         null,
                                         false,
                                         null,
@@ -1389,6 +1393,7 @@ private fun TvDetailContent(
                             onPlay(
                                 detail.contentId,
                                 null,
+                                false,
                                 state.selectedAudioIndex,
                                 state.audioPickedThisSession,
                                 explicitTvSubtitleLaunchSelection(state.selectedSubtitleIndex),
@@ -1611,7 +1616,7 @@ private fun HeroActionRow(
     viewModel: TvItemDetailViewModel,
     playFocus: FocusRequester,
     selectorFocus: FocusRequester,
-    onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
+    onPlay: (contentId: String, fileId: Int?, versionChosen: Boolean, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onSeriesClick: (seriesId: String) -> Unit,
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
     libraryId: Int?,
@@ -1766,6 +1771,8 @@ private fun HeroActionRow(
         },
     )
     val playFileId = selectorSelectedFileId ?: selectedFileId.takeIf { hasTrackOverride }
+    // Only a version the viewer picked pins the file; a track override's file is the automatic one.
+    val playVersionChosen = selectorSelectedFileId != null
     // No separate next-up autofocus: the Play button is always rendered and
     // focusable, and the screen already focuses it on detail load, so re-focusing
     // when next-up resolves would only risk yanking focus back if the viewer had
@@ -1805,7 +1812,7 @@ private fun HeroActionRow(
                         if (playReady && !playLaunchPending) {
                             playLaunchPending = true
                             onPlay(
-                                playContentId, playFileId,
+                                playContentId, playFileId, playVersionChosen,
                                 selectorAudioIndex ?: automaticAudioTrackOrdinal,
                                 selectorAudioPicked,
                                 subtitleLaunchSelection,
@@ -1836,7 +1843,7 @@ private fun HeroActionRow(
                             if (playReady && !playLaunchPending) {
                                 playLaunchPending = true
                                 onPlay(
-                                    playContentId, playFileId,
+                                    playContentId, playFileId, playVersionChosen,
                                     selectorAudioIndex ?: automaticAudioTrackOrdinal,
                                     selectorAudioPicked,
                                     subtitleLaunchSelection,
@@ -2032,6 +2039,8 @@ private fun HeroActionRow(
 
 internal data class SeriesEpisodePlaybackLaunch(
     val fileId: Int?,
+    /** [fileId] is a version the viewer picked, not the automatic one sent with a track override. */
+    val versionChosen: Boolean,
     val audioTrackIndex: Int?,
     val audioPickedThisSession: Boolean,
     val subtitleSelection: TvSubtitleLaunchSelection?,
@@ -2090,6 +2099,7 @@ internal fun seriesEpisodePlaybackLaunch(
     )
     return SeriesEpisodePlaybackLaunch(
         fileId = explicitFileId ?: selectedVersion?.fileId?.takeIf { hasTrackOverride },
+        versionChosen = explicitFileId != null,
         audioTrackIndex = audioTrackIndex ?: automaticAudioTrackOrdinal,
         audioPickedThisSession = selectionMatchesEpisode && state.nextUpAudioPickedThisSession,
         subtitleSelection = subtitleSelection,
