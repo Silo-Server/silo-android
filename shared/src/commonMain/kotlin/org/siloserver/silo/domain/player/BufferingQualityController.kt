@@ -168,6 +168,13 @@ data class BufferingPlanSummary(
  * frame, a lowering during the start's wait) continues the start's wait: its
  * waits are timed under the grace the attempt's first wait began.
  *
+ * Until a plan of the attempt has played, a wait is the network's only on
+ * evidence that the plan's media arrived more slowly than its delivered
+ * bitrate ([planThroughputKbps]): a start can also fail for other reasons,
+ * and each lowering's replacement would carry on the same wait. Without it no
+ * trigger acts, the start's wait does not count once the plan plays, and the
+ * start runs on to its deadline and the caller's failure path.
+ *
  * The answer, the once-per-title notice and the re-offer wait belong to the
  * title: [onNewAttempt] keeps them, and only [reset] (different content) and a
  * quality change clear them. Inside a Watch Party room the controller is
@@ -194,6 +201,11 @@ class BufferingQualityController(
     private val onReplan: (BufferingQualityReplan) -> Unit,
     private val onNotice: (BufferingQualityNotice) -> Unit,
     private val onPlanSummary: (BufferingPlanSummary) -> Unit,
+    /**
+     * The playing plan's measured throughput so far, or null when it has
+     * none: the evidence a lowering needs before the attempt first plays.
+     */
+    private val planThroughputKbps: () -> Int?,
 ) {
     companion object {
         const val STARTUP_GRACE_MS: Long = 10_000L
@@ -476,6 +488,7 @@ class BufferingQualityController(
         val state = current ?: return
         val now = clock()
         thawPill()
+        val startWait = !state.attemptStarted
         state.played = true
         if (state.playingSince == null) state.playingSince = now
         val tracker = state.tracker
@@ -491,10 +504,11 @@ class BufferingQualityController(
             // A stall timed during transport trouble cannot exist: trouble
             // drops the timing and only its end re-times the stall.
             val duration = now - startedAt
-            if (duration >= LONG_STALL_MS) {
-                tracker.longStallEndedAt = now
-            } else if (duration >= STALL_MIN_MS) {
-                tracker.stallEnds += now
+            when {
+                // Not shown to be the network's: see the class notes.
+                startWait && !slowLinkEvidence(state.plan) -> Unit
+                duration >= LONG_STALL_MS -> tracker.longStallEndedAt = now
+                duration >= STALL_MIN_MS -> tracker.stallEnds += now
             }
         }
         evaluate(now)
@@ -654,24 +668,23 @@ class BufferingQualityController(
      * The playing plan, the attempt's first or a replacement, missed the
      * player's own start deadline while it waited for media, before it first
      * played. On Auto in `always` mode, when its media measurably arrived
-     * more slowly than its delivered bitrate ([observedKbps], the plan's
-     * throughput so far), it lowers as a long stall would: the step-down
-     * replan, and the undo pill when a lower plan arrives. Returns false,
-     * leaving the caller's failure recovery to run, without that evidence (no
-     * measurement, or media at or above the bitrate: the stream fails for
-     * another reason), in Ask first or Never, on a quality the viewer picked,
-     * on a title answered at this quality (Keep or Restore), inside a Watch
-     * Party room, during an outage or within [LONG_STALL_MS] after one (the
-     * start never had a fair run on a working network), in a renderer wait,
-     * in the no-lower cooldown, while a pick or a replan of ours is in flight
-     * or waits out its rearm (refused or never adopted), or with nothing
-     * lower to play.
+     * more slowly than its delivered bitrate ([planThroughputKbps]), it
+     * lowers as a long stall would: the step-down replan, and the undo pill
+     * when a lower plan arrives. Returns false, leaving the caller's failure
+     * recovery to run, without that evidence (no measurement, or media at or
+     * above the bitrate: the stream fails for another reason), in Ask first
+     * or Never, on a quality the viewer picked, on a title answered at this
+     * quality (Keep or Restore), inside a Watch Party room, during an outage
+     * or within [LONG_STALL_MS] after one (the start never had a fair run on
+     * a working network), in a renderer wait, in the no-lower cooldown, while
+     * a pick or a replan of ours is in flight or waits out its rearm (refused
+     * or never adopted), or with nothing lower to play.
      *
      * After it returns true, [failurePath] runs if the lowering fails or its
      * rearm passes while this plan is still current and has not played, so a
      * start never ends on a dead player.
      */
-    fun onStartDeadlineMissed(observedKbps: Int?, failurePath: () -> Unit): Boolean {
+    fun onStartDeadlineMissed(failurePath: () -> Unit): Boolean {
         if (!enabled || suspended || pickPending || pending != null || rearmJob?.isActive == true) return false
         val now = clock()
         val recentOutage = transportTroubleEndedAt?.let { now - it < LONG_STALL_MS } == true
@@ -681,9 +694,7 @@ class BufferingQualityController(
         state.cooldownUntil?.let { if (now < it) return false }
         val plan = state.plan
         if (plan.quality != PLAYBACK_QUALITY_AUTO || mode != BufferingQualityMode.ALWAYS) return false
-        if (answeredQuality == plan.quality) return false
-        val delivered = plan.deliveredKbps?.takeIf { it > 0 } ?: return false
-        if (observedKbps == null || observedKbps >= delivered) return false
+        if (answeredQuality == plan.quality || !slowLinkEvidence(plan)) return false
         val lowering = loweringFor(plan) ?: return false
         hidePill()
         state.deadlineFailurePath = failurePath
@@ -771,6 +782,7 @@ class BufferingQualityController(
         }
         val plan = state.plan
         if (answeredQuality == plan.quality) return
+        if (!state.attemptStarted && !slowLinkEvidence(plan)) return
         if (mode == BufferingQualityMode.NEVER) {
             state.action = BufferingAction.IGNORED
             resetTracker(state, now)
@@ -802,6 +814,17 @@ class BufferingQualityController(
      */
     private fun isBusy(): Boolean =
         pending != null || rearmJob?.isActive == true || activePill != null || deferredPill != null
+
+    /**
+     * [plan]'s media measurably arrived more slowly than its delivered
+     * bitrate. No measurement, or media at or above the bitrate, is no
+     * evidence: the plan may be failing for another reason.
+     */
+    private fun slowLinkEvidence(plan: BufferingQualityPlan): Boolean {
+        val delivered = plan.deliveredKbps?.takeIf { it > 0 } ?: return false
+        val observed = planThroughputKbps() ?: return false
+        return observed < delivered
+    }
 
     /**
      * A trigger held but a time-based rule blocked it. While the stall is

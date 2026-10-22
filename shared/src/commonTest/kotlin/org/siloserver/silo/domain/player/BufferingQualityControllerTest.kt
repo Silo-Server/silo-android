@@ -46,6 +46,9 @@ class BufferingQualityControllerTest {
     private val notices = mutableListOf<BufferingQualityNotice>()
     private val summaries = mutableListOf<BufferingPlanSummary>()
 
+    /** The playing plan's measured throughput: below every delivered bitrate here unless a test says otherwise. */
+    private var planThroughputKbps: Int? = 2_000
+
     /**
      * The controller's timers run under [TestScope.backgroundScope], which
      * `runTest` cancels before draining the scheduler. A stall still in
@@ -59,6 +62,7 @@ class BufferingQualityControllerTest {
             onReplan = { replans += it },
             onNotice = { notices += it },
             onPlanSummary = { summaries += it },
+            planThroughputKbps = { planThroughputKbps },
         ).also { it.setMode(mode) }
 
     /** Runs every timer due at or before [t], leaving the clock at [t]. */
@@ -204,11 +208,12 @@ class BufferingQualityControllerTest {
         )
         for (case in cases) {
             replans.clear()
+            planThroughputKbps = case.observedKbps
             val controller = newController(case.mode)
             case.setup(this, controller, testScheduler.currentTime)
             replans.clear()
 
-            assertEquals(case.lowersTo != null, controller.onStartDeadlineMissed(case.observedKbps) {}, case.name)
+            assertEquals(case.lowersTo != null, controller.onStartDeadlineMissed {}, case.name)
             val expected = case.lowersTo
                 ?.let { listOf(BufferingQualityReplan("auto", it, BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER)) }
                 .orEmpty()
@@ -236,7 +241,7 @@ class BufferingQualityControllerTest {
             controller.onPlanAdopted(plan("p1"))
             controller.onWaiting()
             var failurePaths = 0
-            assertTrue(controller.onStartDeadlineMissed(2_000) { failurePaths++ }, case.name)
+            assertTrue(controller.onStartDeadlineMissed { failurePaths++ }, case.name)
             case.after(this, controller)
             // The rearm passes too.
             at(testScheduler.currentTime + BufferingQualityController.REARM_AFTER_UNADOPTED_MS)
@@ -284,6 +289,72 @@ class BufferingQualityControllerTest {
         assertEquals(emptyList(), replans)
         at(16_000)
         assertEquals(1, replans.size)
+    }
+
+    @Test
+    fun `before the attempt first plays, only a measurably slow link lowers`() = runTest {
+        // Each row has p1 waiting from t0, nothing played yet, and counts the lowerings sent.
+        data class Case(
+            val name: String,
+            /** The plans' measured throughput, until the row changes it. */
+            val kbps: Int?,
+            val lowerings: Int,
+            val mode: BufferingQualityMode = BufferingQualityMode.ALWAYS,
+            val then: TestScope.(BufferingQualityController, Long) -> Unit,
+        )
+        // The lowering's plan is adopted and never starts.
+        val replacementNeverStarts: TestScope.(BufferingQualityController, Long) -> Unit = { controller, t0 ->
+            at(t0 + 18_000)
+            controller.onPlanAdopted(plan("p2", deliveredKbps = 31_600))
+            controller.onWaiting()
+            at(t0 + 60_000)
+        }
+        val cases = listOf(
+            Case("no throughput measured", kbps = null, lowerings = 0) { _, t0 -> at(t0 + 60_000) },
+            Case("media at the delivered bitrate", kbps = 63_000, lowerings = 0) { _, t0 -> at(t0 + 60_000) },
+            Case("Ask first offers nothing", kbps = null, lowerings = 0, mode = BufferingQualityMode.ASK) { controller, t0 ->
+                at(t0 + 60_000)
+                assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
+            },
+            Case("a slow start lowers, and its slow replacement again", kbps = 2_000, lowerings = 2) { controller, t0 ->
+                replacementNeverStarts(controller, t0)
+            },
+            Case("a replacement with no evidence does not lower again", kbps = 2_000, lowerings = 1) { controller, t0 ->
+                at(t0 + 16_000)
+                planThroughputKbps = null
+                replacementNeverStarts(controller, t0)
+            },
+            Case("the start's wait does not count when the plan plays", kbps = null, lowerings = 0) { controller, t0 ->
+                at(t0 + 20_000)
+                controller.onPlaying()
+                at(t0 + 40_000)
+                controller.onWaiting()
+                at(t0 + 42_000)
+                controller.onPlaying()
+            },
+            Case("the start's wait counts if it plays on a slow link", kbps = null, lowerings = 1) { controller, t0 ->
+                at(t0 + 20_000)
+                planThroughputKbps = 2_000
+                controller.onPlaying()
+            },
+            Case("after the first play a stall lowers without evidence", kbps = null, lowerings = 1) { controller, t0 ->
+                controller.onPlaying()
+                at(t0 + 125_000)
+                controller.onWaiting()
+                at(t0 + 131_000)
+            },
+        )
+        for (case in cases) {
+            replans.clear()
+            planThroughputKbps = case.kbps
+            val controller = newController(case.mode)
+            val t0 = testScheduler.currentTime
+            controller.onPlanAdopted(plan("p1"))
+            controller.onWaiting()
+            case.then(this, controller, t0)
+            assertEquals(case.lowerings, replans.size, case.name)
+            controller.reset()
+        }
     }
 
     @Test

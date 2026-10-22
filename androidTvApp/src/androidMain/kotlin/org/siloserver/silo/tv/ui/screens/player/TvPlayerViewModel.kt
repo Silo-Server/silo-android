@@ -1484,6 +1484,7 @@ class TvPlayerViewModel(
         onReplan = ::requestBufferingQualityReplan,
         onNotice = ::showBufferingQualityNotice,
         onPlanSummary = { playbackSessionManager.emitPlanSummary(it) },
+        planThroughputKbps = playbackSessionManager::observedPlanThroughputKbps,
     )
 
     /**
@@ -2876,10 +2877,9 @@ class TvPlayerViewModel(
             reason.classification == "transport_stall" &&
             bufferingQualityEnabled
         ) {
-            val observedKbps = playbackSessionManager.observedPlanThroughputKbps()
             val mount = state.transportMountNonce
             val generation = contentLoadGeneration
-            val lowering = bufferingQualityController.onStartDeadlineMissed(observedKbps) {
+            val lowering = bufferingQualityController.onStartDeadlineMissed {
                 // The lowering came to nothing: fail this load as before, if it is still the one mounted.
                 val current = _uiState.value
                 if (generation == contentLoadGeneration && current.transportMountNonce == mount) {
@@ -2890,7 +2890,8 @@ class TvPlayerViewModel(
             if (lowering) {
                 Log.i(
                     TAG,
-                    "buffering_quality start_deadline_missed action=lower observed_kbps=$observedKbps " +
+                    "buffering_quality start_deadline_missed action=lower " +
+                        "observed_kbps=${playbackSessionManager.observedPlanThroughputKbps()} " +
                         "classification=${reason.classification} buffered_ahead_ms=${reason.bufferedAheadMs}",
                 )
                 return

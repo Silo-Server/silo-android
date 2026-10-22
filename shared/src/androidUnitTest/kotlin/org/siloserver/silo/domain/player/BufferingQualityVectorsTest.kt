@@ -131,6 +131,11 @@ class BufferingQualityVectorsTest {
                 }
             },
             onPlanSummary = { summaries += it },
+            // The vectors carry no throughput: every plan's media count as
+            // arriving below its delivered bitrate. That is the evidence a
+            // start's wait needs to lower (slow_start) or to count once the
+            // plan plays (slow_start_frame_after_grace).
+            planThroughputKbps = { 1 },
         )
         val modeWire = case["mode"]?.jsonPrimitive?.content ?: defaultMode
         controller.setMode(
