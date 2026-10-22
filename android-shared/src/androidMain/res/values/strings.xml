@@ -67,6 +67,7 @@
          Quality menu shows one line under the checked row; Playback stats
          list every reason. %1$s rates are settings_rate_mbps or settings_rate_kbps. -->
     <string name="quality_reason_original">Original quality</string>
+    <!-- A fixed quality the viewer picked from the Quality menu (not a version choice). -->
     <string name="quality_reason_user_selected">Quality you picked</string>
     <string name="quality_reason_network_learned_limit">Limited to %1$s after buffering</string>
     <string name="quality_reason_network_estimate">Your connection measured %1$s</string>
@@ -81,7 +82,18 @@
     <string name="quality_reason_dynamic_range_converted">%1$s shown as %2$s</string>
     <!-- %1$s and %2$s are audio codecs such as TrueHD and AAC. -->
     <string name="quality_reason_audio_converted">%1$s audio converted to %2$s</string>
+    <!-- The same audio codec with fewer channels. %1$s is a quality_reason_channels_* word or count. -->
+    <string name="quality_reason_audio_downmixed">Audio downmixed to %1$s</string>
+    <string name="quality_reason_channels_mono">mono</string>
+    <string name="quality_reason_channels_stereo">stereo</string>
+    <string name="quality_reason_channels_5_1">5.1</string>
+    <plurals name="quality_reason_channels">
+        <item quantity="one">%d channel</item>
+        <item quantity="other">%d channels</item>
+    </plurals>
     <string name="quality_reason_subtitle_burn_in">Subtitles burned into the video</string>
+    <!-- Video re-encoded for none of the reasons above, such as a file unsafe to copy. -->
+    <string name="quality_reason_compatibility_conversion">Converted for this device</string>
     <string name="quality_reason_container_unsupported">Repackaged for this device</string>
     <!-- A reason this app version doesn't know yet. -->
     <string name="quality_reason_unknown">Adjusted for this device</string>

@@ -326,7 +326,8 @@ data class PlaybackPlanV3(
 /**
  * One entry of [PlaybackPlanV3.qualityReasons]. [code] is an open set; each
  * code carries only the figures it needs. `alternate_version`'s
- * `media_file_id` is not decoded: no text names it.
+ * `media_file_id` is not decoded: no text names it. [channels] is
+ * `audio_converted`'s delivered channel count, sent when channels drop.
  */
 @Serializable
 data class PlaybackQualityReasonV3(
@@ -336,6 +337,7 @@ data class PlaybackQualityReasonV3(
     val height: Int? = null,
     val from: String? = null,
     val to: String? = null,
+    val channels: Int? = null,
 )
 
 /** A learned bandwidth limit that lowered Auto for this plan. */

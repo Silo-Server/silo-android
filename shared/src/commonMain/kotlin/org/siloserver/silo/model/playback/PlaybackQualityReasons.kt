@@ -10,6 +10,8 @@ package org.siloserver.silo.model.playback
 /** One quality reason, ready to word. */
 sealed interface PlaybackQualityReasonText {
     data object Original : PlaybackQualityReasonText
+
+    /** The viewer picked a fixed quality from the menu. A version pin never gives this. */
     data object UserSelected : PlaybackQualityReasonText
     data class LearnedLimit(val kbps: Int) : PlaybackQualityReasonText
     data class NetworkEstimate(val kbps: Int) : PlaybackQualityReasonText
@@ -28,7 +30,13 @@ sealed interface PlaybackQualityReasonText {
 
     /** Display names, such as "TrueHD" and "AAC". */
     data class AudioConverted(val from: String, val to: String) : PlaybackQualityReasonText
+
+    /** The same audio codec with fewer channels: [channels] is the delivered count. */
+    data class AudioDownmixed(val channels: Int) : PlaybackQualityReasonText
     data object SubtitleBurnIn : PlaybackQualityReasonText
+
+    /** Video re-encoded for none of the named causes, such as a source unsafe to copy. */
+    data object CompatibilityConversion : PlaybackQualityReasonText
     data object ContainerUnsupported : PlaybackQualityReasonText
 
     /**
@@ -40,7 +48,8 @@ sealed interface PlaybackQualityReasonText {
 
     /** A change made for compatibility, which may share the menu line with the primary reason. */
     val isCompatibilityChange: Boolean
-        get() = this is DynamicRangeConverted || this is AudioConverted || this == SubtitleBurnIn
+        get() = this is DynamicRangeConverted || this is AudioConverted || this is AudioDownmixed ||
+            this == SubtitleBurnIn
 }
 
 /** This reason's [PlaybackQualityReasonText]. */
@@ -67,9 +76,15 @@ fun PlaybackQualityReasonV3.text(): PlaybackQualityReasonText {
         "audio_converted" -> {
             val source = from.token() ?: return unknown
             val target = to.token() ?: return unknown
-            PlaybackQualityReasonText.AudioConverted(audioCodecName(source), audioCodecName(target))
+            val delivered = channels?.takeIf { it > 0 }
+            if (source == target && delivered != null) {
+                PlaybackQualityReasonText.AudioDownmixed(delivered)
+            } else {
+                PlaybackQualityReasonText.AudioConverted(audioCodecName(source), audioCodecName(target))
+            }
         }
         "subtitle_burn_in" -> PlaybackQualityReasonText.SubtitleBurnIn
+        "compatibility_conversion" -> PlaybackQualityReasonText.CompatibilityConversion
         "container_unsupported" -> PlaybackQualityReasonText.ContainerUnsupported
         else -> unknown
     }

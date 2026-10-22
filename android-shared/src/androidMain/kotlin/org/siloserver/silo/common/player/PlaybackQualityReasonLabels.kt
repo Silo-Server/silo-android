@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.player
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R
 import org.siloserver.silo.common.settings.connectionRateLabel
@@ -57,8 +58,20 @@ private fun qualityReasonLabel(text: PlaybackQualityReasonText, rawUnknown: Bool
         stringResource(R.string.quality_reason_dynamic_range_converted, text.from, text.to)
     is PlaybackQualityReasonText.AudioConverted ->
         stringResource(R.string.quality_reason_audio_converted, text.from, text.to)
+    is PlaybackQualityReasonText.AudioDownmixed ->
+        stringResource(R.string.quality_reason_audio_downmixed, audioChannelsLabel(text.channels))
     PlaybackQualityReasonText.SubtitleBurnIn -> stringResource(R.string.quality_reason_subtitle_burn_in)
+    PlaybackQualityReasonText.CompatibilityConversion ->
+        stringResource(R.string.quality_reason_compatibility_conversion)
     PlaybackQualityReasonText.ContainerUnsupported -> stringResource(R.string.quality_reason_container_unsupported)
     is PlaybackQualityReasonText.Unknown ->
         if (rawUnknown) text.code else stringResource(R.string.quality_reason_unknown)
+}
+
+@Composable
+private fun audioChannelsLabel(channels: Int): String = when (channels) {
+    1 -> stringResource(R.string.quality_reason_channels_mono)
+    2 -> stringResource(R.string.quality_reason_channels_stereo)
+    6 -> stringResource(R.string.quality_reason_channels_5_1)
+    else -> pluralStringResource(R.plurals.quality_reason_channels, channels, channels)
 }

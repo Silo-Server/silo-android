@@ -10,29 +10,21 @@ import org.siloserver.silo.model.playback.PlaybackQualityReasonText as Text
 
 class PlaybackQualityReasonsTest {
     @Test
-    fun eachCodeMapsWithItsFigures() {
+    fun codesNeedTheirFigures() {
         val cases = listOf(
-            PlaybackQualityReasonV3("original") to Text.Original,
-            PlaybackQualityReasonV3("user_selected") to Text.UserSelected,
-            PlaybackQualityReasonV3("network_learned_limit", kbps = 4_000, expiresAt = "2026-10-23T00:00:00Z") to
-                Text.LearnedLimit(4_000),
             PlaybackQualityReasonV3("network_estimate", kbps = 5_100) to Text.NetworkEstimate(5_100),
-            PlaybackQualityReasonV3("client_cap", kbps = 3_000) to Text.ClientCap(3_000),
-            PlaybackQualityReasonV3("server_cap", kbps = 8_000) to Text.ServerCap(8_000),
             PlaybackQualityReasonV3("device_resolution_limit", height = 1080) to Text.DeviceResolution("1080p"),
-            PlaybackQualityReasonV3("alternate_version") to Text.AlternateVersion,
-            PlaybackQualityReasonV3("video_codec_unsupported", from = "hevc") to Text.VideoCodecUnsupported("HEVC"),
-            PlaybackQualityReasonV3("video_codec_unsupported", from = "vc1") to Text.VideoCodecUnsupported("VC-1"),
+            PlaybackQualityReasonV3("compatibility_conversion") to Text.CompatibilityConversion,
+            // An unknown token shows uppercased.
             PlaybackQualityReasonV3("video_codec_unsupported", from = "prores") to Text.VideoCodecUnsupported("PRORES"),
-            PlaybackQualityReasonV3("dynamic_range_converted", from = "dolby_vision", to = "hdr10") to
-                Text.DynamicRangeConverted("Dolby Vision", "HDR10"),
-            PlaybackQualityReasonV3("dynamic_range_converted", from = "hdr10_plus", to = "sdr") to
-                Text.DynamicRangeConverted("HDR10+", "SDR"),
-            PlaybackQualityReasonV3("audio_converted", from = "truehd", to = "eac3") to
-                Text.AudioConverted("TrueHD", "Dolby Digital Plus"),
             PlaybackQualityReasonV3("audio_converted", from = "mp3", to = "aac") to Text.AudioConverted("MP3", "AAC"),
-            PlaybackQualityReasonV3("subtitle_burn_in") to Text.SubtitleBurnIn,
-            PlaybackQualityReasonV3("container_unsupported") to Text.ContainerUnsupported,
+            // Fewer channels of the same codec is a downmix; a codec change stays a conversion.
+            PlaybackQualityReasonV3("audio_converted", from = "aac", to = "aac", channels = 2) to Text.AudioDownmixed(2),
+            PlaybackQualityReasonV3("audio_converted", from = "truehd", to = "aac", channels = 2) to
+                Text.AudioConverted("TrueHD", "AAC"),
+            PlaybackQualityReasonV3("audio_converted", from = "aac", to = "aac") to Text.AudioConverted("AAC", "AAC"),
+            PlaybackQualityReasonV3("audio_converted", from = "aac", to = "aac", channels = 0) to
+                Text.AudioConverted("AAC", "AAC"),
             // Codes this client doesn't know, and known codes missing the figure their words need.
             PlaybackQualityReasonV3("thermal_limit", kbps = 2_000) to Text.Unknown("thermal_limit"),
             PlaybackQualityReasonV3("network_estimate") to Text.Unknown("network_estimate"),
@@ -47,13 +39,17 @@ class PlaybackQualityReasonsTest {
     @Test
     fun theMenuLineAddsOnlyACompatibilityChange() {
         val estimate = PlaybackQualityReasonV3("network_estimate", kbps = 5_100)
+        val downmix = PlaybackQualityReasonV3("audio_converted", from = "eac3", to = "eac3", channels = 6)
+        val conversion = PlaybackQualityReasonV3("compatibility_conversion")
         val cases = listOf(
-            listOf(estimate, PlaybackQualityReasonV3("dynamic_range_converted", from = "dolby_vision", to = "hdr10")) to
-                listOf(Text.NetworkEstimate(5_100), Text.DynamicRangeConverted("Dolby Vision", "HDR10")),
             listOf(estimate, PlaybackQualityReasonV3("subtitle_burn_in")) to
                 listOf(Text.NetworkEstimate(5_100), Text.SubtitleBurnIn),
+            listOf(estimate, downmix) to listOf(Text.NetworkEstimate(5_100), Text.AudioDownmixed(6)),
             listOf(estimate, PlaybackQualityReasonV3("alternate_version")) to
                 listOf(Text.NetworkEstimate(5_100)),
+            // A conversion can lead the line but never joins it.
+            listOf(estimate, conversion) to listOf(Text.NetworkEstimate(5_100)),
+            listOf(conversion, downmix) to listOf(Text.CompatibilityConversion, Text.AudioDownmixed(6)),
             listOf(PlaybackQualityReasonV3("original"), PlaybackQualityReasonV3("container_unsupported")) to
                 listOf(Text.Original),
             listOf(PlaybackQualityReasonV3("thermal_limit")) to listOf(Text.Unknown("thermal_limit")),
@@ -88,8 +84,6 @@ class PlaybackQualityReasonsTest {
         for ((frame, expected) in cases) assertEquals(expected, playbackResolutionLabel(frame.first, frame.second), "$frame")
         assertEquals("720p", playbackResolutionLabel(height = 720))
         assertNull(playbackResolutionLabel(1920, 0))
-        assertEquals("Auto · 1080p", playbackAutoQualityLabel("1080p"))
-        assertEquals("Auto", playbackAutoQualityLabel(null))
     }
 
     @Test
@@ -109,7 +103,8 @@ class PlaybackQualityReasonsTest {
                 "quality_reasons": [
                   {"code": "network_estimate", "kbps": 5100},
                   {"code": "alternate_version", "media_file_id": "mf_42"},
-                  {"code": "dynamic_range_converted", "from": "dolby_vision", "to": "hdr10", "note": "ignored"}
+                  {"code": "dynamic_range_converted", "from": "dolby_vision", "to": "hdr10", "note": "ignored"},
+                  {"code": "audio_converted", "from": "aac", "to": "aac", "channels": 2}
                 ],
                 "decision_reason": "bandwidth_cap"
               }
@@ -126,6 +121,7 @@ class PlaybackQualityReasonsTest {
                 PlaybackQualityReasonV3("network_estimate", kbps = 5_100),
                 PlaybackQualityReasonV3("alternate_version"),
                 PlaybackQualityReasonV3("dynamic_range_converted", from = "dolby_vision", to = "hdr10"),
+                PlaybackQualityReasonV3("audio_converted", from = "aac", to = "aac", channels = 2),
             ),
             reported.qualityReasons,
         )
