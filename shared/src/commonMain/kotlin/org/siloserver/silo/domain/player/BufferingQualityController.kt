@@ -256,6 +256,12 @@ class BufferingQualityController(
     /** Media requests are failing: any wait is an outage, not a stall. */
     private var transportTrouble = false
 
+    /** When the last outage ended. */
+    private var transportTroubleEndedAt: Long? = null
+
+    /** Why the player is waiting, or null while it plays or is paused. */
+    private var waitCause: BufferingWaitCause? = null
+
     /** The viewer's quality pick is on its way; see [onQualityPickSent]. */
     private var pickPending = false
 
@@ -449,6 +455,7 @@ class BufferingQualityController(
     /** Playback is running: the first frame, or a resume from waiting or pause. */
     fun onPlaying(): Unit {
         paused = false
+        waitCause = null
         if (!enabled) return
         val state = current ?: return
         val now = clock()
@@ -488,6 +495,7 @@ class BufferingQualityController(
      */
     fun onWaiting(cause: BufferingWaitCause = BufferingWaitCause.NETWORK): Unit {
         if (cause != BufferingWaitCause.PAUSE) paused = false
+        waitCause = cause
         if (!enabled) return
         val state = current ?: return
         val now = clock()
@@ -509,6 +517,7 @@ class BufferingQualityController(
     /** The viewer paused. */
     fun onPause(): Unit {
         paused = true
+        waitCause = null
         if (!enabled) return
         freezePill()
         val state = current ?: return
@@ -542,6 +551,7 @@ class BufferingQualityController(
     /** Media requests recovered. */
     fun onTransportErrorEnd(): Unit {
         transportTrouble = false
+        transportTroubleEndedAt = clock()
         if (!enabled) return
         val state = current ?: return
         if (state.tracker.stalled && state.tracker.stallStartedAt == null) {
@@ -613,17 +623,26 @@ class BufferingQualityController(
     fun onNewAttempt(): Unit = onPlaybackStopped()
 
     /**
-     * The playing plan missed the player's own start deadline before its
-     * first frame. On Auto in `always` mode it lowers as a long stall would:
-     * the step-down replan, and the undo pill when a lower plan arrives.
-     * Returns false, leaving the caller's failure recovery to run, in Ask
-     * first or Never, on a quality the viewer picked, on a title answered
-     * at this quality (Keep or Restore), inside a Watch Party room, while a
-     * pick or a replan of ours is in flight, or with nothing lower to play.
+     * The playing plan, the attempt's first or a replacement, missed the
+     * player's own start deadline before it first played. On Auto in
+     * `always` mode it lowers as a long stall would: the step-down replan,
+     * and the undo pill when a lower plan arrives. Returns false, leaving the
+     * caller's failure recovery to run, in Ask first or Never, on a quality
+     * the viewer picked, on a title answered at this quality (Keep or
+     * Restore), inside a Watch Party room, during an outage or within
+     * [LONG_STALL_MS] after one (the start never had a fair run on a working
+     * network), in a renderer wait, in the no-lower cooldown, while a pick or
+     * a replan of ours is in flight or waits out its rearm (refused or never
+     * adopted), or with nothing lower to play.
      */
     fun onStartDeadlineMissed(): Boolean {
-        if (!enabled || suspended || pickPending || pending != null) return false
+        if (!enabled || suspended || pickPending || pending != null || rearmJob?.isActive == true) return false
+        val now = clock()
+        val recentOutage = transportTroubleEndedAt?.let { now - it < LONG_STALL_MS } == true
+        if (transportTrouble || recentOutage || waitCause == BufferingWaitCause.RENDERER) return false
         val state = current ?: return false
+        if (!state.tracker.starting) return false
+        state.cooldownUntil?.let { if (now < it) return false }
         val plan = state.plan
         if (plan.quality != PLAYBACK_QUALITY_AUTO || mode != BufferingQualityMode.ALWAYS) return false
         if (answeredQuality == plan.quality) return false

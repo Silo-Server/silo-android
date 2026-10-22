@@ -103,44 +103,111 @@ class BufferingQualityControllerTest {
     }
 
     @Test
-    fun `a missed start deadline lowers only on unanswered Auto in always mode`() = runTest {
-        data class Case(val name: String, val mode: BufferingQualityMode, val quality: String = "auto", val answer: String? = null)
-        val cases = listOf(
-            Case("always on Auto", BufferingQualityMode.ALWAYS) to true,
-            Case("ask on Auto", BufferingQualityMode.ASK) to false,
-            Case("never on Auto", BufferingQualityMode.NEVER) to false,
-            Case("always on a picked quality", BufferingQualityMode.ALWAYS, quality = "1080p-high") to false,
-            Case("always after Keep", BufferingQualityMode.ALWAYS, answer = "keep") to false,
-            Case("always after Restore", BufferingQualityMode.ALWAYS, answer = "restore") to false,
+    fun `a missed start deadline lowers only on unanswered Auto in always mode after a fair start`() = runTest {
+        // Each setup leaves a plan waiting before it first played, from t0 on the shared clock.
+        data class Case(
+            val name: String,
+            val lowersTo: Int?,
+            val mode: BufferingQualityMode = BufferingQualityMode.ALWAYS,
+            val setup: TestScope.(BufferingQualityController, Long) -> Unit,
         )
-        for ((case, lowers) in cases) {
-            replans.clear()
-            val controller = newController(if (case.answer == "keep") BufferingQualityMode.ASK else case.mode)
-            if (case.answer != null) {
-                // A long stall on p1, timed from now: each case runs later on the same clock.
-                val t0 = testScheduler.currentTime
-                controller.onPlanAdopted(plan("p1"))
-                controller.onPlaying()
-                at(t0 + 125_000)
+        fun TestScope.longStallOnP1(controller: BufferingQualityController, t0: Long) {
+            controller.onPlanAdopted(plan("p1"))
+            controller.onPlaying()
+            at(t0 + 125_000)
+            controller.onWaiting()
+            at(t0 + 131_000)
+        }
+        val start: TestScope.(BufferingQualityController, Long) -> Unit = { controller, _ ->
+            controller.onPlanAdopted(plan("p2"))
+            controller.onWaiting()
+        }
+        val cases = listOf(
+            Case("the attempt's first plan", lowersTo = 44_100, setup = start),
+            Case("ask on Auto", lowersTo = null, mode = BufferingQualityMode.ASK, setup = start),
+            Case("never on Auto", lowersTo = null, mode = BufferingQualityMode.NEVER, setup = start),
+            Case("a picked quality", lowersTo = null) { controller, _ ->
+                controller.onPlanAdopted(plan("p2").copy(quality = "1080p-high"))
                 controller.onWaiting()
-                at(t0 + 131_000)
-                if (case.answer == "keep") {
-                    assertTrue(controller.selectKeep(), case.name)
-                    controller.setMode(case.mode)
-                } else {
-                    controller.onPlanAdopted(plan("p-low", deliveredKbps = 10_000))
-                    assertTrue(controller.selectRestore(), case.name)
-                }
-            }
-            controller.onPlanAdopted(plan("p2").copy(quality = case.quality), controllerInitiated = case.answer == "restore")
+            },
+            Case("after Keep", lowersTo = null, mode = BufferingQualityMode.ASK) { controller, t0 ->
+                longStallOnP1(controller, t0)
+                assertTrue(controller.selectKeep())
+                controller.setMode(BufferingQualityMode.ALWAYS)
+                controller.onPlanAdopted(plan("p2"), controllerInitiated = false)
+                controller.onWaiting()
+            },
+            Case("after Restore", lowersTo = null) { controller, t0 ->
+                longStallOnP1(controller, t0)
+                controller.onPlanAdopted(plan("p-low", deliveredKbps = 10_000))
+                assertTrue(controller.selectRestore())
+                controller.onPlanAdopted(plan("p2"))
+                controller.onWaiting()
+            },
+            Case("a lowering's replacement that never starts lowers again", lowersTo = 7_000) { controller, t0 ->
+                longStallOnP1(controller, t0)
+                controller.onPlanAdopted(plan("p-low", deliveredKbps = 10_000))
+                controller.onWaiting()
+            },
+            Case("an outage in progress", lowersTo = null) { controller, t0 ->
+                start(controller, t0)
+                controller.onTransportErrorStart()
+            },
+            Case("an outage that ended 3 s before the deadline", lowersTo = null) { controller, t0 ->
+                start(controller, t0)
+                controller.onTransportErrorStart()
+                at(t0 + 5_000)
+                controller.onTransportErrorEnd()
+                at(t0 + 8_000)
+            },
+            Case("an outage that ended 6 s before the deadline", lowersTo = 44_100) { controller, t0 ->
+                start(controller, t0)
+                controller.onTransportErrorStart()
+                at(t0 + 5_000)
+                controller.onTransportErrorEnd()
+                at(t0 + 11_000)
+            },
+            Case("a renderer wait", lowersTo = null) { controller, _ ->
+                controller.onPlanAdopted(plan("p2"))
+                controller.onWaiting(BufferingWaitCause.RENDERER)
+            },
+            Case("a plan that already played", lowersTo = null) { controller, _ ->
+                controller.onPlanAdopted(plan("p2"))
+                controller.onPlaying()
+                controller.onWaiting()
+            },
+            Case("the no-lower cooldown", lowersTo = null) { controller, t0 ->
+                longStallOnP1(controller, t0)
+                controller.onPlanAdopted(plan("p1-again"))
+                controller.onWaiting()
+            },
+            Case("a lowering that was never adopted", lowersTo = null) { controller, t0 ->
+                start(controller, t0)
+                // The start's own long stall lowers once.
+                at(t0 + 16_000)
+                assertEquals(1, replans.size)
+                controller.onReplanFailed()
+                at(t0 + 20_000)
+            },
+            Case("a pick pending", lowersTo = null) { controller, t0 ->
+                start(controller, t0)
+                controller.onQualityPickSent()
+            },
+            Case("a Watch Party room", lowersTo = null) { controller, t0 ->
+                start(controller, t0)
+                controller.setSuspended(true)
+            },
+        )
+        for (case in cases) {
+            replans.clear()
+            val controller = newController(case.mode)
+            case.setup(this, controller, testScheduler.currentTime)
             replans.clear()
 
-            assertEquals(lowers, controller.onStartDeadlineMissed(), case.name)
-            val expected = if (lowers) {
-                listOf(BufferingQualityReplan("auto", 44_100, BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER))
-            } else {
-                emptyList()
-            }
+            assertEquals(case.lowersTo != null, controller.onStartDeadlineMissed(), case.name)
+            val expected = case.lowersTo
+                ?.let { listOf(BufferingQualityReplan("auto", it, BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER)) }
+                .orEmpty()
             assertEquals(expected, replans, case.name)
             controller.reset()
         }

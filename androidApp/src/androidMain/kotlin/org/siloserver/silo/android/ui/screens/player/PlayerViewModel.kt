@@ -383,9 +383,6 @@ class PlayerViewModel(
         private const val MAX_TRANSIENT_NETWORK_RETRIES = 1
         // How long an outage's check that the server answers again may take.
         private const val SERVER_CHECK_TIMEOUT_MS = 10_000L
-        // A start stall with at least this much buffered blames the decoder,
-        // not the link, so it is never a reason to lower quality.
-        private const val START_LOWERING_MAX_BUFFERED_MS = 10_000L
         private const val SEEK_SETTLE_DEADLINE_MS = 15_000L
         // How often a Restore quality checks whether the replan in flight has ended.
         private const val BUFFERING_RESTORE_POLL_MS = 250L
@@ -2048,14 +2045,12 @@ class PlayerViewModel(
         }
         Log.i(TAG, "Preflight fallback: $notice")
 
-        // A plan that missed the start deadline on a link that may be too
-        // slow lowers on Auto, as a long stall would, instead of replanning
-        // the same quality. A large buffer means the decoder is stuck, not
-        // the link, and an outage belongs to the reconnect path.
+        // A plan, first or replacement, that missed the start deadline on a
+        // link that may be too slow lowers on Auto, as a long stall would,
+        // instead of replanning the same quality. The controller keeps the
+        // failure path for a renderer wait (the decoder is stuck, not the
+        // link) and for an outage, which belongs to the reconnect path.
         if (reason is Playability.StartupStalled &&
-            !hasRenderedFirstFrame &&
-            reason.bufferedAheadMs < START_LOWERING_MAX_BUFFERED_MS &&
-            !bufferingQualityAdapter.transportTroubleActive &&
             bufferingQualityEnabled &&
             bufferingQualityController.onStartDeadlineMissed()
         ) {
