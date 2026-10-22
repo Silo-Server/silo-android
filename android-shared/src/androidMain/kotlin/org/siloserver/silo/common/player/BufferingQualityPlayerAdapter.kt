@@ -12,8 +12,11 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
 import org.siloserver.silo.domain.player.BufferingQualityController
+import org.siloserver.silo.domain.player.BufferingQualityController.Companion.OUTAGE_NO_DATA_MS
+import org.siloserver.silo.domain.player.BufferingQualityController.Companion.OUTAGE_NO_DATA_SEGMENTED_MS
 import org.siloserver.silo.domain.player.BufferingQualityController.Companion.RENDERER_WAIT_BUFFER_MS
 import org.siloserver.silo.domain.player.BufferingWaitCause
+import org.siloserver.silo.model.playback.PlaybackDelivery
 
 /** The playback events [BufferingQualityController] consumes, as [BufferingQualityPlayerAdapter] emits them. */
 interface BufferingPlaybackEventSink {
@@ -63,8 +66,8 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
  *   running out of data, so that wait is [BufferingWaitCause.RENDERER], which
  *   the controller does not count. If the buffer then drains before playback
  *   resumes, the wait is re-announced as a network wait, from which the
- *   stall is timed: the adapter checks every [RENDERER_DRAIN_CHECK_MS] while
- *   such a wait lasts, and at each [sampleBuffer].
+ *   stall is timed: the adapter checks every [WAIT_CHECK_MS] while a wait
+ *   lasts, and at each [sampleBuffer].
  * - `playWhenReady` false, `STATE_ENDED` or `STATE_IDLE` →
  *   [BufferingPlaybackEventSink.onPause].
  * - A seek discontinuity → [BufferingPlaybackEventSink.onSeek]. During a
@@ -82,7 +85,14 @@ fun BufferingQualityController.asPlaybackEventSink(): BufferingPlaybackEventSink
  * [ownsStartupStall] read it.
  *
  * Transport trouble has two independent sources: failing loads and the
- * device being offline. The sink hears
+ * device being offline. A load fails when it errors, and also when the player
+ * is waiting and loading but no media request has received a byte for
+ * [OUTAGE_NO_DATA_MS] ([lastMediaByteAtMs]), counted from the last byte or
+ * the latest media request or plan start, whichever is later. On segmented
+ * delivery the limit is [OUTAGE_NO_DATA_SEGMENTED_MS], because the server
+ * holds a segment request silent while it produces the segment. That catches
+ * a link that went silent long before the HTTP client's read timeout; a
+ * request that keeps receiving, however slowly, never fails. The sink hears
  * [BufferingPlaybackEventSink.onTransportErrorStart] when either becomes
  * active and [BufferingPlaybackEventSink.onTransportErrorEnd] once both have
  * cleared. Load trouble clears only when the plan's media data arrives again
@@ -107,6 +117,11 @@ class BufferingQualityPlayerAdapter(
     private val clock: () -> Long = { SystemClock.elapsedRealtime() },
     /** Runs an action on the main thread after a delay; returns its cancel. */
     private val schedule: (delayMs: Long, action: () -> Unit) -> () -> Unit = ::scheduleOnMainThread,
+    /**
+     * When any of the player's media requests last received a byte, on
+     * [clock]'s timeline: [PlaybackThroughputMeter.lastByteAtMs]. Any thread.
+     */
+    private val lastMediaByteAtMs: () -> Long? = { null },
 ) : Player.Listener, AnalyticsListener {
 
     private val sink: BufferingPlaybackEventSink = sink.logged {
@@ -129,8 +144,21 @@ class BufferingQualityPlayerAdapter(
     /** The cause of the wait in progress, while [phase] is [Phase.STARVED]. */
     private var waitCause: BufferingWaitCause? = null
 
-    /** Cancels the pending drain check of a renderer wait. */
-    private var cancelDrainCheck: (() -> Unit)? = null
+    /** Cancels the pending check of the wait in progress. */
+    private var cancelWaitCheck: (() -> Unit)? = null
+
+    /** The player is loading media, so its requests can go silent. */
+    private var loading = false
+
+    /**
+     * The earliest moment a silence can be timed from: the plan's start or
+     * its latest media request, which cannot have received anything before
+     * it was sent.
+     */
+    private var silenceFloorMs: Long = clock()
+
+    /** How long the plan's media requests may stay silent during a wait before it is an outage. */
+    private var outageNoDataMs: Long = OUTAGE_NO_DATA_MS
 
     /** Media buffered past the playhead, read from the attached player. */
     private var bufferedAheadMs: () -> Long = { 0L }
@@ -163,10 +191,12 @@ class BufferingQualityPlayerAdapter(
         isPlaying: Boolean,
         tunneling: () -> Boolean = { false },
         suppressed: Boolean = false,
+        loading: Boolean = false,
         bufferedAheadMs: () -> Long = { 0L },
     ) {
         this.bufferedAheadMs = bufferedAheadMs
         this.tunneling = tunneling
+        noteLoading(loading)
         this.playWhenReady = playWhenReady
         this.playbackState = playbackState
         this.isPlaying = isPlaying
@@ -188,6 +218,7 @@ class BufferingQualityPlayerAdapter(
             bufferedAheadMs = { player.totalBufferedDuration },
             tunneling = { player.isTunnelingEnabled },
             suppressed = player.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE,
+            loading = player.isLoading,
         )
         return {
             player.removeListener(this)
@@ -253,11 +284,12 @@ class BufferingQualityPlayerAdapter(
             !transportTroubleActive
 
     /**
-     * A new plan or mount. Forgets the seek and reload flags and the
-     * data-arrival history; for a same-plan remount call [markReload] after
-     * this. Transport trouble ends too: a new plan's transport starts with no
-     * outage. Player state is kept, so the controller's view stays in step;
-     * [seed] again when the player instance changes.
+     * A new plan or mount, delivered as [delivery]. Forgets the seek and
+     * reload flags and the data-arrival history; for a same-plan remount call
+     * [markReload] after this. Transport trouble ends too: a new plan's
+     * transport starts with no outage. Player state is kept, so the
+     * controller's view stays in step; [seed] again when the player instance
+     * changes.
      *
      * Call it after `BufferingQualityController.onPlanAdopted`: it re-announces
      * the player's current phase to the new plan. A player that was already
@@ -265,11 +297,15 @@ class BufferingQualityPlayerAdapter(
      * without this the new plan would never see its first wait, and a slow
      * start would go unnoticed.
      */
-    fun reset() {
+    fun reset(delivery: PlaybackDelivery?) {
+        val segmented =
+            delivery == PlaybackDelivery.SERVER_REMUX_HLS || delivery == PlaybackDelivery.SERVER_TRANSCODE_HLS
+        outageNoDataMs = if (segmented) OUTAGE_NO_DATA_SEGMENTED_MS else OUTAGE_NO_DATA_MS
         seekSinceRun = false
         reloadMarked = false
         lastBufferedPositionMs = null
         lastDataAtMs = null
+        silenceFloorMs = clock()
         setTrouble(load = false, offline = false)
         when (phase) {
             Phase.STARVED -> announceWait(BufferingWaitCause.NETWORK)
@@ -295,6 +331,10 @@ class BufferingQualityPlayerAdapter(
         updatePhase()
     }
 
+    override fun onIsLoadingChanged(isLoading: Boolean) {
+        noteLoading(isLoading)
+    }
+
     override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
         suppressed = playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE
         updatePhase()
@@ -309,6 +349,15 @@ class BufferingQualityPlayerAdapter(
     }
 
     // AnalyticsListener
+
+    override fun onLoadStarted(
+        eventTime: AnalyticsListener.EventTime,
+        loadEventInfo: LoadEventInfo,
+        mediaLoadData: MediaLoadData,
+        retryCount: Int,
+    ) {
+        if (mediaLoadData.trackType != C.TRACK_TYPE_TEXT) onMediaRequestStarted()
+    }
 
     override fun onLoadError(
         eventTime: AnalyticsListener.EventTime,
@@ -345,6 +394,17 @@ class BufferingQualityPlayerAdapter(
         if (phase == Phase.STARVED) announceWait(BufferingWaitCause.SEEK)
     }
 
+    /** A load that begins after none was running starts its silence now. */
+    internal fun noteLoading(isLoading: Boolean) {
+        if (isLoading && !loading) silenceFloorMs = clock()
+        loading = isLoading
+    }
+
+    /** A new media request has received nothing yet, so its silence starts now. */
+    internal fun onMediaRequestStarted() {
+        silenceFloorMs = clock()
+    }
+
     /** A failing subtitle load says nothing about the video's transport. */
     internal fun onLoadFailed(wasCanceled: Boolean, subtitle: Boolean = false) {
         if (wasCanceled || subtitle) return
@@ -374,8 +434,8 @@ class BufferingQualityPlayerAdapter(
         phase = next
         if (next != Phase.STARVED) {
             waitCause = null
-            cancelDrainCheck?.invoke()
-            cancelDrainCheck = null
+            cancelWaitCheck?.invoke()
+            cancelWaitCheck = null
         }
         when (next) {
             Phase.RUNNING -> {
@@ -384,14 +444,19 @@ class BufferingQualityPlayerAdapter(
                 setTrouble(load = false, offline = offline)
                 sink.onPlaying()
             }
-            Phase.STARVED -> announceWait(
-                when {
-                    seekSinceRun -> BufferingWaitCause.SEEK
-                    reloadMarked -> BufferingWaitCause.RELOAD
-                    !tunneling() && bufferedAheadMs() > RENDERER_WAIT_BUFFER_MS -> BufferingWaitCause.RENDERER
-                    else -> BufferingWaitCause.NETWORK
-                },
-            )
+            Phase.STARVED -> {
+                announceWait(
+                    when {
+                        seekSinceRun -> BufferingWaitCause.SEEK
+                        reloadMarked -> BufferingWaitCause.RELOAD
+                        !tunneling() && bufferedAheadMs() > RENDERER_WAIT_BUFFER_MS -> BufferingWaitCause.RENDERER
+                        else -> BufferingWaitCause.NETWORK
+                    },
+                )
+                // A wait that begins on a link already silent is an outage at once.
+                checkSilence()
+                scheduleWaitCheck()
+            }
             Phase.STOPPED -> sink.onPause()
         }
     }
@@ -399,7 +464,6 @@ class BufferingQualityPlayerAdapter(
     private fun announceWait(cause: BufferingWaitCause) {
         waitCause = cause
         sink.onWaiting(cause)
-        if (cause == BufferingWaitCause.RENDERER) scheduleDrainCheck()
     }
 
     /** A renderer wait whose buffer has drained has become a network wait. */
@@ -412,12 +476,21 @@ class BufferingQualityPlayerAdapter(
         }
     }
 
-    private fun scheduleDrainCheck() {
-        cancelDrainCheck?.invoke()
-        cancelDrainCheck = schedule(RENDERER_DRAIN_CHECK_MS) {
-            cancelDrainCheck = null
+    /** The player is waiting and loading, and no media request has received a byte for [outageNoDataMs]. */
+    private fun checkSilence() {
+        if (phase != Phase.STARVED || !loading || loadTrouble) return
+        val silentSince = maxOf(silenceFloorMs, lastDataAtMs ?: Long.MIN_VALUE, lastMediaByteAtMs() ?: Long.MIN_VALUE)
+        if (clock() - silentSince >= outageNoDataMs) setTrouble(load = true, offline = offline)
+    }
+
+    /** Watches the wait in progress until it ends. */
+    private fun scheduleWaitCheck() {
+        cancelWaitCheck?.invoke()
+        cancelWaitCheck = schedule(WAIT_CHECK_MS) {
+            cancelWaitCheck = null
             checkRendererDrain()
-            if (phase == Phase.STARVED && waitCause == BufferingWaitCause.RENDERER) scheduleDrainCheck()
+            checkSilence()
+            if (phase == Phase.STARVED) scheduleWaitCheck()
         }
     }
 
@@ -434,8 +507,8 @@ class BufferingQualityPlayerAdapter(
         /** How recent data must be for a slow plan to count as still receiving it. */
         const val RECEIVING_DATA_WINDOW_MS: Long = 5_000L
 
-        /** How often a renderer wait checks whether its buffer has drained. */
-        const val RENDERER_DRAIN_CHECK_MS: Long = 200L
+        /** How often a wait checks whether its buffer has drained or its link gone silent. */
+        const val WAIT_CHECK_MS: Long = 200L
 
         private const val TRANSPORT_STALL_CLASSIFICATION = "transport_stall"
     }

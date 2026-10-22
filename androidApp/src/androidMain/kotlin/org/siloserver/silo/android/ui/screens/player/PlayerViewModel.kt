@@ -338,6 +338,9 @@ class PlayerViewModel(
     private val shuffleFeatureStore: org.siloserver.silo.model.feature.ShuffleFeatureStore? = null,
     // The network, for the cellular quality pair. Optional for the same reason.
     private val networkEvidenceProvider: PlaybackNetworkEvidenceProvider = PlaybackNetworkEvidenceProvider.None,
+    // When the video's requests last received a byte, so the buffering-quality
+    // adapter can tell a dead link from a slow one. Optional for the same reason.
+    private val throughputMeter: org.siloserver.silo.common.player.PlaybackThroughputMeter? = null,
 ) : ViewModel() {
 
     // Last load request, replayed by the "Can't reach server" Retry / Try Anyway.
@@ -722,7 +725,10 @@ class PlayerViewModel(
      * Feeds the controller from Media3. PlayerScreen attaches it to the
      * in-process ExoPlayer as a Player.Listener and an AnalyticsListener.
      */
-    val bufferingQualityAdapter = BufferingQualityPlayerAdapter(bufferingQualityController.asPlaybackEventSink())
+    val bufferingQualityAdapter = BufferingQualityPlayerAdapter(
+        bufferingQualityController.asPlaybackEventSink(),
+        lastMediaByteAtMs = { throughputMeter?.lastByteAtMs() },
+    )
 
     /** The buffering pill: the prompt, the undo, or nothing. */
     val bufferingPill: StateFlow<BufferingQualityPill> = bufferingQualityController.pill
@@ -4110,7 +4116,7 @@ class PlayerViewModel(
         if (!bufferingQualityController.hasPlan) playbackSessionManager.restartPlanThroughput()
         bufferingQualityController.onPlanAdopted(adopted, controllerInitiated, pickStillPending)
         // After the adoption: it re-announces the player's phase to the new plan.
-        bufferingQualityAdapter.reset()
+        bufferingQualityAdapter.reset(plan.delivery)
         Log.i(
             TAG,
             "buffering_quality plan_adopted plan_id=${adopted.serverPlanId} adoption=${adopted.planId} " +

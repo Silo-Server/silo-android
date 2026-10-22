@@ -489,6 +489,7 @@ val androidModule = module {
             activeProfileStore = get(),
             shuffleFeatureStore = get(),
             networkEvidenceProvider = get(),
+            throughputMeter = get(),
         )
     }
     viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get()) }

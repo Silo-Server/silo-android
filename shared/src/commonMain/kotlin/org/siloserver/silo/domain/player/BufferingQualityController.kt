@@ -199,6 +199,16 @@ class BufferingQualityController(
         const val NO_LOWER_COOLDOWN_MS: Long = 300_000L
         const val REARM_AFTER_UNADOPTED_MS: Long = 60_000L
         const val RENDERER_WAIT_BUFFER_MS: Long = 1_000L
+
+        /** A wait in which no media request has received data for this long is an outage. */
+        const val OUTAGE_NO_DATA_MS: Long = 4_000L
+
+        /**
+         * [OUTAGE_NO_DATA_MS] on segmented (HLS) delivery. The server holds a
+         * segment request silent while it produces the segment, up to 12 s for
+         * a transcode, so a shorter silence there is a stall.
+         */
+        const val OUTAGE_NO_DATA_SEGMENTED_MS: Long = 15_000L
         /**
          * Documentation only: the step-down estimate is the exact integer
          * `delivered × 7 / 10`, because a floating-point `0.7` can floor one

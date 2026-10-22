@@ -6,6 +6,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.siloserver.silo.domain.player.BufferingWaitCause
+import org.siloserver.silo.model.playback.PlaybackDelivery
 
 class BufferingQualityPlayerAdapterTest {
     private class RecordingSink : BufferingPlaybackEventSink {
@@ -19,6 +20,7 @@ class BufferingQualityPlayerAdapterTest {
     }
 
     private var now = 0L
+    private var lastByteAt: Long? = null
     private val sink = RecordingSink()
 
     /** Drain checks the adapter scheduled, run by the test. */
@@ -27,6 +29,7 @@ class BufferingQualityPlayerAdapterTest {
         sink,
         clock = { now },
         schedule = { _, action -> scheduled += action; { scheduled -= action } },
+        lastMediaByteAtMs = { lastByteAt },
     )
 
     private fun runScheduled() {
@@ -104,11 +107,98 @@ class BufferingQualityPlayerAdapterTest {
         runScheduled()
         aheadMs = 400L
         runScheduled()
-        // Nothing is left to check once it is a network wait.
         runScheduled()
+        resume()
 
-        assertEquals(listOf("waiting:renderer", "waiting:network"), sink.events)
+        assertEquals(listOf("waiting:renderer", "waiting:network", "playing"), sink.events)
         assertTrue(scheduled.isEmpty())
+    }
+
+    @Test
+    fun aWaitWithNoMediaBytesForFourSecondsIsAnOutage() {
+        playing()
+        adapter.noteLoading(true)
+        // A slow link: bytes keep arriving, so the wait stays a stall.
+        lastByteAt = 900L
+        now = 1_000L
+        starve()
+        now = 4_800L
+        lastByteAt = 4_500L
+        runScheduled()
+        now = 8_499L
+        runScheduled()
+        assertFalse(adapter.transportTroubleActive)
+        // Four seconds since the last byte.
+        now = 8_500L
+        runScheduled()
+        assertTrue(adapter.transportTroubleActive)
+        // The plan's data arriving again ends it.
+        adapter.sampleBuffer(nowMs = 9_000L, bufferedPositionMs = 10_000L)
+        adapter.sampleBuffer(nowMs = 10_000L, bufferedPositionMs = 11_000L)
+        assertFalse(adapter.transportTroubleActive)
+        resume()
+
+        // A wait that begins on a link already silent is an outage at once.
+        now = 20_000L
+        starve()
+        assertTrue(adapter.transportTroubleActive)
+        resume()
+
+        // A new request, such as a seek's, starts its silence when it is sent.
+        now = 30_000L
+        adapter.onMediaRequestStarted()
+        adapter.onDiscontinuity(Player.DISCONTINUITY_REASON_SEEK)
+        starve()
+        now = 33_999L
+        runScheduled()
+        assertFalse(adapter.transportTroubleActive)
+        resume()
+
+        // A player that is not loading has no request to go silent.
+        adapter.noteLoading(false)
+        now = 60_000L
+        starve()
+        runScheduled()
+        assertFalse(adapter.transportTroubleActive)
+
+        assertEquals(
+            listOf(
+                "waiting:network", "transport_start", "transport_end", "playing",
+                "waiting:network", "transport_start", "transport_end", "playing",
+                "seek", "waiting:seek", "playing",
+                "waiting:network",
+            ),
+            sink.events,
+        )
+    }
+
+    @Test
+    fun aSegmentedPlanWaitsLongerInSilenceBeforeAnOutage() {
+        // The server holds a segment request silent while it produces the
+        // segment (up to 12 s for a transcode): that silence is a stall.
+        data class Row(val delivery: PlaybackDelivery, val silentMs: Long, val outage: Boolean)
+        val rows = listOf(
+            Row(PlaybackDelivery.SERVER_TRANSCODE_HLS, silentMs = 8_000L, outage = false),
+            Row(PlaybackDelivery.SERVER_TRANSCODE_HLS, silentMs = 16_000L, outage = true),
+            Row(PlaybackDelivery.SERVER_REMUX_HLS, silentMs = 16_000L, outage = true),
+            Row(PlaybackDelivery.ORIGINAL_HTTP, silentMs = 5_000L, outage = true),
+            Row(PlaybackDelivery.SERVER_REMUX_PROGRESSIVE, silentMs = 5_000L, outage = true),
+        )
+        playing()
+        adapter.noteLoading(true)
+        for (row in rows) {
+            adapter.reset(row.delivery)
+            lastByteAt = now
+            sink.events.clear()
+            starve()
+            now += row.silentMs
+            runScheduled()
+
+            assertEquals(row.outage, adapter.transportTroubleActive, "$row")
+            val expected = listOf("waiting:network") + if (row.outage) listOf("transport_start") else emptyList()
+            assertEquals(expected, sink.events, "$row")
+            resume()
+        }
     }
 
     @Test
@@ -266,7 +356,7 @@ class BufferingQualityPlayerAdapterTest {
         adapter.onNetworkAvailable(connected = false)
         assertTrue(adapter.transportTroubleActive)
 
-        adapter.reset()
+        adapter.reset(PlaybackDelivery.ORIGINAL_HTTP)
 
         assertFalse(adapter.transportTroubleActive)
         assertEquals(listOf("transport_start", "transport_end", "playing"), sink.events)
@@ -312,7 +402,7 @@ class BufferingQualityPlayerAdapterTest {
 
         adapter.sampleBuffer(nowMs = 2_000, bufferedPositionMs = 502_000)
         assertTrue(adapter.isReceivingData(2_000))
-        adapter.reset()
+        adapter.reset(PlaybackDelivery.ORIGINAL_HTTP)
         assertFalse(adapter.isReceivingData(2_000))
     }
 }

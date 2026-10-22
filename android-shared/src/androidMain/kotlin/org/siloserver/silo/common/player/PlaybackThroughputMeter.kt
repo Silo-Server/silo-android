@@ -30,6 +30,9 @@ import org.siloserver.silo.domain.player.SpeedTestMeter
  * the request that reports it. So when the default network ([networkId])
  * changes while a count runs, as seen at a transfer or at [takeKbps], that
  * count reports nothing.
+ *
+ * It also keeps when a media request last received bytes, which the
+ * buffering-quality adapter reads to tell a dead link from a slow one.
  */
 @OptIn(UnstableApi::class)
 class PlaybackThroughputMeter(
@@ -51,6 +54,9 @@ class PlaybackThroughputMeter(
     private val counted = mutableListOf<LongRange>()
     private var countedBytes = 0L
 
+    /** When a request last received bytes, on [clock]; see [lastByteAtMs]. */
+    @Volatile private var lastByteAt: Long? = null
+
     /** The network this count started on, and whether another was seen since. */
     private var countNetwork: Long? = networkId()
     private var networkChanged = false
@@ -66,6 +72,7 @@ class PlaybackThroughputMeter(
     override fun onBytesTransferred(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean, bytesTransferred: Int) {
         if (!isNetwork || bytesTransferred <= 0) return
         val now = clock()
+        lastByteAt = now
         synchronized(lock) {
             noteNetwork()
             val request = receiving[source]
@@ -83,6 +90,9 @@ class PlaybackThroughputMeter(
             receiving.remove(source)?.let(::count)
         }
     }
+
+    /** When any media request last received bytes, on [clock]; null before the first. Any thread. */
+    fun lastByteAtMs(): Long? = lastByteAt
 
     /**
      * The rate since the last call, then starts over: kbps, at most

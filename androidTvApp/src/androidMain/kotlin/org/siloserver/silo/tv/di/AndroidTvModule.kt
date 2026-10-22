@@ -617,6 +617,7 @@ val androidTvModule = module {
             // The process-wide monitor (PlayerModule): the buffering-quality
             // adapter treats a wait while offline as an outage.
             networkEvidence = get(),
+            throughputMeter = get(),
         )
     }
 

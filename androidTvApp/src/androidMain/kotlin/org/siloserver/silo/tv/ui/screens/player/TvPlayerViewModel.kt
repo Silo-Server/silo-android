@@ -790,6 +790,9 @@ class TvPlayerViewModel(
     // the device is offline is an outage, not a stall. Optional for tests
     // that construct the VM directly; null reads as always connected.
     private val networkEvidence: PlaybackNetworkEvidenceProvider? = null,
+    // When the video's requests last received a byte, so the buffering-quality
+    // adapter can tell a dead link from a slow one. Optional for the same reason.
+    private val throughputMeter: org.siloserver.silo.common.player.PlaybackThroughputMeter? = null,
 ) : ViewModel() {
 
     companion object {
@@ -1468,7 +1471,10 @@ class TvPlayerViewModel(
     val bufferingQualityEnabled: Boolean = roomId == null
 
     /** The Media3 adapter feeding the controller. The screen attaches it to the in-process ExoPlayer. */
-    val bufferingQualityAdapter = BufferingQualityPlayerAdapter(bufferingQualityController.asPlaybackEventSink())
+    val bufferingQualityAdapter = BufferingQualityPlayerAdapter(
+        bufferingQualityController.asPlaybackEventSink(),
+        lastMediaByteAtMs = { throughputMeter?.lastByteAtMs() },
+    )
 
     /** The buffering pill. The screen consumes this directly. */
     val bufferingPill: StateFlow<BufferingQualityPill> = bufferingQualityController.pill
@@ -5914,7 +5920,7 @@ class TvPlayerViewModel(
         val controllerInitiated = bufferingReplanNonce == nonce
         bufferingReplanNonce = null
         if (reload && bufferingAdoptionId != null) {
-            bufferingQualityAdapter.reset()
+            bufferingQualityAdapter.reset(_uiState.value.playbackPlan?.delivery)
             bufferingQualityAdapter.markReload()
             return
         }
@@ -5953,7 +5959,7 @@ class TvPlayerViewModel(
         if (!bufferingQualityController.hasPlan) playbackSessionManager.restartPlanThroughput()
         bufferingQualityController.onPlanAdopted(adopted, controllerInitiated, pickStillPending)
         // After adoption: re-announces the player's phase to the new plan.
-        bufferingQualityAdapter.reset()
+        bufferingQualityAdapter.reset(shown.delivery)
     }
 
     /**
