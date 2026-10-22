@@ -133,17 +133,20 @@ class ConnectionSpeedSettingsModelTest {
     }
 
     @Test
-    fun tryAgainInHidesItsSecondsAfterThe429NotAfterTheReadThatFollows() = runTest {
+    fun tryAgainInCountsDownFromThe429NotFromTheReadThatFollows() = runTest {
         val harness = Harness(this)
         harness.connection = { delay(20_000); "{\"connection\":\"local\"}" }
         harness.model.testSpeed()
         advanceTimeBy(20_000)
         runCurrent()
-        assertEquals(ConnectionSpeedMessage.TryAgainIn(RETRY_AFTER_SECONDS), harness.message, "N as the server sent it")
+        assertEquals(ConnectionSpeedMessage.TryAgainIn(RETRY_AFTER_SECONDS - 20), harness.message, "20 s spent reading")
 
-        advanceTimeBy(9_999)
+        advanceTimeBy(1_000)
         runCurrent()
-        assertEquals(ConnectionSpeedMessage.TryAgainIn(RETRY_AFTER_SECONDS), harness.message)
+        assertEquals(ConnectionSpeedMessage.TryAgainIn(RETRY_AFTER_SECONDS - 21), harness.message)
+        advanceTimeBy(8_999)
+        runCurrent()
+        assertEquals(ConnectionSpeedMessage.TryAgainIn(1), harness.message)
         advanceTimeBy(1)
         runCurrent()
         assertNull(harness.message, "30 seconds after the 429")

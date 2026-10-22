@@ -57,7 +57,7 @@ enum class ConnectionSpeedSkip {
 
 /** The answer to the last **Test speed**, until the next one. */
 sealed interface ConnectionSpeedMessage {
-    /** HTTP 429: "Try again in N seconds", until [seconds] have passed since the 429. */
+    /** HTTP 429: "Try again in N seconds", counting down each second until the wait ends. */
     data class TryAgainIn(val seconds: Int) : ConnectionSpeedMessage
 
     /** Media was playing or starting. */
@@ -214,16 +214,27 @@ class ConnectionSpeedSettingsModel(
             } finally {
                 if (waitEnds?.hasPassedNow() == true) message = null
                 local.update { Local(testing = false, message = message) }
-                waitEnds?.let { ends -> (message as? ConnectionSpeedMessage.TryAgainIn)?.let { expire(it, ends) } }
+                waitEnds?.let { ends -> (message as? ConnectionSpeedMessage.TryAgainIn)?.let { countDown(it, ends) } }
             }
         }
     }
 
-    /** Hides [message] at [ends], unless another answer replaced it. */
-    private fun expire(message: ConnectionSpeedMessage.TryAgainIn, ends: TimeMark) {
+    /**
+     * Counts [message] down to [ends], a new number each time the whole
+     * seconds left change, then hides it, unless another answer replaced it.
+     */
+    private fun countDown(message: ConnectionSpeedMessage.TryAgainIn, ends: TimeMark) {
         scope.launch {
-            delay(-ends.elapsedNow())
-            local.update { if (it.message === message) it.copy(message = null) else it }
+            var shown = message
+            while (true) {
+                val leftMs = -ends.elapsedNow().inWholeMilliseconds
+                val next = if (leftMs > 0) ConnectionSpeedMessage.TryAgainIn(((leftMs + 999) / 1_000).toInt()) else null
+                if (local.value.message !== shown) return@launch
+                local.update { it.copy(message = next) }
+                if (next == null) return@launch
+                shown = next
+                delay(leftMs - (next.seconds - 1) * 1_000L)
+            }
         }
     }
 
