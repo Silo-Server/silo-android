@@ -77,6 +77,32 @@ class BufferingQualityControllerTest {
     }
 
     @Test
+    fun `an undo pill the player cannot show runs on the real clock and then frees the next lowering`() = runTest {
+        val controller = newController(BufferingQualityMode.ALWAYS)
+        longStall(controller)
+        assertEquals(1, replans.size)
+        // The lowering lands in picture in picture.
+        controller.setViewHidden(true)
+        controller.onPlanAdopted(plan("p2", deliveredKbps = 10_000))
+        assertEquals(BufferingQualityPill.Hidden, controller.pill.value)
+        at(136_000)
+        controller.setViewHidden(false)
+        assertEquals(BufferingQualityPill.Undo(10), controller.pill.value, "the time it has left")
+        controller.setViewHidden(true)
+        at(146_000)
+        controller.setViewHidden(false)
+        assertEquals(BufferingQualityPill.Hidden, controller.pill.value, "ended unseen")
+
+        // The lower plan stalls long: nothing holds the next lowering back.
+        controller.setViewHidden(true)
+        controller.onPlaying()
+        at(160_000)
+        controller.onWaiting()
+        at(166_000)
+        assertEquals(2, replans.size)
+    }
+
+    @Test
     fun `a missed start deadline lowers only on Auto in always mode and not after Keep`() = runTest {
         data class Case(val name: String, val mode: BufferingQualityMode, val quality: String = "auto", val kept: Boolean = false)
         val cases = listOf(

@@ -817,8 +817,8 @@ class PlayerViewModel(
         // timer frozen) while one shows. Outside a Watch Party (the only place
         // the controller runs) each shows whenever this state says so; the
         // marker pill mirrors PlayerOverlay's own condition. A player in
-        // picture in picture or in the background shows no pill at all, so
-        // the buffering pill waits there the same way.
+        // picture in picture or in the background shows no pill at all: a
+        // prompt waits there the same way, and an undo pill runs on unseen.
         viewModelScope.launch {
             combine(
                 introAutoSkipController.state.map { it.isVisible },
@@ -826,13 +826,15 @@ class PlayerViewModel(
                     state.showUpNext ||
                         (!state.isLoading && markerSkipTarget(state.position, state.recap, state.credits) != null)
                 },
-                playerViewHidden,
-            ) { introVisible, otherVisible, viewHidden -> introVisible || otherVisible || viewHidden }
+            ) { introVisible, otherVisible -> introVisible || otherVisible }
                 .distinctUntilChanged()
                 .collect { blocked ->
                     Log.i(TAG, "buffering_quality pill_blocked=$blocked")
                     bufferingQualityController.setOtherPillVisible(blocked)
                 }
+        }
+        viewModelScope.launch {
+            playerViewHidden.collect { bufferingQualityController.setViewHidden(it) }
         }
         viewModelScope.launch {
             var shownKind: String? = null

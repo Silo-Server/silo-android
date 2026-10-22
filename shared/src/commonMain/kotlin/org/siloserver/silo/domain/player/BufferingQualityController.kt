@@ -247,6 +247,9 @@ class BufferingQualityController(
     private var suspended = false
     private var otherPillVisible = false
 
+    /** The player cannot show pills: picture in picture or the background. See [setViewHidden]. */
+    private var viewHidden = false
+
     /** The viewer paused and has not resumed. Freezes a pill's timer. */
     private var paused = false
 
@@ -361,7 +364,28 @@ class BufferingQualityController(
         }
         // A plan change hides the pill, so a deferred one is still this plan's.
         val kind = deferredPill ?: return
+        if (viewHidden && kind == PillKind.PROMPT) return
         present(kind, resume = deferredResumes)
+    }
+
+    /**
+     * The player cannot show pills, in picture in picture or the background,
+     * or can again. A prompt waits with its remaining timer, as it does
+     * behind a higher-priority pill. An undo pill runs on unseen: its timer
+     * keeps the real clock, so it ends [PROMPT_SECONDS] after its lowering
+     * wherever the viewer is, and holds off a later lowering no longer than a
+     * visible one would. It shows again with the time it has left.
+     */
+    fun setViewHidden(hidden: Boolean): Unit {
+        if (hidden == viewHidden) return
+        viewHidden = hidden
+        if (!enabled) return
+        if (hidden && activePill == PillKind.PROMPT) {
+            obscurePill()
+            return
+        }
+        publishPill()
+        if (!hidden && !otherPillVisible) deferredPill?.let { present(it, resume = deferredResumes) }
     }
 
     /** A plan is playing, or loading, under this controller. */
@@ -910,7 +934,7 @@ class BufferingQualityController(
 
     /** Offers a fresh [kind] now, or with its full timer once the other pill hides. */
     private fun showPill(kind: PillKind) {
-        if (otherPillVisible) {
+        if (otherPillVisible || (viewHidden && kind == PillKind.PROMPT)) {
             deferredPill = kind
             deferredResumes = false
             return
@@ -1030,7 +1054,7 @@ class BufferingQualityController(
 
     private fun publishPill() {
         val seconds = secondsFor(pillRemainingMs).toInt()
-        _pill.value = when (activePill) {
+        _pill.value = when (activePill?.takeUnless { viewHidden }) {
             PillKind.PROMPT -> BufferingQualityPill.Prompt(seconds)
             PillKind.UNDO -> BufferingQualityPill.Undo(seconds)
             null -> BufferingQualityPill.Hidden
