@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import org.siloserver.silo.model.playback.BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -73,6 +74,39 @@ class BufferingQualityControllerTest {
         at(125_000)
         controller.onWaiting()
         at(131_000)
+    }
+
+    @Test
+    fun `a missed start deadline lowers only on Auto in always mode and not after Keep`() = runTest {
+        data class Case(val name: String, val mode: BufferingQualityMode, val quality: String = "auto", val kept: Boolean = false)
+        val cases = listOf(
+            Case("always on Auto", BufferingQualityMode.ALWAYS) to true,
+            Case("ask on Auto", BufferingQualityMode.ASK) to false,
+            Case("never on Auto", BufferingQualityMode.NEVER) to false,
+            Case("always on a picked quality", BufferingQualityMode.ALWAYS, quality = "1080p-high") to false,
+            Case("always after Keep", BufferingQualityMode.ALWAYS, kept = true) to false,
+        )
+        for ((case, lowers) in cases) {
+            replans.clear()
+            val controller = newController(if (case.kept) BufferingQualityMode.ASK else case.mode)
+            if (case.kept) {
+                longStall(controller)
+                assertTrue(controller.selectKeep(), case.name)
+                controller.setMode(case.mode)
+                controller.onPlanAdopted(plan("p2"), controllerInitiated = false)
+            } else {
+                controller.onPlanAdopted(plan("p1").copy(quality = case.quality))
+            }
+
+            assertEquals(lowers, controller.onStartDeadlineMissed(), case.name)
+            val expected = if (lowers) {
+                listOf(BufferingQualityReplan("auto", 44_100, BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER))
+            } else {
+                emptyList()
+            }
+            assertEquals(expected, replans, case.name)
+            controller.reset()
+        }
     }
 
     @Test
