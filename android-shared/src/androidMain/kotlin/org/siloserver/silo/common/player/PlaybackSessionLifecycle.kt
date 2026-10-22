@@ -90,6 +90,9 @@ class PlaybackSessionLifecycle(
     private val mutex = Mutex()
 
     @Volatile private var lastStartParams: StartParams? = null
+
+    /** The playing session's start pinned its file (`allow_alternate_versions: false`). */
+    val sessionPinsVersion: Boolean get() = lastStartParams?.allowAlternateVersions == false
     @Volatile private var lastReportedPosition: Double? = null
     @Volatile private var lastReportedDuration: Double = 0.0
     /** Durable content-time coordinate; differs from session time for multipart audio. */

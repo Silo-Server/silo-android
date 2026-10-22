@@ -963,6 +963,9 @@ class PlayerViewModel(
     // message early (repeated identical failures used to be dismissed within a
     // second by an uncancelled, message-equality-gated coroutine).
     private var versionSwitchMessageJob: Job? = null
+
+    /** The session a version switch left pinned its file; a failed switch's restart keeps that. */
+    private var versionPinnedBeforeSwitch = false
     // Runtime recovery is a single protocol-v3 replan flight. A transient
     // network failure gets one same-route reopen before server replanning.
     private var transientNetworkRetries = 0
@@ -6042,6 +6045,7 @@ class PlayerViewModel(
         if (isRecovery) {
             routeIntentState.recoverVersionSelection(state.contentId)
         } else {
+            versionPinnedBeforeSwitch = sessionLifecycle.sessionPinsVersion
             routeIntentState.beginVersionSelection(state.contentId, version.fileId)
             // Choosing a file drops a picked quality: a quality served by
             // another version would move playback straight off this one.
@@ -6071,8 +6075,8 @@ class PlayerViewModel(
             loadContent(
                 contentId = state.contentId,
                 preferredFileId = version.fileId,
-                // The viewer's pick, or the exact file it was switching from.
-                versionChosen = true,
+                // The viewer's pick; the file it was switching from only as pinned as it was.
+                versionChosen = !isRecovery || versionPinnedBeforeSwitch,
                 // A catalog ordinal belongs to one file. Carry only an
                 // explicit choice that semantically resolves on the target;
                 // otherwise let that file's persisted/language/default chain

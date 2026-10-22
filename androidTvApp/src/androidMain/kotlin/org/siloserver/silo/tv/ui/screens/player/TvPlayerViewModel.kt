@@ -6716,7 +6716,8 @@ class TvPlayerViewModel(
                     _dolbyVisionSwitchInFlight.value = false
                 }
             }
-            restartSessionInPlace(fileId)
+            // The same file again: pinned only if the playing session was.
+            restartSessionInPlace(fileId, pinVersion = sessionLifecycle.sessionPinsVersion)
         }
     }
 
@@ -7140,7 +7141,7 @@ class TvPlayerViewModel(
             matches = { it.fileId == fileId },
             outstanding = { versionSwitchJob?.isActive == true || _uiState.value.isLoading },
         )
-        restartSessionInPlace(fileId)
+        restartSessionInPlace(fileId, pinVersion = true)
     }
 
     /**
@@ -7153,8 +7154,11 @@ class TvPlayerViewModel(
      * A manual audio choice is translated by identity onto a different file;
      * automatic choices are re-resolved from that file's persisted/language
      * chain. Raw ordinals never cross a file boundary.
+     *
+     * [pinVersion] pins [fileId] for the new session: the viewer's version
+     * pick does, and a settings restart keeps the playing session's pin.
      */
-    private fun restartSessionInPlace(fileId: Int?) {
+    private fun restartSessionInPlace(fileId: Int?, pinVersion: Boolean) {
         // Version and Dolby Vision restarts would choose playback locally.
         if (roomId != null) return
         val state = _uiState.value
@@ -7182,8 +7186,7 @@ class TvPlayerViewModel(
             loadContent(
                 startPositionOverride = resumeAt,
                 preferredFileIdOverride = fileId,
-                // A version switch or Dolby Vision restart plays exactly this file.
-                versionChosen = fileId != null,
+                versionChosen = fileId != null && pinVersion,
                 audioTrackIndexOverride = audioTrackIndexOverride,
                 audioTrackIndexOverrideSpecified = fileId != null,
                 suppressResumeRewind = true,
