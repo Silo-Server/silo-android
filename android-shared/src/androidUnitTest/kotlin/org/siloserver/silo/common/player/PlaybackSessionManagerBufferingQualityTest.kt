@@ -116,6 +116,9 @@ class PlaybackSessionManagerBufferingQualityTest {
         /** When set, the next replan answers with this plan instead. */
         @Volatile var nextReplanPlan: PlaybackPlanV3? = null
 
+        /** When set, the next replan reaches the server but its response is lost. */
+        @Volatile var loseNextReplanResponse = false
+
         /** A re-anchor keeps its plan; every other replan gets the next one, starting at [PLAN_2]. */
         private fun replanReply(sessionId: String, body: JsonObject): PlaybackPlanV3 =
             if (body.stringOrNull("operation") == SEEK_REANCHOR_V3_OPERATION) {
@@ -141,6 +144,10 @@ class PlaybackSessionManagerBufferingQualityTest {
                     path == "/api/v2/playback/start" -> { startBodies += body(); HttpStatusCode.Created to decision(startReply()) }
                     replanSession != null -> {
                         val replan = body().also { replanBodies += it }
+                        if (loseNextReplanResponse) {
+                            loseNextReplanResponse = false
+                            throw java.io.IOException("lost response")
+                        }
                         HttpStatusCode.OK to decision(replanReply(replanSession, replan))
                     }
                     path == "/api/v2/playback/route-events" -> {
@@ -243,6 +250,17 @@ class PlaybackSessionManagerBufferingQualityTest {
         assertNull(body["failure"])
         assertTrue(BUFFERING_QUALITY_V1_FEATURE in body.features())
         assertTrue(BUFFERING_QUALITY_V1_FEATURE in harness.startBodies.single().features())
+    }
+
+    @Test
+    fun aReplanThatGotNoResponseIsResentWithItsOriginalBody() = runTest {
+        val harness = Harness(BUFFERING_QUALITY_SERVER)
+        harness.start()
+        harness.loseNextReplanResponse = true
+        harness.lower()
+
+        assertEquals(2, harness.replanBodies.size)
+        assertEquals(harness.replanBodies[0], harness.replanBodies[1])
     }
 
     @Test

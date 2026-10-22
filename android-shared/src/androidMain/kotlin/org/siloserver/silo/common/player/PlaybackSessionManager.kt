@@ -59,7 +59,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -2666,7 +2668,23 @@ open class PlaybackSessionManager(
                 "failure=${outgoing.failure?.classification} " +
                 "client_features_has_bq=${BUFFERING_QUALITY_V1_FEATURE in outgoing.clientFeatures}",
         )
-        return playbackRepository.replanPlaybackV3(sessionId, outgoing)
+        var result = playbackRepository.replanPlaybackV3(sessionId, outgoing)
+        // A replan that got no response goes again with its original body once
+        // the device is back online, for as long as this session plays: the
+        // server answers it or replays its decision, and an outage never
+        // leaves the session waiting on an answer it lost.
+        var resends = 0
+        while (result is ApiResult.NetworkError && activeVideoAttempt.get()?.sessionId == sessionId) {
+            withTimeoutOrNull(REPLAN_RESEND_BACKOFF_MS.last()) {
+                networkEvidenceProvider.updates.firstOrNull { it.connected }
+            }
+            delay(REPLAN_RESEND_BACKOFF_MS[minOf(resends, REPLAN_RESEND_BACKOFF_MS.lastIndex)])
+            if (activeVideoAttempt.get()?.sessionId != sessionId) break
+            resends += 1
+            Log.i(TAG, "replan_resend attempt=$resends replan_request_id=${outgoing.replanRequestId}")
+            result = playbackRepository.replanPlaybackV3(sessionId, outgoing)
+        }
+        return result
     }
 
     /**
@@ -2870,6 +2888,9 @@ open class PlaybackSessionManager(
     companion object {
         private const val TAG = "PlaybackSessionMgr"
         private const val COMMITTED_SESSION_CLEANUP_ATTEMPTS = 2
+
+        /** The waits before each resend of a replan that got no response; the last repeats. */
+        private val REPLAN_RESEND_BACKOFF_MS = longArrayOf(1_000L, 2_000L, 4_000L, 8_000L, 15_000L)
 
         /**
          * Ceiling on unconfirmed orphaned sessions kept for retry.
