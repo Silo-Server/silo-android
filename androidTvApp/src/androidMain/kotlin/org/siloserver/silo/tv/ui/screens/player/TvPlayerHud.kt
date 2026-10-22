@@ -109,12 +109,16 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import kotlinx.coroutines.launch
 import org.siloserver.silo.common.player.PlayerStatsSnapshot
+import org.siloserver.silo.common.player.qualityReasonMenuLine
+import org.siloserver.silo.common.player.qualityReasonStatsValue
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.settings.QualityChoices
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
+import org.siloserver.silo.model.playback.deliveredResolutionLabel
+import org.siloserver.silo.model.playback.playbackAutoQualityLabel
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -561,7 +565,9 @@ internal fun TvPlayerHud(
                             ?: "Off",
                         chapters = chapters,
                     )
-                    HudTab.Stats -> HudPaneViewport { HudStatsPane(stats) }
+                    HudTab.Stats -> HudPaneViewport {
+                        HudStatsPane(stats, qualityReason = qualityReasonStatsValue(playbackPlan?.qualityReasons.orEmpty()))
+                    }
                     HudTab.Video -> HudVideoPane(
                         videoQualities = if (autoQualityLimited) {
                             val limitedAuto = stringResource(R.string.buffering_quality_auto_limited)
@@ -572,6 +578,8 @@ internal fun TvPlayerHud(
                             videoQualities
                         },
                         videoQualityPreference = videoQualityPreference,
+                        autoQualityResolution = playbackPlan?.deliveredResolutionLabel,
+                        qualityReasonLine = qualityReasonMenuLine(playbackPlan?.qualityReasons.orEmpty()),
                         onSelectVideoQuality = onSelectVideoQuality,
                         fileVersions = if (versionAndSpeedControlsVisible) fileVersions else emptyList(),
                         selectedFileId = selectedFileId,
@@ -1003,7 +1011,7 @@ private fun HudChip(text: String, onPaper: Boolean = false) {
  * non-null rows.
  */
 @Composable
-private fun HudStatsPane(stats: PlayerStatsSnapshot, modifier: Modifier = Modifier) {
+private fun HudStatsPane(stats: PlayerStatsSnapshot, modifier: Modifier = Modifier, qualityReason: String? = null) {
     val rows = stats.hudRows()
 
     if (rows.isEmpty()) {
@@ -1015,15 +1023,19 @@ private fun HudStatsPane(stats: PlayerStatsSnapshot, modifier: Modifier = Modifi
     // 5+4 grid instead of a single column stretched over the full card width
     // with each value 500dp from its label.
     val split = (rows.size + 1) / 2
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(HudPaneColumnGap),
-    ) {
-        listOf(rows.take(split), rows.drop(split)).forEach { column ->
-            Column(modifier = Modifier.weight(1f)) {
-                column.forEach { (label, value) -> HudReadOnlyRow(label = label, value = value) }
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(HudPaneColumnGap),
+        ) {
+            listOf(rows.take(split), rows.drop(split)).forEach { column ->
+                Column(modifier = Modifier.weight(1f)) {
+                    column.forEach { (label, value) -> HudReadOnlyRow(label = label, value = value) }
+                }
             }
         }
+        // Full width under the grid: a reason runs longer than a stat.
+        qualityReason?.let { HudReadOnlyRow(label = "Reason", value = it, maxLines = Int.MAX_VALUE) }
     }
 }
 
@@ -1083,6 +1095,10 @@ private fun onOffLabel(value: Boolean): String = if (value) "On" else "Off"
 private fun HudVideoPane(
     videoQualities: List<VideoQualityOption>,
     videoQualityPreference: String?,
+    /** Auto's delivered resolution, which the Quality row names. */
+    autoQualityResolution: String?,
+    /** Why the plan plays at its quality; null when the server doesn't say. */
+    qualityReasonLine: String?,
     onSelectVideoQuality: (String) -> Unit,
     fileVersions: List<org.siloserver.silo.model.catalog.FileVersion>,
     selectedFileId: Int?,
@@ -1171,8 +1187,13 @@ private fun HudVideoPane(
                     val selectedQuality = videoQualities.firstOrNull { it.isSelected }
                     HudFocusedSettingRow(
                         label = "Quality",
-                        // No row lit: a saved resolution the source plays under.
-                        value = selectedQuality?.label ?: QualityChoices.resolutionLabel(videoQualityPreference),
+                        // Auto names what it plays; no row lit: a saved
+                        // resolution the source plays under.
+                        value = when {
+                            selectedQuality == null -> QualityChoices.resolutionLabel(videoQualityPreference)
+                            selectedQuality.id == PLAYBACK_QUALITY_AUTO -> playbackAutoQualityLabel(autoQualityResolution)
+                            else -> selectedQuality.label
+                        },
                         enabled = enabled,
                         entryFocusRequester = entryFocusRequester.takeIf { entryRow == "quality" },
                         onActivate = {
@@ -1180,7 +1201,12 @@ private fun HudVideoPane(
                                 HudPickerPresentation(
                                     title = "Quality",
                                     options = videoQualities.map {
-                                        HudPickerOption(id = it.id, label = it.label, trailing = it.bitrateLabel)
+                                        HudPickerOption(
+                                            id = it.id,
+                                            label = it.label,
+                                            detail = qualityReasonLine?.takeIf { _ -> it.isSelected },
+                                            trailing = it.bitrateLabel,
+                                        )
                                     },
                                     selectedId = selectedQuality?.id.orEmpty(),
                                     onSelect = { id -> onSelectVideoQuality(id) },
@@ -1188,6 +1214,10 @@ private fun HudVideoPane(
                             )
                         },
                     )
+                    // Never focused: it says why the row's value plays.
+                    qualityReasonLine?.let {
+                        HudTimingText(it, modifier = Modifier.padding(horizontal = HudRowPadding, vertical = 4.dp))
+                    }
                 }
 
                 if (speedRowVisible) {
@@ -1481,7 +1511,7 @@ private fun HudAudioPane(
  * settings and should line up with them.
  */
 @Composable
-private fun HudReadOnlyRow(label: String, value: String) {
+private fun HudReadOnlyRow(label: String, value: String, maxLines: Int = 1) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1496,7 +1526,7 @@ private fun HudReadOnlyRow(label: String, value: String) {
         Text(
             text = value,
             style = TvPlayerType.Value,
-            maxLines = 1,
+            maxLines = maxLines,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.End,
             modifier = Modifier.weight(1f),
