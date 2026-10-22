@@ -2863,7 +2863,7 @@ class TvPlayerViewModel(
         // A plan that missed the start deadline on a link that may be too
         // slow lowers on Auto, as a long stall would, instead of replanning
         // the same quality. A large buffer means the decoder is stuck, not
-        // the link, and an outage waits for the network below.
+        // the link, and an outage belongs to the reconnect path.
         if (reason is org.siloserver.silo.common.player.Playability.StartupStalled &&
             !hasRenderedFirstFrame &&
             reason.bufferedAheadMs < START_LOWERING_MAX_BUFFERED_MS &&
@@ -2886,7 +2886,7 @@ class TvPlayerViewModel(
             playbackSessionManager.recordTransportReopen()
         ) {
             transientNetworkRetries++
-            reopenSameRoute(state, "client_retry=transport_reopen")
+            reopenSameRoute(state, "client_retry=transport_reopen", endLoading = false)
             return
         }
 
@@ -7023,14 +7023,14 @@ class TvPlayerViewModel(
      * new plan object, which re-runs the screen's mount effect: a same-route
      * remount, without a server round-trip.
      */
-    private fun reopenSameRoute(state: UiState, trace: String) {
+    private fun reopenSameRoute(state: UiState, trace: String, endLoading: Boolean = true) {
         val plan = state.playbackPlan ?: return
         val start = plan.timeline.playerPositionForSource(state.position) ?: plan.timeline.playerStartSeconds
         val transportMountNonce = nextTransportMountNonce(selectedSubtitleTrackIndex(state))
         pendingBufferingReloadNonce = transportMountNonce
         _uiState.update {
             it.copy(
-                isLoading = false,
+                isLoading = it.isLoading && !endLoading,
                 error = null,
                 playbackPlan = plan.copy(
                     timeline = plan.timeline.copy(playerStartSeconds = start),
