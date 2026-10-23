@@ -3,6 +3,7 @@ package org.siloserver.silo.android.ui.screens.search
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.CatalogBoxSet
 import org.siloserver.silo.model.catalog.Person
 import org.siloserver.silo.model.navigation.MediaMode
 import org.siloserver.silo.model.navigation.mobileMediaModeForLibraryType
@@ -13,6 +14,9 @@ import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.searchPeopleForQuery
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeoutOrNull
+import org.siloserver.silo.repository.BOX_SET_SEARCH_GRACE_MILLIS
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -75,6 +79,10 @@ internal val MobileSearchMediaType.peopleMediaScopes: List<String?>
 private val MobileSearchMediaType.isClientFiltered: Boolean
     get() = this != MobileSearchMediaType.All
 
+/** Box sets are movies; filters without movies leave them out. */
+internal val MobileSearchMediaType.includesBoxSets: Boolean
+    get() = this == MobileSearchMediaType.All || this == MobileSearchMediaType.Video
+
 internal const val MAX_FILTERED_SEARCH_PAGES = 5
 
 /**
@@ -105,6 +113,8 @@ data class SearchUiState(
     val availableMediaTypes: List<MobileSearchMediaType> = MobileSearchMediaType.entries.toList(),
     val isSearching: Boolean = false,
     val results: List<BrowseItem> = emptyList(),
+    /** Box sets matching the query, shown first, ahead of the movies themselves. */
+    val boxSets: List<CatalogBoxSet> = emptyList(),
     /** Cast and crew matching the query, shown above the title results. */
     val people: List<Person> = emptyList(),
     /** True until the current query's people lookup answers. */
@@ -142,6 +152,12 @@ class SearchViewModel(
     private val pageSize = 60
 
     /**
+     * Some library this profile sees has box sets on. Servers without box
+     * sets report none, so search never asks them for any.
+     */
+    private var boxSetsAvailable = false
+
+    /**
      * A voice query that [onVoiceQuery] already searched for immediately. The
      * debounced collector consumes and skips it once so the same query is not
      * requested twice.
@@ -165,6 +181,7 @@ class SearchViewModel(
                             it.copy(
                                 query = query,
                                 results = emptyList(),
+                                boxSets = emptyList(),
                                 people = emptyList(),
                                 isLoadingPeople = false,
                                 hasMore = false,
@@ -227,6 +244,7 @@ class SearchViewModel(
                 query = "",
                 isSearching = false,
                 results = emptyList(),
+                boxSets = emptyList(),
                 people = emptyList(),
                 isLoadingPeople = false,
                 hasMore = false,
@@ -237,6 +255,14 @@ class SearchViewModel(
             )
         }
         _queryFlow.value = ""
+    }
+
+    /** Whether any library this profile sees has box sets on; see [boxSetsAvailable]. */
+    fun setBoxSetsAvailable(available: Boolean) {
+        if (available == boxSetsAvailable) return
+        boxSetsAvailable = available
+        val query = _uiState.value.query
+        if (query.isNotBlank()) viewModelScope.launch { performSearch(query, reset = true) }
     }
 
     fun setAvailableModes(modes: List<MediaMode>) {
@@ -322,77 +348,96 @@ class SearchViewModel(
 
         _uiState.update { it.copy(isSearching = true, error = null) }
         if (reset) searchPeople(query, requestedMediaType)
+        // Box sets answer beside the first page and land with it, so the grid
+        // does not shift under the viewer when they arrive.
+        val boxSetsRequest = if (reset && boxSetsAvailable && requestedMediaType.includesBoxSets) {
+            viewModelScope.async { catalogRepository.searchBoxSets(query) }
+        } else {
+            null
+        }
 
-        while (true) {
-            val result = catalogRepository.browse(
-                source = "query",
-                query = query,
-                mediaType = requestedMediaType.wire,
-                continuation = cursor,
-                limit = pageSize,
-            )
-            val latest = _uiState.value
-            if (generation != searchGeneration || latest.query != query || latest.mediaType != requestedMediaType) return
+        // The box set request ends with the search, whether a newer query or a
+        // cleared field replaces it, it fails, or it answers.
+        try {
+            while (true) {
+                val result = catalogRepository.browse(
+                    source = "query",
+                    query = query,
+                    mediaType = requestedMediaType.wire,
+                    continuation = cursor,
+                    limit = pageSize,
+                )
+                val latest = _uiState.value
+                if (generation != searchGeneration || latest.query != query || latest.mediaType != requestedMediaType) return
 
-            when (result) {
-                is ApiResult.Success -> {
-                    val response = result.data
-                    cursor = response.continuation
-                    val rawCount = response.items.size
-                    val pageVisibleItems = requestedMediaType.filterResults(response.items)
+                when (result) {
+                    is ApiResult.Success -> {
+                        val response = result.data
+                        cursor = response.continuation
+                        val rawCount = response.items.size
+                        val pageVisibleItems = requestedMediaType.filterResults(response.items)
 
-                    pagesFetched += 1
-                    visibleItems += pageVisibleItems
-                    offset += rawCount
-                    hasMore = response.hasMore && rawCount > 0
-                    total = response.total
+                        pagesFetched += 1
+                        visibleItems += pageVisibleItems
+                        offset += rawCount
+                        hasMore = response.hasMore && rawCount > 0
+                        total = response.total
 
-                    val shouldAdvanceFilteredPage = shouldAutoAdvanceFilteredSearchPage(
-                        isClientFiltered = requestedMediaType.isClientFiltered,
-                        visibleItemCount = visibleItems.size,
-                        hasMore = hasMore,
-                        pagesFetched = pagesFetched,
-                    )
-                    if (shouldAdvanceFilteredPage) continue
-
-                    continuation = cursor
-                    _uiState.update {
-                        val nextResults = if (reset) visibleItems else it.results + visibleItems
-                        it.copy(
-                            isSearching = false,
-                            results = nextResults,
+                        val shouldAdvanceFilteredPage = shouldAutoAdvanceFilteredSearchPage(
+                            isClientFiltered = requestedMediaType.isClientFiltered,
+                            visibleItemCount = visibleItems.size,
                             hasMore = hasMore,
-                            total = if (requestedMediaType.isClientFiltered) nextResults.size else total,
-                            totalExact = if (requestedMediaType.isClientFiltered) !hasMore else response.totalExact == true,
-                            searchDiagnostics = response.searchDiagnostics,
-                            error = null,
-                            hasSearched = true,
-                            nextOffset = offset,
+                            pagesFetched = pagesFetched,
                         )
+                        if (shouldAdvanceFilteredPage) continue
+
+                        // Box sets only add to the titles, so a slow answer never holds them
+                        // back for long: past the grace period this query shows none.
+                        val boxSets = withTimeoutOrNull(BOX_SET_SEARCH_GRACE_MILLIS) { boxSetsRequest?.await() }.orEmpty()
+                        val current = _uiState.value
+                        if (generation != searchGeneration || current.query != query || current.mediaType != requestedMediaType) return
+                        continuation = cursor
+                        _uiState.update {
+                            val nextResults = if (reset) visibleItems else it.results + visibleItems
+                            it.copy(
+                                isSearching = false,
+                                results = nextResults,
+                                boxSets = if (reset) boxSets else it.boxSets,
+                                hasMore = hasMore,
+                                total = if (requestedMediaType.isClientFiltered) nextResults.size else total,
+                                totalExact = if (requestedMediaType.isClientFiltered) !hasMore else response.totalExact == true,
+                                searchDiagnostics = response.searchDiagnostics,
+                                error = null,
+                                hasSearched = true,
+                                nextOffset = offset,
+                            )
+                        }
+                        return
                     }
-                    return
-                }
-                is ApiResult.Error -> {
-                    _uiState.update {
-                        it.copy(
-                            isSearching = false,
-                            error = result.message.ifBlank { "Search failed" },
-                            hasSearched = true,
-                        )
+                    is ApiResult.Error -> {
+                        _uiState.update {
+                            it.copy(
+                                isSearching = false,
+                                error = result.message.ifBlank { "Search failed" },
+                                hasSearched = true,
+                            )
+                        }
+                        return
                     }
-                    return
-                }
-                is ApiResult.NetworkError -> {
-                    _uiState.update {
-                        it.copy(
-                            isSearching = false,
-                            error = result.errorMessage("Search failed"),
-                            hasSearched = true,
-                        )
+                    is ApiResult.NetworkError -> {
+                        _uiState.update {
+                            it.copy(
+                                isSearching = false,
+                                error = result.errorMessage("Search failed"),
+                                hasSearched = true,
+                            )
+                        }
+                        return
                     }
-                    return
                 }
             }
+        } finally {
+            boxSetsRequest?.cancel()
         }
     }
 }

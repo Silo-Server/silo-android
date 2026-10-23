@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.libraries
 
+import org.siloserver.silo.model.catalog.CatalogBoxSet
 import androidx.compose.foundation.background
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -20,6 +21,7 @@ import org.siloserver.silo.network.AccessChangeSignals
 @Composable
 fun TvLibrariesScreen(
     onItemClick: (contentId: String, libraryId: Int) -> Unit,
+    onBoxSetClick: (CatalogBoxSet) -> Unit = {},
     onLibraryCollectionClick: (
         libraryId: Int,
         collectionId: String,
@@ -63,7 +65,9 @@ fun TvLibrariesScreen(
                     libraryId = selectedLibrary.id,
                     libraryTitle = selectedLibrary.name,
                     libraryType = selectedLibrary.type,
+                    boxSetsEnabled = selectedLibrary.boxSetsEnabled,
                     onItemClick = { onItemClick(it, selectedLibrary.id) },
+                    onBoxSetClick = onBoxSetClick,
                     onCollectionClick = { collectionId, title, isUserCollection ->
                         if (isUserCollection) {
                             onUserCollectionClick(collectionId, title)

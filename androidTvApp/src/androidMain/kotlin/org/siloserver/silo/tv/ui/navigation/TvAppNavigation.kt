@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.navigation
 
+import org.siloserver.silo.tv.ui.screens.boxset.TvBoxSetScreen
 import androidx.compose.foundation.layout.fillMaxWidth
 import android.net.Uri
 import android.util.Log
@@ -1108,6 +1109,9 @@ fun TvAppNavigation(
                 onOpenItemDetail = { contentId ->
                     navController.navigateToTvItemDetail(contentId)
                 },
+                onOpenBoxSet = { boxSet ->
+                    navController.navigate(TvRoute.BoxSet(boxSet.id, boxSet.libraryId).route) { launchSingleTop = true }
+                },
                 onOpenItemDetailSelection = { contentId, seasonNumber, episodeContentId ->
                     navController.navigateToTvItemDetail(
                         contentId = contentId,
@@ -1357,6 +1361,39 @@ fun TvAppNavigation(
                     }
                 },
                 onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable(
+            route = TvRoute.BoxSet.ROUTE,
+            arguments = listOf(
+                navArgument(TvRoute.BoxSet.ARG_BOX_SET_ID) { type = NavType.StringType },
+                navArgument(TvRoute.BoxSet.ARG_LIBRARY_ID) { type = NavType.StringType },
+            ),
+        ) { backStack ->
+            val boxSetId = backStack.arguments?.getString(TvRoute.BoxSet.ARG_BOX_SET_ID).orEmpty()
+            val boxSetLibraryId = backStack.arguments?.getString(TvRoute.BoxSet.ARG_LIBRARY_ID).orEmpty()
+            val libraryId = boxSetLibraryId.toIntOrNull()
+            TvBoxSetScreen(
+                boxSetId = boxSetId,
+                libraryId = boxSetLibraryId,
+                onBack = { navController.popBackStack() },
+                onPlayMovie = { contentId, resumePositionSeconds ->
+                    navController.navigateToTvPlayback(
+                        destination = tvPlayDestinationFor(
+                            itemType = "movie",
+                            contentId = contentId,
+                            fileId = null,
+                            resumePositionSeconds = resumePositionSeconds,
+                            libraryId = libraryId,
+                        ),
+                        contentId = contentId,
+                        lastPlaybackNavigation = lastPlaybackNavigation,
+                    )
+                },
+                onOpenMovie = { contentId ->
+                    navController.navigateToTvItemDetail(contentId, libraryId = libraryId)
+                },
             )
         }
 

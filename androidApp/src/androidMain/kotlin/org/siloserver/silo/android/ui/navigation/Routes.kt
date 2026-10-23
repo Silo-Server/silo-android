@@ -170,6 +170,14 @@ sealed class Route(val route: String) {
         }
     }
 
+    /** A movie box set: one TMDB collection's movies in one library. */
+    data class BoxSet(val boxSetId: String, val libraryId: String) :
+        Route("box_set/${boxSetId.routeEncode()}?libraryId=${libraryId.routeEncode()}") {
+        companion object {
+            const val ROUTE = "box_set/{boxSetId}?libraryId={libraryId}"
+        }
+    }
+
     data class PersonDetail(val personId: Long) : Route("person/$personId") {
         companion object {
             const val ROUTE = "person/{personId}"

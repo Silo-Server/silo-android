@@ -3,8 +3,13 @@ package org.siloserver.silo.android.ui.components
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.common.ui.components.BoxSetSleeveColors
+import org.siloserver.silo.common.ui.components.boxSetSleeves
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,9 +32,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.navigation.LocalHeroSourceHandoff
 import org.siloserver.silo.android.ui.navigation.heroSharedKeyPrefix
 import org.siloserver.silo.android.ui.navigation.heroSource
@@ -96,6 +103,12 @@ fun MediaCard(
     detailBackdropUrl: String? = null,
     detailBackdropThumbhash: String? = null,
     hideDetailArtwork: Boolean = hideArtwork,
+    /** A pill in the artwork's top-start corner, such as a box set's "Box set". */
+    badge: String? = null,
+    /** A tag in the artwork's bottom-end corner, such as a box set's film count. */
+    cornerLabel: String? = null,
+    /** Draws a box set's sleeves above the artwork; see [boxSetSleeves]. */
+    sleeves: BoxSetSleeveColors? = null,
 ) {
     val overlayState = LocalCardOverlayUiState.current
     var menuExpanded by remember { mutableStateOf(false) }
@@ -134,6 +147,8 @@ fun MediaCard(
                 .fillMaxWidth()
                 // iOS posterAspectRatio = 2 : 3.3 (posterCardWidth 120 / height 198).
                 .aspectRatio(artworkAspectRatio)
+                // Outside the clip below, so they show above the artwork.
+                .then(if (sleeves != null) Modifier.boxSetSleeves(sleeves) else Modifier)
                 // Hero morph source. Must precede .clip() — sharedBounds renders
                 // into the transition overlay and clipping is applied to its child.
                 .heroSource(heroKey)
@@ -166,6 +181,37 @@ fun MediaCard(
             // Mirrors iOS MediaCard.swift:104–119.
             if (userState?.played == true) {
                 WatchedBadge(modifier = Modifier.align(Alignment.TopEnd))
+            }
+
+            if (badge != null) {
+                Text(
+                    text = badge.uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 1.2.sp,
+                    color = Color.White,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                        .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                )
+            }
+            if (cornerLabel != null) {
+                Text(
+                    text = cornerLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(start = 6.dp, end = 6.dp, bottom = 8.dp)
+                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
             }
 
             // Progress bar at bottom of artwork.

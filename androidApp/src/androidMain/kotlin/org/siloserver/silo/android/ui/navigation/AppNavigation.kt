@@ -83,6 +83,7 @@ import org.siloserver.silo.android.ui.screens.auth.SetupScreen
 import org.siloserver.silo.android.ui.screens.auth.InviteClaimScreen
 import org.siloserver.silo.android.ui.screens.auth.SignupScreen
 import org.siloserver.silo.android.ui.screens.onboarding.OnboardingTourScreen
+import org.siloserver.silo.android.ui.screens.boxset.BoxSetScreen
 import org.siloserver.silo.android.ui.screens.browse.BrowseScreen
 import org.siloserver.silo.android.ui.screens.browse.BrowseViewModel
 import org.siloserver.silo.android.ui.screens.calendar.CalendarScreen
@@ -145,6 +146,7 @@ import org.siloserver.silo.repository.ProfilePromptAction
 import org.siloserver.silo.repository.ProfileVerificationRecovery
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.koin.core.parameter.parametersOf
 
 /**
  * Detail identity actually on screen, which a series redirect can move away
@@ -1324,6 +1326,9 @@ fun AppNavigation(
                 onItemClick = { contentId ->
                     navController.navigate(Route.ItemDetail(contentId).route)
                 },
+                onBoxSetClick = { boxSet ->
+                    navController.navigate(Route.BoxSet(boxSet.id, boxSet.libraryId).route)
+                },
                 onPersonClick = { personId ->
                     navController.navigate(Route.PersonDetail(personId).route)
                 },
@@ -1446,6 +1451,48 @@ fun AppNavigation(
         }
 
         // ---- Detail screens ----
+        composable(
+            route = Route.BoxSet.ROUTE,
+            arguments = listOf(
+                navArgument("boxSetId") { type = NavType.StringType },
+                navArgument("libraryId") { type = NavType.StringType },
+            ),
+        ) { backStackEntry ->
+            val boxSetId = backStackEntry.arguments?.getString("boxSetId").orEmpty()
+            val boxSetLibraryId = backStackEntry.arguments?.getString("libraryId").orEmpty()
+            val libraryId = boxSetLibraryId.toIntOrNull()
+            BoxSetScreen(
+                viewModel = koinViewModel { parametersOf(boxSetId, boxSetLibraryId) },
+                onBackClick = { navController.popBackStack() },
+                onPlayMovie = { contentId, resumePositionSeconds ->
+                    val launchedRemotely = siloCastController.launchOnConnectedTarget(
+                        SiloCastPlaybackRequest(
+                            contentId = contentId,
+                            libraryId = libraryId,
+                            // A box set's movies carry no saved position. Leave the
+                            // resume to the player instead of forcing a start over.
+                            startFromBeginning = false,
+                            resumePosition = resumePositionSeconds,
+                        ),
+                    )
+                    if (launchedRemotely) {
+                        navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
+                    } else {
+                        navController.navigate(
+                            Route.Player(
+                                libraryId = libraryId,
+                                contentId = contentId,
+                                resumePositionSeconds = resumePositionSeconds,
+                            ).route,
+                        )
+                    }
+                },
+                onMovieClick = { contentId ->
+                    navController.navigate(Route.ItemDetail(contentId, libraryId = libraryId).route)
+                },
+            )
+        }
+
         composable(
             route = Route.ItemDetail.ROUTE,
             arguments = listOf(

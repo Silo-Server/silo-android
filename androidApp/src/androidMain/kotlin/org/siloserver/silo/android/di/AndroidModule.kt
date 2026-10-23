@@ -547,6 +547,8 @@ val androidModule = module {
         )
     }
     viewModel { params -> PersonDetailViewModel(get(), params.get(), get()) }
+    // Box set id, then its library id.
+    viewModel { params -> org.siloserver.silo.viewmodel.BoxSetViewModel(get(), params[0], params[1]) }
     viewModel { params -> LibraryCollectionsViewModel(get(), params.get()) }
     viewModel { FavoritesViewModel(get(), get()) }
     viewModel { WatchlistViewModel(get(), get()) }

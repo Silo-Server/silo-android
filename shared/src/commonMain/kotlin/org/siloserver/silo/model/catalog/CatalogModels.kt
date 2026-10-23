@@ -87,6 +87,8 @@ data class BrowseItem(
     @SerialName("pending_translation_language") val pendingTranslationLanguage: String? = null,
     /** Localized fields ("overview", "tagline") whose text was machine-translated by AI. */
     @SerialName("machine_translated_fields") val machineTranslatedFields: List<String> = emptyList(),
+    /** The box set a [BOX_SET_TYPE] card of a `group=box_set` browse stands for. */
+    @SerialName("box_set") val boxSet: CatalogBoxSet? = null,
 )
 
 @Serializable

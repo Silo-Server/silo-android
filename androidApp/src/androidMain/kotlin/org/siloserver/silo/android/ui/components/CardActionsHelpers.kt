@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.catalog.BrowseItem
@@ -26,9 +27,16 @@ import org.koin.compose.koinInject
 @Composable
 fun rememberBrowseItemCardActions(
     item: BrowseItem,
+    /**
+     * A watched write failed while it was still the latest one for the item,
+     * after the card put its own state back. For a screen that also showed
+     * the change elsewhere, such as a box set's hero.
+     */
+    onWatchedWriteFailed: () -> Unit = {},
 ): Triple<MediaCardActions, MediaItemUserState, Double?> {
     val coordinator: MediaActionsCoordinator = koinInject()
     val scope = rememberCoroutineScope()
+    val currentOnWatchedWriteFailed by rememberUpdatedState(onWatchedWriteFailed)
 
     // Re-key on userState too: when the list re-emits with an overlaid userState
     // (local watched/favorite applied), the card must pick it up — keying on
@@ -46,7 +54,10 @@ fun rememberBrowseItemCardActions(
                 state = state.withWatched(watched)
                 scope.launch {
                     if (coordinator.performPersonalWrite(writeIntent).isFailure()) {
-                        if (coordinator.isCurrent(writeIntent)) state = previous
+                        if (coordinator.isCurrent(writeIntent)) {
+                            state = previous
+                            currentOnWatchedWriteFailed()
+                        }
                     }
                 }
             },
