@@ -639,7 +639,7 @@ fun PlayerOverlay(
             onSelectSubtitle = onSelectSubtitle,
             onDismiss = { tracksSheetVisible = false },
             initialTab = tracksInitialTab,
-            showSearchAction = subtitleToolsAvailable,
+            showSearchAction = subtitleToolsAvailable && subtitleTools.providerSearchAvailable == true,
             showTranslateAction = subtitleToolsAvailable &&
                 subtitleTools.aiStatus?.let { it.enabled || it.transcribeEnabled } == true,
             onSearchSubtitles = {

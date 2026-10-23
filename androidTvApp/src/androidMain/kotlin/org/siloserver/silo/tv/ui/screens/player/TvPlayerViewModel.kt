@@ -130,6 +130,7 @@ import org.siloserver.silo.playback.activeSyncKey
 import org.siloserver.silo.playback.statusLabelFor
 import org.siloserver.silo.playback.syncKeyFor
 import org.siloserver.silo.playback.timingActionsFor
+import org.siloserver.silo.model.subtitles.subtitleSearchAvailabilityAfter
 import org.siloserver.silo.model.subtitles.SubtitleSyncState
 import org.siloserver.silo.common.player.subtitleSyncName
 import org.siloserver.silo.playback.applyAuthoritativeSubtitleReadyTrack
@@ -698,6 +699,11 @@ data class TvPlayerLaunchArgs(
  * list has been refreshed — the dialog observes it and dismisses itself.
  */
 data class SubtitleSearchUiState(
+    /**
+     * Whether the server offers provider search ("Search online"); null until
+     * the first provider-status answer. A failed probe offers search.
+     */
+    val providerAvailable: Boolean? = null,
     val language: String = "en",
     val isSearching: Boolean = false,
     val hasSearched: Boolean = false,
@@ -5712,6 +5718,7 @@ class TvPlayerViewModel(
     fun onSubtitlesPaneShown() {
         // Opening re-reads sync state so a job that finished meanwhile shows.
         subtitleSync.reload()
+        refreshSubtitleProviderStatus()
         if (aiStatusRequested) return
         aiStatusRequested = true
         viewModelScope.launch {
@@ -5720,6 +5727,26 @@ class TvPlayerViewModel(
                 else -> SubtitleAiStatus(enabled = false, transcribeEnabled = false)
             }
             _aiTranslate.update { it.copy(statusLoaded = true, status = status) }
+        }
+    }
+
+    private var subtitleProviderStatusGeneration = 0L
+
+    /**
+     * Re-reads whether the server has a subtitle provider each time the
+     * Subtitles pane shows, so a provider an administrator added or removed
+     * shows or hides "Search online" without restarting playback.
+     */
+    private fun refreshSubtitleProviderStatus() {
+        // Reopening the panel can start a probe while an older one is still
+        // pending; only the newest answer is applied.
+        val generation = ++subtitleProviderStatusGeneration
+        viewModelScope.launch {
+            val result = subtitlesRepository.providerStatus()
+            if (generation != subtitleProviderStatusGeneration) return@launch
+            _subtitleSearch.update {
+                it.copy(providerAvailable = subtitleSearchAvailabilityAfter(result, it.providerAvailable))
+            }
         }
     }
 
