@@ -285,7 +285,9 @@ private fun TvBufferingPillCard(
         }
     }
     DisposableEffect(Unit) {
-        onDispose { latestOnFocusChanged(null) }
+        // Only a report this card still holds: on Prompt to Undo the next
+        // card may already have reported its own action.
+        onDispose { if (focusedAction != null) latestOnFocusChanged(null) }
     }
 
     val shape = RoundedCornerShape(16.dp)
