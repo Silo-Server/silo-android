@@ -22,6 +22,7 @@ class HomeScreenV2Test {
     private var owner = AuthScopeSnapshot("s", "p", "https://example.invalid", "pin", identityGeneration = 1)
     private val tokens = object : TokenManager by TokenManagerImpl() { override suspend fun snapshotCurrentScope() = owner }
     private val language = org.siloserver.silo.domain.settings.CatalogLanguageRevision()
+    private val layoutChanges = HomeLayoutChanges()
     private var title = "Old"
     private var unresolved = false
     private var failFallback = false
@@ -71,7 +72,7 @@ class HomeScreenV2Test {
         try {
             val repository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted, decodeDispatcher = dispatcher)))
             val vm = HomeViewModel(repository, MediaActionsCoordinator(PersonalDataRepository(PersonalDataApi(client))), cache, local,
-                homeRealtime = realtime, catalogLanguage = language, startShown = startShown)
+                homeRealtime = realtime, catalogLanguage = language, startShown = startShown, homeLayoutChanges = layoutChanges)
             store.put("home", vm); block(vm)
         } finally { store.clear(); client.close(); Dispatchers.resetMain() }
     }
@@ -143,6 +144,18 @@ class HomeScreenV2Test {
         assertEquals("New", vm.uiState.value.sections.single().items.single().title)
         vm.runPendingRealtimeRefresh(); runCurrent()
         assertEquals(2, listReads, "the deferred refresh runs once")
+    }
+
+    // A Home layout saved from the editor shows on Home at once, and a hidden
+    // Home (TV while Settings is open) re-reads when it is shown again.
+    @Test fun savedHomeLayoutRereadsHome() = scenario(startShown = false) { vm ->
+        runCurrent(); assertEquals(1, listReads)
+        layoutChanges.changed(); runCurrent()
+        assertEquals(1, listReads, "a hidden Home must not re-read")
+        vm.onShown(); vm.runPendingRealtimeRefresh(); runCurrent()
+        assertEquals(2, listReads)
+        layoutChanges.changed(); runCurrent()
+        assertEquals(3, listReads)
     }
 
     @Test fun shownHomeRefreshesLiveAndStopsWhenHidden() = scenario { vm ->

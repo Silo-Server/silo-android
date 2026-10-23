@@ -101,7 +101,7 @@ fun SettingsInterfaceScreen(viewModel: SettingsViewModel, onBackClick: () -> Uni
         item(key = "home") {
             SettingsSection(
                 title = "Home",
-                footer = "Choose which Home rows are visible and the order they appear in.",
+                footer = "Choose which Home rows are visible and the order they appear in. This applies to this profile on every device.",
             ) {
                 SettingsNavigationRow(
                     label = "Home Sections",

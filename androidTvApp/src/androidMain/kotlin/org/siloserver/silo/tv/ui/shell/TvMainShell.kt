@@ -1226,10 +1226,6 @@ fun TvMainShell(
                         onOpenForYou = {
                             openForYou(null)
                         },
-                        onOpenSettings = {
-                            navigateToRoute(TvMainRoute.Settings.route)
-                            moveFocusToContent(TvMainRoute.Settings.route)
-                        },
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
                         detailReturnFocusRequest = homeDetailReturnFocusState.requestId,
@@ -1252,10 +1248,6 @@ fun TvMainShell(
                         },
                         onOpenForYou = {
                             openForYou(null)
-                        },
-                        onOpenSettings = {
-                            navigateToRoute(TvMainRoute.Settings.route)
-                            moveFocusToContent(TvMainRoute.Settings.route)
                         },
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
@@ -1460,7 +1452,6 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Settings.route) {
                     TvSettingsScreen(
-                        homeSectionsViewModel = homeViewModel,
                         onManageServers = onManageServers,
                         onOpenDiagnosticsReport = onOpenDiagnosticsReport,
                         initialManageServersFocus = returnToManageServers,

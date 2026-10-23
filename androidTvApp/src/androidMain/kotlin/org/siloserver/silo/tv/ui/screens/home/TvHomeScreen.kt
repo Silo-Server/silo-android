@@ -13,7 +13,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -27,11 +26,9 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
-import org.siloserver.silo.tv.data.preferences.TvHomeSectionPreferences
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
@@ -67,7 +64,6 @@ fun TvHomeScreen(
     onPlayItem: (contentId: String, type: String?, resumePositionSeconds: Double?) -> Unit = { _, _, _ -> },
     onSeeAll: () -> Unit = {},
     onOpenForYou: () -> Unit = {},
-    onOpenSettings: () -> Unit = {},
     onInitialContentFocus: () -> Unit = {},
     focusRequest: Int = 0,
     detailReturnFocusRequest: Int = 0,
@@ -79,20 +75,11 @@ fun TvHomeScreen(
     viewModel: HomeViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    val homeSectionPreferences: TvHomeSectionPreferences = koinInject()
-    val homeSectionPreferenceState by homeSectionPreferences.state.collectAsState()
-    val normalizedSections = remember(state.sections) { state.sections.normalizeTvHomeSections() }
-    val visibleSections = remember(normalizedSections, homeSectionPreferenceState.layout) {
-        TvHomeSectionPreferences.arrange(
-            sections = normalizedSections,
-            layout = homeSectionPreferenceState.layout,
-        )
-    }
-    val sectionsHiddenByPreference =
-        normalizedSections.isNotEmpty() && visibleSections.isEmpty()
-
-    LaunchedEffect(homeSectionPreferences) {
-        homeSectionPreferences.refresh()
+    // The server already orders and hides rows for this profile, so Home
+    // shows its populated rows in that order. A split-off Continue Listening
+    // row sits right after the row it came from.
+    val visibleSections = remember(state.sections) {
+        state.sections.normalizeTvHomeSections().filter { it.items.isNotEmpty() }
     }
 
     // TV has no pull-to-refresh, so ON_RESUME is the only manual freshness
@@ -129,43 +116,37 @@ fun TvHomeScreen(
         shouldShowHomeEmptyState(state.isLoading, state.error, visibleSections.size) ->
             TvHomeEmptyState(
                 onRefresh = viewModel::loadSections,
-                onOpenSettings = onOpenSettings,
-                sectionsHiddenByPreference = sectionsHiddenByPreference,
                 focusRequester = firstRowFocusRequester,
                 focusRequest = focusRequest,
                 onInitialContentFocus = onInitialContentFocus,
             )
-        else -> key(homeSectionPreferenceState.layoutRevision) {
-            TvHomeContent(
-                sections = visibleSections,
-                sectionsFullyResolved = state.sectionsFullyResolved,
-                onItemClick = onItemClick,
-                onItemDetailSelection = onItemDetailSelection,
-                onPlayItem = onPlayItem,
-                onSeeAll = onSeeAll,
-                onOpenForYou = onOpenForYou,
-                onInitialContentFocus = onInitialContentFocus,
-                focusRequest = focusRequest,
-                detailReturnFocusRequest = detailReturnFocusRequest,
-                detailReturnCardFocusRequester = detailReturnCardFocusRequester,
-                firstRowFocusRequester = firstRowFocusRequester,
-                firstRowContainerFocusRequester = firstRowContainerFocusRequester,
-                onContentUpFallbackChanged = onContentUpFallbackChanged,
-                onSetWatched = viewModel::setWatched,
-                onMarqueeTranslated = viewModel::refreshFromRealtime,
-                onToggleFavorite = viewModel::toggleFavorite,
-                onToggleWatchlist = viewModel::toggleWatchlist,
-                onRemoveFromHome = viewModel::dismissFromHome,
-            )
-        }
+        else -> TvHomeContent(
+            sections = visibleSections,
+            sectionsFullyResolved = state.sectionsFullyResolved,
+            onItemClick = onItemClick,
+            onItemDetailSelection = onItemDetailSelection,
+            onPlayItem = onPlayItem,
+            onSeeAll = onSeeAll,
+            onOpenForYou = onOpenForYou,
+            onInitialContentFocus = onInitialContentFocus,
+            focusRequest = focusRequest,
+            detailReturnFocusRequest = detailReturnFocusRequest,
+            detailReturnCardFocusRequester = detailReturnCardFocusRequester,
+            firstRowFocusRequester = firstRowFocusRequester,
+            firstRowContainerFocusRequester = firstRowContainerFocusRequester,
+            onContentUpFallbackChanged = onContentUpFallbackChanged,
+            onSetWatched = viewModel::setWatched,
+            onMarqueeTranslated = viewModel::refreshFromRealtime,
+            onToggleFavorite = viewModel::toggleFavorite,
+            onToggleWatchlist = viewModel::toggleWatchlist,
+            onRemoveFromHome = viewModel::dismissFromHome,
+        )
     }
 }
 
 @Composable
 private fun TvHomeEmptyState(
     onRefresh: () -> Unit,
-    onOpenSettings: () -> Unit,
-    sectionsHiddenByPreference: Boolean,
     focusRequester: FocusRequester?,
     focusRequest: Int,
     onInitialContentFocus: () -> Unit,
@@ -194,30 +175,22 @@ private fun TvHomeEmptyState(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                text = if (sectionsHiddenByPreference) {
-                    "Home sections are hidden"
-                } else {
-                    "Nothing to watch yet"
-                },
+                text = "Nothing to watch yet",
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
-                text = if (sectionsHiddenByPreference) {
-                    "Choose which rows appear in Settings → General → Home Sections."
-                } else {
-                    "Add media to your libraries or start watching to see it here."
-                },
+                text = "Add media to your libraries or start watching to see it here.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Button(
-                onClick = if (sectionsHiddenByPreference) onOpenSettings else onRefresh,
+                onClick = onRefresh,
                 modifier = Modifier.focusRequester(refreshFocusRequester),
                 contentPadding = PaddingValues(horizontal = 32.dp, vertical = 12.dp),
             ) {
                 Text(
-                    text = if (sectionsHiddenByPreference) "Open Settings" else "Refresh",
+                    text = "Refresh",
                     style = MaterialTheme.typography.labelLarge,
                 )
             }
