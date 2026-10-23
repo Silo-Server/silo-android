@@ -24,6 +24,7 @@ import org.siloserver.silo.repository.RequestsRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.repository.SettingsRepository
 import org.siloserver.silo.repository.WatchTogetherRepository
+import org.siloserver.silo.network.realtimeAdmissionOwner
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.watchtogether.RoomSession
 import org.koin.dsl.module
@@ -156,9 +157,10 @@ val repositoryModule = module {
         NotificationsRepository(
             api = get(),
             tokens = get(), authorities = getOrNull(), checkpoints = getOrNull(), identityTransitions = get(),
-            realtimeFactory = {
+            realtimeFactory = { recovery ->
                 org.siloserver.silo.network.DefaultNotificationsRealtimeClient(
                     socket = get(),
+                    recovery = recovery,
                 )
             },
         )
@@ -174,6 +176,7 @@ val repositoryModule = module {
         WatchTogetherRepository(
             api = get(),
             authScopeProvider = { tokenManager.snapshotCurrentScope() },
+            admissionOwnerProvider = { tokenManager.realtimeAdmissionOwner(it) },
             realtimeFactory = {
                 org.siloserver.silo.network.DefaultWatchTogetherRealtimeClient(
                     client = get(),

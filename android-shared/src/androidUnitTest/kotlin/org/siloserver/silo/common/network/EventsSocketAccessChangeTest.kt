@@ -10,6 +10,8 @@ import okhttp3.mockwebserver.MockWebServer
 import org.siloserver.silo.network.AccessChangeSignals
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.CleartextOriginConsent
+import org.siloserver.silo.network.DefaultHomeRealtimeClient
+import org.siloserver.silo.network.HomeRealtimeEvent
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.TokenManagerImpl
 import org.siloserver.silo.network.apiv2.ApiV2Gate
@@ -18,6 +20,7 @@ import org.siloserver.silo.network.canonicalHttpOrigin
 import org.siloserver.silo.network.createSiloClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -55,10 +58,18 @@ class EventsSocketAccessChangeTest {
         assertEquals(0L, frames.signals.revision.value)
     }
 
-    private class Outcome(val signals: AccessChangeSignals, val received: List<String>)
+    @Test
+    fun `only the named input shield 1008 selects shield backoff`() = runBlocking {
+        val shield = connectOnce(home = true) { it.close(1008, "realtime input shield") }
+        assertTrue(assertNotNull(shield.closed?.retryAfterMs) in 5_000L..5_250L)
+        val other = connectOnce(home = true) { it.close(1008, "subscribe required") }
+        assertTrue(assertNotNull(other.closed?.retryAfterMs) in 1_000L..1_250L)
+    }
+
+    private class Outcome(val signals: AccessChangeSignals, val received: List<String>, val closed: HomeRealtimeEvent.Closed? = null)
 
     /** [afterSubscribe] runs once the client's subscribe frame arrives, as the server's recheck would. */
-    private suspend fun connectOnce(afterSubscribe: (WebSocket) -> Unit): Outcome {
+    private suspend fun connectOnce(home: Boolean = false, afterSubscribe: (WebSocket) -> Unit): Outcome {
         val server = MockWebServer()
         server.enqueue(
             MockResponse()
@@ -90,12 +101,13 @@ class EventsSocketAccessChangeTest {
             accessChangeSignals = signals,
         )
         try {
-            val received = withTimeout(10_000) {
-                EventsSocketV2Api(httpClient, tokens, ApiV2Gate.Unrestricted, signals)
-                    .frames(listOf("catalog"))
-                    .toList()
+            return withTimeout(10_000) {
+                val api = EventsSocketV2Api(httpClient, tokens, ApiV2Gate.Unrestricted, signals)
+                if (home) {
+                    val closed = DefaultHomeRealtimeClient(api).connect().toList().filterIsInstance<HomeRealtimeEvent.Closed>().single()
+                    Outcome(signals, emptyList(), closed)
+                } else Outcome(signals, api.frames(listOf("catalog")).toList())
             }
-            return Outcome(signals, received)
         } finally {
             httpClient.close()
             server.shutdown()
