@@ -13,6 +13,7 @@ import androidx.core.app.NotificationManagerCompat
 import org.siloserver.silo.android.MainActivity
 import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.navigation.Route
+import org.siloserver.silo.android.ui.screens.notifications.watchlistAvailableTitle
 import org.siloserver.silo.model.notifications.NotificationRow
 import org.siloserver.silo.model.notifications.NotificationType
 import org.siloserver.silo.network.ApiResult
@@ -214,6 +215,11 @@ class PushNotificationPresenter internal constructor(
                 body = row.episodeTitle.ifBlank { null }
                     ?: row.seriesTitle.ifBlank { null }
                     ?: "Your requested title is ready.",
+                route = route,
+            )
+            NotificationType.WatchlistAvailable -> PushNotificationContent(
+                title = watchlistAvailableTitle(row.seriesTitle.ifBlank { null }),
+                body = "From your watchlist.",
                 route = route,
             )
             NotificationType.Unknown -> PushNotificationContent(
