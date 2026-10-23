@@ -31,7 +31,7 @@ import org.siloserver.silo.common.player.video.DesiredAudio
 import org.siloserver.silo.common.player.video.LocalAudioSelection
 import org.siloserver.silo.common.player.video.reconcileDesiredAudioAction
 import org.siloserver.silo.common.player.video.shouldVerifyOriginalAudioSelection
-import org.siloserver.silo.common.player.video.matchMountedAudioTrack
+import org.siloserver.silo.common.player.video.mountedAudioFor
 import org.siloserver.silo.playback.resolveAudioTrackOrdinal
 import org.siloserver.silo.common.player.FinalPlaybackPosition
 import org.siloserver.silo.common.player.FinalPlaybackPositionWriter
@@ -3607,6 +3607,7 @@ class TvPlayerViewModel(
             selectedOrdinal = audio.firstOrNull { it.isSelected }?.index,
             planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
             requiresMountedIdentity = requiresMountedIdentity,
+            delivery = state.playbackPlan?.delivery,
         )
         when (action) {
             AudioReconcileAction.None -> armOriginalAudioSelectionVerification(
@@ -4639,9 +4640,12 @@ class TvPlayerViewModel(
             // to a replan left an older launch/persisted/HUD intent authoritative,
             // and it would reapply itself afterwards and undo the remote pick.
             setDesiredAudio(selected, explicit = true)
-            if (matchMountedAudioTrack(
-                    catalogAudioTracks(state).getOrNull(selected) ?: return,
-                    state.audioTracks.map { it.toMountedAudioTrack() },
+            if (mountedAudioFor(
+                    catalog = catalogAudioTracks(state),
+                    catalogOrdinal = selected,
+                    mounted = state.audioTracks.map { it.toMountedAudioTrack() },
+                    delivery = state.playbackPlan?.delivery,
+                    planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
                 ) != null
             ) {
                 return
@@ -5682,9 +5686,12 @@ class TvPlayerViewModel(
         // mounted stream already carries the track, which is the common
         // direct-play case and needs no replan at all.
         setDesiredAudio(catalogOrdinal, explicit = true)
-        if (matchMountedAudioTrack(
-                catalog[catalogOrdinal],
-                state.audioTracks.map { it.toMountedAudioTrack() },
+        if (mountedAudioFor(
+                catalog = catalog,
+                catalogOrdinal = catalogOrdinal,
+                mounted = state.audioTracks.map { it.toMountedAudioTrack() },
+                delivery = state.playbackPlan?.delivery,
+                planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
             ) != null
         ) {
             return

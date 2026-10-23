@@ -138,7 +138,7 @@ import org.siloserver.silo.common.player.video.AUDIO_TRACK_SELECTION_FAILED_CLAS
 import org.siloserver.silo.common.player.video.DesiredAudio
 import org.siloserver.silo.common.player.video.LocalAudioSelection
 import org.siloserver.silo.common.player.video.MountedAudioTrack
-import org.siloserver.silo.common.player.video.matchMountedAudioTrack
+import org.siloserver.silo.common.player.video.mountedAudioFor
 import org.siloserver.silo.common.player.video.reconcileDesiredAudioAction
 import org.siloserver.silo.common.player.video.resolveAudioSelectionAcrossVersions
 import org.siloserver.silo.common.player.video.shouldVerifyOriginalAudioSelection
@@ -4766,9 +4766,12 @@ class PlayerViewModel(
         // Already in the mounted stream: switch it on the player instead of
         // rebuilding the session to deliver audio already being received. A
         // replan is only needed when the track is genuinely absent.
-        if (matchMountedAudioTrack(
-                state.audioTracks[serverIndex],
-                mountedAudio,
+        if (mountedAudioFor(
+                catalog = state.audioTracks,
+                catalogOrdinal = serverIndex,
+                mounted = mountedAudio,
+                delivery = state.playbackPlan?.delivery,
+                planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
             ) != null
         ) {
             return
@@ -4848,6 +4851,7 @@ class PlayerViewModel(
                 planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
                 requiresMountedIdentity = requiresMountedIdentity,
                 positionalCatalog = state.offlineAudioByPosition,
+                delivery = state.playbackPlan?.delivery,
             )
         ) {
             AudioReconcileAction.None -> armOriginalAudioSelectionVerification(
