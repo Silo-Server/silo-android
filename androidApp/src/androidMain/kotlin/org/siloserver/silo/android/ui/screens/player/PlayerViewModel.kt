@@ -4553,7 +4553,8 @@ class PlayerViewModel(
         }
         noteQualityCommitted(snapshot.transition.committed.qualityPreference)
         // A failure while a newer pick is queued is the older pick's, which settles nothing.
-        if (snapshot.qualityChangeFailed && !mobileSubtitleTransactions.hasActiveTransaction) {
+        // Any failure counts, as on TV: a pick of the committed preference changes no quality.
+        if (snapshot.failureMessage != null && !mobileSubtitleTransactions.hasActiveTransaction) {
             bufferingPicks.refused(lastMenuPick)
         }
         if (!mobileSubtitleTransactions.hasActiveTransaction) {
