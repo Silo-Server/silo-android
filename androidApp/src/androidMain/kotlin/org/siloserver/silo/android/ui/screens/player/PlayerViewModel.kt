@@ -975,6 +975,9 @@ class PlayerViewModel(
     // An outage's wait for the network and the server; see [waitOutOutage].
     private var outageRecoveryJob: Job? = null
 
+    // The mount [outageRecoveryJob] waits to reopen.
+    private var outageMount: Long? = null
+
     // The same route was reopened once the outage ended and has not played
     // since: a transport failure now is the route's, so it is replanned.
     private var reopenedAfterOutage = false
@@ -2318,11 +2321,17 @@ class PlayerViewModel(
      * that raised the error is one. Otherwise the wait goes on.
      */
     private fun waitOutOutage(routeFailed: (() -> Unit)? = null) {
-        if (outageRecoveryJob?.isActive == true) return
+        // The wait belongs to the mount that failed: a newer mount's error
+        // replaces it, and it never acts on a mount that replaced its own.
+        val mount = _uiState.value.mediaMountGeneration
+        if (outageRecoveryJob?.isActive == true && outageMount == mount) return
+        outageRecoveryJob?.cancel()
+        outageMount = mount
         Log.i(TAG, "outage: waiting for the network and the server before reopening the same route")
         _uiState.update { it.copy(isLoading = false, isBuffering = true, error = null) }
         outageRecoveryJob = viewModelScope.launch {
             if (routeFailed != null && networkEvidenceProvider.snapshot().connected && serverAnswers()) {
+                if (_uiState.value.mediaMountGeneration != mount) return@launch
                 Log.i(TAG, "outage: the reopened route failed while the server answers; recovering")
                 routeFailed()
                 return@launch
@@ -2331,6 +2340,10 @@ class PlayerViewModel(
             do {
                 awaitNetworkRetry(networkEvidenceProvider.updates, attempt++)
             } while (!serverAnswers())
+            if (_uiState.value.mediaMountGeneration != mount) {
+                Log.i(TAG, "outage: over, but another mount replaced the failed one; not reopening")
+                return@launch
+            }
             Log.i(TAG, "outage: over after $attempt checks; reopening the same route")
             reopenedAfterOutage = true
             reopenSameRoute(_uiState.value, "client_retry=outage_end")
