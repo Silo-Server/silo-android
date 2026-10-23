@@ -405,6 +405,15 @@ open class PlaybackSessionManager(
     private fun takeOwedClear(profileId: String): String? =
         LEARNED_LIMIT_CLEAR.takeIf { owedClearProfileId.getAndSet(null) == profileId }
 
+    /**
+     * A request that took the owed `clear` for [profileId] did not succeed:
+     * it is owed again, unless a newer Restore already owes one. A second
+     * `clear` is harmless.
+     */
+    private fun reoweClear(profileId: String) {
+        owedClearProfileId.compareAndSet(null, profileId)
+    }
+
     private suspend fun modeLearnedLimit(): String? =
         LEARNED_LIMIT_IGNORE.takeIf { bufferingQualityMode() == BufferingQualityMode.NEVER }
 
@@ -574,6 +583,7 @@ open class PlaybackSessionManager(
             if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
                 return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
             val playbackAttemptId = UUID.randomUUID().toString()
+            val owedClear = takeOwedClear(profileId)
             val request = PlaybackStartRequestV3(
                 fileId = fileId,
                 profileId = profileId,
@@ -601,14 +611,16 @@ open class PlaybackSessionManager(
                 // SequencedPlayback strips the source and learned_limit for a
                 // server without buffering_quality_v1; the estimate stays.
                 bandwidthEstimateSource = probeEstimateKbps?.let { BANDWIDTH_ESTIMATE_SOURCE_PROBE },
-                learnedLimit = takeOwedClear(profileId) ?: modeLearnedLimit(),
+                learnedLimit = owedClear ?: modeLearnedLimit(),
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
                 allowAlternateVersions = allowAlternateVersions,
             )
             if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
                 return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
-            return@withLock when (val result = playbackRepository.startPlaybackV3(request, expectedMetadataOwner, allowsLocalRoute)) {
+            val result = playbackRepository.startPlaybackV3(request, expectedMetadataOwner, allowsLocalRoute)
+            if (owedClear != null && result !is ApiResult.Success) reoweClear(profileId)
+            return@withLock when (result) {
                 is ApiResult.Success -> when (val validated = result.data.validateForMedia3()) {
                     is PlaybackV3Validation.Playable -> {
                         leasedSessionId = validated.sessionId
@@ -2653,10 +2665,12 @@ open class PlaybackSessionManager(
         sessionId: String,
         request: PlaybackReplanRequestV3,
     ): ApiResult<PlaybackDecisionResponseV3> {
+        val profileId = activeVideoAttempt.get()?.profileId
+        var tookOwedClear = false
         val learnedLimit = when (request.learnedLimit) {
             // A Restore sent itself: nothing is owed any more.
             LEARNED_LIMIT_CLEAR -> LEARNED_LIMIT_CLEAR.also { owedClearProfileId.set(null) }
-            null -> activeVideoAttempt.get()?.profileId?.let(::takeOwedClear) ?: modeLearnedLimit()
+            null -> profileId?.let(::takeOwedClear)?.also { tookOwedClear = true } ?: modeLearnedLimit()
             else -> request.learnedLimit
         }
         val outgoing = request
@@ -2687,6 +2701,7 @@ open class PlaybackSessionManager(
             Log.i(TAG, "replan_resend attempt=$resends replan_request_id=${outgoing.replanRequestId}")
             result = playbackRepository.replanPlaybackV3(sessionId, outgoing)
         }
+        if (tookOwedClear && result !is ApiResult.Success) profileId?.let(::reoweClear)
         return result
     }
 

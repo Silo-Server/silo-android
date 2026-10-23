@@ -116,6 +116,9 @@ class PlaybackSessionManagerBufferingQualityTest {
         /** When set, the next replan answers with this plan instead. */
         @Volatile var nextReplanPlan: PlaybackPlanV3? = null
 
+        /** When set, the next start gets no response. */
+        @Volatile var loseNextStart = false
+
         /** When set, the next replan reaches the server but its response is lost. */
         @Volatile var loseNextReplanResponse = false
 
@@ -141,7 +144,14 @@ class PlaybackSessionManagerBufferingQualityTest {
                     path == "/api/v2/playback/capabilities" -> HttpStatusCode.OK to
                         """{"installation_id":"11111111-1111-4111-8111-111111111111","revision":"1","state":"available","allowed":true,"protocol_versions":[3],"features":[$features]}"""
                     path == "/api/v2/account/me" -> HttpStatusCode.OK to """{"id":"account-1","username":"test","email":"","role":"user"}"""
-                    path == "/api/v2/playback/start" -> { startBodies += body(); HttpStatusCode.Created to decision(startReply()) }
+                    path == "/api/v2/playback/start" -> {
+                        startBodies += body()
+                        if (loseNextStart) {
+                            loseNextStart = false
+                            throw java.io.IOException("no response")
+                        }
+                        HttpStatusCode.Created to decision(startReply())
+                    }
                     replanSession != null -> {
                         val replan = body().also { replanBodies += it }
                         if (loseNextReplanResponse) {
@@ -485,6 +495,33 @@ class PlaybackSessionManagerBufferingQualityTest {
         val (pick, trackChange) = harness.replanBodies.takeLast(2)
         assertEquals(LEARNED_LIMIT_CLEAR, pick.string("learned_limit"))
         assertNull(trackChange["learned_limit"])
+        assertFalse(harness.manager.learnedLimitClearOwed)
+    }
+
+    @Test
+    fun anOwedRestoreClearStaysOwedWhenItsStartFails() = runTest {
+        val harness = Harness(BUFFERING_QUALITY_SERVER)
+        harness.start()
+        harness.manager.oweLearnedLimitClear()
+        harness.loseNextStart = true
+        val failed = harness.manager.startVideoSessionV3(
+            fileId = 42,
+            profileId = "profile-1",
+            capabilities = ClientCodecCapabilities(),
+            clientPlaybackContext = ClientPlaybackContext(formFactor = "tv", appVersion = "test"),
+            audioTrackIndex = null,
+            subtitleTrackIndex = null,
+            qualityPreference = "auto",
+            startPosition = 0.0,
+        )
+        assertIs<ApiResult.NetworkError>(failed)
+        assertTrue(harness.manager.learnedLimitClearOwed)
+        // Retry carries it.
+        harness.start()
+
+        val (_, lost, retried) = harness.startBodies.toList()
+        assertEquals(LEARNED_LIMIT_CLEAR, lost.string("learned_limit"))
+        assertEquals(LEARNED_LIMIT_CLEAR, retried.string("learned_limit"))
         assertFalse(harness.manager.learnedLimitClearOwed)
     }
 
