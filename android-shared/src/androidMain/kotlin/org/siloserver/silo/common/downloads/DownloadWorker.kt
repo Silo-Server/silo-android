@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.downloads
 
 import org.siloserver.silo.network.localroute.stayOnSavedAddress
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
@@ -18,6 +19,7 @@ import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import org.siloserver.silo.model.download.DownloadStatus
@@ -394,16 +396,22 @@ class DownloadWorker(
         } catch (e: CancellationException) {
             // Worker stopped — user cancel (notification action /
             // DownloadEnqueuer.cancel → cancelAllWorkByTag) or a
-            // constraint / quota stop. Not a failure: drop the partial
-            // bytes but leave the repo record + sidecar status alone.
-            // A constraint-stop must keep "downloading" state so the
-            // WorkManager retry restarts cleanly; a user cancel is
-            // finalized by the record-delete path, not here. Writing
+            // constraint / quota / time-limit stop. Not a failure: leave the
+            // repo record + sidecar status alone. A system stop keeps
+            // "downloading" state and the partial so the WorkManager retry
+            // resumes it (a refused foreground promotion leaves the transfer
+            // subject to the background time limit); a user cancel drops the
+            // bytes and is finalized by the record-delete path. Writing
             // Failed here is what used to paint cancelled / paused
             // downloads with a red badge and delete-then-fail them.
-            Log.i(TAG, "doWork cancelled id=$downloadId")
+            // WorkManager records the stop reason itself on every API level;
+            // @RequiresApi(31) only covers the JobScheduler values it relays.
+            @SuppressLint("NewApi")
+            val reason = stopReason
+            val keepPartial = downloadStopKeepsPartial(reason)
+            Log.i(TAG, "doWork cancelled id=$downloadId stopReason=$reason keepPartial=$keepPartial")
             DiagnosticsDownloadLogger.event("download cancelled")
-            if (!mediaPublished) withContext(NonCancellable) {
+            if (!mediaPublished && !keepPartial) withContext(NonCancellable) {
                 // WorkManager's notification action cancels this transfer directly.
                 // Its separate status job must stop before we remove the bytes.
                 runCatching { DownloadStatusWorker.cancel(appContext, downloadId) }
@@ -799,6 +807,19 @@ class DownloadWorker(
         private const val CANCEL_ACK_TIMEOUT_SECONDS = 30L
     }
 }
+
+/**
+ * True when WorkManager stopped the transfer for a reason it retries (time
+ * limit, lost constraint, quota, or a JobScheduler stop that carries no reason
+ * before Android 12), so the partial and its validator stay for a Range resume.
+ * A cancel by the app (the notification action, removal, an identity purge),
+ * reported as [WorkInfo.STOP_REASON_CANCELLED_BY_APP] on every API level, drops
+ * it, as does a cancellation that was not a WorkManager stop. A kept partial
+ * that is never resumed is removed with its slot when the download is removed.
+ */
+internal fun downloadStopKeepsPartial(stopReason: Int): Boolean =
+    stopReason != WorkInfo.STOP_REASON_CANCELLED_BY_APP &&
+        stopReason != WorkInfo.STOP_REASON_NOT_STOPPED
 
 /**
  * A 409 from the v2 file route: the download is not servable right now,

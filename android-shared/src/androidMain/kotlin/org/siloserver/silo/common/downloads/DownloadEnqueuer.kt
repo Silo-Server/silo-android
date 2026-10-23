@@ -548,6 +548,11 @@ class DownloadEnqueuer(
         scope: CancelScope,
     ) {
         cancel(downloadId)
+        // A worker stopped by the system keeps its partial for the retry; a
+        // cancel while that retry waits runs no worker cleanup, and the row
+        // removed below is the only pointer to those bytes.
+        runCatching { storage.delete(scope.serverId, scope.profileId, fileId) }
+            .onFailure { Log.w(TAG, "cancel: partial delete failed for fileId=$fileId", it) }
         runCatching { metadataStore.deleteSidecar(scope.serverId, scope.profileId, fileId) }
             .onFailure { Log.w(TAG, "cancel: deleteSidecar failed for fileId=$fileId", it) }
     }

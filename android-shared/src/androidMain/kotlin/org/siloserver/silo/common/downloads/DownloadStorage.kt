@@ -7,6 +7,7 @@ import android.content.Context
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import org.siloserver.silo.common.store.containedLegacyChild
@@ -877,17 +878,37 @@ class MediaStorePublicDownloadStore(context: Context) : PublicDownloadStore {
     }
 
     /** Exact-path delete (no wildcards). Used for single-file deletes. */
-    private fun deleteByExactRelativePath(collection: PublicDownloadCollection, path: String): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
-        val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
-        return resolver.delete(collection.contentUri(), selection, arrayOf(path)) > 0
-    }
+    private fun deleteByExactRelativePath(collection: PublicDownloadCollection, path: String): Boolean =
+        deleteIncludingPending(collection, "${MediaStore.MediaColumns.RELATIVE_PATH} = ?", path)
 
     /** Prefix delete (`.../%`). Caller must pre-escape dynamic segments via [escapeMediaStoreLike]. */
-    private fun deleteByRelativePathPrefix(collection: PublicDownloadCollection, pattern: String): Boolean {
+    private fun deleteByRelativePathPrefix(collection: PublicDownloadCollection, pattern: String): Boolean =
+        deleteIncludingPending(collection, "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? ESCAPE '\\'", pattern)
+
+    /**
+     * A collection-wide MediaStore match leaves out IS_PENDING items unless the
+     * caller opts in, and an interrupted transfer's partial stays pending. Without
+     * the opt-in a slot delete kept every partial (hidden `.pending-…` files the
+     * OS only expires after about a week). A worker deletes its own slot only
+     * after its transfer ends, and other callers wait for the slot's worker to
+     * stop (cancelAndAwait) before deleting.
+     */
+    private fun deleteIncludingPending(collection: PublicDownloadCollection, selection: String, argument: String): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
-        val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? ESCAPE '\\'"
-        return resolver.delete(collection.contentUri(), selection, arrayOf(pattern)) > 0
+        val deleted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            resolver.delete(
+                collection.contentUri(),
+                Bundle().apply {
+                    putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arrayOf(argument))
+                    putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+                },
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            resolver.delete(MediaStore.setIncludePending(collection.contentUri()), selection, arrayOf(argument))
+        }
+        return deleted > 0
     }
 
     /**
