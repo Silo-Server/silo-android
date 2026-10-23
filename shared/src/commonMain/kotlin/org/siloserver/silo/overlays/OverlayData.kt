@@ -32,6 +32,10 @@ data class OverlayData(
     val network: String? = null,
     // ribbons (data sources pending)
     val showStatus: String? = null,
+    // Series: complete released seasons / released seasons.
+    // Season: episodes in the library / known episodes.
+    val availabilityHave: Int? = null,
+    val availabilityTotal: Int? = null,
     val imdbTop250: Int? = null,
     val rtCertifiedFresh: Boolean? = null,
 )

@@ -39,6 +39,13 @@ data class OverlaySummary(
     @SerialName("multi_sub") val multiSub: Boolean? = null
 )
 
+/** Poster fraction for a series (complete seasons) or a season (episodes in the library). */
+@Serializable
+data class CatalogAvailability(
+    val have: Int = 0,
+    val total: Int = 0,
+)
+
 /** A watched mutation clears resume progress, including optimistic unwatched resets. */
 fun BrowseItem.withWatched(watched: Boolean): BrowseItem = copy(
     userState = (userState ?: MediaItemUserState()).copy(played = watched),
@@ -75,6 +82,7 @@ data class BrowseItem(
     @SerialName("last_air_date") val lastAirDate: String? = null,
     @SerialName("user_state") val userState: MediaItemUserState? = null,
     @SerialName("overlay_summary") val overlaySummary: OverlaySummary? = null,
+    val availability: CatalogAvailability? = null,
     @SerialName("series_id") val seriesId: String? = null,
     @SerialName("series_title") val seriesTitle: String? = null,
     @SerialName("season_number") val seasonNumber: Int? = null,
@@ -232,6 +240,7 @@ data class ItemDetail(
     @SerialName("playback_variants") val playbackVariants: List<PlaybackVariant> = emptyList(),
     val subtitles: List<SubtitleInfo> = emptyList(),
     @SerialName("overlay_summary") val overlaySummary: OverlaySummary? = null,
+    val availability: CatalogAvailability? = null,
     val intro: TimeRange? = null,
     val credits: TimeRange? = null,
     val recap: TimeRange? = null,
@@ -464,6 +473,7 @@ data class Season(
     @SerialName("poster_url") val posterUrl: String? = null,
     @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
     @SerialName("user_data") val userData: SeasonUserData? = null,
+    val availability: CatalogAvailability? = null,
     /** Localized fields ("overview") whose text was machine-translated by AI. */
     @SerialName("machine_translated_fields") val machineTranslatedFields: List<String> = emptyList(),
 )
