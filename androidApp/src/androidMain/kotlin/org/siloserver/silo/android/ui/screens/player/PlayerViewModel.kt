@@ -2013,6 +2013,14 @@ class PlayerViewModel(
         val isTransientNetwork =
             error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
                 error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT
+        if (isTransientNetwork &&
+            (positionReportsBlockedForPendingLoad || awaitingMediaMountGeneration != null)
+        ) {
+            // A new title or route is about to mount, so the failed stream is
+            // the one it replaces. Reopening that would mount the old stream
+            // under the new title, or spend the new route's reopen on it.
+            return
+        }
         val plan = state.playbackPlan
         if (isTransientNetwork &&
             state.sessionId != null &&
@@ -2022,9 +2030,11 @@ class PlayerViewModel(
         ) {
             transientNetworkRetries++
             Log.i(TAG, "Transient network error; retrying same route ($transientNetworkRetries/$MAX_TRANSIENT_NETWORK_RETRIES)")
-            // Appending to the decision trace produces a new plan object, which
-            // re-runs the screen's mount effect — a same-route remount at the
-            // current position, without a server round-trip.
+            // A same-route remount at the current position, without a server
+            // round-trip. The screen applies a mount only for the generation it
+            // is waiting for; a new plan object alone re-runs its effect but
+            // mounts nothing, leaving the failed player idle on its last frame.
+            val mountGeneration = expectNextMediaMount()
             _uiState.update {
                 it.copy(
                     isLoading = false,
@@ -2039,6 +2049,7 @@ class PlayerViewModel(
                     ),
                     startPosition = plan.timeline.playerPositionForSource(state.position)
                         ?: plan.timeline.playerStartSeconds,
+                    mediaMountGeneration = mountGeneration,
                 )
             }
             return
