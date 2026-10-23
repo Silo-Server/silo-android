@@ -124,9 +124,11 @@ class ServerListViewModel(
     fun onRemove(serverId: String) {
         viewModelScope.launch {
             val wasActive = serverRegistry.activeServerId.value == serverId
-            // While the server's credentials still exist: removal wipes them.
-            // Failing to remove the registration never stops the removal;
-            // cancellation still does, before anything is removed.
+            // Before removal wipes the server's credentials, which a server
+            // without the retirement route needs; a retirement it has not
+            // answered is sent again later without them. Failing to remove the
+            // registration never stops the removal; cancellation still does,
+            // before anything is removed.
             var removal: PushRemoval? = null
             tolerateFailure { removal = unregisterPush(serverId) }
             try {

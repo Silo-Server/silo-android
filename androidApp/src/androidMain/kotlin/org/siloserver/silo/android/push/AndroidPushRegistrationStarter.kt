@@ -24,6 +24,9 @@ class AndroidPushRegistrationStarter(
         if (scope != null) return
         val nextScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scope = nextScope
+        // A removed or signed-out server keeps pushing until its retirement lands.
+        // It needs no login, so it goes out on app start and every foreground.
+        nextScope.launch { runCatching { registrar.retryPendingRetirements() } }
         nextScope.registerOnce()
         nextScope.launch {
             notificationsRepository.resetSignals.collect {

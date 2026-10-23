@@ -1,13 +1,21 @@
 package org.siloserver.silo.android.push
 
+import android.app.Application
 import kotlinx.coroutines.*
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.siloserver.silo.model.notifications.*
 import org.siloserver.silo.network.*
 import org.siloserver.silo.network.api.PushRegistrationApi
 import org.siloserver.silo.repository.PushRegistrationRepository
 import kotlin.test.*
 
+// Robolectric for the diagnostics log lines the registrar writes.
+@RunWith(RobolectricTestRunner::class)
+@Config(application=Application::class, sdk=[28])
 class AndroidPushRegistrarTest {
     private var owner = DurableLoginAuthority("login", AuthScopeSnapshot("server","profile","https://example.invalid","pin",identityGeneration=1))
     private val token = "t".repeat(80)
@@ -44,6 +52,11 @@ class AndroidPushRegistrarTest {
     private var unreachableUrl: String?=null
     private var available=true
     private var onAvailable: suspend (AuthScopeSnapshot) -> Unit = {}
+    /** The retirement route's answer: 200 retires, null is no answer. A server without the route by default. */
+    private var retireStatus: Int? = 404
+    /** Each retirement sent: server URL, key and generation. It carries no login at all. */
+    private val retirements=mutableListOf<Triple<String,String,Long>>()
+    private var onRetire: suspend () -> Unit = {}
     private val api=object : PushRegistrationApi {
         override suspend fun available(owner: AuthScopeSnapshot): ApiResult<Boolean> { onAvailable(owner); return ApiResult.Success(available) }
         override suspend fun register(request: PushDeviceRegisterRequest,key:String,generation:Long,owner:AuthScopeSnapshot):ApiResult<PushDeviceRegisterResponse> {
@@ -60,6 +73,17 @@ class AndroidPushRegistrarTest {
             generations+=generation; keys+=key; removedAs=owner; send()
             if(serverProfiles[owner.serverUrl].let { it!=null && it!=owner.profileId }) return ApiResult.Error(409,"conflict","")
             return if(uncertain) ApiResult.NetworkError(IllegalStateException("lost reply")) else ApiResult.Success(Unit)
+        }
+        override suspend fun retire(serverUrl:String,deviceId:String,key:String,generation:Long):ApiResult<Unit> {
+            val record=store.entries.single { it.serverUrl==serverUrl }
+            assertEquals(generation,record.retirement?.generation) // durable before dispatch
+            assertNull(record.intent.registration); assertEquals("device",deviceId)
+            retirements+=Triple(serverUrl,key,generation); onRetire()
+            return when(val status=retireStatus) {
+                null -> ApiResult.NetworkError(IllegalStateException("no answer"))
+                200 -> ApiResult.Success(Unit)
+                else -> ApiResult.Error(status,"","")
+            }
         }
     }
     private fun registrar(provider: AndroidPushTokenProvider=object:AndroidPushTokenProvider { override suspend fun token()=token }) =
@@ -147,7 +171,8 @@ class AndroidPushRegistrarTest {
         available=true
         owner=owner.copy(loginId="next",scope=owner.scope.copy(identityGeneration=2))
         assertIs<ApiResult.Success<*>>(r.registerToken(token))
-        assertEquals(listOf(1L,2L),generations); assertEquals("next",store.entries.single().intent.loginId)
+        // The removal took generation 2 before anything was sent, so the next login registers above it.
+        assertEquals(listOf(1L,3L),generations); assertEquals("next",store.entries.single().intent.loginId)
     }
     @Test fun theNextForegroundGivesOtherServersARotatedTokenTheyMissed()=runTest {
         val r=registrar(); r.registerToken(token)
@@ -277,6 +302,140 @@ class AndroidPushRegistrarTest {
         r.registerToken(token); val removal=r.unregisterDevice("server")
         savedLogins.remove("server") // the sign-out went through after all
         assertIs<ApiResult.Error>(r.restoreRegistration(removal)); assertNull(store.entries.single().intent.registration)
+    }
+    @Test fun aRemovalIsRetiredWithoutALoginAtTheGenerationItPersisted()=runTest {
+        val r=registrar(); r.registerToken(token)
+        retireStatus=200
+        savedLogins.remove("server") // no login can act for that server any more
+        assertIs<ApiResult.Success<Unit>>(r.unregisterDevice("server").result)
+        assertEquals(listOf(Triple("https://example.invalid",proof,2L)),retirements)
+        assertEquals(listOf(1L),generations) // no session request
+        val record=store.entries.single()
+        assertNull(record.intent.registration); assertTrue(record.acknowledged); assertNull(record.retirement)
+    }
+    @Test fun aRemovalTheSessionCouldNotSendIsRetiredAfterARestartAtTheSameKeyAndGeneration()=runTest {
+        registrar().registerToken(token)
+        // A server without the retirement route, whose session removal gets no answer.
+        uncertain=true
+        assertFalse(registrar().unregisterDevice("server").result is ApiResult.Success)
+        assertEquals(listOf(1L,2L),generations)
+        savedLogins.remove("server") // the sign-out goes ahead and clears the login
+        // After a restart, the updated server answers.
+        uncertain=false; retireStatus=200
+        registrar().retryPendingRetirements()
+        assertEquals(listOf(2L,2L),retirements.map { it.third }); assertEquals(setOf(proof),retirements.map { it.second }.toSet())
+        assertEquals(listOf(1L,2L),generations)
+        val record=store.entries.single(); assertTrue(record.acknowledged); assertNull(record.retirement)
+        registrar().retryPendingRetirements(); assertEquals(2,retirements.size)
+    }
+    @Test fun onlyAFinalAnswerDropsAQueuedRetirement()=runTest {
+        val day=24*60*60*1000L
+        // status to whether the entry is queued 31 days ago, and whether it is then dropped.
+        val cases=listOf(Triple(200,false,true),Triple(403,false,true),Triple(409,false,true),Triple(503,false,false),
+            Triple(null,false,false),Triple(404,false,false),Triple(404,true,true))
+        for ((status,aged,dropped) in cases) {
+            store.entries=emptyList(); savedLogins["server"]="login"
+            retireStatus=503; registrar().registerToken(token)
+            uncertain=true; registrar().unregisterDevice("server"); uncertain=false // the session removal gets no answer either
+            savedLogins.remove("server")
+            if (aged) store.entries=store.entries.map { it.copy(retirement=it.retirement!!.copy(queuedAtMs=it.retirement!!.queuedAtMs-31*day)) }
+            retireStatus=status; val sent=retirements.size
+            registrar().retryPendingRetirements()
+            assertEquals(sent+1,retirements.size,"$status")
+            val record=store.entries.single()
+            assertEquals(dropped,record.retirement==null,"$status aged=$aged")
+            assertEquals(status==200,record.acknowledged,"$status")
+            assertNull(record.intent.registration)
+        }
+    }
+    @Test fun signingInAgainOrARestoreDropsTheRetirementAndRegistersAboveIt()=runTest {
+        val r=registrar(); r.registerToken(token)
+        retireStatus=null; uncertain=true // neither the retirement nor the session removal is answered
+        assertFalse(r.unregisterDevice("server").result is ApiResult.Success)
+        uncertain=false
+        assertEquals(2L,store.entries.single().retirement?.generation)
+        owner=owner.copy(loginId="next",scope=owner.scope.copy(identityGeneration=2)); savedLogins["server"]="next"
+        assertIs<ApiResult.Success<*>>(r.registerToken(token))
+        assertEquals(listOf(1L,2L,3L),generations)
+        assertNull(store.entries.single().retirement)
+        registrar().retryPendingRetirements(); assertEquals(1,retirements.size)
+
+        // A sign-out that stops undoes its removal, retirement included.
+        uncertain=true; val removal=r.unregisterDevice("server"); uncertain=false
+        assertEquals(4L,store.entries.single().retirement?.generation)
+        assertIs<ApiResult.Success<*>>(r.restoreRegistration(removal))
+        assertEquals(listOf(1L,2L,3L,4L,5L),generations)
+        val record=store.entries.single(); assertNull(record.retirement); assertTrue(record.acknowledged)
+        registrar().retryPendingRetirements(); assertEquals(2,retirements.size)
+    }
+    @Test fun aRemovalThatRanOutOfTimeWaitingOnARegistrationIsRetiredOnceTheLoginIsGone()=runTest {
+        val r=registrar(); r.registerToken(token)
+        // A registration holds the server's lock past the removal's budget.
+        val gate=CompletableDeferred<Unit>(); onAvailable={ gate.await() }
+        val registering=launch { r.registerToken(token) }; runCurrent()
+        assertFalse(r.unregisterDevice("server").result is ApiResult.Success)
+        assertNull(store.entries.single().retirement)
+        savedLogins.remove("server") // the sign-out goes ahead and clears the login
+        onAvailable={}; gate.complete(Unit); registering.join()
+        retireStatus=200
+        registrar().retryPendingRetirements()
+        assertEquals(listOf(Triple("https://example.invalid",proof,2L)),retirements)
+        val record=store.entries.single(); assertNull(record.intent.registration); assertTrue(record.acknowledged); assertNull(record.retirement)
+    }
+    @Test fun aRemovalAnOlderVersionCouldNotSendIsRetiredAtItsOwnGeneration()=runTest {
+        registrar().registerToken(token)
+        // What a failed session removal left behind before retirements existed.
+        store.entries=store.entries.map { it.copy(generation=2, intent=it.intent.copy(registration=null), acknowledged=false, receipt=null, ownerLeaving=true) }
+        savedLogins.remove("server")
+        retireStatus=200
+        registrar().retryPendingRetirements()
+        assertEquals(listOf(Triple("https://example.invalid",proof,2L)),retirements)
+        assertTrue(store.entries.single().acknowledged)
+    }
+    @Test fun aDroppedRetirementIsNotQueuedAgain()=runTest {
+        val day=24*60*60*1000L
+        for (aged in listOf(false,true)) {
+            store.entries=emptyList(); retirements.clear(); savedLogins["server"]="login"
+            registrar().registerToken(token)
+            retireStatus=if (aged) null else 403
+            uncertain=aged; registrar().unregisterDevice("server"); uncertain=false; savedLogins.remove("server")
+            if (aged) {
+                store.entries=store.entries.map { it.copy(retirement=it.retirement!!.copy(queuedAtMs=it.retirement!!.queuedAtMs-91*day)) }
+                registrar().retryPendingRetirements() // expires unsent
+            }
+            assertNull(store.entries.single().retirement,"aged=$aged")
+            val sent=retirements.size
+            registrar().retryPendingRetirements()
+            assertEquals(sent,retirements.size,"aged=$aged"); assertNull(store.entries.single().retirement,"aged=$aged")
+        }
+    }
+    @Test fun aRetirementThatStallsWaitsOutTheBackOffLikeOneThatFailed()=runTest {
+        registrar().registerToken(token)
+        retireStatus=null; uncertain=true; registrar().unregisterDevice("server"); uncertain=false; savedLogins.remove("server")
+        val r=registrar() // a restart: no failures remembered
+        onRetire={ awaitCancellation() }
+        r.retryPendingRetirements(afterPush=true)
+        r.retryPendingRetirements(afterPush=true)
+        assertEquals(2,retirements.size) // the removal's and the stalled retry's; the next push waits
+        assertEquals(2L,store.entries.single().retirement?.generation)
+    }
+    @Test fun aSlowRetirementLeavesTheSessionRemovalTimeBeforeTheLoginIsCleared()=runTest {
+        val r=registrar(); r.registerToken(token)
+        // A server without the route that takes 7 seconds to say so, and a session removal that takes 1.5.
+        onRetire={ delay(7_000) }; send={ delay(1_500) }
+        assertIs<ApiResult.Success<Unit>>(r.unregisterDevice("server").result)
+        assertEquals(listOf(1L,2L),generations)
+        val record=store.entries.single(); assertTrue(record.acknowledged); assertNull(record.retirement)
+    }
+    @Test fun aRetirementWithoutAnAnswerFallsBackToTheSessionRemoval()=runTest {
+        for (status in listOf(null,429,503)) {
+            store.entries=emptyList(); generations.clear()
+            registrar().registerToken(token)
+            retireStatus=status
+            assertIs<ApiResult.Success<Unit>>(registrar().unregisterDevice("server").result,"$status")
+            assertEquals(listOf(1L,2L),generations,"$status")
+            val record=store.entries.single(); assertTrue(record.acknowledged,"$status"); assertNull(record.retirement,"$status")
+        }
     }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)

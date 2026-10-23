@@ -74,10 +74,12 @@ class SignOutTeardown(
         fun stillActive() = serverRegistry.activeServerId.value == signedOutOf
         if (flushFirst) flushPendingSettings()
         if (!stillActive()) return false
-        // While the credentials removing it needs still exist. A registration
-        // left behind keeps the server pushing this device for an account it
-        // no longer holds, but failing to remove it never stops the sign-out.
-        // Cancellation still does, before anyone is signed out.
+        // Before the credentials are cleared: a server without the retirement
+        // route can only be told with them. A retirement the server has not
+        // answered stays queued and is sent again without them, as a
+        // registration left behind keeps the server pushing this device for an
+        // account it no longer holds. Failing to remove it never stops the
+        // sign-out; cancellation still does, before anyone is signed out.
         var removal: PushRemoval? = null
         if (signedOutOf != null) tolerateFailure { removal = unregisterPush(signedOutOf) }
         if (!stillActive()) {
