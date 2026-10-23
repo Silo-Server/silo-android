@@ -53,8 +53,15 @@ internal fun buildCollectionSections(
         CollectionSection(
             groupId = g.id,
             name = g.name,
-            collections = (byGroup[g.id] ?: emptyList())
-                .sortedBy { it.sortOrder },
+            collections = (byGroup[g.id] ?: emptyList()).let { items ->
+                if (g.defaultSortMode == "most_items") {
+                    items.sortedWith(compareByDescending<Collection> { it.availableItemCount != null }
+                        .thenByDescending { it.availableItemCount }
+                        .thenBy { it.sortOrder })
+                } else {
+                    items.sortedBy { it.sortOrder }
+                }
+            },
         )
     }
     val ungrouped = (byGroup[null] ?: emptyList()).sortedBy { it.sortOrder }

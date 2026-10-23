@@ -31,8 +31,12 @@ data class Collection(
     @SerialName("poster_url") val posterUrl: String? = null,
     @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
-    @SerialName("updated_at") val updatedAt: String? = null
-)
+    @SerialName("updated_at") val updatedAt: String? = null,
+    @SerialName("item_count_status") val itemCountStatus: String? = null,
+) {
+    val availableItemCount: Int? get() = availableCollectionItemCount(itemCount, itemCountStatus)
+    val itemCountLabel: String get() = collectionItemCountLabel(itemCount, itemCountStatus)
+}
 
 @Serializable
 data class CollectionGroup(
