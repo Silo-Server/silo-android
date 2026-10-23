@@ -11,24 +11,22 @@ absent membership; authorization, server, and malformed-response failures remain
 errors. The response item must match the requested item. Viewer changes during a
 read prevent publication.
 
-PUT and DELETE require the contract's empty 204 response. Each request opts into
-single-attempt auth handling after the normal origin checks, so a 401 returns to
-the caller without token-refresh replay. Other requests retain their existing
-refresh behavior. A captured authority that is already stale is refused before
-sending.
+PUT and DELETE require the contract's empty 204 response. Both are idempotent, so
+they use the normal auth handling: a 401 refreshes the captured scope's token and
+replays the request once. A captured authority that is already stale is refused
+before sending.
 
 A confirmed acknowledgement is the 204 itself; the caller already knows the
 item, desired membership, and captured authority it sent. It remains available
 after an active-viewer change so a caller can acknowledge its exact old command.
 It does not authorize publishing that result into the new viewer's UI. Cancellation or an uncertain network outcome is not an
-acknowledgement and must not be treated as safe to replay by a generic outbox rule.
+acknowledgement; recovery reads the server before resending (see below).
 Consumer adoption must retain command identity through acknowledgement and protect
 newer commands and their optimistic state.
 
 Focused tests cover both read operations, all four empty-body writes, the contract
-gate, captured-scope refusal and acknowledgement, real auth-plugin 401 request
-counts with an unchanged default read control, and foreign-origin credential
-stripping. Phone, TV and shared consumers use the typed membership port described below.
+gate, captured-scope refusal and acknowledgement, real auth-plugin 401 refresh and
+replay for reads and writes, and foreign-origin credential stripping. Phone, TV and shared consumers use the typed membership port described below.
 
 ## Outbox foundation
 
@@ -40,18 +38,20 @@ SyncEngine pending/in-flight queries do not select or recover them.
 `RoomMembershipPort` owns one guarded runtime shared by inline producers and the background worker. Both inline and background senders must call the
 same `send` method; neither may send first and claim afterwards. Each enqueue gets
 a new database row and UUID even when its payload equals an older command. Pending
-intent coalesces; a sending command remains immutable and blocks another send for
+intent coalesces: a new command deletes the item's older ready, reconcile and paused
+commands, so none of them can be retried after it. A sending command remains immutable and blocks another send for
 the same key. Only an exact row, claim and authority match can consume a confirmed
 204. A newer coalesced command survives the old acknowledgement. Acknowledgement
 publication remains subject to the consumer's identity/generation checks at its
 actual UI update; the returned publication hint is not a synchronization lock.
 
 Cancellation or any unconfirmed response transitions the claimed command to
-reconciliation, never to automatic mutation retry. Explicit reconciliation issues
-a captured-authority GET. Observing the desired state resolves that command as
-reconciled, without claiming that mutation side effects were replayed. A mismatch
-pauses it; another explicit reconciliation or a new user command can resolve the
-situation. Read failures retain the unresolved command.
+reconciliation. Retry first issues a captured-authority GET. Observing the desired
+state resolves that command as reconciled. A mismatch pauses it and, while it is
+still the item's latest command and no sibling is sending, reclaims and resends
+it through the same claim protocol. A command that was mid-send when a newer one
+arrived and is retried later is deleted without sending; the newer command decides
+the item. Read failures retain the unresolved command.
 
 Startup must construct one process-wide owner identity and recover abandoned
 sending claims before starting any membership senders. Claims owned by a previous
@@ -113,8 +113,8 @@ disposition in the same transaction that resolves the claimed command.
 
 The worker makes one bounded READY-only pass through the same runtime as inline
 senders. Uncertain, paused and quarantined commands do not drive worker retries.
-Room invalidations notify the visible recovery surface about background results.
-A recovered sending claim needs reconciliation and is never ready to resend.
+Room invalidations notify the shared consumer about background results.
+A recovered sending claim needs reconciliation; only retry can resend it.
 
 Shared, phone and TV consumers capture per-item, per-field intents before launching
 work. A generation change clears those witnesses. Completion requires the same
@@ -133,9 +133,11 @@ Confirmed fields overlay older cards independently. A failed favorite cannot
 roll back another field or replace a newer home snapshot. Personal-list removals
 retain their row, total and continuation until acknowledged or reconciled.
 
-The recovery banner restores a bounded set of current-authority commands and
-provides explicit GET status checks. A mismatch pauses the command; the user can
-review the item and make a new explicit choice. Legacy quarantine receives a
-separate generic notice directing the user to current Favorites. Dismissing that
-notice hides only the notice, never its retained rows. Neither recovery surface
-requests TV focus or replaces the existing list content.
+An unconfirmed user change retries automatically after 2, 5 and 15 seconds, even
+if the screen that started it closes. Repeating the same choice retries it again.
+A change still unconfirmed after those retries shows a brief notice; the field
+keeps its last confirmed value. On startup the shared consumer restores a bounded
+set of current-authority commands and retries each unconfirmed one once, silently.
+Legacy quarantine receives a separate generic notice directing the user to current
+Favorites. Dismissing that notice hides only the notice, never its retained rows.
+Neither notice requests TV focus or replaces the existing list content.
