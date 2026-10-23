@@ -48,6 +48,12 @@
 -keep class androidx.media3.decoder.ffmpeg.** { *; }
 -dontwarn androidx.media3.decoder.ffmpeg.**
 
+# Playback diagnostics name player and load failures by exception class
+# (InvalidResponseCodeException, StreamResetException, ...). Keep the class
+# names readable in release bundles; unused classes can still be removed.
+-keepnames class androidx.media3.** extends java.lang.Throwable
+-keepnames class okhttp3.** extends java.lang.Throwable
+
 # --- libass Media3 integration ------------------------------------------------
 # ass-media's Matroska extractor reads these Media3 internals by exact field
 # name so it can intercept ASS packets and MKV font attachments. Preserve the
