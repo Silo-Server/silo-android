@@ -1222,6 +1222,9 @@ class PlayerViewModel(
      */
     private var sessionTrackChoices: org.siloserver.silo.model.playback.CarriedSeriesTrackChoices? = null
 
+    /** Set by the restart after a failed pick adoption: its load inherits the staged pick. */
+    private var handOffStagedPicks = false
+
     /** What played when a version switch began, for the switch's own load. */
     private var pendingVersionSwitchCarry: org.siloserver.silo.model.playback.CarriedSeriesTrackChoices? = null
 
@@ -1547,7 +1550,12 @@ class PlayerViewModel(
         // from the picks made in this player.
         val loadTrackChoices = pendingVersionSwitchCarry?.takeIf { it.contentId == contentId } ?: sessionTrackChoices
         pendingVersionSwitchCarry = null
-        clearStagedSeriesWrites(keepContentId = contentId)
+        // A staged pick belongs to the playback it was made in. Only the
+        // restart that a failed pick adoption performs hands it to the next
+        // load; any other load (a retry, a renewal, Next Up) would otherwise
+        // let a matching commit there save a pick that never committed.
+        clearStagedSeriesWrites(keepContentId = contentId.takeIf { handOffStagedPicks })
+        handOffStagedPicks = false
         if (room != null) beginRoomLoad(room)
         // A fresh load resets any in-flight intro countdown / cancellation memory.
         introAutoSkipController.reset()
@@ -4802,6 +4810,8 @@ class PlayerViewModel(
         bufferingQualityController.onNewAttempt()
         val outgoingSession = retainedOwnedSessionId ?: state.sessionId
         if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) return
+        // This restart finishes the pick whose adoption failed.
+        handOffStagedPicks = true
         loadContent(
             contentId = state.contentId,
             preferredFileId = state.mediaFileId,
@@ -5014,11 +5024,11 @@ class PlayerViewModel(
     }
 
     /**
-     * Drops staged picks made on another item. A restart of the same item
-     * (a replan that changed delivery) keeps them: it is how such a pick
-     * commits.
+     * Drops staged picks when a new load replaces the playback they were
+     * made in, except those for [keepContentId] (null drops all): the restart
+     * that finishes a pick whose adoption failed inherits it.
      */
-    private fun clearStagedSeriesWrites(keepContentId: String) {
+    private fun clearStagedSeriesWrites(keepContentId: String?) {
         stagedSubtitleWrite.updateAndGet { it?.takeIf { write -> write.contentId == keepContentId } }
         stagedAudioWrite.updateAndGet { it?.takeIf { write -> write.contentId == keepContentId } }
     }

@@ -2666,7 +2666,10 @@ class TvPlayerViewModel(
                             sessionId = allocatedSessionId,
                             publish = {
                                 trackChoiceOwner = loadTrackChoiceOwner
-                                clearStagedSeriesWrites(keepContentId = contentId)
+                                // A staged pick belongs to the playback it was
+                                // made in; TV never finishes a pick through a
+                                // new load, so every load drops it.
+                                clearStagedSeriesWrites(keepContentId = null)
                                 unpublishedTvLoadUi.register(
                                     sessionId = allocatedSessionId,
                                     state = predecessorUi,
@@ -5994,11 +5997,11 @@ class TvPlayerViewModel(
     }
 
     /**
-     * Drops staged picks made on another item. A restart of the same item
-     * (a replan that changed delivery) keeps them: it is how such a pick
-     * commits.
+     * Drops staged picks when a new load replaces the playback they were
+     * made in, except those for [keepContentId] (null drops all): the restart
+     * that finishes a pick whose adoption failed inherits it.
      */
-    private fun clearStagedSeriesWrites(keepContentId: String) {
+    private fun clearStagedSeriesWrites(keepContentId: String?) {
         stagedSubtitleWrite.updateAndGet { it?.takeIf { write -> write.contentId == keepContentId } }
         stagedAudioWrite.updateAndGet { it?.takeIf { write -> write.contentId == keepContentId } }
     }
