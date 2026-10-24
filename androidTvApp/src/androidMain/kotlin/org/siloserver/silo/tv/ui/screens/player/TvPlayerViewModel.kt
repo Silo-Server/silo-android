@@ -343,6 +343,28 @@ private fun SubtitleMediaIdentity.toEpisodeSubtitleIntent(
  * Captures only episode-portable intent. Server, download, and Media3 identities
  * remain local to the current item and therefore cannot cross this boundary.
  */
+/**
+ * The handoff the next episode gets: what [captured] saw this episode play,
+ * except that a choice carried into this episode ([incoming]) is carried on
+ * unchanged unless the viewer picked again here. This episode may have
+ * played a fallback for it (only plain English where SDH was chosen); the
+ * next one re-resolves the original choice on its own tracks.
+ */
+internal fun carryEpisodeIntent(
+    captured: EpisodeSelectionHandoff,
+    incoming: EpisodeSelectionHandoff?,
+    audioPicked: Boolean,
+    subtitlePicked: Boolean,
+): EpisodeSelectionHandoff {
+    incoming ?: return captured
+    return captured.copy(
+        audio = incoming.audio.takeIf { !audioPicked && it.mode != EpisodeAudioMode.AUTO } ?: captured.audio,
+        subtitle = incoming.subtitle
+            .takeIf { !subtitlePicked && it.mode != org.siloserver.silo.common.player.video.EpisodeSubtitleMode.AUTO }
+            ?: captured.subtitle,
+    )
+}
+
 internal fun captureTvEpisodeSelectionHandoff(
     activeVersion: FileVersion?,
     committedSubtitleIdentity: SubtitleIdentity,
@@ -1021,6 +1043,31 @@ class TvPlayerViewModel(
      * — what a series audio or subtitle pick is saved under.
      */
     private var trackChoiceOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null
+
+    /**
+     * The choice the current episode was started with by the previous one,
+     * and whether the viewer has picked anything during this episode. What
+     * played can be a fallback (the episode lacks the chosen track); the next
+     * episode inherits the choice, not the fallback.
+     */
+    private var episodeIntentContentId: String? = null
+    private var incomingEpisodeIntent: org.siloserver.silo.common.player.video.EpisodeSelectionHandoff? = null
+    private var audioPickedThisEpisode = false
+    private var subtitlePickedThisEpisode = false
+
+    private fun noteEpisodeIntent(
+        contentId: String,
+        handoff: org.siloserver.silo.common.player.video.EpisodeSelectionHandoff?,
+    ) {
+        if (contentId != episodeIntentContentId) {
+            episodeIntentContentId = contentId
+            incomingEpisodeIntent = handoff
+            audioPickedThisEpisode = false
+            subtitlePickedThisEpisode = false
+        } else if (handoff != null) {
+            incomingEpisodeIntent = handoff
+        }
+    }
 
     /** A pick waiting for its change to commit; a newer pick replaces it. */
     private val stagedSubtitleWrite = java.util.concurrent.atomic.AtomicReference<StagedSubtitleWrite?>(null)
@@ -2382,6 +2429,7 @@ class TvPlayerViewModel(
                     ownerGeneration = loadOwner.generation,
                 )
                 val episodeSelectionHandoff = episodeSelectionHandoffLease?.handoff
+                noteEpisodeIntent(contentId, episodeSelectionHandoff)
                 val request = VideoPlaybackStartRequest(
                         libraryId = requestRoom?.libraryId ?: launchArgs.libraryId,
                         contentId = contentId,
@@ -4708,6 +4756,7 @@ class TvPlayerViewModel(
             // to a replan left an older launch/persisted/HUD intent authoritative,
             // and it would reapply itself afterwards and undo the remote pick.
             setDesiredAudio(selected, explicit = true)
+            audioPickedThisEpisode = true
             val switchesLocally = mountedAudioFor(
                 catalog = catalogAudioTracks(state),
                 catalogOrdinal = selected,
@@ -5160,7 +5209,7 @@ class TvPlayerViewModel(
         val activeVersion = state.fileVersions.firstOrNull { version ->
             version.fileId == (state.selectedFileId ?: state.mediaFileId)
         }
-        val handoff = captureTvEpisodeSelectionHandoff(
+        val captured = captureTvEpisodeSelectionHandoff(
             activeVersion = activeVersion,
             committedSubtitleIdentity = state.committedSubtitleIdentity,
             catalogSubtitles = state.subtitleUrls,
@@ -5177,6 +5226,12 @@ class TvPlayerViewModel(
                 )?.let { activeVersion?.audioTracks?.getOrNull(it) },
             hasExplicitAudioSelection = manualAudioSelectionApplied,
             hasExplicitSubtitleSelection = manualSubtitleSelectionApplied,
+        )
+        val handoff = carryEpisodeIntent(
+            captured = captured,
+            incoming = incomingEpisodeIntent,
+            audioPicked = audioPickedThisEpisode,
+            subtitlePicked = subtitlePickedThisEpisode,
         )
         val outgoingSessionId = exitSessionId
         resolveNextEpisodeJob?.cancel()
@@ -5748,6 +5803,7 @@ class TvPlayerViewModel(
         val state = _uiState.value
         val catalog = catalogAudioTracks(state)
         if (catalogOrdinal !in catalog.indices) return
+        audioPickedThisEpisode = true
 
         // If the mounted stream already carries this track, switch it on the
         // player. A replan would rebuild the whole session to deliver audio the
@@ -5802,6 +5858,7 @@ class TvPlayerViewModel(
      * nothing to commit and is saved at once.
      */
     private fun rememberSeriesSubtitleChoice(identity: SubtitleIdentity) {
+        subtitlePickedThisEpisode = true
         val state = _uiState.value
         val key = trackChoiceKey(state) ?: return
         val owner = trackChoiceOwner ?: return

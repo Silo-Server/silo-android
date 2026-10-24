@@ -16,6 +16,21 @@ import org.siloserver.silo.playback.audioTrackFingerprint
 
 class TvEpisodeHandoffPlaybackStartTest {
     @Test
+    fun nextUpCarriesTheChosenSubtitleNotTheFallbackThatPlayed() {
+        val sdh = EpisodeSubtitleIntent(EpisodeSubtitleMode.TRACK, language = "en", hearingImpaired = true)
+        val plainEnglish = EpisodeSubtitleIntent(EpisodeSubtitleMode.TRACK, language = "en", hearingImpaired = false)
+        // E03 had only plain English, so the SDH choice carried in fell back.
+        val playedOnE03 = EpisodeSelectionHandoff(subtitle = plainEnglish)
+        val carriedIntoE03 = EpisodeSelectionHandoff(subtitle = sdh)
+
+        assertEquals(sdh, carryEpisodeIntent(playedOnE03, carriedIntoE03, audioPicked = false, subtitlePicked = false).subtitle)
+        // A pick made during E03 is the new choice.
+        assertEquals(plainEnglish, carryEpisodeIntent(playedOnE03, carriedIntoE03, audioPicked = false, subtitlePicked = true).subtitle)
+        // Nothing carried in: what played (an explicit choice) is carried.
+        assertEquals(plainEnglish, carryEpisodeIntent(playedOnE03, null, audioPicked = false, subtitlePicked = false).subtitle)
+    }
+
+    @Test
     fun explicitDetailFileIdWinsOverEpisodeHandoff() {
         val resolved = resolveTvPlaybackStartSelection(
             preferredFileId = 1080,
