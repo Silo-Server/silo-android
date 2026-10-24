@@ -234,6 +234,7 @@ val androidTvModule = module {
             sessionLifecycle = get(),
             reachabilityMonitor = get(),
             userItemStatePort = get(),
+            seriesTrackChoiceWriter = get(),
         )
     }
     factory {
@@ -558,6 +559,7 @@ val androidTvModule = module {
             tokenManager = get(),
             identityTransitions = get(),
             capabilityDetector = get(),
+            seriesTrackChoiceWriter = get(),
         )
     }
     // Watch Party: the shared hub, lobby (keyed per room; roomId is the
@@ -623,6 +625,7 @@ val androidTvModule = module {
             // adapter treats a wait while offline as an outage.
             networkEvidence = get(),
             throughputMeter = get(),
+            seriesTrackChoiceWriter = get(),
         )
     }
 

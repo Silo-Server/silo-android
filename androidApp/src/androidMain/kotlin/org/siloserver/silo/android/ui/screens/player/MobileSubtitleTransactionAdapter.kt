@@ -389,8 +389,21 @@ internal class MobileSubtitleTransactionAdapter(
         mutate(UpdateAudioPreference(audioTrackIndex), explicit = true)
     }
 
-    /** Replans the same file at [qualityPreference] (a protocol-v3 quality label). */
-    fun selectQuality(qualityPreference: String?) {
+    /**
+     * Replans the same file at [qualityPreference] (a protocol-v3 quality label).
+     *
+     * [chosenAudioTrackIndex] is the audio the viewer chose on the playing
+     * file. When the transaction would send another one — a switch made on
+     * the player never replanned, so the server still holds the earlier
+     * choice — the replan names it as an audio change too, or the server
+     * plans the new quality with the track the viewer moved away from.
+     */
+    fun selectQuality(qualityPreference: String?, chosenAudioTrackIndex: Int? = null) {
+        val pending = transition.pending
+        val sentAudio = if (pending != null) pending.audioTrackIndex else transition.committed.audioTrackIndex
+        if (chosenAudioTrackIndex != null && chosenAudioTrackIndex != sentAudio) {
+            mutate(UpdateAudioPreference(chosenAudioTrackIndex), explicit = true)
+        }
         mutate(UpdateQualityPreference(qualityPreference), explicit = true)
     }
 

@@ -80,6 +80,24 @@ class SettingsContractRevision(
         return known?.let { it.manifestRevision >= needed }
     }
 
+    /**
+     * Whether the server at [serverUrl] accepts [key] at profile scope, as
+     * last read, or null while that is unknown. Only a key whose profile scope
+     * a later revision added ([PlaybackSettingsKeys.profileScopeMinimumRevision])
+     * depends on the revision; below it the server stores the key per device
+     * only and refuses `scope=profile`.
+     */
+    fun storesPerProfile(serverUrl: String, key: String): Boolean? {
+        val needed = PlaybackSettingsKeys.profileScopeMinimumRevision(key) ?: return true
+        return cachedFor(serverUrl)?.let { it >= needed }
+    }
+
+    /** [storesPerProfile], probing when it is not known yet. */
+    suspend fun storesPerProfileKey(serverUrl: String, key: String): Boolean? {
+        val needed = PlaybackSettingsKeys.profileScopeMinimumRevision(key) ?: return true
+        return revisionFor(serverUrl)?.let { it >= needed }
+    }
+
     /** [stores], probing when it is not known yet. */
     suspend fun storesKey(serverUrl: String, key: String): Boolean? {
         stores(serverUrl, key)?.let { return it }

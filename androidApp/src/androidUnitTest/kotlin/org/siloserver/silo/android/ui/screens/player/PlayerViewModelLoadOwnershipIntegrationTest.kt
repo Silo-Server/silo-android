@@ -1490,7 +1490,12 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
         var allocation: MobileVideoSessionAllocation? = null
 
         start(
-            effective = "",
+            // The series choice on the server is this same English track, so
+            // the per-file memory may restore it (see the next test for a
+            // choice the server no longer holds).
+            effective = """
+                "effective_subtitle_track_signature": {"source":"embedded","language":"en","codec":"subrip","label":"English"},
+            """.trimIndent(),
             profile = Profile(id = PROFILE_ID, name = "Profile"),
             versionFields = """
                 "audio_tracks": [
@@ -1509,6 +1514,43 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
 
         assertEquals(1, allocation?.audioTrackIndex)
         assertEquals(1, allocation?.subtitleTrackIndex)
+    }
+
+    @Test
+    fun perFileSubtitleMemoryRestoresWhenTheServerHoldsNoSeriesChoice() = runTest(dispatcher) {
+        // A per-file pick whose write never landed is still remembered here.
+        assertEquals(0, startWithPerFileEnglishSubtitle(effective = ""))
+    }
+
+    @Test
+    fun perFileSubtitleMemoryYieldsToSeriesOff() = runTest(dispatcher) {
+        assertEquals(null, startWithPerFileEnglishSubtitle(effective = "\"effective_subtitle_mode\": \"off\","))
+    }
+
+    private suspend fun TestScope.startWithPerFileEnglishSubtitle(effective: String): Int? {
+        val subtitleTracks = listOf(
+            SubtitleTrack(index = 12, codec = "subrip", language = "en", title = "English"),
+        )
+        val persisted = LocalTrackSelection(
+            audioFingerprint = null,
+            subtitleFingerprint = encodeCatalogSubtitlePreference(subtitleTracks, 0),
+        )
+        val localState = object : UserItemStatePort by NoOpUserItemStatePort {
+            override suspend fun localTrackSelection(contentId: String, fileId: Int) = persisted
+        }
+        var allocation: MobileVideoSessionAllocation? = null
+        start(
+            effective = effective,
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            versionFields = """
+                "subtitle_tracks": [
+                  {"index":12,"codec":"subrip","language":"en","title":"English","external":false}
+                ]
+            """.trimIndent(),
+            userItemStatePort = localState,
+            onAllocation = { allocation = it },
+        )
+        return allocation?.subtitleTrackIndex
     }
 
     @Test
@@ -1547,6 +1589,33 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
         )
 
         assertEquals(1, selection.audioTrackIndex)
+    }
+
+    @Test
+    fun theServersSeriesAudioChoiceOutranksPerFileMemoryButNotAPick() {
+        val tracks = listOf(
+            AudioTrack(codec = "aac", language = "eng", title = "English"),
+            AudioTrack(codec = "aac", language = "eng", title = "Commentary"),
+            AudioTrack(codec = "aac", language = "jpn", title = "Japanese"),
+        )
+        // An older pick on this device; the series choice (Japanese) has
+        // since been made here or on another device.
+        val persisted = LocalTrackSelection(audioFingerprint = audioTrackFingerprint(tracks[1]), subtitleFingerprint = null)
+        fun select(explicit: Int?, server: Int?) = resolveMobileInitialTrackSelection(
+            explicitAudioTrackIndex = explicit,
+            explicitSubtitleTrackIndex = null,
+            audioTracks = tracks,
+            subtitleTracks = emptyList(),
+            persisted = persisted,
+            preferredAudioLanguage = "eng",
+            capabilities = ClientCodecCapabilities(codecsAudio = listOf("aac")),
+            serverAudioTrackIndex = server,
+        ).audioTrackIndex
+
+        assertEquals(2, select(explicit = null, server = 2))
+        assertEquals(0, select(explicit = 0, server = 2))
+        // No server answer: the per-file memory, as before.
+        assertEquals(1, select(explicit = null, server = null))
     }
 
     @Test

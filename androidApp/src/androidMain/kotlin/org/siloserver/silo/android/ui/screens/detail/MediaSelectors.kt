@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.model.playback.matchesSignature
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -602,8 +603,22 @@ fun formatAudioValueLabel(
  * tvOS-style "Auto - <track>" form for consistency with the Video/Audio rows
  * (Jim 2026-07-09). -1 = Off.
  */
-fun formatSubtitleValueLabel(tracks: List<SubtitleTrack>, selectedIndex: Int?): String {
+fun formatSubtitleValueLabel(
+    tracks: List<SubtitleTrack>,
+    selectedIndex: Int?,
+    seriesSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
+    seriesOff: Boolean = false,
+): String {
     if (selectedIndex == null) {
+        // A remembered series choice is what Auto plays, so it can be named:
+        // the track its signature finds in this file, or Off.
+        if (seriesOff) return "Auto - Off"
+        seriesSignature?.let { signature ->
+            val candidates = org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates(tracks)
+            candidates.indexOfFirst { it.matchesSignature(signature) }
+                .takeIf { it >= 0 }
+                ?.let { return "Auto - ${formatSubtitleLabel(tracks[it])}" }
+        }
         val single = tracks.singleOrNull() ?: return "Auto"
         return "Auto - ${formatSubtitleLabel(single)}"
     }
@@ -627,8 +642,7 @@ fun formatVersionMenuLabel(version: FileVersion): String {
 fun formatAudioLabel(track: AudioTrack?): String {
     if (track == null) return "Auto"
     val parts = mutableListOf<String>()
-    track.title?.let { parts.add(it) }
-        ?: track.language?.uppercase()?.let { parts.add(it) }
+    trackHeadline(track.language, track.title)?.let { parts.add(it) }
     track.channelLayout?.let { parts.add(it) }
         ?: track.channels?.let { parts.add("${it}ch") }
     return parts.joinToString(" \u00B7 ").ifBlank { "Track 1" }
@@ -637,11 +651,41 @@ fun formatAudioLabel(track: AudioTrack?): String {
 fun formatSubtitleLabel(track: SubtitleTrack?): String {
     if (track == null) return "Off"
     val parts = mutableListOf<String>()
-    track.title?.let { parts.add(it) }
-        ?: track.language?.uppercase()?.let { parts.add(it) }
+    trackHeadline(track.language, track.title)?.let { parts.add(it) }
     if (track.forced) parts.add("Forced")
     return parts.joinToString(" \u00B7 ").ifBlank { "Track" }
 }
+
+/**
+ * How a track is named in the pickers: its language, then what its title
+ * adds ("SDH", "Director's Commentary"). Codec names are stripped from the
+ * title ("AAC (Advanced Audio Coding)", "Commentary (AC3)", "SUBRIP"), as is
+ * the language itself, and the title is dropped only when nothing else
+ * remains — as on TV and Apple. Null when neither says anything.
+ */
+internal fun trackHeadline(language: String?, title: String?): String? {
+    val code = language?.trim()?.takeUnless { it.isEmpty() || it.equals("und", ignoreCase = true) }
+    val name = org.siloserver.silo.player.trackLanguageDisplayName(code) ?: code?.uppercase()
+    val extra = title?.let { meaningfulTrackTitle(it, name, code) }
+    return listOfNotNull(name, extra).joinToString(" \u00B7 ").takeIf { it.isNotBlank() }
+}
+
+/** [title] without codec names or the language, or null when nothing else remains. */
+private fun meaningfulTrackTitle(title: String, languageName: String?, languageCode: String?): String? {
+    var text = TECHNICAL_TRACK_TITLE.replace(title, " ")
+    listOfNotNull(languageName, languageCode).forEach { word ->
+        text = Regex("(?i)(?<![\\p{L}\\p{N}])${Regex.escape(word)}(?![\\p{L}\\p{N}])").replace(text, " ")
+    }
+    // Brackets the strip emptied, then separators left at either end or doubled.
+    repeat(2) { text = Regex("[(\\[{]\\s*[)\\]}]").replace(text, " ") }
+    text = text.replace(Regex("\\s+"), " ").trim().trim('-', '/', '|', ',', ':', '\u00B7', ' ').trim()
+    return text.takeIf { it.any(Char::isLetterOrDigit) }
+}
+
+private val TECHNICAL_TRACK_TITLE = Regex(
+    "(?i)advanced audio coding|(?<![\\p{L}\\p{N}])(?:e-?ac-?3|ac-?3|aac|truehd|dts(?:-hd)?(?: ma)?|flac|opus|mp3|pcm|" +
+        "subrip|srt|webvtt|vtt|ass|ssa|pgs|vobsub)(?![\\p{L}\\p{N}])",
+)
 
 private fun formatVersionTitle(version: FileVersion): String {
     val parts = mutableListOf<String>()
@@ -773,7 +817,7 @@ private fun formatCompactAudioLayout(track: AudioTrack): String? {
 }
 
 private fun formatAudioTitle(track: AudioTrack, index: Int): String {
-    return track.title ?: track.language?.uppercase() ?: "Audio ${index + 1}"
+    return trackHeadline(track.language, track.title) ?: track.title ?: "Audio ${index + 1}"
 }
 
 private fun formatAudioSubtitle(track: AudioTrack): String {
@@ -794,7 +838,7 @@ private fun buildAudioBadges(track: AudioTrack): List<String> {
 }
 
 private fun formatSubtitleTitle(track: SubtitleTrack, index: Int): String {
-    return track.title ?: track.language?.uppercase() ?: "Track ${index + 1}"
+    return trackHeadline(track.language, track.title) ?: track.title ?: "Track ${index + 1}"
 }
 
 private fun formatSubtitleSubtitle(track: SubtitleTrack): String {

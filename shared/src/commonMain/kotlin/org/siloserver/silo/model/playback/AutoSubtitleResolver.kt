@@ -1,6 +1,7 @@
 package org.siloserver.silo.model.playback
 
 import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.playback.canonicalSubtitleLanguage
 import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import org.siloserver.silo.playback.isClientMountableBitmapCodecFamily
 import org.siloserver.silo.playback.playbackSubtitleIdentity
@@ -51,7 +52,15 @@ data class AutoSubtitleCandidate(
      * treating every bitmap track as a burn-in.
      */
     val needsBurnIn: Boolean? = null,
-)
+    /**
+     * The label the track is listed under in the session inventory — what a
+     * [SubtitleTrackSignature] records and is matched against. Falls back to
+     * [title].
+     */
+    val label: String? = null,
+) {
+    val signatureLabel: String? get() = label ?: title
+}
 
 /** Track provenance, in auto-selection preference order. */
 enum class AutoSubtitleSource { EMBEDDED, EXTERNAL, DOWNLOADED }
@@ -66,6 +75,13 @@ data class AutoSubtitleContext(
     val showForced: Boolean = false,
     /** Language of the audio track that will play. */
     val audioLanguage: String? = null,
+    /**
+     * The track the viewer last chose for this series, from the server's
+     * `effective_subtitle_track_signature`. Its exact match wins over the
+     * language rules (unless subtitles are off); otherwise it breaks ties
+     * between tracks in the wanted language.
+     */
+    val trackSignature: SubtitleTrackSignature? = null,
 )
 
 sealed class AutoSubtitleResolution {
@@ -86,7 +102,8 @@ fun AutoSubtitleResolution.selectedCandidate(): AutoSubtitleCandidate? =
  * Resolves the track Auto should start with.
  *
  * Cascade (unchanged from the detail page):
- * mode `off` / an explicitly empty preferred language → off; no preferred
+ * mode `off` → off, or the forced track in the audio's language when forced
+ * subs are enabled (web parity); an explicitly empty preferred language → off; no preferred
  * language → only mode `always` picks anything; audio already in the preferred
  * language under mode `auto` → off, or the language's forced track when forced
  * subs are enabled; otherwise the best track in the preferred language, falling
@@ -104,6 +121,10 @@ fun AutoSubtitleResolution.selectedCandidate(): AutoSubtitleCandidate? =
  * already in the preferred language). Product owner call, 2026-08-16: an
  * "English – Always" profile with forced enabled was starting on the Forced
  * track of a disc that also carried a plain English track.
+ *
+ * A series choice ([AutoSubtitleContext.trackSignature]) comes first, as on
+ * Apple and the web: the track it describes exactly is selected outright —
+ * even a forced one, because the viewer picked it — unless subtitles are off.
  */
 fun resolveAutoSubtitle(
     candidates: List<AutoSubtitleCandidate>,
@@ -112,7 +133,21 @@ fun resolveAutoSubtitle(
     if (candidates.isEmpty()) return AutoSubtitleResolution.NoChange
 
     val mode = context.mode?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: "auto"
-    if (mode == "off") return AutoSubtitleResolution.Disable
+    if (mode == "off") {
+        // Off still shows foreign-language dialogue when forced subtitles are
+        // on — what the settings copy promises and the web player does: the
+        // forced track in the language of the audio that plays, else nothing.
+        if (!context.showForced) return AutoSubtitleResolution.Disable
+        val audioLanguage = autoSubtitleLanguageKey(context.audioLanguage)
+            ?: return AutoSubtitleResolution.Disable
+        return bestForcedAutoSubtitleCandidate(candidates, audioLanguage)
+            ?.let(AutoSubtitleResolution::Select)
+            ?: AutoSubtitleResolution.Disable
+    }
+
+    val signature = context.trackSignature
+    signature?.let { sig -> candidates.firstOrNull { it.matchesSignature(sig) } }
+        ?.let { return AutoSubtitleResolution.Select(it) }
 
     val preferred = context.preferredLanguage
     if (preferred != null && preferred.isBlank()) return AutoSubtitleResolution.Disable
@@ -120,7 +155,7 @@ fun resolveAutoSubtitle(
     val targetLanguage = autoSubtitleLanguageKey(preferred)
     if (targetLanguage == null) {
         if (mode != "always") return AutoSubtitleResolution.NoChange
-        return bestAutoSubtitleCandidate(candidates, null)
+        return bestAutoSubtitleCandidate(candidates, null, signature)
             ?.let(AutoSubtitleResolution::Select)
             ?: AutoSubtitleResolution.NoChange
     }
@@ -138,7 +173,7 @@ fun resolveAutoSubtitle(
         return AutoSubtitleResolution.Disable
     }
 
-    val target = bestAutoSubtitleCandidate(candidates, targetLanguage)
+    val target = bestAutoSubtitleCandidate(candidates, targetLanguage, signature)
         ?: if (context.showForced) {
             candidates.filter { it.forced }.minWithOrNull(autoSubtitlePreferenceOrder)
         } else {
@@ -168,13 +203,23 @@ val autoSubtitlePreferenceOrder: Comparator<AutoSubtitleCandidate> = compareBy(
 private fun bestAutoSubtitleCandidate(
     candidates: List<AutoSubtitleCandidate>,
     targetLanguage: String?,
+    signature: SubtitleTrackSignature? = null,
 ): AutoSubtitleCandidate? {
     val pool = if (targetLanguage == null) {
         candidates
     } else {
         candidates.filter { autoSubtitleLanguageKey(it.language) == targetLanguage }
     }
-    return pool.minWithOrNull(autoSubtitlePreferenceOrder)
+    // The remembered track's traits rank first within the language (web
+    // parity), so a series that was watched with SDH keeps SDH when the exact
+    // track is not in this episode.
+    val order = if (signature == null) {
+        autoSubtitlePreferenceOrder
+    } else {
+        compareByDescending<AutoSubtitleCandidate> { it.signatureScore(signature) }
+            .then(autoSubtitlePreferenceOrder)
+    }
+    return pool.minWithOrNull(order)
 }
 
 private fun bestForcedAutoSubtitleCandidate(
@@ -199,31 +244,12 @@ private fun AutoSubtitleCandidate.requiresBurnIn(): Boolean =
     needsBurnIn ?: isBitmapSubtitleCodecFamily(codec)
 
 /**
- * The ONE ISO-639 folding table for auto-selection language comparison.
- *
- * Deliberately smaller than the display-name alias table and deliberately
- * drops `und`: it answers "is this the language the viewer asked for", not
- * "what do we call this language".
+ * The language key auto-selection compares: the primary subtitle language with
+ * every ISO 639-2 code folded to its ISO 639-1 form, `und` dropped. Mounted
+ * tracks report 639-1 (`it`) while the catalog and server rows usually carry
+ * 639-2 (`ita`), so the whole table is needed, not a few common aliases.
  */
-fun autoSubtitleLanguageKey(language: String?): String? {
-    val primary = language
-        ?.trim()
-        ?.takeUnless { it.isBlank() || it.equals("und", ignoreCase = true) }
-        ?.lowercase()
-        ?.replace('_', '-')
-        ?.substringBefore('-')
-        ?: return null
-    return when (primary) {
-        "eng" -> "en"
-        "spa" -> "es"
-        "fre", "fra" -> "fr"
-        "ger", "deu" -> "de"
-        "dut", "nld" -> "nl"
-        "jpn" -> "ja"
-        "dan" -> "da"
-        else -> primary
-    }
-}
+fun autoSubtitleLanguageKey(language: String?): String? = canonicalSubtitleLanguage(language)
 
 /**
  * Candidates over the CATALOG subtitle list, in catalog order, addressed in
@@ -277,6 +303,7 @@ fun PlayerSubtitleInfo.toAutoSubtitleCandidate(): AutoSubtitleCandidate =
         forced = forced == true,
         source = autoSubtitleSource(),
         needsBurnIn = playbackSubtitleIdentity(this) is SubtitleIdentity.ServerBurnIn,
+        label = label ?: catalogLabel,
     )
 
 private fun PlayerSubtitleInfo.autoSubtitleSource(): AutoSubtitleSource? {
