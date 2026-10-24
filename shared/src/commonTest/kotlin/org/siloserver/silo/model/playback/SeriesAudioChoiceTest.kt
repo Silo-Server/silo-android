@@ -43,7 +43,10 @@ class SeriesAudioChoiceTest {
             body,
         )
         assertNull(SeriesAudioChoice.of(main.copy(language = "und"), 0).audioLanguage)
-        assertNull(SeriesAudioChoice.of(main.copy(language = "English"), 0).audioLanguage)
+        // An English name older files carry becomes its tag; anything else the
+        // server would refuse is left out.
+        assertEquals("en", SeriesAudioChoice.of(main.copy(language = "English"), 0).audioLanguage)
+        assertNull(SeriesAudioChoice.of(main.copy(language = "Português"), 0).audioLanguage)
     }
 
     @Test
@@ -57,6 +60,21 @@ class SeriesAudioChoiceTest {
         // …else the first track in the language, else nothing.
         assertEquals(1, choice.copy(audioTrackIndex = 0).resolveOn(otherEpisode))
         assertNull(choice.resolveOn(listOf(japanese)))
+    }
+
+    @Test
+    fun `a choice ranks language tags and skips undecodable tracks like the server`() {
+        val brazil = AudioTrack(language = "pt-BR", codec = "aac", channels = 2, title = "Portuguese")
+        val portugal = brazil.copy(language = "pt-PT")
+        val bare = brazil.copy(language = "por")
+        val choice = SeriesAudioChoice.of(brazil, 0)
+        // Same signature apart from the regional tag: the exact tag wins.
+        assertEquals(1, choice.resolveOn(listOf(portugal, brazil)))
+        // No exact signature: the bare language outranks another variant.
+        val byLanguage = choice.copy(trackSignature = null, audioTrackIndex = 9)
+        assertEquals(1, byLanguage.resolveOn(listOf(portugal.copy(title = "x"), bare.copy(title = "y"))))
+        // A track FFmpeg cannot decode is never the answer while another can.
+        assertEquals(1, choice.resolveOn(listOf(brazil.copy(codec = "unknown"), portugal)))
     }
 
     @Test

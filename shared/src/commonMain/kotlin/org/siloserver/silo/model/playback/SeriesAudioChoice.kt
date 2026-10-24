@@ -44,7 +44,7 @@ data class SeriesAudioChoice(
         /** The track at [ordinal] of a file's catalog audio list. */
         fun of(track: AudioTrack, ordinal: Int): SeriesAudioChoice = SeriesAudioChoice(
             audioTrackIndex = ordinal.coerceAtLeast(-1),
-            audioLanguage = serverAudioLanguage(track.language),
+            audioLanguage = serverLanguageTag(track.language),
             trackSignature = track.audioTrackSignature(),
         )
 
@@ -92,21 +92,57 @@ fun AudioTrack.matchesSignature(signature: AudioTrackSignature): Boolean {
 
 /**
  * The position in [tracks] this choice plays, by the server's series rungs
- * (`SelectAudioTrack` steps 1-3): the track its signature describes, else the
- * remembered position while it still holds the same language, else the first
- * track in that language. Null when none applies — playback then follows the
- * profile's language, as the server would.
+ * (`SelectAudioTrack` steps 1-3), so an unsent choice names the track the
+ * server will: among the tracks FFmpeg can decode (all of them when none or
+ * every one can), the track its signature describes — the closest language
+ * tag first —, else the remembered position while it still holds the
+ * language, else the closest track in that language (exact tag, then the
+ * bare language, then another regional variant; file order breaks ties).
+ * Null when none applies: the server then follows the profile's language, as
+ * the starters' fallback does.
  */
 fun SeriesAudioChoice.resolveOn(tracks: List<AudioTrack>): Int? {
     if (tracks.isEmpty()) return null
+    val decodable = tracks.indices.filter { tracks[it].isDecodable() }
+    val pool = if (decodable.isEmpty() || decodable.size == tracks.size) tracks.indices.toList() else decodable
     trackSignature?.let { signature ->
-        tracks.indexOfFirst { it.matchesSignature(signature) }.takeIf { it >= 0 }?.let { return it }
+        pool.filter { tracks[it].matchesSignature(signature) }
+            .minByOrNull { audioLanguageRank(tracks[it].language, signature.language) }
+            ?.let { return it }
     }
-    val language = autoSubtitleLanguageKey(audioLanguage ?: trackSignature?.language) ?: return null
-    tracks.getOrNull(audioTrackIndex)
-        ?.takeIf { autoSubtitleLanguageKey(it.language) == language }
-        ?.let { return audioTrackIndex }
-    return tracks.indexOfFirst { autoSubtitleLanguageKey(it.language) == language }.takeIf { it >= 0 }
+    val language = audioLanguage ?: return null
+    audioTrackIndex.takeIf { it in pool && audioLanguageRank(tracks[it].language, language) >= 0 }?.let { return it }
+    return pool.filter { audioLanguageRank(tracks[it].language, language) >= 0 }
+        .minByOrNull { audioLanguageRank(tracks[it].language, language) }
+}
+
+/**
+ * The server's `AudioTrackDecodable` for a track list: a track whose probe
+ * named no codec, or `unknown`, cannot be converted or copied.
+ */
+private fun AudioTrack.isDecodable(): Boolean {
+    val probed = codec?.trim()?.lowercase().orEmpty()
+    return probed.isNotEmpty() && probed != "unknown"
+}
+
+/**
+ * The server's `langMatchRank`: 0 for the same tag, 1 for a bare candidate
+ * of the same language, 2 for another regional or script variant, -1 for a
+ * different (or unknown) language. ISO 639-2 primaries fold to 639-1.
+ */
+internal fun audioLanguageRank(candidate: String?, preferred: String?): Int {
+    val a = comparableLanguageTag(candidate) ?: return -1
+    val b = comparableLanguageTag(preferred) ?: return -1
+    if (a == b) return 0
+    if (a.substringBefore('-') != b.substringBefore('-')) return -1
+    return if ('-' in a) 2 else 1
+}
+
+private fun comparableLanguageTag(value: String?): String? {
+    val tag = value?.trim()?.lowercase()?.replace('_', '-')?.takeIf { it.isNotEmpty() } ?: return null
+    val primary = autoSubtitleLanguageKey(tag.substringBefore('-')) ?: return null
+    val rest = tag.substringAfter('-', missingDelimiterValue = "")
+    return if (rest.isEmpty()) primary else "$primary-$rest"
 }
 
 /**
@@ -148,14 +184,17 @@ fun localAudioMemoryForSeriesChoice(
 }
 
 /**
- * Track language as the server's `audio_language` accepts it (a BCP 47 tag or
- * ISO 639 code); null for unknown (`und`) or anything else, which the server
- * would refuse.
+ * A track language as the server's `audio_language` and `subtitle_language`
+ * accept it: a BCP 47 tag or ISO 639 code as recorded, an English language
+ * name older files carry ("English") as its tag, and null for unknown (`und`)
+ * or anything else ("Português"), which the server would refuse with a 422.
  */
-private fun serverAudioLanguage(language: String?): String? {
+internal fun serverLanguageTag(language: String?): String? {
     val value = language?.trim().orEmpty()
     if (value.isEmpty() || value.equals("und", ignoreCase = true)) return null
-    return value.takeIf { SERVER_LANGUAGE.matches(it) }
+    if (SERVER_LANGUAGE.matches(value)) return value
+    return org.siloserver.silo.model.settings.LanguageOptions.migrateLegacyValue(value)
+        .takeIf { SERVER_LANGUAGE.matches(it) && !it.equals("und", ignoreCase = true) }
 }
 
 private val SERVER_LANGUAGE = Regex("^[A-Za-z]{2,3}(?:[-_][0-9A-Za-z]{1,8})*$")

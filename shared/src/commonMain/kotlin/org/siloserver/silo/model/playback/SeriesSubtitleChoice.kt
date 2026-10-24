@@ -49,7 +49,7 @@ data class SeriesSubtitleChoice(
 
         /** One track, chosen from the session's subtitle inventory. */
         fun of(track: PlayerSubtitleInfo): SeriesSubtitleChoice = SeriesSubtitleChoice(
-            subtitleLanguage = track.language?.trim().orEmpty(),
+            subtitleLanguage = serverLanguageTag(track.language).orEmpty(),
             subtitleTrackIndex = track.index.coerceAtLeast(-1),
             subtitleMode = "always",
             trackSignature = track.subtitleTrackSignature(),
@@ -77,7 +77,7 @@ data class SeriesSubtitleChoice(
             }
             if (media.language.isNullOrBlank() && media.label.isNullOrBlank()) return null
             return SeriesSubtitleChoice(
-                subtitleLanguage = media.language?.trim().orEmpty(),
+                subtitleLanguage = serverLanguageTag(media.language).orEmpty(),
                 subtitleTrackIndex = -1,
                 subtitleMode = "always",
                 trackSignature = SubtitleTrackSignature(
@@ -93,7 +93,7 @@ data class SeriesSubtitleChoice(
 
         /** One track, chosen from the catalog listing (the detail page). */
         fun of(track: SubtitleTrack, selectionIndex: Int): SeriesSubtitleChoice = SeriesSubtitleChoice(
-            subtitleLanguage = track.language?.trim().orEmpty(),
+            subtitleLanguage = serverLanguageTag(track.language).orEmpty(),
             subtitleTrackIndex = selectionIndex.coerceAtLeast(-1),
             subtitleMode = "always",
             trackSignature = track.subtitleTrackSignature(),
