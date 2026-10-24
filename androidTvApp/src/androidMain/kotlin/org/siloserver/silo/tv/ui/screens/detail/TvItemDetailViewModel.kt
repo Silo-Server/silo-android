@@ -898,32 +898,41 @@ class TvItemDetailViewModel(
      * season selection is preserved.
      */
     fun refreshOnReturn() {
-        // Back from playback: picks made on this page before it are older than
-        // anything picked in the player, which the server now holds. Drop the
-        // page's own overlays and its Next Up audio pick so the previews and
-        // Play follow the refreshed answer. (A movie or episode page resets
-        // its audio selection from the playback return in [quietRefresh].)
-        // Comparing the refreshed answer with the one a pick was laid over
-        // cannot tell: a newer choice can equal that older answer.
-        val returnedFromPlayback = TvDetailTrackSelectionSession.hasPlaybackReturn(contentId) ||
-            _uiState.value.nextUpEpisode?.contentId?.let(TvDetailTrackSelectionSession::hasPlaybackReturn) == true
-        if (returnedFromPlayback) _uiState.update {
+        // Back on the page (from playback, or the background): its own picks
+        // whose writes have landed are dropped, whatever the page knows about
+        // the playback. The server holds them, or something newer picked in
+        // the player; the refreshes below bring that answer. Comparing it with
+        // the answer a pick was laid over cannot tell, since a newer choice can
+        // equal that older answer, and the playback return may already have
+        // been consumed by another refresh. A pick still on its way stays.
+        val pickedBefore = _uiState.value.pickedSeriesAudioChoices.keys + _uiState.value.pickedSeriesSubtitleChoices.keys
+        _uiState.update {
             it.copy(
-                pickedSeriesSubtitleChoices = emptyMap(),
-                pickedSeriesAudioChoices = emptyMap(),
-                pickedSubtitleBaselines = emptyMap(),
-                pickedAudioBaselines = emptyMap(),
+                pickedSeriesSubtitleChoices = it.pickedSeriesSubtitleChoices.filterKeys(it.pendingSeriesSubtitleChoices::containsKey),
+                pickedSeriesAudioChoices = it.pickedSeriesAudioChoices.filterKeys(it.pendingSeriesAudioChoices::containsKey),
+                pickedSubtitleBaselines = it.pickedSubtitleBaselines.filterKeys(it.pendingSeriesSubtitleChoices::containsKey),
+                pickedAudioBaselines = it.pickedAudioBaselines.filterKeys(it.pendingSeriesAudioChoices::containsKey),
+            )
+        }
+        // Back from playing the Next Up episode (its return is consumed here,
+        // once): its selections picked here before are older than anything
+        // picked in the player. An explicit Off (or track) would otherwise
+        // also ride the next Next Up handoff. A movie or episode page resets
+        // its own selection from the playback return in [quietRefresh].
+        val nextUpPlayed = _uiState.value.nextUpEpisode?.contentId
+            ?.takeIf { it != contentId }
+            ?.let(TvDetailTrackSelectionSession::consumePlaybackReturn) != null
+        if (nextUpPlayed) _uiState.update {
+            it.copy(
                 selectedNextUpAudioIndex = null,
                 nextUpAudioPickedThisSession = false,
-                // An explicit Off (or track) picked here before the playback
-                // is older than a subtitle picked in the player, and would
-                // otherwise ride the next Next Up handoff.
                 selectedNextUpSubtitleIndex = null,
             )
         }
-        // The Next Up episode's effective fields predate the playback; the
-        // series refresh keeps the loaded episode detail, so re-read it.
-        if (returnedFromPlayback) refreshNextUpPlaybackDetail()
+        // The Next Up episode's effective fields may predate the playback or
+        // a pick; the series refresh keeps the loaded episode detail, so
+        // re-read it.
+        if (nextUpPlayed || pickedBefore.isNotEmpty()) refreshNextUpPlaybackDetail()
         quietRefresh()
     }
 
@@ -2984,9 +2993,6 @@ internal object TvDetailTrackSelectionSession {
     }
 
     fun recall(contentId: String): Saved? = byContent[contentId]
-
-    /** Whether a playback of [contentId] ended and its return has not been consumed. */
-    fun hasPlaybackReturn(contentId: String): Boolean = byContent[contentId]?.positionSeconds != null
 
     /**
      * Returns the pending player-exit progress once, while retaining the
