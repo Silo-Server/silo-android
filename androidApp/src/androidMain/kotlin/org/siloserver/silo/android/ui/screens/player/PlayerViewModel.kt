@@ -1881,7 +1881,10 @@ class PlayerViewModel(
                         org.siloserver.silo.model.playback.localAudioMemoryForSeriesChoice(
                             localFingerprint = localTrackSelection?.audioFingerprint,
                             tracks = tracks,
-                            serverOrdinal = version.effectiveAudioTrackIndex,
+                            // The plan's audio: the starter already weighed the
+                            // memory against the series choice and any Auto reset.
+                            serverOrdinal = playbackState.playbackPlan?.selectedTracks?.audioIndex
+                                ?: version.effectiveAudioTrackIndex,
                             resetToAuto = audioResetToAuto,
                         ),
                     )

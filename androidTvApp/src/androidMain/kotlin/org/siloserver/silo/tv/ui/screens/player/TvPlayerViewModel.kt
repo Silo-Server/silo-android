@@ -2617,14 +2617,16 @@ class TvPlayerViewModel(
                         }
                         val hydratedSubtitleUrls = freshRestore.rows
                         // The starter already weighed this memory against the
-                        // server's series choice; only the track that choice
-                        // names may be restored onto the renderer.
+                        // series choice (and an Auto reset, which may have
+                        // landed during its flush); only the track its plan
+                        // plays may be restored onto the renderer.
                         pendingPersistedAudioFingerprint = if (initialAudioTrackIndex == null) {
                             val readyVersion = result.versions.firstOrNull { it.fileId == (result.fileId ?: readyMediaFileId) }
                             org.siloserver.silo.model.playback.localAudioMemoryForSeriesChoice(
                                 localFingerprint = localTrackSelection?.audioFingerprint,
                                 tracks = readyVersion?.audioTracks.orEmpty(),
-                                serverOrdinal = readyVersion?.effectiveAudioTrackIndex,
+                                serverOrdinal = result.playbackPlan?.selectedTracks?.audioIndex
+                                    ?: readyVersion?.effectiveAudioTrackIndex,
                                 resetToAuto = org.siloserver.silo.model.playback.seriesTrackChoiceKey(result.seriesId, contentId)
                                     ?.let { seriesTrackChoiceWriter?.pendingAudio(it) }
                                     ?.let { it.choice == null } == true,
