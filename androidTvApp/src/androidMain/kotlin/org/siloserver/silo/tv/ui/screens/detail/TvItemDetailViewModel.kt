@@ -183,6 +183,7 @@ internal fun org.siloserver.silo.repository.port.LocalTrackSelection.withSeriesT
     version: FileVersion,
     pendingSubtitles: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
     pendingAudio: Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice> = emptyMap(),
+    subtitleResetToAuto: Boolean = false,
 ): org.siloserver.silo.repository.port.LocalTrackSelection {
     val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId)
     val audioTracks = version.audioTracks.orEmpty()
@@ -196,6 +197,7 @@ internal fun org.siloserver.silo.repository.port.LocalTrackSelection.withSeriesT
                 version.subtitleTracks.orEmpty(),
             ),
             effectiveMode = served.effectiveSubtitleMode,
+            resetToAuto = subtitleResetToAuto,
         ),
         audioFingerprint = org.siloserver.silo.model.playback.localAudioMemoryForSeriesChoice(
             localFingerprint = audioFingerprint,
@@ -1310,6 +1312,11 @@ class TvItemDetailViewModel(
         viewModelScope.launch { writer.saveAudio(key, choice) }
     }
 
+    private suspend fun subtitleResetToAuto(detail: ItemDetail): Boolean {
+        val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId) ?: return false
+        return seriesTrackChoiceWriter?.subtitleResetToAuto(key) == true
+    }
+
     /** The exact version the Auto/display/player policy currently resolves. */
     private fun selectedVersionFor(state: TvItemDetailUiState, detail: ItemDetail): FileVersion? {
         return resolveTvTrackSelectionVersion(detail, state.selectedFileId, state.preferredQuality)
@@ -1374,6 +1381,7 @@ class TvItemDetailViewModel(
                     version,
                     _uiState.value.pendingSeriesSubtitleChoices,
                     _uiState.value.pendingSeriesAudioChoices,
+                    subtitleResetToAuto = subtitleResetToAuto(detail),
                 )
                 ?: return@launch
             val restored = restoreTrackSelection(version, saved)
@@ -2500,6 +2508,7 @@ class TvItemDetailViewModel(
                     version,
                     _uiState.value.pendingSeriesSubtitleChoices,
                     _uiState.value.pendingSeriesAudioChoices,
+                    subtitleResetToAuto = subtitleResetToAuto(playbackDetail),
                 )
                 ?: return@launch
             val restored = restoreTrackSelection(version, saved)

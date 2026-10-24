@@ -244,8 +244,10 @@ private fun sameSubtitleLanguage(a: String?, b: String?): Boolean =
  *
  * With no series track choice the memory restores: the server has nothing
  * newer, and a pick that never reached it (its write expired, was refused or
- * died with the process) is still remembered on this device. The same holds
- * offline ([serverChoiceKnown] false: no watch detail was read).
+ * died with the process) is still remembered on this device — unless this
+ * device set the series back to Auto since ([resetToAuto]), which asks for the
+ * profile's defaults rather than an older pick. The same holds offline
+ * ([serverChoiceKnown] false: no watch detail was read).
  */
 fun localSubtitleMemoryForSeriesChoice(
     localPreference: String?,
@@ -253,8 +255,11 @@ fun localSubtitleMemoryForSeriesChoice(
     signature: SubtitleTrackSignature?,
     candidates: List<AutoSubtitleCandidate> = emptyList(),
     effectiveMode: String? = null,
+    resetToAuto: Boolean = false,
 ): String? {
-    if (localPreference == null || !serverChoiceKnown) return localPreference
+    if (localPreference == null) return null
+    if (resetToAuto) return null
+    if (!serverChoiceKnown) return localPreference
     val localOff = localPreference.trim() == SUBTITLE_OFF_FINGERPRINT ||
         decodeSubtitleIdentityPreference(localPreference) == SubtitleIdentity.Off
     if (signature == null) {

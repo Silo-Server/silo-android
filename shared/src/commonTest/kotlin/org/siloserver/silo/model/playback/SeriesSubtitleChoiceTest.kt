@@ -205,6 +205,8 @@ class SeriesSubtitleChoiceTest {
             SUBTITLE_OFF_FINGERPRINT,
             localSubtitleMemoryForSeriesChoice(SUBTITLE_OFF_FINGERPRINT, serverChoiceKnown = true, signature = null),
         )
+        // Auto set on this device since the pick: the profile's defaults, not the memory.
+        assertNull(localSubtitleMemoryForSeriesChoice(local, true, null, resetToAuto = true))
         // Off for the series: only an Off memory agrees with it.
         assertNull(localSubtitleMemoryForSeriesChoice(local, true, null, effectiveMode = "off"))
         assertEquals(

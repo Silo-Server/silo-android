@@ -228,6 +228,7 @@ val playerInfraModule = module {
                 .map { it.lastCheckedAtMs }
                 .distinctUntilChanged()
                 .map { },
+            autoResets = org.siloserver.silo.common.settings.SharedPreferencesSeriesAutoResetStore(androidContext()),
         )
     }
 

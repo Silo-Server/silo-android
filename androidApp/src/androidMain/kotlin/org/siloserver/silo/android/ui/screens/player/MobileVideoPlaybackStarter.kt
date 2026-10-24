@@ -157,6 +157,11 @@ internal class MobileVideoPlaybackStarter(
     private val seriesTrackChoiceWriter: org.siloserver.silo.common.settings.SeriesTrackChoiceWriter? = null,
 ) : VideoPlaybackStarter {
 
+    private suspend fun subtitleResetToAuto(detail: WatchDetail): Boolean {
+        val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId) ?: return false
+        return seriesTrackChoiceWriter?.subtitleResetToAuto(key) == true
+    }
+
     override suspend fun start(request: VideoPlaybackStartRequest): VideoPlaybackStartResult {
         // Pre-play gate: don't launch a doomed server session when the origin is
         // unreachable (issue #33). Playable local downloads are already served by
@@ -286,6 +291,7 @@ internal class MobileVideoPlaybackStarter(
                             serverChoiceKnown = true,
                             signature = seriesSubtitleSignature,
                             effectiveMode = watchDetail.effectiveSubtitleMode,
+                            resetToAuto = subtitleResetToAuto(watchDetail),
                         )
                         // A memory that agrees with the series choice restores
                         // it — as the track the signature names, where the

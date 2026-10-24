@@ -1205,6 +1205,16 @@ class PlayerViewModel(
     private val stagedSubtitleWrite = java.util.concurrent.atomic.AtomicReference<StagedSubtitleWrite?>(null)
     private val stagedAudioWrite = java.util.concurrent.atomic.AtomicReference<StagedAudioWrite?>(null)
 
+    init {
+        viewModelScope.launch {
+            _uiState.collect { state ->
+                sendStagedSubtitleIfCommitted(
+                    state.contentId, state.committedSubtitleIdentity, state.pendingSubtitleIdentity, state.subtitleTracks,
+                )
+            }
+        }
+    }
+
     /**
      * The audio and subtitle the viewer picked in this player, by track
      * identity. Every later start of the same series (the next episode, a
@@ -1537,7 +1547,7 @@ class PlayerViewModel(
         // from the picks made in this player.
         val loadTrackChoices = pendingVersionSwitchCarry?.takeIf { it.contentId == contentId } ?: sessionTrackChoices
         pendingVersionSwitchCarry = null
-        clearStagedSeriesWrites()
+        clearStagedSeriesWrites(keepContentId = contentId)
         if (room != null) beginRoomLoad(room)
         // A fresh load resets any in-flight intro countdown / cancellation memory.
         introAutoSkipController.reset()
@@ -1882,6 +1892,9 @@ class PlayerViewModel(
                 // by its signature and an older local pick must not win.
                 candidates = playbackState.subtitleUrls.map { it.toMobileAutoSubtitleCandidate() },
                 effectiveMode = watchDetail?.effectiveSubtitleMode,
+                resetToAuto = watchDetail
+                    ?.let { org.siloserver.silo.model.playback.seriesTrackChoiceKey(it.seriesId, it.contentId) }
+                    ?.let { seriesTrackChoiceWriter?.subtitleResetToAuto(it) } == true,
             )
                 ?.takeUnless { explicitSubtitlePickResolved || isSessionRenewal },
             authoritativeInventory = playbackState.playbackPlan != null,
@@ -4829,7 +4842,7 @@ class PlayerViewModel(
         sessionTrackChoices = sessionTrackChoices.withPick(key, subtitle = choice)
         if (state.isLocalFilePlayback()) return
         val owner = trackChoiceOwner ?: return
-        val write = StagedSubtitleWrite(key, choice, owner, identity)
+        val write = StagedSubtitleWrite(state.contentId, key, choice, owner, identity)
         if (state.pendingSubtitleIdentity == null && state.committedSubtitleIdentity == identity) {
             stagedSubtitleWrite.set(null)
             saveSeriesSubtitle(write)
@@ -4863,7 +4876,7 @@ class PlayerViewModel(
         val choice = org.siloserver.silo.model.playback.SeriesAudioChoice.of(state.audioTracks, catalogOrdinal) ?: return
         sessionTrackChoices = sessionTrackChoices.withPick(key, audio = choice)
         val owner = trackChoiceOwner ?: return
-        val write = StagedAudioWrite(key, choice, owner, catalogOrdinal)
+        val write = StagedAudioWrite(state.contentId, key, choice, owner, catalogOrdinal)
         if (committed) {
             stagedAudioWrite.set(null)
             saveSeriesAudio(write)
@@ -4894,6 +4907,7 @@ class PlayerViewModel(
     }
 
     private data class StagedSubtitleWrite(
+        val contentId: String,
         val key: String,
         val choice: org.siloserver.silo.model.playback.SeriesSubtitleChoice,
         val owner: org.siloserver.silo.network.AuthScopeSnapshot,
@@ -4901,11 +4915,40 @@ class PlayerViewModel(
     )
 
     private data class StagedAudioWrite(
+        val contentId: String,
         val key: String,
         val choice: org.siloserver.silo.model.playback.SeriesAudioChoice,
         val owner: org.siloserver.silo.network.AuthScopeSnapshot,
         val catalogOrdinal: Int,
     )
+
+    /**
+     * Whether [identity], committed over [rows], is the pick [write] staged:
+     * the same identity, or the same track described again — a change that
+     * restarted playback (a delivery change, such as a subtitle added to a
+     * plan that had none) commits it from the new plan's rows.
+     */
+    private fun stagedSubtitleCommitted(
+        write: StagedSubtitleWrite,
+        identity: SubtitleIdentity,
+        rows: List<org.siloserver.silo.model.playback.PlayerSubtitleInfo>,
+    ): Boolean {
+        if (identity == write.identity) return true
+        val described = org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(identity, rows) ?: return false
+        return described.subtitleMode == write.choice.subtitleMode &&
+            described.trackSignature == write.choice.trackSignature
+    }
+
+    /**
+     * Sends a staged subtitle pick once the item on screen has committed it,
+     * whichever path got it there (a local mount, a replan, a restart).
+     */
+    private fun sendStagedSubtitleIfCommitted(contentId: String, committed: SubtitleIdentity, pending: SubtitleIdentity?, rows: List<org.siloserver.silo.model.playback.PlayerSubtitleInfo>) {
+        val write = stagedSubtitleWrite.get() ?: return
+        if (pending != null || write.contentId != contentId) return
+        if (!stagedSubtitleCommitted(write, committed, rows)) return
+        if (stagedSubtitleWrite.compareAndSet(write, null)) saveSeriesSubtitle(write)
+    }
 
     /** Sends the staged picks [committed] made final; each goes out once. */
     private fun sendCommittedSeriesWrites(committed: CommittedSubtitle) {
@@ -4919,9 +4962,14 @@ class PlayerViewModel(
         }
     }
 
-    private fun clearStagedSeriesWrites() {
-        stagedSubtitleWrite.set(null)
-        stagedAudioWrite.set(null)
+    /**
+     * Drops staged picks made on another item. A restart of the same item
+     * (a replan that changed delivery) keeps them: it is how such a pick
+     * commits.
+     */
+    private fun clearStagedSeriesWrites(keepContentId: String) {
+        stagedSubtitleWrite.updateAndGet { it?.takeIf { write -> write.contentId == keepContentId } }
+        stagedAudioWrite.updateAndGet { it?.takeIf { write -> write.contentId == keepContentId } }
     }
 
     private fun saveSeriesSubtitle(write: StagedSubtitleWrite) {

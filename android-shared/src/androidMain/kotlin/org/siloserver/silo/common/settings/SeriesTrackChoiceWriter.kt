@@ -67,6 +67,14 @@ interface SeriesTrackChoiceWriter {
     /** [pendingSubtitle] for the series' audio track. */
     suspend fun pendingAudio(seriesKey: String): PendingSeriesAudioChoice? = null
 
+    /**
+     * Whether the active profile last set [seriesKey]'s subtitles back to
+     * Auto on this device, with no subtitle pick since. This device's
+     * per-file subtitle memory then stays out even though the server holds no
+     * series choice: Auto means the profile's defaults, not an older pick.
+     */
+    suspend fun subtitleResetToAuto(seriesKey: String): Boolean = false
+
     /** [pendingSubtitle] for every series of the active profile, as it changes. */
     val pendingSubtitleChoices: Flow<Map<String, PendingSeriesSubtitleChoice>>
         get() = flowOf(emptyMap())
@@ -154,6 +162,8 @@ class DefaultSeriesTrackChoiceWriter(
     private val maxPendingAgeMs: Long = MAX_PENDING_AGE_MS,
     /** Moments worth trying the queue again: the server reachable, the app foregrounded. */
     resumeSignals: Flow<Unit> = emptyFlow(),
+    /** Where Auto set on this device is remembered across launches. */
+    private val autoResets: SeriesAutoResetStore = SeriesAutoResetStore.InMemory(),
 ) : SeriesTrackChoiceWriter {
 
     private enum class Kind(val label: String) { AUDIO("audio"), SUBTITLE("subtitle") }
@@ -204,6 +214,7 @@ class DefaultSeriesTrackChoiceWriter(
             if ((newestSequence[key] ?: 0L) > order) return
             newestSequence[key] = order
             val op = Op(writer, choice, now(), order)
+            if (kind == Kind.SUBTITLE) autoResets.set(key.resetId(), reset = choice == null)
             pending.remove(key)
             pending[key] = op
             unsent.value = unsent.value + (key to op)
@@ -236,6 +247,14 @@ class DefaultSeriesTrackChoiceWriter(
         }
         scope.launch { drain() }.join()
     }
+
+    override suspend fun subtitleResetToAuto(seriesKey: String): Boolean {
+        val owner = captureOwner() ?: return false
+        val profileId = owner.profileId?.takeIf { it.isNotBlank() } ?: return false
+        return autoResets.isReset(Key(profileId, owner.serverId, seriesKey, Kind.SUBTITLE).resetId())
+    }
+
+    private fun Key.resetId(): String = listOf(serverId, profileId, kind.label, seriesKey).joinToString("\u001f")
 
     override suspend fun pendingSubtitle(seriesKey: String): PendingSeriesSubtitleChoice? =
         pendingOp(seriesKey, Kind.SUBTITLE)?.let { PendingSeriesSubtitleChoice(it.choice as SeriesSubtitleChoice?) }
@@ -399,5 +418,34 @@ class DefaultSeriesTrackChoiceWriter(
         const val RETRY_MAX_DELAY_MS = 60_000L
         const val MAX_PENDING_AGE_MS = 10 * 60_000L
         const val IDENTITY_CHANGED = "identity_changed"
+    }
+}
+
+/**
+ * The series whose subtitles were set back to Auto on this device, by
+ * (server, profile, kind, series). Kept across launches: the per-file memory
+ * it silences is too.
+ */
+interface SeriesAutoResetStore {
+    fun isReset(id: String): Boolean
+    fun set(id: String, reset: Boolean)
+
+    class InMemory : SeriesAutoResetStore {
+        private val ids = java.util.Collections.synchronizedSet(HashSet<String>())
+        override fun isReset(id: String): Boolean = id in ids
+        override fun set(id: String, reset: Boolean) {
+            if (reset) ids.add(id) else ids.remove(id)
+        }
+    }
+}
+
+class SharedPreferencesSeriesAutoResetStore(context: android.content.Context) : SeriesAutoResetStore {
+    private val prefs = context.getSharedPreferences("series_track_auto_resets", android.content.Context.MODE_PRIVATE)
+
+    override fun isReset(id: String): Boolean = prefs.contains(id)
+
+    override fun set(id: String, reset: Boolean) {
+        if (reset == isReset(id)) return
+        prefs.edit().apply { if (reset) putBoolean(id, true) else remove(id) }.apply()
     }
 }

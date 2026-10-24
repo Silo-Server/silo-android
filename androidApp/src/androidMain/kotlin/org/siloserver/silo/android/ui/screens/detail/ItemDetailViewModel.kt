@@ -1334,6 +1334,7 @@ class ItemDetailViewModel(
                         version.subtitleTracks.orEmpty(),
                     ),
                     effectiveMode = detail.withPendingSeriesSubtitleChoice(pendingSubtitle).effectiveSubtitleMode,
+                    resetToAuto = key?.let { seriesTrackChoiceWriter?.subtitleResetToAuto(it) } == true,
                 ),
             )
             // Likewise for audio: the memory only restores the track the

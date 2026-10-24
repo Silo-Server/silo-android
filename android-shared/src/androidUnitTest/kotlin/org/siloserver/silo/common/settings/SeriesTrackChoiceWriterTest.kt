@@ -446,6 +446,27 @@ class SeriesTrackChoiceWriterTest {
     }
 
     @Test
+    fun `auto set on this device is remembered until the next subtitle pick`() = runTest {
+        val resets = SeriesAutoResetStore.InMemory()
+        val recorder = Recorder()
+        val writer = DefaultSeriesTrackChoiceWriter(
+            putSubtitle = { key, choice, o -> recorder.calls += Call("PUT", key, choice, o); recorder.next() },
+            deleteSubtitle = { key, o -> recorder.calls += Call("DELETE", key, null, o); recorder.next() },
+            captureOwner = { profileA },
+            scope = this,
+            autoResets = resets,
+        )
+        writer.saveSubtitle("series-1", null)
+        advanceUntilIdle()
+        assertTrue(writer.subtitleResetToAuto("series-1"))
+        assertEquals(false, writer.subtitleResetToAuto("series-2"))
+
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
+        advanceUntilIdle()
+        assertEquals(false, writer.subtitleResetToAuto("series-1"))
+    }
+
+    @Test
     fun `nothing is sent without an active profile`() = runTest {
         val recorder = Recorder()
         val writer = writer(recorder) { null }
