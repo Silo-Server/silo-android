@@ -810,7 +810,7 @@ class TvPlayerViewModel(
     // adapter can tell a dead link from a slow one. Optional for the same reason.
     private val throughputMeter: org.siloserver.silo.common.player.PlaybackThroughputMeter? = null,
     /** Remembers a manual subtitle choice for the whole series on the server. */
-    private val seriesSubtitleChoiceWriter: org.siloserver.silo.common.settings.SeriesSubtitleChoiceWriter? = null,
+    private val seriesTrackChoiceWriter: org.siloserver.silo.common.settings.SeriesTrackChoiceWriter? = null,
 ) : ViewModel() {
 
     companion object {
@@ -1015,6 +1015,12 @@ class TvPlayerViewModel(
      */
     private var contentLoadGeneration = 0L
     private val loadOwners = TvPlayerLoadOwnerRegistry()
+
+    /**
+     * The account, server and profile the current playback was started under
+     * — what a series audio or subtitle pick is saved under.
+     */
+    private var trackChoiceOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null
 
     /** Same-route retries spent on transient network errors; reset once playback progresses. */
     private var transientNetworkRetries = 0
@@ -2389,6 +2395,8 @@ class TvPlayerViewModel(
                         room = requestRoom,
                         versionChosen = versionChosen,
                     )
+                trackChoiceOwner = catalogRepository.captureWatchAuthority()
+                if (!loadOwners.owns(loadOwner)) return@launch
                 val result = loadOwners.withOwner(loadOwner) {
                     videoPlaybackCoordinator.start(request)
                 }
@@ -4667,6 +4675,7 @@ class TvPlayerViewModel(
             // to a replan left an older launch/persisted/HUD intent authoritative,
             // and it would reapply itself afterwards and undo the remote pick.
             setDesiredAudio(selected, explicit = true)
+            rememberSeriesAudioChoice(state, selected)
             if (mountedAudioFor(
                     catalog = catalogAudioTracks(state),
                     catalogOrdinal = selected,
@@ -5718,6 +5727,9 @@ class TvPlayerViewModel(
         // mounted stream already carries the track, which is the common
         // direct-play case and needs no replan at all.
         setDesiredAudio(catalogOrdinal, explicit = true)
+        // Saved before the local-switch return below, so a switch inside the
+        // mounted stream is remembered too.
+        rememberSeriesAudioChoice(state, catalogOrdinal)
         if (mountedAudioFor(
                 catalog = catalog,
                 catalogOrdinal = catalogOrdinal,
@@ -5757,11 +5769,26 @@ class TvPlayerViewModel(
      * which hands it back as `effective_subtitle_*` on every later load.
      */
     private fun rememberSeriesSubtitleChoice(identity: SubtitleIdentity) {
-        val writer = seriesSubtitleChoiceWriter ?: return
+        val writer = seriesTrackChoiceWriter ?: return
+        val owner = trackChoiceOwner ?: return
         val state = _uiState.value
-        val key = org.siloserver.silo.model.playback.seriesSubtitleChoiceKey(state.seriesId, state.contentId) ?: return
+        val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(state.seriesId, state.contentId) ?: return
         val choice = org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(identity, state.subtitleUrls) ?: return
-        viewModelScope.launch { writer.save(key, choice) }
+        viewModelScope.launch { writer.saveSubtitle(key, choice, owner) }
+    }
+
+    /**
+     * A manual audio pick applies to the whole series (or the movie) and the
+     * profile's other devices, like a subtitle pick. Restores, carried
+     * choices and fallbacks never come through here.
+     */
+    private fun rememberSeriesAudioChoice(state: UiState, catalogOrdinal: Int) {
+        val writer = seriesTrackChoiceWriter ?: return
+        val owner = trackChoiceOwner ?: return
+        val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(state.seriesId, state.contentId) ?: return
+        val choice = org.siloserver.silo.model.playback.SeriesAudioChoice.of(catalogAudioTracks(state), catalogOrdinal)
+            ?: return
+        viewModelScope.launch { writer.saveAudio(key, choice, owner) }
     }
 
     fun selectSubtitleOption(serverIndex: Int) {

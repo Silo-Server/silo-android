@@ -762,10 +762,18 @@ fun ItemDetailScreen(
                                 if (index == null) viewModel.selectAutoVersion() else viewModel.selectVersion(index)
                             },
                             onAudioSelected = { index ->
-                                if (index == null) viewModel.selectAutoAudioTrack() else viewModel.selectAudioTrack(index)
+                                if (index == null) {
+                                    viewModel.selectAutoAudioTrack()
+                                } else {
+                                    viewModel.selectAudioTrack(index, selectedEpisodeVersion)
+                                }
                             },
                             onSubtitleSelected = { index ->
-                                if (index == null) viewModel.selectAutoSubtitle() else viewModel.selectSubtitle(index)
+                                if (index == null) {
+                                    viewModel.selectAutoSubtitle()
+                                } else {
+                                    viewModel.selectSubtitle(index, selectedEpisodeVersion)
+                                }
                             },
                             onPlayClick = {
                                 selectedEpisode?.let {
@@ -1012,10 +1020,18 @@ fun ItemDetailScreen(
                                 if (index != null) viewModel.selectVersion(index) else viewModel.selectAutoVersion()
                             },
                             onAudioSelected = { index ->
-                                if (index != null) viewModel.selectAudioTrack(index) else viewModel.selectAutoAudioTrack()
+                                if (index != null) {
+                                    viewModel.selectAudioTrack(index, selectedVersion)
+                                } else {
+                                    viewModel.selectAutoAudioTrack()
+                                }
                             },
                             onSubtitleSelected = { index ->
-                                if (index != null) viewModel.selectSubtitle(index) else viewModel.selectAutoSubtitle()
+                                if (index != null) {
+                                    viewModel.selectSubtitle(index, selectedVersion)
+                                } else {
+                                    viewModel.selectAutoSubtitle()
+                                }
                             },
                             onPersonClick = onPersonClick,
                             onItemDetailClick = onItemDetailClick,

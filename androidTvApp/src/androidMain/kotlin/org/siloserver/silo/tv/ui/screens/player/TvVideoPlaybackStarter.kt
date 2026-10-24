@@ -64,7 +64,7 @@ class TvVideoPlaybackStarter(
     private val reachabilityMonitor: ServerReachabilityMonitor,
     private val userItemStatePort: UserItemStatePort,
     /** Lays a series subtitle choice that has not landed yet over the server's answer. */
-    private val seriesSubtitleChoiceWriter: org.siloserver.silo.common.settings.SeriesSubtitleChoiceWriter? = null,
+    private val seriesTrackChoiceWriter: org.siloserver.silo.common.settings.SeriesTrackChoiceWriter? = null,
 ) : VideoPlaybackStarter {
 
     override suspend fun start(request: VideoPlaybackStartRequest): VideoPlaybackStartResult {
@@ -86,7 +86,7 @@ class TvVideoPlaybackStarter(
         var lifecycleAdopted = false
         return try {
             val watchDetail = when (val r = catalogRepository.getWatchDetail(request.contentId, expectedMetadataOwner, request.libraryId)) {
-                is ApiResult.Success -> seriesSubtitleChoiceWriter
+                is ApiResult.Success -> seriesTrackChoiceWriter
                     ?.reconcile(r.data)
                     ?: r.data
                 is ApiResult.Error -> return failure(

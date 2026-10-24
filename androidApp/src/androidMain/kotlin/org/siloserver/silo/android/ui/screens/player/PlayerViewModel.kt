@@ -344,8 +344,8 @@ class PlayerViewModel(
     // When the video's requests last received a byte, so the buffering-quality
     // adapter can tell a dead link from a slow one. Optional for the same reason.
     private val throughputMeter: org.siloserver.silo.common.player.PlaybackThroughputMeter? = null,
-    /** Remembers a manual subtitle choice for the whole series on the server. */
-    private val seriesSubtitleChoiceWriter: org.siloserver.silo.common.settings.SeriesSubtitleChoiceWriter? = null,
+    /** Remembers a manual audio or subtitle choice for the whole series on the server. */
+    private val seriesTrackChoiceWriter: org.siloserver.silo.common.settings.SeriesTrackChoiceWriter? = null,
 ) : ViewModel() {
 
     // Last load request, replayed by the "Can't reach server" Retry / Try Anyway.
@@ -1191,6 +1191,13 @@ class PlayerViewModel(
     private val loadOwners = MobilePlayerLoadOwnerRegistry()
     private var loadJob: Job? = null
 
+    /**
+     * The account, server and profile the mounted playback belongs to — what a
+     * series audio or subtitle pick is saved under. Null when that is not the
+     * active profile (a download kept for another one), so nothing is saved.
+     */
+    private var trackChoiceOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null
+
     init {
         // Reclaim-Watched must never delete the file the player is using
         // (reachable via PiP -> Downloads). Mirror the currently-playing file
@@ -1748,10 +1755,11 @@ class PlayerViewModel(
         val watchMetadata = ReadyWatchMetadata(
             catalogRepository, watchOwner, playbackState.contentId, playbackState.serverUrl, browseLibraryId,
         ) { ownsLoad(loadOwner) }
+        trackChoiceOwner = watchOwner
         // A series subtitle choice still waiting to land outranks the
         // server's older answer (the starter already gave it a chance to).
         val watchDetail = watchMetadata.read()?.let { detail ->
-            seriesSubtitleChoiceWriter?.overlayPendingChoice(detail) ?: detail
+            seriesTrackChoiceWriter?.overlayPendingChoice(detail) ?: detail
         }
         if (!watchMetadata.current()) {
             stopStaleReadySession(playbackState.sessionId)
@@ -4760,8 +4768,7 @@ class PlayerViewModel(
      * which hands it back as `effective_subtitle_*` on every later load.
      */
     private fun rememberSeriesSubtitleChoice(state: PlayerUiState, index: Int) {
-        val writer = seriesSubtitleChoiceWriter ?: return
-        val key = org.siloserver.silo.model.playback.seriesSubtitleChoiceKey(state.seriesId, state.contentId) ?: return
+        val key = trackChoiceKey(state) ?: return
         val choice = if (index == -1) {
             org.siloserver.silo.model.playback.SeriesSubtitleChoice.Off
         } else {
@@ -4769,7 +4776,35 @@ class PlayerViewModel(
                 ?.let { org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(it) }
                 ?: return
         }
-        viewModelScope.launch { writer.save(key, choice) }
+        val writer = seriesTrackChoiceWriter ?: return
+        val owner = trackChoiceOwner ?: return
+        viewModelScope.launch { writer.saveSubtitle(key, choice, owner) }
+    }
+
+    /**
+     * The id a pick in this player is remembered under. Null for an episode
+     * whose series is unknown (a download played without metadata): keying it
+     * by the episode would save a choice no other episode reads.
+     */
+    private fun trackChoiceKey(state: PlayerUiState): String? {
+        if (state.contentType == "episode" && state.seriesId.isNullOrBlank()) return null
+        return org.siloserver.silo.model.playback.seriesTrackChoiceKey(state.seriesId, state.contentId)
+    }
+
+    /**
+     * A manual audio pick applies to the whole series (or the movie) and the
+     * profile's other devices, like a subtitle pick. Only the viewer's own
+     * pick: restores and fallbacks go through [selectAudio] without it.
+     */
+    private fun rememberSeriesAudioChoice(state: PlayerUiState, catalogOrdinal: Int) {
+        val key = trackChoiceKey(state) ?: return
+        // A download that lists the file's own tracks by position describes
+        // them differently from the catalog the server matches against.
+        if (state.offlineAudioByPosition) return
+        val choice = org.siloserver.silo.model.playback.SeriesAudioChoice.of(state.audioTracks, catalogOrdinal) ?: return
+        val writer = seriesTrackChoiceWriter ?: return
+        val owner = trackChoiceOwner ?: return
+        viewModelScope.launch { writer.saveAudio(key, choice, owner) }
     }
 
     internal fun isCurrentSubtitleMount(mount: MobileSubtitleMount?): Boolean =
@@ -4808,6 +4843,9 @@ class PlayerViewModel(
                 routeOrdinal = index,
                 serverIndex = serverIndex,
             )
+            // Saved before the local-switch returns below, so a switch inside
+            // the mounted stream is remembered too.
+            rememberSeriesAudioChoice(state, serverIndex)
         }
         setDesiredAudio(serverIndex, explicit = userInitiated)
         // A downloaded file is switched on the player only: there is no
@@ -6373,6 +6411,7 @@ class PlayerViewModel(
         }
         if (!ownsLoad(loadOwner)) return false
         media ?: return false
+        trackChoiceOwner = watchOwner?.takeIf { it.serverId == media.serverId && it.profileId == media.profileId }
         val sidecar = media.sidecar
         val fileId = media.fileId
 

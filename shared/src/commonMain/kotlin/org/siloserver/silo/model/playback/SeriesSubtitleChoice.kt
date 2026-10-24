@@ -158,11 +158,11 @@ fun ItemDetail.withPendingSeriesSubtitleChoice(pending: PendingSeriesSubtitleCho
 }
 
 /**
- * The id a subtitle choice is remembered under: the series for an episode, so
+ * The id an audio or subtitle choice is remembered under: the series for an episode, so
  * one choice covers every episode, else the item's own content id (a movie).
  * Null when neither is known.
  */
-fun seriesSubtitleChoiceKey(seriesId: String?, contentId: String?): String? =
+fun seriesTrackChoiceKey(seriesId: String?, contentId: String?): String? =
     seriesId?.takeIf { it.isNotBlank() } ?: contentId?.takeIf { it.isNotBlank() }
 
 fun PlayerSubtitleInfo.subtitleTrackSignature(): SubtitleTrackSignature {

@@ -24,10 +24,10 @@ class SeriesSubtitleChoiceTest {
 
     @Test
     fun `an episode is remembered under its series and a movie under itself`() {
-        assertEquals("series-1", seriesSubtitleChoiceKey("series-1", "episode-9"))
-        assertEquals("movie-4", seriesSubtitleChoiceKey(null, "movie-4"))
-        assertEquals("movie-4", seriesSubtitleChoiceKey("", "movie-4"))
-        assertNull(seriesSubtitleChoiceKey(null, " "))
+        assertEquals("series-1", seriesTrackChoiceKey("series-1", "episode-9"))
+        assertEquals("movie-4", seriesTrackChoiceKey(null, "movie-4"))
+        assertEquals("movie-4", seriesTrackChoiceKey("", "movie-4"))
+        assertNull(seriesTrackChoiceKey(null, " "))
     }
 
     @Test
@@ -232,4 +232,5 @@ class SeriesSubtitleChoiceTest {
         assertNull(localSubtitleMemoryForSeriesChoice(localSdhByLabel, true, plain))
         assertEquals(localSdh, localSubtitleMemoryForSeriesChoice(localSdh, true, sdh))
     }
+
 }

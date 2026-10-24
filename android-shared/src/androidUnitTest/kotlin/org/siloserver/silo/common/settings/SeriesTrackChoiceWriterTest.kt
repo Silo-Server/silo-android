@@ -13,7 +13,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class SeriesSubtitleChoiceWriterTest {
+class SeriesTrackChoiceWriterTest {
 
     private val profileA = AuthScopeSnapshot("server", "profile-a", "https://one.example", "token-a")
     private val profileB = AuthScopeSnapshot("server", "profile-b", "https://one.example", "token-b")
@@ -29,9 +29,9 @@ class SeriesSubtitleChoiceWriterTest {
     private fun kotlinx.coroutines.test.TestScope.writer(
         recorder: Recorder,
         owner: () -> AuthScopeSnapshot?,
-    ) = DefaultSeriesSubtitleChoiceWriter(
-        put = { key, choice, o -> recorder.calls += Call("PUT", key, choice, o); recorder.next() },
-        delete = { key, o -> recorder.calls += Call("DELETE", key, null, o); recorder.next() },
+    ) = DefaultSeriesTrackChoiceWriter(
+        putSubtitle = { key, choice, o -> recorder.calls += Call("PUT", key, choice, o); recorder.next() },
+        deleteSubtitle = { key, o -> recorder.calls += Call("DELETE", key, null, o); recorder.next() },
         captureOwner = { owner() },
         scope = this,
     )
@@ -42,9 +42,9 @@ class SeriesSubtitleChoiceWriterTest {
         val writer = writer(recorder) { profileA }
         val off = SeriesSubtitleChoice.Off
 
-        writer.save("series-1", off)
+        writer.saveSubtitle("series-1", off)
         advanceUntilIdle()
-        writer.save("series-1", null)
+        writer.saveSubtitle("series-1", null)
         advanceUntilIdle()
 
         assertEquals(
@@ -58,7 +58,7 @@ class SeriesSubtitleChoiceWriterTest {
         val recorder = Recorder().apply { results += ApiResult.NetworkError(IllegalStateException("offline")) }
         val writer = writer(recorder) { profileA }
 
-        writer.save("series-1", SeriesSubtitleChoice.Off)
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
         advanceUntilIdle()
 
         assertEquals(2, recorder.calls.size, "the first attempt failed, the retry landed")
@@ -70,7 +70,7 @@ class SeriesSubtitleChoiceWriterTest {
         val recorder = Recorder().apply { results += ApiResult.Error(400, "invalid", "bad mode") }
         val writer = writer(recorder) { profileA }
 
-        writer.save("series-1", SeriesSubtitleChoice.Off)
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
         advanceUntilIdle()
 
         assertEquals(1, recorder.calls.size)
@@ -83,9 +83,9 @@ class SeriesSubtitleChoiceWriterTest {
         val recorder = Recorder().apply { results += ApiResult.Error(503, "unavailable", "busy") }
         val writer = writer(recorder) { active }
 
-        writer.save("series-1", SeriesSubtitleChoice.Off)
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
         active = profileB
-        writer.save("series-2", null)
+        writer.saveSubtitle("series-2", null)
         advanceUntilIdle()
 
         assertTrue(recorder.calls.filter { it.key == "series-1" }.all { it.owner == profileA })
@@ -105,7 +105,7 @@ class SeriesSubtitleChoiceWriterTest {
                 index = 1, language = "es", codec = "subrip", label = "Spanish SRT", source = "embedded", url = "/s/1.vtt",
             ),
         )
-        writer.save("series-1", spanish)
+        writer.saveSubtitle("series-1", spanish)
         runCurrent()
 
         val stale = org.siloserver.silo.model.catalog.WatchDetail(
@@ -126,10 +126,10 @@ class SeriesSubtitleChoiceWriterTest {
     fun `a landed pick no longer overrides the server`() = runTest {
         val recorder = Recorder()
         val writer = writer(recorder) { profileA }
-        writer.save("series-1", SeriesSubtitleChoice.Off)
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
         advanceUntilIdle()
 
-        assertEquals(null, writer.pendingChoice("series-1"))
+        assertEquals(null, writer.pendingSubtitle("series-1"))
     }
 
     @Test
@@ -138,7 +138,7 @@ class SeriesSubtitleChoiceWriterTest {
         // lands. The detail was read before that, so it still carries English.
         val recorder = Recorder().apply { results += ApiResult.NetworkError(IllegalStateException("offline")) }
         val writer = writer(recorder) { profileA }
-        writer.save("series-1", SeriesSubtitleChoice.Off)
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
         runCurrent()
 
         val stale = org.siloserver.silo.model.catalog.WatchDetail(
@@ -147,15 +147,15 @@ class SeriesSubtitleChoiceWriterTest {
         )
         val reconciled = writer.reconcile(stale)
 
-        assertEquals(null, writer.pendingChoice("series-1"), "the retry landed")
+        assertEquals(null, writer.pendingSubtitle("series-1"), "the retry landed")
         assertEquals("off", reconciled.effectiveSubtitleMode)
     }
 
     @Test
     fun `a flush cut short by the load timeout keeps the pick queued`() = runTest {
         var puts = 0
-        val writer = DefaultSeriesSubtitleChoiceWriter(
-            put = { _, _, _ ->
+        val writer = DefaultSeriesTrackChoiceWriter(
+            putSubtitle = { _, _, _ ->
                 puts++
                 when (puts) {
                     1 -> ApiResult.NetworkError(IllegalStateException("offline"))
@@ -164,11 +164,11 @@ class SeriesSubtitleChoiceWriterTest {
                     else -> ApiResult.Success(Unit)
                 }
             },
-            delete = { _, _ -> ApiResult.Success(Unit) },
+            deleteSubtitle = { _, _ -> ApiResult.Success(Unit) },
             captureOwner = { profileA },
             scope = this,
         )
-        writer.save("series-1", SeriesSubtitleChoice.Off)
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
         runCurrent()
 
         val detail = org.siloserver.silo.model.catalog.WatchDetail(
@@ -179,7 +179,7 @@ class SeriesSubtitleChoiceWriterTest {
         advanceUntilIdle()
 
         assertEquals(3, puts)
-        assertEquals(null, writer.pendingChoice("series-1"))
+        assertEquals(null, writer.pendingSubtitle("series-1"))
     }
 
     @Test
@@ -189,15 +189,15 @@ class SeriesSubtitleChoiceWriterTest {
             repeat(10) { results += ApiResult.NetworkError(IllegalStateException("offline")) }
         }
         val writer = writer(recorder) { active }
-        writer.save("series-1", SeriesSubtitleChoice.Off)
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
         runCurrent()
 
         active = profileB
-        assertEquals(null, writer.pendingChoice("series-1"))
+        assertEquals(null, writer.pendingSubtitle("series-1"))
         active = profileA
         assertEquals(
             org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice(SeriesSubtitleChoice.Off),
-            writer.pendingChoice("series-1"),
+            writer.pendingSubtitle("series-1"),
         )
     }
 
@@ -206,14 +206,14 @@ class SeriesSubtitleChoiceWriterTest {
         val recorder = Recorder().apply { results += ApiResult.NetworkError(IllegalStateException("offline")) }
         val writer = writer(recorder) { profileA }
 
-        writer.save("series-1", SeriesSubtitleChoice.Off)
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
         runCurrent()
         // The first attempt failed; the viewer picks Off again before the retry.
-        writer.save("series-1", SeriesSubtitleChoice.Off)
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
         advanceUntilIdle()
 
         assertTrue(writer.pendingSeries("profile-a").isEmpty())
-        assertEquals(null, writer.pendingChoice("series-1"), "a landed choice must not keep overriding the server")
+        assertEquals(null, writer.pendingSubtitle("series-1"), "a landed choice must not keep overriding the server")
     }
 
     @Test
@@ -225,16 +225,16 @@ class SeriesSubtitleChoiceWriterTest {
         val recorder = Recorder().apply {
             repeat(10) { results += ApiResult.NetworkError(IllegalStateException("offline")) }
         }
-        val writer = DefaultSeriesSubtitleChoiceWriter(
-            put = { key, choice, o -> recorder.calls += Call("PUT", key, choice, o); recorder.next() },
-            delete = { key, o -> recorder.calls += Call("DELETE", key, null, o); recorder.next() },
+        val writer = DefaultSeriesTrackChoiceWriter(
+            putSubtitle = { key, choice, o -> recorder.calls += Call("PUT", key, choice, o); recorder.next() },
+            deleteSubtitle = { key, o -> recorder.calls += Call("DELETE", key, null, o); recorder.next() },
             captureOwner = { active },
             scope = backgroundScope,
             identityChanges = transitions,
         )
         val seen = mutableListOf<Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice>>()
-        backgroundScope.launch { writer.pendingChoices.collect { seen += it } }
-        writer.save("series-1", SeriesSubtitleChoice.Off)
+        backgroundScope.launch { writer.pendingSubtitleChoices.collect { seen += it } }
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
         runCurrent()
         assertEquals(setOf("series-1"), seen.last().keys)
 
@@ -253,12 +253,122 @@ class SeriesSubtitleChoiceWriterTest {
         assertTrue(seen.last().isEmpty(), "profile B sees none of profile A's choices")
     }
 
+    private data class AudioCall(val verb: String, val key: String, val choice: org.siloserver.silo.model.playback.SeriesAudioChoice?)
+
+    private fun kotlinx.coroutines.test.TestScope.audioWriter(
+        subtitles: Recorder,
+        audio: MutableList<AudioCall>,
+        audioResults: ArrayDeque<ApiResult<Unit>> = ArrayDeque(),
+        owner: () -> AuthScopeSnapshot?,
+    ) = DefaultSeriesTrackChoiceWriter(
+        putSubtitle = { key, choice, o -> subtitles.calls += Call("PUT", key, choice, o); subtitles.next() },
+        deleteSubtitle = { key, o -> subtitles.calls += Call("DELETE", key, null, o); subtitles.next() },
+        putAudio = { key, choice, _ -> audio += AudioCall("PUT", key, choice); audioResults.removeFirstOrNull() ?: ApiResult.Success(Unit) },
+        deleteAudio = { key, _ -> audio += AudioCall("DELETE", key, null); audioResults.removeFirstOrNull() ?: ApiResult.Success(Unit) },
+        captureOwner = { owner() },
+        scope = this,
+        now = { testScheduler.currentTime },
+    )
+
+    private val japanese = org.siloserver.silo.model.catalog.AudioTrack(language = "jpn", codec = "aac", channels = 2)
+
+    @Test
+    fun `audio and subtitle choices for one series are separate, each latest-wins`() = runTest {
+        val subtitles = Recorder().apply { results += ApiResult.NetworkError(IllegalStateException("offline")) }
+        val audio = mutableListOf<AudioCall>()
+        val writer = audioWriter(subtitles, audio) { profileA }
+        val japaneseChoice = org.siloserver.silo.model.playback.SeriesAudioChoice.of(japanese, 1)
+
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
+        writer.saveAudio("series-1", japaneseChoice)
+        writer.saveAudio("series-1", null)
+        advanceUntilIdle()
+
+        // Audio Auto replaced the queued Japanese pick; the subtitle is a
+        // separate write with its own retry.
+        assertEquals(listOf(AudioCall("DELETE", "series-1", null)), audio)
+        assertEquals(listOf("PUT", "PUT"), subtitles.calls.map { it.verb }, "the subtitle failed once, then landed")
+        assertEquals(null, writer.pendingAudio("series-1"))
+    }
+
+    @Test
+    fun `a pending pick survives the server's address changing`() = runTest {
+        // Home network to remote address: same server id, new URL.
+        var active = profileA
+        val audio = mutableListOf<AudioCall>()
+        val results = ArrayDeque<ApiResult<Unit>>().apply { repeat(10) { add(ApiResult.NetworkError(IllegalStateException("offline"))) } }
+        val writer = audioWriter(Recorder(), audio, results) { active }
+        val choice = org.siloserver.silo.model.playback.SeriesAudioChoice.of(japanese, 1)
+        writer.saveAudio("series-1", choice)
+        runCurrent()
+
+        active = profileA.copy(serverUrl = "https://remote.example")
+        assertEquals(org.siloserver.silo.model.playback.PendingSeriesAudioChoice(choice), writer.pendingAudio("series-1"))
+        active = profileA.copy(serverId = "other-server")
+        assertEquals(null, writer.pendingAudio("series-1"))
+    }
+
+    @Test
+    fun `a pick made under another profile or server is not saved`() = runTest {
+        // A download playing for profile B while profile A is active.
+        val audio = mutableListOf<AudioCall>()
+        val subtitles = Recorder()
+        val writer = audioWriter(subtitles, audio) { profileA }
+
+        writer.saveAudio("series-1", org.siloserver.silo.model.playback.SeriesAudioChoice.of(japanese, 1), owner = profileB)
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off, owner = profileA.copy(serverId = "other"))
+        writer.saveSubtitle("series-2", SeriesSubtitleChoice.Off, owner = profileA.copy(serverUrl = "https://remote.example"))
+        advanceUntilIdle()
+
+        assertTrue(audio.isEmpty())
+        assertEquals(listOf("series-2"), subtitles.calls.map { it.key }, "only the playback owned by the active profile saves")
+    }
+
+    @Test
+    fun `a pick that never landed expires instead of overwriting a newer choice later`() = runTest {
+        val audio = mutableListOf<AudioCall>()
+        val results = ArrayDeque<ApiResult<Unit>>().apply { repeat(20) { add(ApiResult.NetworkError(IllegalStateException("offline"))) } }
+        val writer = audioWriter(Recorder(), audio, results) { profileA }
+        writer.saveAudio("series-1", org.siloserver.silo.model.playback.SeriesAudioChoice.of(japanese, 1))
+        advanceUntilIdle()
+        val attempts = audio.size
+        assertTrue(writer.pendingAudio("series-1") != null, "still waiting after the automatic retries")
+
+        // Long after, another device has chosen differently; reopening an
+        // item flushes the queue, and the stale pick must not go out.
+        testScheduler.advanceTimeBy(11 * 60_000L)
+        results.clear()
+        writer.flushNow()
+
+        assertEquals(attempts, audio.size)
+        assertEquals(null, writer.pendingAudio("series-1"))
+        assertTrue(writer.pendingSeries("profile-a").isEmpty())
+    }
+
+    @Test
+    fun `an unsent audio pick is laid over the effective track on reconcile`() = runTest {
+        val audio = mutableListOf<AudioCall>()
+        val results = ArrayDeque<ApiResult<Unit>>().apply { repeat(10) { add(ApiResult.NetworkError(IllegalStateException("offline"))) } }
+        val writer = audioWriter(Recorder(), audio, results) { profileA }
+        writer.saveAudio("series-1", org.siloserver.silo.model.playback.SeriesAudioChoice.of(japanese, 1))
+        runCurrent()
+
+        val english = org.siloserver.silo.model.catalog.AudioTrack(language = "eng", codec = "eac3", channels = 6)
+        val stale = org.siloserver.silo.model.catalog.WatchDetail(
+            contentId = "episode-2", type = "episode", title = "E2", seriesId = "series-1",
+            versions = listOf(
+                org.siloserver.silo.model.catalog.FileVersion(fileId = 9, audioTracks = listOf(japanese, english), effectiveAudioTrackIndex = 1),
+            ),
+        )
+        assertEquals(0, writer.reconcile(stale).versions.single().effectiveAudioTrackIndex)
+    }
+
     @Test
     fun `nothing is sent without an active profile`() = runTest {
         val recorder = Recorder()
         val writer = writer(recorder) { null }
 
-        writer.save("series-1", SeriesSubtitleChoice.Off)
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
         advanceUntilIdle()
 
         assertTrue(recorder.calls.isEmpty())

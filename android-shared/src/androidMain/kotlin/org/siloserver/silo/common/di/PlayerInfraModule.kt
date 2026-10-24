@@ -206,13 +206,15 @@ val playerInfraModule = module {
         )
     }
 
-    // Manual subtitle choices remembered per series on the server. App-scoped
-    // so a retry outlives the player that made the choice.
-    single<org.siloserver.silo.common.settings.SeriesSubtitleChoiceWriter> {
+    // Manual audio and subtitle choices remembered per series on the server.
+    // App-scoped so a retry outlives the player that made the choice.
+    single<org.siloserver.silo.common.settings.SeriesTrackChoiceWriter> {
         val v2 = get<org.siloserver.silo.network.apiv2.SettingsV2Api>()
-        org.siloserver.silo.common.settings.DefaultSeriesSubtitleChoiceWriter(
-            put = { key, choice, owner -> v2.putSubtitlePreference(key, choice, owner) },
-            delete = { key, owner -> v2.deleteSubtitlePreference(key, owner) },
+        org.siloserver.silo.common.settings.DefaultSeriesTrackChoiceWriter(
+            putSubtitle = { key, choice, owner -> v2.putSubtitlePreference(key, choice, owner) },
+            deleteSubtitle = { key, owner -> v2.deleteSubtitlePreference(key, owner) },
+            putAudio = { key, choice, owner -> v2.putAudioPreference(key, choice, owner) },
+            deleteAudio = { key, owner -> v2.deleteAudioPreference(key, owner) },
             captureOwner = {
                 get<TokenManager>().snapshotCurrentScope()?.takeIf { !it.profileId.isNullOrBlank() }
             },

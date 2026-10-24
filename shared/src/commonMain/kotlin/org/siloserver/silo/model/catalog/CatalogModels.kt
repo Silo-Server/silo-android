@@ -452,6 +452,8 @@ data class AudioTrack(
     @SerialName("sample_rate") val sampleRate: Int? = null,
     val language: String? = null,
     val title: String? = null,
+    /** The title stored in the container; part of the server's audio track signature. */
+    @SerialName("embedded_title") val embeddedTitle: String? = null,
     @SerialName("default") val isDefault: Boolean = false
 )
 

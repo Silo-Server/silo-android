@@ -202,6 +202,39 @@ class SettingsV2Api(
             client.delete("/api/v2/subtitle-prefs/${seriesId.encodeURLPathPart()}") { authScope(owner); requireSiloAuth() }
         }) { _, _ -> }
 
+    // ---- per-series audio choice ----
+
+    /**
+     * PUT /api/v2/audio-prefs/{series_id} (204): replaces the profile's
+     * remembered audio track for a series (or a movie, keyed by its own
+     * content id). Pinned to [expected] like [putSubtitlePreference].
+     */
+    suspend fun putAudioPreference(
+        seriesId: String,
+        choice: org.siloserver.silo.model.playback.SeriesAudioChoice,
+        expected: AuthScopeSnapshot? = null,
+    ): ApiResult<Unit> = exchange<Unit, Unit>(expected, HttpStatusCode.NoContent, block = { owner ->
+        client.put("/api/v2/audio-prefs/${seriesId.encodeURLPathPart()}") {
+            authScope(owner); requireSiloAuth()
+            contentType(ContentType.Application.Json)
+            setBody(
+                SiloJson.encodeToJsonElement(
+                    org.siloserver.silo.model.playback.SeriesAudioChoice.serializer(),
+                    choice,
+                ),
+            )
+        }
+    }) { _, _ -> }
+
+    /**
+     * DELETE /api/v2/audio-prefs/{series_id} (204, also when none was stored):
+     * back to automatic. Also clears the series' `playback.audio_language`.
+     */
+    suspend fun deleteAudioPreference(seriesId: String, expected: AuthScopeSnapshot? = null): ApiResult<Unit> =
+        exchange<Unit, Unit>(expected, HttpStatusCode.NoContent, block = { owner ->
+            client.delete("/api/v2/audio-prefs/${seriesId.encodeURLPathPart()}") { authScope(owner); requireSiloAuth() }
+        }) { _, _ -> }
+
     private fun stringID(value: JsonElement): String {
         val primitive = value.jsonPrimitive
         require(primitive.isString && primitive.content.isNotBlank())
