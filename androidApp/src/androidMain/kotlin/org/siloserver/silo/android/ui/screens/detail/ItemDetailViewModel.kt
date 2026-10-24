@@ -442,6 +442,13 @@ class ItemDetailViewModel(
     fun loadDetail() = loadDetail(afterAccessChange = false)
 
     /**
+     * The profile this page was loaded for. A series track pick is saved for
+     * it, so a pick still being saved when the profile changes is dropped
+     * rather than filed under the next profile.
+     */
+    private var trackChoiceOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null
+
+    /**
      * [afterAccessChange] skips joining a Home warm-up still in flight, whose
      * answer may predate the change.
      */
@@ -455,6 +462,7 @@ class ItemDetailViewModel(
         _uiState.update { it.copy(similarItems = emptyList()) }
         detailLoadJob = viewModelScope.launch {
             val similarOwner = recommendationRepository.captureSimilarAuthority()
+            trackChoiceOwner = catalogRepository.captureWatchAuthority()
             _uiState.update { it.copy(isLoading = true, error = null) }
             // Start the live request immediately. The durable cache read can
             // still paint an instant first frame, but it no longer delays the
@@ -1337,6 +1345,7 @@ class ItemDetailViewModel(
      */
     private fun rememberSeriesSubtitleChoice(ordinal: Int?, version: FileVersion?) {
         val writer = seriesTrackChoiceWriter ?: return
+        val owner = trackChoiceOwner ?: return
         val state = _uiState.value
         val (detail, key) = trackChoiceTarget(state) ?: return
         val choice = when (ordinal) {
@@ -1358,12 +1367,13 @@ class ItemDetailViewModel(
                     (key to org.siloserver.silo.model.playback.PickedSubtitleBaseline.of(detail)),
             )
         }
-        viewModelScope.launch { writer.saveSubtitle(key, choice) }
+        viewModelScope.launch { writer.saveSubtitle(key, choice, owner) }
     }
 
     /** [rememberSeriesSubtitleChoice] for audio: a track is saved, Auto (null) deletes it. */
     private fun rememberSeriesAudioChoice(ordinal: Int?, version: FileVersion?) {
         val writer = seriesTrackChoiceWriter ?: return
+        val owner = trackChoiceOwner ?: return
         val state = _uiState.value
         val (detail, key) = trackChoiceTarget(state) ?: return
         val choice = ordinal?.let {
@@ -1380,7 +1390,7 @@ class ItemDetailViewModel(
                     (key to org.siloserver.silo.model.playback.PickedAudioBaseline.of(detail)),
             )
         }
-        viewModelScope.launch { writer.saveAudio(key, choice) }
+        viewModelScope.launch { writer.saveAudio(key, choice, owner) }
     }
 
     /**

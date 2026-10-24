@@ -799,6 +799,13 @@ class TvItemDetailViewModel(
     }
 
     /**
+     * The profile this page was loaded for. A series track pick is saved for
+     * it, so a pick still being saved when the profile changes is dropped
+     * rather than filed under the next profile.
+     */
+    private var trackChoiceOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null
+
+    /**
      * [afterAccessChange] skips joining a Home warm-up still in flight, whose
      * answer may predate the change.
      */
@@ -812,6 +819,7 @@ class TvItemDetailViewModel(
         _uiState.update { it.copy(moreLikeThis = emptyList(), moreLikeThisLoading = false) }
         detailLoadJob = viewModelScope.launch {
             val similarOwner = recommendationRepository?.captureSimilarAuthority()
+            trackChoiceOwner = catalogRepository.captureWatchAuthority()
             when (val result = catalogRepository.getItemDetail(contentId, libraryId = libraryId, joinWarmup = !afterAccessChange)) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
@@ -1459,6 +1467,7 @@ class TvItemDetailViewModel(
      */
     private fun rememberSeriesSubtitleChoice(detail: ItemDetail, version: FileVersion?, index: Int?) {
         val writer = seriesTrackChoiceWriter ?: return
+        val owner = trackChoiceOwner ?: return
         if (detail.type != "movie" && detail.type != "episode") return
         val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId) ?: return
         val choice = when (index) {
@@ -1477,12 +1486,13 @@ class TvItemDetailViewModel(
                 pickedSubtitleBaselines = it.pickedSubtitleBaselines + (key to org.siloserver.silo.model.playback.PickedSubtitleBaseline.of(detail)),
             )
         }
-        viewModelScope.launch { writer.saveSubtitle(key, choice) }
+        viewModelScope.launch { writer.saveSubtitle(key, choice, owner) }
     }
 
     /** [rememberSeriesSubtitleChoice] for audio: a track is saved, Auto (null) deletes it. */
     private fun rememberSeriesAudioChoice(detail: ItemDetail, version: FileVersion?, index: Int?) {
         val writer = seriesTrackChoiceWriter ?: return
+        val owner = trackChoiceOwner ?: return
         if (detail.type != "movie" && detail.type != "episode") return
         val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId) ?: return
         val choice = index?.let {
@@ -1495,7 +1505,7 @@ class TvItemDetailViewModel(
                 pickedAudioBaselines = it.pickedAudioBaselines + (key to org.siloserver.silo.model.playback.PickedAudioBaseline.of(detail)),
             )
         }
-        viewModelScope.launch { writer.saveAudio(key, choice) }
+        viewModelScope.launch { writer.saveAudio(key, choice, owner) }
     }
 
     private suspend fun subtitleResetToAuto(detail: ItemDetail): Boolean {
