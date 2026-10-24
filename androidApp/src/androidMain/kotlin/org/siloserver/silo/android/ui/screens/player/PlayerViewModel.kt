@@ -633,6 +633,7 @@ class PlayerViewModel(
                 committed: CommittedSubtitle,
                 context: MobileSubtitlePlaybackContext,
             ): Boolean {
+                sendCommittedSeriesWrites(committed)
                 val writeScope = context.writeScope ?: return false
                 val audioUpdate = mobileAudioTrackPersistenceUpdate(
                     committedAudioTrackIndex = committed.audioTrackIndex,
@@ -1200,12 +1201,19 @@ class PlayerViewModel(
      */
     private var trackChoiceOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null
 
+    /** A pick waiting for its change to commit; a newer pick replaces it. */
+    private val stagedSubtitleWrite = java.util.concurrent.atomic.AtomicReference<StagedSubtitleWrite?>(null)
+    private val stagedAudioWrite = java.util.concurrent.atomic.AtomicReference<StagedAudioWrite?>(null)
+
     /**
      * The audio and subtitle the viewer picked in this player, by track
      * identity. Every later start of the same series (the next episode, a
      * version switch, a restart) resolves them on its own file.
      */
     private var sessionTrackChoices: org.siloserver.silo.model.playback.CarriedSeriesTrackChoices? = null
+
+    /** What played when a version switch began, for the switch's own load. */
+    private var pendingVersionSwitchCarry: org.siloserver.silo.model.playback.CarriedSeriesTrackChoices? = null
 
     init {
         // Reclaim-Watched must never delete the file the player is using
@@ -1525,6 +1533,11 @@ class PlayerViewModel(
             suppressResumeRewind = suppressResumeRewind,
             room = room,
         )
+        // A version switch hands over what plays now; anything else starts
+        // from the picks made in this player.
+        val loadTrackChoices = pendingVersionSwitchCarry?.takeIf { it.contentId == contentId } ?: sessionTrackChoices
+        pendingVersionSwitchCarry = null
+        clearStagedSeriesWrites()
         if (room != null) beginRoomLoad(room)
         // A fresh load resets any in-flight intro countdown / cancellation memory.
         introAutoSkipController.reset()
@@ -1600,7 +1613,7 @@ class PlayerViewModel(
                         force = force,
                         recoveryStartParams = recoveryStartParams,
                         room = room,
-                        carriedTrackChoices = sessionTrackChoices,
+                        carriedTrackChoices = loadTrackChoices,
                     ),
                 )) {
                     is VideoPlayerUiState.Ready -> {
@@ -1627,6 +1640,7 @@ class PlayerViewModel(
                             loadOwner = loadOwner,
                             watchOwner = readyWatchOwner,
                             room = room,
+                            carriedTrackChoices = loadTrackChoices,
                         )
                         unpublishedReadySessionId = null
                     }
@@ -1761,16 +1775,16 @@ class PlayerViewModel(
         loadOwner: MobilePlayerLoadOwner,
         watchOwner: org.siloserver.silo.network.AuthScopeSnapshot?,
         room: WatchPartyPlaybackContext? = null,
+        carriedTrackChoices: org.siloserver.silo.model.playback.CarriedSeriesTrackChoices? = null,
     ) {
         val watchMetadata = ReadyWatchMetadata(
             catalogRepository, watchOwner, playbackState.contentId, playbackState.serverUrl, browseLibraryId,
         ) { ownsLoad(loadOwner) }
-        trackChoiceOwner = watchOwner
         // A series subtitle choice still waiting to land outranks the
         // server's older answer (the starter already gave it a chance to).
         val watchDetail = watchMetadata.read()?.let { detail ->
             (seriesTrackChoiceWriter?.overlayPendingChoice(detail) ?: detail)
-                .withCarriedSeriesTrackChoices(sessionTrackChoices)
+                .withCarriedSeriesTrackChoices(carriedTrackChoices)
         }
         if (!watchMetadata.current()) {
             stopStaleReadySession(playbackState.sessionId)
@@ -1928,6 +1942,9 @@ class PlayerViewModel(
             return
         }
         val published = loadOwners.runIfOwned(loadOwner) {
+            // Adopted only by the load that publishes: a superseded one must
+            // not replace the owner of the playback on screen.
+            trackChoiceOwner = watchOwner
             val mountGeneration = expectNextMediaMount()
             val preservesNextUp = nextUpTransitionGate.expectMount(
                 contentId = playbackState.contentId,
@@ -4772,6 +4789,8 @@ class PlayerViewModel(
             .getOrNull(index)
             ?.let(::mobileSubtitleIdentity)
             ?: SubtitleIdentity.Off
+        // Staged before the change starts, so its commit finds it.
+        rememberSeriesSubtitleChoice(state, index, identity)
         // The route intent is begun as the pick is staged: a network move in
         // flight publishes its own tracks when it lands, which would clear an
         // intent begun before it.
@@ -4785,15 +4804,20 @@ class PlayerViewModel(
             mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(current))
             mobileSubtitleTransactions.select(identity)
         }
-        rememberSeriesSubtitleChoice(state, index)
     }
 
     /**
      * A manual pick (a track or Off) applies to the whole series — or the
      * movie — and to the profile's other devices: it is saved on the server,
      * which hands it back as `effective_subtitle_*` on every later load.
+     *
+     * Saved only once the change commits, so a pick whose request fails or
+     * rolls back never becomes a preference; a pick of what already plays has
+     * nothing to commit and is saved at once. A download's subtitle rows are
+     * its own sidecars, not the server's combined index space, so a pick
+     * there is carried within this player but not saved.
      */
-    private fun rememberSeriesSubtitleChoice(state: PlayerUiState, index: Int) {
+    private fun rememberSeriesSubtitleChoice(state: PlayerUiState, index: Int, identity: SubtitleIdentity) {
         val key = trackChoiceKey(state) ?: return
         val choice = if (index == -1) {
             org.siloserver.silo.model.playback.SeriesSubtitleChoice.Off
@@ -4803,9 +4827,15 @@ class PlayerViewModel(
                 ?: return
         }
         sessionTrackChoices = sessionTrackChoices.withPick(key, subtitle = choice)
-        val writer = seriesTrackChoiceWriter ?: return
+        if (state.isLocalFilePlayback()) return
         val owner = trackChoiceOwner ?: return
-        viewModelScope.launch { writer.saveSubtitle(key, choice, owner) }
+        val write = StagedSubtitleWrite(key, choice, owner, identity)
+        if (state.pendingSubtitleIdentity == null && state.committedSubtitleIdentity == identity) {
+            stagedSubtitleWrite.set(null)
+            saveSeriesSubtitle(write)
+        } else {
+            stagedSubtitleWrite.set(write)
+        }
     }
 
     /**
@@ -4820,19 +4850,88 @@ class PlayerViewModel(
 
     /**
      * A manual audio pick applies to the whole series (or the movie) and the
-     * profile's other devices, like a subtitle pick. Only the viewer's own
-     * pick: restores and fallbacks go through [selectAudio] without it.
+     * profile's other devices, like a subtitle pick: at once when [committed]
+     * (a switch on the player), else when its replan commits. Only the
+     * viewer's own pick: restores and fallbacks go through [selectAudio]
+     * without it.
      */
-    private fun rememberSeriesAudioChoice(state: PlayerUiState, catalogOrdinal: Int) {
+    private fun rememberSeriesAudioChoice(state: PlayerUiState, catalogOrdinal: Int, committed: Boolean) {
         val key = trackChoiceKey(state) ?: return
         // A download that lists the file's own tracks by position describes
         // them differently from the catalog the server matches against.
         if (state.offlineAudioByPosition) return
         val choice = org.siloserver.silo.model.playback.SeriesAudioChoice.of(state.audioTracks, catalogOrdinal) ?: return
         sessionTrackChoices = sessionTrackChoices.withPick(key, audio = choice)
-        val writer = seriesTrackChoiceWriter ?: return
         val owner = trackChoiceOwner ?: return
-        viewModelScope.launch { writer.saveAudio(key, choice, owner) }
+        val write = StagedAudioWrite(key, choice, owner, catalogOrdinal)
+        if (committed) {
+            stagedAudioWrite.set(null)
+            saveSeriesAudio(write)
+        } else {
+            stagedAudioWrite.set(write)
+        }
+    }
+
+    /**
+     * What a version switch carries to the target file, by identity: the
+     * picks made in this player, else the subtitle that plays now — restored
+     * from this device's memory, chosen by Auto, or a pick that could not be
+     * described as a series choice. Null when there is nothing to carry.
+     */
+    private fun versionSwitchTrackChoices(state: PlayerUiState): org.siloserver.silo.model.playback.CarriedSeriesTrackChoices? {
+        val picks = sessionTrackChoices?.takeIf { it.seriesKey == trackChoiceKey(state) }
+        val playingSubtitle = if (state.pendingSubtitleIdentity == null) {
+            org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(state.committedSubtitleIdentity, state.subtitleTracks)
+        } else {
+            null
+        }
+        return org.siloserver.silo.model.playback.CarriedSeriesTrackChoices(
+            seriesKey = picks?.seriesKey ?: state.contentId,
+            audio = picks?.audio,
+            subtitle = picks?.subtitle ?: playingSubtitle,
+            contentId = state.contentId,
+        ).takeIf { it.audio != null || it.subtitle != null }
+    }
+
+    private data class StagedSubtitleWrite(
+        val key: String,
+        val choice: org.siloserver.silo.model.playback.SeriesSubtitleChoice,
+        val owner: org.siloserver.silo.network.AuthScopeSnapshot,
+        val identity: SubtitleIdentity,
+    )
+
+    private data class StagedAudioWrite(
+        val key: String,
+        val choice: org.siloserver.silo.model.playback.SeriesAudioChoice,
+        val owner: org.siloserver.silo.network.AuthScopeSnapshot,
+        val catalogOrdinal: Int,
+    )
+
+    /** Sends the staged picks [committed] made final; each goes out once. */
+    private fun sendCommittedSeriesWrites(committed: CommittedSubtitle) {
+        stagedSubtitleWrite.get()
+            ?.takeIf { it.identity == committed.identity && stagedSubtitleWrite.compareAndSet(it, null) }
+            ?.let(::saveSeriesSubtitle)
+        if (committed.audioPreferenceSpecified) {
+            stagedAudioWrite.get()
+                ?.takeIf { it.catalogOrdinal == committed.audioTrackIndex && stagedAudioWrite.compareAndSet(it, null) }
+                ?.let(::saveSeriesAudio)
+        }
+    }
+
+    private fun clearStagedSeriesWrites() {
+        stagedSubtitleWrite.set(null)
+        stagedAudioWrite.set(null)
+    }
+
+    private fun saveSeriesSubtitle(write: StagedSubtitleWrite) {
+        val writer = seriesTrackChoiceWriter ?: return
+        viewModelScope.launch { writer.saveSubtitle(write.key, write.choice, write.owner) }
+    }
+
+    private fun saveSeriesAudio(write: StagedAudioWrite) {
+        val writer = seriesTrackChoiceWriter ?: return
+        viewModelScope.launch { writer.saveAudio(write.key, write.choice, write.owner) }
     }
 
     internal fun isCurrentSubtitleMount(mount: MobileSubtitleMount?): Boolean =
@@ -4871,28 +4970,24 @@ class PlayerViewModel(
                 routeOrdinal = index,
                 serverIndex = serverIndex,
             )
-            // Saved before the local-switch returns below, so a switch inside
-            // the mounted stream is remembered too.
-            rememberSeriesAudioChoice(state, serverIndex)
         }
         setDesiredAudio(serverIndex, explicit = userInitiated)
         // A downloaded file is switched on the player only: there is no
         // server session to replan, and the desired-audio reconcile above
-        // already applies the track when the file carries it.
-        if (state.isLocalFilePlayback()) return
-        // Already in the mounted stream: switch it on the player instead of
-        // rebuilding the session to deliver audio already being received. A
-        // replan is only needed when the track is genuinely absent.
-        if (mountedAudioFor(
-                catalog = state.audioTracks,
-                catalogOrdinal = serverIndex,
-                mounted = mountedAudio,
-                delivery = state.playbackPlan?.delivery,
-                planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
-            ) != null
-        ) {
-            return
-        }
+        // already applies the track when the file carries it. Already in the
+        // mounted stream: switch it on the player instead of rebuilding the
+        // session to deliver audio already being received. A replan is only
+        // needed when the track is genuinely absent.
+        val switchesLocally = state.isLocalFilePlayback() || mountedAudioFor(
+            catalog = state.audioTracks,
+            catalogOrdinal = serverIndex,
+            mounted = mountedAudio,
+            delivery = state.playbackPlan?.delivery,
+            planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
+        ) != null
+        // A local switch is final now; a replan is saved once it commits.
+        if (userInitiated) rememberSeriesAudioChoice(state, serverIndex, committed = switchesLocally)
+        if (switchesLocally) return
         picksDuringNetworkMove.applyAfterMove {
             // The intent begun above serves the local paths. Begin it again as
             // the pick is staged: a network move it waited for published its
@@ -6181,6 +6276,7 @@ class PlayerViewModel(
                 outstanding = { loadJob?.isActive == true || _uiState.value.isLoading },
             )
         }
+        pendingVersionSwitchCarry = versionSwitchTrackChoices(state)
         val currentVersion = state.versions.getOrNull(state.selectedVersionIndex)
         val carriedAudioIndex = desiredAudio
             ?.takeIf { desired ->
@@ -6207,10 +6303,9 @@ class PlayerViewModel(
                 // decide.
                 initialAudioTrackIndex = carriedAudioIndex,
                 // The playing file's subtitle position names another track
-                // (or none) on the target. Leave it unset: the target starts
-                // from the series choice (a pick in the player is saved as
-                // one, and an unsent one is laid over the server's answer) or
-                // the profile's Auto rules, both resolved by track identity.
+                // (or none) on the target, so no position is sent: the
+                // subtitle that plays now is carried by identity instead
+                // (versionSwitchTrackChoices) and resolved on the target.
                 initialSubtitleTrackIndex = null,
                 resumePositionOverride = state.position,
                 suppressResumeRewind = true,
@@ -6444,7 +6539,7 @@ class PlayerViewModel(
         }
         if (!ownsLoad(loadOwner)) return false
         media ?: return false
-        trackChoiceOwner = watchOwner?.takeIf { it.serverId == media.serverId && it.profileId == media.profileId }
+        val localTrackChoiceOwner = watchOwner?.takeIf { it.serverId == media.serverId && it.profileId == media.profileId }
         val sidecar = media.sidecar
         val fileId = media.fileId
 
@@ -6507,6 +6602,7 @@ class PlayerViewModel(
         if (!ownsLoad(loadOwner)) return false
 
         val published = loadOwners.runIfOwned(loadOwner) {
+            trackChoiceOwner = localTrackChoiceOwner
             val mountGeneration = expectNextMediaMount()
             val preservesNextUp = nextUpTransitionGate.expectMount(
                 contentId = contentId,

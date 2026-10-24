@@ -17,12 +17,23 @@ data class CarriedSeriesTrackChoices(
     val seriesKey: String,
     val audio: SeriesAudioChoice? = null,
     val subtitle: SeriesSubtitleChoice? = null,
+    /**
+     * When set, the choices apply to this item only, whatever series key it
+     * reports — a version switch, whose item may have played without its
+     * series known.
+     */
+    val contentId: String? = null,
 )
 
-/** [this] with [carried] laid over its effective fields, when it belongs to the same series. */
+/**
+ * [this] with [carried] laid over its effective fields, when it belongs to the
+ * same series (or is the very item [CarriedSeriesTrackChoices.contentId] names).
+ */
 fun WatchDetail.withCarriedSeriesTrackChoices(carried: CarriedSeriesTrackChoices?): WatchDetail {
     carried ?: return this
-    if (seriesTrackChoiceKey(seriesId, contentId) != carried.seriesKey) return this
+    val applies = carried.contentId?.let { it == contentId }
+        ?: (seriesTrackChoiceKey(seriesId, contentId) == carried.seriesKey)
+    if (!applies) return this
     return withPendingSeriesSubtitleChoice(carried.subtitle?.let(::PendingSeriesSubtitleChoice))
         .withPendingSeriesAudioChoice(carried.audio?.let(::PendingSeriesAudioChoice))
 }
