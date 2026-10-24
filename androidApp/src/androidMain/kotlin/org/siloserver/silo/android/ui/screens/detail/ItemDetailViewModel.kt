@@ -88,7 +88,7 @@ data class ItemDetailUiState(
      * once a refreshed detail answers differently (the server then holds it,
      * or a newer choice made elsewhere).
      */
-    val pickedSubtitleBaselines: Map<String, org.siloserver.silo.model.playback.EffectiveSubtitleFields> = emptyMap(),
+    val pickedSubtitleBaselines: Map<String, org.siloserver.silo.model.playback.PickedSubtitleBaseline> = emptyMap(),
     val pickedAudioBaselines: Map<String, org.siloserver.silo.model.playback.PickedAudioBaseline> = emptyMap(),
     val isLoadingSelectedEpisodeDetail: Boolean = false,
     /** Parent-series portrait art used when an episode's own artwork is a wide still. */
@@ -1275,7 +1275,7 @@ class ItemDetailViewModel(
                 pickedSeriesSubtitleChoices = it.pickedSeriesSubtitleChoices +
                     (key to org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice(choice)),
                 pickedSubtitleBaselines = it.pickedSubtitleBaselines +
-                    (key to org.siloserver.silo.model.playback.effectiveSubtitleFieldsOf(detail)),
+                    (key to org.siloserver.silo.model.playback.PickedSubtitleBaseline.of(detail)),
             )
         }
         viewModelScope.launch { writer.saveSubtitle(key, choice) }
@@ -1821,8 +1821,7 @@ internal fun LeafItemUserData?.withoutPlayed(played: Boolean, previous: LeafItem
 internal fun ItemDetailUiState.withPickedSeriesChoices(detail: ItemDetail): ItemDetail {
     val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId) ?: return detail
     val subtitle = pickedSeriesSubtitleChoices[key]?.takeIf {
-        val baseline = pickedSubtitleBaselines[key]
-        baseline == null || baseline == org.siloserver.silo.model.playback.effectiveSubtitleFieldsOf(detail)
+        pickedSubtitleBaselines[key]?.supersededBy(detail) != true
     }
     val audio = pickedSeriesAudioChoices[key]?.takeIf {
         pickedAudioBaselines[key]?.supersededBy(detail) != true

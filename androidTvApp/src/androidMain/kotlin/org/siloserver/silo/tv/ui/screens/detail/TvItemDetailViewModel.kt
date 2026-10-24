@@ -182,15 +182,14 @@ data class TvItemDetailUiState(
      * a refreshed detail answers differently: the server then holds it, or a
      * newer choice made elsewhere (in the player, on another device).
      */
-    val pickedSubtitleBaselines: Map<String, org.siloserver.silo.model.playback.EffectiveSubtitleFields> = emptyMap(),
+    val pickedSubtitleBaselines: Map<String, org.siloserver.silo.model.playback.PickedSubtitleBaseline> = emptyMap(),
     val pickedAudioBaselines: Map<String, org.siloserver.silo.model.playback.PickedAudioBaseline> = emptyMap(),
 ) {
     /** What this page knows newer than [detail]: its own picks, and any choice still unsent. */
     fun subtitleOverlayFor(detail: ItemDetail?): Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> {
-        val current = detail?.let { org.siloserver.silo.model.playback.effectiveSubtitleFieldsOf(it) }
         val picked = pickedSeriesSubtitleChoices.filterKeys { key ->
             val baseline = pickedSubtitleBaselines[key]
-            baseline == null || current == null || baseline == current
+            baseline == null || detail == null || !baseline.supersededBy(detail)
         }
         return picked + pendingSeriesSubtitleChoices
     }
@@ -1396,7 +1395,7 @@ class TvItemDetailViewModel(
             it.copy(
                 pickedSeriesSubtitleChoices = it.pickedSeriesSubtitleChoices +
                     (key to org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice(choice)),
-                pickedSubtitleBaselines = it.pickedSubtitleBaselines + (key to org.siloserver.silo.model.playback.effectiveSubtitleFieldsOf(detail)),
+                pickedSubtitleBaselines = it.pickedSubtitleBaselines + (key to org.siloserver.silo.model.playback.PickedSubtitleBaseline.of(detail)),
             )
         }
         viewModelScope.launch { writer.saveSubtitle(key, choice) }

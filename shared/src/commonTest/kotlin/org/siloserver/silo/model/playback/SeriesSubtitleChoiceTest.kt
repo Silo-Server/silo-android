@@ -116,6 +116,26 @@ class SeriesSubtitleChoiceTest {
     }
 
     @Test
+    fun `a page pick's baseline is retired only by a refresh of the same item`() {
+        val e1 = org.siloserver.silo.model.catalog.ItemDetail(
+            contentId = "e1", type = "episode", title = "E1", seriesId = "show",
+            effectiveSubtitleLanguage = "en", effectiveSubtitleMode = "auto",
+        )
+        val e2 = e1.copy(contentId = "e2", title = "E2", effectiveSubtitleMode = "always")
+        val subtitle = PickedSubtitleBaseline.of(e1)
+        val audio = PickedAudioBaseline.of(e1.copy(versions = listOf(org.siloserver.silo.model.catalog.FileVersion(fileId = 1, effectiveAudioTrackIndex = 0))))
+
+        // Another episode of the series answers differently: nothing superseded the pick.
+        assertFalse(subtitle.supersededBy(e2))
+        assertFalse(audio.supersededBy(e2.copy(versions = listOf(org.siloserver.silo.model.catalog.FileVersion(fileId = 2, effectiveAudioTrackIndex = 1)))))
+        // The same episode, unchanged: still the stale answer the pick covers.
+        assertFalse(subtitle.supersededBy(e1))
+        // The same episode refreshed with a different answer: retired.
+        assertTrue(subtitle.supersededBy(e1.copy(effectiveSubtitleMode = "always")))
+        assertTrue(audio.supersededBy(e1.copy(versions = listOf(org.siloserver.silo.model.catalog.FileVersion(fileId = 1, effectiveAudioTrackIndex = 1)))))
+    }
+
+    @Test
     fun `a pending choice overlays the server's effective fields`() {
         val served = WatchDetail(
             contentId = "e2", type = "episode", title = "E2", seriesId = "s",
