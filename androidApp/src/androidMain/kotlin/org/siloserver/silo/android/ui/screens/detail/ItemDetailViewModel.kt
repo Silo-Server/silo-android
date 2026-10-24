@@ -815,6 +815,9 @@ class ItemDetailViewModel(
                     hasExplicitSubtitleSelection = false,
                 )
             }
+            // The selected episode's effective fields predate the playback;
+            // the parent refresh below does not re-read them.
+            refreshSelectedEpisodeDetail()
         }
         refreshOnReturn()
         if (wasPaused && !_uiState.value.allEpisodeIdsComplete) {
@@ -917,6 +920,25 @@ class ItemDetailViewModel(
         if (state.selectedEpisodeDetail != null || state.isLoadingSelectedEpisodeDetail) return
         _uiState.update { it.copy(isLoadingSelectedEpisodeDetail = true) }
         loadSelectedEpisodeDetail(contentId)
+    }
+
+    /** Re-reads the shown episode's detail from the server, keeping it on screen meanwhile. */
+    private fun refreshSelectedEpisodeDetail() {
+        val state = _uiState.value
+        val contentId = state.selectedEpisodeContentId ?: return
+        if (state.selectedEpisodeDetail == null || state.isLoadingSelectedEpisodeDetail) return
+        selectedEpisodeLoadJob?.cancel()
+        selectedEpisodeLoadJob = viewModelScope.launch {
+            val result = catalogRepository.getItemDetail(contentId, libraryId = libraryId)
+            if (result !is ApiResult.Success) return@launch
+            val refreshed = withLocalProgress(result.data)
+            _uiState.update { current ->
+                if (current.selectedEpisodeContentId != contentId) current else current.copy(
+                    selectedEpisodeDetail = current.episodes.firstOrNull { it.contentId == contentId }
+                        ?.let(refreshed::withEpisodeDescription) ?: refreshed,
+                )
+            }
+        }
     }
 
     private fun loadSelectedEpisodeDetail(contentId: String) {

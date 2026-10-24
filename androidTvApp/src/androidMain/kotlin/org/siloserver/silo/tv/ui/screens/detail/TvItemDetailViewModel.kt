@@ -915,9 +915,33 @@ class TvItemDetailViewModel(
                 pickedAudioBaselines = emptyMap(),
                 selectedNextUpAudioIndex = null,
                 nextUpAudioPickedThisSession = false,
+                // An explicit Off (or track) picked here before the playback
+                // is older than a subtitle picked in the player, and would
+                // otherwise ride the next Next Up handoff.
+                selectedNextUpSubtitleIndex = null,
             )
         }
+        // The Next Up episode's effective fields predate the playback; the
+        // series refresh keeps the loaded episode detail, so re-read it.
+        if (returnedFromPlayback) refreshNextUpPlaybackDetail()
         quietRefresh()
+    }
+
+    /** Re-reads the shown Next Up episode's detail, keeping it on screen meanwhile. */
+    private fun refreshNextUpPlaybackDetail() {
+        val episodeId = _uiState.value.nextUpPlaybackDetail?.contentId ?: return
+        viewModelScope.launch {
+            val result = catalogRepository.getItemDetail(episodeId, libraryId = libraryId)
+            if (result !is ApiResult.Success) return@launch
+            val refreshed = withLocalProgress(result.data)
+            _uiState.update { state ->
+                if (state.nextUpPlaybackDetail?.contentId != episodeId) state else state.copy(
+                    nextUpPlaybackDetail = state.nextUpEpisode
+                        ?.takeIf { it.contentId == episodeId }
+                        ?.let(refreshed::withEpisodeDescription) ?: refreshed,
+                )
+            }
+        }
     }
 
     /**
