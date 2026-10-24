@@ -126,7 +126,7 @@ class TvTrackSelectionPersistenceTest {
     }
 
     @Test
-    fun playbackReturnPreservesPreviouslySelectedAudio() {
+    fun playbackReturnLeavesAudioToTheSeriesChoice() {
         val contentId = "episode-playback-return-audio"
         TvDetailTrackSelectionSession.remember(contentId, fileId = 22, audio = 1, subtitle = 0)
 
@@ -139,7 +139,10 @@ class TvTrackSelectionPersistenceTest {
             durationSeconds = 120.0,
         )
 
-        assertEquals(1, TvDetailTrackSelectionSession.recall(contentId)?.audio)
+        // The player does not report audio, and the viewer may have picked
+        // again there: the page's older pick must not come back as a selection.
+        assertNull(TvDetailTrackSelectionSession.recall(contentId)?.audio)
+        assertEquals(2, TvDetailTrackSelectionSession.recall(contentId)?.subtitle)
     }
 
     @Test
@@ -193,8 +196,10 @@ class TvTrackSelectionPersistenceTest {
 
         assertEquals(37.0, playbackReturn?.positionSeconds)
         assertNull(TvDetailTrackSelectionSession.consumePlaybackReturn(contentId))
+        // The subtitle the player ended on remains; the audio is left to the
+        // series choice (see playbackReturnLeavesAudioToTheSeriesChoice).
         assertEquals(
-            TvDetailTrackSelectionSession.Saved(fileId = 22, audio = 1, subtitle = 2),
+            TvDetailTrackSelectionSession.Saved(fileId = 22, audio = null, subtitle = 2),
             TvDetailTrackSelectionSession.recall(contentId),
         )
     }

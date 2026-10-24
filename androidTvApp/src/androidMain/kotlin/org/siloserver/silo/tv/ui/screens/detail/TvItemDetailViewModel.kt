@@ -897,7 +897,28 @@ class TvItemDetailViewModel(
      * ended. Deliberately NOT [loadAll] — no loading flashes, and the user's
      * season selection is preserved.
      */
-    fun refreshOnReturn() = quietRefresh()
+    fun refreshOnReturn() {
+        // Back from playback: picks made on this page before it are older than
+        // anything picked in the player, which the server now holds. Drop the
+        // page's own overlays and its Next Up audio pick so the previews and
+        // Play follow the refreshed answer. (A movie or episode page resets
+        // its audio selection from the playback return in [quietRefresh].)
+        // Comparing the refreshed answer with the one a pick was laid over
+        // cannot tell: a newer choice can equal that older answer.
+        val returnedFromPlayback = TvDetailTrackSelectionSession.hasPlaybackReturn(contentId) ||
+            _uiState.value.nextUpEpisode?.contentId?.let(TvDetailTrackSelectionSession::hasPlaybackReturn) == true
+        if (returnedFromPlayback) _uiState.update {
+            it.copy(
+                pickedSeriesSubtitleChoices = emptyMap(),
+                pickedSeriesAudioChoices = emptyMap(),
+                pickedSubtitleBaselines = emptyMap(),
+                pickedAudioBaselines = emptyMap(),
+                selectedNextUpAudioIndex = null,
+                nextUpAudioPickedThisSession = false,
+            )
+        }
+        quietRefresh()
+    }
 
     /**
      * [refreshOnReturn] after the server reports an access change, except that
@@ -2924,10 +2945,11 @@ internal object TvDetailTrackSelectionSession {
             // A playback return reports the resolved backing file, not a new
             // manual Version choice. Preserve Auto/explicit UI intent.
             fileId = previous?.fileId,
-            // The player currently reports subtitle selection on exit but not
-            // audio selection. Keep the detail page's explicit audio choice
-            // instead of replacing it with an unknown/null value.
-            audio = audio ?: previous?.audio,
+            // The player reports the subtitle it ended on, not the audio. The
+            // page's own audio pick is not kept either: the viewer may have
+            // picked again in the player, and that pick is the series choice
+            // now. Auto shows (and Play resolves) whatever the server holds.
+            audio = audio,
             // A null player result means the mounted track could not be
             // resolved to a stable server index (keep current), not Off.
             subtitle = subtitle ?: previous?.subtitle,
@@ -2938,6 +2960,9 @@ internal object TvDetailTrackSelectionSession {
     }
 
     fun recall(contentId: String): Saved? = byContent[contentId]
+
+    /** Whether a playback of [contentId] ended and its return has not been consumed. */
+    fun hasPlaybackReturn(contentId: String): Boolean = byContent[contentId]?.positionSeconds != null
 
     /**
      * Returns the pending player-exit progress once, while retaining the

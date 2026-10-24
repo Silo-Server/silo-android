@@ -794,6 +794,28 @@ class ItemDetailViewModel(
     fun onRouteResumed() {
         val wasPaused = !routeActive
         routeActive = true
+        if (wasPaused) {
+            // Back from the player (or the background): picks made on this
+            // page before are older than anything picked in the player, which
+            // the server now holds. Drop the page's own overlays and explicit
+            // track picks so the previews and Play follow the refreshed
+            // answer; a newer choice can equal the answer a pick was laid
+            // over, so comparing the two cannot tell. The page's picks were
+            // saved as the series choice, so Auto still shows them when
+            // nothing replaced them.
+            _uiState.update {
+                it.copy(
+                    pickedSeriesAudioChoices = emptyMap(),
+                    pickedAudioBaselines = emptyMap(),
+                    pickedSeriesSubtitleChoices = emptyMap(),
+                    pickedSubtitleBaselines = emptyMap(),
+                    selectedAudioIndex = if (it.hasExplicitAudioSelection) 0 else it.selectedAudioIndex,
+                    hasExplicitAudioSelection = false,
+                    selectedSubtitleIndex = if (it.hasExplicitSubtitleSelection) -1 else it.selectedSubtitleIndex,
+                    hasExplicitSubtitleSelection = false,
+                )
+            }
+        }
         refreshOnReturn()
         if (wasPaused && !_uiState.value.allEpisodeIdsComplete) {
             pendingEpisodeRollup?.let { request ->
