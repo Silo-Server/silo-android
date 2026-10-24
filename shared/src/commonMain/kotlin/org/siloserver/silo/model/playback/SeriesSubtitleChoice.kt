@@ -190,10 +190,12 @@ fun SubtitleTrack.subtitleTrackSignature(): SubtitleTrackSignature = SubtitleTra
  * Whether [this] is the very track [signature] describes (web parity:
  * `subtitleTrackMatchesSignature`): same source, language and codec, the same
  * label when the signature carries one, and the same forced and SDH flags.
+ * Languages compare the way Auto does, so `eng` (catalog, server) and `en`
+ * (Media3, another client) are the same track.
  */
 fun AutoSubtitleCandidate.matchesSignature(signature: SubtitleTrackSignature): Boolean =
     signature.source.norm() == signatureSource().norm() &&
-        signature.language.norm() == language.norm() &&
+        sameSubtitleLanguage(signature.language, language) &&
         signature.codec.norm() == codec.norm() &&
         (signature.label.norm().isEmpty() || signature.label.norm() == signatureLabel.norm()) &&
         signature.forced == forced &&
@@ -221,6 +223,9 @@ private fun AutoSubtitleCandidate.signatureSource(): String? = when (source) {
 }
 
 private fun String?.norm(): String = this?.trim()?.lowercase().orEmpty()
+
+private fun sameSubtitleLanguage(a: String?, b: String?): Boolean =
+    a.norm() == b.norm() || autoSubtitleLanguageKey(a)?.let { it == autoSubtitleLanguageKey(b) } == true
 
 /**
  * The device's per-file subtitle memory, filtered by the server's series

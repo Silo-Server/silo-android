@@ -177,6 +177,13 @@ class SeriesSubtitleChoiceTest {
     }
 
     @Test
+    fun `a signature recorded as eng finds the track listed as en`() {
+        val latino = SubtitleTrackSignature(source = "embedded", language = "spa", codec = "ass", label = "Latino")
+        assertEquals(1, resolve(AutoSubtitleContext("es", "always", trackSignature = latino)))
+        assertFalse(tracks[2].matchesSignature(SubtitleTrackSignature(source = "external", language = "fre", codec = "srt")))
+    }
+
+    @Test
     fun `forced never outranks the full track without a series choice`() {
         assertEquals(2, resolve(AutoSubtitleContext("en", "always", showForced = true)))
     }
