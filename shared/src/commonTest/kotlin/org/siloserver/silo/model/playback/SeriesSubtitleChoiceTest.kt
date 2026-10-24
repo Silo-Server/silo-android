@@ -97,6 +97,25 @@ class SeriesSubtitleChoiceTest {
     }
 
     @Test
+    fun `the catalog item detail carries the series subtitle choice too`() {
+        // Detail pages read the v2 catalog item, not the watch detail.
+        val detail = SiloJson.decodeFromString<org.siloserver.silo.network.apiv2.ItemDetailReadV2>(
+            """{"content_id":"e4","type":"episode","title":"E4","series_id":"show","cast":[],"crew":[],
+               "versions":[],"subtitles":[],"effective_subtitle_language":"en","effective_subtitle_mode":"always",
+               "effective_show_forced_subtitles":false,
+               "effective_subtitle_track_signature":{"source":"embedded","language":"en","codec":"subrip",
+               "label":"SDH","forced":false,"hearing_impaired":true}}""",
+        ).toDomain()
+        assertEquals("en", detail.effectiveSubtitleLanguage)
+        assertEquals("always", detail.effectiveSubtitleMode)
+        assertEquals(false, detail.effectiveShowForcedSubtitles)
+        assertEquals(
+            SubtitleTrackSignature(source = "embedded", language = "en", codec = "subrip", label = "SDH", hearingImpaired = true),
+            detail.effectiveSubtitleTrackSignature,
+        )
+    }
+
+    @Test
     fun `a pending choice overlays the server's effective fields`() {
         val served = WatchDetail(
             contentId = "e2", type = "episode", title = "E2", seriesId = "s",
