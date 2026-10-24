@@ -814,6 +814,32 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
+    fun `a revision-gated clear enqueued while the device write is in flight keeps it if that write fails`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(18) }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+        api.failNextPuts(1, ApiResult.Error(503, "unavailable", "busy"))
+        var toggledOff = false
+        api.onPut = {
+            // The toggle is turned off while the delay's device write is on the wire.
+            if (!toggledOff) {
+                toggledOff = true
+                flusher.enqueueDelete("p1", syncKey, serverUrl, onlyWhereStoredPerProfile = true)
+            }
+        }
+
+        flusher.enqueue("p1", syncKey, "250", serverUrl)
+        flusher.flushNow()
+        advanceUntilIdle()
+
+        // Below revision 19 the clear is a no-op, so the failed write must
+        // still be retried rather than settled by the clear.
+        assertTrue(api.calls.none { it.kind == RecordingSettingsApi.Call.Kind.DELETE }, "${api.calls}")
+        assertEquals(2, api.calls.count { it.kind == RecordingSettingsApi.Call.Kind.PUT })
+        assertEquals(JsonPrimitive(250L), api.calls.last().value)
+        assertTrue(flusher.pendingKeys("p1").isEmpty())
+    }
+
+    @Test
     fun `a revision-gated clear from revision 19 drops the device write it replaced`() = runTest {
         val api = RecordingSettingsApi().apply { manifestRevision(19) }
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)

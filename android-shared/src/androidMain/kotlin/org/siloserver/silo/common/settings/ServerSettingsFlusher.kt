@@ -252,6 +252,23 @@ class DefaultServerSettingsFlusher(
         return copy(scope = profile.copy(clearDevice = true))
     }
 
+    /**
+     * A revision-gated clear that took the slot of a device write it never
+     * saw queued — that write was in flight, or held for retry, when the
+     * clear was enqueued — keeps it as [PendingOp.Delete.replacedSet], under
+     * the same rule as [enqueueDelete] (same server and owner). Otherwise a
+     * clear that resolves to a no-op (below the key's revision) would settle
+     * the slot and lose the write.
+     */
+    private fun PendingOp.keepingReplacedSetOf(failed: PendingOp): PendingOp {
+        val delete = this as? PendingOp.Delete ?: return this
+        if (!delete.profileGated || delete.replacedSet != null) return this
+        val set = (failed as? PendingOp.Delete)?.replacedSet ?: failed as? PendingOp.Set ?: return this
+        if (set.scope != SettingWriteScope.Device) return this
+        if (set.serverUrl != delete.serverUrl || set.authority != delete.authority) return this
+        return delete.copy(replacedSet = set)
+    }
+
     private fun scheduleDebounced(
         composite: PendingKey,
         op: (PendingOp?) -> PendingOp,
@@ -343,10 +360,16 @@ class DefaultServerSettingsFlusher(
                     // A newer op settles the slot, so it also takes over the
                     // device clear an older failed save there still owed.
                     val failedEarlier = retryable[composite]
-                    val op = if (failedEarlier != null && queued is PendingOp.Set && !deviceWroteSinceFailure(composite)) {
-                        queued.keepingDeviceClearOf(failedEarlier)
-                    } else {
-                        queued
+                    val op = when {
+                        failedEarlier == null -> queued
+                        queued is PendingOp.Set && !deviceWroteSinceFailure(composite) ->
+                            queued.keepingDeviceClearOf(failedEarlier)
+                        // A revision-gated clear enqueued while the device
+                        // write it replaces was on the wire never saw it in
+                        // the queue; it still owes that write where the
+                        // clear turns out to be a no-op.
+                        queued is PendingOp.Delete -> queued.keepingReplacedSetOf(failedEarlier)
+                        else -> queued
                     }
                     val retry = flushOne(composite.profileId, composite.key, op)
                     if (retry != null) {
@@ -372,6 +395,8 @@ class DefaultServerSettingsFlusher(
                         // but still owes the failed one's device clear.
                         if (!newerDeviceIntent && newer is PendingOp.Set) {
                             pending[composite] = newer.keepingDeviceClearOf(op)
+                        } else if (newer is PendingOp.Delete) {
+                            pending[composite] = newer.keepingReplacedSetOf(op)
                         }
                         continue
                     }
