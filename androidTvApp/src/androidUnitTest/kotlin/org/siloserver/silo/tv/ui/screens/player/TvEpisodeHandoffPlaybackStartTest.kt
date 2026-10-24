@@ -31,6 +31,24 @@ class TvEpisodeHandoffPlaybackStartTest {
     }
 
     @Test
+    fun nextUpCarriesOnlyAudioTheViewerChose() {
+        val japanese = org.siloserver.silo.common.player.video.EpisodeAudioIntent(
+            org.siloserver.silo.common.player.video.EpisodeAudioMode.TRACK, language = "jpn",
+        )
+        val english = org.siloserver.silo.common.player.video.EpisodeAudioIntent(
+            org.siloserver.silo.common.player.video.EpisodeAudioMode.TRACK, language = "eng",
+        )
+        // E03 has only English audio; an automatic commit made it look chosen.
+        val playedOnE03 = EpisodeSelectionHandoff(audio = english)
+        val auto = org.siloserver.silo.common.player.video.EpisodeAudioMode.AUTO
+
+        assertEquals(auto, carryEpisodeIntent(playedOnE03, null, audioPicked = false, subtitlePicked = false).audio.mode)
+        assertEquals(auto, carryEpisodeIntent(playedOnE03, EpisodeSelectionHandoff(), audioPicked = false, subtitlePicked = false).audio.mode)
+        assertEquals(japanese, carryEpisodeIntent(playedOnE03, EpisodeSelectionHandoff(audio = japanese), audioPicked = false, subtitlePicked = false).audio)
+        assertEquals(english, carryEpisodeIntent(playedOnE03, EpisodeSelectionHandoff(audio = japanese), audioPicked = true, subtitlePicked = false).audio)
+    }
+
+    @Test
     fun explicitDetailFileIdWinsOverEpisodeHandoff() {
         val resolved = resolveTvPlaybackStartSelection(
             preferredFileId = 1080,

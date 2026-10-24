@@ -349,6 +349,12 @@ private fun SubtitleMediaIdentity.toEpisodeSubtitleIntent(
  * unchanged unless the viewer picked again here. This episode may have
  * played a fallback for it (only plain English where SDH was chosen); the
  * next one re-resolves the original choice on its own tracks.
+ *
+ * Audio is carried only as the viewer chose it: a pick during this episode
+ * ([audioPicked]), else the choice carried in, else Auto — the next episode
+ * then follows the series choice. The audio this episode merely played
+ * (the series default, a fallback where the chosen language is missing, a
+ * track an automatic replan settled on) is never handed on as a choice.
  */
 internal fun carryEpisodeIntent(
     captured: EpisodeSelectionHandoff,
@@ -356,9 +362,14 @@ internal fun carryEpisodeIntent(
     audioPicked: Boolean,
     subtitlePicked: Boolean,
 ): EpisodeSelectionHandoff {
-    incoming ?: return captured
+    val audio = when {
+        audioPicked -> captured.audio
+        incoming != null && incoming.audio.mode != EpisodeAudioMode.AUTO -> incoming.audio
+        else -> org.siloserver.silo.common.player.video.EpisodeAudioIntent.auto()
+    }
+    incoming ?: return captured.copy(audio = audio)
     return captured.copy(
-        audio = incoming.audio.takeIf { !audioPicked && it.mode != EpisodeAudioMode.AUTO } ?: captured.audio,
+        audio = audio,
         subtitle = incoming.subtitle
             .takeIf { !subtitlePicked && it.mode != org.siloserver.silo.common.player.video.EpisodeSubtitleMode.AUTO }
             ?: captured.subtitle,
@@ -1060,9 +1071,11 @@ class TvPlayerViewModel(
         handoff: org.siloserver.silo.common.player.video.EpisodeSelectionHandoff?,
     ) {
         if (contentId != episodeIntentContentId) {
+            // The first episode's audio counts as picked only when the detail
+            // page's selector was used; its Auto preview is not a pick.
+            audioPickedThisEpisode = episodeIntentContentId == null && launchArgs.initialAudioPickedThisSession
             episodeIntentContentId = contentId
             incomingEpisodeIntent = handoff
-            audioPickedThisEpisode = false
             subtitlePickedThisEpisode = false
         } else if (handoff != null) {
             incomingEpisodeIntent = handoff
