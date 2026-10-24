@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.settings
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
@@ -152,7 +153,7 @@ class SeriesTrackChoiceWriterTest {
     }
 
     @Test
-    fun `a flush cut short by the load timeout keeps the pick queued`() = runTest {
+    fun `a flush that stops waiting lets the request in flight land`() = runTest {
         var puts = 0
         val writer = DefaultSeriesTrackChoiceWriter(
             putSubtitle = { _, _, _ ->
@@ -174,12 +175,93 @@ class SeriesTrackChoiceWriterTest {
         val detail = org.siloserver.silo.model.catalog.WatchDetail(
             contentId = "episode-2", type = "episode", title = "E2", seriesId = "series-1",
         )
-        writer.reconcile(detail)
-        assertEquals(setOf("series-1"), writer.pendingSeries("profile-a"), "the cut-short send is queued again")
+        assertEquals("off", writer.reconcile(detail).effectiveSubtitleMode)
+        assertEquals(SeriesSubtitleChoice.Off, writer.pendingSubtitle("series-1")?.choice, "still in flight")
         advanceUntilIdle()
 
-        assertEquals(3, puts)
+        assertEquals(2, puts, "the slow request was not cancelled and sent again")
         assertEquals(null, writer.pendingSubtitle("series-1"))
+    }
+
+    @Test
+    fun `two quick picks land in the order they were made`() = runTest {
+        val recorder = Recorder()
+        var slowOwnerLookups = 1
+        val writer = DefaultSeriesTrackChoiceWriter(
+            putSubtitle = { key, choice, o -> recorder.calls += Call("PUT", key, choice, o); recorder.next() },
+            deleteSubtitle = { key, o -> recorder.calls += Call("DELETE", key, null, o); recorder.next() },
+            // The first pick's owner lookup is slow, so it resumes after the second.
+            captureOwner = {
+                if (slowOwnerLookups-- > 0) kotlinx.coroutines.delay(100)
+                profileA
+            },
+            scope = this,
+        )
+        val english = SeriesSubtitleChoice(subtitleLanguage = "en", subtitleTrackIndex = 2, subtitleMode = "always")
+
+        launch { writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off) }
+        launch { writer.saveSubtitle("series-1", english) }
+        advanceUntilIdle()
+
+        assertEquals(listOf(english), recorder.calls.map { it.choice })
+        assertEquals(null, writer.pendingSubtitle("series-1"))
+    }
+
+    @Test
+    fun `a rotated profile token sends with the new one, and another profile waits`() = runTest {
+        var active: AuthScopeSnapshot = profileA
+        val recorder = Recorder()
+        // A channel the test closes, so the writer's collector ends with it.
+        val signals = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        val writer = DefaultSeriesTrackChoiceWriter(
+            putSubtitle = { key, choice, o -> recorder.calls += Call("PUT", key, choice, o); recorder.next() },
+            deleteSubtitle = { key, o -> recorder.calls += Call("DELETE", key, null, o); recorder.next() },
+            captureOwner = { active },
+            scope = this,
+            resumeSignals = signals.receiveAsFlow(),
+        )
+        val unlocked = profileA.copy(profileToken = "token-a2")
+
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off, owner = profileA)
+        active = unlocked
+        advanceUntilIdle()
+        assertEquals(listOf(unlocked), recorder.calls.map { it.owner })
+
+        writer.saveSubtitle("series-2", SeriesSubtitleChoice.Off, owner = unlocked)
+        active = profileB
+        advanceUntilIdle()
+        assertEquals(1, recorder.calls.size, "nothing goes out under profile B")
+
+        active = unlocked
+        signals.send(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf("series-1", "series-2"), recorder.calls.map { it.key })
+        signals.close()
+    }
+
+    @Test
+    fun `a pick out of automatic retries is sent again when the server is back`() = runTest {
+        val recorder = Recorder().apply { repeat(6) { results += ApiResult.NetworkError(IllegalStateException("offline")) } }
+        // A channel the test closes, so the writer's collector ends with it.
+        val signals = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        val writer = DefaultSeriesTrackChoiceWriter(
+            putSubtitle = { key, choice, o -> recorder.calls += Call("PUT", key, choice, o); recorder.next() },
+            deleteSubtitle = { key, o -> recorder.calls += Call("DELETE", key, null, o); recorder.next() },
+            captureOwner = { profileA },
+            scope = this,
+            now = { testScheduler.currentTime },
+            resumeSignals = signals.receiveAsFlow(),
+        )
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
+        advanceUntilIdle()
+        assertEquals(6, recorder.calls.size, "the first try and five retries failed")
+
+        signals.send(Unit)
+        advanceUntilIdle()
+
+        assertEquals(7, recorder.calls.size)
+        assertEquals(null, writer.pendingSubtitle("series-1"))
+        signals.close()
     }
 
     @Test

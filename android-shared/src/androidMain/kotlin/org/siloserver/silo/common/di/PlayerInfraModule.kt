@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.koin.android.ext.koin.androidContext
@@ -220,6 +221,13 @@ val playerInfraModule = module {
             },
             scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
             identityChanges = get<org.siloserver.silo.network.IdentityTransitionBarrier>().transitions,
+            // Each successful probe: the server is back, or the app returned
+            // to the foreground and checked it again.
+            resumeSignals = get<ServerReachabilityMonitor>().state
+                .filter { it.status == org.siloserver.silo.common.network.ServerReachabilityStatus.Reachable }
+                .map { it.lastCheckedAtMs }
+                .distinctUntilChanged()
+                .map { },
         )
     }
 

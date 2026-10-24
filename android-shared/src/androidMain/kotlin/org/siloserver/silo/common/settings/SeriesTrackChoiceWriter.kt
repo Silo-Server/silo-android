@@ -118,7 +118,19 @@ private const val LOAD_FLUSH_TIMEOUT_MS = 1_500L
  *
  * A write that has not landed within [maxPendingAgeMs] is dropped: by then a
  * newer choice may have been made on another device, and sending this one
- * late would overwrite it. Process death loses the queue.
+ * late would overwrite it. Until then, a write that ran out of automatic
+ * retries is sent again whenever [resumeSignals] fires (the server is
+ * reachable again, the app returned to the foreground). Process death loses
+ * the queue.
+ *
+ * A write is sent with the active profile's current credentials while that is
+ * still the profile it was made under (same server id and profile id): a
+ * profile token rotated by a PIN unlock or a reselect must not drop it. While
+ * another profile is active it waits instead of being sent.
+ *
+ * Picks are ordered when [saveSubtitle] or [saveAudio] is called, before any
+ * suspension, so two quick picks land in the order the viewer made them even
+ * when the calls resume out of order.
  *
  * Keys use the server id, not its URL: the URL changes when the app moves
  * between the home network and the remote address of the same server.
@@ -140,6 +152,8 @@ class DefaultSeriesTrackChoiceWriter(
     private val identityChanges: Flow<IdentityTransition> = emptyFlow(),
     private val now: () -> Long = System::currentTimeMillis,
     private val maxPendingAgeMs: Long = MAX_PENDING_AGE_MS,
+    /** Moments worth trying the queue again: the server reachable, the app foregrounded. */
+    resumeSignals: Flow<Unit> = emptyFlow(),
 ) : SeriesTrackChoiceWriter {
 
     private enum class Kind(val label: String) { AUDIO("audio"), SUBTITLE("subtitle") }
@@ -152,10 +166,16 @@ class DefaultSeriesTrackChoiceWriter(
      * [choice] is a [SeriesSubtitleChoice] or [SeriesAudioChoice] matching the
      * key's kind; null is back to automatic.
      */
-    private class Op(val owner: AuthScopeSnapshot, val choice: Any?, val queuedAt: Long)
+    private class Op(val owner: AuthScopeSnapshot, val choice: Any?, val queuedAt: Long, val sequence: Long)
 
     private val lock = Any()
     private val pending = LinkedHashMap<Key, Op>()
+
+    /** Taken at each save's call, before it suspends: the viewer's pick order. */
+    private val sequence = java.util.concurrent.atomic.AtomicLong()
+
+    /** The newest pick's sequence per key, so an older one resuming late is dropped. */
+    private val newestSequence = HashMap<Key, Long>()
 
     /** Every op not yet settled — queued, in flight or held for retry. */
     private val unsent = MutableStateFlow<Map<Key, Op>>(emptyMap())
@@ -170,6 +190,7 @@ class DefaultSeriesTrackChoiceWriter(
         save(seriesKey, Kind.AUDIO, choice, owner)
 
     private suspend fun save(seriesKey: String, kind: Kind, choice: Any?, owner: AuthScopeSnapshot?) {
+        val order = sequence.incrementAndGet()
         if (seriesKey.isBlank()) return
         val active = captureOwner() ?: return
         val writer = owner ?: active
@@ -180,7 +201,9 @@ class DefaultSeriesTrackChoiceWriter(
         }
         synchronized(lock) {
             val key = Key(profileId, writer.serverId, seriesKey, kind)
-            val op = Op(writer, choice, now())
+            if ((newestSequence[key] ?: 0L) > order) return
+            newestSequence[key] = order
+            val op = Op(writer, choice, now(), order)
             pending.remove(key)
             pending[key] = op
             unsent.value = unsent.value + (key to op)
@@ -191,13 +214,27 @@ class DefaultSeriesTrackChoiceWriter(
         scope.launch { drain() }
     }
 
+    init {
+        scope.launch {
+            resumeSignals.collect {
+                if (synchronized(lock) { pending.isEmpty() }) return@collect
+                flushNow()
+            }
+        }
+    }
+
+    /**
+     * The drain runs in [scope], not the caller: a caller that stops waiting
+     * (a load's flush timeout) must not cancel a request already in flight,
+     * which may well land; it then settles as usual.
+     */
     override suspend fun flushNow() {
         synchronized(lock) {
             retryJob?.cancel()
             retryJob = null
             retryAttempts = 0
         }
-        drain()
+        scope.launch { drain() }.join()
     }
 
     override suspend fun pendingSubtitle(seriesKey: String): PendingSeriesSubtitleChoice? =
@@ -266,10 +303,9 @@ class DefaultSeriesTrackChoiceWriter(
                     }
                 }
             } catch (e: CancellationException) {
-                // The caller gave up waiting (a load's flush timeout): put
-                // back what this drain still owed, a newer choice winning, and
-                // let the retry send it — otherwise it stays "unsent" with
-                // nothing left to send it.
+                // The writer's scope is going away: put back what this drain
+                // still owed, a newer choice winning, so it still counts as
+                // unsent rather than vanishing mid-flight.
                 synchronized(lock) {
                     for ((key, op) in retry + unfinished) {
                         if (key !in pending) pending[key] = op
@@ -309,14 +345,25 @@ class DefaultSeriesTrackChoiceWriter(
             SiloLog.w(CATEGORY, TAG, "$verb ${key.kind.label} choice dropped: it did not land in time")
             return false
         }
+        // The active profile's current credentials while it is still the
+        // profile the pick was made under; while another one is active, wait.
+        val active = captureOwner()
+        val owner = when {
+            active == null -> return true
+            active.serverId == op.owner.serverId && active.profileId == op.owner.profileId -> active
+            else -> {
+                SiloLog.i(CATEGORY, TAG, "$verb ${key.kind.label} choice waits: another profile is active")
+                return true
+            }
+        }
         val result = try {
             when (key.kind) {
                 Kind.SUBTITLE -> (op.choice as SeriesSubtitleChoice?)
-                    ?.let { putSubtitle(key.seriesKey, it, op.owner) }
-                    ?: deleteSubtitle(key.seriesKey, op.owner)
+                    ?.let { putSubtitle(key.seriesKey, it, owner) }
+                    ?: deleteSubtitle(key.seriesKey, owner)
                 Kind.AUDIO -> (op.choice as SeriesAudioChoice?)
-                    ?.let { putAudio(key.seriesKey, it, op.owner) }
-                    ?: deleteAudio(key.seriesKey, op.owner)
+                    ?.let { putAudio(key.seriesKey, it, owner) }
+                    ?: deleteAudio(key.seriesKey, owner)
             }
         } catch (e: CancellationException) {
             throw e
@@ -330,7 +377,10 @@ class DefaultSeriesTrackChoiceWriter(
                 true
             }
             is ApiResult.Error -> {
-                val transient = result.code >= 500 || result.code == 408 || result.code == 429
+                // identity_changed: the profile's credentials moved while the
+                // request was out; the next attempt reads them again.
+                val transient = result.code >= 500 || result.code == 408 || result.code == 429 ||
+                    result.error == IDENTITY_CHANGED
                 SiloLog.w(
                     CATEGORY, TAG,
                     "$verb ${key.kind.label} choice failed (${result.code} ${result.error}); " +
@@ -348,5 +398,6 @@ class DefaultSeriesTrackChoiceWriter(
         const val RETRY_BASE_DELAY_MS = 1_000L
         const val RETRY_MAX_DELAY_MS = 60_000L
         const val MAX_PENDING_AGE_MS = 10 * 60_000L
+        const val IDENTITY_CHANGED = "identity_changed"
     }
 }
