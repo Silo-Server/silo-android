@@ -167,6 +167,9 @@ fun ItemDetail.withPendingSeriesAudioChoice(pending: PendingSeriesAudioChoice?):
 /**
  * The device's per-file audio memory, filtered by the server's answer.
  *
+ * [resetToAuto]: the viewer set the series audio back to Auto and that has
+ * not landed; the memory stays out so the profile's language decides.
+ *
  * Online ([serverOrdinal] known: the server's effective track for this file,
  * which includes the profile's series choice) the memory only restores when it
  * names that same track; a different one is a pick the series choice has
@@ -177,8 +180,12 @@ fun localAudioMemoryForSeriesChoice(
     localFingerprint: String?,
     tracks: List<AudioTrack>,
     serverOrdinal: Int?,
+    resetToAuto: Boolean = false,
 ): String? {
     localFingerprint ?: return null
+    // Auto chosen and not landed yet: the answered track is the series choice
+    // being deleted, and the memory is an older pick — neither applies.
+    if (resetToAuto) return null
     if (serverOrdinal == null || serverOrdinal !in tracks.indices) return localFingerprint
     return localFingerprint.takeIf { resolveAudioTrackOrdinal(tracks, it) == serverOrdinal }
 }

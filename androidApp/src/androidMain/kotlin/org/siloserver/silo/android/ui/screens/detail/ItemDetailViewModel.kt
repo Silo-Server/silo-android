@@ -1365,6 +1365,7 @@ class ItemDetailViewModel(
                     localFingerprint = saved.audioFingerprint,
                     tracks = audioTracks,
                     serverOrdinal = version.withPendingSeriesAudioChoice(pendingAudio).effectiveAudioTrackIndex,
+                    resetToAuto = pendingAudio != null && pendingAudio.choice == null,
                 ),
             )
             if (subtitleOrdinal == null && audioOrdinal == null) return@launch

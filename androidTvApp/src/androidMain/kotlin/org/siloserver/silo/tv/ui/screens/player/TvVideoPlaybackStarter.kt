@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.common.settings.reconcile
+import org.siloserver.silo.common.settings.audioResetToAutoPending
 import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
@@ -84,10 +85,18 @@ class TvVideoPlaybackStarter(
         var unpublishedSessionId: String? = null
         var lifecycleAdopted = false
         return try {
+            var audioResetToAuto = false
             val watchDetail = when (val r = catalogRepository.getWatchDetail(request.contentId, expectedMetadataOwner, request.libraryId)) {
-                is ApiResult.Success -> seriesTrackChoiceWriter
-                    ?.reconcile(r.data)
-                    ?: r.data
+                is ApiResult.Success -> {
+                    // An Auto set here and not landed: checked before and after
+                    // the flush, which can land it after its overlay is taken.
+                    val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(r.data.seriesId, r.data.contentId)
+                    suspend fun resetPending() = key?.let { seriesTrackChoiceWriter?.audioResetToAutoPending(it) } == true
+                    audioResetToAuto = resetPending()
+                    val reconciled = seriesTrackChoiceWriter?.reconcile(r.data) ?: r.data
+                    audioResetToAuto = audioResetToAuto || resetPending()
+                    reconciled
+                }
                 is ApiResult.Error -> return failure(
                     request.contentId,
                     "Failed to load content: ${r.message}",
@@ -204,6 +213,7 @@ class TvVideoPlaybackStarter(
                 preferredAudioLanguage = effectivePreferredAudioLanguage,
                 capabilities = capabilities,
                 serverAudioTrackIndex = version.effectiveAudioTrackIndex,
+                audioResetToAuto = audioResetToAuto,
             )
             // Skip-back-on-resume — see MobileVideoPlaybackStarter for the rationale.
             // Suppressed for Start Over / retry (request flag) and Watch Together
@@ -499,6 +509,7 @@ internal fun resolveTvInitialAudioTrackIndex(
     preferredAudioLanguage: String?,
     capabilities: ClientCodecCapabilities,
     serverAudioTrackIndex: Int? = null,
+    audioResetToAuto: Boolean = false,
 ): Int? {
     if (requestedAudioIndex == null && carriedAudioIndex == null && unresolvedCarriedChoice) return null
     return org.siloserver.silo.common.player.resolveStartAudioTrackOrdinal(
@@ -506,6 +517,7 @@ internal fun resolveTvInitialAudioTrackIndex(
         tracks = tracks,
         serverOrdinal = serverAudioTrackIndex,
         localFingerprint = durableAudioFingerprint,
+        resetToAuto = audioResetToAuto,
     ) {
         TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
             tracks = tracks,

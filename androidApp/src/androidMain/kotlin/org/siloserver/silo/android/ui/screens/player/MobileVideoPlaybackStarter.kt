@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
 import org.siloserver.silo.common.settings.reconcile
+import org.siloserver.silo.common.settings.audioResetToAutoPending
 import android.util.Log
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
@@ -103,12 +104,14 @@ internal fun resolveMobileInitialTrackSelection(
     preferredAudioLanguage: String? = null,
     capabilities: ClientCodecCapabilities,
     serverAudioTrackIndex: Int? = null,
+    audioResetToAuto: Boolean = false,
 ): MobileInitialTrackSelection {
     val audioTrackIndex = org.siloserver.silo.common.player.resolveStartAudioTrackOrdinal(
         explicitOrdinal = explicitAudioTrackIndex,
         tracks = audioTracks,
         serverOrdinal = serverAudioTrackIndex,
         localFingerprint = persisted?.audioFingerprint,
+        resetToAuto = audioResetToAuto,
     ) {
         // The phone keeps the file's default track when no language is set.
         preferredAudioLanguage?.let { language ->
@@ -181,9 +184,18 @@ internal class MobileVideoPlaybackStarter(
         var allocatedButUnpublishedSessionId: String? = null
         var lifecycleAdopted = false
         return try {
+            var audioResetToAuto = false
             val watchDetail = when (val r = catalogRepository.getWatchDetail(request.contentId, expectedMetadataOwner, request.libraryId)) {
-                is ApiResult.Success -> (seriesTrackChoiceWriter?.reconcile(r.data) ?: r.data)
-                    .withCarriedSeriesTrackChoices(request.carriedTrackChoices)
+                is ApiResult.Success -> {
+                    // An Auto set here and not landed: checked before and after
+                    // the flush, which can land it after its overlay is taken.
+                    val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(r.data.seriesId, r.data.contentId)
+                    suspend fun resetPending() = key?.let { seriesTrackChoiceWriter?.audioResetToAutoPending(it) } == true
+                    audioResetToAuto = resetPending()
+                    val reconciled = seriesTrackChoiceWriter?.reconcile(r.data) ?: r.data
+                    audioResetToAuto = audioResetToAuto || resetPending()
+                    reconciled.withCarriedSeriesTrackChoices(request.carriedTrackChoices)
+                }
                 is ApiResult.Error -> return failure(
                     request.contentId,
                     "Failed to load content: ${r.message}",
@@ -336,6 +348,7 @@ internal class MobileVideoPlaybackStarter(
                 preferredAudioLanguage = preferredAudioLanguage,
                 capabilities = capabilities,
                 serverAudioTrackIndex = version.effectiveAudioTrackIndex,
+                audioResetToAuto = audioResetToAuto,
             )
             // Skip-back-on-resume: nudge a genuine resume back a few seconds.
             // Suppressed for Start Over / retry (request flag) and Watch Party

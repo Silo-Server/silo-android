@@ -201,6 +201,8 @@ class TvEpisodeHandoffPlaybackStartTest {
         assertEquals(1, resolveTvInitialAudioTrackIndex(1, null, false, tracks, durable, "fr", capabilities, serverAudioTrackIndex = 0))
         // An index the file does not have is no answer.
         assertEquals(1, resolveTvInitialAudioTrackIndex(null, null, false, tracks, durable, "fr", capabilities, serverAudioTrackIndex = 7))
+        // Auto set and not landed: the language decides, not the older per-file pick.
+        assertEquals(2, resolveTvInitialAudioTrackIndex(null, null, false, tracks, durable, "fr", capabilities, audioResetToAuto = true))
     }
 
     @Test

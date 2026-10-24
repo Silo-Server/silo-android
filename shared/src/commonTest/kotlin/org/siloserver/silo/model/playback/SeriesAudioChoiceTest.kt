@@ -106,6 +106,8 @@ class SeriesAudioChoiceTest {
         assertEquals(olderPick, localAudioMemoryForSeriesChoice(olderPick, tracks, serverOrdinal = 1))
         // No server answer (offline, an older server, a reset not landed yet).
         assertEquals(olderPick, localAudioMemoryForSeriesChoice(olderPick, tracks, serverOrdinal = null))
+        // ...but not while an Auto set here waits to land.
+        assertNull(localAudioMemoryForSeriesChoice(olderPick, tracks, serverOrdinal = null, resetToAuto = true))
     }
 
     @Test

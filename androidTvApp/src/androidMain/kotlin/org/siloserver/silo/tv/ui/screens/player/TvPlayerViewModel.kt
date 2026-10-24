@@ -2625,6 +2625,9 @@ class TvPlayerViewModel(
                                 localFingerprint = localTrackSelection?.audioFingerprint,
                                 tracks = readyVersion?.audioTracks.orEmpty(),
                                 serverOrdinal = readyVersion?.effectiveAudioTrackIndex,
+                                resetToAuto = org.siloserver.silo.model.playback.seriesTrackChoiceKey(result.seriesId, contentId)
+                                    ?.let { seriesTrackChoiceWriter?.pendingAudio(it) }
+                                    ?.let { it.choice == null } == true,
                             )
                         } else {
                             null

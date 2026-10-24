@@ -1861,6 +1861,10 @@ class PlayerViewModel(
         }
         // Online the per-file memory only restores the track the server's
         // series choice already names; another one is an older pick it replaced.
+        val audioResetToAuto = watchDetail
+            ?.let { org.siloserver.silo.model.playback.seriesTrackChoiceKey(it.seriesId, it.contentId) }
+            ?.let { seriesTrackChoiceWriter?.pendingAudio(it) }
+            ?.let { it.choice == null } == true
         val persistedAudioIndex = if (initialAudioTrackIndex == null) {
             version?.audioTracks
                 ?.let { tracks ->
@@ -1870,6 +1874,7 @@ class PlayerViewModel(
                             localFingerprint = localTrackSelection?.audioFingerprint,
                             tracks = tracks,
                             serverOrdinal = version.effectiveAudioTrackIndex,
+                            resetToAuto = audioResetToAuto,
                         ),
                     )
                 }

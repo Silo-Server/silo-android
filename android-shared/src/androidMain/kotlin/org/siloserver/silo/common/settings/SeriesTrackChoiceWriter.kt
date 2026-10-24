@@ -104,6 +104,10 @@ suspend fun SeriesTrackChoiceWriter.reconcile(detail: WatchDetail): WatchDetail 
         .withPendingSeriesAudioChoice(pendingAudio(key) ?: audioBeforeFlush)
 }
 
+/** Whether the series audio was set back to Auto here and that has not landed. */
+suspend fun SeriesTrackChoiceWriter.audioResetToAutoPending(seriesKey: String): Boolean =
+    pendingAudio(seriesKey)?.let { it.choice == null } == true
+
 /** [detail] with the choices still unsent laid over it; no flush. */
 suspend fun SeriesTrackChoiceWriter.overlayPendingChoice(detail: WatchDetail): WatchDetail {
     val key = seriesTrackChoiceKey(detail.seriesId, detail.contentId) ?: return detail

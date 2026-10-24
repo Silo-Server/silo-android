@@ -217,6 +217,7 @@ internal fun org.siloserver.silo.repository.port.LocalTrackSelection.withSeriesT
             localFingerprint = audioFingerprint,
             tracks = audioTracks,
             serverOrdinal = version.withPendingSeriesAudioChoice(key?.let(pendingAudio::get)).effectiveAudioTrackIndex,
+            resetToAuto = key?.let(pendingAudio::get)?.let { it.choice == null } == true,
         ),
     )
 }
