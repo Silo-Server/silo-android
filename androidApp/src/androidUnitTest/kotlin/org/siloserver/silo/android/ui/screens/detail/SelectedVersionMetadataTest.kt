@@ -51,6 +51,6 @@ class SelectedVersionMetadataTest {
         assertEquals(listOf("4h 11m"), HeroMetadata.movieFactsLine(detail, directorsRuntime))
         assertEquals("4K · HDR · HEVC · TrueHD 7.1", formatVersionMenuLabel(directorsCut))
         assertEquals("Auto - 7.1", formatAudioValueLabel(directorsCut.audioTracks.orEmpty(), null))
-        assertEquals("Auto - EN", formatSubtitleValueLabel(directorsCut.subtitleTracks.orEmpty(), null))
+        assertEquals("Auto - English", formatSubtitleValueLabel(directorsCut.subtitleTracks.orEmpty(), null))
     }
 }
