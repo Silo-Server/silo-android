@@ -770,6 +770,24 @@ class MobileSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `a quality pick names the audio chosen on the player`() = runTest {
+        val harness = harness(backgroundScope)
+
+        // Audio 1 was switched on the player; the transaction still holds the
+        // audio the session started with, so the quality replan names it.
+        harness.adapter.selectQuality("720p-medium", chosenAudioTrackIndex = 1)
+        runCurrent()
+
+        val qualityRequest = harness.port.requests.lastOrNull { it.qualityChanged }
+            ?: run {
+                harness.port.failStage(ApiResult.NetworkError(IllegalStateException("superseded")))
+                runCurrent()
+                harness.port.requests.last { it.qualityChanged }
+            }
+        assertEquals(1, qualityRequest.audioTrackIndex)
+    }
+
+    @Test
     fun `failed quality change is reported apart from subtitle failures`() = runTest {
         val harness = harness(backgroundScope)
 

@@ -4180,10 +4180,12 @@ class PlayerViewModel(
         // The replan carries the audio the viewer chose on this file, also
         // when it was switched on the player and no replan has told the
         // server yet: otherwise the server keeps its own earlier choice.
-        desiredAudio
-            ?.takeIf { it.explicit && it.fileId == state.mediaFileId }
-            ?.let { mobileSubtitleTransactions.commitLocallyAppliedAudio(it.catalogOrdinal) }
-        mobileSubtitleTransactions.selectQuality(id)
+        mobileSubtitleTransactions.selectQuality(
+            id,
+            chosenAudioTrackIndex = desiredAudio
+                ?.takeIf { it.explicit && it.fileId == state.mediaFileId }
+                ?.catalogOrdinal,
+        )
     }
 
     /**
@@ -4799,7 +4801,12 @@ class PlayerViewModel(
             contentId = state.contentId,
             preferredFileId = state.mediaFileId,
             versionChosen = lastLoadArgs?.versionChosen == true,
-            initialAudioTrackIndex = state.selectedAudioIndex,
+            // The audio the viewer chose on this file, also when it was
+            // switched on the player and the UI has not confirmed it yet.
+            initialAudioTrackIndex = desiredAudio
+                ?.takeIf { it.explicit && it.fileId == state.mediaFileId }
+                ?.catalogOrdinal
+                ?: state.selectedAudioIndex,
             initialSubtitleTrackIndex = state.selectedSubtitleIndex,
             resumePositionOverride = state.position,
             suppressResumeRewind = true,
