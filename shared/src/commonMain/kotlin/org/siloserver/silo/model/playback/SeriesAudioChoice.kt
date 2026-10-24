@@ -6,6 +6,7 @@ import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.WatchDetail
+import org.siloserver.silo.playback.resolveAudioTrackOrdinal
 
 /**
  * How playback recognizes a chosen audio track when indexes shift between the
@@ -127,6 +128,25 @@ fun WatchDetail.withPendingSeriesAudioChoice(pending: PendingSeriesAudioChoice?)
 
 fun ItemDetail.withPendingSeriesAudioChoice(pending: PendingSeriesAudioChoice?): ItemDetail =
     if (pending == null) this else copy(versions = versions.withPendingSeriesAudioChoice(pending))
+
+/**
+ * The device's per-file audio memory, filtered by the server's answer.
+ *
+ * Online ([serverOrdinal] known: the server's effective track for this file,
+ * which includes the profile's series choice) the memory only restores when it
+ * names that same track; a different one is a pick the series choice has
+ * since replaced, here or on another device. Offline, or when the server gave
+ * no answer, the memory is all there is and restores as before.
+ */
+fun localAudioMemoryForSeriesChoice(
+    localFingerprint: String?,
+    tracks: List<AudioTrack>,
+    serverOrdinal: Int?,
+): String? {
+    localFingerprint ?: return null
+    if (serverOrdinal == null || serverOrdinal !in tracks.indices) return localFingerprint
+    return localFingerprint.takeIf { resolveAudioTrackOrdinal(tracks, it) == serverOrdinal }
+}
 
 /**
  * Track language as the server's `audio_language` accepts it (a BCP 47 tag or

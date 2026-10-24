@@ -1824,9 +1824,20 @@ class PlayerViewModel(
             stopStaleReadySession(playbackState.sessionId)
             return
         }
+        // Online the per-file memory only restores the track the server's
+        // series choice already names; another one is an older pick it replaced.
         val persistedAudioIndex = if (initialAudioTrackIndex == null) {
             version?.audioTracks
-                ?.let { tracks -> resolveAudioTrackOrdinal(tracks, localTrackSelection?.audioFingerprint) }
+                ?.let { tracks ->
+                    resolveAudioTrackOrdinal(
+                        tracks,
+                        org.siloserver.silo.model.playback.localAudioMemoryForSeriesChoice(
+                            localFingerprint = localTrackSelection?.audioFingerprint,
+                            tracks = tracks,
+                            serverOrdinal = version.effectiveAudioTrackIndex,
+                        ),
+                    )
+                }
         } else {
             null
         }
@@ -1842,6 +1853,9 @@ class PlayerViewModel(
                 localPreference = localTrackSelection?.subtitleFingerprint,
                 serverChoiceKnown = watchDetail != null,
                 signature = seriesSubtitleSignature,
+                // Where the server's rows hold the chosen track, Auto finds it
+                // by its signature and an older local pick must not win.
+                candidates = playbackState.subtitleUrls.map { it.toMobileAutoSubtitleCandidate() },
             )
                 ?.takeUnless { explicitSubtitlePickResolved || isSessionRenewal },
             authoritativeInventory = playbackState.playbackPlan != null,

@@ -3,6 +3,7 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
 import org.siloserver.silo.model.playback.withPendingSeriesSubtitleChoice
+import org.siloserver.silo.model.playback.withPendingSeriesAudioChoice
 import kotlinx.coroutines.flow.stateIn
 
 import androidx.lifecycle.ViewModel
@@ -166,27 +167,45 @@ data class TvItemDetailUiState(
      * which still describe the older choice.
      */
     val pendingSeriesSubtitleChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
+    /** [pendingSeriesSubtitleChoices] for audio. */
+    val pendingSeriesAudioChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice> = emptyMap(),
 )
 
 /**
- * This device's per-file memory with its subtitle half filtered by the
- * server's series choice: the Auto preview already shows that choice, and a
- * stale local pick would otherwise override it (or undo a reset made on
- * another device).
+ * This device's per-file memory for [version] filtered by the server's series
+ * choices: the Auto preview already shows them, and a stale local pick would
+ * otherwise override them (or undo a reset made on another device). A
+ * subtitle only restores the series choice where its signature cannot find
+ * it; audio only the track the server's effective answer names.
  */
-internal fun org.siloserver.silo.repository.port.LocalTrackSelection.withSeriesSubtitleChoice(
+internal fun org.siloserver.silo.repository.port.LocalTrackSelection.withSeriesTrackChoices(
     detail: ItemDetail,
-    pending: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
-): org.siloserver.silo.repository.port.LocalTrackSelection = copy(
-    subtitleFingerprint = org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice(
-        localPreference = subtitleFingerprint,
-        serverChoiceKnown = true,
-        signature = detail.withPendingSeriesSubtitleChoice(
-            org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId)
-                ?.let(pending::get),
-        ).effectiveSubtitleTrackSignature,
-    ),
-)
+    version: FileVersion,
+    pendingSubtitles: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
+    pendingAudio: Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice> = emptyMap(),
+): org.siloserver.silo.repository.port.LocalTrackSelection {
+    val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId)
+    val audioTracks = version.audioTracks.orEmpty()
+    return copy(
+        subtitleFingerprint = org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice(
+            localPreference = subtitleFingerprint,
+            serverChoiceKnown = true,
+            signature = detail.withPendingSeriesSubtitleChoice(key?.let(pendingSubtitles::get))
+                .effectiveSubtitleTrackSignature,
+            candidates = org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates(
+                version.subtitleTracks.orEmpty(),
+            ),
+        ),
+        audioFingerprint = org.siloserver.silo.model.playback.localAudioMemoryForSeriesChoice(
+            localFingerprint = audioFingerprint,
+            tracks = audioTracks,
+            serverOrdinal = listOf(version)
+                .withPendingSeriesAudioChoice(key?.let(pendingAudio::get))
+                .single()
+                .effectiveAudioTrackIndex,
+        ),
+    )
+}
 
 /**
  * The Auto preview's subtitle context for [playbackDetail] (the item Play
@@ -1352,7 +1371,12 @@ class TvItemDetailViewModel(
         val version = selectedVersionFor(state, detail) ?: return
         viewModelScope.launch {
             val saved = userItemState.localTrackSelection(contentId, version.fileId)
-                ?.withSeriesSubtitleChoice(detail, _uiState.value.pendingSeriesSubtitleChoices)
+                ?.withSeriesTrackChoices(
+                    detail,
+                    version,
+                    _uiState.value.pendingSeriesSubtitleChoices,
+                    _uiState.value.pendingSeriesAudioChoices,
+                )
                 ?: return@launch
             val restored = restoreTrackSelection(version, saved)
             val subOrdinal = restored.subtitleIndex
@@ -2245,6 +2269,12 @@ class TvItemDetailViewModel(
             targetSubtitles = targetSubtitleChoices,
         )
         val durable = userItemState.localTrackSelection(episodeContentId, selectedVersion.fileId)
+            ?.withSeriesTrackChoices(
+                detail,
+                selectedVersion,
+                _uiState.value.pendingSeriesSubtitleChoices,
+                _uiState.value.pendingSeriesAudioChoices,
+            )
             ?.let { restoreTrackSelection(selectedVersion, it) }
 
         val sessionAudio = session?.audio.takeIf { sessionMatchesSelectedVersion }
@@ -2467,7 +2497,12 @@ class TvItemDetailViewModel(
         ) ?: return
         viewModelScope.launch {
             val saved = userItemState.localTrackSelection(targetContentId, version.fileId)
-                ?.withSeriesSubtitleChoice(playbackDetail, _uiState.value.pendingSeriesSubtitleChoices)
+                ?.withSeriesTrackChoices(
+                    playbackDetail,
+                    version,
+                    _uiState.value.pendingSeriesSubtitleChoices,
+                    _uiState.value.pendingSeriesAudioChoices,
+                )
                 ?: return@launch
             val restored = restoreTrackSelection(version, saved)
             var remembered: TvDetailTrackSelectionSession.Saved? = null
@@ -2557,6 +2592,11 @@ class TvItemDetailViewModel(
             viewModelScope.launch {
                 writer.pendingSubtitleChoices.collect { pending ->
                     _uiState.update { it.copy(pendingSeriesSubtitleChoices = pending) }
+                }
+            }
+            viewModelScope.launch {
+                writer.pendingAudioChoices.collect { pending ->
+                    _uiState.update { it.copy(pendingSeriesAudioChoices = pending) }
                 }
             }
         }

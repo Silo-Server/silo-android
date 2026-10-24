@@ -233,4 +233,18 @@ class SeriesSubtitleChoiceTest {
         assertEquals(localSdh, localSubtitleMemoryForSeriesChoice(localSdh, true, sdh))
     }
 
+    @Test
+    fun `online the local memory yields to a series choice the file holds`() {
+        // The series choice is the external English SRT; an older local pick
+        // of another English track agrees on language, forced and SDH, but the
+        // signature finds the chosen track itself, so the memory must not win.
+        val signature = SubtitleTrackSignature(source = "external", language = "eng", codec = "srt", label = "English")
+        val olderPick = encodeSubtitleIdentityPreference(
+            SubtitleIdentity.ServerSidecar(5, SubtitleMediaIdentity(language = "en", codecFamily = "pgs", forced = false)),
+        )
+        assertNull(localSubtitleMemoryForSeriesChoice(olderPick, true, signature, candidates = tracks))
+        // Where the file does not hold it (a downloaded or AI track), the
+        // memory still restores the same choice.
+        assertEquals(olderPick, localSubtitleMemoryForSeriesChoice(olderPick, true, signature, candidates = tracks.take(2)))
+    }
 }

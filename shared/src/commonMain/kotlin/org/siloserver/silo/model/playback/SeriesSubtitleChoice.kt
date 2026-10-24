@@ -237,6 +237,10 @@ private fun sameSubtitleLanguage(a: String?, b: String?): Boolean =
  * AI track the signature alone cannot find again): a track whose language
  * and forced flag agree with [signature]. With no server track choice the
  * local memory is ignored, so a reset made elsewhere is not undone here.
+ * When the file holds the track [signature] describes ([candidates] has an
+ * exact match) the memory is ignored too: the signature finds the choice
+ * itself, and an older pick of a sibling track in the same language (another
+ * codec or label) must not win over it.
  *
  * Offline ([serverChoiceKnown] false: no watch detail was read) the local
  * memory is the only memory there is and restores as before.
@@ -245,9 +249,11 @@ fun localSubtitleMemoryForSeriesChoice(
     localPreference: String?,
     serverChoiceKnown: Boolean,
     signature: SubtitleTrackSignature?,
+    candidates: List<AutoSubtitleCandidate> = emptyList(),
 ): String? {
     if (localPreference == null || !serverChoiceKnown) return localPreference
     if (signature == null) return null
+    if (candidates.any { it.matchesSignature(signature) }) return null
     val (language, forced) = when (val identity = decodeSubtitleIdentityPreference(localPreference)) {
         SubtitleIdentity.Off -> return null
         null -> legacyFingerprintTraits(localPreference) ?: return null

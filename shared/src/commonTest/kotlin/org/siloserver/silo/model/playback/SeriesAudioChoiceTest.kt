@@ -7,6 +7,7 @@ import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.WatchDetail
 import org.siloserver.silo.network.SiloJson
+import org.siloserver.silo.playback.audioTrackFingerprint
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -77,6 +78,16 @@ class SeriesAudioChoiceTest {
             detail.withPendingSeriesAudioChoice(PendingSeriesAudioChoice(null)).versions.map { it.effectiveAudioTrackIndex },
         )
         assertEquals(detail, detail.withPendingSeriesAudioChoice(null))
+    }
+
+    @Test
+    fun `online the per-file audio memory only restores the server's track`() {
+        val tracks = listOf(main, commentary, japanese)
+        val olderPick = audioTrackFingerprint(commentary)
+        assertNull(localAudioMemoryForSeriesChoice(olderPick, tracks, serverOrdinal = 2))
+        assertEquals(olderPick, localAudioMemoryForSeriesChoice(olderPick, tracks, serverOrdinal = 1))
+        // No server answer (offline, an older server, a reset not landed yet).
+        assertEquals(olderPick, localAudioMemoryForSeriesChoice(olderPick, tracks, serverOrdinal = null))
     }
 
 }

@@ -2487,6 +2487,9 @@ class TvPlayerViewModel(
                                 localPreference = localTrackSelection?.subtitleFingerprint,
                                 serverChoiceKnown = true,
                                 signature = result.preferredSubtitleTrackSignature,
+                                candidates = org.siloserver.silo.model.playback.inventoryAutoSubtitleCandidates(
+                                    result.subtitleUrls,
+                                ),
                             )
                         } else {
                             null
@@ -2532,8 +2535,16 @@ class TvPlayerViewModel(
                             return@launch
                         }
                         val hydratedSubtitleUrls = freshRestore.rows
+                        // The starter already weighed this memory against the
+                        // server's series choice; only the track that choice
+                        // names may be restored onto the renderer.
                         pendingPersistedAudioFingerprint = if (initialAudioTrackIndex == null) {
-                            localTrackSelection?.audioFingerprint
+                            val readyVersion = result.versions.firstOrNull { it.fileId == (result.fileId ?: readyMediaFileId) }
+                            org.siloserver.silo.model.playback.localAudioMemoryForSeriesChoice(
+                                localFingerprint = localTrackSelection?.audioFingerprint,
+                                tracks = readyVersion?.audioTracks.orEmpty(),
+                                serverOrdinal = readyVersion?.effectiveAudioTrackIndex,
+                            )
                         } else {
                             null
                         }

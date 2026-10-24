@@ -34,6 +34,7 @@ import org.siloserver.silo.model.playback.applyResumeRewind
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.videoQualityPreference
+import org.siloserver.silo.model.playback.matchesSignature
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.orNullIfBlank
 import org.siloserver.silo.playback.resolveCatalogSubtitlePreferenceOrdinal
@@ -264,6 +265,14 @@ internal class MobileVideoPlaybackStarter(
                     }
             }
             val allowAlternateVersions = request.allowAlternateVersions()
+            // The series subtitle choice as this file holds it, by signature.
+            val seriesSubtitleSignature = watchDetail.effectiveSubtitleTrackSignature
+                ?.takeUnless { watchDetail.effectiveSubtitleMode.equals("off", ignoreCase = true) }
+            val seriesSubtitleCandidate = seriesSubtitleSignature?.let { signature ->
+                org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates(version.subtitleTracks.orEmpty())
+                    .firstOrNull { it.matchesSignature(signature) }
+            }
+            var restoredSeriesSubtitleIndex: Int? = null
             val persistedTrackSelection = if (
                 userItemStatePort != null &&
                 (request.audioTrackIndex == null || request.subtitleTrackIndex == null)
@@ -272,13 +281,16 @@ internal class MobileVideoPlaybackStarter(
                     ?.let { local ->
                         // The series choice on the server outranks this
                         // device's per-file memory (see the player's load).
-                        local.copy(
-                            subtitleFingerprint = org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice(
-                                localPreference = local.subtitleFingerprint,
-                                serverChoiceKnown = true,
-                                signature = watchDetail.effectiveSubtitleTrackSignature,
-                            ),
+                        val agreeing = org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice(
+                            localPreference = local.subtitleFingerprint,
+                            serverChoiceKnown = true,
+                            signature = seriesSubtitleSignature,
                         )
+                        // A memory that agrees with the series choice restores
+                        // it — as the track the signature names, where the
+                        // file holds it, not a sibling the memory recorded.
+                        if (agreeing != null) restoredSeriesSubtitleIndex = seriesSubtitleCandidate?.selectionIndex
+                        local.copy(subtitleFingerprint = agreeing.takeIf { seriesSubtitleCandidate == null })
                     }
             } else {
                 null
@@ -310,7 +322,7 @@ internal class MobileVideoPlaybackStarter(
                 )
             val initialTracks = resolveMobileInitialTrackSelection(
                 explicitAudioTrackIndex = request.audioTrackIndex,
-                explicitSubtitleTrackIndex = request.subtitleTrackIndex,
+                explicitSubtitleTrackIndex = request.subtitleTrackIndex ?: restoredSeriesSubtitleIndex,
                 audioTracks = version.audioTracks.orEmpty(),
                 subtitleTracks = version.subtitleTracks.orEmpty(),
                 persisted = persistedTrackSelection,

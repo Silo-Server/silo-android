@@ -36,6 +36,7 @@ import org.siloserver.silo.repository.RecommendationRepository
 import org.siloserver.silo.viewmodel.applyLocalPlaybackProgress
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.playback.withPendingSeriesSubtitleChoice
+import org.siloserver.silo.model.playback.withPendingSeriesAudioChoice
 import org.siloserver.silo.playback.SUBTITLE_OFF_FINGERPRINT
 import org.siloserver.silo.playback.audioTrackFingerprint
 import org.siloserver.silo.playback.resolveAudioTrackOrdinal
@@ -1320,21 +1321,33 @@ class ItemDetailViewModel(
             // The series choice on the server outranks this device's per-file
             // memory; the player starts from it when nothing is picked here.
             // A choice still waiting to land outranks the server's older one.
-            val pending = seriesTrackChoiceWriter?.let { writer ->
-                org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId)
-                    ?.let { writer.pendingSubtitle(it) }
-            }
+            val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId)
+            val pendingSubtitle = key?.let { seriesTrackChoiceWriter?.pendingSubtitle(it) }
+            val pendingAudio = key?.let { seriesTrackChoiceWriter?.pendingAudio(it) }
             val subtitleOrdinal = resolveSubtitleTrackOrdinal(
                 version.subtitleTracks.orEmpty(),
                 org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice(
                     localPreference = saved.subtitleFingerprint,
                     serverChoiceKnown = true,
-                    signature = detail.withPendingSeriesSubtitleChoice(pending).effectiveSubtitleTrackSignature,
+                    signature = detail.withPendingSeriesSubtitleChoice(pendingSubtitle).effectiveSubtitleTrackSignature,
+                    candidates = org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates(
+                        version.subtitleTracks.orEmpty(),
+                    ),
                 ),
             )
+            // Likewise for audio: the memory only restores the track the
+            // server's effective answer (the series choice) already names.
+            val audioTracks = version.audioTracks.orEmpty()
             val audioOrdinal = resolveAudioTrackOrdinal(
-                version.audioTracks.orEmpty(),
-                saved.audioFingerprint,
+                audioTracks,
+                org.siloserver.silo.model.playback.localAudioMemoryForSeriesChoice(
+                    localFingerprint = saved.audioFingerprint,
+                    tracks = audioTracks,
+                    serverOrdinal = listOf(version)
+                        .withPendingSeriesAudioChoice(pendingAudio)
+                        .single()
+                        .effectiveAudioTrackIndex,
+                ),
             )
             if (subtitleOrdinal == null && audioOrdinal == null) return@launch
             _uiState.update {
