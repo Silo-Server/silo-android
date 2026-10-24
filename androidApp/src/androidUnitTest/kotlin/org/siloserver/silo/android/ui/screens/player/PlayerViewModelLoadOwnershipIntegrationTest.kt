@@ -1586,6 +1586,33 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
     }
 
     @Test
+    fun theServersSeriesAudioChoiceOutranksPerFileMemoryButNotAPick() {
+        val tracks = listOf(
+            AudioTrack(codec = "aac", language = "eng", title = "English"),
+            AudioTrack(codec = "aac", language = "eng", title = "Commentary"),
+            AudioTrack(codec = "aac", language = "jpn", title = "Japanese"),
+        )
+        // An older pick on this device; the series choice (Japanese) has
+        // since been made here or on another device.
+        val persisted = LocalTrackSelection(audioFingerprint = audioTrackFingerprint(tracks[1]), subtitleFingerprint = null)
+        fun select(explicit: Int?, server: Int?) = resolveMobileInitialTrackSelection(
+            explicitAudioTrackIndex = explicit,
+            explicitSubtitleTrackIndex = null,
+            audioTracks = tracks,
+            subtitleTracks = emptyList(),
+            persisted = persisted,
+            preferredAudioLanguage = "eng",
+            capabilities = ClientCodecCapabilities(codecsAudio = listOf("aac")),
+            serverAudioTrackIndex = server,
+        ).audioTrackIndex
+
+        assertEquals(2, select(explicit = null, server = 2))
+        assertEquals(0, select(explicit = 0, server = 2))
+        // No server answer: the per-file memory, as before.
+        assertEquals(1, select(explicit = null, server = null))
+    }
+
+    @Test
     fun explicitAudioSelectionWinsOverTheLanguageSetting() = runTest(dispatcher) {
         var allocation: MobileVideoSessionAllocation? = null
 

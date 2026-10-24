@@ -40,7 +40,6 @@ import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
 import org.siloserver.silo.model.playback.videoQualityPreference
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.orNullIfBlank
-import org.siloserver.silo.playback.resolveAudioTrackOrdinal
 import org.siloserver.silo.playback.selectPlaybackVersion
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.ProfileRepository
@@ -192,7 +191,8 @@ class TvVideoPlaybackStarter(
                 settingsLanguage = preferredAudioLanguage,
                 profileLanguage = activeProfile?.language,
             )
-            // Explicit, carried, and durable choices win. Otherwise resolve the
+            // Explicit and carried choices win, then the server's effective
+            // track (the profile's series choice). Otherwise resolve the
             // automatic language + quality policy against the detected device
             // capabilities before asking the server for a plan.
             val startAudioTrackIndex = resolveTvInitialAudioTrackIndex(
@@ -203,6 +203,7 @@ class TvVideoPlaybackStarter(
                 durableAudioFingerprint = durableAudioFingerprint,
                 preferredAudioLanguage = effectivePreferredAudioLanguage,
                 capabilities = capabilities,
+                serverAudioTrackIndex = version.effectiveAudioTrackIndex,
             )
             // Skip-back-on-resume — see MobileVideoPlaybackStarter for the rationale.
             // Suppressed for Start Over / retry (request flag) and Watch Together
@@ -497,16 +498,21 @@ internal fun resolveTvInitialAudioTrackIndex(
     durableAudioFingerprint: String?,
     preferredAudioLanguage: String?,
     capabilities: ClientCodecCapabilities,
+    serverAudioTrackIndex: Int? = null,
 ): Int? {
-    requestedAudioIndex?.let { return it }
-    carriedAudioIndex?.let { return it }
-    if (unresolvedCarriedChoice) return null
-    return resolveAudioTrackOrdinal(tracks, durableAudioFingerprint)
-        ?: TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
+    if (requestedAudioIndex == null && carriedAudioIndex == null && unresolvedCarriedChoice) return null
+    return org.siloserver.silo.common.player.resolveStartAudioTrackOrdinal(
+        explicitOrdinal = requestedAudioIndex ?: carriedAudioIndex,
+        tracks = tracks,
+        serverOrdinal = serverAudioTrackIndex,
+        localFingerprint = durableAudioFingerprint,
+    ) {
+        TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
             tracks = tracks,
             preferredAudioLanguage = preferredAudioLanguage,
             capabilities = capabilities,
         )
+    }
 }
 
 internal fun resolveTvSourceStartPosition(

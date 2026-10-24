@@ -147,7 +147,7 @@ class TvEpisodeHandoffPlaybackStartTest {
     }
 
     @Test
-    fun tvAudioPrecedenceIsManualThenCarryThenPerFileThenLanguage() {
+    fun tvAudioPrecedenceIsManualThenCarryThenServerThenPerFileThenLanguage() {
         val tracks = listOf(
             AudioTrack(codec = "aac", language = "eng", title = "English"),
             AudioTrack(codec = "truehd", language = "jpn", title = "Japanese"),
@@ -161,6 +161,13 @@ class TvEpisodeHandoffPlaybackStartTest {
         assertEquals(1, resolveTvInitialAudioTrackIndex(null, null, false, tracks, durable, "fr", capabilities))
         assertEquals(2, resolveTvInitialAudioTrackIndex(null, null, false, tracks, null, "fr", capabilities))
         assertNull(resolveTvInitialAudioTrackIndex(null, null, true, tracks, durable, "fr", capabilities))
+        // The server's effective track (the series choice) beats this device's
+        // per-file memory and language, never a pick or a carried choice.
+        assertEquals(0, resolveTvInitialAudioTrackIndex(null, null, false, tracks, durable, "fr", capabilities, serverAudioTrackIndex = 0))
+        assertEquals(2, resolveTvInitialAudioTrackIndex(null, 2, false, tracks, durable, "fr", capabilities, serverAudioTrackIndex = 0))
+        assertEquals(1, resolveTvInitialAudioTrackIndex(1, null, false, tracks, durable, "fr", capabilities, serverAudioTrackIndex = 0))
+        // An index the file does not have is no answer.
+        assertEquals(1, resolveTvInitialAudioTrackIndex(null, null, false, tracks, durable, "fr", capabilities, serverAudioTrackIndex = 7))
     }
 
     @Test

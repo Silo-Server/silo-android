@@ -36,7 +36,6 @@ import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.videoQualityPreference
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.orNullIfBlank
-import org.siloserver.silo.playback.resolveAudioTrackOrdinal
 import org.siloserver.silo.playback.resolveCatalogSubtitlePreferenceOrdinal
 import org.siloserver.silo.playback.selectPlaybackVersion
 import org.siloserver.silo.repository.CatalogRepository
@@ -82,7 +81,10 @@ internal data class MobileInitialTrackSelection(
  * Resolves durable per-file choices before neutral-v3 allocates its first plan.
  *
  * Explicit request indexes are already playback-v3 indexes and must pass
- * through unchanged, including internal recovery starts. Persisted subtitle
+ * through unchanged, including internal recovery starts. Audio otherwise
+ * follows the server's effective track for the file ([serverAudioTrackIndex],
+ * which holds the profile's series choice); see
+ * [org.siloserver.silo.common.player.resolveStartAudioTrackOrdinal]. Persisted subtitle
  * choices are stable catalog identities, so resolve only those onto the
  * server's combined external-then-embedded index space. This lets restore
  * happen in the first plan without reinterpreting a recovery index twice.
@@ -98,16 +100,23 @@ internal fun resolveMobileInitialTrackSelection(
     persisted: LocalTrackSelection?,
     preferredAudioLanguage: String? = null,
     capabilities: ClientCodecCapabilities,
+    serverAudioTrackIndex: Int? = null,
 ): MobileInitialTrackSelection {
-    val audioTrackIndex = explicitAudioTrackIndex
-        ?: resolveAudioTrackOrdinal(audioTracks, persisted?.audioFingerprint)
-        ?: preferredAudioLanguage?.let { language ->
+    val audioTrackIndex = org.siloserver.silo.common.player.resolveStartAudioTrackOrdinal(
+        explicitOrdinal = explicitAudioTrackIndex,
+        tracks = audioTracks,
+        serverOrdinal = serverAudioTrackIndex,
+        localFingerprint = persisted?.audioFingerprint,
+    ) {
+        // The phone keeps the file's default track when no language is set.
+        preferredAudioLanguage?.let { language ->
             TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
                 tracks = audioTracks,
                 preferredAudioLanguage = language,
                 capabilities = capabilities,
             )
         }
+    }
     val persistedSubtitleOrdinal = if (explicitSubtitleTrackIndex == null) {
         resolveCatalogSubtitlePreferenceOrdinal(
             subtitleTracks,
@@ -307,6 +316,7 @@ internal class MobileVideoPlaybackStarter(
                 persisted = persistedTrackSelection,
                 preferredAudioLanguage = preferredAudioLanguage,
                 capabilities = capabilities,
+                serverAudioTrackIndex = version.effectiveAudioTrackIndex,
             )
             // Skip-back-on-resume: nudge a genuine resume back a few seconds.
             // Suppressed for Start Over / retry (request flag) and Watch Party
