@@ -1513,6 +1513,21 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
 
     @Test
     fun theServersSubtitlePreferenceOutranksAPerFileChoice() = runTest(dispatcher) {
+        // Picked French for the series on another device. Not the English this
+        // device remembered for the file: the player's auto-selection applies
+        // the server's answer once tracks mount.
+        assertNull(allocatedSubtitleWithPerFileEnglish("\"effective_subtitle_language\": \"fr\", \"effective_subtitle_mode\": \"always\","))
+    }
+
+    @Test
+    fun anEmptyEffectiveLanguageIsNoPreferenceAndKeepsThePerFileChoice() = runTest(dispatcher) {
+        // The server spells a stored "no preference" as "", which the player
+        // reads as no preference, so it must not displace this device's choice.
+        assertEquals(1, allocatedSubtitleWithPerFileEnglish("\"effective_subtitle_language\": \"\","))
+    }
+
+    /** English is combined index 1; this device remembered it for the file. */
+    private suspend fun TestScope.allocatedSubtitleWithPerFileEnglish(effective: String): Int? {
         val subtitleTracks = listOf(
             SubtitleTrack(index = 12, codec = "subrip", language = "en", title = "English"),
             SubtitleTrack(index = 0, codec = "srt", language = "fr", title = "French", external = true),
@@ -1524,10 +1539,8 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
             )
         }
         var allocation: MobileVideoSessionAllocation? = null
-
         start(
-            // Picked French for the series on another device.
-            effective = "\"effective_subtitle_language\": \"fr\", \"effective_subtitle_mode\": \"always\",",
+            effective = effective,
             profile = Profile(id = PROFILE_ID, name = "Profile"),
             versionFields = """
                 "subtitle_tracks": [
@@ -1538,10 +1551,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
             userItemStatePort = localState,
             onAllocation = { allocation = it },
         )
-
-        // Not the English this device remembered for the file: the player's
-        // auto-selection applies the server's answer once tracks mount.
-        assertNull(allocation?.subtitleTrackIndex)
+        return allocation?.subtitleTrackIndex
     }
 
     @Test

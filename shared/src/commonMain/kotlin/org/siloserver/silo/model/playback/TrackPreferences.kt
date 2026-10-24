@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.catalog.WatchDetail
+import org.siloserver.silo.playback.orNullIfBlank
 import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 
 /**
@@ -74,10 +75,14 @@ fun trackPreferenceKey(contentType: String?, contentId: String?, seriesId: Strin
 /**
  * Whether the server resolved a subtitle preference for this title at any
  * scope. When it did, that answer is authoritative and a per-file choice
- * remembered on this device must not override it.
+ * remembered on this device must not override it. The server spells a stored
+ * "no preference" as an empty language, which playback reads as none; Off is
+ * the nonblank mode `off`.
  */
 fun WatchDetail.hasSubtitlePreference(): Boolean =
-    effectiveSubtitleTrackSignature != null || effectiveSubtitleLanguage != null || effectiveSubtitleMode != null
+    effectiveSubtitleTrackSignature != null ||
+        effectiveSubtitleLanguage.orNullIfBlank() != null ||
+        effectiveSubtitleMode.orNullIfBlank() != null
 
 /**
  * An audio pick against the source file's catalog tracks. [ordinal] indexes

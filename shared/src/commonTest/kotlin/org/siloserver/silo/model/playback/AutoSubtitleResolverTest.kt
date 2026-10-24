@@ -54,6 +54,24 @@ class AutoSubtitleResolverTest {
     }
 
     @Test
+    fun aSignatureMatchesTracksTaggedWithTheOtherIsoSpelling() {
+        // Saved as "por" on one episode; the next tags its untitled tracks "pt".
+        val plain = AutoSubtitleCandidate(selectionIndex = 0, language = "pt", codec = "subrip")
+        val forced = AutoSubtitleCandidate(selectionIndex = 1, language = "pt", codec = "subrip", forced = true)
+
+        val selected = resolveAutoSubtitle(
+            candidates = listOf(plain, forced),
+            context = AutoSubtitleContext(
+                preferredLanguage = "pt",
+                mode = "always",
+                trackSignature = SubtitleTrackSignature(language = "por", codec = "subrip", forced = true),
+            ),
+        ).selectedCandidate()
+
+        assertEquals(forced, selected)
+    }
+
+    @Test
     fun aSignatureMatchingNothingFallsBackToTheLanguageCascade() {
         // Flags and codec agreeing is no match: a Japanese pick must not
         // hijack the English cascade on an episode with no Japanese track.
