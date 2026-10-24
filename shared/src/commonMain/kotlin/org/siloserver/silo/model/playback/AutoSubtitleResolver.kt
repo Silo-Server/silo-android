@@ -1,6 +1,7 @@
 package org.siloserver.silo.model.playback
 
 import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.playback.canonicalSubtitleLanguage
 import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import org.siloserver.silo.playback.isClientMountableBitmapCodecFamily
 import org.siloserver.silo.playback.playbackSubtitleIdentity
@@ -186,12 +187,13 @@ fun bestSignatureAutoSubtitleCandidate(
     signature: SubtitleTrackSignature,
     candidates: List<AutoSubtitleCandidate>,
 ): AutoSubtitleCandidate? {
-    val signatureLanguage = autoSubtitleLanguageKey(signature.language)
+    // The full ISO 639 table: a signature saved as "por" names the next episode's "pt" track.
+    val signatureLanguage = canonicalSubtitleLanguage(signature.language)
     val signatureLabel = signature.label?.trim()?.takeIf { it.isNotEmpty() }
     val scored = candidates.mapNotNull { candidate ->
         var score = 0
         var strong = false
-        if (signatureLanguage != null && autoSubtitleLanguageKey(candidate.language) == signatureLanguage) {
+        if (signatureLanguage != null && canonicalSubtitleLanguage(candidate.language) == signatureLanguage) {
             score += 5
             strong = true
         }
