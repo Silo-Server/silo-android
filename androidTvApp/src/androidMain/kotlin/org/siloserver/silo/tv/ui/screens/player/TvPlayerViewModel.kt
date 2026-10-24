@@ -2648,6 +2648,14 @@ class TvPlayerViewModel(
                                 mediaFileId = result.mediaFileId,
                                 position = result.sourceStartPositionSeconds,
                                 subtitleUrls = hydratedSubtitleUrls,
+                                // The predecessor's audio belongs to its own
+                                // file (on Next Up, another episode). Left in,
+                                // the first subtitle replan here sent that
+                                // ordinal back as this file's audio choice,
+                                // replacing the track the start resolved.
+                                desiredAudioOrdinal = null,
+                                desiredAudioConfirmed = false,
+                                audioTracks = emptyList(),
                             ),
                         )
                         val published = loadOwners.publishReadyIfOwned(
