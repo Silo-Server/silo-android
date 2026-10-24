@@ -1343,10 +1343,7 @@ class ItemDetailViewModel(
                 org.siloserver.silo.model.playback.localAudioMemoryForSeriesChoice(
                     localFingerprint = saved.audioFingerprint,
                     tracks = audioTracks,
-                    serverOrdinal = listOf(version)
-                        .withPendingSeriesAudioChoice(pendingAudio)
-                        .single()
-                        .effectiveAudioTrackIndex,
+                    serverOrdinal = version.withPendingSeriesAudioChoice(pendingAudio).effectiveAudioTrackIndex,
                 ),
             )
             if (subtitleOrdinal == null && audioOrdinal == null) return@launch

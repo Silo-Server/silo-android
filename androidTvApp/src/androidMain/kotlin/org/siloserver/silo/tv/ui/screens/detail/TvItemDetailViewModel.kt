@@ -199,10 +199,7 @@ internal fun org.siloserver.silo.repository.port.LocalTrackSelection.withSeriesT
         audioFingerprint = org.siloserver.silo.model.playback.localAudioMemoryForSeriesChoice(
             localFingerprint = audioFingerprint,
             tracks = audioTracks,
-            serverOrdinal = listOf(version)
-                .withPendingSeriesAudioChoice(key?.let(pendingAudio::get))
-                .single()
-                .effectiveAudioTrackIndex,
+            serverOrdinal = version.withPendingSeriesAudioChoice(key?.let(pendingAudio::get)).effectiveAudioTrackIndex,
         ),
     )
 }

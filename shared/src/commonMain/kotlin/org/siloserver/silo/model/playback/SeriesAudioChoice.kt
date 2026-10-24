@@ -116,12 +116,11 @@ fun SeriesAudioChoice.resolveOn(tracks: List<AudioTrack>): Int? {
  * the series choice being replaced, and the starters then fall back to the
  * profile's language.
  */
-fun List<FileVersion>.withPendingSeriesAudioChoice(pending: PendingSeriesAudioChoice?): List<FileVersion> {
-    pending ?: return this
-    return map { version ->
-        version.copy(effectiveAudioTrackIndex = pending.choice?.resolveOn(version.audioTracks.orEmpty()))
-    }
-}
+fun FileVersion.withPendingSeriesAudioChoice(pending: PendingSeriesAudioChoice?): FileVersion =
+    if (pending == null) this else copy(effectiveAudioTrackIndex = pending.choice?.resolveOn(audioTracks.orEmpty()))
+
+fun List<FileVersion>.withPendingSeriesAudioChoice(pending: PendingSeriesAudioChoice?): List<FileVersion> =
+    if (pending == null) this else map { it.withPendingSeriesAudioChoice(pending) }
 
 fun WatchDetail.withPendingSeriesAudioChoice(pending: PendingSeriesAudioChoice?): WatchDetail =
     if (pending == null) this else copy(versions = versions.withPendingSeriesAudioChoice(pending))
