@@ -227,6 +227,18 @@ class DefaultSeriesTrackChoiceWriter(
 
     init {
         scope.launch {
+            // A sign-out, account replacement or server removal ends the login
+            // the queued picks were made under. A later sign-in to the same
+            // server and profile is another login: sending them with its
+            // credentials would act for it. Profile switches and token
+            // rotation keep the queue (see [send]).
+            identityChanges.collect { transition ->
+                if (transition.phase != IdentityTransitionPhase.WILL_CHANGE || !transition.purgesPersistentIdentity) return@collect
+                if (transition.kind !in LOGIN_ENDING_TRANSITIONS) return@collect
+                dropLogin(transition.targetServerId)
+            }
+        }
+        scope.launch {
             resumeSignals.collect {
                 if (synchronized(lock) { pending.isEmpty() }) return@collect
                 flushNow()
@@ -294,6 +306,22 @@ class DefaultSeriesTrackChoiceWriter(
         }
     }
 
+    /** Drops every queued pick for [serverId] (every server when null). */
+    private fun dropLogin(serverId: String?) {
+        synchronized(lock) {
+            val doomed = unsent.value.keys.filter { serverId == null || it.serverId == serverId }.toSet() +
+                pending.keys.filter { serverId == null || it.serverId == serverId }
+            if (doomed.isEmpty()) return
+            doomed.forEach { pending.remove(it); newestSequence.remove(it) }
+            unsent.value = unsent.value - doomed
+            if (pending.isEmpty()) {
+                retryJob?.cancel()
+                retryJob = null
+            }
+        }
+        SiloLog.i(CATEGORY, TAG, "queued track choices dropped: the login they were made under ended")
+    }
+
     /** For tests: the series keys still queued for [profileId]. */
     internal fun pendingSeries(profileId: String): Set<String> = synchronized(lock) {
         pending.keys.filter { it.profileId == profileId }.map { it.seriesKey }.toSet()
@@ -327,7 +355,8 @@ class DefaultSeriesTrackChoiceWriter(
                 // unsent rather than vanishing mid-flight.
                 synchronized(lock) {
                     for ((key, op) in retry + unfinished) {
-                        if (key !in pending) pending[key] = op
+                        // Not a dropped login's pick, nor one a newer pick replaced.
+                        if (key !in pending && unsent.value[key] === op) pending[key] = op
                     }
                     if (pending.isNotEmpty()) scheduleRetry(attempt = 1)
                 }
@@ -340,7 +369,11 @@ class DefaultSeriesTrackChoiceWriter(
             val attempt = synchronized(lock) {
                 // A newer choice queued meanwhile wins over the failed one.
                 for ((key, op) in retry) {
-                    if (key !in pending) pending[key] = op else settle(key, op)
+                    when {
+                        unsent.value[key] !== op -> Unit // dropped with its login, or replaced
+                        key !in pending -> pending[key] = op
+                        else -> settle(key, op)
+                    }
                 }
                 if (retryAttempts >= MAX_AUTO_RETRIES) null else ++retryAttempts
             } ?: return
@@ -418,6 +451,11 @@ class DefaultSeriesTrackChoiceWriter(
         const val RETRY_MAX_DELAY_MS = 60_000L
         const val MAX_PENDING_AGE_MS = 10 * 60_000L
         const val IDENTITY_CHANGED = "identity_changed"
+        val LOGIN_ENDING_TRANSITIONS = setOf(
+            org.siloserver.silo.network.IdentityTransitionKind.SIGN_OUT,
+            org.siloserver.silo.network.IdentityTransitionKind.ACCOUNT_REPLACE,
+            org.siloserver.silo.network.IdentityTransitionKind.SERVER_REMOVE,
+        )
     }
 }
 
