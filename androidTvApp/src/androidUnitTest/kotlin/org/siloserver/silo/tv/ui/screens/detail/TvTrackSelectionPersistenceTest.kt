@@ -37,6 +37,16 @@ class TvTrackSelectionPersistenceTest {
         )
         // No capabilities known in this state, so no device-language answer either.
         assertNull(cleared.automaticAudioOrdinal(detail, version))
+
+        // Once a refreshed detail answers differently (here: a newer pick of
+        // English made in the player), the page's own pick stops applying.
+        val withBaseline = cleared.copy(
+            pickedAudioBaselines = mapOf("show" to org.siloserver.silo.model.playback.PickedAudioBaseline.of(detail)),
+        )
+        assertNull(withBaseline.automaticAudioOrdinal(detail, version))
+        val refreshedVersion = version.copy(effectiveAudioTrackIndex = 0)
+        val refreshed = detail.copy(versions = listOf(refreshedVersion))
+        assertEquals(0, withBaseline.automaticAudioOrdinal(refreshed, refreshedVersion))
     }
 
     @Test

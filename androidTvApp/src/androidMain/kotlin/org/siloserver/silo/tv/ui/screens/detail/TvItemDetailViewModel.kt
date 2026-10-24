@@ -177,13 +177,35 @@ data class TvItemDetailUiState(
      */
     val pickedSeriesSubtitleChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
     val pickedSeriesAudioChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice> = emptyMap(),
+    /**
+     * The effective fields each pick was laid over. A pick stops applying once
+     * a refreshed detail answers differently: the server then holds it, or a
+     * newer choice made elsewhere (in the player, on another device).
+     */
+    val pickedSubtitleBaselines: Map<String, org.siloserver.silo.model.playback.EffectiveSubtitleFields> = emptyMap(),
+    val pickedAudioBaselines: Map<String, org.siloserver.silo.model.playback.PickedAudioBaseline> = emptyMap(),
 ) {
-    /** What this page knows newer than its details: its own picks, and any choice still unsent. */
-    val seriesSubtitleOverlay: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice>
-        get() = pickedSeriesSubtitleChoices + pendingSeriesSubtitleChoices
-    val seriesAudioOverlay: Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice>
-        get() = pickedSeriesAudioChoices + pendingSeriesAudioChoices
+    /** What this page knows newer than [detail]: its own picks, and any choice still unsent. */
+    fun subtitleOverlayFor(detail: ItemDetail?): Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> {
+        val current = detail?.let { org.siloserver.silo.model.playback.effectiveSubtitleFieldsOf(it) }
+        val picked = pickedSeriesSubtitleChoices.filterKeys { key ->
+            val baseline = pickedSubtitleBaselines[key]
+            baseline == null || current == null || baseline == current
+        }
+        return picked + pendingSeriesSubtitleChoices
+    }
+
+    /** [subtitleOverlayFor] for audio. */
+    fun audioOverlayFor(detail: ItemDetail?): Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice> {
+        val picked = pickedSeriesAudioChoices.filterKeys { key ->
+            val baseline = pickedAudioBaselines[key]
+            baseline == null || detail == null || !baseline.supersededBy(detail)
+        }
+        return picked + pendingSeriesAudioChoices
+    }
 }
+
+
 
 /**
  * This device's per-file memory for [version] filtered by the server's series
@@ -234,7 +256,7 @@ internal fun TvItemDetailUiState.subtitleAutoContext(
 ): TvPlaybackFormatting.SubtitleAutoContext {
     val detail = playbackDetail?.withPendingSeriesSubtitleChoice(
         org.siloserver.silo.model.playback.seriesTrackChoiceKey(playbackDetail.seriesId, playbackDetail.contentId)
-            ?.let(seriesSubtitleOverlay::get),
+            ?.let(subtitleOverlayFor(playbackDetail)::get),
     )
     return TvPlaybackFormatting.SubtitleAutoContext(
         preferredLanguage = detail?.effectiveSubtitleLanguage?.takeIf { it.isNotBlank() }
@@ -294,7 +316,7 @@ internal fun sessionTracksConsistentWithSeriesChoice(
 internal fun TvItemDetailUiState.automaticAudioOrdinal(playbackDetail: ItemDetail?, version: FileVersion?): Int? {
     version ?: return null
     val key = playbackDetail?.let { org.siloserver.silo.model.playback.seriesTrackChoiceKey(it.seriesId, it.contentId) }
-    val served = version.withPendingSeriesAudioChoice(key?.let(seriesAudioOverlay::get))
+    val served = version.withPendingSeriesAudioChoice(key?.let(audioOverlayFor(playbackDetail)::get))
     served.effectiveAudioTrackIndex?.takeIf { it in served.audioTracks.orEmpty().indices }?.let { return it }
     return resolveTvAutomaticAudioTrackOrdinal(
         version = version,
@@ -1374,6 +1396,7 @@ class TvItemDetailViewModel(
             it.copy(
                 pickedSeriesSubtitleChoices = it.pickedSeriesSubtitleChoices +
                     (key to org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice(choice)),
+                pickedSubtitleBaselines = it.pickedSubtitleBaselines + (key to org.siloserver.silo.model.playback.effectiveSubtitleFieldsOf(detail)),
             )
         }
         viewModelScope.launch { writer.saveSubtitle(key, choice) }
@@ -1391,6 +1414,7 @@ class TvItemDetailViewModel(
             it.copy(
                 pickedSeriesAudioChoices = it.pickedSeriesAudioChoices +
                     (key to org.siloserver.silo.model.playback.PendingSeriesAudioChoice(choice)),
+                pickedAudioBaselines = it.pickedAudioBaselines + (key to org.siloserver.silo.model.playback.PickedAudioBaseline.of(detail)),
             )
         }
         viewModelScope.launch { writer.saveAudio(key, choice) }
@@ -1463,8 +1487,8 @@ class TvItemDetailViewModel(
                 ?.withSeriesTrackChoices(
                     detail,
                     version,
-                    _uiState.value.seriesSubtitleOverlay,
-                    _uiState.value.seriesAudioOverlay,
+                    _uiState.value.subtitleOverlayFor(detail),
+                    _uiState.value.audioOverlayFor(detail),
                     subtitleResetToAuto = subtitleResetToAuto(detail),
                 )
                 ?: return@launch
@@ -1495,8 +1519,8 @@ class TvItemDetailViewModel(
             version = version,
             audio = saved.audio.takeIf { tracksBelongToVersion },
             subtitle = saved.subtitle.takeIf { tracksBelongToVersion },
-            pendingSubtitles = state.seriesSubtitleOverlay,
-            pendingAudio = state.seriesAudioOverlay,
+            pendingSubtitles = state.subtitleOverlayFor(detail),
+            pendingAudio = state.audioOverlayFor(detail),
         )
         _uiState.update {
             it.copy(
@@ -2370,8 +2394,8 @@ class TvItemDetailViewModel(
             ?.withSeriesTrackChoices(
                 detail,
                 selectedVersion,
-                _uiState.value.seriesSubtitleOverlay,
-                _uiState.value.seriesAudioOverlay,
+                _uiState.value.subtitleOverlayFor(detail),
+                _uiState.value.audioOverlayFor(detail),
                 subtitleResetToAuto = subtitleResetToAuto(detail),
             )
             ?.let { restoreTrackSelection(selectedVersion, it) }
@@ -2381,8 +2405,8 @@ class TvItemDetailViewModel(
             version = selectedVersion,
             audio = session?.audio.takeIf { sessionMatchesSelectedVersion },
             subtitle = session?.subtitle.takeIf { sessionMatchesSelectedVersion },
-            pendingSubtitles = _uiState.value.seriesSubtitleOverlay,
-            pendingAudio = _uiState.value.seriesAudioOverlay,
+            pendingSubtitles = _uiState.value.subtitleOverlayFor(detail),
+            pendingAudio = _uiState.value.audioOverlayFor(detail),
         )
         return ResolvedNextUpTrackSelection(
             fileId = selectedFileId,
@@ -2605,8 +2629,8 @@ class TvItemDetailViewModel(
                 ?.withSeriesTrackChoices(
                     playbackDetail,
                     version,
-                    _uiState.value.seriesSubtitleOverlay,
-                    _uiState.value.seriesAudioOverlay,
+                    _uiState.value.subtitleOverlayFor(playbackDetail),
+                    _uiState.value.audioOverlayFor(playbackDetail),
                     subtitleResetToAuto = subtitleResetToAuto(playbackDetail),
                 )
                 ?: return@launch
