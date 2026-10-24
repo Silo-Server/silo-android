@@ -195,15 +195,18 @@ private val PREFERENCE_LANGUAGE = Regex("^[A-Za-z]{2,3}(?:[-_][0-9A-Za-z]{1,8})*
 
 /**
  * An audio pick while a download plays. An original download is the source
- * file, so its position is the source ordinal and its tracks describe the
- * source faithfully. A prepared download's tracks are re-encoded and may be
- * reordered, so only the language is remembered: its position and its codec
- * and layout would name a different track in the source.
+ * file, so its position is the source ordinal. A prepared download's tracks are
+ * re-encoded and may be reordered, so its position would name a different
+ * track in the source and only the language is remembered. Neither sends a
+ * signature: the manifest folds a track's title and embedded title into one
+ * title, so the source's own pair is not known.
  */
 fun downloadAudioPreferenceUpdate(tracks: List<AudioTrack>, position: Int, prepared: Boolean): AudioPreferenceUpdate? {
     val track = tracks.getOrNull(position) ?: return null
-    if (!prepared) return audioPreferenceUpdate(tracks, position)
-    return AudioPreferenceUpdate(audioTrackIndex = -1, audioLanguage = preferenceLanguage(track.language))
+    return AudioPreferenceUpdate(
+        audioTrackIndex = if (prepared) -1 else position,
+        audioLanguage = preferenceLanguage(track.language),
+    )
 }
 
 /**
@@ -232,42 +235,100 @@ fun downloadSubtitlePreferenceUpdate(row: PlayerSubtitleInfo?): SubtitlePreferen
 
 /**
  * The position in a download's [tracks] that a saved series audio pick names,
- * resolved the way the server resolves it for streaming: the exact track
- * signature, then the saved index when its track is still in the saved
- * language, then the saved language. The index only applies to an original
- * download ([indexIsSourceOrdinal]). Null when nothing matches, so the
- * download's own default stands.
+ * resolved the way the server's `SelectAudioTrack` resolves it for streaming:
+ * the exact track signature, then the saved index when its track is still in
+ * the saved language, then the best track in the saved language. The index
+ * only applies to an original download ([indexIsSourceOrdinal]). Like the
+ * server, every step skips tracks no decoder can play while the file has one
+ * that can. Null when nothing matches, so the download's own default stands.
  */
 fun savedAudioTrackPosition(
     tracks: List<AudioTrack>,
     saved: AudioPreferenceUpdate,
     indexIsSourceOrdinal: Boolean,
 ): Int? {
-    val language = canonicalSubtitleLanguage(saved.audioLanguage)
-    fun sameLanguage(track: AudioTrack, wanted: String?) =
-        wanted != null && canonicalSubtitleLanguage(track.language) == wanted
+    val candidates = tracks.indices.filter { tracks.isDecodable(it) }.ifEmpty { tracks.indices.toList() }
     saved.trackSignature?.let { signature ->
-        tracks.indexOfFirst { it.matches(signature) }.takeIf { it >= 0 }?.let { return it }
+        soleBestLanguageTrack(candidates.filter { tracks[it].matches(signature) }, tracks, signature.language)
+            ?.let { return it }
     }
-    if (indexIsSourceOrdinal) {
-        tracks.getOrNull(saved.audioTrackIndex)
-            ?.takeIf { sameLanguage(it, language) }
-            ?.let { return saved.audioTrackIndex }
+    if (indexIsSourceOrdinal && saved.audioTrackIndex in candidates &&
+        audioLanguageRank(tracks[saved.audioTrackIndex].language, saved.audioLanguage) != null
+    ) {
+        return saved.audioTrackIndex
     }
-    return tracks.indexOfFirst { sameLanguage(it, language) }.takeIf { it >= 0 }
+    return bestLanguageTrack(candidates, tracks, saved.audioLanguage)
 }
 
 /**
- * The server's exact-signature test. A download's manifest carries no embedded
- * title, so that member is compared only when the track has one.
+ * The server's `AudioTrackDecodable` without the file's own codec, which a
+ * download does not keep: ffprobe names no codec, or `unknown`, for a stream
+ * FFmpeg cannot decode. An unnamed codec counts only when another track names
+ * one; when none does, every track gets the same verdict and none is skipped.
+ */
+private fun List<AudioTrack>.isDecodable(index: Int): Boolean {
+    fun codec(track: AudioTrack) = track.codec.orEmpty().trim().lowercase()
+    return when (codec(this[index])) {
+        "unknown" -> false
+        "" -> none { codec(it).isNotEmpty() }
+        else -> true
+    }
+}
+
+/**
+ * The server's exact-signature test. A download's manifest folds a track's
+ * title and embedded title into its title and carries no embedded title, so
+ * the signature's are folded the same way for such a track.
  */
 private fun AudioTrack.matches(signature: AudioTrackSignature): Boolean {
     fun same(a: String?, b: String?) = a.orEmpty().trim().equals(b.orEmpty().trim(), ignoreCase = true)
-    val signatureLanguage = canonicalSubtitleLanguage(signature.language)
-    return signatureLanguage != null && canonicalSubtitleLanguage(language) == signatureLanguage &&
-        same(title, signature.title) &&
-        (embeddedTitle == null || same(embeddedTitle, signature.embeddedTitle)) &&
+    val titlesMatch = if (embeddedTitle == null) {
+        same(title, signature.title.orNullIfBlank() ?: signature.embeddedTitle)
+    } else {
+        same(title, signature.title) && same(embeddedTitle, signature.embeddedTitle)
+    }
+    return audioLanguageRank(language, signature.language) != null && titlesMatch &&
         same(codec, signature.codec) &&
         same(channelLayout, signature.layout) &&
         (channels ?: 0) == (signature.channels ?: 0)
+}
+
+/**
+ * The signature match in the closest language, or null when two share it:
+ * folded titles can make the saved track and another look the same (title
+ * `English`, embedded titles `Main` and `Commentary`), and then the saved
+ * index or language decides.
+ */
+private fun soleBestLanguageTrack(matches: List<Int>, tracks: List<AudioTrack>, language: String?): Int? {
+    val ranked = languageRanked(matches, tracks, language)
+    val best = ranked.minOfOrNull { it.second } ?: return null
+    return ranked.filter { it.second == best }.singleOrNull()?.first
+}
+
+/** The server's `bestLanguageTrack`: the closest language, the earlier track on a tie. */
+private fun bestLanguageTrack(candidates: List<Int>, tracks: List<AudioTrack>, language: String?): Int? =
+    languageRanked(candidates, tracks, language).minByOrNull { it.second }?.first
+
+/** Each of [indexes] in some variant of [language], with its [audioLanguageRank]. */
+private fun languageRanked(indexes: List<Int>, tracks: List<AudioTrack>, language: String?): List<Pair<Int, Int>> =
+    indexes.mapNotNull { index -> audioLanguageRank(tracks[index].language, language)?.let { rank -> index to rank } }
+
+/**
+ * The server's `langMatchRank`: 0 for the same tag, 1 for the bare language
+ * of a tagged preference, 2 for another regional or script variant (`pt-PT`
+ * for `pt-BR`), null for another language or none.
+ */
+private fun audioLanguageRank(candidate: String?, preferred: String?): Int? {
+    val have = audioLanguageTag(candidate) ?: return null
+    val want = audioLanguageTag(preferred) ?: return null
+    if (have == want) return 0
+    if (have.substringBefore('-') != want.substringBefore('-')) return null
+    return if ('-' in have) 2 else 1
+}
+
+/** [language] for comparison: its primary language folded to ISO 639-1, its other subtags kept. */
+private fun audioLanguageTag(language: String?): String? {
+    val primary = canonicalSubtitleLanguage(language) ?: return null
+    val subtags = language.orEmpty().trim().lowercase().replace('_', '-').substringAfter('-', "")
+    return if (subtags.isEmpty()) primary else "$primary-$subtags"
 }
