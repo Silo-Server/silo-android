@@ -63,6 +63,17 @@ class SeriesAudioChoiceTest {
     }
 
     @Test
+    fun `an untagged pick is found again among untagged tracks`() {
+        val commentary = AudioTrack(codec = "aac", channels = 2, channelLayout = "stereo", title = "Commentary")
+        val mix = commentary.copy(title = "Stereo Mix")
+        val choice = SeriesAudioChoice.of(commentary.copy(language = "und"), 1)
+        assertNull(choice.audioLanguage)
+        assertEquals(1, choice.resolveOn(listOf(mix, commentary)))
+        // A tagged track is not the untagged pick.
+        assertNull(choice.resolveOn(listOf(commentary.copy(language = "eng"))))
+    }
+
+    @Test
     fun `a choice ranks language tags and skips undecodable tracks like the server`() {
         val brazil = AudioTrack(language = "pt-BR", codec = "aac", channels = 2, title = "Portuguese")
         val portugal = brazil.copy(language = "pt-PT")

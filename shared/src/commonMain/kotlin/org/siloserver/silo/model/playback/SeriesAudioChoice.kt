@@ -76,13 +76,17 @@ fun AudioTrack.audioTrackSignature(): AudioTrackSignature? {
  * Whether [this] is the very track [signature] describes, by the server's rule
  * (`audioTrackMatchesSignature`): a compatible language (ISO 639-1 and 639-2
  * forms are the same language), the same title, embedded title, codec and
- * layout ignoring case, and the same channel count.
+ * layout ignoring case, and the same channel count. A track with no language
+ * (or `und`) is recognized only by an untagged signature whose other fields
+ * all match, as the server's `MatchAudioTrack` recognizes an untagged pick
+ * among untagged tracks — a commentary or alternate mix often carries none.
  */
 fun AudioTrack.matchesSignature(signature: AudioTrackSignature): Boolean {
     if (signature == AudioTrackSignature()) return false
     val trackLanguage = autoSubtitleLanguageKey(language)
     val signatureLanguage = autoSubtitleLanguageKey(signature.language)
-    if (trackLanguage == null || trackLanguage != signatureLanguage) return false
+    if (trackLanguage != signatureLanguage) return false
+    if (trackLanguage == null && signature.copy(language = null) == AudioTrackSignature()) return false
     return title.sameText(signature.title) &&
         embeddedTitle.sameText(signature.embeddedTitle) &&
         codec.sameText(signature.codec) &&
