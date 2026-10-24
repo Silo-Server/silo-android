@@ -34,6 +34,7 @@ import org.siloserver.silo.model.playback.applyResumeRewind
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.videoQualityPreference
+import org.siloserver.silo.model.playback.withCarriedSeriesTrackChoices
 import org.siloserver.silo.model.playback.matchesSignature
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.orNullIfBlank
@@ -176,9 +177,8 @@ internal class MobileVideoPlaybackStarter(
         var lifecycleAdopted = false
         return try {
             val watchDetail = when (val r = catalogRepository.getWatchDetail(request.contentId, expectedMetadataOwner, request.libraryId)) {
-                is ApiResult.Success -> seriesTrackChoiceWriter
-                    ?.reconcile(r.data)
-                    ?: r.data
+                is ApiResult.Success -> (seriesTrackChoiceWriter?.reconcile(r.data) ?: r.data)
+                    .withCarriedSeriesTrackChoices(request.carriedTrackChoices)
                 is ApiResult.Error -> return failure(
                     request.contentId,
                     "Failed to load content: ${r.message}",

@@ -90,4 +90,19 @@ class SeriesAudioChoiceTest {
         assertEquals(olderPick, localAudioMemoryForSeriesChoice(olderPick, tracks, serverOrdinal = null))
     }
 
+    @Test
+    fun `carried picks apply to the same series only and never reuse a position`() {
+        val detail = WatchDetail(
+            contentId = "episode-3", type = "episode", title = "E3", seriesId = "series-1",
+            versions = listOf(FileVersion(fileId = 3, audioTracks = listOf(japanese, main), effectiveAudioTrackIndex = 1)),
+        )
+        val carried = null.withPick("series-1", audio = SeriesAudioChoice.of(japanese, 2))
+            .withPick("series-1", subtitle = SeriesSubtitleChoice.Off)
+        val applied = detail.withCarriedSeriesTrackChoices(carried)
+        assertEquals(0, applied.versions.single().effectiveAudioTrackIndex)
+        assertEquals("off", applied.effectiveSubtitleMode)
+        assertEquals(detail, detail.copy(seriesId = "series-2").withCarriedSeriesTrackChoices(carried).copy(seriesId = "series-1"))
+        // A pick for another series starts over.
+        assertNull(carried.withPick("series-2", subtitle = SeriesSubtitleChoice.Off).audio)
+    }
 }

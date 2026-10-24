@@ -94,6 +94,8 @@ import org.siloserver.silo.model.playback.playbackQualityMenu
 import org.siloserver.silo.model.playback.videoQualityPreference
 import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.withCarriedSeriesTrackChoices
+import org.siloserver.silo.model.playback.withPick
 import org.siloserver.silo.model.playback.CommittedSubtitle
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
@@ -1198,6 +1200,13 @@ class PlayerViewModel(
      */
     private var trackChoiceOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null
 
+    /**
+     * The audio and subtitle the viewer picked in this player, by track
+     * identity. Every later start of the same series (the next episode, a
+     * version switch, a restart) resolves them on its own file.
+     */
+    private var sessionTrackChoices: org.siloserver.silo.model.playback.CarriedSeriesTrackChoices? = null
+
     init {
         // Reclaim-Watched must never delete the file the player is using
         // (reachable via PiP -> Downloads). Mirror the currently-playing file
@@ -1591,6 +1600,7 @@ class PlayerViewModel(
                         force = force,
                         recoveryStartParams = recoveryStartParams,
                         room = room,
+                        carriedTrackChoices = sessionTrackChoices,
                     ),
                 )) {
                     is VideoPlayerUiState.Ready -> {
@@ -1759,7 +1769,8 @@ class PlayerViewModel(
         // A series subtitle choice still waiting to land outranks the
         // server's older answer (the starter already gave it a chance to).
         val watchDetail = watchMetadata.read()?.let { detail ->
-            seriesTrackChoiceWriter?.overlayPendingChoice(detail) ?: detail
+            (seriesTrackChoiceWriter?.overlayPendingChoice(detail) ?: detail)
+                .withCarriedSeriesTrackChoices(sessionTrackChoices)
         }
         if (!watchMetadata.current()) {
             stopStaleReadySession(playbackState.sessionId)
@@ -4790,6 +4801,7 @@ class PlayerViewModel(
                 ?.let { org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(it) }
                 ?: return
         }
+        sessionTrackChoices = sessionTrackChoices.withPick(key, subtitle = choice)
         val writer = seriesTrackChoiceWriter ?: return
         val owner = trackChoiceOwner ?: return
         viewModelScope.launch { writer.saveSubtitle(key, choice, owner) }
@@ -4816,6 +4828,7 @@ class PlayerViewModel(
         // them differently from the catalog the server matches against.
         if (state.offlineAudioByPosition) return
         val choice = org.siloserver.silo.model.playback.SeriesAudioChoice.of(state.audioTracks, catalogOrdinal) ?: return
+        sessionTrackChoices = sessionTrackChoices.withPick(key, audio = choice)
         val writer = seriesTrackChoiceWriter ?: return
         val owner = trackChoiceOwner ?: return
         viewModelScope.launch { writer.saveAudio(key, choice, owner) }
@@ -6192,7 +6205,12 @@ class PlayerViewModel(
                 // otherwise let that file's persisted/language/default chain
                 // decide.
                 initialAudioTrackIndex = carriedAudioIndex,
-                initialSubtitleTrackIndex = state.selectedSubtitleIndex,
+                // The playing file's subtitle position names another track
+                // (or none) on the target. Leave it unset: the target starts
+                // from the series choice (a pick in the player is saved as
+                // one, and an unsent one is laid over the server's answer) or
+                // the profile's Auto rules, both resolved by track identity.
+                initialSubtitleTrackIndex = null,
                 resumePositionOverride = state.position,
                 suppressResumeRewind = true,
                 preserveRouteIntent = true,
