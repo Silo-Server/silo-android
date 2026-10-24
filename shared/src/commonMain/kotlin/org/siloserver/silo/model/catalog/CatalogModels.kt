@@ -344,6 +344,7 @@ data class FileVersion(
     // between an explicit selection and the isDefault flag (Apple parity:
     // selected → effective → default → first).
     @SerialName("effective_audio_track_index") val effectiveAudioTrackIndex: Int? = null,
+    @SerialName("effective_audio_language") val effectiveAudioLanguage: String? = null,
     @SerialName("subtitle_tracks") val subtitleTracks: List<SubtitleTrack>? = null,
     val chapters: List<VersionChapter>? = null,
     // --- Whole-book audiobook stitching (see org.siloserver.silo.audiobook.AudiobookTimeline) ---
@@ -442,6 +443,7 @@ data class AudioTrack(
     @SerialName("sample_rate") val sampleRate: Int? = null,
     val language: String? = null,
     val title: String? = null,
+    @SerialName("embedded_title") val embeddedTitle: String? = null,
     @SerialName("default") val isDefault: Boolean = false
 )
 
@@ -452,6 +454,7 @@ data class SubtitleTrack(
     val language: String? = null,
     val title: String? = null,
     val forced: Boolean = false,
+    @SerialName("hearing_impaired") val hearingImpaired: Boolean = false,
     @SerialName("default") val isDefault: Boolean = false,
     val external: Boolean = false,
     @SerialName("external_path") val externalPath: String? = null
@@ -633,6 +636,9 @@ data class WatchDetail(
     @SerialName("effective_subtitle_language") val effectiveSubtitleLanguage: String? = null,
     @SerialName("effective_subtitle_mode") val effectiveSubtitleMode: String? = null,
     @SerialName("effective_show_forced_subtitles") val effectiveShowForcedSubtitles: Boolean? = null,
+    /** The track the profile last chose for this title's series pref; absent without one. */
+    @SerialName("effective_subtitle_track_signature")
+    val effectiveSubtitleTrackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
     // Optional forward-compatible artwork. Current servers expose these on
     // ItemDetail rather than WatchDetail, so playback clients must fall back
     // to the full catalog detail when these fields are absent.

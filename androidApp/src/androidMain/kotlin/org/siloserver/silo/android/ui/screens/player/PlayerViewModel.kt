@@ -131,7 +131,10 @@ import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.playback.audioTrackFingerprint
 import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
 import org.siloserver.silo.playback.nextEpisodeAfter
-import org.siloserver.silo.playback.resolveAudioTrackOrdinal
+import org.siloserver.silo.model.playback.audioPreferenceUpdate
+import org.siloserver.silo.model.playback.hasSubtitlePreference
+import org.siloserver.silo.model.playback.subtitlePreferenceUpdate
+import org.siloserver.silo.model.playback.trackPreferenceKey
 import org.siloserver.silo.common.player.video.AudioReconcileAction
 import org.siloserver.silo.common.player.video.AudioSelectionWatchdog
 import org.siloserver.silo.common.player.video.AUDIO_TRACK_SELECTION_FAILED_CLASSIFICATION
@@ -343,6 +346,8 @@ class PlayerViewModel(
     // When the video's requests last received a byte, so the buffering-quality
     // adapter can tell a dead link from a slow one. Optional for the same reason.
     private val throughputMeter: org.siloserver.silo.common.player.PlaybackThroughputMeter? = null,
+    // Remembers the viewer's track picks for the series. Optional for the same reason.
+    private val trackPreferenceWriter: org.siloserver.silo.playback.TrackPreferenceWriter? = null,
 ) : ViewModel() {
 
     // Last load request, replayed by the "Can't reach server" Retry / Try Anyway.
@@ -628,6 +633,7 @@ class PlayerViewModel(
                 committed: CommittedSubtitle,
                 context: MobileSubtitlePlaybackContext,
             ): Boolean {
+                saveLandedSeriesPicks(committed)
                 val writeScope = context.writeScope ?: return false
                 val audioUpdate = mobileAudioTrackPersistenceUpdate(
                     committedAudioTrackIndex = committed.audioTrackIndex,
@@ -1179,6 +1185,10 @@ class PlayerViewModel(
      */
     private val lifecycleTeardown = PlaybackTeardownGate(sessionLifecycle)
     private var finalPositionScope: PlaybackWriteScope? = null
+    // The streamed playback's metadata owner; a track pick is remembered only
+    // under it. Null while nothing streams.
+    private var trackPreferenceOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null
+    private val pendingSeriesPicks = org.siloserver.silo.common.player.video.PendingSeriesTrackPicks()
     private val initialPlayerLoadGate = InitialPlayerLoadGate()
 
     fun claimInitialRouteLoad(): Boolean = initialPlayerLoadGate.claim()
@@ -1532,6 +1542,8 @@ class PlayerViewModel(
         if (!initialized) return
 
         finalPositionScope = null
+        trackPreferenceOwner = null
+        pendingSeriesPicks.clear()
         val newLoadJob = viewModelScope.launch {
             finalPositionScope = finalPlaybackPositionWriter.captureScope()
             var unpublishedReadySessionId: String? = null
@@ -1799,26 +1811,25 @@ class PlayerViewModel(
         // Off and (via onSubtitleSelectionApplied) persist that Off for every
         // future playback.
         val explicitSubtitlePickResolved = !isSessionRenewal && requestedSubtitleIndex != null
+        // A choice remembered on this device for this file applies only where
+        // the server resolved no series preference. The starter already put
+        // the remembered audio into the plan, so only subtitles are read here.
+        // The starter's own answer stands when this second read fails.
+        val trackPreferenceRestore = playbackState.trackPreferenceRestore
+        val serverDecidesSubtitle =
+            trackPreferenceRestore.subtitlePreferenceResolved || watchDetail?.hasSubtitlePreference() == true
         val localTrackSelection = version?.fileId
-            ?.takeIf { initialAudioTrackIndex == null || !explicitSubtitlePickResolved }
+            ?.takeIf { !explicitSubtitlePickResolved && !isSessionRenewal && !serverDecidesSubtitle }
             ?.let { fileId -> userItemStatePort.localTrackSelection(playbackState.contentId, fileId) }
         if (!watchMetadata.current()) {
             stopStaleReadySession(playbackState.sessionId)
             return
         }
-        val persistedAudioIndex = if (initialAudioTrackIndex == null) {
-            version?.audioTracks
-                ?.let { tracks -> resolveAudioTrackOrdinal(tracks, localTrackSelection?.audioFingerprint) }
-        } else {
-            null
-        }
         val freshSubtitleRestore = prepareMobileFreshSubtitleRestore(
             mediaFileId = version?.fileId ?: playbackState.fileId,
             mountedSubtitles = playbackState.subtitleUrls,
             sessionId = playbackState.sessionId.orEmpty(),
-            persistedPreference = localTrackSelection
-                ?.subtitleFingerprint
-                ?.takeUnless { explicitSubtitlePickResolved || isSessionRenewal },
+            persistedPreference = localTrackSelection?.subtitleFingerprint,
             authoritativeInventory = playbackState.playbackPlan != null,
             loadDownloadedSubtitles = subtitlesRepository::list,
         )
@@ -1841,6 +1852,8 @@ class PlayerViewModel(
                 preferredLanguage = playbackState.preferredTextLanguage,
                 subtitleMode = playbackState.preferredSubtitleMode,
                 showForcedSubtitles = playbackState.showForcedSubtitles,
+                trackSignature = watchDetail?.effectiveSubtitleTrackSignature
+                    ?: trackPreferenceRestore.subtitleTrackSignature,
             )
         } else {
             MobileSubtitleAutoSelection.NoChange
@@ -1941,6 +1954,7 @@ class PlayerViewModel(
                 )
             }
 
+            trackPreferenceOwner = watchOwner
             val mountedState = _uiState.value
             val committedIdentity = mountedState.subtitleTracks
                 .getOrNull(mountedState.selectedSubtitleIndex)
@@ -1965,9 +1979,7 @@ class PlayerViewModel(
             // Equality with the plan is not evidence the RENDERER is on that
             // track: a direct-play file mounts every track and Media3 picks its
             // own default, which is precisely the case this exists for.
-            val restoreOrdinal = persistedAudioIndex
-                ?: initialAudioTrackIndex
-                ?: selectedAudioOrdinal
+            val restoreOrdinal = initialAudioTrackIndex ?: selectedAudioOrdinal
             if (restoreOrdinal in _uiState.value.audioTracks.indices) {
                 setDesiredAudio(restoreOrdinal, explicit = false)
                 if (restoreOrdinal != selectedAudioOrdinal) {
@@ -4720,6 +4732,7 @@ class PlayerViewModel(
             .getOrNull(index)
             ?.let(::mobileSubtitleIdentity)
             ?: SubtitleIdentity.Off
+        pendingSeriesPicks.pickSubtitle(identity)
         // The route intent is begun as the pick is staged: a network move in
         // flight publishes its own tracks when it lands, which would clear an
         // intent begun before it.
@@ -4765,7 +4778,21 @@ class PlayerViewModel(
     private fun selectAudio(index: Int, userInitiated: Boolean) {
         val state = _uiState.value
         val serverIndex = selectedServerAudioTrackIndex(index, state.audioTracks) ?: return
+        // A downloaded file is switched on the player only: there is no
+        // server session to replan, and the desired-audio reconcile below
+        // applies the track when the file carries it. Already in the mounted
+        // stream, it is switched on the player too instead of rebuilding the
+        // session to deliver audio already being received. A replan is only
+        // needed when the track is genuinely absent.
+        val local = state.isLocalFilePlayback() || mountedAudioFor(
+            catalog = state.audioTracks,
+            catalogOrdinal = serverIndex,
+            mounted = mountedAudio,
+            delivery = state.playbackPlan?.delivery,
+            planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
+        ) != null
         if (userInitiated) {
+            pendingSeriesPicks.pickAudio(serverIndex, local)
             routeIntentState.beginAudioSelection(
                 contentId = state.contentId,
                 routeOrdinal = index,
@@ -4773,23 +4800,7 @@ class PlayerViewModel(
             )
         }
         setDesiredAudio(serverIndex, explicit = userInitiated)
-        // A downloaded file is switched on the player only: there is no
-        // server session to replan, and the desired-audio reconcile above
-        // already applies the track when the file carries it.
-        if (state.isLocalFilePlayback()) return
-        // Already in the mounted stream: switch it on the player instead of
-        // rebuilding the session to deliver audio already being received. A
-        // replan is only needed when the track is genuinely absent.
-        if (mountedAudioFor(
-                catalog = state.audioTracks,
-                catalogOrdinal = serverIndex,
-                mounted = mountedAudio,
-                delivery = state.playbackPlan?.delivery,
-                planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
-            ) != null
-        ) {
-            return
-        }
+        if (local) return
         picksDuringNetworkMove.applyAfterMove {
             // The intent begun above serves the local paths. Begin it again as
             // the pick is staged: a network move it waited for published its
@@ -4804,6 +4815,35 @@ class PlayerViewModel(
             mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(_uiState.value))
             mobileSubtitleTransactions.selectAudio(serverIndex)
         }
+    }
+
+    /**
+     * Remembers the viewer's pick for the whole series (a movie: for itself),
+     * as Silo Apple does, once playback has taken it. Only the two pick
+     * handlers record picks; a restored or automatic selection is already the
+     * server's answer.
+     */
+    private fun saveLandedSeriesPicks(committed: CommittedSubtitle) {
+        val state = _uiState.value
+        if (pendingSeriesPicks.takeSubtitle(committed.identity)) saveSeriesSubtitlePick(state, committed.identity)
+        if (pendingSeriesPicks.takeAudio(committed.audioTrackIndex, local = false)) {
+            committed.audioTrackIndex?.let { saveSeriesAudioPick(state, it) }
+        }
+    }
+
+    private fun saveSeriesSubtitlePick(state: PlayerUiState, identity: SubtitleIdentity) {
+        val owner = trackPreferenceOwner ?: return
+        val key = trackPreferenceKey(state.contentType, state.contentId, state.seriesId) ?: return
+        val catalog = state.versions.getOrNull(state.selectedVersionIndex)?.subtitleTracks.orEmpty()
+        val update = subtitlePreferenceUpdate(identity, catalog) ?: return
+        trackPreferenceWriter?.saveSubtitle(owner, key, update)
+    }
+
+    private fun saveSeriesAudioPick(state: PlayerUiState, catalogOrdinal: Int) {
+        val owner = trackPreferenceOwner ?: return
+        val key = trackPreferenceKey(state.contentType, state.contentId, state.seriesId) ?: return
+        val update = audioPreferenceUpdate(state.audioTracks, catalogOrdinal) ?: return
+        trackPreferenceWriter?.saveAudio(owner, key, update)
     }
 
     // ---- Desired audio ------------------------------------------------------
@@ -5010,7 +5050,12 @@ class PlayerViewModel(
         // stages and what teardown persists, so it has to move too -- updating
         // the context alone left it stale and the choice got undone.
         mobileSubtitleTransactions.commitLocallyAppliedAudio(desired.catalogOrdinal)
-        if (desired.explicit) persistDesiredAudio(desired.catalogOrdinal)
+        if (desired.explicit) {
+            persistDesiredAudio(desired.catalogOrdinal)
+            if (pendingSeriesPicks.takeAudio(desired.catalogOrdinal, local = true)) {
+                saveSeriesAudioPick(_uiState.value, desired.catalogOrdinal)
+            }
+        }
     }
 
     private var localAudioAttemptGeneration = 0L

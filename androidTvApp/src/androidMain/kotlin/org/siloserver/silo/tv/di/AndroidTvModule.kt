@@ -234,6 +234,7 @@ val androidTvModule = module {
             sessionLifecycle = get(),
             reachabilityMonitor = get(),
             userItemStatePort = get(),
+            trackPreferences = get(),
         )
     }
     factory {
@@ -623,6 +624,7 @@ val androidTvModule = module {
             // adapter treats a wait while offline as an outage.
             networkEvidence = get(),
             throughputMeter = get(),
+            trackPreferenceWriter = get(),
         )
     }
 

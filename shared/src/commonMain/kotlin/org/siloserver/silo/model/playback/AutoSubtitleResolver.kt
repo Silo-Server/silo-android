@@ -1,6 +1,7 @@
 package org.siloserver.silo.model.playback
 
 import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.playback.canonicalSubtitleLanguage
 import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import org.siloserver.silo.playback.isClientMountableBitmapCodecFamily
 import org.siloserver.silo.playback.playbackSubtitleIdentity
@@ -38,9 +39,10 @@ data class AutoSubtitleCandidate(
     val title: String? = null,
     val forced: Boolean = false,
     /**
-     * A hearing-impaired signal the caller already knows (Media3 role flags, an
-     * accessibility label). ORed with a title match — never a replacement for
-     * it, because the catalog only ever says SDH in the title.
+     * A hearing-impaired signal the caller already knows (the server's
+     * `hearing_impaired`, Media3 role flags, an accessibility label). ORed
+     * with a title match — never a replacement for it, because older servers
+     * only say SDH in the title.
      */
     val hearingImpaired: Boolean = false,
     /** Where the track lives. `null` (unknown) ranks with embedded, as on the web player. */
@@ -66,6 +68,8 @@ data class AutoSubtitleContext(
     val showForced: Boolean = false,
     /** Language of the audio track that will play. */
     val audioLanguage: String? = null,
+    /** The series' remembered track (`effective_subtitle_track_signature`). */
+    val trackSignature: SubtitleTrackSignature? = null,
 )
 
 sealed class AutoSubtitleResolution {
@@ -85,8 +89,9 @@ fun AutoSubtitleResolution.selectedCandidate(): AutoSubtitleCandidate? =
 /**
  * Resolves the track Auto should start with.
  *
- * Cascade (unchanged from the detail page):
- * mode `off` / an explicitly empty preferred language → off; no preferred
+ * Cascade (unchanged from the detail page, plus the series' remembered track):
+ * mode `off` → off; a track matching the series' [AutoSubtitleContext.trackSignature]
+ * → that track; an explicitly empty preferred language → off; no preferred
  * language → only mode `always` picks anything; audio already in the preferred
  * language under mode `auto` → off, or the language's forced track when forced
  * subs are enabled; otherwise the best track in the preferred language, falling
@@ -113,6 +118,10 @@ fun resolveAutoSubtitle(
 
     val mode = context.mode?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: "auto"
     if (mode == "off") return AutoSubtitleResolution.Disable
+
+    context.trackSignature
+        ?.let { bestSignatureAutoSubtitleCandidate(it, candidates) }
+        ?.let { return AutoSubtitleResolution.Select(it) }
 
     val preferred = context.preferredLanguage
     if (preferred != null && preferred.isBlank()) return AutoSubtitleResolution.Disable
@@ -164,6 +173,43 @@ val autoSubtitlePreferenceOrder: Comparator<AutoSubtitleCandidate> = compareBy(
     { it.isHearingImpaired() },
     { it.source?.ordinal ?: 0 },
 )
+
+/**
+ * The track that best matches a remembered [signature], scored as Silo Apple
+ * scores it: language +5 and a label contained in the title +2 are the only
+ * signals that can make a match; forced, SDH and codec agreement (+1 each)
+ * only rank. A file's forced and SDH variants of one language therefore tie on
+ * language and are split by the flags the viewer chose; a full tie falls back
+ * to [autoSubtitlePreferenceOrder], never to the caller's list order. The
+ * source is deliberately not compared: a download stores as a sidecar what
+ * streamed as an embedded track.
+ */
+fun bestSignatureAutoSubtitleCandidate(
+    signature: SubtitleTrackSignature,
+    candidates: List<AutoSubtitleCandidate>,
+): AutoSubtitleCandidate? {
+    // The full ISO 639 table: a signature saved as "por" names the next episode's "pt" track.
+    val signatureLanguage = canonicalSubtitleLanguage(signature.language)
+    val signatureLabel = signature.label?.trim()?.takeIf { it.isNotEmpty() }
+    val scored = candidates.mapNotNull { candidate ->
+        var score = 0
+        var strong = false
+        if (signatureLanguage != null && canonicalSubtitleLanguage(candidate.language) == signatureLanguage) {
+            score += 5
+            strong = true
+        }
+        if (signatureLabel != null && candidate.title?.contains(signatureLabel, ignoreCase = true) == true) {
+            score += 2
+            strong = true
+        }
+        if (signature.forced == candidate.forced) score += 1
+        if (signature.hearingImpaired == candidate.isHearingImpaired()) score += 1
+        if (signature.codec != null && signature.codec.equals(candidate.codec, ignoreCase = true)) score += 1
+        if (strong) candidate to score else null
+    }
+    val best = scored.maxOfOrNull { it.second } ?: return null
+    return scored.filter { it.second == best }.map { it.first }.minWithOrNull(autoSubtitlePreferenceOrder)
+}
 
 private fun bestAutoSubtitleCandidate(
     candidates: List<AutoSubtitleCandidate>,
@@ -246,6 +292,7 @@ fun catalogAutoSubtitleCandidates(
             codec = track.codec,
             title = track.title,
             forced = track.forced,
+            hearingImpaired = track.hearingImpaired,
             source = if (track.external) AutoSubtitleSource.EXTERNAL else AutoSubtitleSource.EMBEDDED,
             needsBurnIn = isBitmapSubtitleCodecFamily(track.codec) &&
                 (track.external || !isClientMountableBitmapCodecFamily(track.codec)),
@@ -275,6 +322,7 @@ fun PlayerSubtitleInfo.toAutoSubtitleCandidate(): AutoSubtitleCandidate =
         codec = codec,
         title = catalogLabel ?: label,
         forced = forced == true,
+        hearingImpaired = hearingImpaired == true,
         source = autoSubtitleSource(),
         needsBurnIn = playbackSubtitleIdentity(this) is SubtitleIdentity.ServerBurnIn,
     )

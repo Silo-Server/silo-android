@@ -9,7 +9,15 @@ data class VideoPlaybackStartRequest(
     val roomId: String?,
     val resumePositionOverride: Double?,
     val audioTrackIndex: Int? = null,
+    /** [audioTrackIndex] is the detail row's automatic choice, not the viewer's pick. */
+    val audioTrackIndexAutoResolved: Boolean = false,
     val subtitleTrackIndex: Int? = null,
+    /**
+     * [subtitleTrackIndex] is the detail row's Auto preview, not the viewer's
+     * pick, so the starter may resolve Auto again with the title's own
+     * preferences.
+     */
+    val subtitleTrackIndexAutoResolved: Boolean = false,
     /** Selects the preferred source file version and supplies the default output-quality ceiling. */
     val preferredQualityOverride: String? = null,
     /**

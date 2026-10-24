@@ -11,6 +11,7 @@ import org.siloserver.silo.common.player.TrackSelectionPresets
 import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.common.player.qualityPair
 import org.siloserver.silo.common.player.usesCellularQuality
+import org.siloserver.silo.common.player.video.TrackPreferenceRestore
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.VideoPlaybackStartResult
 import org.siloserver.silo.common.player.video.VideoPlaybackStarter
@@ -35,6 +36,10 @@ import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.videoQualityPreference
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.orNullIfBlank
+import org.siloserver.silo.model.playback.hasSubtitlePreference
+import org.siloserver.silo.model.playback.trackPreferenceKey
+import org.siloserver.silo.network.apiv2.TrackPreferencesV2Api
+import org.siloserver.silo.network.apiv2.savedAudioTrackIndex
 import org.siloserver.silo.playback.resolveAudioTrackOrdinal
 import org.siloserver.silo.playback.resolveCatalogSubtitlePreferenceOrdinal
 import org.siloserver.silo.playback.selectPlaybackVersion
@@ -92,6 +97,8 @@ internal data class MobileInitialTrackSelection(
 internal fun resolveMobileInitialTrackSelection(
     explicitAudioTrackIndex: Int?,
     explicitSubtitleTrackIndex: Int?,
+    /** The series' saved audio pick resolved onto this file; see [savedAudioTrackIndex]. */
+    seriesAudioTrackIndex: Int? = null,
     audioTracks: List<org.siloserver.silo.model.catalog.AudioTrack>,
     subtitleTracks: List<SubtitleTrack>,
     persisted: LocalTrackSelection?,
@@ -99,6 +106,7 @@ internal fun resolveMobileInitialTrackSelection(
     capabilities: ClientCodecCapabilities,
 ): MobileInitialTrackSelection {
     val audioTrackIndex = explicitAudioTrackIndex
+        ?: seriesAudioTrackIndex
         ?: resolveAudioTrackOrdinal(audioTracks, persisted?.audioFingerprint)
         ?: preferredAudioLanguage?.let { language ->
             TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
@@ -141,6 +149,7 @@ internal class MobileVideoPlaybackStarter(
     private val sessionAdopter: MobileVideoSessionAdopter? = null,
     /** Picks the cellular quality pair on mobile data or a metered network. */
     private val networkEvidenceProvider: PlaybackNetworkEvidenceProvider = PlaybackNetworkEvidenceProvider.None,
+    private val trackPreferences: TrackPreferencesV2Api? = null,
 ) : VideoPlaybackStarter {
 
     override suspend fun start(request: VideoPlaybackStartRequest): VideoPlaybackStartResult {
@@ -250,11 +259,26 @@ internal class MobileVideoPlaybackStarter(
                     }
             }
             val allowAlternateVersions = request.allowAlternateVersions()
+            val seriesAudioTrackIndex = if (request.audioTrackIndex == null) {
+                trackPreferences?.savedAudioTrackIndex(
+                    owner = expectedMetadataOwner,
+                    key = trackPreferenceKey(watchDetail.type, watchDetail.contentId, watchDetail.seriesId),
+                    version = version,
+                )
+            } else {
+                null
+            }
+            // A choice remembered on this device for this file only fills in
+            // where the server resolved no series preference.
             val persistedTrackSelection = if (
                 userItemStatePort != null &&
                 (request.audioTrackIndex == null || request.subtitleTrackIndex == null)
             ) {
                 userItemStatePort.localTrackSelection(request.contentId, version.fileId)
+                    ?.let { local ->
+                        val serverDecides = watchDetail.hasSubtitlePreference()
+                        local.copy(subtitleFingerprint = local.subtitleFingerprint.takeUnless { serverDecides })
+                    }
             } else {
                 null
             }
@@ -286,6 +310,7 @@ internal class MobileVideoPlaybackStarter(
             val initialTracks = resolveMobileInitialTrackSelection(
                 explicitAudioTrackIndex = request.audioTrackIndex,
                 explicitSubtitleTrackIndex = request.subtitleTrackIndex,
+                seriesAudioTrackIndex = seriesAudioTrackIndex,
                 audioTracks = version.audioTracks.orEmpty(),
                 subtitleTracks = version.subtitleTracks.orEmpty(),
                 persisted = persistedTrackSelection,
@@ -520,6 +545,12 @@ internal class MobileVideoPlaybackStarter(
                 showForcedSubtitles = watchDetail.effectiveShowForcedSubtitles
                     ?: activeProfile?.showForcedSubtitles
                     ?: true,
+                // The player reads the watch detail again once tracks mount; a
+                // failed read there must not undo what this start decided.
+                trackPreferenceRestore = TrackPreferenceRestore(
+                    subtitlePreferenceResolved = watchDetail.hasSubtitlePreference(),
+                    subtitleTrackSignature = watchDetail.effectiveSubtitleTrackSignature,
+                ),
                 intro = effectiveVersion?.intro,
                 credits = effectiveVersion?.credits,
                 recap = effectiveVersion?.recap,

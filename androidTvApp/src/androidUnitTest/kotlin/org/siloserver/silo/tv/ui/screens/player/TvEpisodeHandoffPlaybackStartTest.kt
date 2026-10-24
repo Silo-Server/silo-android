@@ -147,7 +147,7 @@ class TvEpisodeHandoffPlaybackStartTest {
     }
 
     @Test
-    fun tvAudioPrecedenceIsManualThenCarryThenPerFileThenLanguage() {
+    fun tvAudioPrecedenceIsManualThenCarryThenSeriesThenPerFileThenLanguage() {
         val tracks = listOf(
             AudioTrack(codec = "aac", language = "eng", title = "English"),
             AudioTrack(codec = "truehd", language = "jpn", title = "Japanese"),
@@ -158,6 +158,12 @@ class TvEpisodeHandoffPlaybackStartTest {
 
         assertEquals(0, resolveTvInitialAudioTrackIndex(0, 2, false, tracks, durable, "fr", capabilities))
         assertEquals(2, resolveTvInitialAudioTrackIndex(null, 2, false, tracks, durable, "fr", capabilities))
+        // The series' saved pick beats a per-file choice and the language, never a carried one.
+        assertEquals(0, resolveTvInitialAudioTrackIndex(null, null, false, tracks, durable, "fr", capabilities, seriesAudioTrackIndex = 0))
+        assertEquals(2, resolveTvInitialAudioTrackIndex(null, 2, false, tracks, durable, "fr", capabilities, seriesAudioTrackIndex = 0))
+        // The detail row's automatic choice gives way to it; the viewer's own pick does not.
+        assertEquals(0, resolveTvInitialAudioTrackIndex(2, null, false, tracks, durable, "fr", capabilities, seriesAudioTrackIndex = 0, requestedIsAutomatic = true))
+        assertEquals(2, resolveTvInitialAudioTrackIndex(2, null, false, tracks, durable, "fr", capabilities, seriesAudioTrackIndex = 0))
         assertEquals(1, resolveTvInitialAudioTrackIndex(null, null, false, tracks, durable, "fr", capabilities))
         assertEquals(2, resolveTvInitialAudioTrackIndex(null, null, false, tracks, null, "fr", capabilities))
         assertNull(resolveTvInitialAudioTrackIndex(null, null, true, tracks, durable, "fr", capabilities))

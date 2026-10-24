@@ -11,6 +11,7 @@ import org.siloserver.silo.common.player.TrackSelectionPresets
 import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.VideoPlaybackStartResult
+import org.siloserver.silo.common.player.video.TrackPreferenceRestore
 import org.siloserver.silo.common.player.video.VideoPlaybackStarter
 import org.siloserver.silo.common.player.video.PlaybackDiagnosticsCode
 import org.siloserver.silo.common.player.video.EpisodeSelectionHandoff
@@ -28,7 +29,15 @@ import org.siloserver.silo.common.player.video.shouldReachServerForPlayback
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.model.catalog.FileVersion
+import org.siloserver.silo.model.playback.AutoSubtitleContext
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
+import org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates
+import org.siloserver.silo.model.playback.hasSubtitlePreference
+import org.siloserver.silo.model.playback.resolveAutoSubtitle
+import org.siloserver.silo.model.playback.selectedCandidate
+import org.siloserver.silo.model.playback.trackPreferenceKey
+import org.siloserver.silo.network.apiv2.TrackPreferencesV2Api
+import org.siloserver.silo.network.apiv2.savedAudioTrackIndex
 import org.siloserver.silo.model.playback.applyResumeRewind
 import org.siloserver.silo.model.playback.buildPlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleChoices
@@ -62,6 +71,7 @@ class TvVideoPlaybackStarter(
     private val sessionLifecycle: PlaybackSessionLifecycle,
     private val reachabilityMonitor: ServerReachabilityMonitor,
     private val userItemStatePort: UserItemStatePort,
+    private val trackPreferences: TrackPreferencesV2Api? = null,
 ) : VideoPlaybackStarter {
 
     override suspend fun start(request: VideoPlaybackStartRequest): VideoPlaybackStartResult {
@@ -133,13 +143,6 @@ class TvVideoPlaybackStarter(
                 fromBeginning = isExplicitStartOver(request.resumePositionOverride),
             )
             val version = watchDetail.versions.first { it.fileId == resolvedEpisodeSelection.fileId }
-            // The server rejects -1, while the Ready result retains it for the
-            // client-side Media3 selection that represents explicit Off.
-            val serverSubtitleTrackIndex = resolveTvServerSubtitleTrackIndex(
-                episodeSelectionHandoff = request.episodeSelectionHandoff,
-                resolvedEpisodeSelection = resolvedEpisodeSelection,
-                requestedSubtitleTrackIndex = request.subtitleTrackIndex,
-            )
             val activeProfile = profileRepository.getActiveProfile()
             val profileId = activeProfile?.id ?: profileRepository.getActiveProfileId()
                 ?: return failure(
@@ -155,11 +158,22 @@ class TvVideoPlaybackStarter(
             val unresolvedCarriedChoice = request.episodeSelectionHandoff
                 ?.audio
                 ?.mode == EpisodeAudioMode.TRACK && carriedAudioIndex == null
-            val durableAudioFingerprint = if (
-                request.audioTrackIndex == null &&
+            // The detail row sends its own automatic choice; the series' saved pick outranks it.
+            val automaticAudio = (request.audioTrackIndex == null || request.audioTrackIndexAutoResolved) &&
                 carriedAudioIndex == null &&
                 !unresolvedCarriedChoice
-            ) {
+            val seriesAudioTrackIndex = if (automaticAudio) {
+                trackPreferences?.savedAudioTrackIndex(
+                    owner = expectedMetadataOwner,
+                    key = trackPreferenceKey(watchDetail.type, watchDetail.contentId, watchDetail.seriesId),
+                    version = version,
+                )
+            } else {
+                null
+            }
+            // A choice remembered on this device for this file only fills in
+            // where the series has no saved pick.
+            val durableAudioFingerprint = if (request.audioTrackIndex == null && automaticAudio && seriesAudioTrackIndex == null) {
                 userItemStatePort.localTrackSelection(request.contentId, version.fileId)
                     ?.audioFingerprint
             } else {
@@ -192,12 +206,55 @@ class TvVideoPlaybackStarter(
             // capabilities before asking the server for a plan.
             val startAudioTrackIndex = resolveTvInitialAudioTrackIndex(
                 requestedAudioIndex = request.audioTrackIndex,
+                requestedIsAutomatic = request.audioTrackIndexAutoResolved,
                 carriedAudioIndex = carriedAudioIndex,
                 unresolvedCarriedChoice = unresolvedCarriedChoice,
+                seriesAudioTrackIndex = seriesAudioTrackIndex,
                 tracks = version.audioTracks.orEmpty(),
                 durableAudioFingerprint = durableAudioFingerprint,
                 preferredAudioLanguage = effectivePreferredAudioLanguage,
                 capabilities = capabilities,
+            )
+            // Blank normalizes to null on every rung: a canonical row
+            // holding JSON null ("no preference") arrives here as a
+            // present-but-empty string, and TV auto-selection reads a
+            // non-null blank language as an explicit "subtitles off".
+            val preferredTextLanguage = watchDetail.effectiveSubtitleLanguage.orNullIfBlank()
+                ?: activeProfile?.subtitleLanguage.orNullIfBlank()
+            val preferredSubtitleMode = watchDetail.effectiveSubtitleMode.orNullIfBlank()
+                ?: activeProfile?.subtitleMode.orNullIfBlank()
+            val showForcedSubtitles = watchDetail.effectiveShowForcedSubtitles
+                ?: activeProfile?.showForcedSubtitles
+                ?: true
+            // The detail row previews Auto from the profile's own settings. This
+            // title's effective answer also carries its library and series
+            // scopes and the series' remembered track, so it decides through
+            // the same resolver before the plan is requested.
+            val autoSubtitleTrackIndex = if (
+                request.subtitleTrackIndexAutoResolved &&
+                request.episodeSelectionHandoff == null &&
+                request.recoveryStartParams == null
+            ) {
+                resolveTvAutoSubtitleLaunchIndex(
+                    catalogTracks = version.subtitleTracks.orEmpty(),
+                    context = AutoSubtitleContext(
+                        preferredLanguage = preferredTextLanguage,
+                        mode = preferredSubtitleMode,
+                        showForced = showForcedSubtitles,
+                        audioLanguage = version.audioTracks?.getOrNull(startAudioTrackIndex ?: -1)?.language,
+                        trackSignature = watchDetail.effectiveSubtitleTrackSignature,
+                    ),
+                )
+            } else {
+                null
+            }
+            val launchSubtitleTrackIndex = autoSubtitleTrackIndex ?: request.subtitleTrackIndex
+            // The server rejects -1, while the Ready result retains it for the
+            // client-side Media3 selection that represents explicit Off.
+            val serverSubtitleTrackIndex = resolveTvServerSubtitleTrackIndex(
+                episodeSelectionHandoff = request.episodeSelectionHandoff,
+                resolvedEpisodeSelection = resolvedEpisodeSelection,
+                requestedSubtitleTrackIndex = launchSubtitleTrackIndex,
             )
             // Skip-back-on-resume — see MobileVideoPlaybackStarter for the rationale.
             // Suppressed for Start Over / retry (request flag) and Watch Together
@@ -340,7 +397,7 @@ class TvVideoPlaybackStarter(
                         subtitleTrackIndex = if (request.episodeSelectionHandoff != null) {
                             serverSubtitleTrackIndex
                         } else {
-                            request.subtitleTrackIndex
+                            launchSubtitleTrackIndex
                         },
                         qualityPreference = carriedQuality,
                         startPosition = sourceStartPos,
@@ -404,17 +461,15 @@ class TvVideoPlaybackStarter(
                     plannedTracks = resolved.subtitleUrls.orEmpty(),
                 ),
                 preferredAudioLanguage = effectivePreferredAudioLanguage ?: "en",
-                // Blank normalizes to null on every rung: a canonical row
-                // holding JSON null ("no preference") arrives here as a
-                // present-but-empty string, and TV auto-selection reads a
-                // non-null blank language as an explicit "subtitles off".
-                preferredTextLanguage = watchDetail.effectiveSubtitleLanguage.orNullIfBlank()
-                    ?: activeProfile?.subtitleLanguage.orNullIfBlank(),
-                preferredSubtitleMode = watchDetail.effectiveSubtitleMode.orNullIfBlank()
-                    ?: activeProfile?.subtitleMode.orNullIfBlank(),
-                showForcedSubtitles = watchDetail.effectiveShowForcedSubtitles
-                    ?: activeProfile?.showForcedSubtitles
-                    ?: true,
+                preferredTextLanguage = preferredTextLanguage,
+                preferredSubtitleMode = preferredSubtitleMode,
+                showForcedSubtitles = showForcedSubtitles,
+                trackPreferenceRestore = TrackPreferenceRestore(
+                    subtitlePreferenceResolved = watchDetail.hasSubtitlePreference(),
+                    subtitleTrackSignature = watchDetail.effectiveSubtitleTrackSignature,
+                    seriesAudioApplied = seriesAudioTrackIndex != null && startAudioTrackIndex == seriesAudioTrackIndex,
+                    autoSubtitleTrackIndex = autoSubtitleTrackIndex,
+                ),
                 intro = effectiveVersion?.intro,
                 credits = effectiveVersion?.credits,
                 recap = effectiveVersion?.recap,
@@ -491,10 +546,15 @@ internal fun resolveTvInitialAudioTrackIndex(
     durableAudioFingerprint: String?,
     preferredAudioLanguage: String?,
     capabilities: ClientCodecCapabilities,
+    /** The series' saved audio pick resolved onto this file; see [savedAudioTrackIndex]. */
+    seriesAudioTrackIndex: Int? = null,
+    /** [requestedAudioIndex] is the detail row's automatic choice, which the series' saved pick outranks. */
+    requestedIsAutomatic: Boolean = false,
 ): Int? {
-    requestedAudioIndex?.let { return it }
+    requestedAudioIndex?.takeUnless { requestedIsAutomatic && seriesAudioTrackIndex != null }?.let { return it }
     carriedAudioIndex?.let { return it }
     if (unresolvedCarriedChoice) return null
+    seriesAudioTrackIndex?.let { return it }
     return resolveAudioTrackOrdinal(tracks, durableAudioFingerprint)
         ?: TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
             tracks = tracks,
@@ -502,6 +562,19 @@ internal fun resolveTvInitialAudioTrackIndex(
             capabilities = capabilities,
         )
 }
+
+/**
+ * The combined subtitle index Auto starts with for [context], or -1 when Auto
+ * resolves to no subtitle — the same answer the detail row's preview gives
+ * for the same inputs ([TvPlaybackFormatting.subtitleLaunchSelection]).
+ */
+internal fun resolveTvAutoSubtitleLaunchIndex(
+    catalogTracks: List<org.siloserver.silo.model.catalog.SubtitleTrack>,
+    context: AutoSubtitleContext,
+): Int = resolveAutoSubtitle(catalogAutoSubtitleCandidates(catalogTracks), context)
+    .selectedCandidate()
+    ?.selectionIndex
+    ?: -1
 
 internal fun resolveTvSourceStartPosition(
     startRequestPosition: Double?,

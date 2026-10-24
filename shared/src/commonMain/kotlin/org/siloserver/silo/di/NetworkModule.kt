@@ -53,6 +53,7 @@ val networkModule = module {
     single { TasteProfileV2Api(get(), get(), get()) }
     single { DiscoverV2Api(get(), get(), get()) }
     single { ShufflesV2Api(get(), get(), get()) }
+    single { org.siloserver.silo.network.apiv2.TrackPreferencesV2Api(get(), get(), get()) }
     single { RecommendationApi(get(), get(), get(), get()) }
     single<RequestsApi> { DefaultRequestsApi(get(), get(), get()) }
     single<MetadataAiApi> { DefaultMetadataAiApi(get(), get(), get()) }

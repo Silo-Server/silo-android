@@ -50,6 +50,85 @@ class TvStartupMetadataOwnerTest {
         scenario("success", pickedQuality = "1080p", expectedCarriedQuality = "1080p")
     }
 
+    // The detail row previews Auto from the profile's own settings; the title's
+    // effective answer, with the series' remembered track, is what starts.
+    @Test fun theDetailRowsAutoSubtitleGivesWayToTheSeriesPreference() = runTest {
+        val sdh = "\"effective_subtitle_language\":\"en\",\"effective_subtitle_mode\":\"always\"," +
+            "\"effective_subtitle_track_signature\":{\"source\":\"embedded\",\"language\":\"en\",\"label\":\"English (SDH)\",\"forced\":false,\"hearing_impaired\":true},"
+        val off = "\"effective_subtitle_language\":\"\",\"effective_subtitle_mode\":\"off\","
+        // effective, launch index, launched from the Auto preview, expected start index
+        for ((effective, launch, autoResolved, expected) in listOf(
+            Quad(sdh, 0, true, 1),
+            Quad(off, 0, true, null),
+            Quad(off, 0, false, 0),
+        )) {
+            assertEquals(expected, startedSubtitleIndex(effective, launch, autoResolved), "$effective auto=$autoResolved")
+        }
+    }
+
+    private data class Quad(val effective: String, val launch: Int, val autoResolved: Boolean, val expected: Int?)
+
+    private suspend fun TestScope.startedSubtitleIndex(effective: String, launch: Int, autoResolved: Boolean): Int? {
+        val tokens = FakeTokenManager()
+        var requested: Int? = -99
+        val client = HttpClient(MockEngine(MockEngineConfig().apply {
+            dispatcher = StandardTestDispatcher(testScheduler)
+            addHandler { req ->
+                var status = HttpStatusCode.OK
+                val body = when (req.url.encodedPath) {
+                    "/api/v2/playback/capabilities" ->
+                        """{"installation_id":"11111111-1111-4111-8111-111111111111","revision":"1","state":"available","allowed":true,"protocol_versions":[3],"features":["sequenced_progress_v1"],"deliveries":["original_http"]}"""
+                    "/api/v2/account/me" -> """{"id":"account-1","username":"test","email":"","role":"user"}"""
+                    "/api/v2/watch/item" ->
+                        """{"content_id":"item","type":"episode","title":"Title","series_id":"show",$effective"versions":[{"file_id":"41","duration_seconds":120,"subtitle_tracks":[{"index":2,"codec":"subrip","language":"en","title":"English"},{"index":3,"codec":"subrip","language":"en","title":"English (SDH)"}]}]}"""
+                    "/api/v2/playback/start" -> {
+                        status = HttpStatusCode.Created
+                        val sent = SiloJson.parseToJsonElement(req.body.toByteArray().decodeToString()).jsonObject
+                        requested = sent["subtitle_track_index"]?.toString()?.toIntOrNull()
+                        """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1","sequenced_progress_v1"],"outcome":"playable","session_id":"allocated","playback_plan":{"plan_id":"plan","plan_attempt_key":"key","session_id":"allocated","delivery":"original_http","stream":{"url":"https://silo.test/stream/allocated","protocol":"http_progressive"},"decision_reason":"direct","requested_media_file_id":"41","effective_media_file_id":"41"}}"""
+                    }
+                    "/api/v2/playback/route-events" -> {
+                        status = HttpStatusCode.Accepted
+                        val sent = SiloJson.parseToJsonElement(req.body.toByteArray().decodeToString()).jsonObject
+                        """{"event_id":${sent["event_id"]},"outcome":"accepted"}"""
+                    }
+                    else -> error("Unexpected transport ${req.url.encodedPath}")
+                }
+                respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
+            }
+        })) { install(ContentNegotiation) { json(SiloJson) } }
+        try {
+            val authorities = object : DurableLoginAuthorityProvider {
+                override suspend fun snapshotDurableLoginAuthority() = tokens.metadataOwner?.let { DurableLoginAuthority("login-1", it) }
+            }
+            val sequenced = SequencedPlayback(PlaybackV2Api(client, ApiV2Gate.Unrestricted), tokens, authorities, StartupPlaybackJournal()) {
+                java.util.UUID.randomUUID().toString()
+            }
+            val manager = PlaybackSessionManager(PlaybackRepository(sequenced), tokens)
+            val lifecycle = PlaybackSessionLifecycle(manager, HealthApi(client), PersonalDataRepository(PersonalDataApi(client)), backgroundScope)
+            val profiles = object : ProfileRepository(ProfileApi(client, ApiV2Gate.Unrestricted), tokens) {
+                override suspend fun getActiveProfileId() = "profile"
+                override suspend fun listProfiles(): ApiResult<List<Profile>> = ApiResult.Success(listOf(Profile(id = "profile", name = "Profile")))
+            }
+            val context = ApplicationProvider.getApplicationContext<Application>()
+            val starter = TvVideoPlaybackStarter(
+                CatalogRepository(CatalogApi(client, watchDetail = WatchDetailV2Api(client, tokens, ApiV2Gate.Unrestricted))), manager, profiles,
+                PlaybackCapabilityDetector(context, AudioCapabilityManager(context), LibassBridge(false), SiloClientBuildIdentity(buildNumber = "5", channel = "release")),
+                FakePlayerSettingsStore(), lifecycle,
+                ServerReachabilityMonitor(ApiV2Probe(client)::probeFresh, backgroundScope, { null }), NoOpUserItemStatePort,
+            )
+            val result = starter.start(
+                VideoPlaybackStartRequest(
+                    contentId = "item", preferredFileId = 41, roomId = null, resumePositionOverride = null,
+                    subtitleTrackIndex = launch, subtitleTrackIndexAutoResolved = autoResolved,
+                ),
+            )
+            assertIs<VideoPlaybackStartResult.Ready>(result)
+            assertNotEquals(-99, requested, "the start request was sent")
+            return requested
+        } finally { client.close() }
+    }
+
     private suspend fun TestScope.scenario(
         stage: String,
         settings: FakePlayerSettingsStore = FakePlayerSettingsStore(),
