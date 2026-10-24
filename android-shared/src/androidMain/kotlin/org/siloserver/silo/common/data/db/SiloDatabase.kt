@@ -16,6 +16,8 @@ import org.siloserver.silo.common.data.db.dao.DirtyOperationDao
 import org.siloserver.silo.common.data.db.dao.DownloadDao
 import org.siloserver.silo.common.data.db.dao.DownloadDeletionDao
 import org.siloserver.silo.common.data.db.dao.DownloadSubscriptionDao
+import org.siloserver.silo.common.data.db.dao.TrackPreferenceDao
+import org.siloserver.silo.common.data.db.entity.TrackPreferenceEntity
 import org.siloserver.silo.common.data.db.dao.ServerPurgeDao
 import org.siloserver.silo.common.data.db.dao.HomeCacheDao
 import org.siloserver.silo.common.data.db.dao.LegacyImportDao
@@ -55,8 +57,9 @@ import org.siloserver.silo.common.data.db.entity.UserItemStateEntity
         DownloadSubscriptionEntity::class,
         MembershipProjectionEntity::class,
         LegacyMembershipQuarantineEntity::class,
+        TrackPreferenceEntity::class,
     ],
-    version = 15,
+    version = 16,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -72,6 +75,7 @@ import org.siloserver.silo.common.data.db.entity.UserItemStateEntity
         AutoMigration(from = 12, to = 13),
         AutoMigration(from = 13, to = 14),
         AutoMigration(from = 14, to = 15),
+        AutoMigration(from = 15, to = 16),
     ],
 )
 abstract class SiloDatabase : RoomDatabase() {
@@ -86,6 +90,7 @@ abstract class SiloDatabase : RoomDatabase() {
     abstract fun catalogCacheDao(): CatalogCacheDao
     abstract fun downloadSubscriptionDao(): DownloadSubscriptionDao
     abstract fun serverPurgeDao(): ServerPurgeDao
+    abstract fun trackPreferenceDao(): TrackPreferenceDao
 
     companion object {
         const val NAME = "silo.db"

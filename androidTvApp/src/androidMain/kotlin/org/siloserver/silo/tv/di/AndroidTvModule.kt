@@ -113,6 +113,9 @@ val androidTvModule = module {
     // commonMain PersonalDataRepository's `getOrNull<UserItemStatePort>()` picks
     // up the Room-backed port and writes optimistic projection + outbox rows.
     single { org.siloserver.silo.common.data.db.SiloDatabase.build(androidContext()) }
+    single<org.siloserver.silo.playback.TrackPreferenceStore> {
+        org.siloserver.silo.common.data.repository.RoomTrackPreferenceStore(get())
+    }
     single<org.siloserver.silo.common.data.sync.OutboxSyncScheduler> {
         val appContext = androidContext().applicationContext
         org.siloserver.silo.common.data.sync.OutboxSyncScheduler {

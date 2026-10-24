@@ -132,6 +132,9 @@ import org.siloserver.silo.playback.audioTrackFingerprint
 import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
 import org.siloserver.silo.playback.nextEpisodeAfter
 import org.siloserver.silo.model.playback.audioPreferenceUpdate
+import org.siloserver.silo.model.playback.downloadAudioPreferenceUpdate
+import org.siloserver.silo.model.playback.downloadSubtitlePreferenceUpdate
+import org.siloserver.silo.model.playback.savedAudioTrackPosition
 import org.siloserver.silo.model.playback.hasSubtitlePreference
 import org.siloserver.silo.model.playback.subtitlePreferenceUpdate
 import org.siloserver.silo.model.playback.trackPreferenceKey
@@ -1184,9 +1187,18 @@ class PlayerViewModel(
      */
     private val lifecycleTeardown = PlaybackTeardownGate(sessionLifecycle)
     private var finalPositionScope: PlaybackWriteScope? = null
-    // The streamed playback's metadata owner; a track pick is remembered only
-    // under it. Null while nothing streams.
-    private var trackPreferenceOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null
+    /**
+     * Where this playback's track picks are remembered: for the series [key],
+     * under the [owner] it was loaded for. Null while nothing plays, or when
+     * a download cannot name its series.
+     */
+    private data class TrackPreferenceTarget(
+        val owner: org.siloserver.silo.network.AuthScopeSnapshot,
+        val key: String,
+        /** For a download: whether its audio positions are the source's own (an original file). */
+        val downloadAudioIsSource: Boolean = true,
+    )
+    private var trackPreferenceTarget: TrackPreferenceTarget? = null
     private val initialPlayerLoadGate = InitialPlayerLoadGate()
 
     fun claimInitialRouteLoad(): Boolean = initialPlayerLoadGate.claim()
@@ -1540,7 +1552,7 @@ class PlayerViewModel(
         if (!initialized) return
 
         finalPositionScope = null
-        trackPreferenceOwner = null
+        trackPreferenceTarget = null
         val newLoadJob = viewModelScope.launch {
             finalPositionScope = finalPlaybackPositionWriter.captureScope()
             var unpublishedReadySessionId: String? = null
@@ -1946,7 +1958,10 @@ class PlayerViewModel(
                 )
             }
 
-            trackPreferenceOwner = watchOwner
+            trackPreferenceTarget = watchOwner?.let { owner ->
+                trackPreferenceKey(watchDetail?.type, playbackState.contentId, watchDetail?.seriesId)
+                    ?.let { key -> TrackPreferenceTarget(owner, key) }
+            }
             val mountedState = _uiState.value
             val committedIdentity = mountedState.subtitleTracks
                 .getOrNull(mountedState.selectedSubtitleIndex)
@@ -4724,7 +4739,7 @@ class PlayerViewModel(
             .getOrNull(index)
             ?.let(::mobileSubtitleIdentity)
             ?: SubtitleIdentity.Off
-        saveSeriesSubtitlePick(state, identity)
+        saveSeriesSubtitlePick(state, identity, state.subtitleTracks.getOrNull(index))
         // The route intent is begun as the pick is staged: a network move in
         // flight publishes its own tracks when it lands, which would clear an
         // intent begun before it.
@@ -4817,19 +4832,25 @@ class PlayerViewModel(
      * as Silo Apple does. Only the two pick handlers call these; a restored or
      * automatic selection is already the server's answer.
      */
-    private fun saveSeriesSubtitlePick(state: PlayerUiState, identity: SubtitleIdentity) {
-        val owner = trackPreferenceOwner ?: return
-        val key = trackPreferenceKey(state.contentType, state.contentId, state.seriesId) ?: return
-        val catalog = state.versions.getOrNull(state.selectedVersionIndex)?.subtitleTracks.orEmpty()
-        val update = subtitlePreferenceUpdate(identity, catalog) ?: return
-        trackPreferenceWriter?.saveSubtitle(owner, key, update)
+    private fun saveSeriesSubtitlePick(state: PlayerUiState, identity: SubtitleIdentity, row: PlayerSubtitleInfo?) {
+        val target = trackPreferenceTarget ?: return
+        val update = if (state.isLocalFilePlayback()) {
+            downloadSubtitlePreferenceUpdate(row)
+        } else {
+            val catalog = state.versions.getOrNull(state.selectedVersionIndex)?.subtitleTracks.orEmpty()
+            subtitlePreferenceUpdate(identity, catalog) ?: return
+        }
+        trackPreferenceWriter?.saveSubtitle(target.owner, target.key, update)
     }
 
     private fun saveSeriesAudioPick(state: PlayerUiState, catalogOrdinal: Int) {
-        val owner = trackPreferenceOwner ?: return
-        val key = trackPreferenceKey(state.contentType, state.contentId, state.seriesId) ?: return
-        val update = audioPreferenceUpdate(state.audioTracks, catalogOrdinal) ?: return
-        trackPreferenceWriter?.saveAudio(owner, key, update)
+        val target = trackPreferenceTarget ?: return
+        val update = if (state.isLocalFilePlayback()) {
+            downloadAudioPreferenceUpdate(state.audioTracks, catalogOrdinal, prepared = !target.downloadAudioIsSource)
+        } else {
+            audioPreferenceUpdate(state.audioTracks, catalogOrdinal)
+        } ?: return
+        trackPreferenceWriter?.saveAudio(target.owner, target.key, update)
     }
 
     // ---- Desired audio ------------------------------------------------------
@@ -6416,11 +6437,38 @@ class PlayerViewModel(
         } else {
             versions
         }
-        val localSelectedAudio = offlineTracks?.defaultAudioPosition() ?: 0
+        // The series' remembered tracks seed the download, read fresh when the
+        // server answers and from what this device last saw otherwise, with
+        // a pick not yet sent taking precedence. Only for the server and
+        // profile the download belongs to, and only when it names its series.
+        val preferenceTarget = watchOwner
+            ?.takeIf { it.serverId == media.serverId && it.profileId == media.profileId }
+            ?.let { owner ->
+                val key = watchDetail?.let { trackPreferenceKey(it.type, contentId, it.seriesId) }
+                    ?: sidecar.trackPreferenceKey()
+                key?.let {
+                    // Only an original download's positions are the source's;
+                    // without a manifest the file's layout is unknown.
+                    TrackPreferenceTarget(owner, it, downloadAudioIsSource = offlineTracks != null && !offlineTracks.audioByPosition)
+                }
+            }
+        if (preferenceTarget != null && watchDetail != null) {
+            trackPreferenceWriter?.refresh(preferenceTarget.owner, preferenceTarget.key, TRACK_PREFERENCE_REFRESH_TIMEOUT_MS)
+        }
+        val savedAudio = preferenceTarget?.let { trackPreferenceWriter?.rememberedAudio(media.serverId, media.profileId, it.key) }
+        val savedSubtitle = preferenceTarget?.let { trackPreferenceWriter?.rememberedSubtitle(media.serverId, media.profileId, it.key) }
+        val localSelectedAudio = savedAudio
+            ?.let { saved ->
+                savedAudioTrackPosition(localAudioTracks, saved, indexIsSourceOrdinal = preferenceTarget?.downloadAudioIsSource == true)
+            }
+            ?: offlineTracks?.defaultAudioPosition()
+            ?: 0
         val sidecarSubtitles = withContext(Dispatchers.IO) {
             offlineSidecarSubtitleRows(offlineTracks?.subtitles.orEmpty())
         }
-        val subtitlePreferences = offlineSubtitlePreferences(watchDetail)
+        val subtitlePreferences = offlineSubtitlePreferences(watchDetail).let { resolved ->
+            savedSubtitle?.let(resolved::withSeriesRow) ?: resolved
+        }
         if (!ownsLoad(loadOwner)) return false
 
         val published = loadOwners.runIfOwned(loadOwner) {
@@ -6498,6 +6546,7 @@ class PlayerViewModel(
                 mountGeneration = mountGeneration,
                 preferences = subtitlePreferences,
             )
+            trackPreferenceTarget = preferenceTarget
             mobileSubtitleTransactions.resetContent(
                 context = mobileSubtitleContext(_uiState.value),
                 committedIdentity = SubtitleIdentity.Off,
@@ -6617,6 +6666,7 @@ class PlayerViewModel(
             preferredLanguage = current.preferences.preferredLanguage,
             subtitleMode = current.preferences.mode,
             showForcedSubtitles = current.preferences.showForced,
+            trackSignature = current.preferences.trackSignature,
         )
         val identity = when (selection) {
             is MobileSubtitleAutoSelection.Select ->
@@ -6670,6 +6720,9 @@ class PlayerViewModel(
  * PLAYBACK_PAUSE_GRACE_MS; TV carries the same constant.
  */
 private const val PLAYBACK_PAUSE_GRACE_MS = 1_500L
+
+/** How long a download waits for the series' remembered tracks before playing with what it has. */
+private const val TRACK_PREFERENCE_REFRESH_TIMEOUT_MS = 2_000L
 
 /** Snapshots to let a local audio switch take before asking the server. */
 private const val MAX_LOCAL_AUDIO_ATTEMPTS = 3

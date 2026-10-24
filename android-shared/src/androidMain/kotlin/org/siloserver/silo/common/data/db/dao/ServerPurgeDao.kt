@@ -38,7 +38,8 @@ interface ServerPurgeDao {
             "UNION SELECT DISTINCT serverId FROM content_item_state " +
             "UNION SELECT DISTINCT serverId FROM user_item_state " +
             "UNION SELECT DISTINCT serverId FROM home_cache " +
-            "UNION SELECT DISTINCT serverId FROM catalog_cache",
+            "UNION SELECT DISTINCT serverId FROM catalog_cache " +
+            "UNION SELECT DISTINCT serverId FROM track_preferences",
     )
     suspend fun knownServerIds(): List<String>
 
@@ -72,6 +73,9 @@ interface ServerPurgeDao {
     @Query("DELETE FROM catalog_cache WHERE serverId = :serverId")
     suspend fun deleteCatalogCache(serverId: String)
 
+    @Query("DELETE FROM track_preferences WHERE serverId = :serverId")
+    suspend fun deleteTrackPreferences(serverId: String)
+
     @Transaction
     suspend fun deleteAllRowsForServer(serverId: String) {
         deleteDownloads(serverId)
@@ -82,5 +86,6 @@ interface ServerPurgeDao {
         deleteUserItemState(serverId)
         deleteHomeCache(serverId)
         deleteCatalogCache(serverId)
+        deleteTrackPreferences(serverId)
     }
 }

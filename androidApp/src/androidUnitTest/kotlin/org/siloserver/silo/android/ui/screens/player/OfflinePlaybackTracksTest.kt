@@ -5,6 +5,9 @@ import org.siloserver.silo.common.player.resolveMountedSubtitle
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.download.OfflineSubtitleFile
 import org.siloserver.silo.model.playback.SubtitleIdentity
+import org.siloserver.silo.model.playback.SubtitlePreferenceUpdate
+import org.siloserver.silo.model.playback.SubtitleTrackSignature
+import org.siloserver.silo.model.playback.downloadSubtitlePreferenceUpdate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -103,6 +106,43 @@ class OfflinePlaybackTracksTest {
         assertEquals(
             MobileSubtitleAutoSelection.NoChange,
             resolveMobileAutoSubtitleSelection(audio, 0, rows, null, null, showForcedSubtitles = true),
+        )
+    }
+
+    @Test
+    fun anSdhSidecarWithAPlainTitleIsSavedAsSdh() {
+        val sdh = OfflineSubtitleFile(path = "/data/app/subs/3.srt", format = "srt", language = "eng", title = "English", hearingImpaired = true)
+        val row = offlineSidecarSubtitleRows(listOf(sdh)) { true }.single()
+
+        assertEquals(true, downloadSubtitlePreferenceUpdate(row).trackSignature?.hearingImpaired)
+        // And the saved SDH track is found again among plain and SDH English.
+        val plain = OfflineSubtitleFile(path = "/data/app/subs/4.srt", format = "srt", language = "eng", title = "English")
+        val rows = offlineSidecarSubtitleRows(listOf(plain, sdh)) { true }
+        val signature = SubtitleTrackSignature(language = "en", codec = "srt", label = "English", hearingImpaired = true)
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(1),
+            resolveMobileAutoSubtitleSelection(emptyList(), 0, rows, "en", "always", showForcedSubtitles = false, trackSignature = signature),
+        )
+    }
+
+    @Test
+    fun aSeriesRowWithoutALanguageOrModeKeepsTheInheritedOnes() {
+        // A row holding only a forced-subtitle override: the profile's English/Always still applies.
+        val inherited = OfflineSubtitlePreferences(preferredLanguage = "en", mode = "always", showForced = false)
+        val forcedOnly = SubtitlePreferenceUpdate(subtitleTrackIndex = -1, subtitleLanguage = "", subtitleMode = "", showForcedSubtitles = true)
+        val rows = offlineSidecarSubtitleRows(files) { true }
+
+        val merged = inherited.withSeriesRow(forcedOnly)
+        assertEquals(OfflineSubtitlePreferences(preferredLanguage = "en", mode = "always", showForced = true), merged)
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(0),
+            resolveMobileAutoSubtitleSelection(emptyList(), 0, rows, merged.preferredLanguage, merged.mode, merged.showForced, merged.trackSignature),
+        )
+        // Off is a mode, so it still turns subtitles off.
+        val off = inherited.withSeriesRow(forcedOnly.copy(subtitleMode = "off"))
+        assertEquals(
+            MobileSubtitleAutoSelection.Disable,
+            resolveMobileAutoSubtitleSelection(emptyList(), 0, rows, off.preferredLanguage, off.mode, off.showForced, off.trackSignature),
         )
     }
 

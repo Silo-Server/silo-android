@@ -320,6 +320,7 @@ fun PlayerSubtitleInfo.toAutoSubtitleCandidate(): AutoSubtitleCandidate =
         codec = codec,
         title = catalogLabel ?: label,
         forced = forced == true,
+        hearingImpaired = hearingImpaired == true,
         source = autoSubtitleSource(),
         needsBurnIn = playbackSubtitleIdentity(this) is SubtitleIdentity.ServerBurnIn,
     )
