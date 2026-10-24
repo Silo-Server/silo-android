@@ -170,7 +170,20 @@ data class TvItemDetailUiState(
     val pendingSeriesSubtitleChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
     /** [pendingSeriesSubtitleChoices] for audio. */
     val pendingSeriesAudioChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice> = emptyMap(),
-)
+    /**
+     * Series choices picked on this page, by series key. Kept after their
+     * write lands: the loaded details still describe the older choice until
+     * they are read again, and the previews must not fall back to it.
+     */
+    val pickedSeriesSubtitleChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
+    val pickedSeriesAudioChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice> = emptyMap(),
+) {
+    /** What this page knows newer than its details: its own picks, and any choice still unsent. */
+    val seriesSubtitleOverlay: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice>
+        get() = pickedSeriesSubtitleChoices + pendingSeriesSubtitleChoices
+    val seriesAudioOverlay: Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice>
+        get() = pickedSeriesAudioChoices + pendingSeriesAudioChoices
+}
 
 /**
  * This device's per-file memory for [version] filtered by the server's series
@@ -220,7 +233,7 @@ internal fun TvItemDetailUiState.subtitleAutoContext(
 ): TvPlaybackFormatting.SubtitleAutoContext {
     val detail = playbackDetail?.withPendingSeriesSubtitleChoice(
         org.siloserver.silo.model.playback.seriesTrackChoiceKey(playbackDetail.seriesId, playbackDetail.contentId)
-            ?.let(pendingSeriesSubtitleChoices::get),
+            ?.let(seriesSubtitleOverlay::get),
     )
     return TvPlaybackFormatting.SubtitleAutoContext(
         preferredLanguage = detail?.effectiveSubtitleLanguage?.takeIf { it.isNotBlank() }
@@ -280,7 +293,7 @@ internal fun sessionTracksConsistentWithSeriesChoice(
 internal fun TvItemDetailUiState.automaticAudioOrdinal(playbackDetail: ItemDetail?, version: FileVersion?): Int? {
     version ?: return null
     val key = playbackDetail?.let { org.siloserver.silo.model.playback.seriesTrackChoiceKey(it.seriesId, it.contentId) }
-    val served = version.withPendingSeriesAudioChoice(key?.let(pendingSeriesAudioChoices::get))
+    val served = version.withPendingSeriesAudioChoice(key?.let(seriesAudioOverlay::get))
     served.effectiveAudioTrackIndex?.takeIf { it in served.audioTracks.orEmpty().indices }?.let { return it }
     return resolveTvAutomaticAudioTrackOrdinal(
         version = version,
@@ -1356,6 +1369,12 @@ class TvItemDetailViewModel(
                 org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(track, index)
             }
         }
+        _uiState.update {
+            it.copy(
+                pickedSeriesSubtitleChoices = it.pickedSeriesSubtitleChoices +
+                    (key to org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice(choice)),
+            )
+        }
         viewModelScope.launch { writer.saveSubtitle(key, choice) }
     }
 
@@ -1366,6 +1385,12 @@ class TvItemDetailViewModel(
         val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId) ?: return
         val choice = index?.let {
             org.siloserver.silo.model.playback.SeriesAudioChoice.of(version?.audioTracks.orEmpty(), it) ?: return
+        }
+        _uiState.update {
+            it.copy(
+                pickedSeriesAudioChoices = it.pickedSeriesAudioChoices +
+                    (key to org.siloserver.silo.model.playback.PendingSeriesAudioChoice(choice)),
+            )
         }
         viewModelScope.launch { writer.saveAudio(key, choice) }
     }
@@ -1437,8 +1462,8 @@ class TvItemDetailViewModel(
                 ?.withSeriesTrackChoices(
                     detail,
                     version,
-                    _uiState.value.pendingSeriesSubtitleChoices,
-                    _uiState.value.pendingSeriesAudioChoices,
+                    _uiState.value.seriesSubtitleOverlay,
+                    _uiState.value.seriesAudioOverlay,
                     subtitleResetToAuto = subtitleResetToAuto(detail),
                 )
                 ?: return@launch
@@ -1469,8 +1494,8 @@ class TvItemDetailViewModel(
             version = version,
             audio = saved.audio.takeIf { tracksBelongToVersion },
             subtitle = saved.subtitle.takeIf { tracksBelongToVersion },
-            pendingSubtitles = state.pendingSeriesSubtitleChoices,
-            pendingAudio = state.pendingSeriesAudioChoices,
+            pendingSubtitles = state.seriesSubtitleOverlay,
+            pendingAudio = state.seriesAudioOverlay,
         )
         _uiState.update {
             it.copy(
@@ -2344,8 +2369,8 @@ class TvItemDetailViewModel(
             ?.withSeriesTrackChoices(
                 detail,
                 selectedVersion,
-                _uiState.value.pendingSeriesSubtitleChoices,
-                _uiState.value.pendingSeriesAudioChoices,
+                _uiState.value.seriesSubtitleOverlay,
+                _uiState.value.seriesAudioOverlay,
                 subtitleResetToAuto = subtitleResetToAuto(detail),
             )
             ?.let { restoreTrackSelection(selectedVersion, it) }
@@ -2355,8 +2380,8 @@ class TvItemDetailViewModel(
             version = selectedVersion,
             audio = session?.audio.takeIf { sessionMatchesSelectedVersion },
             subtitle = session?.subtitle.takeIf { sessionMatchesSelectedVersion },
-            pendingSubtitles = _uiState.value.pendingSeriesSubtitleChoices,
-            pendingAudio = _uiState.value.pendingSeriesAudioChoices,
+            pendingSubtitles = _uiState.value.seriesSubtitleOverlay,
+            pendingAudio = _uiState.value.seriesAudioOverlay,
         )
         return ResolvedNextUpTrackSelection(
             fileId = selectedFileId,
@@ -2579,8 +2604,8 @@ class TvItemDetailViewModel(
                 ?.withSeriesTrackChoices(
                     playbackDetail,
                     version,
-                    _uiState.value.pendingSeriesSubtitleChoices,
-                    _uiState.value.pendingSeriesAudioChoices,
+                    _uiState.value.seriesSubtitleOverlay,
+                    _uiState.value.seriesAudioOverlay,
                     subtitleResetToAuto = subtitleResetToAuto(playbackDetail),
                 )
                 ?: return@launch

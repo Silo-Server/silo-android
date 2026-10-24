@@ -1831,7 +1831,11 @@ private fun HeroActionRow(
                             playLaunchPending = true
                             onPlay(
                                 playContentId, playFileId, playVersionChosen,
-                                selectorAudioIndex ?: automaticAudioTrackOrdinal,
+                                // Only a pick on this page travels as the start's
+                                // audio. Auto is resolved by the start itself,
+                                // from the server's current answer: a preview
+                                // can be older than a choice cleared here.
+                                selectorAudioIndex,
                                 selectorAudioPicked,
                                 subtitleLaunchSelection,
                                 playType, resumePosition,
@@ -1862,7 +1866,7 @@ private fun HeroActionRow(
                                 playLaunchPending = true
                                 onPlay(
                                     playContentId, playFileId, playVersionChosen,
-                                    selectorAudioIndex ?: automaticAudioTrackOrdinal,
+                                    selectorAudioIndex,
                                     selectorAudioPicked,
                                     subtitleLaunchSelection,
                                     playType, 0.0,
@@ -2118,7 +2122,8 @@ internal fun seriesEpisodePlaybackLaunch(
     return SeriesEpisodePlaybackLaunch(
         fileId = explicitFileId ?: selectedVersion?.fileId?.takeIf { hasTrackOverride },
         versionChosen = explicitFileId != null,
-        audioTrackIndex = audioTrackIndex ?: automaticAudioTrackOrdinal,
+        // Only a pick travels; Auto is resolved by the start (see the hero row).
+        audioTrackIndex = audioTrackIndex,
         audioPickedThisSession = selectionMatchesEpisode && state.nextUpAudioPickedThisSession,
         subtitleSelection = subtitleSelection,
         resumePositionSeconds = episode.userData?.resumePositionSeconds(),

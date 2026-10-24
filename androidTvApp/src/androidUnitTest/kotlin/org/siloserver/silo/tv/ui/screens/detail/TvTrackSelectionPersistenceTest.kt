@@ -18,6 +18,28 @@ import kotlin.test.assertTrue
 
 class TvTrackSelectionPersistenceTest {
     @Test
+    fun autoClearedOnThePageOutlivesItsWriteInTheAudioPreview() {
+        // The details still answer German (1); Auto was chosen here and its
+        // DELETE has landed, so nothing is pending any more.
+        val version = FileVersion(
+            fileId = 7,
+            audioTracks = listOf(AudioTrack(language = "eng", codec = "aac"), AudioTrack(language = "deu", codec = "aac")),
+            effectiveAudioTrackIndex = 1,
+        )
+        val detail = org.siloserver.silo.model.catalog.ItemDetail(
+            contentId = "e1", type = "episode", title = "E1", seriesId = "show", versions = listOf(version),
+        )
+        val before = TvItemDetailUiState()
+        assertEquals(1, before.automaticAudioOrdinal(detail, version))
+
+        val cleared = before.copy(
+            pickedSeriesAudioChoices = mapOf("show" to org.siloserver.silo.model.playback.PendingSeriesAudioChoice(null)),
+        )
+        // No capabilities known in this state, so no device-language answer either.
+        assertNull(cleared.automaticAudioOrdinal(detail, version))
+    }
+
+    @Test
     fun aRememberedSessionTrackYieldsToTheNewerSeriesChoice() {
         // Episode tracks: English (0), Japanese (1); subtitles: English (0), English SDH (1).
         val version = FileVersion(
