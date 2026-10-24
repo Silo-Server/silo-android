@@ -106,6 +106,12 @@ val repositoryModule = module {
         )
     }
     single { org.siloserver.silo.repository.ForegroundAccessCheck(get(), get()) }
+    single {
+        org.siloserver.silo.playback.TrackPreferenceWriter(
+            api = get(),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        )
+    }
     single { CollectionRepository(get()) }
     single {
         SectionRepository(

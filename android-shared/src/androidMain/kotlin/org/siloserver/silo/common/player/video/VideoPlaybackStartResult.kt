@@ -8,6 +8,21 @@ import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 
+/**
+ * How a start applied the title's remembered tracks, for the player's restore
+ * decisions once its tracks land.
+ */
+data class TrackPreferenceRestore(
+    /** The server resolved a subtitle preference, so a per-file choice must not override it. */
+    val subtitlePreferenceResolved: Boolean = false,
+    /** The series' remembered subtitle track (`effective_subtitle_track_signature`). */
+    val subtitleTrackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
+    /** The start requested the series' saved audio pick, so a per-file choice must not override it. */
+    val seriesAudioApplied: Boolean = false,
+    /** The detail row's Auto subtitle re-resolved with this title's own preferences; null when not re-resolved. */
+    val autoSubtitleTrackIndex: Int? = null,
+)
+
 sealed interface VideoPlaybackStartResult {
     data class Ready(
         val contentId: String,
@@ -55,6 +70,7 @@ sealed interface VideoPlaybackStartResult {
         val episodeNumber: Int? = null,
         /** TV's target-catalog resolution of [VideoPlaybackStartRequest.episodeSelectionHandoff]. */
         val resolvedEpisodeSelection: ResolvedEpisodeSelection? = null,
+        val trackPreferenceRestore: TrackPreferenceRestore = TrackPreferenceRestore(),
         val seriesTitle: String? = null,
         /** Release year, for the player's "MOVIE · 2026" line. */
         val year: Int? = null,

@@ -85,6 +85,7 @@ sealed interface VideoPlayerUiState {
         val episodeNumber: Int? = null,
         /** Target-catalog decision for the one-shot episode-selection handoff. */
         val resolvedEpisodeSelection: ResolvedEpisodeSelection? = null,
+        val trackPreferenceRestore: TrackPreferenceRestore = TrackPreferenceRestore(),
         val seriesTitle: String? = null,
         /** Release year, for the player's "MOVIE · 2026" line. */
         val year: Int? = null,

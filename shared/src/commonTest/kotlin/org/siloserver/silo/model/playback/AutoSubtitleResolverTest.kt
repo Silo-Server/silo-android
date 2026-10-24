@@ -13,6 +13,65 @@ import kotlin.test.assertNull
  */
 class AutoSubtitleResolverTest {
 
+    // --- the series' remembered track -------------------------------------
+
+    @Test
+    fun theSeriesRememberedSdhTrackBeatsThePlainOneTheLanguageCascadePicks() {
+        // Picked "English (SDH)" on an earlier episode. The series pref stores
+        // English/Always, which alone ranks the plain track first.
+        val tracks = listOf(
+            SubtitleTrack(index = 0, codec = "subrip", language = "eng", title = "English"),
+            SubtitleTrack(index = 1, codec = "subrip", language = "eng", title = "English (SDH)"),
+            SubtitleTrack(index = 2, codec = "subrip", language = "eng", title = "Forced", forced = true),
+        )
+        val signature = SubtitleTrackSignature(
+            source = "embedded",
+            language = "en",
+            codec = "subrip",
+            label = "English (SDH)",
+            hearingImpaired = true,
+        )
+
+        val selected = resolveAutoSubtitle(
+            candidates = catalogAutoSubtitleCandidates(tracks),
+            context = AutoSubtitleContext(preferredLanguage = "en", mode = "always", trackSignature = signature),
+        ).selectedCandidate()
+
+        assertEquals(1, selected?.selectionIndex)
+    }
+
+    @Test
+    fun anAmbiguousSignatureResolvesTheSameInCatalogAndInventoryOrder() {
+        // A download keeps the embedded English as a sidecar: two otherwise
+        // equal English tracks, listed embedded-first in the catalog and
+        // external-first in a session inventory. The list order must not decide.
+        val signature = SubtitleTrackSignature(language = "en", codec = "subrip")
+        val embedded = AutoSubtitleCandidate(selectionIndex = 1, language = "en", codec = "subrip", source = AutoSubtitleSource.EMBEDDED)
+        val external = AutoSubtitleCandidate(selectionIndex = 0, language = "en", codec = "subrip", source = AutoSubtitleSource.EXTERNAL)
+
+        assertEquals(embedded, bestSignatureAutoSubtitleCandidate(signature, listOf(embedded, external)))
+        assertEquals(embedded, bestSignatureAutoSubtitleCandidate(signature, listOf(external, embedded)))
+    }
+
+    @Test
+    fun aSignatureMatchingNothingFallsBackToTheLanguageCascade() {
+        // Flags and codec agreeing is no match: a Japanese pick must not
+        // hijack the English cascade on an episode with no Japanese track.
+        val tracks = listOf(SubtitleTrack(index = 0, codec = "subrip", language = "eng", title = "English"))
+
+        val resolution = resolveAutoSubtitle(
+            candidates = catalogAutoSubtitleCandidates(tracks),
+            context = AutoSubtitleContext(
+                preferredLanguage = "en",
+                mode = "auto",
+                audioLanguage = "en",
+                trackSignature = SubtitleTrackSignature(language = "ja", codec = "subrip"),
+            ),
+        )
+
+        assertEquals(AutoSubtitleResolution.Disable, resolution)
+    }
+
     // --- the regression -------------------------------------------------
 
     @Test

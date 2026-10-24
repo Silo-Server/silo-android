@@ -389,6 +389,7 @@ val androidModule = module {
             reachabilityMonitor = get(),
             userItemStatePort = get(),
             networkEvidenceProvider = get(),
+            trackPreferences = get(),
         )
     }
     factory {
@@ -493,6 +494,7 @@ val androidModule = module {
             shuffleFeatureStore = get(),
             networkEvidenceProvider = get(),
             throughputMeter = get(),
+            trackPreferenceWriter = get(),
         )
     }
     viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get()) }

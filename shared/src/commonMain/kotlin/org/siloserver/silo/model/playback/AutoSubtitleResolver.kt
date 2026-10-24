@@ -66,6 +66,8 @@ data class AutoSubtitleContext(
     val showForced: Boolean = false,
     /** Language of the audio track that will play. */
     val audioLanguage: String? = null,
+    /** The series' remembered track (`effective_subtitle_track_signature`). */
+    val trackSignature: SubtitleTrackSignature? = null,
 )
 
 sealed class AutoSubtitleResolution {
@@ -85,8 +87,9 @@ fun AutoSubtitleResolution.selectedCandidate(): AutoSubtitleCandidate? =
 /**
  * Resolves the track Auto should start with.
  *
- * Cascade (unchanged from the detail page):
- * mode `off` / an explicitly empty preferred language → off; no preferred
+ * Cascade (unchanged from the detail page, plus the series' remembered track):
+ * mode `off` → off; a track matching the series' [AutoSubtitleContext.trackSignature]
+ * → that track; an explicitly empty preferred language → off; no preferred
  * language → only mode `always` picks anything; audio already in the preferred
  * language under mode `auto` → off, or the language's forced track when forced
  * subs are enabled; otherwise the best track in the preferred language, falling
@@ -113,6 +116,10 @@ fun resolveAutoSubtitle(
 
     val mode = context.mode?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: "auto"
     if (mode == "off") return AutoSubtitleResolution.Disable
+
+    context.trackSignature
+        ?.let { bestSignatureAutoSubtitleCandidate(it, candidates) }
+        ?.let { return AutoSubtitleResolution.Select(it) }
 
     val preferred = context.preferredLanguage
     if (preferred != null && preferred.isBlank()) return AutoSubtitleResolution.Disable
@@ -164,6 +171,42 @@ val autoSubtitlePreferenceOrder: Comparator<AutoSubtitleCandidate> = compareBy(
     { it.isHearingImpaired() },
     { it.source?.ordinal ?: 0 },
 )
+
+/**
+ * The track that best matches a remembered [signature], scored as Silo Apple
+ * scores it: language +5 and a label contained in the title +2 are the only
+ * signals that can make a match; forced, SDH and codec agreement (+1 each)
+ * only rank. A file's forced and SDH variants of one language therefore tie on
+ * language and are split by the flags the viewer chose; a full tie falls back
+ * to [autoSubtitlePreferenceOrder], never to the caller's list order. The
+ * source is deliberately not compared: a download stores as a sidecar what
+ * streamed as an embedded track.
+ */
+fun bestSignatureAutoSubtitleCandidate(
+    signature: SubtitleTrackSignature,
+    candidates: List<AutoSubtitleCandidate>,
+): AutoSubtitleCandidate? {
+    val signatureLanguage = autoSubtitleLanguageKey(signature.language)
+    val signatureLabel = signature.label?.trim()?.takeIf { it.isNotEmpty() }
+    val scored = candidates.mapNotNull { candidate ->
+        var score = 0
+        var strong = false
+        if (signatureLanguage != null && autoSubtitleLanguageKey(candidate.language) == signatureLanguage) {
+            score += 5
+            strong = true
+        }
+        if (signatureLabel != null && candidate.title?.contains(signatureLabel, ignoreCase = true) == true) {
+            score += 2
+            strong = true
+        }
+        if (signature.forced == candidate.forced) score += 1
+        if (signature.hearingImpaired == candidate.isHearingImpaired()) score += 1
+        if (signature.codec != null && signature.codec.equals(candidate.codec, ignoreCase = true)) score += 1
+        if (strong) candidate to score else null
+    }
+    val best = scored.maxOfOrNull { it.second } ?: return null
+    return scored.filter { it.second == best }.map { it.first }.minWithOrNull(autoSubtitlePreferenceOrder)
+}
 
 private fun bestAutoSubtitleCandidate(
     candidates: List<AutoSubtitleCandidate>,

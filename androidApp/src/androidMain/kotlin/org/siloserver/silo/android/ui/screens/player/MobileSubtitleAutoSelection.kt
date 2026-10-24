@@ -5,7 +5,9 @@ import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.playback.AutoSubtitleCandidate
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
+import org.siloserver.silo.model.playback.SubtitleTrackSignature
 import org.siloserver.silo.model.playback.autoSubtitlePreferenceOrder
+import org.siloserver.silo.model.playback.bestSignatureAutoSubtitleCandidate
 import org.siloserver.silo.model.playback.toAutoSubtitleCandidate
 import org.siloserver.silo.playback.canonicalSubtitleLanguage
 import org.siloserver.silo.playback.hasPositiveSubtitleDiscriminator
@@ -91,11 +93,19 @@ internal fun resolveMobileAutoSubtitleSelection(
     preferredLanguage: String?,
     subtitleMode: String?,
     showForcedSubtitles: Boolean,
+    /** The series' remembered track (`effective_subtitle_track_signature`); it outranks the language cascade. */
+    trackSignature: SubtitleTrackSignature? = null,
 ): MobileSubtitleAutoSelection {
     if (subtitles.isEmpty()) return MobileSubtitleAutoSelection.NoChange
 
     val mode = subtitleMode?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: "auto"
     if (mode == "off") return MobileSubtitleAutoSelection.Disable
+
+    if (trackSignature != null) {
+        val candidates = subtitles.map(PlayerSubtitleInfo::toAutoSubtitleCandidate)
+        bestSignatureAutoSubtitleCandidate(trackSignature, candidates)
+            ?.let { return MobileSubtitleAutoSelection.Select(candidates.indexOf(it)) }
+    }
 
     if (preferredLanguage != null && preferredLanguage.isBlank()) {
         return MobileSubtitleAutoSelection.Disable

@@ -2,6 +2,9 @@
 
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.model.playback.audioPreferenceUpdate
+import org.siloserver.silo.model.playback.subtitlePreferenceUpdate
+import org.siloserver.silo.model.playback.trackPreferenceKey
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsSeekEvent
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
@@ -519,12 +522,14 @@ internal fun resolveTvAutoSubtitleIdentity(
     preferredLanguage: String?,
     subtitleMode: String?,
     showForced: Boolean,
+    trackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
 ): SubtitleIdentity {
     val context = AutoSubtitleContext(
         preferredLanguage = preferredLanguage,
         mode = subtitleMode,
         showForced = showForced,
         audioLanguage = audioTracks.firstOrNull { it.isSelected }?.language,
+        trackSignature = trackSignature,
     )
     if (subtitleRows.isNotEmpty()) {
         val winner = resolveAutoSubtitle(
@@ -797,6 +802,8 @@ class TvPlayerViewModel(
     // When the video's requests last received a byte, so the buffering-quality
     // adapter can tell a dead link from a slow one. Optional for the same reason.
     private val throughputMeter: org.siloserver.silo.common.player.PlaybackThroughputMeter? = null,
+    // Remembers the viewer's track picks for the series. Optional for the same reason.
+    private val trackPreferenceWriter: org.siloserver.silo.playback.TrackPreferenceWriter? = null,
 ) : ViewModel() {
 
     companion object {
@@ -842,6 +849,8 @@ class TvPlayerViewModel(
     private var lastRecordedKey: String? = null
     private var lastRecordedPositionSec: Double = -1.0
     private var finalPositionScope: PlaybackWriteScope? = null
+    // The playing title's metadata owner; a track pick is remembered only under it.
+    private var trackPreferenceOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null
 
     /** [force] bypasses the time-throttle (used on pause/stop to capture the exact spot). */
     private fun maybeRecordPosition(positionSec: Double, durationSec: Double, force: Boolean = false) {
@@ -1207,6 +1216,8 @@ class TvPlayerViewModel(
         val preferredTextLanguage: String? = null,
         val preferredSubtitleMode: String? = null,
         val showForcedSubtitles: Boolean = true,
+        /** The series' remembered subtitle track, ranked ahead of the language cascade. */
+        val subtitleTrackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
         // Intro / credits ranges — populated from `WatchDetail`. Used by the
         // intro auto-skip observer and (eventually) the next-up promote.
         val intro: TimeRange? = null,
@@ -2332,6 +2343,7 @@ class TvPlayerViewModel(
             else it.copy(isLoading = true, error = null, serverUnreachable = false)
         }
         finalPositionScope = null
+        trackPreferenceOwner = null
         viewModelScope.launch {
             finalPositionScope = finalPlaybackPositionWriter.captureScope()
             val unpublishedReadySession =
@@ -2358,11 +2370,18 @@ class TvPlayerViewModel(
                         } else {
                             initialAudioTrackIndex
                         },
+                        audioTrackIndexAutoResolved = recoveryStartParams == null &&
+                            !audioTrackIndexOverrideSpecified &&
+                            initialAudioTrackIndex != null &&
+                            !launchArgs.initialAudioPickedThisSession,
                         subtitleTrackIndex = if (recoveryStartParams != null) {
                             recoveryStartParams.subtitleTrackIndex
                         } else {
                             pendingInitialSubtitleIndex
                         },
+                        subtitleTrackIndexAutoResolved = recoveryStartParams == null &&
+                            pendingInitialSubtitleIndex != null &&
+                            pendingInitialSubtitleAutoResolved,
                         preferredQualityOverride = recoveryStartParams?.qualityPreference
                             ?: preferredQuality,
                         playbackQualityIntent = qualityOverride,
@@ -2373,6 +2392,7 @@ class TvPlayerViewModel(
                         room = requestRoom,
                         versionChosen = versionChosen,
                     )
+                val watchOwner = catalogRepository.captureWatchAuthority()
                 val result = loadOwners.withOwner(loadOwner) {
                     videoPlaybackCoordinator.start(request)
                 }
@@ -2421,7 +2441,13 @@ class TvPlayerViewModel(
                         if (episodeSelectionHandoff != null) {
                             // A carried episode intent is the viewer's, not a preview.
                             pendingInitialSubtitleAutoResolved = false
+                        } else if (pendingInitialSubtitleAutoResolved) {
+                            // The starter resolved the detail row's Auto again with
+                            // this title's own preferences; that is what was planned.
+                            result.trackPreferenceRestore.autoSubtitleTrackIndex
+                                ?.let { pendingInitialSubtitleIndex = it }
                         }
+                        trackPreferenceOwner = watchOwner
                         val resolvedSelection = result.resolvedEpisodeSelection
                         if (episodeSelectionHandoff != null && resolvedSelection != null) {
                             pendingInitialSubtitleAttempts = 0
@@ -2452,9 +2478,12 @@ class TvPlayerViewModel(
                             .firstOrNull { it.fileId == (result.fileId ?: readyMediaFileId) }
                             ?.subtitleTracks
                             .orEmpty()
+                        // A choice remembered on this device for this file applies
+                        // only where the server resolved no series preference.
                         val restorePreference = if (
                             pendingInitialSubtitleIndex == null &&
-                            !subtitleSelection.suppressDurableSubtitleRestore
+                            !subtitleSelection.suppressDurableSubtitleRestore &&
+                            !result.trackPreferenceRestore.subtitlePreferenceResolved
                         ) {
                             localTrackSelection?.subtitleFingerprint
                         } else {
@@ -2501,7 +2530,10 @@ class TvPlayerViewModel(
                             return@launch
                         }
                         val hydratedSubtitleUrls = freshRestore.rows
-                        pendingPersistedAudioFingerprint = if (initialAudioTrackIndex == null) {
+                        pendingPersistedAudioFingerprint = if (
+                            initialAudioTrackIndex == null &&
+                            !result.trackPreferenceRestore.seriesAudioApplied
+                        ) {
                             localTrackSelection?.audioFingerprint
                         } else {
                             null
@@ -2600,6 +2632,7 @@ class TvPlayerViewModel(
                                 preferredTextLanguage = result.preferredTextLanguage,
                                 preferredSubtitleMode = result.preferredSubtitleMode,
                                 showForcedSubtitles = result.showForcedSubtitles,
+                                subtitleTrackSignature = result.trackPreferenceRestore.subtitleTrackSignature,
                                 intro = result.intro,
                                 credits = result.credits,
                                 recap = result.recap,
@@ -3528,6 +3561,29 @@ class TvPlayerViewModel(
      */
     val pendingLocalAudioSelection: StateFlow<LocalAudioSelection?> =
         _pendingLocalAudioSelection.asStateFlow()
+
+    /**
+     * Remembers the viewer's pick for the whole series (a movie: for itself),
+     * as Silo Apple does. Only the HUD and remote pick entry points call these;
+     * restored, carried and automatic selections are not the viewer's pick.
+     */
+    private fun saveSeriesSubtitlePick(state: UiState, identity: SubtitleIdentity) {
+        val owner = trackPreferenceOwner ?: return
+        val key = trackPreferenceKey(state.contentType, state.contentId, state.seriesId) ?: return
+        val catalog = state.fileVersions
+            .firstOrNull { it.fileId == (state.selectedFileId ?: state.mediaFileId) }
+            ?.subtitleTracks
+            .orEmpty()
+        val update = subtitlePreferenceUpdate(identity, catalog) ?: return
+        trackPreferenceWriter?.saveSubtitle(owner, key, update)
+    }
+
+    private fun saveSeriesAudioPick(state: UiState, catalogOrdinal: Int) {
+        val owner = trackPreferenceOwner ?: return
+        val key = trackPreferenceKey(state.contentType, state.contentId, state.seriesId) ?: return
+        val update = audioPreferenceUpdate(catalogAudioTracks(state), catalogOrdinal) ?: return
+        trackPreferenceWriter?.saveAudio(owner, key, update)
+    }
 
     private fun catalogAudioTracks(state: UiState): List<AudioTrack> = state.fileVersions
         .firstOrNull { it.fileId == (state.selectedFileId ?: state.mediaFileId) }
@@ -4639,6 +4695,7 @@ class TvPlayerViewModel(
         )
         if (selected != null) {
             _pendingRemoteAudioIndex.compareAndSet(index, null)
+            saveSeriesAudioPick(state, selected)
             // Through the same intent as every other entry point. Going straight
             // to a replan left an older launch/persisted/HUD intent authoritative,
             // and it would reapply itself afterwards and undo the remote pick.
@@ -4671,6 +4728,7 @@ class TvPlayerViewModel(
         )
         if (identity != null) {
             _pendingRemoteSubtitleIndex.compareAndSet(index, null)
+            saveSeriesSubtitlePick(state, identity)
             playbackMutationFence.beginReplan()
             launchSubtitleTransaction(_uiState.value) {
                 subtitleTransactions.select(identity)
@@ -5488,6 +5546,7 @@ class TvPlayerViewModel(
             preferredLanguage = state.preferredTextLanguage,
             subtitleMode = state.preferredSubtitleMode,
             showForced = state.showForcedSubtitles,
+            trackSignature = state.subtitleTrackSignature,
         )
         autoTextSubtitleSelectionAttempted = true
         SubDiag.log("AUTO subtitle -> $identity")
@@ -5679,6 +5738,7 @@ class TvPlayerViewModel(
         val state = _uiState.value
         val catalog = catalogAudioTracks(state)
         if (catalogOrdinal !in catalog.indices) return
+        saveSeriesAudioPick(state, catalogOrdinal)
 
         // If the mounted stream already carries this track, switch it on the
         // player. A replan would rebuild the whole session to deliver audio the
@@ -5710,6 +5770,7 @@ class TvPlayerViewModel(
     }
 
     fun selectSubtitleOption(identity: SubtitleIdentity) {
+        saveSeriesSubtitlePick(_uiState.value, identity)
         manualSubtitleSelectionApplied = true
         // The viewer is choosing: drop the automatic marker so this commit
         // writes the durable per-item preference.

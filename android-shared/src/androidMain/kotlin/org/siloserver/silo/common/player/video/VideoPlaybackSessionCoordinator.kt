@@ -52,6 +52,7 @@ class VideoPlaybackSessionCoordinator(
                     seasonNumber = result.seasonNumber,
                     episodeNumber = result.episodeNumber,
                     resolvedEpisodeSelection = result.resolvedEpisodeSelection,
+                    trackPreferenceRestore = result.trackPreferenceRestore,
                 )
             }
             is VideoPlaybackStartResult.Error -> {
