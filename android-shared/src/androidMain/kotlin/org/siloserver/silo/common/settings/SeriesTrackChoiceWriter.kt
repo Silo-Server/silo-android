@@ -353,10 +353,11 @@ class DefaultSeriesTrackChoiceWriter(
                         unfinished.remove(key)
                     }
                 }
-            } catch (e: CancellationException) {
-                // The writer's scope is going away: put back what this drain
-                // still owed, a newer choice winning, so it still counts as
-                // unsent rather than vanishing mid-flight.
+            } catch (e: Throwable) {
+                // The writer's scope is going away, or a step failed outside
+                // a request: put back what this drain still owed, a newer
+                // choice winning, so it is retried rather than left counted
+                // as unsent with nothing to send it.
                 synchronized(lock) {
                     for ((key, op) in retry + unfinished) {
                         // Not a dropped login's pick, nor one a newer pick replaced.
@@ -403,7 +404,14 @@ class DefaultSeriesTrackChoiceWriter(
         }
         // The active profile's current credentials while it is still the
         // profile the pick was made under; while another one is active, wait.
-        val active = captureOwner()
+        val active = try {
+            captureOwner()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            SiloLog.w(CATEGORY, TAG, "$verb ${key.kind.label} choice waits: the active profile could not be read")
+            return true
+        }
         val owner = when {
             active == null -> return true
             active.serverId == op.owner.serverId && active.profileId == op.owner.profileId -> active
