@@ -4904,7 +4904,18 @@ class PlayerViewModel(
         // them differently from the catalog the server matches against.
         if (state.offlineAudioByPosition) return
         val choice = org.siloserver.silo.model.playback.SeriesAudioChoice.of(state.audioTracks, catalogOrdinal) ?: return
-        val write = StagedAudioWrite(state.contentId, key, choice, trackChoiceOwner, catalogOrdinal)
+        // A pick on a download (at any quality) is carried within this player
+        // and kept in its per-file memory, but never becomes the profile's
+        // series choice: that would change every device's playback of the
+        // series from an offline copy.
+        val write = StagedAudioWrite(
+            contentId = state.contentId,
+            key = key,
+            choice = choice,
+            owner = trackChoiceOwner,
+            catalogOrdinal = catalogOrdinal,
+            save = !state.isLocalFilePlayback(),
+        )
         if (committed) {
             stagedAudioWrite.set(null)
             saveSeriesAudio(write)
@@ -4954,6 +4965,7 @@ class PlayerViewModel(
         val choice: org.siloserver.silo.model.playback.SeriesAudioChoice,
         val owner: org.siloserver.silo.network.AuthScopeSnapshot?,
         val catalogOrdinal: Int,
+        val save: Boolean = true,
     )
 
     /**
@@ -5016,6 +5028,7 @@ class PlayerViewModel(
 
     private fun saveSeriesAudio(write: StagedAudioWrite) {
         sessionTrackChoices = sessionTrackChoices.withPick(write.key, audio = write.choice)
+        if (!write.save) return
         val owner = write.owner ?: return
         val writer = seriesTrackChoiceWriter ?: return
         viewModelScope.launch { writer.saveAudio(write.key, write.choice, owner) }
