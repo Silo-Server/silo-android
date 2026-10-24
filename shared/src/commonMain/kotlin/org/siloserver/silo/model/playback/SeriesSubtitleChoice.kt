@@ -5,7 +5,6 @@ import kotlinx.serialization.Serializable
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.catalog.WatchDetail
-import org.siloserver.silo.playback.SUBTITLE_OFF_FINGERPRINT
 import org.siloserver.silo.playback.decodeSubtitleIdentityPreference
 import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 
@@ -240,7 +239,8 @@ private fun sameSubtitleLanguage(a: String?, b: String?): Boolean =
  * [signature] describes ([candidates] has an exact match) the memory stays out
  * too: the signature finds the choice itself, and an older pick of a sibling
  * track (another codec or label) must not win over it. Where the series is
- * off ([effectiveMode] `off` with no signature), only an Off memory agrees.
+ * off ([effectiveMode] `off` with no signature), the memory stays out and Auto
+ * decides (off, or the forced track for the audio).
  *
  * With no series track choice the memory restores: the server has nothing
  * newer, and a pick that never reached it (its write expired, was refused or
@@ -260,11 +260,11 @@ fun localSubtitleMemoryForSeriesChoice(
     if (localPreference == null) return null
     if (resetToAuto) return null
     if (!serverChoiceKnown) return localPreference
-    val localOff = localPreference.trim() == SUBTITLE_OFF_FINGERPRINT ||
-        decodeSubtitleIdentityPreference(localPreference) == SubtitleIdentity.Off
     if (signature == null) {
+        // Off for the series: Auto decides (off, or the forced track for the
+        // audio when forced subtitles are on); even a local Off would skip it.
         val seriesOff = effectiveMode?.trim().equals("off", ignoreCase = true)
-        return localPreference.takeIf { !seriesOff || localOff }
+        return localPreference.takeIf { !seriesOff }
     }
     if (candidates.any { it.matchesSignature(signature) }) return null
     val (language, forced) = when (val identity = decodeSubtitleIdentityPreference(localPreference)) {

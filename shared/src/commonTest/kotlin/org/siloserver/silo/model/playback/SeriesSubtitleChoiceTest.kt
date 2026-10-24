@@ -226,12 +226,10 @@ class SeriesSubtitleChoiceTest {
         )
         // Auto set on this device since the pick: the profile's defaults, not the memory.
         assertNull(localSubtitleMemoryForSeriesChoice(local, true, null, resetToAuto = true))
-        // Off for the series: only an Off memory agrees with it.
+        // Off for the series: Auto decides (it may show the forced track), so
+        // neither a track nor an Off memory restores.
         assertNull(localSubtitleMemoryForSeriesChoice(local, true, null, effectiveMode = "off"))
-        assertEquals(
-            SUBTITLE_OFF_FINGERPRINT,
-            localSubtitleMemoryForSeriesChoice(SUBTITLE_OFF_FINGERPRINT, true, null, effectiveMode = "off"),
-        )
+        assertNull(localSubtitleMemoryForSeriesChoice(SUBTITLE_OFF_FINGERPRINT, true, null, effectiveMode = "off"))
     }
 
     @Test
