@@ -1884,6 +1884,12 @@ private fun HeroActionRow(
                     preferredSubtitleLanguage = state.preferredSubtitleLanguage,
                     subtitleMode = state.subtitleMode,
                     showForcedSubtitles = state.showForcedSubtitles,
+                    subtitleAutoContextFor = { audioLanguage ->
+                        state.subtitleAutoContext(
+                            playbackDetail = if (isSeriesOrSeason) nextUpDetail else detail,
+                            audioLanguage = audioLanguage,
+                        )
+                    },
                     onSelectVersion = if (isSeriesOrSeason) {
                         viewModel::onNextUpVersionSelected
                     } else {

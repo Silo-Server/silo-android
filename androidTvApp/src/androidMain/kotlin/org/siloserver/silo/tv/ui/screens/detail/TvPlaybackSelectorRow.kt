@@ -72,6 +72,13 @@ internal fun TvPlaybackActionSelectors(
     preferredSubtitleLanguage: String?,
     subtitleMode: String?,
     showForcedSubtitles: Boolean,
+    /**
+     * The Auto context the detail page previews and starts from (the series
+     * choice over the profile's preferences), for the given audio language.
+     * The button's value is also its accessibility label, so it must say
+     * what the preview says.
+     */
+    subtitleAutoContextFor: ((audioLanguage: String?) -> TvPlaybackFormatting.SubtitleAutoContext)? = null,
     onSelectVersion: (Int?) -> Unit,
     onSelectAudioTrack: (Int?) -> Unit,
     onSelectSubtitleTrack: (Int?) -> Unit,
@@ -184,15 +191,16 @@ internal fun TvPlaybackActionSelectors(
             version = version,
             selectedSubtitleTrackIndex = selectedSubtitleTrackIndex,
             autoContext = if (selectedAudioTrackIndex != null || automaticAudioResolutionKnown) {
-                TvPlaybackFormatting.SubtitleAutoContext(
+                val audioLanguage = TvPlaybackFormatting.resolvedAudioLanguage(
+                    version,
+                    selectedAudioTrackIndex,
+                    automaticAudioTrackOrdinal,
+                )
+                subtitleAutoContextFor?.invoke(audioLanguage) ?: TvPlaybackFormatting.SubtitleAutoContext(
                     preferredLanguage = preferredSubtitleLanguage,
                     mode = subtitleMode,
                     showForced = showForcedSubtitles,
-                    audioLanguage = TvPlaybackFormatting.resolvedAudioLanguage(
-                        version,
-                        selectedAudioTrackIndex,
-                        automaticAudioTrackOrdinal,
-                    ),
+                    audioLanguage = audioLanguage,
                 )
             } else {
                 null

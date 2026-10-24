@@ -76,6 +76,13 @@ data class ItemDetailUiState(
      */
     val episodeFallbackContentId: String? = null,
     val selectedEpisodeDetail: ItemDetail? = null,
+    /**
+     * Series choices picked on this page, by series key. The selectors'
+     * Auto previews lay them over the server's effective fields, which keep
+     * describing the older choice until the page reloads.
+     */
+    val pickedSeriesSubtitleChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
+    val pickedSeriesAudioChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice> = emptyMap(),
     val isLoadingSelectedEpisodeDetail: Boolean = false,
     /** Parent-series portrait art used when an episode's own artwork is a wide still. */
     val episodeSeriesPosterUrl: String? = null,
@@ -1256,6 +1263,12 @@ class ItemDetailViewModel(
                 org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(track, selectionIndex)
             }
         }
+        _uiState.update {
+            it.copy(
+                pickedSeriesSubtitleChoices = it.pickedSeriesSubtitleChoices +
+                    (key to org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice(choice)),
+            )
+        }
         viewModelScope.launch { writer.saveSubtitle(key, choice) }
     }
 
@@ -1269,6 +1282,12 @@ class ItemDetailViewModel(
                 trackChoiceVersion(state, detail, version)?.audioTracks.orEmpty(),
                 it,
             ) ?: return
+        }
+        _uiState.update {
+            it.copy(
+                pickedSeriesAudioChoices = it.pickedSeriesAudioChoices +
+                    (key to org.siloserver.silo.model.playback.PendingSeriesAudioChoice(choice)),
+            )
         }
         viewModelScope.launch { writer.saveAudio(key, choice) }
     }
@@ -1780,4 +1799,16 @@ internal fun LeafItemUserData?.withoutPlayed(played: Boolean, previous: LeafItem
         isInProgress = if (progressUntouched) previous?.isInProgress else isInProgress,
         positionSeconds = if (progressUntouched) previous?.positionSeconds else positionSeconds,
     )
+}
+
+/**
+ * [detail] as this page's selectors preview it: the series choices picked
+ * here laid over the server's effective fields (see
+ * [ItemDetailUiState.pickedSeriesSubtitleChoices]).
+ */
+internal fun ItemDetailUiState.withPickedSeriesChoices(detail: ItemDetail): ItemDetail {
+    val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId) ?: return detail
+    return detail
+        .withPendingSeriesSubtitleChoice(pickedSeriesSubtitleChoices[key])
+        .withPendingSeriesAudioChoice(pickedSeriesAudioChoices[key])
 }

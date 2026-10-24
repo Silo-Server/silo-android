@@ -752,7 +752,7 @@ fun ItemDetailScreen(
                             isInWatchlist = state.isInWatchlist,
                             nextEpisodeLabel = nextEpisodeLabel,
                             selectedEpisodeContentId = state.selectedEpisodeContentId,
-                            selectedEpisodeDetail = selectedEpisodeDetail,
+                            selectedEpisodeDetail = selectedEpisodeDetail?.let(state::withPickedSeriesChoices),
                             isLoadingSelectedEpisodeDetail = state.isLoadingSelectedEpisodeDetail,
                             selectedVersionIndex = selectedEpisodeVersionIndex,
                             isAutoVersion = !state.hasExplicitVersionSelection,
@@ -981,7 +981,7 @@ fun ItemDetailScreen(
                         val movieResume = playbackResumePosition(detail.userData)
                         MovieDetailContent(
                             translation = translationSlot,
-                            detail = detail,
+                            detail = state.withPickedSeriesChoices(detail),
                             similarItems = state.similarItems,
                             portraitArtwork = portraitArtwork,
                             isFavorite = state.isFavorite,
