@@ -75,6 +75,15 @@ interface SeriesTrackChoiceWriter {
      */
     suspend fun subtitleResetToAuto(seriesKey: String): Boolean = false
 
+    /**
+     * How many writes have landed on the server so far. A start reads it
+     * before its watch-detail request: when it has moved by the time the
+     * pending choices are read, the answer may predate a write that is no
+     * longer pending (see [reconcileStart]).
+     */
+    val landedWrites: Long
+        get() = 0L
+
     /** [pendingSubtitle] for every series of the active profile, as it changes. */
     val pendingSubtitleChoices: Flow<Map<String, PendingSeriesSubtitleChoice>>
         get() = flowOf(emptyMap())
@@ -102,6 +111,27 @@ suspend fun SeriesTrackChoiceWriter.reconcile(detail: WatchDetail): WatchDetail 
     return detail
         .withPendingSeriesSubtitleChoice(pendingSubtitle(key) ?: subtitleBeforeFlush)
         .withPendingSeriesAudioChoice(pendingAudio(key) ?: audioBeforeFlush)
+}
+
+/**
+ * [reconcile] for a playback start that read [detail] when [landedBefore]
+ * writes had landed ([SeriesTrackChoiceWriter.landedWrites]). A write that
+ * lands after that read leaves nothing pending to lay over it, so the start
+ * would play the server's older choice; and a reset to Auto laid over it
+ * clears the effective subtitle fields, which skips the library and device
+ * settings the server resolves under the series choice. So when any write
+ * landed meanwhile, [reread] asks again and only what is still unsent is laid
+ * over the fresh answer. Null from [reread] keeps the reconciled [detail].
+ */
+suspend fun SeriesTrackChoiceWriter.reconcileStart(
+    landedBefore: Long,
+    detail: WatchDetail,
+    reread: suspend () -> WatchDetail?,
+): WatchDetail {
+    val reconciled = reconcile(detail)
+    if (landedWrites == landedBefore) return reconciled
+    val fresh = reread() ?: return reconciled
+    return overlayPendingChoice(fresh)
 }
 
 /** Whether the series audio was set back to Auto here and that has not landed. */
@@ -213,6 +243,11 @@ class DefaultSeriesTrackChoiceWriter(
     /** Every op not yet settled — queued, in flight or held for retry. */
     private val unsent = MutableStateFlow<Map<Key, Op>>(emptyMap())
     private val sendMutex = Mutex()
+    private val landed = java.util.concurrent.atomic.AtomicLong()
+
+    override val landedWrites: Long
+        get() = landed.get()
+
     private var retryJob: Job? = null
     private var retryAttempts = 0
 
@@ -466,7 +501,12 @@ class DefaultSeriesTrackChoiceWriter(
             ApiResult.NetworkError(e)
         }
         return when (result) {
-            is ApiResult.Success -> false
+            is ApiResult.Success -> {
+                // Counted before the op settles, so a reader that sees it
+                // gone also sees the count move.
+                landed.incrementAndGet()
+                false
+            }
             is ApiResult.NetworkError -> {
                 SiloLog.w(CATEGORY, TAG, "$verb ${key.kind.label} choice failed (network); kept queued for retry")
                 true

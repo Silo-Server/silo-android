@@ -57,6 +57,8 @@ data class PlayerSubtitleInfo(
     val source: String? = null,
     val forced: Boolean? = null,
     val url: String,
+    /** The server's SDH flag; a label naming SDH counts too ([isHearingImpaired]). */
+    @SerialName("hearing_impaired") val hearingImpaired: Boolean? = null,
     /** Catalog-facing identity retained when a mounted artifact has a generic runtime label. */
     @SerialName("catalog_label") val catalogLabel: String? = null,
     /** Catalog provenance retained separately from the runtime artifact source. */

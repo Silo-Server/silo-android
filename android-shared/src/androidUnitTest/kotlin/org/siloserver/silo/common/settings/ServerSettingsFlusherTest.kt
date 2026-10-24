@@ -930,6 +930,30 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
+    fun `retried timing writes below revision 19 land in the order they were made`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(18) }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+        api.failNextPuts(3, ApiResult.Error(503, "unavailable", "busy"))
+        var puts = 0
+        api.onPut = {
+            puts++
+            // Each edit is made while the previous write is on the wire.
+            when (puts) {
+                1 -> flusher.enqueue("p1", syncKey, "200", serverUrl)
+                2 -> flusher.enqueue("p1", syncKey, "300", serverUrl, scope = SettingWriteScope.Profile())
+            }
+        }
+
+        flusher.enqueue("p1", syncKey, "100", serverUrl, scope = SettingWriteScope.Profile())
+        flusher.flushNow()
+        advanceUntilIdle()
+
+        assertTrue(api.calls.all { it.scope == SettingScopeIdentity.profileDevice() })
+        assertEquals(JsonPrimitive(300L), api.calls.last().value, "the newest edit lands last")
+        assertTrue(flusher.pendingKeys("p1").isEmpty())
+    }
+
+    @Test
     fun `a held timing save does not overwrite a device write made while the revision was unknown`() = runTest {
         val api = RecordingSettingsApi().apply {
             capabilities = ApiResult.NetworkError(IllegalStateException("offline"))

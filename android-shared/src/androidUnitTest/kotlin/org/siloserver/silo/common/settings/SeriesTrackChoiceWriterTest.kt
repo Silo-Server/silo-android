@@ -153,6 +153,45 @@ class SeriesTrackChoiceWriterTest {
     }
 
     @Test
+    fun `a pick that lands before the start reconciles is read again from the server`() = runTest {
+        val recorder = Recorder()
+        val writer = writer(recorder) { profileA }
+        val stale = org.siloserver.silo.model.catalog.WatchDetail(
+            contentId = "episode-2", type = "episode", title = "E2", seriesId = "series-1",
+            effectiveSubtitleLanguage = "en", effectiveSubtitleMode = "always",
+        )
+        // The start read the detail; the pick landed before it reconciled,
+        // so nothing is pending to lay over the older answer.
+        val landedBefore = writer.landedWrites
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
+        advanceUntilIdle()
+
+        val reconciled = writer.reconcileStart(landedBefore, stale) { stale.copy(effectiveSubtitleMode = "off") }
+
+        assertEquals("off", reconciled.effectiveSubtitleMode)
+    }
+
+    @Test
+    fun `an Auto reset that lands during the start takes the server's inherited subtitle settings`() = runTest {
+        val recorder = Recorder().apply { results += ApiResult.NetworkError(IllegalStateException("offline")) }
+        val writer = writer(recorder) { profileA }
+        writer.saveSubtitle("series-1", null)
+        runCurrent()
+        val landedBefore = writer.landedWrites
+        val stale = org.siloserver.silo.model.catalog.WatchDetail(
+            contentId = "episode-2", type = "episode", title = "E2", seriesId = "series-1",
+            effectiveSubtitleLanguage = "en", effectiveSubtitleMode = "always",
+        )
+        // With the series choice gone, the library's French applies.
+        val inherited = stale.copy(effectiveSubtitleLanguage = "fr")
+
+        val reconciled = writer.reconcileStart(landedBefore, stale) { inherited }
+
+        assertEquals(null, writer.pendingSubtitle("series-1"), "the reset landed")
+        assertEquals(inherited, reconciled)
+    }
+
+    @Test
     fun `a flush that stops waiting lets the request in flight land`() = runTest {
         var puts = 0
         val writer = DefaultSeriesTrackChoiceWriter(

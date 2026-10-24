@@ -373,6 +373,12 @@ class DefaultServerSettingsFlusher(
                     }
                     val retry = flushOne(composite.profileId, composite.key, op)
                     if (retry != null) {
+                        // Moved to the end, so the retries go out in the
+                        // order their ops were made: a newer profile save
+                        // keeping an older one's slot would be requeued ahead
+                        // of a device write made between them, and below its
+                        // revision both write the device row.
+                        retryable.remove(composite)
                         retryable[composite] = retry
                         failedAt[composite] = sequence
                     } else {
@@ -385,9 +391,12 @@ class DefaultServerSettingsFlusher(
                 return
             }
             val attempt = synchronized(lock) {
+                // Only what was enqueued during the flush is newer: an older
+                // failed device write requeued just above a profile save is not.
+                val enqueuedDuringFlush = pending.keys.toSet()
                 for ((composite, op) in retryable) {
                     val newerDeviceIntent = deviceWroteSinceFailure(composite) ||
-                        (composite.profileLevel && composite.copy(profileLevel = false) in pending)
+                        (composite.profileLevel && composite.copy(profileLevel = false) in enqueuedDuringFlush)
                     val newer = pending[composite]
                     if (newer != null) {
                         // A newer op enqueued during the flush wins over the

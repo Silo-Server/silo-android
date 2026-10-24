@@ -466,7 +466,8 @@ data class SubtitleTrack(
     val forced: Boolean = false,
     @SerialName("default") val isDefault: Boolean = false,
     val external: Boolean = false,
-    @SerialName("external_path") val externalPath: String? = null
+    @SerialName("external_path") val externalPath: String? = null,
+    @SerialName("hearing_impaired") val hearingImpaired: Boolean = false,
 )
 
 @Serializable

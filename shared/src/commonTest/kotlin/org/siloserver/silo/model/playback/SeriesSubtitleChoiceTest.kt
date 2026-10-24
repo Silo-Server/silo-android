@@ -23,6 +23,23 @@ class SeriesSubtitleChoiceTest {
     )
 
     @Test
+    fun `the server's SDH flag marks a track whose label does not say SDH`() {
+        val catalog = SiloJson.decodeFromString(
+            SubtitleTrack.serializer(),
+            """{"index":0,"language":"eng","codec":"subrip","title":"English","hearing_impaired":true}""",
+        )
+        val row = PlayerSubtitleInfo(
+            index = 0, language = "en", codec = "subrip", label = "English", source = "embedded",
+            url = "/s/0.vtt", hearingImpaired = true,
+        )
+
+        assertTrue(catalog.subtitleTrackSignature().hearingImpaired)
+        assertTrue(row.subtitleTrackSignature().hearingImpaired)
+        assertTrue(row.toAutoSubtitleCandidate().matchesSignature(catalog.subtitleTrackSignature()))
+        assertFalse(row.copy(hearingImpaired = false).toAutoSubtitleCandidate().matchesSignature(catalog.subtitleTrackSignature()))
+    }
+
+    @Test
     fun `an episode is remembered under its series and a movie under itself`() {
         assertEquals("series-1", seriesTrackChoiceKey("series-1", "episode-9"))
         assertEquals("movie-4", seriesTrackChoiceKey(null, "movie-4"))

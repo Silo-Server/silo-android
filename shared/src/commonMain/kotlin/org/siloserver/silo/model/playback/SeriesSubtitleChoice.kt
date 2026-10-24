@@ -183,7 +183,7 @@ fun SubtitleTrack.subtitleTrackSignature(): SubtitleTrackSignature = SubtitleTra
     codec = codec?.trim()?.takeIf { it.isNotBlank() },
     label = title?.trim()?.takeIf { it.isNotBlank() },
     forced = forced,
-    hearingImpaired = AutoSubtitleCandidate(selectionIndex = 0, title = title).isHearingImpaired(),
+    hearingImpaired = AutoSubtitleCandidate(selectionIndex = 0, title = title, hearingImpaired = hearingImpaired).isHearingImpaired(),
 )
 
 /**

@@ -1,6 +1,6 @@
 package org.siloserver.silo.android.ui.screens.player
 
-import org.siloserver.silo.common.settings.reconcile
+import org.siloserver.silo.common.settings.reconcileStart
 import org.siloserver.silo.common.settings.audioResetToAutoPending
 import android.util.Log
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
@@ -185,6 +185,7 @@ internal class MobileVideoPlaybackStarter(
         var lifecycleAdopted = false
         return try {
             var audioResetToAuto = false
+            val landedBefore = seriesTrackChoiceWriter?.landedWrites ?: 0L
             val watchDetail = when (val r = catalogRepository.getWatchDetail(request.contentId, expectedMetadataOwner, request.libraryId)) {
                 is ApiResult.Success -> {
                     // An Auto set here and not landed: checked before and after
@@ -192,7 +193,9 @@ internal class MobileVideoPlaybackStarter(
                     val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(r.data.seriesId, r.data.contentId)
                     suspend fun resetPending() = key?.let { seriesTrackChoiceWriter?.audioResetToAutoPending(it) } == true
                     audioResetToAuto = resetPending()
-                    val reconciled = seriesTrackChoiceWriter?.reconcile(r.data) ?: r.data
+                    val reconciled = seriesTrackChoiceWriter?.reconcileStart(landedBefore, r.data) {
+                        (catalogRepository.getWatchDetail(request.contentId, expectedMetadataOwner, request.libraryId) as? ApiResult.Success)?.data
+                    } ?: r.data
                     audioResetToAuto = audioResetToAuto || resetPending()
                     reconciled.withCarriedSeriesTrackChoices(request.carriedTrackChoices)
                 }
