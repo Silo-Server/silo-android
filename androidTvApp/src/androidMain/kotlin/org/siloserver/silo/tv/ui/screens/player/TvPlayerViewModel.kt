@@ -4777,7 +4777,6 @@ class TvPlayerViewModel(
             // to a replan left an older launch/persisted/HUD intent authoritative,
             // and it would reapply itself afterwards and undo the remote pick.
             setDesiredAudio(selected, explicit = true)
-            audioPickedThisEpisode = true
             val switchesLocally = mountedAudioFor(
                 catalog = catalogAudioTracks(state),
                 catalogOrdinal = selected,
@@ -5824,7 +5823,6 @@ class TvPlayerViewModel(
         val state = _uiState.value
         val catalog = catalogAudioTracks(state)
         if (catalogOrdinal !in catalog.indices) return
-        audioPickedThisEpisode = true
 
         // If the mounted stream already carries this track, switch it on the
         // player. A replan would rebuild the whole session to deliver audio the
@@ -5879,12 +5877,17 @@ class TvPlayerViewModel(
      * nothing to commit and is saved at once.
      */
     private fun rememberSeriesSubtitleChoice(identity: SubtitleIdentity) {
-        subtitlePickedThisEpisode = true
         val state = _uiState.value
-        val key = trackChoiceKey(state) ?: return
-        val owner = trackChoiceOwner ?: return
-        val choice = org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(identity, state.subtitleUrls) ?: return
-        val write = StagedSubtitleWrite(state.contentId, key, choice, owner, identity)
+        // Counted as this episode's pick (handed to Next Up) and saved only
+        // once the change commits: a pick that fails to replan or mount is
+        // undone. One that cannot be saved still counts once it commits.
+        val write = StagedSubtitleWrite(
+            contentId = state.contentId,
+            key = trackChoiceKey(state),
+            choice = org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(identity, state.subtitleUrls),
+            owner = trackChoiceOwner,
+            identity = identity,
+        )
         if (state.pendingSubtitleIdentity == null && state.committedSubtitleIdentity == identity) {
             stagedSubtitleWrite.set(null)
             saveSeriesSubtitle(write)
@@ -5900,11 +5903,13 @@ class TvPlayerViewModel(
      * Restores, carried choices and fallbacks never come through here.
      */
     private fun rememberSeriesAudioChoice(state: UiState, catalogOrdinal: Int, committed: Boolean) {
-        val key = trackChoiceKey(state) ?: return
-        val owner = trackChoiceOwner ?: return
-        val choice = org.siloserver.silo.model.playback.SeriesAudioChoice.of(catalogAudioTracks(state), catalogOrdinal)
-            ?: return
-        val write = StagedAudioWrite(state.contentId, key, choice, owner, catalogOrdinal)
+        val write = StagedAudioWrite(
+            contentId = state.contentId,
+            key = trackChoiceKey(state),
+            choice = org.siloserver.silo.model.playback.SeriesAudioChoice.of(catalogAudioTracks(state), catalogOrdinal),
+            owner = trackChoiceOwner,
+            catalogOrdinal = catalogOrdinal,
+        )
         if (committed) {
             stagedAudioWrite.set(null)
             saveSeriesAudio(write)
@@ -5923,19 +5928,24 @@ class TvPlayerViewModel(
         return org.siloserver.silo.model.playback.seriesTrackChoiceKey(state.seriesId, state.contentId)
     }
 
+    /**
+     * A pick waiting for its change to commit. On commit it counts as this
+     * episode's pick and, when [key], [choice] and [owner] are known, is
+     * saved as the series choice.
+     */
     private data class StagedSubtitleWrite(
         val contentId: String,
-        val key: String,
-        val choice: org.siloserver.silo.model.playback.SeriesSubtitleChoice,
-        val owner: org.siloserver.silo.network.AuthScopeSnapshot,
+        val key: String?,
+        val choice: org.siloserver.silo.model.playback.SeriesSubtitleChoice?,
+        val owner: org.siloserver.silo.network.AuthScopeSnapshot?,
         val identity: SubtitleIdentity,
     )
 
     private data class StagedAudioWrite(
         val contentId: String,
-        val key: String,
-        val choice: org.siloserver.silo.model.playback.SeriesAudioChoice,
-        val owner: org.siloserver.silo.network.AuthScopeSnapshot,
+        val key: String?,
+        val choice: org.siloserver.silo.model.playback.SeriesAudioChoice?,
+        val owner: org.siloserver.silo.network.AuthScopeSnapshot?,
         val catalogOrdinal: Int,
     )
 
@@ -5951,9 +5961,10 @@ class TvPlayerViewModel(
         rows: List<org.siloserver.silo.model.playback.PlayerSubtitleInfo>,
     ): Boolean {
         if (identity == write.identity) return true
+        val staged = write.choice ?: return false
         val described = org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(identity, rows) ?: return false
-        return described.subtitleMode == write.choice.subtitleMode &&
-            described.trackSignature == write.choice.trackSignature
+        return described.subtitleMode == staged.subtitleMode &&
+            described.trackSignature == staged.trackSignature
     }
 
     /**
@@ -5990,13 +6001,21 @@ class TvPlayerViewModel(
     }
 
     private fun saveSeriesSubtitle(write: StagedSubtitleWrite) {
+        if (write.contentId == _uiState.value.contentId) subtitlePickedThisEpisode = true
+        val key = write.key ?: return
+        val choice = write.choice ?: return
+        val owner = write.owner ?: return
         val writer = seriesTrackChoiceWriter ?: return
-        viewModelScope.launch { writer.saveSubtitle(write.key, write.choice, write.owner) }
+        viewModelScope.launch { writer.saveSubtitle(key, choice, owner) }
     }
 
     private fun saveSeriesAudio(write: StagedAudioWrite) {
+        if (write.contentId == _uiState.value.contentId) audioPickedThisEpisode = true
+        val key = write.key ?: return
+        val choice = write.choice ?: return
+        val owner = write.owner ?: return
         val writer = seriesTrackChoiceWriter ?: return
-        viewModelScope.launch { writer.saveAudio(write.key, write.choice, write.owner) }
+        viewModelScope.launch { writer.saveAudio(key, choice, owner) }
     }
 
     fun selectSubtitleOption(serverIndex: Int) {

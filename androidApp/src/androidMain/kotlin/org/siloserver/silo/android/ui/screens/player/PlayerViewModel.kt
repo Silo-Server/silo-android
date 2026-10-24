@@ -4863,10 +4863,16 @@ class PlayerViewModel(
                 ?.let { org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(it) }
                 ?: return
         }
-        sessionTrackChoices = sessionTrackChoices.withPick(key, subtitle = choice)
-        if (state.isLocalFilePlayback()) return
-        val owner = trackChoiceOwner ?: return
-        val write = StagedSubtitleWrite(state.contentId, key, choice, owner, identity)
+        // Carried and saved only once the change commits: a pick that fails
+        // to replan or mount is undone, and must not ride the next episode.
+        val write = StagedSubtitleWrite(
+            contentId = state.contentId,
+            key = key,
+            choice = choice,
+            owner = trackChoiceOwner,
+            identity = identity,
+            save = !state.isLocalFilePlayback(),
+        )
         if (state.pendingSubtitleIdentity == null && state.committedSubtitleIdentity == identity) {
             stagedSubtitleWrite.set(null)
             saveSeriesSubtitle(write)
@@ -4898,9 +4904,7 @@ class PlayerViewModel(
         // them differently from the catalog the server matches against.
         if (state.offlineAudioByPosition) return
         val choice = org.siloserver.silo.model.playback.SeriesAudioChoice.of(state.audioTracks, catalogOrdinal) ?: return
-        sessionTrackChoices = sessionTrackChoices.withPick(key, audio = choice)
-        val owner = trackChoiceOwner ?: return
-        val write = StagedAudioWrite(state.contentId, key, choice, owner, catalogOrdinal)
+        val write = StagedAudioWrite(state.contentId, key, choice, trackChoiceOwner, catalogOrdinal)
         if (committed) {
             stagedAudioWrite.set(null)
             saveSeriesAudio(write)
@@ -4930,19 +4934,25 @@ class PlayerViewModel(
         ).takeIf { it.audio != null || it.subtitle != null }
     }
 
+    /**
+     * A pick waiting for its change to commit. On commit it joins
+     * [sessionTrackChoices] and, when [owner] is known and [save] holds, is
+     * saved as the series choice.
+     */
     private data class StagedSubtitleWrite(
         val contentId: String,
         val key: String,
         val choice: org.siloserver.silo.model.playback.SeriesSubtitleChoice,
-        val owner: org.siloserver.silo.network.AuthScopeSnapshot,
+        val owner: org.siloserver.silo.network.AuthScopeSnapshot?,
         val identity: SubtitleIdentity,
+        val save: Boolean = true,
     )
 
     private data class StagedAudioWrite(
         val contentId: String,
         val key: String,
         val choice: org.siloserver.silo.model.playback.SeriesAudioChoice,
-        val owner: org.siloserver.silo.network.AuthScopeSnapshot,
+        val owner: org.siloserver.silo.network.AuthScopeSnapshot?,
         val catalogOrdinal: Int,
     )
 
@@ -4997,13 +5007,18 @@ class PlayerViewModel(
     }
 
     private fun saveSeriesSubtitle(write: StagedSubtitleWrite) {
+        sessionTrackChoices = sessionTrackChoices.withPick(write.key, subtitle = write.choice)
+        if (!write.save) return
+        val owner = write.owner ?: return
         val writer = seriesTrackChoiceWriter ?: return
-        viewModelScope.launch { writer.saveSubtitle(write.key, write.choice, write.owner) }
+        viewModelScope.launch { writer.saveSubtitle(write.key, write.choice, owner) }
     }
 
     private fun saveSeriesAudio(write: StagedAudioWrite) {
+        sessionTrackChoices = sessionTrackChoices.withPick(write.key, audio = write.choice)
+        val owner = write.owner ?: return
         val writer = seriesTrackChoiceWriter ?: return
-        viewModelScope.launch { writer.saveAudio(write.key, write.choice, write.owner) }
+        viewModelScope.launch { writer.saveAudio(write.key, write.choice, owner) }
     }
 
     internal fun isCurrentSubtitleMount(mount: MobileSubtitleMount?): Boolean =
