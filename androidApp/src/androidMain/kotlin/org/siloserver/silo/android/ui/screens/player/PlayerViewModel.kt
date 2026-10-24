@@ -4908,12 +4908,14 @@ class PlayerViewModel(
 
     /**
      * A manual audio pick applies to the whole series (or the movie) and the
-     * profile's other devices, like a subtitle pick: at once when [committed]
-     * (a switch on the player), else when its replan commits. Only the
-     * viewer's own pick: restores and fallbacks go through [selectAudio]
-     * without it.
+     * profile's other devices, like a subtitle pick. It is staged here and
+     * saved when the track actually plays: confirmed on the player
+     * ([commitLocalAudio]) or committed by its replan
+     * ([sendCommittedSeriesWrites]), so a switch that never takes is never
+     * saved. Only the viewer's own pick: restores and fallbacks go through
+     * [selectAudio] without it.
      */
-    private fun rememberSeriesAudioChoice(state: PlayerUiState, catalogOrdinal: Int, committed: Boolean) {
+    private fun rememberSeriesAudioChoice(state: PlayerUiState, catalogOrdinal: Int) {
         val key = trackChoiceKey(state) ?: return
         // A download that lists the file's own tracks by position describes
         // them differently from the catalog the server matches against.
@@ -4931,12 +4933,7 @@ class PlayerViewModel(
             catalogOrdinal = catalogOrdinal,
             save = !state.isLocalFilePlayback(),
         )
-        if (committed) {
-            stagedAudioWrite.set(null)
-            saveSeriesAudio(write)
-        } else {
-            stagedAudioWrite.set(write)
-        }
+        stagedAudioWrite.set(write)
     }
 
     /**
@@ -5086,6 +5083,9 @@ class PlayerViewModel(
                 serverIndex = serverIndex,
             )
         }
+        // Staged before the switch starts: a track already mounted can be
+        // confirmed during setDesiredAudio itself.
+        if (userInitiated) rememberSeriesAudioChoice(state, serverIndex)
         setDesiredAudio(serverIndex, explicit = userInitiated)
         // A downloaded file is switched on the player only: there is no
         // server session to replan, and the desired-audio reconcile above
@@ -5100,8 +5100,6 @@ class PlayerViewModel(
             delivery = state.playbackPlan?.delivery,
             planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
         ) != null
-        // A local switch is final now; a replan is saved once it commits.
-        if (userInitiated) rememberSeriesAudioChoice(state, serverIndex, committed = switchesLocally)
         if (switchesLocally) return
         picksDuringNetworkMove.applyAfterMove {
             // The intent begun above serves the local paths. Begin it again as
@@ -5324,6 +5322,15 @@ class PlayerViewModel(
         // the context alone left it stale and the choice got undone.
         mobileSubtitleTransactions.commitLocallyAppliedAudio(desired.catalogOrdinal)
         if (desired.explicit) persistDesiredAudio(desired.catalogOrdinal)
+        // The viewer's pick is playing on the player: now it is saved.
+        if (desired.explicit) {
+            stagedAudioWrite.get()
+                ?.takeIf {
+                    it.catalogOrdinal == desired.catalogOrdinal && it.contentId == state.contentId &&
+                        stagedAudioWrite.compareAndSet(it, null)
+                }
+                ?.let(::saveSeriesAudio)
+        }
     }
 
     private var localAudioAttemptGeneration = 0L
