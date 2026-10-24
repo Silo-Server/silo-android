@@ -1,11 +1,14 @@
 package org.siloserver.silo.playback
 
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.fromHttpToGmtDate
 import io.ktor.util.date.getTimeMillis
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.model.playback.AudioPreferenceUpdate
@@ -44,11 +47,12 @@ import org.siloserver.silo.util.parseRfc3339ToEpochMillis
 class TrackPreferenceWriter(
     private val api: TrackPreferencesV2Api,
     private val tokens: TokenManager,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     private val store: TrackPreferenceStore = InMemoryTrackPreferenceStore(),
     private val nowMs: () -> Long = { getTimeMillis() },
 ) {
     private val work = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+    private var retry: Job? = null
 
     init {
         scope.launch {
@@ -145,7 +149,11 @@ class TrackPreferenceWriter(
         val body = record.pending ?: return true
         val read = when (val result = api.read(owner, record.kind, record.key)) {
             is ApiResult.Success -> result.data
-            is ApiResult.Error, is ApiResult.NetworkError -> return false
+            is ApiResult.Error -> {
+                if (result.code == HttpStatusCode.TooManyRequests.value) retryAfterRateLimit()
+                return false
+            }
+            is ApiResult.NetworkError -> return false
         }
         val receivedAtMs = nowMs()
         val serverUnchanged = record.pendingBaselineKnown && read.updatedAt == record.pendingBaselineUpdatedAt
@@ -163,14 +171,29 @@ class TrackPreferenceWriter(
                 }
             }
             // A body the server refuses will be refused again; anything else is retried later.
-            is ApiResult.Error -> if (result.code in 400..499 && result.code != 401 && result.code != 403) {
-                settle(record) { it }
-            } else {
-                return false
+            is ApiResult.Error -> when {
+                result.code == HttpStatusCode.TooManyRequests.value -> {
+                    retryAfterRateLimit()
+                    return false
+                }
+                result.code in 400..499 && result.code != 401 && result.code != 403 -> settle(record) { it }
+                else -> return false
             }
             is ApiResult.NetworkError -> return false
         }
         return true
+    }
+
+    /**
+     * Sends again once the server's rate limit has passed. A reconnect would
+     * never come: the server did not go away.
+     */
+    private fun retryAfterRateLimit() {
+        if (retry?.isActive == true) return
+        retry = scope.launch {
+            delay(RATE_LIMIT_RETRY_MS)
+            flush()
+        }
     }
 
     /** Clears [sent]'s pick unless a newer pick replaced it meanwhile, and applies [update]. */
@@ -194,3 +217,6 @@ class TrackPreferenceWriter(
     private fun TrackPreferenceRecord.observed(read: TrackPreferenceRead) =
         copy(serverRow = read.row?.toString(), serverUpdatedAt = read.updatedAt, serverObserved = true)
 }
+
+/** The wait before sending again after a 429. */
+private const val RATE_LIMIT_RETRY_MS = 60_000L

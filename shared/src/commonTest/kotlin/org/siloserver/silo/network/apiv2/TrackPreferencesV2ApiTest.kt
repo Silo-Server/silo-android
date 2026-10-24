@@ -12,6 +12,7 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.util.date.GMTDate
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
 import kotlinx.serialization.json.Json
@@ -48,6 +49,8 @@ class TrackPreferencesV2ApiTest {
     private inner class FakeServer(private val scope: TestScope) {
         var reachable = true
         var refuseWrites = false
+        /** How many more writes to answer with 429. */
+        var rateLimitedWrites = 0
         var deviceNowMs = 1_800_000_000_000L
         var serverAheadMs = 0L
         val rows = mutableMapOf<String, JsonObject>()
@@ -70,6 +73,10 @@ class TrackPreferencesV2ApiTest {
                 val path = request.url.encodedPath
                 val row = rows[path]
                 when {
+                    request.method == HttpMethod.Put && rateLimitedWrites > 0 -> {
+                        rateLimitedWrites--
+                        respond("""{"status":429,"detail":"slow down"}""", HttpStatusCode.TooManyRequests, headersOf(HttpHeaders.Date, date))
+                    }
                     request.method == HttpMethod.Put && refuseWrites ->
                         respond("""{"status":503,"detail":"later"}""", HttpStatusCode.ServiceUnavailable, headersOf(HttpHeaders.Date, date))
                     request.method == HttpMethod.Put -> {
@@ -241,6 +248,22 @@ class TrackPreferencesV2ApiTest {
 
         assertEquals("off", server.rows[subtitlePath].mode())
         assertEquals("always", writer.rememberedSubtitle("s", "p", "series-9")?.subtitleMode)
+    }
+
+    @Test fun aRateLimitedPickIsKeptAndSentAgainLater() = runTest {
+        val server = FakeServer(this)
+        val writer = server.writer()
+        server.rateLimitedWrites = 1
+
+        writer.saveSubtitle(owner, "series-9", pick)
+        writer.settle()
+        assertNull(server.rows[subtitlePath], "the server has not applied it")
+        assertEquals("always", writer.rememberedSubtitle("s", "p", "series-9")?.subtitleMode, "the pick is still pending")
+
+        advanceTimeBy(5 * 60_000L)
+        writer.settle()
+        assertEquals(2, server.puts.size)
+        assertEquals("always", server.rows[subtitlePath].mode())
     }
 
     @Test fun picksAreSentInOrderAndOnlyUnderTheProfileTheyWereMadeIn() = runTest {
