@@ -3873,6 +3873,14 @@ class TvPlayerViewModel(
         if (desired.explicit) {
             onAudioSelectionCommitted()
             persistDesiredAudio(desired.catalogOrdinal)
+            // The viewer's pick is playing: now it is saved and counts as
+            // this episode's pick.
+            stagedAudioWrite.get()
+                ?.takeIf {
+                    it.catalogOrdinal == desired.catalogOrdinal && it.contentId == _uiState.value.contentId &&
+                        stagedAudioWrite.compareAndSet(it, null)
+                }
+                ?.let(::saveSeriesAudio)
         }
     }
 
@@ -4784,6 +4792,9 @@ class TvPlayerViewModel(
             // Through the same intent as every other entry point. Going straight
             // to a replan left an older launch/persisted/HUD intent authoritative,
             // and it would reapply itself afterwards and undo the remote pick.
+            // Staged before the switch starts: a mounted track can be
+            // confirmed during setDesiredAudio itself.
+            rememberSeriesAudioChoice(state, selected)
             setDesiredAudio(selected, explicit = true)
             val switchesLocally = mountedAudioFor(
                 catalog = catalogAudioTracks(state),
@@ -4792,7 +4803,6 @@ class TvPlayerViewModel(
                 delivery = state.playbackPlan?.delivery,
                 planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
             ) != null
-            rememberSeriesAudioChoice(state, selected, committed = switchesLocally)
             if (switchesLocally) return
             playbackMutationFence.beginReplan()
             launchSubtitleTransaction(state) {
@@ -5840,6 +5850,9 @@ class TvPlayerViewModel(
         // Record the intent first: the resolver applies it locally when the
         // mounted stream already carries the track, which is the common
         // direct-play case and needs no replan at all.
+        // Staged before the switch starts: a mounted track can be confirmed
+        // during setDesiredAudio itself.
+        rememberSeriesAudioChoice(state, catalogOrdinal)
         setDesiredAudio(catalogOrdinal, explicit = true)
         val switchesLocally = mountedAudioFor(
             catalog = catalog,
@@ -5848,9 +5861,6 @@ class TvPlayerViewModel(
             delivery = state.playbackPlan?.delivery,
             planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
         ) != null
-        // A switch inside the mounted stream is final now; a replan is saved
-        // only once it commits.
-        rememberSeriesAudioChoice(state, catalogOrdinal, committed = switchesLocally)
         if (switchesLocally) return
 
         // manualAudioSelectionApplied is deliberately NOT raised here: it is
@@ -5906,11 +5916,13 @@ class TvPlayerViewModel(
 
     /**
      * A manual audio pick applies to the whole series (or the movie) and the
-     * profile's other devices, like a subtitle pick: at once when [committed]
-     * (a switch inside the mounted stream), else when its replan commits.
-     * Restores, carried choices and fallbacks never come through here.
+     * profile's other devices, like a subtitle pick. It is staged here and
+     * saved once the track plays: confirmed on the player
+     * ([confirmDesiredAudio]) or committed by its replan, so a switch the
+     * watchdog gives up on is never saved. Restores, carried choices and
+     * fallbacks never come through here.
      */
-    private fun rememberSeriesAudioChoice(state: UiState, catalogOrdinal: Int, committed: Boolean) {
+    private fun rememberSeriesAudioChoice(state: UiState, catalogOrdinal: Int) {
         val write = StagedAudioWrite(
             contentId = state.contentId,
             key = trackChoiceKey(state),
@@ -5918,12 +5930,7 @@ class TvPlayerViewModel(
             owner = trackChoiceOwner,
             catalogOrdinal = catalogOrdinal,
         )
-        if (committed) {
-            stagedAudioWrite.set(null)
-            saveSeriesAudio(write)
-        } else {
-            stagedAudioWrite.set(write)
-        }
+        stagedAudioWrite.set(write)
     }
 
     /**
