@@ -34,6 +34,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -117,6 +118,9 @@ import org.siloserver.silo.repository.PlaybackRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SubtitlesRepository
 import org.siloserver.silo.repository.port.LocalTrackSelection
+import org.siloserver.silo.common.player.video.TrackPreferenceRestore
+import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
 import org.siloserver.silo.repository.port.NoOpUserItemStatePort
 import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.playback.audioTrackFingerprint
@@ -818,6 +822,91 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
         }
     }
 
+    @Test
+    fun aFailedSecondWatchReadKeepsTheStartersSeriesSubtitleOverAPerFileChoice() = runTest(dispatcher) {
+        // The start resolved a series subtitle preference; the player's own
+        // watch read after it fails (this client answers 404). The French this
+        // device remembered for the file must not replace the server's answer.
+        val english = PlayerSubtitleInfo(index = 0, language = "en", codec = "subrip", label = "English", source = "external", url = "https://silo.test/en.vtt")
+        val french = PlayerSubtitleInfo(index = 1, language = "fr", codec = "subrip", label = "French", source = "external", url = "https://silo.test/fr.vtt")
+        val local = object : UserItemStatePort by NoOpUserItemStatePort {
+            override suspend fun localTrackSelection(contentId: String, fileId: Int) = LocalTrackSelection(
+                audioFingerprint = null,
+                subtitleFingerprint = encodeSubtitleIdentityPreference(mobileSubtitleIdentity(french)),
+            )
+        }
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope, userItemStatePort = local)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        val requested = mutableListOf<org.siloserver.silo.model.playback.SubtitleIdentity>()
+        backgroundScope.launch {
+            fixture.viewModel.uiState.collect { state -> state.pendingSubtitleIdentity?.let(requested::add) }
+        }
+        try {
+            fixture.viewModel.loadContent(contentId = "episode", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session").copy(
+                subtitleUrls = listOf(english, french),
+                trackPreferenceRestore = TrackPreferenceRestore(subtitlePreferenceResolved = true),
+            ))
+            fixture.viewModel.awaitState { it.sessionId == "session" && !it.isLoading }
+            runCurrent()
+
+            assertEquals(emptyList(), requested, "the per-file French was requested over the series preference")
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun aSubtitlePickIsRememberedForTheSeriesOnlyOncePlaybackTakesIt() = runTest(dispatcher) {
+        val writes = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val preferences = HttpClient(MockEngine { request ->
+            writes += "${request.url.encodedPath} ${(request.body as? io.ktor.http.content.TextContent)?.text}"
+            respond("", HttpStatusCode.NoContent)
+        }) { install(ContentNegotiation) { json(SiloJson) } }
+        val english = PlayerSubtitleInfo(index = 0, language = "en", codec = "subrip", label = "English", source = "external", url = "https://silo.test/en.vtt")
+        val french = PlayerSubtitleInfo(index = 1, language = "fr", codec = "subrip", label = "French", source = "external", url = "https://silo.test/fr.vtt")
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope, trackPreferenceClient = preferences)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.loadContent(contentId = "movie", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session").copy(
+                contentType = "movie",
+                subtitleUrls = listOf(english, french),
+                playbackPlan = executionPlan().copy(
+                    selectedTracks = org.siloserver.silo.model.playback.SelectedPlaybackTracks(subtitleIndex = 0),
+                ),
+            ))
+            viewModel.awaitState { it.sessionId == "session" && !it.isLoading }
+            // This harness's catalog has no watch owner; the start's own owner stands in.
+            PlayerViewModel::class.java.getDeclaredField("trackPreferenceOwner").let {
+                it.isAccessible = true
+                it.set(viewModel, FakeTokenManager().metadataOwner)
+            }
+
+            // The French replan cannot be staged here, so English keeps playing.
+            viewModel.onSelectSubtitle(1)
+            runCurrent()
+            assertEquals(mobileSubtitleIdentity(english), viewModel.uiState.value.committedSubtitleIdentity)
+
+            // Picking English back commits it; only that pick is remembered.
+            viewModel.onSelectSubtitle(0)
+            viewModel.landNetworkMove(mobileSubtitleIdentity(english))
+            viewModel.privateField<MobileSubtitleTransactionAdapter>("mobileSubtitleTransactions").persistCommittedSelection()
+            runCurrent()
+            awaitRealTime { while (writes.none { "\"subtitle_language\":\"en\"" in it }) delay(10) }
+            assertEquals(listOf("/api/v2/subtitle-prefs/movie"), writes.map { it.substringBefore(' ') })
+            assertTrue("\"subtitle_language\":\"en\"" in writes.single(), "a refused pick was remembered for the series: $writes")
+        } finally {
+            store.clear()
+            preferences.close()
+        }
+    }
+
     @Suppress("UNCHECKED_CAST")
     private fun PlayerViewModel.mutableUiState(): MutableStateFlow<PlayerViewModel.PlayerUiState> =
         PlayerViewModel::class.java.getDeclaredField("_uiState").let {
@@ -865,6 +954,9 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
         network: PlaybackNetworkEvidenceProvider = PlaybackNetworkEvidenceProvider.None,
         /** The reachability probe answers; otherwise it has no server to probe. */
         serverReachable: Boolean = false,
+        userItemStatePort: UserItemStatePort = NoOpUserItemStatePort,
+        /** Answers the series track preference writes; none are made without it. */
+        trackPreferenceClient: HttpClient? = null,
     ): PlayerFixture {
         val client = noOpClient()
         val tokenManager = FakeTokenManager()
@@ -912,14 +1004,21 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                         org.siloserver.silo.network.apiv2.SubtitleAiCreateV2Api(client, tokenManager, ApiV2Gate.Unrestricted),
                     ),
                 ),
-                userItemStatePort = NoOpUserItemStatePort,
+                userItemStatePort = userItemStatePort,
                 finalPlaybackPositionWriter = FinalPlaybackPositionWriter(
                     scope = scope,
-                    scopeProvider = { null },
+                    // Track picks persist only under a profile's write scope.
+                    scopeProvider = { tokenManager.metadataOwner.takeIf { trackPreferenceClient != null } },
                     write = {},
                 ),
                 shuffleFeatureStore = shuffleStore,
                 networkEvidenceProvider = network,
+                trackPreferenceWriter = trackPreferenceClient?.let {
+                    org.siloserver.silo.playback.TrackPreferenceWriter(
+                        org.siloserver.silo.network.apiv2.TrackPreferencesV2Api(it, tokenManager, ApiV2Gate.Unrestricted),
+                        scope,
+                    )
+                },
             ),
             manager = manager,
             lifecycle = lifecycle,

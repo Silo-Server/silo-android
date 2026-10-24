@@ -39,9 +39,10 @@ data class AutoSubtitleCandidate(
     val title: String? = null,
     val forced: Boolean = false,
     /**
-     * A hearing-impaired signal the caller already knows (Media3 role flags, an
-     * accessibility label). ORed with a title match — never a replacement for
-     * it, because the catalog only ever says SDH in the title.
+     * A hearing-impaired signal the caller already knows (the server's
+     * `hearing_impaired`, Media3 role flags, an accessibility label). ORed
+     * with a title match — never a replacement for it, because older servers
+     * only say SDH in the title.
      */
     val hearingImpaired: Boolean = false,
     /** Where the track lives. `null` (unknown) ranks with embedded, as on the web player. */
@@ -291,6 +292,7 @@ fun catalogAutoSubtitleCandidates(
             codec = track.codec,
             title = track.title,
             forced = track.forced,
+            hearingImpaired = track.hearingImpaired,
             source = if (track.external) AutoSubtitleSource.EXTERNAL else AutoSubtitleSource.EMBEDDED,
             needsBurnIn = isBitmapSubtitleCodecFamily(track.codec) &&
                 (track.external || !isClientMountableBitmapCodecFamily(track.codec)),
@@ -320,6 +322,7 @@ fun PlayerSubtitleInfo.toAutoSubtitleCandidate(): AutoSubtitleCandidate =
         codec = codec,
         title = catalogLabel ?: label,
         forced = forced == true,
+        hearingImpaired = hearingImpaired == true,
         source = autoSubtitleSource(),
         needsBurnIn = playbackSubtitleIdentity(this) is SubtitleIdentity.ServerBurnIn,
     )

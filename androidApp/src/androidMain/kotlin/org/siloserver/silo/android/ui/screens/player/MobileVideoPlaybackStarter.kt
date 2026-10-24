@@ -11,6 +11,7 @@ import org.siloserver.silo.common.player.TrackSelectionPresets
 import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.common.player.qualityPair
 import org.siloserver.silo.common.player.usesCellularQuality
+import org.siloserver.silo.common.player.video.TrackPreferenceRestore
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.VideoPlaybackStartResult
 import org.siloserver.silo.common.player.video.VideoPlaybackStarter
@@ -544,6 +545,12 @@ internal class MobileVideoPlaybackStarter(
                 showForcedSubtitles = watchDetail.effectiveShowForcedSubtitles
                     ?: activeProfile?.showForcedSubtitles
                     ?: true,
+                // The player reads the watch detail again once tracks mount; a
+                // failed read there must not undo what this start decided.
+                trackPreferenceRestore = TrackPreferenceRestore(
+                    subtitlePreferenceResolved = watchDetail.hasSubtitlePreference(),
+                    subtitleTrackSignature = watchDetail.effectiveSubtitleTrackSignature,
+                ),
                 intro = effectiveVersion?.intro,
                 credits = effectiveVersion?.credits,
                 recap = effectiveVersion?.recap,

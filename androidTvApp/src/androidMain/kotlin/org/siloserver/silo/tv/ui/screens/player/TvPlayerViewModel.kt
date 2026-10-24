@@ -851,6 +851,7 @@ class TvPlayerViewModel(
     private var finalPositionScope: PlaybackWriteScope? = null
     // The playing title's metadata owner; a track pick is remembered only under it.
     private var trackPreferenceOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null
+    private val pendingSeriesPicks = org.siloserver.silo.common.player.video.PendingSeriesTrackPicks()
 
     /** [force] bypasses the time-throttle (used on pause/stop to capture the exact spot). */
     private fun maybeRecordPosition(positionSec: Double, durationSec: Double, force: Boolean = false) {
@@ -1348,6 +1349,7 @@ class TvPlayerViewModel(
                 // testing the index for non-null marked the server default as
                 // the viewer's choice after any successful subtitle change.
                 if (committed.audioPreferenceSpecified) onAudioSelectionCommitted()
+                saveLandedSeriesPicks(committed)
                 val writeScope = context.writeScope ?: return false
                 return userItemStatePort.recordTrackSelection(
                     scope = writeScope,
@@ -2343,7 +2345,10 @@ class TvPlayerViewModel(
             else it.copy(isLoading = true, error = null, serverUnreachable = false)
         }
         finalPositionScope = null
-        trackPreferenceOwner = null
+        pendingSeriesPicks.clear()
+        // A failed version switch keeps the current session playing, and its
+        // picks are still remembered under its owner.
+        if (!preserveCurrentPlaybackOnFailure) trackPreferenceOwner = null
         viewModelScope.launch {
             finalPositionScope = finalPlaybackPositionWriter.captureScope()
             val unpublishedReadySession =
@@ -3564,9 +3569,18 @@ class TvPlayerViewModel(
 
     /**
      * Remembers the viewer's pick for the whole series (a movie: for itself),
-     * as Silo Apple does. Only the HUD and remote pick entry points call these;
-     * restored, carried and automatic selections are not the viewer's pick.
+     * as Silo Apple does, once playback has taken it. Only the HUD and remote
+     * pick entry points record picks; restored, carried and automatic
+     * selections are not the viewer's pick.
      */
+    private fun saveLandedSeriesPicks(committed: org.siloserver.silo.model.playback.CommittedSubtitle) {
+        val state = _uiState.value
+        if (pendingSeriesPicks.takeSubtitle(committed.identity)) saveSeriesSubtitlePick(state, committed.identity)
+        if (committed.audioPreferenceSpecified && pendingSeriesPicks.takeAudio(committed.audioTrackIndex, local = false)) {
+            committed.audioTrackIndex?.let { saveSeriesAudioPick(state, it) }
+        }
+    }
+
     private fun saveSeriesSubtitlePick(state: UiState, identity: SubtitleIdentity) {
         val owner = trackPreferenceOwner ?: return
         val key = trackPreferenceKey(state.contentType, state.contentId, state.seriesId) ?: return
@@ -3787,6 +3801,9 @@ class TvPlayerViewModel(
         if (desired.explicit) {
             onAudioSelectionCommitted()
             persistDesiredAudio(desired.catalogOrdinal)
+            if (pendingSeriesPicks.takeAudio(desired.catalogOrdinal, local = true)) {
+                saveSeriesAudioPick(_uiState.value, desired.catalogOrdinal)
+            }
         }
     }
 
@@ -4695,21 +4712,19 @@ class TvPlayerViewModel(
         )
         if (selected != null) {
             _pendingRemoteAudioIndex.compareAndSet(index, null)
-            saveSeriesAudioPick(state, selected)
+            val local = mountedAudioFor(
+                catalog = catalogAudioTracks(state),
+                catalogOrdinal = selected,
+                mounted = state.audioTracks.map { it.toMountedAudioTrack() },
+                delivery = state.playbackPlan?.delivery,
+                planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
+            ) != null
+            pendingSeriesPicks.pickAudio(selected, local)
             // Through the same intent as every other entry point. Going straight
             // to a replan left an older launch/persisted/HUD intent authoritative,
             // and it would reapply itself afterwards and undo the remote pick.
             setDesiredAudio(selected, explicit = true)
-            if (mountedAudioFor(
-                    catalog = catalogAudioTracks(state),
-                    catalogOrdinal = selected,
-                    mounted = state.audioTracks.map { it.toMountedAudioTrack() },
-                    delivery = state.playbackPlan?.delivery,
-                    planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
-                ) != null
-            ) {
-                return
-            }
+            if (local) return
             playbackMutationFence.beginReplan()
             launchSubtitleTransaction(state) {
                 subtitleTransactions.selectAudio(selected)
@@ -4728,7 +4743,7 @@ class TvPlayerViewModel(
         )
         if (identity != null) {
             _pendingRemoteSubtitleIndex.compareAndSet(index, null)
-            saveSeriesSubtitlePick(state, identity)
+            pendingSeriesPicks.pickSubtitle(identity)
             playbackMutationFence.beginReplan()
             launchSubtitleTransaction(_uiState.value) {
                 subtitleTransactions.select(identity)
@@ -5738,7 +5753,6 @@ class TvPlayerViewModel(
         val state = _uiState.value
         val catalog = catalogAudioTracks(state)
         if (catalogOrdinal !in catalog.indices) return
-        saveSeriesAudioPick(state, catalogOrdinal)
 
         // If the mounted stream already carries this track, switch it on the
         // player. A replan would rebuild the whole session to deliver audio the
@@ -5748,17 +5762,16 @@ class TvPlayerViewModel(
         // Record the intent first: the resolver applies it locally when the
         // mounted stream already carries the track, which is the common
         // direct-play case and needs no replan at all.
+        val local = mountedAudioFor(
+            catalog = catalog,
+            catalogOrdinal = catalogOrdinal,
+            mounted = state.audioTracks.map { it.toMountedAudioTrack() },
+            delivery = state.playbackPlan?.delivery,
+            planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
+        ) != null
+        pendingSeriesPicks.pickAudio(catalogOrdinal, local)
         setDesiredAudio(catalogOrdinal, explicit = true)
-        if (mountedAudioFor(
-                catalog = catalog,
-                catalogOrdinal = catalogOrdinal,
-                mounted = state.audioTracks.map { it.toMountedAudioTrack() },
-                delivery = state.playbackPlan?.delivery,
-                planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
-            ) != null
-        ) {
-            return
-        }
+        if (local) return
 
         // manualAudioSelectionApplied is deliberately NOT raised here: it is
         // raised on commit via CommittedSubtitle.audioPreferenceSpecified, so a
@@ -5770,7 +5783,7 @@ class TvPlayerViewModel(
     }
 
     fun selectSubtitleOption(identity: SubtitleIdentity) {
-        saveSeriesSubtitlePick(_uiState.value, identity)
+        pendingSeriesPicks.pickSubtitle(identity)
         manualSubtitleSelectionApplied = true
         // The viewer is choosing: drop the automatic marker so this commit
         // writes the durable per-item preference.

@@ -41,6 +41,24 @@ class AutoSubtitleResolverTest {
     }
 
     @Test
+    fun aSeriesSdhPickFlaggedOnlyByTheServerBeatsAnIdenticallyTitledPlainTrack() {
+        // Both tracks are titled "English"; only `hearing_impaired` tells them apart.
+        val signature = SubtitleTrackSignature(language = "en", codec = "subrip", label = "English", hearingImpaired = true)
+        val context = AutoSubtitleContext(preferredLanguage = "en", mode = "always", trackSignature = signature)
+        val catalog = listOf(
+            SubtitleTrack(index = 0, codec = "subrip", language = "eng", title = "English"),
+            SubtitleTrack(index = 1, codec = "subrip", language = "eng", title = "English", hearingImpaired = true),
+        )
+        val inventory = listOf(
+            PlayerSubtitleInfo(index = 0, language = "eng", codec = "subrip", label = "English", url = ""),
+            PlayerSubtitleInfo(index = 1, language = "eng", codec = "subrip", label = "English", hearingImpaired = true, url = ""),
+        )
+
+        assertEquals(1, resolveAutoSubtitle(catalogAutoSubtitleCandidates(catalog), context).selectedCandidate()?.selectionIndex)
+        assertEquals(1, resolveAutoSubtitle(inventoryAutoSubtitleCandidates(inventory), context).selectedCandidate()?.selectionIndex)
+    }
+
+    @Test
     fun anAmbiguousSignatureResolvesTheSameInCatalogAndInventoryOrder() {
         // A download keeps the embedded English as a sidecar: two otherwise
         // equal English tracks, listed embedded-first in the catalog and

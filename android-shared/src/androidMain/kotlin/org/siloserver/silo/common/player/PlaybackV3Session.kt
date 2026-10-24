@@ -110,6 +110,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
                 label = item.label,
                 source = item.source,
                 forced = item.forced,
+                hearingImpaired = item.hearingImpaired,
                 url = if (
                     rendition == null &&
                     subtitle.mode != PlaybackSubtitleModeV3.BURN_IN &&

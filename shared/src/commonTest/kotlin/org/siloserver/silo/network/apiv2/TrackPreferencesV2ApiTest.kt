@@ -11,7 +11,9 @@ import io.ktor.client.request.HttpResponseData
 import io.ktor.http.*
 import io.ktor.http.content.TextContent
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -179,5 +181,41 @@ class TrackPreferencesV2ApiTest {
         writer.saveSubtitle(owner, "series-9", off)
         writer.saveSubtitle(switched, "series-9", pick)
         assertEquals("always" to "p2", sends.receive(), "only the pick made under the new profile was sent")
+    }
+
+    @Test fun aRequestStalledForOneProfileDoesNotHoldUpAnothersPicks() = runTest {
+        val sends = Channel<String?>(Channel.UNLIMITED)
+        val c = client {
+            val profile = it.attributes[AuthScopeAttributeKey].profileId
+            sends.send(profile)
+            if (profile == "p") awaitCancellation()
+            respond("", HttpStatusCode.NoContent)
+        }
+        val writer = TrackPreferenceWriter(TrackPreferencesV2Api(c, tokens, ApiV2Gate.Unrestricted), backgroundScope)
+        val off = assertNotNull(subtitlePreferenceUpdate(SubtitleIdentity.Off, emptyList()))
+
+        writer.saveSubtitle(owner, "series-9", off)
+        assertEquals("p", sends.receive())
+        val switched = owner.copy(profileId = "p2", identityGeneration = 2)
+        active = switched
+        writer.saveSubtitle(switched, "series-9", off)
+        assertEquals("p2", sends.receive(), "the new profile's pick is sent while the old profile's request hangs")
+    }
+
+    @Test fun aWriteCancelledFromInsideDoesNotStopLaterPicks() = runTest {
+        val sends = Channel<String>(Channel.UNLIMITED)
+        var count = 0
+        val c = client {
+            val mode = it.json().getValue("subtitle_mode").jsonPrimitive.content
+            if (++count == 1) throw CancellationException("request cancelled")
+            sends.send(mode)
+            respond("", HttpStatusCode.NoContent)
+        }
+        val writer = TrackPreferenceWriter(TrackPreferencesV2Api(c, tokens, ApiV2Gate.Unrestricted), backgroundScope)
+        val catalog = listOf(SubtitleTrack(index = 0, codec = "subrip", language = "en"))
+
+        writer.saveSubtitle(owner, "series-9", assertNotNull(subtitlePreferenceUpdate(SubtitleIdentity.Off, catalog)))
+        writer.saveSubtitle(owner, "series-9", assertNotNull(subtitlePreferenceUpdate(SubtitleIdentity.Embedded(0, SubtitleMediaIdentity()), catalog)))
+        assertEquals("always", sends.receive())
     }
 }
