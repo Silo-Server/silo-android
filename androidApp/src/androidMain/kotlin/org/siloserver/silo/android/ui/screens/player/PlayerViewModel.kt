@@ -4177,6 +4177,12 @@ class PlayerViewModel(
             outstanding = { mobileSubtitleTransactions.hasActiveTransaction },
         )
         mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
+        // The replan carries the audio the viewer chose on this file, also
+        // when it was switched on the player and no replan has told the
+        // server yet: otherwise the server keeps its own earlier choice.
+        desiredAudio
+            ?.takeIf { it.explicit && it.fileId == state.mediaFileId }
+            ?.let { mobileSubtitleTransactions.commitLocallyAppliedAudio(it.catalogOrdinal) }
         mobileSubtitleTransactions.selectQuality(id)
     }
 
@@ -4761,6 +4767,17 @@ class PlayerViewModel(
             )
         }
         adoptFileMarkersAfterReplan(predecessorFileId, effectiveVersion)
+        // The plan's audio is what plays now. A direct-play file mounts every
+        // track and Media3 picks its own default, so seed it as the desired
+        // audio, as a fresh load does; an explicit choice of the same track on
+        // the same file stays explicit.
+        val adoptedAudio = selectedAudioTrackOrdinal(returnedAudioIndex, effectiveVersion.audioTracks.orEmpty())
+        if (adoptedAudio in effectiveVersion.audioTracks.orEmpty().indices) {
+            val stillExplicit = desiredAudio?.let {
+                it.explicit && it.catalogOrdinal == adoptedAudio && it.fileId == effectiveFileId
+            } == true
+            setDesiredAudio(adoptedAudio, explicit = stillExplicit)
+        }
         Log.i(
             TAG,
             "subtitle_replan_mount restored_source_seconds=$sourcePosition " +
