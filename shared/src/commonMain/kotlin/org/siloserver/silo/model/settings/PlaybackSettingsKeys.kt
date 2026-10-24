@@ -71,7 +71,7 @@ object PlaybackSettingsKeys {
      * at profile scope. Older servers store it per device only and refuse
      * `scope=profile` with a 422.
      */
-    const val SubtitleSyncProfileMinRevision = 18
+    const val SubtitleSyncProfileMinRevision = 19
     const val VideoGravity = "player.video_gravity"
     const val OrientationMode = "player.orientation_mode"
     // Android shipped this under player.* while Apple and the server used
@@ -265,7 +265,7 @@ object PlaybackSettingsKeys {
         SubtitleAppearance,
         ThemeMusicEnabled,
         ThemeMusicLoop,
-        // Profile scope from manifest revision 18.
+        // Profile scope from manifest revision 19.
         SubtitleSyncMs,
     )
 
@@ -282,6 +282,14 @@ object PlaybackSettingsKeys {
         IntroSkipMode, AutoSkipIntro -> listOf(IntroSkipMode, AutoSkipIntro)
         else -> listOf(key)
     }
+
+    /**
+     * The manifest revision from which the server accepts [key] at profile
+     * scope, or null for a key whose profile scope arrived with the key.
+     * Read through `SettingsContractRevision.storesPerProfile`.
+     */
+    fun profileScopeMinimumRevision(key: String): Int? =
+        SubtitleSyncProfileMinRevision.takeIf { key == SubtitleSyncMs }
 
     /** Whether this device holds its own value for [key]'s control. */
     fun hasDeviceOverride(overrides: Set<String>, key: String): Boolean =

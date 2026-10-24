@@ -761,37 +761,37 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
-    fun `a revision-gated clear waits for the revision and clears from revision 18`() = runTest {
+    fun `a revision-gated clear waits for the revision and clears from revision 19`() = runTest {
         val api = RecordingSettingsApi().apply {
             capabilities = ApiResult.NetworkError(IllegalStateException("offline"))
         }
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueueDelete("p1", syncKey, serverUrl, minRevision = 18)
+        flusher.enqueueDelete("p1", syncKey, serverUrl, onlyWhereStoredPerProfile = true)
         flusher.flushNow()
         assertTrue(api.calls.isEmpty())
         assertEquals(setOf(syncKey), flusher.pendingKeys("p1"), "an unknown revision holds the clear")
 
-        api.manifestRevision(18)
+        api.manifestRevision(19)
         flusher.flushNow()
         assertEquals(RecordingSettingsApi.Call.Kind.DELETE, api.calls.single().kind)
         assertTrue(flusher.pendingKeys("p1").isEmpty())
     }
 
     @Test
-    fun `a revision-gated clear leaves the device row alone below revision 18`() = runTest {
-        val api = RecordingSettingsApi().apply { manifestRevision(17) }
+    fun `a revision-gated clear leaves the device row alone below revision 19`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(18) }
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueueDelete("p1", syncKey, serverUrl, minRevision = 18)
+        flusher.enqueueDelete("p1", syncKey, serverUrl, onlyWhereStoredPerProfile = true)
         flusher.flushNow()
 
-        assertTrue(api.calls.isEmpty(), "below 18 the device row is the only timing")
+        assertTrue(api.calls.isEmpty(), "below 19 the device row is the only timing")
         assertTrue(flusher.pendingKeys("p1").isEmpty())
     }
 
     @Test
-    fun `a revision-gated clear below revision 18 still sends the device write it replaced`() = runTest {
+    fun `a revision-gated clear below revision 19 still sends the device write it replaced`() = runTest {
         val api = RecordingSettingsApi().apply {
             capabilities = ApiResult.NetworkError(IllegalStateException("offline"))
         }
@@ -799,11 +799,11 @@ class ServerSettingsFlusherTest {
 
         // Delay edited offline with the toggle on, then the toggle turned off.
         flusher.enqueue("p1", syncKey, "250", serverUrl)
-        flusher.enqueueDelete("p1", syncKey, serverUrl, minRevision = 18)
+        flusher.enqueueDelete("p1", syncKey, serverUrl, onlyWhereStoredPerProfile = true)
         flusher.flushNow()
         assertTrue(api.calls.isEmpty())
 
-        api.manifestRevision(17)
+        api.manifestRevision(18)
         flusher.flushNow()
 
         val call = api.calls.single()
@@ -814,12 +814,12 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
-    fun `a revision-gated clear from revision 18 drops the device write it replaced`() = runTest {
-        val api = RecordingSettingsApi().apply { manifestRevision(18) }
+    fun `a revision-gated clear from revision 19 drops the device write it replaced`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(19) }
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
         flusher.enqueue("p1", syncKey, "250", serverUrl)
-        flusher.enqueueDelete("p1", syncKey, serverUrl, minRevision = 18)
+        flusher.enqueueDelete("p1", syncKey, serverUrl, onlyWhereStoredPerProfile = true)
         flusher.flushNow()
 
         assertEquals(RecordingSettingsApi.Call.Kind.DELETE, api.calls.single().kind)
@@ -827,17 +827,17 @@ class ServerSettingsFlusherTest {
 
     @Test
     fun `a timing save queued before a device write in the same drain does not overwrite it`() = runTest {
-        val api = RecordingSettingsApi().apply { manifestRevision(17) }
+        val api = RecordingSettingsApi().apply { manifestRevision(18) }
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
         api.failNextPuts(1, ApiResult.Error(503, "unavailable", "busy"))
 
         // Both queued before the revision was known, so they drain together.
-        flusher.enqueue("p1", syncKey, "100", serverUrl, scope = SettingWriteScope.Profile(minRevision = 18))
+        flusher.enqueue("p1", syncKey, "100", serverUrl, scope = SettingWriteScope.Profile())
         flusher.enqueue("p1", syncKey, "200", serverUrl)
         flusher.flushNow()
         advanceUntilIdle()
 
-        // At revision 17 the profile save falls back to the row the newer
+        // At revision 18 the profile save falls back to the row the newer
         // device write owns, so it is dropped; only the failed device write
         // is retried.
         assertTrue(api.calls.isNotEmpty())
@@ -877,12 +877,12 @@ class ServerSettingsFlusherTest {
 
     @Test
     fun `a failed timing save that fell back to the device row does not overwrite a newer device write`() = runTest {
-        val api = RecordingSettingsApi().apply { manifestRevision(17) }
+        val api = RecordingSettingsApi().apply { manifestRevision(18) }
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
         api.failNextPuts(1, ApiResult.Error(503, "unavailable", "busy"))
         var edited = false
         api.onPut = {
-            // Queued once the store knows the revision is 17: a device write.
+            // Queued once the store knows the revision is 18: a device write.
             if (!edited) {
                 edited = true
                 flusher.enqueue("p1", syncKey, "200", serverUrl)
@@ -890,7 +890,7 @@ class ServerSettingsFlusherTest {
         }
 
         // Queued before the revision was known: a profile intent.
-        flusher.enqueue("p1", syncKey, "100", serverUrl, scope = SettingWriteScope.Profile(minRevision = 18))
+        flusher.enqueue("p1", syncKey, "100", serverUrl, scope = SettingWriteScope.Profile())
         flusher.flushNow()
         advanceUntilIdle()
 
@@ -910,7 +910,7 @@ class ServerSettingsFlusherTest {
         }
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", syncKey, "100", serverUrl, scope = SettingWriteScope.Profile(minRevision = 18))
+        flusher.enqueue("p1", syncKey, "100", serverUrl, scope = SettingWriteScope.Profile())
         flusher.flushNow()
         assertTrue(api.calls.isEmpty())
         // "Only on This Device" turned on and the delay edited: a device
@@ -918,31 +918,31 @@ class ServerSettingsFlusherTest {
         flusher.enqueue("p1", syncKey, "200", serverUrl)
         flusher.flushNow()
 
-        api.manifestRevision(17)
+        api.manifestRevision(18)
         flusher.flushNow()
 
         assertEquals(
             listOf(JsonPrimitive(200L)),
             api.calls.map { it.value },
-            "at revision 17 the held save falls back to the row the newer write owns",
+            "at revision 18 the held save falls back to the row the newer write owns",
         )
         assertTrue(flusher.pendingKeys("p1").isEmpty())
     }
 
     @Test
     fun `a failed device write kept by a revision-gated clear checks the revision again on retry`() = runTest {
-        val api = RecordingSettingsApi().apply { manifestRevision(17) }
+        val api = RecordingSettingsApi().apply { manifestRevision(18) }
         val revision = SettingsContractRevision({ api.getContractCapabilities() })
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200, contractRevision = revision)
         api.failNextPuts(1, ApiResult.Error(503, "unavailable", "busy"))
 
         flusher.enqueue("p1", syncKey, "250", serverUrl)
-        flusher.enqueueDelete("p1", syncKey, serverUrl, minRevision = 18)
+        flusher.enqueueDelete("p1", syncKey, serverUrl, onlyWhereStoredPerProfile = true)
         flusher.flushNow()
         assertEquals(RecordingSettingsApi.Call.Kind.PUT, api.calls.single().kind)
 
         // The server is upgraded before the retry.
-        api.manifestRevision(18)
+        api.manifestRevision(19)
         revision.refresh(serverUrl)
         flusher.flushNow()
 
@@ -952,13 +952,13 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
-    fun `subtitle timing goes to the profile from revision 18`() = runTest {
-        val api = RecordingSettingsApi().apply { manifestRevision(18) }
+    fun `subtitle timing goes to the profile from revision 19`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(19) }
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
         flusher.enqueue(
             "p1", syncKey, "250", serverUrl,
-            scope = SettingWriteScope.Profile(clearDevice = true, minRevision = 18),
+            scope = SettingWriteScope.Profile(clearDevice = true),
         )
         advanceUntilIdle()
 
@@ -969,17 +969,17 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
-    fun `subtitle timing stays on the device below revision 18 and clears nothing`() = runTest {
-        val api = RecordingSettingsApi().apply { manifestRevision(17) }
+    fun `subtitle timing stays on the device below revision 19 and clears nothing`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(18) }
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
         flusher.enqueue(
             "p1", syncKey, "250", serverUrl,
-            scope = SettingWriteScope.Profile(clearDevice = true, minRevision = 18),
+            scope = SettingWriteScope.Profile(clearDevice = true),
         )
         advanceUntilIdle()
 
-        assertEquals(1, api.calls.size, "a revision 17 server refuses scope=profile with a 422")
+        assertEquals(1, api.calls.size, "a revision 18 server refuses scope=profile with a 422")
         assertEquals(RecordingSettingsApi.Call.Kind.PUT, api.calls.single().kind)
         assertEquals(SettingScopeIdentity.profileDevice(), api.calls.single().scope)
         assertEquals(JsonPrimitive(250L), api.calls.single().value)
@@ -992,12 +992,12 @@ class ServerSettingsFlusherTest {
         }
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", syncKey, "250", serverUrl, scope = SettingWriteScope.Profile(minRevision = 18))
+        flusher.enqueue("p1", syncKey, "250", serverUrl, scope = SettingWriteScope.Profile())
         flusher.flushNow()
         assertTrue(api.calls.isEmpty(), "neither scope is safe to guess")
         assertEquals(setOf(syncKey), flusher.pendingKeys("p1"))
 
-        api.manifestRevision(18)
+        api.manifestRevision(19)
         flusher.flushNow()
         assertEquals(SettingScopeIdentity.profile(), api.calls.single().scope)
     }

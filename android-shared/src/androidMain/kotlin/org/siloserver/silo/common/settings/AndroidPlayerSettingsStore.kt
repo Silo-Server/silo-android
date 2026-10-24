@@ -487,10 +487,9 @@ class AndroidPlayerSettingsStore(
         if (contractRevision == null) {
             subtitleUsesDeviceOverrideFlow.map { !it }
         } else {
-            combine(subtitleUsesDeviceOverrideFlow, currentScopeFlow, contractRevision.known) { deviceOnly, scope, known ->
-                val revision = known?.takeIf { scope != null && it.serverUrl == scope.serverUrl }
-                    ?.manifestRevision
-                !deviceOnly && (revision == null || revision >= PlaybackSettingsKeys.SubtitleSyncProfileMinRevision)
+            combine(subtitleUsesDeviceOverrideFlow, currentScopeFlow, contractRevision.known) { deviceOnly, scope, _ ->
+                !deviceOnly &&
+                    scope?.let { contractRevision.storesPerProfile(it.serverUrl, PlaybackSettingsKeys.SubtitleSyncMs) } != false
             }.distinctUntilChanged()
         }
 
@@ -606,28 +605,31 @@ class AndroidPlayerSettingsStore(
      * Subtitle timing follows the subtitle appearance's scope: the profile's
      * value unless this device keeps its own subtitles ("Only on This
      * Device"). A server below [PlaybackSettingsKeys.SubtitleSyncProfileMinRevision]
-     * only stores it per device, so there it stays a device value — decided
-     * here when the revision is already known and by the flusher otherwise.
+     * only stores it per device ([SettingsContractRevision.storesPerProfile]),
+     * so there it stays a device value — decided here when the revision is
+     * already known and by the flusher otherwise.
      */
     override suspend fun setSubtitleSyncMs(value: Int) {
         val clamped = value.coerceIn(-10000, 10000)
         withScope { scope, store ->
-            val profileUnsupported = cachedRevision(scope)
-                ?.let { it < PlaybackSettingsKeys.SubtitleSyncProfileMinRevision } ?: false
+            val profileUnsupported = keptPerDeviceOnly(scope, PlaybackSettingsKeys.SubtitleSyncMs)
             store.edit { prefs ->
                 prefs[intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleSyncMs)] = clamped
                 enqueueSubtitleScoped(
                     prefs, scope, PlaybackSettingsKeys.SubtitleSyncMs, clamped.toString(),
-                    minRevision = PlaybackSettingsKeys.SubtitleSyncProfileMinRevision,
                     deviceOnly = profileUnsupported,
                 )
             }
         }
     }
 
-    /** The settings manifest revision already known for [scope]'s server, without probing. */
-    private fun cachedRevision(scope: Scope): Int? =
-        contractRevision?.known?.value?.takeIf { it.serverUrl == scope.serverUrl }?.manifestRevision
+    /**
+     * Whether [scope]'s server is already known to store [key] per device
+     * only, without probing. Unknown counts as not: the flusher holds the
+     * write until the revision is known.
+     */
+    private fun keptPerDeviceOnly(scope: Scope, key: String): Boolean =
+        contractRevision?.storesPerProfile(scope.serverUrl, key) == false
 
     /**
      * Queues a subtitle setting at the scope the "Only on This Device" toggle
@@ -646,7 +648,6 @@ class AndroidPlayerSettingsStore(
         scope: Scope,
         key: String,
         value: String,
-        minRevision: Int = 0,
         deviceOnly: Boolean = false,
     ) {
         val usesDevice = deviceOnly || prefs.boolFor(scope, PlaybackSettingsKeys.SubtitleUsesDeviceOverride, false)
@@ -658,7 +659,7 @@ class AndroidPlayerSettingsStore(
             clearDeviceOverride(prefs, scope, key)
             serverSettingsFlusher.enqueue(
                 scope.profileId, key, value, scope.serverUrl, scope.authority,
-                SettingWriteScope.Profile(clearDevice = staleDeviceRow, minRevision = minRevision),
+                SettingWriteScope.Profile(clearDevice = staleDeviceRow),
             )
         }
     }
@@ -999,13 +1000,12 @@ class AndroidPlayerSettingsStore(
                     // Read and queued in this transaction, so a timing edit
                     // made after the toggle-off is never cleared by it.
                     val timingOnDevice = PlaybackSettingsKeys.SubtitleSyncMs in it[deviceOverridesKey(scope)].orEmpty()
-                    val timingDeviceOnly = cachedRevision(scope)
-                        ?.let { revision -> revision < PlaybackSettingsKeys.SubtitleSyncProfileMinRevision } ?: false
+                    val timingDeviceOnly = keptPerDeviceOnly(scope, PlaybackSettingsKeys.SubtitleSyncMs)
                     if (timingOnDevice && !timingDeviceOnly) {
                         clearDeviceOverride(it, scope, PlaybackSettingsKeys.SubtitleSyncMs)
                         serverSettingsFlusher.enqueueDelete(
                             scope.profileId, PlaybackSettingsKeys.SubtitleSyncMs, scope.serverUrl, scope.authority,
-                            minRevision = PlaybackSettingsKeys.SubtitleSyncProfileMinRevision,
+                            onlyWhereStoredPerProfile = true,
                         )
                     }
                 }

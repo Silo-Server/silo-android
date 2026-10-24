@@ -2,6 +2,7 @@ package org.siloserver.silo.common.settings
 
 import org.siloserver.silo.common.diagnostics.SiloLog
 import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
+import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SettingScopeIdentity
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -35,15 +36,15 @@ sealed interface SettingWriteScope {
      * has landed, so the value just saved is the one that resolves here — a
      * stale device row would otherwise keep winning over it.
      *
-     * [minRevision] is the settings manifest revision that first accepts the
-     * key at profile scope. Below it the server refuses `scope=profile`, so
-     * the write goes to this device instead and clears nothing. The choice is
-     * made at send time, like the text-opacity gate: while the revision is
-     * unknown the write is held and retried rather than guessed.
+     * A key whose profile scope a later manifest revision added
+     * ([SettingsContractRevision.storesPerProfile]) goes to this device
+     * instead, clearing nothing, on a server below that revision, which
+     * refuses `scope=profile`. The choice is made at send time, like the
+     * text-opacity gate: while the revision is unknown the write is held and
+     * retried rather than guessed.
      */
     data class Profile(
         val clearDevice: Boolean = false,
-        val minRevision: Int = 0,
     ) : SettingWriteScope
 }
 
@@ -76,17 +77,18 @@ interface ServerSettingsFlusher {
     /**
      * Queue clearing the device-scoped value, so the setting inherits again.
      *
-     * A [minRevision] above zero clears it only where the server stores [key]
-     * per profile from that manifest revision on: below it the device row is
-     * the only value there is, so the clear is dropped. Decided at send time;
-     * while the revision is unknown the clear is held and retried.
+     * [onlyWhereStoredPerProfile] clears it only where the server stores
+     * [key] per profile ([SettingsContractRevision.storesPerProfile]): on an
+     * older server the device row is the only value there is, so the clear is
+     * dropped. Decided at send time; while the revision is unknown the clear
+     * is held and retried.
      */
     fun enqueueDelete(
         profileId: String,
         key: String,
         serverUrl: String,
         authority: AuthScopeSnapshot? = null,
-        minRevision: Int = 0,
+        onlyWhereStoredPerProfile: Boolean = false,
     )
 
     /**
@@ -135,16 +137,18 @@ private sealed class PendingOp {
 
     /**
      * Always this device's row: nothing deletes a profile-scoped value.
-     * [minRevision] as in [ServerSettingsFlusher.enqueueDelete].
+     * [profileGated] as `onlyWhereStoredPerProfile` in
+     * [ServerSettingsFlusher.enqueueDelete].
      *
      * [replacedSet] is the unsent device write this revision-gated clear took
-     * the slot of. Below [minRevision] the clear is dropped and the device row
-     * stays the value, so that write is sent instead of being lost.
+     * the slot of. Where the server keeps the key per device only, the clear
+     * is dropped and the device row stays the value, so that write is sent
+     * instead of being lost.
      */
     data class Delete(
         override val serverUrl: String,
         override val authority: AuthScopeSnapshot?,
-        val minRevision: Int = 0,
+        val profileGated: Boolean = false,
         val replacedSet: Set? = null,
     ) : PendingOp()
 
@@ -222,13 +226,13 @@ class DefaultServerSettingsFlusher(
         key: String,
         serverUrl: String,
         authority: AuthScopeSnapshot?,
-        minRevision: Int,
+        onlyWhereStoredPerProfile: Boolean,
     ) {
         scheduleDebounced(PendingKey(profileId, key, profileLevel = false)) { existing ->
             val replaced = (existing as? PendingOp.Delete)?.replacedSet ?: existing as? PendingOp.Set
-            val keep = minRevision > 0 && replaced != null &&
+            val keep = onlyWhereStoredPerProfile && replaced != null &&
                 replaced.serverUrl == serverUrl && replaced.authority == authority
-            PendingOp.Delete(serverUrl, authority, minRevision, replacedSet = replaced.takeIf { keep })
+            PendingOp.Delete(serverUrl, authority, onlyWhereStoredPerProfile, replacedSet = replaced.takeIf { keep })
         }
     }
 
@@ -264,9 +268,9 @@ class DefaultServerSettingsFlusher(
                 // A revision-gated clear is not one yet: below its revision it
                 // leaves the device row alone, so it supersedes nothing.
                 val profileKey = composite.copy(profileLevel = true)
-                val gated = next is PendingOp.Delete && next.minRevision > 0
+                val gated = next is PendingOp.Delete && next.profileGated
                 if (!gated) pending[profileKey]?.let { queued ->
-                    val kept = queued.supersededByDeviceIntent()
+                    val kept = queued.supersededByDeviceIntent(composite.key)
                     if (kept == null) pending.remove(profileKey) else pending[profileKey] = kept
                 }
             }
@@ -371,7 +375,7 @@ class DefaultServerSettingsFlusher(
                         }
                         continue
                     }
-                    val kept = if (newerDeviceIntent) op.supersededByDeviceIntent() else op
+                    val kept = if (newerDeviceIntent) op.supersededByDeviceIntent(composite.key) else op
                     if (kept != null) pending[composite] = kept
                 }
                 if (retryAttempts >= MAX_AUTO_RETRIES) {
@@ -401,13 +405,13 @@ class DefaultServerSettingsFlusher(
      *   drops it if it resolves to this device's row.
      * - A clear left over from a landed profile save goes too.
      */
-    private fun PendingOp.supersededByDeviceIntent(): PendingOp? {
+    private fun PendingOp.supersededByDeviceIntent(key: String): PendingOp? {
         if (this is PendingOp.Delete) return null
         val set = this as? PendingOp.Set ?: return this
         val profile = set.scope as? SettingWriteScope.Profile ?: return this
-        val known = contractRevision.known.value?.takeIf { it.serverUrl == serverUrl }?.manifestRevision
-        if (profile.minRevision > 0 && known != null && known < profile.minRevision) return null
-        val marked = if (profile.minRevision > 0) set.copy(deviceWroteAfter = true) else set
+        val gated = PlaybackSettingsKeys.profileScopeMinimumRevision(key) != null
+        if (gated && contractRevision.storesPerProfile(serverUrl, key) == false) return null
+        val marked = if (gated) set.copy(deviceWroteAfter = true) else set
         return if (profile.clearDevice) marked.copy(scope = profile.copy(clearDevice = false)) else marked
     }
 
@@ -486,7 +490,7 @@ class DefaultServerSettingsFlusher(
         }
         val wire = gateForServerRevision(key, encoded, op.serverUrl)
             ?: return op.takeIf { failed("put", key, "settings manifest revision unknown", retry = true) }
-        val target = resolveScope(op.scope, op.serverUrl)
+        val target = resolveScope(op.scope, key, op.serverUrl)
             ?: return op.takeIf { failed("put", key, "settings manifest revision unknown", retry = true) }
         if (op.deviceWroteAfter && target.identity == SettingScopeIdentity.profileDevice()) {
             SiloLog.w(CATEGORY, TAG, "dropping $key: a newer device write owns the row this save falls back to")
@@ -531,21 +535,16 @@ class DefaultServerSettingsFlusher(
     private class ResolvedScope(val identity: SettingScopeIdentity, val clearDevice: Boolean)
 
     /**
-     * The scope [scope] means on the server at [serverUrl], or null while that
-     * depends on a manifest revision not known yet. A profile write the server
-     * cannot take at profile scope yet stays on this device, as before.
+     * The scope [scope] means for [key] on the server at [serverUrl], or null
+     * while that depends on a manifest revision not known yet. A profile write
+     * the server cannot take at profile scope yet stays on this device, as
+     * before.
      */
-    private suspend fun resolveScope(scope: SettingWriteScope, serverUrl: String): ResolvedScope? = when (scope) {
-        SettingWriteScope.Device -> ResolvedScope(SettingScopeIdentity.profileDevice(), clearDevice = false)
-        is SettingWriteScope.Profile -> {
-            val supported = scope.minRevision <= 0 ||
-                (contractRevision.revisionFor(serverUrl) ?: return null) >= scope.minRevision
-            if (supported) {
-                ResolvedScope(SettingScopeIdentity.profile(), scope.clearDevice)
-            } else {
-                ResolvedScope(SettingScopeIdentity.profileDevice(), clearDevice = false)
-            }
-        }
+    private suspend fun resolveScope(scope: SettingWriteScope, key: String, serverUrl: String): ResolvedScope? {
+        val device = ResolvedScope(SettingScopeIdentity.profileDevice(), clearDevice = false)
+        if (scope !is SettingWriteScope.Profile) return device
+        val perProfile = contractRevision.storesPerProfileKey(serverUrl, key) ?: return null
+        return if (perProfile) ResolvedScope(SettingScopeIdentity.profile(), scope.clearDevice) else device
     }
 
     /**
@@ -575,24 +574,24 @@ class DefaultServerSettingsFlusher(
      */
     private suspend fun flushDeleteOrReplacedSet(profileId: String, key: String, op: PendingOp.Delete): PendingOp? {
         val replaced = op.replacedSet
-        if (replaced != null && op.minRevision > 0) {
-            val revision = contractRevision.revisionFor(op.serverUrl)
+        if (replaced != null && op.profileGated) {
+            val perProfile = contractRevision.storesPerProfileKey(op.serverUrl, key)
                 ?: return op.takeIf { failed("delete", key, "settings manifest revision unknown", retry = true) }
             // A failed write retries inside this clear, so the next attempt
             // checks the revision again rather than writing the device row
             // after the server has started storing the key per profile.
-            if (revision < op.minRevision) return op.takeIf { flushSet(profileId, key, replaced) != null }
+            if (!perProfile) return op.takeIf { flushSet(profileId, key, replaced) != null }
         }
         return op.takeIf { flushDelete(profileId, key, op) }
     }
 
     private suspend fun flushDelete(profileId: String, key: String, op: PendingOp.Delete): Boolean {
-        if (op.minRevision > 0) {
-            val revision = contractRevision.revisionFor(op.serverUrl)
+        if (op.profileGated) {
+            val perProfile = contractRevision.storesPerProfileKey(op.serverUrl, key)
                 ?: return failed("delete", key, "settings manifest revision unknown", retry = true)
-            if (revision < op.minRevision) {
-                // Below it the server keeps this key per device only: the
-                // device row is the value, so there is nothing to clear.
+            if (!perProfile) {
+                // The server keeps this key per device only: the device row
+                // is the value, so there is nothing to clear.
                 return false
             }
         }

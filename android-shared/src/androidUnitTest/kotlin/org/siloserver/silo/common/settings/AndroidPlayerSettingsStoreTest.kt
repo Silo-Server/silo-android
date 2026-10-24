@@ -629,7 +629,7 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
-    fun `subtitleSyncMs saves to the profile from revision 18`() = runTest {
+    fun `subtitleSyncMs saves to the profile from revision 19`() = runTest {
         val store = newStore()
 
         store.setSubtitleSyncMs(-1900)
@@ -641,16 +641,13 @@ class AndroidPlayerSettingsStoreTest {
         assertEquals("-1900", call.value)
         assertEquals(serverUrl, call.serverUrl)
         assertFalse(call.isDelete)
-        // The flusher decides at send time; below 18 it lands on the device.
-        assertEquals(
-            SettingWriteScope.Profile(clearDevice = false, minRevision = PlaybackSettingsKeys.SubtitleSyncProfileMinRevision),
-            call.scope,
-        )
+        // The flusher decides at send time; below 19 it lands on the device.
+        assertEquals(SettingWriteScope.Profile(clearDevice = false), call.scope)
     }
 
     @Test
-    fun `subtitleSyncMs stays on the device when the server is known to be below revision 18`() = runTest {
-        val contractRevision = SettingsContractRevision({ capabilitiesAt(17) }, { serverUrl })
+    fun `subtitleSyncMs stays on the device when the server is known to be below revision 19`() = runTest {
+        val contractRevision = SettingsContractRevision({ capabilitiesAt(18) }, { serverUrl })
         contractRevision.revisionFor(serverUrl)
         val store = AndroidPlayerSettingsStore(
             context = mockContextStub(),
@@ -660,7 +657,7 @@ class AndroidPlayerSettingsStoreTest {
             serverSettingsFlusher = fakeFlusher,
             getDeviceId = { null },
             contractRevision = contractRevision,
-            dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_sync17.preferences_pb") }) },
+            dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_sync18.preferences_pb") }) },
         )
 
         store.setSubtitleSyncMs(400)
@@ -671,7 +668,7 @@ class AndroidPlayerSettingsStoreTest {
 
     @Test
     fun `the subtitle delay says where it is saved`() = runTest {
-        var revision = capabilitiesAt(17)
+        var revision = capabilitiesAt(18)
         val contractRevision = SettingsContractRevision({ revision }, { serverUrl })
         val store = AndroidPlayerSettingsStore(
             context = mockContextStub(),
@@ -684,9 +681,9 @@ class AndroidPlayerSettingsStoreTest {
             dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_syncscope.preferences_pb") }) },
         )
         contractRevision.refresh(serverUrl)
-        assertFalse(store.subtitleSyncSavedToProfileFlow.first(), "below 18 timing stays on this device")
+        assertFalse(store.subtitleSyncSavedToProfileFlow.first(), "below 19 timing stays on this device")
 
-        revision = capabilitiesAt(18)
+        revision = capabilitiesAt(19)
         contractRevision.refresh(serverUrl)
         assertTrue(store.subtitleSyncSavedToProfileFlow.first())
 
@@ -714,7 +711,7 @@ class AndroidPlayerSettingsStoreTest {
     fun `turning the device toggle off while the revision is unknown still clears the timing row`() = runTest {
         // Offline: the probe cannot answer, so the store cannot tell whether
         // the server keeps timing per profile. The clear is queued gated on
-        // revision 18 for the flusher to settle once the revision is known.
+        // revision 19 for the flusher to settle once the revision is known.
         val contractRevision = SettingsContractRevision(
             { ApiResult.NetworkError(IllegalStateException("offline")) },
             { serverUrl },
@@ -735,13 +732,13 @@ class AndroidPlayerSettingsStoreTest {
         store.setSubtitleDeviceOverrideEnabled(false)
 
         val clear = fakeFlusher.calls.single { it.isDelete && it.key == PlaybackSettingsKeys.SubtitleSyncMs }
-        assertEquals(PlaybackSettingsKeys.SubtitleSyncProfileMinRevision, clear.minRevision)
+        assertTrue(clear.onlyWhereStoredPerProfile)
         assertFalse(PlaybackSettingsKeys.SubtitleSyncMs in store.deviceOverrideKeysFlow.first())
     }
 
     @Test
-    fun `turning the device toggle off below revision 18 keeps the timing row`() = runTest {
-        val contractRevision = SettingsContractRevision({ capabilitiesAt(17) }, { serverUrl })
+    fun `turning the device toggle off below revision 19 keeps the timing row`() = runTest {
+        val contractRevision = SettingsContractRevision({ capabilitiesAt(18) }, { serverUrl })
         contractRevision.revisionFor(serverUrl)
         val store = AndroidPlayerSettingsStore(
             context = mockContextStub(),
@@ -751,7 +748,7 @@ class AndroidPlayerSettingsStoreTest {
             serverSettingsFlusher = fakeFlusher,
             getDeviceId = { null },
             contractRevision = contractRevision,
-            dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_syncoff17.preferences_pb") }) },
+            dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_syncoff18.preferences_pb") }) },
         )
         store.setSubtitleDeviceOverrideEnabled(true)
         store.setSubtitleSyncMs(300)
@@ -1763,7 +1760,7 @@ private class FakeServerSettingsFlusher : ServerSettingsFlusher {
         val isDelete: Boolean,
         val serverUrl: String,
         val scope: SettingWriteScope = SettingWriteScope.Device,
-        val minRevision: Int = 0,
+        val onlyWhereStoredPerProfile: Boolean = false,
     )
     val calls = mutableListOf<Call>()
     var flushNowCount: Int = 0
@@ -1783,9 +1780,14 @@ private class FakeServerSettingsFlusher : ServerSettingsFlusher {
         key: String,
         serverUrl: String,
         authority: org.siloserver.silo.network.AuthScopeSnapshot?,
-        minRevision: Int,
+        onlyWhereStoredPerProfile: Boolean,
     ) {
-        calls.add(Call(profileId, key, value = null, isDelete = true, serverUrl = serverUrl, minRevision = minRevision))
+        calls.add(
+            Call(
+                profileId, key, value = null, isDelete = true, serverUrl = serverUrl,
+                onlyWhereStoredPerProfile = onlyWhereStoredPerProfile,
+            ),
+        )
     }
 
     override suspend fun flushNow() {
