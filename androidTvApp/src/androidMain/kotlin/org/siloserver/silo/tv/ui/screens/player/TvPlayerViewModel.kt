@@ -2490,6 +2490,7 @@ class TvPlayerViewModel(
                                 candidates = org.siloserver.silo.model.playback.inventoryAutoSubtitleCandidates(
                                     result.subtitleUrls,
                                 ),
+                                effectiveMode = result.preferredSubtitleMode,
                             )
                         } else {
                             null

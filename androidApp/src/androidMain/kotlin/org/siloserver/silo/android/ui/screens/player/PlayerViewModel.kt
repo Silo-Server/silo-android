@@ -1867,6 +1867,7 @@ class PlayerViewModel(
                 // Where the server's rows hold the chosen track, Auto finds it
                 // by its signature and an older local pick must not win.
                 candidates = playbackState.subtitleUrls.map { it.toMobileAutoSubtitleCandidate() },
+                effectiveMode = watchDetail?.effectiveSubtitleMode,
             )
                 ?.takeUnless { explicitSubtitlePickResolved || isSessionRenewal },
             authoritativeInventory = playbackState.playbackPlan != null,

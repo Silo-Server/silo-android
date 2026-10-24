@@ -173,10 +173,10 @@ data class TvItemDetailUiState(
 
 /**
  * This device's per-file memory for [version] filtered by the server's series
- * choices: the Auto preview already shows them, and a stale local pick would
- * otherwise override them (or undo a reset made on another device). A
- * subtitle only restores the series choice where its signature cannot find
- * it; audio only the track the server's effective answer names.
+ * choices: the Auto preview already shows them, and a stale local pick that
+ * conflicts with them would otherwise override them. See
+ * [org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice] for
+ * subtitles; audio only restores the track the server's effective answer names.
  */
 internal fun org.siloserver.silo.repository.port.LocalTrackSelection.withSeriesTrackChoices(
     detail: ItemDetail,
@@ -186,15 +186,16 @@ internal fun org.siloserver.silo.repository.port.LocalTrackSelection.withSeriesT
 ): org.siloserver.silo.repository.port.LocalTrackSelection {
     val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId)
     val audioTracks = version.audioTracks.orEmpty()
+    val served = detail.withPendingSeriesSubtitleChoice(key?.let(pendingSubtitles::get))
     return copy(
         subtitleFingerprint = org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice(
             localPreference = subtitleFingerprint,
             serverChoiceKnown = true,
-            signature = detail.withPendingSeriesSubtitleChoice(key?.let(pendingSubtitles::get))
-                .effectiveSubtitleTrackSignature,
+            signature = served.effectiveSubtitleTrackSignature,
             candidates = org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates(
                 version.subtitleTracks.orEmpty(),
             ),
+            effectiveMode = served.effectiveSubtitleMode,
         ),
         audioFingerprint = org.siloserver.silo.model.playback.localAudioMemoryForSeriesChoice(
             localFingerprint = audioFingerprint,

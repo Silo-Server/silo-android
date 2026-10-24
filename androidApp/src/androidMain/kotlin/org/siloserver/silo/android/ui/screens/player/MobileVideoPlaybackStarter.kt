@@ -285,6 +285,7 @@ internal class MobileVideoPlaybackStarter(
                             localPreference = local.subtitleFingerprint,
                             serverChoiceKnown = true,
                             signature = seriesSubtitleSignature,
+                            effectiveMode = watchDetail.effectiveSubtitleMode,
                         )
                         // A memory that agrees with the series choice restores
                         // it — as the track the signature names, where the

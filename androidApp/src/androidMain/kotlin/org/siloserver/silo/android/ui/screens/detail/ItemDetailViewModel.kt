@@ -1333,6 +1333,7 @@ class ItemDetailViewModel(
                     candidates = org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates(
                         version.subtitleTracks.orEmpty(),
                     ),
+                    effectiveMode = detail.withPendingSeriesSubtitleChoice(pendingSubtitle).effectiveSubtitleMode,
                 ),
             )
             // Likewise for audio: the memory only restores the track the

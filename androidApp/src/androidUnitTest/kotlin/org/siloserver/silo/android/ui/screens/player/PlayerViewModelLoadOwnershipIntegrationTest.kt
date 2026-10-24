@@ -1517,9 +1517,17 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
     }
 
     @Test
-    fun perFileSubtitleMemoryYieldsToTheServerWhenItHoldsNoSeriesChoice() = runTest(dispatcher) {
-        // "Auto" chosen on another device deleted the series choice: this
-        // device's older per-file pick must not bring it back.
+    fun perFileSubtitleMemoryRestoresWhenTheServerHoldsNoSeriesChoice() = runTest(dispatcher) {
+        // A per-file pick whose write never landed is still remembered here.
+        assertEquals(0, startWithPerFileEnglishSubtitle(effective = ""))
+    }
+
+    @Test
+    fun perFileSubtitleMemoryYieldsToSeriesOff() = runTest(dispatcher) {
+        assertEquals(null, startWithPerFileEnglishSubtitle(effective = "\"effective_subtitle_mode\": \"off\","))
+    }
+
+    private suspend fun TestScope.startWithPerFileEnglishSubtitle(effective: String): Int? {
         val subtitleTracks = listOf(
             SubtitleTrack(index = 12, codec = "subrip", language = "en", title = "English"),
         )
@@ -1531,9 +1539,8 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
             override suspend fun localTrackSelection(contentId: String, fileId: Int) = persisted
         }
         var allocation: MobileVideoSessionAllocation? = null
-
         start(
-            effective = "",
+            effective = effective,
             profile = Profile(id = PROFILE_ID, name = "Profile"),
             versionFields = """
                 "subtitle_tracks": [
@@ -1543,8 +1550,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
             userItemStatePort = localState,
             onAllocation = { allocation = it },
         )
-
-        assertEquals(null, allocation?.subtitleTrackIndex)
+        return allocation?.subtitleTrackIndex
     }
 
     @Test

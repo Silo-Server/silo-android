@@ -196,10 +196,29 @@ class SeriesSubtitleChoiceTest {
     }
 
     @Test
-    fun `online without a series choice the local memory is ignored`() {
+    fun `online without a series track choice the local memory restores unless the series is off`() {
+        // A pick whose write never landed is still remembered on this device.
         val local = encodeSubtitleIdentityPreference(SubtitleIdentity.ServerSidecar(3, SubtitleMediaIdentity(language = "en")))
-        assertNull(localSubtitleMemoryForSeriesChoice(local, serverChoiceKnown = true, signature = null))
-        assertNull(localSubtitleMemoryForSeriesChoice(SUBTITLE_OFF_FINGERPRINT, serverChoiceKnown = true, signature = null))
+        assertEquals(local, localSubtitleMemoryForSeriesChoice(local, serverChoiceKnown = true, signature = null))
+        assertEquals(local, localSubtitleMemoryForSeriesChoice(local, true, null, effectiveMode = "always"))
+        assertEquals(
+            SUBTITLE_OFF_FINGERPRINT,
+            localSubtitleMemoryForSeriesChoice(SUBTITLE_OFF_FINGERPRINT, serverChoiceKnown = true, signature = null),
+        )
+        // Off for the series: only an Off memory agrees with it.
+        assertNull(localSubtitleMemoryForSeriesChoice(local, true, null, effectiveMode = "off"))
+        assertEquals(
+            SUBTITLE_OFF_FINGERPRINT,
+            localSubtitleMemoryForSeriesChoice(SUBTITLE_OFF_FINGERPRINT, true, null, effectiveMode = "off"),
+        )
+    }
+
+    @Test
+    fun `a pick's language is sent the way the server accepts it`() {
+        assertEquals("eng", SeriesSubtitleChoice.of(SubtitleTrack(language = "eng"), 0).subtitleLanguage)
+        assertEquals("en", SeriesSubtitleChoice.of(SubtitleTrack(language = "English"), 0).subtitleLanguage)
+        assertEquals("", SeriesSubtitleChoice.of(SubtitleTrack(language = "Português"), 0).subtitleLanguage)
+        assertEquals("", SeriesSubtitleChoice.of(englishSdh.copy(language = "und")).subtitleLanguage)
     }
 
     @Test

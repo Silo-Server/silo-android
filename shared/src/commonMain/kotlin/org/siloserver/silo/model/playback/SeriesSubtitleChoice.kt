@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.catalog.WatchDetail
+import org.siloserver.silo.playback.SUBTITLE_OFF_FINGERPRINT
 import org.siloserver.silo.playback.decodeSubtitleIdentityPreference
 import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 
@@ -229,30 +230,37 @@ private fun sameSubtitleLanguage(a: String?, b: String?): Boolean =
 
 /**
  * The device's per-file subtitle memory, filtered by the server's series
- * choice.
+ * choice: it is dropped only where that choice conflicts with it.
  *
- * Online the server's choice is the truth — it is what every other device
- * sees, and "Auto" on another device deletes it — so the local memory may
- * only restore that same choice as it exists in this file (a downloaded or
- * AI track the signature alone cannot find again): a track whose language
- * and forced flag agree with [signature]. With no server track choice the
- * local memory is ignored, so a reset made elsewhere is not undone here.
- * When the file holds the track [signature] describes ([candidates] has an
- * exact match) the memory is ignored too: the signature finds the choice
- * itself, and an older pick of a sibling track in the same language (another
- * codec or label) must not win over it.
+ * Online the server's series choice is the truth — it is what every other
+ * device sees — so where it names a track ([signature]) the memory may only
+ * restore that same choice as it exists in this file (a downloaded or AI
+ * track the signature alone cannot find again): a track whose language,
+ * forced and SDH flags agree with [signature]. When the file holds the track
+ * [signature] describes ([candidates] has an exact match) the memory stays out
+ * too: the signature finds the choice itself, and an older pick of a sibling
+ * track (another codec or label) must not win over it. Where the series is
+ * off ([effectiveMode] `off` with no signature), only an Off memory agrees.
  *
- * Offline ([serverChoiceKnown] false: no watch detail was read) the local
- * memory is the only memory there is and restores as before.
+ * With no series track choice the memory restores: the server has nothing
+ * newer, and a pick that never reached it (its write expired, was refused or
+ * died with the process) is still remembered on this device. The same holds
+ * offline ([serverChoiceKnown] false: no watch detail was read).
  */
 fun localSubtitleMemoryForSeriesChoice(
     localPreference: String?,
     serverChoiceKnown: Boolean,
     signature: SubtitleTrackSignature?,
     candidates: List<AutoSubtitleCandidate> = emptyList(),
+    effectiveMode: String? = null,
 ): String? {
     if (localPreference == null || !serverChoiceKnown) return localPreference
-    if (signature == null) return null
+    val localOff = localPreference.trim() == SUBTITLE_OFF_FINGERPRINT ||
+        decodeSubtitleIdentityPreference(localPreference) == SubtitleIdentity.Off
+    if (signature == null) {
+        val seriesOff = effectiveMode?.trim().equals("off", ignoreCase = true)
+        return localPreference.takeIf { !seriesOff || localOff }
+    }
     if (candidates.any { it.matchesSignature(signature) }) return null
     val (language, forced) = when (val identity = decodeSubtitleIdentityPreference(localPreference)) {
         SubtitleIdentity.Off -> return null

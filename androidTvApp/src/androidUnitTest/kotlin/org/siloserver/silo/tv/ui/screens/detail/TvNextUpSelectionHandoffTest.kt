@@ -509,7 +509,7 @@ class TvNextUpSelectionHandoffTest {
     }
 
     @Test
-    fun targetDurableSubtitleMemoryYieldsToTheServerWithoutASeriesChoice() = runDetailTest {
+    fun autoAllowsExistingTargetDurableSubtitleRestore() = runDetailTest {
         val targetEnglish = subtitle(index = 8, language = "eng", title = "English")
         val scenario = Scenario(
             suffix = "-auto-durable",
@@ -524,11 +524,7 @@ class TvNextUpSelectionHandoffTest {
 
         advanceToEpisodeTwo(fixture.viewModel, scenario)
 
-        // Online the server holds no series subtitle choice (Auto, perhaps
-        // chosen on another device), so this device's older per-file pick
-        // stays out and the selector shows Auto, as the movie and episode
-        // pages already did.
-        assertEquals(null, fixture.viewModel.uiState.value.selectedNextUpSubtitleIndex)
+        assertEquals(0, fixture.viewModel.uiState.value.selectedNextUpSubtitleIndex)
     }
 
     @Test
