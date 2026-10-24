@@ -71,14 +71,19 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
 
     suspend fun getItemEpisodes(id: String, libraryId: Int? = null): ApiResult<EpisodesResponse> = v2.itemEpisodes(id, libraryId)
 
-    suspend fun getSeasons(seriesId: String, libraryId: Int? = null): ApiResult<SeasonsResponse> = v2.seriesSeasons(seriesId, libraryId)
+    suspend fun getSeasons(
+        seriesId: String,
+        libraryId: Int? = null,
+        missing: MissingEpisodes = MissingEpisodes.NONE,
+    ): ApiResult<SeasonsResponse> = v2.seriesSeasons(seriesId, libraryId, missing)
 
     suspend fun getEpisodes(
         seriesId: String,
         seasonNumber: Int,
         libraryId: Int? = null,
         widths: ArtworkWidths? = null,
-    ): ApiResult<EpisodesResponse> = v2.seasonEpisodes(seriesId, seasonNumber, libraryId, widths)
+        missing: MissingEpisodes = MissingEpisodes.NONE,
+    ): ApiResult<EpisodesResponse> = v2.seasonEpisodes(seriesId, seasonNumber, libraryId, widths, missing)
 
     suspend fun captureWatchAuthority() = watchDetail.capture()
     suspend fun isWatchAuthorityCurrent(owner: AuthScopeSnapshot) = watchDetail.current(owner)

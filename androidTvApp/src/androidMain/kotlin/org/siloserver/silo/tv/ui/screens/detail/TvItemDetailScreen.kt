@@ -36,6 +36,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipPrevious
@@ -131,6 +132,9 @@ import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.tv.ui.navigation.TvSubtitleLaunchSelection
 import org.siloserver.silo.tv.ui.navigation.explicitTvSubtitleLaunchSelection
+import org.siloserver.silo.tv.ui.components.TvDialog
+import org.siloserver.silo.tv.ui.components.TvDialogAction
+import org.siloserver.silo.tv.ui.components.TvDialogActionStyle
 import org.siloserver.silo.tv.ui.components.TvDialogOption
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvHeroActionPill
@@ -940,10 +944,20 @@ private fun TvDetailContent(
                             machineTranslated = heroMachineTranslated && !hidesHeroOverview,
                             compactSeries = isSeriesDetail,
                             playbackSummary = {
-                                TvDetailPlaybackSelectionSummary(
-                                    detail = detail,
-                                    state = state,
-                                )
+                                val missingEpisode = state.nextUpEpisode
+                                    ?.takeIf { isSeriesDetail && it.isMissingFromLibrary }
+                                if (missingEpisode != null) {
+                                    TvMissingEpisodeNote(
+                                        episode = missingEpisode,
+                                        requested = missingEpisode.seasonNumber in
+                                            state.missingRequests.requestedSeasons,
+                                    )
+                                } else {
+                                    TvDetailPlaybackSelectionSummary(
+                                        detail = detail,
+                                        state = state,
+                                    )
+                                }
                             },
                             actions = {
                                 // Series keeps the full action row in both Show
@@ -1554,6 +1568,23 @@ private fun TvDetailPlaybackSelectionSummary(
     }
 }
 
+/**
+ * Takes the playback readout's place for an episode the library lacks, which
+ * has no version, audio or subtitles to show.
+ */
+@Composable
+private fun TvMissingEpisodeNote(episode: EpisodeListItem, requested: Boolean) {
+    val state = if (episode.isUnaired) "Not aired yet" else "Not in your library"
+    Box(modifier = Modifier.height(TV_PLAYBACK_SUMMARY_HEIGHT), contentAlignment = Alignment.TopStart) {
+        Text(
+            text = if (requested) "$state · Season ${episode.seasonNumber} requested" else state,
+            style = MaterialTheme.typography.titleMedium,
+            color = Color.White.copy(alpha = 0.7f),
+            maxLines = 1,
+        )
+    }
+}
+
 @Composable
 private fun TvPlaybackSummaryItem(
     label: String,
@@ -1656,6 +1687,33 @@ private fun HeroActionRow(
     val watchPartyEntry = rememberTvWatchPartyDetailEntry()
     var moreOpen by remember(detail.contentId) { mutableStateOf(false) }
     var playLaunchPending by remember(detail.contentId) { mutableStateOf(false) }
+    var seasonRequestPrompt by remember(detail.contentId) { mutableStateOf<Int?>(null) }
+    seasonRequestPrompt?.let { season ->
+        TvDialog(
+            title = "Request Season $season?",
+            message = "Silo asks your download server for the season's episodes.",
+            onDismissRequest = { seasonRequestPrompt = null },
+            actions = listOf(
+                TvDialogAction("Cancel", { seasonRequestPrompt = null }),
+                TvDialogAction(
+                    "Request",
+                    {
+                        seasonRequestPrompt = null
+                        viewModel.requestSeason(season)
+                    },
+                    TvDialogActionStyle.Primary,
+                ),
+            ),
+        )
+    }
+    if (state.seasonRequestFailed) {
+        TvDialog(
+            title = "Couldn't Request the Season",
+            message = "Please check your connection and try again.",
+            onDismissRequest = viewModel::onSeasonRequestFailureShown,
+            actions = listOf(TvDialogAction("OK", viewModel::onSeasonRequestFailureShown)),
+        )
+    }
     LaunchedEffect(playLaunchPending) {
         if (playLaunchPending) {
             // Navigation is synchronous, but TV remotes can deliver a second
@@ -1749,7 +1807,7 @@ private fun HeroActionRow(
             libraryId = libraryId,
             spoilers = WatchPartySpoilers.of(detail),
         )
-        detail.type == "series" && nextUp != null && playReady -> tvWatchPartyItem(
+        detail.type == "series" && nextUp != null && playReady && !nextUp.isMissingFromLibrary -> tvWatchPartyItem(
             contentId = nextUp.contentId,
             contentType = "episode",
             title = nextUp.title?.takeIf { it.isNotBlank() } ?: "Episode ${nextUp.episodeNumber}",
@@ -1825,18 +1883,41 @@ private fun HeroActionRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(9.dp),
             ) {
+                // An episode the library lacks has nothing to play: the
+                // primary pill requests its season instead.
+                // A season switch keeps the old episode until the new season
+                // loads; it is no request target until it is ready.
+                val missingEpisode = nextUp?.takeIf { it.isMissingFromLibrary && state.nextUpTargetReady }
+                val missingSeasonRequested = missingEpisode != null &&
+                    missingEpisode.seasonNumber in state.missingRequests.requestedSeasons
                 TvPrimaryPillButton(
                     stableHero = true,
-                    icon = Icons.Filled.PlayArrow,
-                    title = playButtonLabel(
-                        isSeriesOrSeason = isSeriesOrSeason,
-                        seriesContainer = detail.type == "series",
-                        nextUp = nextUp,
-                        hasResume = hasResume,
-                        resumePosition = resumePosition,
-                    ),
+                    icon = when {
+                        missingEpisode == null -> Icons.Filled.PlayArrow
+                        missingSeasonRequested -> Icons.Filled.Check
+                        else -> null
+                    },
+                    title = if (missingEpisode != null) {
+                        missingSeasonActionLabel(
+                            season = missingEpisode.seasonNumber,
+                            requested = missingSeasonRequested,
+                            canRequest = state.missingRequests.canRequest,
+                        )
+                    } else {
+                        playButtonLabel(
+                            isSeriesOrSeason = isSeriesOrSeason,
+                            seriesContainer = detail.type == "series",
+                            nextUp = nextUp,
+                            hasResume = hasResume,
+                            resumePosition = resumePosition,
+                        )
+                    },
                     onClick = {
-                        if (playReady && !playLaunchPending) {
+                        if (missingEpisode != null) {
+                            if (state.missingRequests.canRequest && !missingSeasonRequested) {
+                                seasonRequestPrompt = missingEpisode.seasonNumber
+                            }
+                        } else if (playReady && !playLaunchPending) {
                             playLaunchPending = true
                             onPlay(
                                 playContentId, playFileId, playVersionChosen,
@@ -1856,7 +1937,7 @@ private fun HeroActionRow(
                 )
 
 
-                if (hasResume) {
+                if (hasResume && missingEpisode == null) {
                     // tvOS Start Over uses `backward.end.fill` (skip-to-start),
                     // not a replay arrow. It is an icon-only circular companion
                     // to the primary Play/Resume pill.
@@ -1881,7 +1962,7 @@ private fun HeroActionRow(
                     )
                 }
 
-                TvPlaybackActionSelectors(
+                if (missingEpisode == null) TvPlaybackActionSelectors(
                     versions = selectorVersions,
                     playbackVariants = if (isSeriesOrSeason) nextUpDetail?.playbackVariants.orEmpty() else detail.playbackVariants,
                     currentVersion = selectedVersion,
@@ -2286,6 +2367,7 @@ private fun EpisodesSection(
                             onCarouselEdgeRequested = onCarouselEdgeRequested,
                             onCarouselFocusLost = onCarouselFocusLost,
                             modifier = Modifier.onSizeChanged { railHeightPx = it.height },
+                            requestedSeasons = state.missingRequests.requestedSeasons,
                         )
                     }
 
@@ -2664,6 +2746,13 @@ private fun org.siloserver.silo.model.catalog.LeafItemUserData.resumePositionSec
     val dur = durationSeconds ?: return null
     if (pos <= 30 || dur <= 0 || pos >= dur - 5) return null
     return pos
+}
+
+/** The hero's primary pill for an episode the library lacks. */
+private fun missingSeasonActionLabel(season: Int, requested: Boolean, canRequest: Boolean): String = when {
+    requested -> "Season $season Requested"
+    canRequest -> "Request Season $season"
+    else -> "Not in Library"
 }
 
 /**

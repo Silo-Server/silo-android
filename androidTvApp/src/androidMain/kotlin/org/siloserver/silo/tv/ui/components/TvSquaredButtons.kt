@@ -121,7 +121,7 @@ internal enum class PillKind { Primary, Secondary }
  */
 @Composable
 fun TvPrimaryPillButton(
-    icon: ImageVector,
+    icon: ImageVector?,
     title: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -168,7 +168,7 @@ fun TvSecondaryPillButton(
 @Composable
 private fun SquaredPill(
     kind: PillKind,
-    icon: ImageVector,
+    icon: ImageVector?,
     title: String,
     onClick: () -> Unit,
     modifier: Modifier,
@@ -197,20 +197,23 @@ private fun SquaredPill(
             // only the original icon HEIGHT, and the Icon escapes the slot
             // vertically via requiredSize — so the row still measures at the
             // pre-enlargement button height.
-            Box(
-                modifier = Modifier
-                    .width(if (stableHero) 18.dp else if (primary) 30.dp else 20.dp)
-                    .height(if (primary) 16.dp else 14.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = foreground,
-                    modifier = Modifier.requiredSize(if (stableHero) 18.dp else if (primary) 30.dp else 20.dp),
-                )
+            // No icon for an action that is not playback, such as a request.
+            if (icon != null) {
+                Box(
+                    modifier = Modifier
+                        .width(if (stableHero) 18.dp else if (primary) 30.dp else 20.dp)
+                        .height(if (primary) 16.dp else 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = foreground,
+                        modifier = Modifier.requiredSize(if (stableHero) 18.dp else if (primary) 30.dp else 20.dp),
+                    )
+                }
+                Spacer(Modifier.width(if (primary) 9.dp else 8.dp))
             }
-            Spacer(Modifier.width(if (primary) 9.dp else 8.dp))
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge.copy(

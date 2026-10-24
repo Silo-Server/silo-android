@@ -558,6 +558,7 @@ val androidTvModule = module {
             tokenManager = get(),
             identityTransitions = get(),
             capabilityDetector = get(),
+            missingSeasons = getOrNull(),
         )
     }
     // Watch Party: the shared hub, lobby (keyed per room; roomId is the

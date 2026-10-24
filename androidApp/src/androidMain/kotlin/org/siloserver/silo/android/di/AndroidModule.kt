@@ -532,6 +532,7 @@ val androidModule = module {
         ItemDetailViewModel(
             get(), get(), get(), get(), get(), get(), get(), params.get(),
             getOrNull<org.siloserver.silo.repository.port.UserItemStatePort>() ?: org.siloserver.silo.repository.port.NoOpUserItemStatePort,
+            missingSeasons = getOrNull(),
         )
     }
     viewModel { params -> PersonDetailViewModel(get(), params.get(), get()) }

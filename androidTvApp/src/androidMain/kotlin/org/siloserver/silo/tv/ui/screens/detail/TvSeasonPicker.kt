@@ -221,6 +221,7 @@ fun TvSeriesModePicker(
                 title = tvSeasonPickerLabel(season),
                 isSelected = selected,
                 onActivated = { onSeasonSelected(season) },
+                isMissing = season.isMissing,
                 modifier = if (selected) {
                     Modifier.focusRequester(selectedFocusRequester)
                 } else {
@@ -237,6 +238,8 @@ private fun TvSeriesModeTab(
     isSelected: Boolean,
     onActivated: () -> Unit,
     modifier: Modifier = Modifier,
+    /** A season the library holds none of reads dimmed until focused. */
+    isMissing: Boolean = false,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -251,7 +254,7 @@ private fun TvSeriesModeTab(
         label = "seriesModeFill",
     )
     val labelColor by animateColorAsState(
-        targetValue = if (isFocused) Color.Black else Color.White,
+        targetValue = if (isFocused) Color.Black else Color.White.copy(alpha = if (isMissing) 0.45f else 1f),
         animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f),
         label = "seriesModeLabel",
     )

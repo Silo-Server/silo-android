@@ -159,6 +159,18 @@ data class RequestMediaDetail(
     val availability: String = RequestAvailability.Missing,
     @SerialName("library_content_id") val libraryContentId: String? = null,
     val request: RequestState = RequestState(),
+    /** Series: the regular seasons with library availability and request coverage; absent on older servers. */
+    val seasons: List<RequestMediaSeason> = emptyList(),
+)
+
+/** One regular season of a series on its request detail. */
+@Serializable
+data class RequestMediaSeason(
+    @SerialName("season_number") val seasonNumber: Int,
+    /** `missing`, `partial` or `available`. */
+    val availability: String = "",
+    /** A request already covers the season, or a download server already has it on its way. */
+    val requested: Boolean = false,
 )
 
 @Serializable
@@ -172,6 +184,8 @@ data class CreateMediaRequest(
     val overview: String = "",
     @SerialName("poster_path") val posterPath: String? = null,
     @SerialName("backdrop_path") val backdropPath: String? = null,
+    /** Series only: the season numbers to request; null asks for every aired season not yet complete. */
+    val seasons: List<Int>? = null,
 )
 
 @Serializable
@@ -245,6 +259,13 @@ data class RequestsFeatureStatus(
     val state: String? = null,
     /** The server takes `PUT`/`DELETE /api/v2/requests/follows/{media_type}/{tmdb_id}`; absent (false) on older servers. */
     @SerialName("follow_supported") val followSupported: Boolean = false,
+    /** An enabled download server takes series requests, so a missing season has somewhere to go. */
+    @SerialName("series_server_connected") val seriesServerConnected: Boolean = false,
+    /**
+     * A series already in the library can be requested for the seasons it lacks: every
+     * download server the series go to fetches single seasons. Absent (false) on older servers.
+     */
+    @SerialName("missing_seasons_requestable") val missingSeasonsRequestable: Boolean = false,
 ) {
     /** The feature is on and this profile may use it; a blocked account sees `allowed: false`. */
     val isAvailable: Boolean

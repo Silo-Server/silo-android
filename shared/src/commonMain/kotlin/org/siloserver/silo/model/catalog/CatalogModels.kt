@@ -488,7 +488,12 @@ data class Season(
     @SerialName("user_data") val userData: SeasonUserData? = null,
     /** Localized fields ("overview") whose text was machine-translated by AI. */
     @SerialName("machine_translated_fields") val machineTranslatedFields: List<String> = emptyList(),
-)
+    /** Episodes of the season no library holds, sent only to a list that asked for missing episodes. */
+    @SerialName("missing_episode_count") val missingEpisodeCount: Int = 0,
+) {
+    /** A season the library holds none of, listed only because the viewer asked to see what is missing. */
+    val isMissing: Boolean get() = episodeCount == 0 && missingEpisodeCount > 0
+}
 
 @Serializable
 data class SeasonsResponse(
@@ -508,6 +513,12 @@ fun List<Season>.sortedForDisplay(): List<Season> =
     )
 
 private fun List<Season>.selectedSeasonForDisplay(preferredSeasonNumber: Int?): Season? {
+    // A season the library holds none of is never where a viewer resumes.
+    val held = filterNot { it.isMissing }
+    if (held.isNotEmpty() && held.size != size) {
+        return preferredSeasonNumber?.let { preferred -> firstOrNull { it.seasonNumber == preferred } }
+            ?: held.selectedSeasonForDisplay(null)
+    }
     return preferredSeasonNumber
         ?.let { preferred -> firstOrNull { it.seasonNumber == preferred } }
         // Open the Show overview while preloading the viewer's actual browse
@@ -570,7 +581,21 @@ data class EpisodeListItem(
     @SerialName("pending_translation_language") val pendingTranslationLanguage: String? = null,
     /** Localized fields ("overview") whose text was machine-translated by AI. */
     @SerialName("machine_translated_fields") val machineTranslatedFields: List<String> = emptyList(),
-)
+    /**
+     * `missing` or `unaired` for an episode no library holds, listed only
+     * because the viewer asked to see what is missing; null for one it holds.
+     */
+    val availability: String? = null,
+) {
+    /** An episode the library lacks: nothing to play, mark or download. */
+    val isMissingFromLibrary: Boolean get() = availability != null
+    val isUnaired: Boolean get() = availability == EPISODE_UNAIRED
+}
+
+/** [EpisodeListItem.availability] of an aired episode no library holds. */
+const val EPISODE_MISSING = "missing"
+/** [EpisodeListItem.availability] of an episode not aired yet. */
+const val EPISODE_UNAIRED = "unaired"
 
 @Serializable
 data class EpisodeFile(

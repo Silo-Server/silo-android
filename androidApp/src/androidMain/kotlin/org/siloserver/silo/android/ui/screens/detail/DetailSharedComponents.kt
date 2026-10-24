@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import androidx.compose.ui.draw.alpha
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import org.siloserver.silo.android.ui.components.SiloDialogActionStyle
@@ -1120,7 +1121,7 @@ private fun OverviewBlock(
  */
 @Composable
 fun PrimaryPillButton(
-    icon: ImageVector,
+    icon: ImageVector?,
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -1138,12 +1139,14 @@ fun PrimaryPillButton(
             .height(52.dp),
     ) {
         // iOS PhonePrimaryPillButton: icon 17pt bold, label 17pt semibold, spacing 10.
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(17.dp),
-        )
-        Spacer(Modifier.width(10.dp))
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(17.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+        }
         Text(
             text = label,
             fontSize = 17.sp,
@@ -1324,6 +1327,8 @@ fun HeroActionStack(
     // resuming immediately, matching iOS. Null → the button plays directly.
     onPlayFromBeginning: (() -> Unit)? = null,
     resumeStoppedAtLabel: String? = null,
+    /** Null for a primary action that does not play, such as a season request. */
+    primaryIcon: ImageVector? = Icons.Filled.PlayArrow,
 ) {
     var showResumeDialog by remember { mutableStateOf(false) }
     Column(
@@ -1332,7 +1337,7 @@ fun HeroActionStack(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         PrimaryPillButton(
-            icon = Icons.Filled.PlayArrow,
+            icon = primaryIcon,
             label = primaryLabel,
             onClick = { if (onPlayFromBeginning != null) showResumeDialog = true else onPlay() },
         )
@@ -1552,6 +1557,8 @@ fun SeasonChips(
                     },
                     modifier = Modifier
                         .height(36.dp)
+                        // A season the library holds none of reads dimmed.
+                        .alpha(if (season.isMissing && !isSelected) 0.5f else 1f)
                         .combinedClickable(
                             onClick = { onSeasonSelected(season.seasonNumber) },
                             onLongClick = if (onSeasonWatchedChange != null && season.episodeCount > 0) {

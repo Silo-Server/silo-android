@@ -30,6 +30,7 @@ import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.SeasonUserData
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.catalog.initialSeasonDisplayPlan
+import org.siloserver.silo.model.catalog.initialSeasonForDisplay
 import org.siloserver.silo.model.catalog.sortedForDisplay
 import org.siloserver.silo.model.catalog.pendingEpisodeTranslationLanguage
 import org.siloserver.silo.model.playback.combinedSubtitleSelectionIndexes
@@ -97,6 +98,13 @@ data class TvItemDetailUiState(
     val carouselNextSeason: Int? = null,
     val carouselJump: TvEpisodeCarouselJump? = null,
     val carouselLoadError: Boolean = false,
+    /** Request state for the seasons this series page lists as missing. */
+    val missingRequests: org.siloserver.silo.domain.catalog.MissingSeasonRequests =
+        org.siloserver.silo.domain.catalog.MissingSeasonRequests(),
+    /** A season request is on its way to the server. */
+    val isRequestingSeason: Boolean = false,
+    /** The last season request failed; the screen shows it once. */
+    val seasonRequestFailed: Boolean = false,
     val episodeFavoriteStates: Map<String, Boolean> = emptyMap(),
     /** The route's one-shot episode target has been applied (or safely rejected). */
     val entryEpisodeSelectionApplied: Boolean = false,
@@ -378,7 +386,81 @@ class TvItemDetailViewModel(
     private val tokenManager: TokenManager,
     private val identityTransitions: IdentityTransitionBarrier,
     private val capabilityDetector: PlaybackCapabilityDetector? = null,
+    private val missingSeasons: org.siloserver.silo.domain.catalog.MissingSeasons? = null,
 ) : ViewModel() {
+    /**
+     * What the library lacks that this page's season and episode lists
+     * include. Only these lists ask for it; playback reads the library alone.
+     */
+    private var missing = org.siloserver.silo.model.catalog.MissingEpisodes.NONE
+    private var missingResolved = false
+
+    private suspend fun resolveMissingScope() {
+        if (missingResolved) return
+        missing = missingSeasons?.scope() ?: org.siloserver.silo.model.catalog.MissingEpisodes.NONE
+        missingResolved = true
+    }
+
+    /**
+     * Reads the scope and the request state again on a return, since either
+     * may have changed elsewhere; the lists the refresh reloads read in the
+     * new scope.
+     */
+    private suspend fun refreshMissingScope(detail: ItemDetail) {
+        val service = missingSeasons ?: return
+        if (!missingResolved) return
+        val scope = service.scope()
+        if (scope == missing) {
+            // Another client may have requested a season meanwhile.
+            if (scope != org.siloserver.silo.model.catalog.MissingEpisodes.NONE) loadMissingRequests(detail)
+            return
+        }
+        missing = scope
+        // Pages read in the old scope are dropped so the next load reads again.
+        episodeWindow.clear()
+        loadMissingRequests(detail)
+    }
+
+    /** Moves with every request-state read, so only the newest one lands. */
+    private var missingRequestsGeneration = 0L
+
+    private fun loadMissingRequests(detail: ItemDetail) {
+        val service = missingSeasons ?: return
+        val generation = ++missingRequestsGeneration
+        val scope = missing
+        viewModelScope.launch {
+            val requests = service.requests(detail.tmdbId?.toIntOrNull(), scope)
+            if (generation != missingRequestsGeneration) return@launch
+            _uiState.update { if (it.detail?.contentId == detail.contentId) it.copy(missingRequests = requests) else it }
+        }
+    }
+
+    /** Requests one missing season of this series. */
+    fun requestSeason(season: Int) {
+        val service = missingSeasons ?: return
+        val current = _uiState.value
+        val media = current.missingRequests.media ?: return
+        if (current.isRequestingSeason || season in current.missingRequests.requestedSeasons) return
+        _uiState.update { it.copy(isRequestingSeason = true, seasonRequestFailed = false) }
+        viewModelScope.launch {
+            val ok = service.request(media, season)
+            _uiState.update {
+                it.copy(
+                    isRequestingSeason = false,
+                    seasonRequestFailed = !ok,
+                    missingRequests = if (ok) {
+                        it.missingRequests.copy(requestedSeasons = it.missingRequests.requestedSeasons + season)
+                    } else {
+                        it.missingRequests
+                    },
+                )
+            }
+        }
+    }
+
+    fun onSeasonRequestFailureShown() {
+        _uiState.update { it.copy(seasonRequestFailed = false) }
+    }
     /** Access changes this ViewModel has applied, kept while its screen is away. */
     val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
 
@@ -792,6 +874,7 @@ class TvItemDetailViewModel(
         quietDetailShowsRefusal = showRefusal
         quietPlaybackReturn = playbackReturn
         quietDetailJob = viewModelScope.launch {
+            refreshMissingScope(current)
             // Local overlay first: the player's final position write is already
             // on disk, so the label corrects before the server round-trip.
             val overlaid = withLocalProgress(current)
@@ -1068,6 +1151,7 @@ class TvItemDetailViewModel(
 
     /** Episode ids of a season read fresh from the server; empty if the read fails. */
     private suspend fun seasonEpisodeIds(seriesContentId: String, seasonNumber: Int): List<String> =
+        // Library episodes only: these ids get marked watched.
         when (val r = catalogRepository.getEpisodes(seriesContentId, seasonNumber, libraryId = libraryId, fresh = true,
             surface = episodeArtwork)) {
             is ApiResult.Success -> r.data.episodes.map { it.contentId }
@@ -1080,7 +1164,7 @@ class TvItemDetailViewModel(
         // generation so an older read cannot undo its optimistic state.
         val generation = ++seasonsRefreshGeneration
         viewModelScope.launch {
-            val result = catalogRepository.getSeasons(seriesContentId, libraryId = libraryId, fresh = fresh)
+            val result = catalogRepository.getSeasons(seriesContentId, libraryId = libraryId, fresh = fresh, missing = missing)
             if (result !is ApiResult.Success) return@launch
             val seasons = result.data.seasons.sortedForDisplay()
             _uiState.update { state ->
@@ -1327,6 +1411,17 @@ class TvItemDetailViewModel(
     fun onSeriesEpisodeActivated(contentId: String?) {
         val state = _uiState.value
         if (state.detail?.type?.lowercase() != "series") return
+        if (contentId == null &&
+            state.seasons.firstOrNull { it.seasonNumber == state.selectedSeason }?.isMissing == true
+        ) {
+            // Show mode suggests something to play, never a season the
+            // library holds none of: go back to the first held one.
+            val held = state.seasons.initialSeasonForDisplay(null)
+            if (held != null && !held.isMissing) {
+                onSeasonSelected(held.seasonNumber)
+                return
+            }
+        }
         val active = contentId?.let { id ->
             (state.carouselEpisodes.ifEmpty { state.episodes }).firstOrNull { it.contentId == id }
         }
@@ -1460,7 +1555,7 @@ class TvItemDetailViewModel(
         carouselLoads[season] = viewModelScope.launch {
             _uiState.update { it.copy(carouselLoadError = false) }
             try {
-                val result = catalogRepository.getEpisodes(series.contentId, season, libraryId = libraryId)
+                val result = catalogRepository.getEpisodes(series.contentId, season, libraryId = libraryId, missing = missing)
                 if (result is ApiResult.Success) {
                     val episodes = withLocalProgress(result.data.episodes)
                     // A distant season jump can make this prefetch obsolete.
@@ -1495,7 +1590,9 @@ class TvItemDetailViewModel(
         val selectionGenerationAtRequest = seasonSelectionGeneration
         viewModelScope.launch {
             _uiState.update { it.copy(seasonsLoading = true) }
-            when (val r = catalogRepository.getSeasons(seriesContentId, libraryId = libraryId)) {
+            resolveMissingScope()
+            _uiState.value.detail?.takeIf { it.type.lowercase() == "series" }?.let(::loadMissingRequests)
+            when (val r = catalogRepository.getSeasons(seriesContentId, libraryId = libraryId, missing = missing)) {
                 is ApiResult.Success -> {
                     val plan = r.data.seasons.initialSeasonDisplayPlan(preferredSeasonNumber)
                     val currentSelection = _uiState.value.selectedSeason
@@ -1628,7 +1725,7 @@ class TvItemDetailViewModel(
                 seasonNumber,
                 libraryId = libraryId,
                 fresh = freshRead,
-                surface = episodeArtwork,
+                surface = episodeArtwork, missing = missing,
             )
             if (!ownsRequest()) return@launch
             when (result) {
@@ -1650,7 +1747,10 @@ class TvItemDetailViewModel(
                     refreshNextUp(publishedEpisodes)
                     recordCarouselSeason(seasonNumber, publishedEpisodes)
                     val revalidationComplete =
-                        refreshEpisodeFavoriteStates(episodes, revalidate = revalidateFavorites)
+                        refreshEpisodeFavoriteStates(
+                            episodes.filterNot { it.isMissingFromLibrary },
+                            revalidate = revalidateFavorites,
+                        )
                     // Caught up only now, and only if every id we were asked to
                     // re-check actually answered. Advancing on read would drop
                     // the signal when the reload failed; advancing after a
@@ -1881,7 +1981,11 @@ class TvItemDetailViewModel(
         }
 
         val previousId = _uiState.value.nextUpEpisode?.contentId
-        if (nextUp?.contentId == previousId && _uiState.value.nextUpEpisode != null) {
+        // A target that became missing, or held, under the same id takes the
+        // full path below, which clears or reloads its playback detail.
+        if (nextUp?.contentId == previousId && _uiState.value.nextUpEpisode != null &&
+            nextUp?.isMissingFromLibrary == _uiState.value.nextUpEpisode?.isMissingFromLibrary
+        ) {
             // Same target — just refresh the snapshot (userData may have changed)
             // without re-loading playback detail. A fresher row also carries
             // the episode's translated description into the hero.
@@ -1904,6 +2008,26 @@ class TvItemDetailViewModel(
                     nextUpPlaybackDetail = null,
                     isLoadingNextUpPlaybackDetail = false,
                     didLoadNextUpPlaybackDetail = false,
+                    selectedNextUpFileId = null,
+                    selectedNextUpAudioIndex = null,
+                    nextUpAudioPickedThisSession = false,
+                    selectedNextUpSubtitleIndex = null,
+                )
+            }
+            return
+        }
+
+        if (nextUp.isMissingFromLibrary) {
+            // Nothing to play, so no playback detail to read: the hero offers
+            // the season's request instead.
+            invalidateNextUpPlaybackDetailRequest()
+            _uiState.update {
+                it.copy(
+                    nextUpEpisode = nextUp,
+                    nextUpTargetReady = true,
+                    nextUpPlaybackDetail = null,
+                    isLoadingNextUpPlaybackDetail = false,
+                    didLoadNextUpPlaybackDetail = true,
                     selectedNextUpFileId = null,
                     selectedNextUpAudioIndex = null,
                     nextUpAudioPickedThisSession = false,
@@ -1944,6 +2068,9 @@ class TvItemDetailViewModel(
     }
 
     private fun resolveNextUpEpisode(episodes: List<EpisodeListItem>): EpisodeListItem? {
+        // An episode the library lacks cannot be played.
+        val held = episodes.filterNot { it.isMissingFromLibrary }
+        if (held.size != episodes.size) return resolveNextUpEpisode(held) ?: episodes.firstOrNull()
         episodes.firstOrNull { it.userData?.isInProgress == true }?.let { return it }
         episodes.firstOrNull { it.userData?.played != true }?.let { return it }
         return episodes.firstOrNull()
@@ -2215,7 +2342,7 @@ class TvItemDetailViewModel(
         val requestGeneration = episodeLoadRequestGeneration
         val listGeneration = episodeListGeneration
         val result = catalogRepository.getEpisodes(seriesId, seasonNumber, libraryId = libraryId, fresh = true,
-            surface = episodeArtwork)
+            surface = episodeArtwork, missing = missing)
         if (result !is ApiResult.Success || !metadataAiRepository.isCurrent(owner)) return target
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         if (_uiState.value.selectedSeason != seasonNumber) return result.data.episodes.pendingEpisodeTranslationLanguage()
@@ -2436,7 +2563,7 @@ class TvItemDetailViewModel(
                     _uiState.update { it.copy(isFavorite = false, inWatchlist = false, episodeFavoriteStates = emptyMap()) }
                 } else {
                     loadUserState()
-                    refreshEpisodeFavoriteStates(_uiState.value.episodes, revalidate = null)
+                    refreshEpisodeFavoriteStates(_uiState.value.episodes.filterNot { it.isMissingFromLibrary }, revalidate = null)
                 }
             }
         }

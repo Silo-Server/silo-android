@@ -10,6 +10,11 @@ internal class TvEpisodeWindow {
 
     fun get(season: Int): List<EpisodeListItem>? = pages[season]
 
+    /** Drops every page, for a change that makes them all stale. */
+    fun clear() {
+        pages.clear()
+    }
+
     fun put(season: Int, episodes: List<EpisodeListItem>) {
         pages[season] = episodes.sortedBy { it.episodeNumber }
     }

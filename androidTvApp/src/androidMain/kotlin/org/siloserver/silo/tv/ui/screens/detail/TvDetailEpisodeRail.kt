@@ -39,6 +39,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
@@ -48,6 +49,8 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -64,6 +67,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
+import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.components.SpoilerImage
@@ -165,6 +169,8 @@ internal fun TvDetailEpisodeRail(
     carouselLoadError: Boolean = false,
     onCarouselEdgeRequested: (String, Int) -> Unit = { _, _ -> },
     onCarouselFocusLost: () -> Unit = {},
+    /** Seasons a request or a download server already covers; their missing episodes read Requested. */
+    requestedSeasons: Set<Int> = emptySet(),
 ) {
     if (episodes.isEmpty()) return
 
@@ -276,10 +282,13 @@ internal fun TvDetailEpisodeRail(
                 episode = episode,
                 isCurrent = isCurrent,
                 isFavorite = favoriteStates[episode.contentId] ?: false,
-                onClick = { onEpisodeSelected(episode) },
+                // An episode the library lacks has nothing to play; its
+                // season's request is the hero's primary pill.
+                onClick = { if (!episode.isMissingFromLibrary) onEpisodeSelected(episode) },
                 onSetWatched = { watched -> onSetWatched(episode.contentId, watched) },
                 onSetFavorite = { favorite -> onSetFavorite(episode.contentId, favorite) },
                 usesSeriesGeometry = usesSeriesGeometry,
+                isRequested = episode.seasonNumber in requestedSeasons,
                 modifier = Modifier
                     .tvRailPinOnFocus(
                         listState,
@@ -359,7 +368,9 @@ private fun TvDetailEpisodeCard(
     onSetFavorite: (Boolean) -> Unit,
     usesSeriesGeometry: Boolean,
     modifier: Modifier = Modifier,
+    isRequested: Boolean = false,
 ) {
+    val isMissing = episode.isMissingFromLibrary
     // The combined Series page uses the exact same card footprint as Home's
     // Continue Watching rail. Legacy season/episode routes keep their existing
     // geometry so this targeted parity change cannot disturb those layouts.
@@ -401,7 +412,8 @@ private fun TvDetailEpisodeCard(
                 interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick,
-                onLongClick = { menuExpanded = true },
+                // Nothing to mark on an episode the library lacks.
+                onLongClick = { if (!isMissing) menuExpanded = true },
             ),
         verticalArrangement = Arrangement.spacedBy(if (usesSeriesGeometry) SeriesStillToCaption else 9.dp),
     ) {
@@ -442,11 +454,30 @@ private fun TvDetailEpisodeCard(
                 hidden = spoilers.hidesImage(unwatched, episode.stillIsEpisodeStill),
                 contentDescription = episode.title,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().then(if (isMissing) Modifier.alpha(0.45f) else Modifier),
+                colorFilter = if (isMissing) GrayscaleFilter else null,
                 defaultArtwork = DefaultArtworkKind.Tv,
             )
 
-            if (episode.userData?.played == true) {
+            if (isMissing) {
+                Text(
+                    text = when {
+                        isRequested -> "Requested"
+                        episode.isUnaired -> "Not aired yet"
+                        else -> "Missing"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.Black.copy(alpha = 0.7f))
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                )
+            }
+
+            if (episode.userData?.played == true && !isMissing) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -585,6 +616,9 @@ private val CaptionOverviewStyle = TextStyle(
 )
 
 // Shared with the hero facts row (tvOS parity), so the card dates agree with it.
+/** Drains an episode still the library lacks of its colour. */
+private val GrayscaleFilter = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+
 private fun abbreviatedEpisodeDate(raw: String?): String? =
     TvDetailMetadata.abbreviatedDate(raw)
 

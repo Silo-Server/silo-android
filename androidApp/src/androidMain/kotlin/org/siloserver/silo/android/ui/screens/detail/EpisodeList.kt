@@ -46,6 +46,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
@@ -77,6 +79,8 @@ fun EpisodeList(
     onEpisodePlayClick: ((String, Double?) -> Unit)? = null,
     onEpisodeDetailClick: (String) -> Unit,
     onEpisodeWatchedChange: ((String, Boolean) -> Unit)? = null,
+    /** Seasons a request or a download server already covers; their missing episodes read Requested. */
+    requestedSeasons: Set<Int> = emptySet(),
     highlightContentId: String? = null,
     selectsCenteredEpisode: Boolean = false,
     /** Expanded rails select on tap and never force the card into centre. */
@@ -139,14 +143,16 @@ fun EpisodeList(
             items(episodes, key = EpisodeListItem::contentId) { episode ->
                 EpisodeRailCard(
                     episode = episode,
-                    onPlayClick = onEpisodePlayClick?.let { play -> {
+                    isRequested = episode.seasonNumber in requestedSeasons,
+                    // An episode the library lacks has nothing to play or mark.
+                    onPlayClick = onEpisodePlayClick?.takeUnless { episode.isMissingFromLibrary }?.let { play -> {
                         play(
                             episode.contentId,
                             playbackResumePosition(episode),
                         )
                     } },
                     onSelect = { onEpisodeDetailClick(episode.contentId) },
-                    onWatchedChange = onEpisodeWatchedChange?.let { change ->
+                    onWatchedChange = onEpisodeWatchedChange?.takeUnless { episode.isMissingFromLibrary }?.let { change ->
                         { watched -> change(episode.contentId, watched) }
                     },
                     isCurrent = episode.contentId == highlightContentId,
@@ -170,6 +176,7 @@ private fun centeredItemIndex(state: LazyListState): Int? {
 @Composable
 private fun EpisodeRailCard(
     episode: EpisodeListItem,
+    isRequested: Boolean,
     onPlayClick: (() -> Unit)?,
     onSelect: () -> Unit,
     onWatchedChange: ((Boolean) -> Unit)?,
@@ -215,10 +222,29 @@ private fun EpisodeRailCard(
                 thumbhash = episode.stillThumbhash,
                 hidden = spoilers.hidesImage(unwatched, episode.stillIsEpisodeStill),
                 contentDescription = episode.title,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().then(if (episode.isMissingFromLibrary) Modifier.alpha(0.45f) else Modifier),
+                colorFilter = if (episode.isMissingFromLibrary) GrayscaleFilter else null,
                 // The play button covers the centre, so no mark under it.
                 defaultArtwork = if (onPlayClick != null) DefaultArtworkKind.GlowOnly else DefaultArtworkKind.Tv,
             )
+
+            if (episode.isMissingFromLibrary) {
+                Text(
+                    text = when {
+                        isRequested -> "Requested"
+                        episode.isUnaired -> "Not aired yet"
+                        else -> "Missing"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.Black.copy(alpha = 0.7f))
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                )
+            }
 
             if (episode.userData?.played == true) {
                 Box(
@@ -359,6 +385,9 @@ private fun EpisodeRailCard(
         }
     }
 }
+
+/** Drains an episode still the library lacks of its colour. */
+private val GrayscaleFilter = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
 
 internal fun episodeProgressFraction(positionSeconds: Double?, durationSeconds: Double?): Float? {
     val position = positionSeconds?.takeIf { it.isFinite() && it > 0 } ?: return null

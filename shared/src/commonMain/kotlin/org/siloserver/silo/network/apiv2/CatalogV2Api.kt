@@ -13,6 +13,7 @@ import kotlinx.serialization.json.jsonObject
 import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.MissingEpisodes
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.SeasonsResponse
 import org.siloserver.silo.model.catalog.EpisodesResponse
@@ -152,19 +153,31 @@ class CatalogV2Api(
             }
         }) { it.toDomain() }
 
-    suspend fun seriesSeasons(id: String, libraryId: Int? = null): ApiResult<SeasonsResponse> =
+    suspend fun seriesSeasons(
+        id: String,
+        libraryId: Int? = null,
+        missing: MissingEpisodes = MissingEpisodes.NONE,
+    ): ApiResult<SeasonsResponse> =
         read<DetailCollectionReadV2<Season>, SeasonsResponse>({ scope ->
             client.get("/api/v2/catalog/series/${id.encodeURLPathPart()}/seasons") {
                 scope?.let { authScope(it) }
                 libraryId?.let { parameter("library_id", it) }
+                missing.queryParameters.forEach { (name, value) -> parameter(name, value) }
             }
         }) { it.requireComplete(); SeasonsResponse(it.items) }
 
-    suspend fun seasonEpisodes(id: String, number: Int, libraryId: Int? = null, widths: ArtworkWidths? = null): ApiResult<EpisodesResponse> =
+    suspend fun seasonEpisodes(
+        id: String,
+        number: Int,
+        libraryId: Int? = null,
+        widths: ArtworkWidths? = null,
+        missing: MissingEpisodes = MissingEpisodes.NONE,
+    ): ApiResult<EpisodesResponse> =
         read<DetailCollectionReadV2<EpisodeListItemReadV2>, EpisodesResponse>({ scope ->
             client.get("/api/v2/catalog/series/${id.encodeURLPathPart()}/seasons/$number/episodes") {
                 scope?.let { authScope(it) }
                 libraryId?.let { parameter("library_id", it) }
+                missing.queryParameters.forEach { (name, value) -> parameter(name, value) }
                 artworkWidths(widths, scope)
             }
         }) { it.requireComplete(); EpisodesResponse(it.items.map { row -> row.toDomain() }) }

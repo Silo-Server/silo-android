@@ -127,6 +127,7 @@ val repositoryModule = module {
         )
     }
     single { RequestsFeatureStore(get()) }
+    single { org.siloserver.silo.domain.catalog.MissingSeasons(get(), get()) }
     single { ActiveProfileStore(get()) }
     single { org.siloserver.silo.repository.MetadataAiRepository(get()) }
     single { org.siloserver.silo.model.feature.MetadataAiFeatureStore(get()) }

@@ -24,7 +24,7 @@ data class SettingPresentation(
 )
 
 object SettingKeys {
-    const val REVISION = 23
+    const val REVISION = 24
 
     /** Blur unwatched episode images */
     const val CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES = "catalog.hide_unwatched_episode_images"
@@ -36,6 +36,8 @@ object SettingKeys {
     const val CATALOG_METADATA_LANGUAGE_OVERRIDES = "catalog.metadata_language_overrides"
     /** Show advisory age */
     const val CATALOG_SHOW_ADVISORY_AGE = "catalog.show_advisory_age"
+    /** Show missing episodes */
+    const val CATALOG_SHOW_MISSING_EPISODES = "catalog.show_missing_episodes"
     /** Download quality */
     const val DOWNLOADS_DEFAULT_QUALITY = "downloads.default_quality"
     /** Keep watched downloads */
@@ -180,6 +182,7 @@ object SettingKeys {
         CATALOG_METADATA_LANGUAGE,
         CATALOG_METADATA_LANGUAGE_OVERRIDES,
         CATALOG_SHOW_ADVISORY_AGE,
+        CATALOG_SHOW_MISSING_EPISODES,
         HOME_HIDE_WATCHED_ITEMS,
         NAV_PRIMARY_MENU,
         NAV_SHORTCUTS,
@@ -268,6 +271,7 @@ object SettingKeys {
         CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES,
         CATALOG_HIDE_UNWATCHED_EPISODE_OVERVIEWS,
         CATALOG_SHOW_ADVISORY_AGE,
+        CATALOG_SHOW_MISSING_EPISODES,
         HOME_HIDE_WATCHED_ITEMS,
         PLAYBACK_AUTO_PLAY_NEXT,
         PLAYBACK_AUTO_PLAY_NEXT_PREVIEW,

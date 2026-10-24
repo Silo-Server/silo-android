@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.AudioFile
@@ -20,6 +22,7 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.ClosedCaption
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -98,6 +101,10 @@ fun SeriesDetailContent(
     /** The Watch Party overflow action (host, add, or suggest), when one applies. */
     partyAction: org.siloserver.silo.android.ui.screens.watchparty.DetailPartyAction? = null,
     translation: (@Composable () -> Unit)? = null,
+    /** Seasons a request or a download server already covers. */
+    requestedSeasons: Set<Int> = emptySet(),
+    /** Requests a missing season; null while no download server takes series requests. */
+    onRequestSeason: ((Int) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val dominantColor by rememberDominantColor(
@@ -159,8 +166,34 @@ fun SeriesDetailContent(
         "$count episode${if (count == 1) "" else "s"}"
     }
 
+    // An episode the library lacks has nothing to play: the hero requests its
+    // season, and a note takes the playback selector's place.
+    val missingEpisode = selectedEpisode?.takeIf { it.isMissingFromLibrary }
+    val missingSeasonRequested = missingEpisode != null && missingEpisode.seasonNumber in requestedSeasons
+    var seasonRequestPrompt by remember { mutableStateOf<Int?>(null) }
+    seasonRequestPrompt?.let { season ->
+        SiloConfirmDialog(
+            title = "Request Season $season?",
+            body = "Silo asks your download server for the season's episodes.",
+            confirmLabel = "Request",
+            destructive = false,
+            onConfirm = {
+                seasonRequestPrompt = null
+                onRequestSeason?.invoke(season)
+            },
+            onDismiss = { seasonRequestPrompt = null },
+        )
+    }
     val playbackSelector: @Composable () -> Unit = {
-        if (selectedEpisodeContentId != null) {
+        if (missingEpisode != null) {
+            val state = if (missingEpisode.isUnaired) "Not aired yet" else "Not in your library"
+            Text(
+                text = if (missingSeasonRequested) "$state · Season ${missingEpisode.seasonNumber} requested" else state,
+                style = MaterialTheme.typography.bodyMedium,
+                color = DetailSecondaryText,
+                modifier = Modifier.padding(horizontal = SafePadding, vertical = 8.dp),
+            )
+        } else if (selectedEpisodeContentId != null) {
             when {
                 isLoadingSelectedEpisodeDetail || loadedSelectedEpisodeDetail == null ->
                     PlaybackSelectorSkeleton()
@@ -243,6 +276,7 @@ fun SeriesDetailContent(
                 onEpisodePlayClick = onEpisodePlayClick,
                 onEpisodeDetailClick = onEpisodeDetailClick,
                 onEpisodeWatchedChange = onEpisodeWatchedChange,
+                requestedSeasons = requestedSeasons,
                 highlightContentId = selectedEpisodeContentId,
                 showsSeasonSelector = false,
                 selectsCenteredEpisode = !showsEpisodeDetails,
@@ -314,11 +348,23 @@ fun SeriesDetailContent(
                 },
             ) {
                 HeroActionStack(
-                    primaryLabel = selectedEpisode?.let { "Play ${episodeNumberText(it)}" }
-                        ?: computePlayLabel(detail, nextEpisodeLabel),
-                    onPlay = onPlayClick,
-                    onPlayFromBeginning = onPlayFromBeginning,
+                    primaryLabel = when {
+                        missingEpisode == null -> selectedEpisode?.let { "Play ${episodeNumberText(it)}" }
+                            ?: computePlayLabel(detail, nextEpisodeLabel)
+                        missingSeasonRequested -> "Season ${missingEpisode.seasonNumber} Requested"
+                        onRequestSeason != null -> "Request Season ${missingEpisode.seasonNumber}"
+                        else -> "Not in Library"
+                    },
+                    onPlay = {
+                        when {
+                            missingEpisode == null -> onPlayClick()
+                            onRequestSeason != null && !missingSeasonRequested ->
+                                seasonRequestPrompt = missingEpisode.seasonNumber
+                        }
+                    },
+                    onPlayFromBeginning = onPlayFromBeginning.takeIf { missingEpisode == null },
                     resumeStoppedAtLabel = resumeStoppedAtLabel,
+                    primaryIcon = if (missingEpisode == null) Icons.Filled.PlayArrow else null,
                     isFavorite = isFavorite,
                     isInWatchlist = isInWatchlist,
                     isWatched = detail.userData?.played == true,

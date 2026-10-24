@@ -655,9 +655,10 @@ fun ItemDetailScreen(
                     }
 
                     detail.type == "series" -> {
+                        // A missing episode is never the fallback play target.
                         val nextEpisode = state.episodes.firstOrNull { ep ->
-                            ep.userData?.played != true
-                        } ?: state.episodes.firstOrNull()
+                            !ep.isMissingFromLibrary && ep.userData?.played != true
+                        } ?: state.episodes.firstOrNull { ep -> !ep.isMissingFromLibrary }
                         val nextEpisodeLabel = nextEpisode?.let { ep ->
                             "S${ep.seasonNumber}·E${ep.episodeNumber}"
                         }
@@ -741,6 +742,8 @@ fun ItemDetailScreen(
                         }
                         SeriesDetailContent(
                             translation = translationSlot,
+                            requestedSeasons = state.missingRequests.requestedSeasons,
+                            onRequestSeason = viewModel::requestSeason.takeIf { state.missingRequests.canRequest },
                             detail = detail,
                             similarItems = state.similarItems,
                             seasons = state.seasons,
@@ -891,9 +894,10 @@ fun ItemDetailScreen(
                                 }
                             },
                             // A series enters a party through the episode Play
-                            // would start: the selected one, else next up.
+                            // would start: the selected one, else next up. A
+                            // missing episode has nothing to play, so no party.
                             partyAction = partyActions.actionFor(
-                                (selectedEpisode ?: nextEpisode)?.let { episode ->
+                                (selectedEpisode ?: nextEpisode)?.takeUnless { it.isMissingFromLibrary }?.let { episode ->
                                     WatchPartyItem(
                                         contentId = episode.contentId,
                                         contentType = "episode",
@@ -1126,6 +1130,17 @@ fun ItemDetailScreen(
             SiloCastTargetPickerSheet(
                 onDismiss = { showRemoteTargetPicker = false },
                 controller = siloCastController,
+            )
+        }
+
+        if (state.seasonRequestFailed) {
+            SiloConfirmDialog(
+                title = "Couldn't Request the Season",
+                body = "Please check your connection and try again.",
+                confirmLabel = "OK",
+                destructive = false,
+                onConfirm = viewModel::onSeasonRequestFailureShown,
+                onDismiss = viewModel::onSeasonRequestFailureShown,
             )
         }
 
