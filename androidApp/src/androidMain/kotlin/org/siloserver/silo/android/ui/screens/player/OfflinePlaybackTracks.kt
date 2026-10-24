@@ -5,9 +5,11 @@ import org.siloserver.silo.common.player.isSubtitleArtifactTrackId
 import org.siloserver.silo.common.player.subtitleArtifactTrackId
 import org.siloserver.silo.model.download.OfflineSubtitleFile
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.SubtitlePreferenceUpdate
 import org.siloserver.silo.playback.canonicalSubtitleCodecFamily
 import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import org.siloserver.silo.playback.isClientMountableBitmapCodecFamily
+import org.siloserver.silo.playback.orNullIfBlank
 
 /**
  * Menu indexes for text tracks found inside a downloaded file. Kept clear of
@@ -23,6 +25,19 @@ internal data class OfflineSubtitlePreferences(
     val showForced: Boolean,
     /** The series' remembered track. */
     val trackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
+)
+
+/**
+ * These preferences under the series' saved subtitle [row]. An empty language
+ * or mode in the row means no preference at that level, as on the server, so
+ * the inherited one stands; Off is the mode `off`. An omitted forced override
+ * keeps the inherited setting.
+ */
+internal fun OfflineSubtitlePreferences.withSeriesRow(row: SubtitlePreferenceUpdate) = copy(
+    preferredLanguage = row.subtitleLanguage.orNullIfBlank() ?: preferredLanguage,
+    mode = row.subtitleMode.orNullIfBlank() ?: mode,
+    showForced = row.showForcedSubtitles ?: showForced,
+    trackSignature = row.trackSignature,
 )
 
 /**
@@ -43,6 +58,7 @@ internal fun offlineSidecarSubtitleRows(
             label = file.title ?: if (file.hearingImpaired) "SDH" else null,
             source = "external",
             forced = file.forced,
+            hearingImpaired = file.hearingImpaired,
             url = "file://" + java.io.File(file.path).toURI().rawPath,
             // The id the mount gives this sidecar; also keeps two otherwise
             // identical sidecars distinct when the menu resolves a selection.
@@ -77,6 +93,7 @@ internal fun localEmbeddedSubtitleRows(tracks: List<MountedSubtitleTrack>): List
                 label = track.label,
                 source = "embedded",
                 forced = track.forced,
+                hearingImpaired = track.hearingImpaired,
                 url = "",
                 mediaTrackId = track.trackId,
             )

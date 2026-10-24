@@ -6467,13 +6467,7 @@ class PlayerViewModel(
             offlineSidecarSubtitleRows(offlineTracks?.subtitles.orEmpty())
         }
         val subtitlePreferences = offlineSubtitlePreferences(watchDetail).let { resolved ->
-            savedSubtitle?.let { saved ->
-                resolved.copy(
-                    preferredLanguage = saved.subtitleLanguage,
-                    mode = saved.subtitleMode.orNullIfBlank(),
-                    trackSignature = saved.trackSignature,
-                )
-            } ?: resolved
+            savedSubtitle?.let(resolved::withSeriesRow) ?: resolved
         }
         if (!ownsLoad(loadOwner)) return false
 

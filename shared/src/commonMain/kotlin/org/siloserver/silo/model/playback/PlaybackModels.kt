@@ -80,6 +80,11 @@ data class PlayerSubtitleInfo(
     @SerialName("hls_rendition") val hlsRendition: SubtitleHlsRendition? = null,
     /** The inventory's `sync_key`: present when the server can sync this track to the audio. */
     @SerialName("sync_key") val syncKey: String? = null,
+    /**
+     * A hearing-impaired flag known apart from the label: a saved sidecar's or
+     * a downloaded file's own. Only offline rows set it.
+     */
+    @Transient val hearingImpaired: Boolean? = null,
 )
 
 /**

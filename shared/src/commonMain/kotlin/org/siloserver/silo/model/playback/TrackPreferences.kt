@@ -228,7 +228,7 @@ fun downloadSubtitlePreferenceUpdate(row: PlayerSubtitleInfo?): SubtitlePreferen
             codec = row.codec?.takeUnless { '/' in it },
             label = label,
             forced = row.forced == true,
-            hearingImpaired = subtitleLabelIndicatesHearingImpaired(label),
+            hearingImpaired = row.hearingImpaired == true || subtitleLabelIndicatesHearingImpaired(label),
         ),
     )
 }
