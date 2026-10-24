@@ -503,6 +503,47 @@ class SeriesTrackChoiceWriterTest {
     }
 
     @Test
+    fun `picks already taken by a drain are not sent after their login ends`() = runTest {
+        val transitions = kotlinx.coroutines.channels.Channel<org.siloserver.silo.network.IdentityTransition>(
+            kotlinx.coroutines.channels.Channel.UNLIMITED,
+        )
+        val firstRequest = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val sent = mutableListOf<String>()
+        val writer = DefaultSeriesTrackChoiceWriter(
+            putSubtitle = { key, _, _ ->
+                sent += key
+                if (key == "series-1") firstRequest.await()
+                ApiResult.Success(Unit)
+            },
+            deleteSubtitle = { key, _ -> sent += key; ApiResult.Success(Unit) },
+            // The same server and profile throughout: a new login looks alike.
+            captureOwner = { profileA },
+            scope = this,
+            identityChanges = transitions.receiveAsFlow(),
+        )
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
+        writer.saveSubtitle("series-2", SeriesSubtitleChoice.Off)
+        runCurrent()
+        assertEquals(listOf("series-1"), sent, "the first request is on the wire, the second waits in the batch")
+
+        transitions.send(
+            org.siloserver.silo.network.IdentityTransition(
+                phase = org.siloserver.silo.network.IdentityTransitionPhase.WILL_CHANGE,
+                kind = org.siloserver.silo.network.IdentityTransitionKind.SIGN_OUT,
+                generation = 1,
+                targetServerId = profileA.serverId,
+            ),
+        )
+        runCurrent()
+        firstRequest.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(listOf("series-1"), sent, "the rest of the batch belonged to the ended login")
+        assertEquals(null, writer.pendingSubtitle("series-2"))
+        transitions.close()
+    }
+
+    @Test
     fun `nothing is sent without an active profile`() = runTest {
         val recorder = Recorder()
         val writer = writer(recorder) { null }

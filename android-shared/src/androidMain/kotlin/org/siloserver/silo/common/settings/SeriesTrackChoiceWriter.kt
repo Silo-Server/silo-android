@@ -180,7 +180,14 @@ class DefaultSeriesTrackChoiceWriter(
      * [choice] is a [SeriesSubtitleChoice] or [SeriesAudioChoice] matching the
      * key's kind; null is back to automatic.
      */
-    private class Op(val owner: AuthScopeSnapshot, val choice: Any?, val queuedAt: Long, val sequence: Long)
+    private class Op(
+        val owner: AuthScopeSnapshot,
+        val choice: Any?,
+        val queuedAt: Long,
+        val sequence: Long,
+        /** The login the pick was made under; see [loginGeneration]. */
+        val login: Long,
+    )
 
     private val lock = Any()
     private val pending = LinkedHashMap<Key, Op>()
@@ -190,6 +197,18 @@ class DefaultSeriesTrackChoiceWriter(
 
     /** The newest pick's sequence per key, so an older one resuming late is dropped. */
     private val newestSequence = HashMap<Key, Long>()
+
+    /**
+     * Moves when a login ends on a server ([dropLogin]); every server's when
+     * the server is unknown. An op made under an earlier value is never sent,
+     * even from a batch a drain had already taken, so a later sign-in to the
+     * same server and profile never sends it with its credentials.
+     */
+    private val serverLoginGenerations = HashMap<String, Long>()
+    private var allServersLoginGeneration = 0L
+
+    private fun loginGeneration(serverId: String): Long =
+        allServersLoginGeneration + (serverLoginGenerations[serverId] ?: 0L)
 
     /** Every op not yet settled — queued, in flight or held for retry. */
     private val unsent = MutableStateFlow<Map<Key, Op>>(emptyMap())
@@ -217,7 +236,7 @@ class DefaultSeriesTrackChoiceWriter(
             val key = Key(profileId, writer.serverId, seriesKey, kind)
             if ((newestSequence[key] ?: 0L) > order) return
             newestSequence[key] = order
-            val op = Op(writer, choice, now(), order)
+            val op = Op(writer, choice, now(), order, loginGeneration(writer.serverId))
             if (kind == Kind.SUBTITLE) autoResets.set(key.resetId(), reset = choice == null)
             pending.remove(key)
             pending[key] = op
@@ -313,6 +332,11 @@ class DefaultSeriesTrackChoiceWriter(
     /** Drops every queued pick for [serverId] (every server when null). */
     private fun dropLogin(serverId: String?) {
         synchronized(lock) {
+            if (serverId == null) {
+                allServersLoginGeneration++
+            } else {
+                serverLoginGenerations[serverId] = (serverLoginGenerations[serverId] ?: 0L) + 1
+            }
             val doomed = unsent.value.keys.filter { serverId == null || it.serverId == serverId }.toSet() +
                 pending.keys.filter { serverId == null || it.serverId == serverId }
             if (doomed.isEmpty()) return
@@ -411,6 +435,13 @@ class DefaultSeriesTrackChoiceWriter(
         } catch (e: Exception) {
             SiloLog.w(CATEGORY, TAG, "$verb ${key.kind.label} choice waits: the active profile could not be read")
             return true
+        }
+        // Rechecked after the profile read, right before the request: a login
+        // that ended meanwhile (even mid-batch) takes its picks with it.
+        val sameLogin = synchronized(lock) { op.login == loginGeneration(op.owner.serverId) }
+        if (!sameLogin) {
+            SiloLog.i(CATEGORY, TAG, "$verb ${key.kind.label} choice dropped: the login it was made under ended")
+            return false
         }
         val owner = when {
             active == null -> return true
