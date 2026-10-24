@@ -381,6 +381,8 @@ val playerInfraModule = module {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
             onServerReconnected = {
                 get<ServerDrivenConfigRefresher>().forceRefresh()
+                // Track picks made while offline go out now.
+                get<org.siloserver.silo.playback.TrackPreferenceWriter>().flush()
             },
         )
     }

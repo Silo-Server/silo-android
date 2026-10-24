@@ -5,6 +5,9 @@ import kotlinx.serialization.Serializable
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.catalog.WatchDetail
+import org.siloserver.silo.model.download.DownloadMediaType
+import org.siloserver.silo.model.download.DownloadSidecar
+import org.siloserver.silo.playback.canonicalSubtitleLanguage
 import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 
 /**
@@ -72,6 +75,18 @@ fun trackPreferenceKey(contentType: String?, contentId: String?, seriesId: Strin
     }?.trim()?.takeIf { it.isNotEmpty() }
 
 /**
+ * The key for a download played from what was saved with it, for when the
+ * server cannot be asked: a movie's own id, an episode's series. Null for a
+ * download saved without its series, which must not guess one.
+ */
+fun DownloadSidecar.trackPreferenceKey(): String? = when (DownloadMediaType.fromWire(mediaType)) {
+    DownloadMediaType.Movie -> trackPreferenceKey("movie", record.contentId, null)
+    DownloadMediaType.TvShow -> seriesContentId?.takeIf { episodeNumber != null }
+        ?.let { trackPreferenceKey("episode", record.contentId, it) }
+    else -> null
+}
+
+/**
  * Whether the server resolved a subtitle preference for this title at any
  * scope. When it did, that answer is authoritative and a per-file choice
  * remembered on this device must not override it.
@@ -111,8 +126,7 @@ fun audioPreferenceUpdate(tracks: List<AudioTrack>, ordinal: Int): AudioPreferen
  */
 fun subtitlePreferenceUpdate(identity: SubtitleIdentity, catalogTracks: List<SubtitleTrack>): SubtitlePreferenceUpdate? =
     when (identity) {
-        SubtitleIdentity.Off ->
-            SubtitlePreferenceUpdate(subtitleTrackIndex = -1, subtitleLanguage = "", subtitleMode = "off")
+        SubtitleIdentity.Off -> subtitleOffPreferenceUpdate()
         is SubtitleIdentity.ServerSidecar ->
             catalogSubtitlePreferenceUpdate(catalogTracks, identity.serverIndex)
                 ?: identity.media?.preferenceUpdate("external")
@@ -123,6 +137,9 @@ fun subtitlePreferenceUpdate(identity: SubtitleIdentity, catalogTracks: List<Sub
         is SubtitleIdentity.Downloaded -> identity.media.preferenceUpdate(SUBTITLE_SOURCE_DOWNLOADED)
         is SubtitleIdentity.LocalMedia3 -> identity.media.preferenceUpdate("embedded")
     }
+
+private fun subtitleOffPreferenceUpdate() =
+    SubtitlePreferenceUpdate(subtitleTrackIndex = -1, subtitleLanguage = "", subtitleMode = "off")
 
 private fun catalogSubtitlePreferenceUpdate(catalogTracks: List<SubtitleTrack>, serverIndex: Int): SubtitlePreferenceUpdate? {
     val ordinal = combinedSubtitleSelectionIndexes(catalogTracks).indexOf(serverIndex)
@@ -170,3 +187,82 @@ private fun preferenceLanguage(language: String?): String {
 }
 
 private val PREFERENCE_LANGUAGE = Regex("^[A-Za-z]{2,3}(?:[-_][0-9A-Za-z]{1,8})*$")
+
+/**
+ * An audio pick while a download plays. An original download is the source
+ * file, so its position is the source ordinal and its tracks describe the
+ * source faithfully. A prepared download's tracks are re-encoded and may be
+ * reordered, so only the language is remembered: its position and its codec
+ * and layout would name a different track in the source.
+ */
+fun downloadAudioPreferenceUpdate(tracks: List<AudioTrack>, position: Int, prepared: Boolean): AudioPreferenceUpdate? {
+    val track = tracks.getOrNull(position) ?: return null
+    if (!prepared) return audioPreferenceUpdate(tracks, position)
+    return AudioPreferenceUpdate(audioTrackIndex = -1, audioLanguage = preferenceLanguage(track.language))
+}
+
+/**
+ * A subtitle pick while a download plays: [row] is a saved sidecar or a track
+ * inside the file, null for Off. Neither has a server index, so only the
+ * language, flags and signature are sent.
+ */
+fun downloadSubtitlePreferenceUpdate(row: PlayerSubtitleInfo?): SubtitlePreferenceUpdate {
+    row ?: return subtitleOffPreferenceUpdate()
+    val label = row.catalogLabel ?: row.label
+    return SubtitlePreferenceUpdate(
+        subtitleTrackIndex = -1,
+        subtitleLanguage = preferenceLanguage(row.language),
+        subtitleMode = "always",
+        trackSignature = SubtitleTrackSignature(
+            source = row.catalogSource ?: row.source,
+            language = row.language,
+            // The player reports a MIME type, which names no codec the server or other clients record.
+            codec = row.codec?.takeUnless { '/' in it },
+            label = label,
+            forced = row.forced == true,
+            hearingImpaired = subtitleLabelIndicatesHearingImpaired(label),
+        ),
+    )
+}
+
+/**
+ * The position in a download's [tracks] that a saved series audio pick names,
+ * resolved the way the server resolves it for streaming: the exact track
+ * signature, then the saved index when its track is still in the saved
+ * language, then the saved language. The index only applies to an original
+ * download ([indexIsSourceOrdinal]). Null when nothing matches, so the
+ * download's own default stands.
+ */
+fun savedAudioTrackPosition(
+    tracks: List<AudioTrack>,
+    saved: AudioPreferenceUpdate,
+    indexIsSourceOrdinal: Boolean,
+): Int? {
+    val language = canonicalSubtitleLanguage(saved.audioLanguage)
+    fun sameLanguage(track: AudioTrack, wanted: String?) =
+        wanted != null && canonicalSubtitleLanguage(track.language) == wanted
+    saved.trackSignature?.let { signature ->
+        tracks.indexOfFirst { it.matches(signature) }.takeIf { it >= 0 }?.let { return it }
+    }
+    if (indexIsSourceOrdinal) {
+        tracks.getOrNull(saved.audioTrackIndex)
+            ?.takeIf { sameLanguage(it, language) }
+            ?.let { return saved.audioTrackIndex }
+    }
+    return tracks.indexOfFirst { sameLanguage(it, language) }.takeIf { it >= 0 }
+}
+
+/**
+ * The server's exact-signature test. A download's manifest carries no embedded
+ * title, so that member is compared only when the track has one.
+ */
+private fun AudioTrack.matches(signature: AudioTrackSignature): Boolean {
+    fun same(a: String?, b: String?) = a.orEmpty().trim().equals(b.orEmpty().trim(), ignoreCase = true)
+    val signatureLanguage = canonicalSubtitleLanguage(signature.language)
+    return signatureLanguage != null && canonicalSubtitleLanguage(language) == signatureLanguage &&
+        same(title, signature.title) &&
+        (embeddedTitle == null || same(embeddedTitle, signature.embeddedTitle)) &&
+        same(codec, signature.codec) &&
+        same(channelLayout, signature.layout) &&
+        (channels ?: 0) == (signature.channels ?: 0)
+}

@@ -109,7 +109,10 @@ val repositoryModule = module {
     single {
         org.siloserver.silo.playback.TrackPreferenceWriter(
             api = get(),
+            tokens = get(),
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+            // The apps bind the durable store; without one, picks last for the process.
+            store = getOrNull() ?: org.siloserver.silo.playback.InMemoryTrackPreferenceStore(),
         )
     }
     single { CollectionRepository(get()) }

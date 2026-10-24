@@ -21,6 +21,8 @@ internal data class OfflineSubtitlePreferences(
     val preferredLanguage: String?,
     val mode: String?,
     val showForced: Boolean,
+    /** The series' remembered track. */
+    val trackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
 )
 
 /**
