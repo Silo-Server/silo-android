@@ -657,26 +657,34 @@ fun formatSubtitleLabel(track: SubtitleTrack?): String {
 }
 
 /**
- * How a track is named in the pickers: its language, then a title that adds
- * something ("SDH", "Commentary"). A title that only names the codec ("AAC
- * (Advanced Audio Coding)", "SUBRIP") or repeats the language is left out,
- * as on TV and Apple. Null when neither says anything.
+ * How a track is named in the pickers: its language, then what its title
+ * adds ("SDH", "Director's Commentary"). Codec names are stripped from the
+ * title ("AAC (Advanced Audio Coding)", "Commentary (AC3)", "SUBRIP"), as is
+ * the language itself, and the title is dropped only when nothing else
+ * remains — as on TV and Apple. Null when neither says anything.
  */
 internal fun trackHeadline(language: String?, title: String?): String? {
     val code = language?.trim()?.takeUnless { it.isEmpty() || it.equals("und", ignoreCase = true) }
     val name = org.siloserver.silo.player.trackLanguageDisplayName(code) ?: code?.uppercase()
-    val extra = title?.trim()?.takeIf { it.isNotEmpty() }?.takeUnless { candidate ->
-        val lowered = candidate.lowercase()
-        val tokens = lowered.replace("-", "").split(Regex("[^a-z0-9]+")).filter { it.isNotEmpty() }
-        "advanced audio coding" in lowered || tokens.any { it in TECHNICAL_TRACK_TITLE_TOKENS } ||
-            lowered == name?.lowercase() || lowered == code?.lowercase()
-    }
+    val extra = title?.let { meaningfulTrackTitle(it, name, code) }
     return listOfNotNull(name, extra).joinToString(" \u00B7 ").takeIf { it.isNotBlank() }
 }
 
-private val TECHNICAL_TRACK_TITLE_TOKENS = setOf(
-    "aac", "ac3", "eac3", "truehd", "dts", "flac", "opus", "mp3", "pcm",
-    "subrip", "srt", "webvtt", "vtt", "ass", "ssa", "pgs", "vobsub",
+/** [title] without codec names or the language, or null when nothing else remains. */
+private fun meaningfulTrackTitle(title: String, languageName: String?, languageCode: String?): String? {
+    var text = TECHNICAL_TRACK_TITLE.replace(title, " ")
+    listOfNotNull(languageName, languageCode).forEach { word ->
+        text = Regex("(?i)(?<![\\p{L}\\p{N}])${Regex.escape(word)}(?![\\p{L}\\p{N}])").replace(text, " ")
+    }
+    // Brackets the strip emptied, then separators left at either end or doubled.
+    repeat(2) { text = Regex("[(\\[{]\\s*[)\\]}]").replace(text, " ") }
+    text = text.replace(Regex("\\s+"), " ").trim().trim('-', '/', '|', ',', ':', '\u00B7', ' ').trim()
+    return text.takeIf { it.any(Char::isLetterOrDigit) }
+}
+
+private val TECHNICAL_TRACK_TITLE = Regex(
+    "(?i)advanced audio coding|(?<![\\p{L}\\p{N}])(?:e-?ac-?3|ac-?3|aac|truehd|dts(?:-hd)?(?: ma)?|flac|opus|mp3|pcm|" +
+        "subrip|srt|webvtt|vtt|ass|ssa|pgs|vobsub)(?![\\p{L}\\p{N}])",
 )
 
 private fun formatVersionTitle(version: FileVersion): String {
