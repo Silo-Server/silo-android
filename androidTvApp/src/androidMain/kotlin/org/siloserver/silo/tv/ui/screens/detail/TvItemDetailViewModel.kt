@@ -936,19 +936,44 @@ class TvItemDetailViewModel(
         quietRefresh()
     }
 
-    /** Re-reads the shown Next Up episode's detail, keeping it on screen meanwhile. */
+    /**
+     * Re-reads the shown Next Up episode's detail, keeping it on screen
+     * meanwhile. Published only while the same load (Next Up generation and
+     * episode) and the same identity still own the page. A refusal (404, 410,
+     * an access-denying 403) clears it as the Next Up load does; a transient
+     * failure keeps it.
+     */
     private fun refreshNextUpPlaybackDetail() {
         val episodeId = _uiState.value.nextUpPlaybackDetail?.contentId ?: return
+        val generation = nextUpPlaybackDetailGeneration
+        val identityGeneration = identityTransitions.generation.value
         viewModelScope.launch {
+            val identity = captureNextUpIdentity(identityGeneration) ?: return@launch
             val result = catalogRepository.getItemDetail(episodeId, libraryId = libraryId)
-            if (result !is ApiResult.Success) return@launch
-            val refreshed = withLocalProgress(result.data)
-            _uiState.update { state ->
-                if (state.nextUpPlaybackDetail?.contentId != episodeId) state else state.copy(
-                    nextUpPlaybackDetail = state.nextUpEpisode
-                        ?.takeIf { it.contentId == episodeId }
-                        ?.let(refreshed::withEpisodeDescription) ?: refreshed,
-                )
+            if (!ownsNextUpPlaybackDetailRequest(episodeId, generation)) return@launch
+            if (captureNextUpIdentity(identityGeneration) != identity) return@launch
+            when {
+                result is ApiResult.Success -> {
+                    val refreshed = withLocalProgress(result.data)
+                    _uiState.update { state ->
+                        if (!ownsNextUpPlaybackDetailRequest(episodeId, generation) ||
+                            state.nextUpPlaybackDetail?.contentId != episodeId
+                        ) state else state.copy(
+                            nextUpPlaybackDetail = state.nextUpEpisode
+                                ?.takeIf { it.contentId == episodeId }
+                                ?.let(refreshed::withEpisodeDescription) ?: refreshed,
+                        )
+                    }
+                }
+                result.isAccessRefusal() -> _uiState.update { state ->
+                    if (!ownsNextUpPlaybackDetailRequest(episodeId, generation)) state else state.copy(
+                        nextUpPlaybackDetail = null,
+                        isLoadingNextUpPlaybackDetail = false,
+                        didLoadNextUpPlaybackDetail = true,
+                    )
+                }
+                // Transient: keep what is shown.
+                else -> Unit
             }
         }
     }

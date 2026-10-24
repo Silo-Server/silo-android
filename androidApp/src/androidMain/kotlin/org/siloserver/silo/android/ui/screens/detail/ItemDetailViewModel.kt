@@ -922,26 +922,62 @@ class ItemDetailViewModel(
         loadSelectedEpisodeDetail(contentId)
     }
 
-    /** Re-reads the shown episode's detail from the server, keeping it on screen meanwhile. */
+    /** Bumped by every load or refresh of the selected episode's detail. */
+    private var selectedEpisodeLoadGeneration = 0L
+
+    /**
+     * Re-reads the shown episode's detail from the server, keeping it on
+     * screen meanwhile. Published only while this refresh is still the newest
+     * load of that episode and the viewer who asked still owns the page. A
+     * refusal (404, 410, an access-denying 403) clears it, as the page does
+     * for its own detail (a completed download keeps it); a transient failure
+     * keeps it.
+     */
     private fun refreshSelectedEpisodeDetail() {
         val state = _uiState.value
         val contentId = state.selectedEpisodeContentId ?: return
         if (state.selectedEpisodeDetail == null || state.isLoadingSelectedEpisodeDetail) return
         selectedEpisodeLoadJob?.cancel()
+        val generation = ++selectedEpisodeLoadGeneration
         selectedEpisodeLoadJob = viewModelScope.launch {
+            val owner = catalogRepository.captureWatchAuthority() ?: return@launch
             val result = catalogRepository.getItemDetail(contentId, libraryId = libraryId)
-            if (result !is ApiResult.Success) return@launch
-            val refreshed = withLocalProgress(result.data)
-            _uiState.update { current ->
-                if (current.selectedEpisodeContentId != contentId) current else current.copy(
-                    selectedEpisodeDetail = current.episodes.firstOrNull { it.contentId == contentId }
-                        ?.let(refreshed::withEpisodeDescription) ?: refreshed,
-                )
+            fun owns() = generation == selectedEpisodeLoadGeneration &&
+                _uiState.value.selectedEpisodeContentId == contentId
+            if (!owns() || !catalogRepository.isWatchAuthorityCurrent(owner) || !owns()) return@launch
+            when {
+                result is ApiResult.Success -> {
+                    val refreshed = withLocalProgress(result.data)
+                    _uiState.update { current ->
+                        if (generation != selectedEpisodeLoadGeneration || current.selectedEpisodeContentId != contentId) {
+                            current
+                        } else {
+                            current.copy(
+                                selectedEpisodeDetail = current.episodes.firstOrNull { it.contentId == contentId }
+                                    ?.let(refreshed::withEpisodeDescription) ?: refreshed,
+                            )
+                        }
+                    }
+                }
+                result is ApiResult.Error && result.isAccessRefusal() &&
+                    downloads.value.none { record ->
+                        record.statusEnum() == DownloadStatus.Completed &&
+                            (record.contentId == contentId || record.episodeId == contentId)
+                    } -> _uiState.update { current ->
+                    if (generation != selectedEpisodeLoadGeneration || current.selectedEpisodeContentId != contentId) {
+                        current
+                    } else {
+                        current.copy(selectedEpisodeDetail = null, isLoadingSelectedEpisodeDetail = false)
+                    }
+                }
+                // Transient: keep what is shown.
+                else -> Unit
             }
         }
     }
 
     private fun loadSelectedEpisodeDetail(contentId: String) {
+        selectedEpisodeLoadGeneration++
         selectedEpisodeLoadJob = viewModelScope.launch {
             val result = if (contentId == initialEpisodeContentId) {
                 catalogRepository.getItemDetailForPrefetch(contentId, libraryId = libraryId)
