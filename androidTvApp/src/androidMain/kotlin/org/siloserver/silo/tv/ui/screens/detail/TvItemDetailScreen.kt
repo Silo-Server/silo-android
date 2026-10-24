@@ -1479,11 +1479,7 @@ private fun TvDetailPlaybackSelectionSummary(
     } else {
         compactVersion
     }
-    val automaticAudioTrackOrdinal = resolveTvAutomaticAudioTrackOrdinal(
-        version = selectedVersion,
-        preferredAudioLanguage = state.preferredAudioLanguage,
-        capabilities = state.audioSelectionCapabilities,
-    )
+    val automaticAudioTrackOrdinal = state.automaticAudioOrdinal(playbackDetail, selectedVersion)
     val automaticAudioResolutionKnown = state.audioSelectionCapabilities != null
     val audioValue = selectedVersion?.let { version ->
         if (selectedAudioIndex == null && !automaticAudioResolutionKnown) {
@@ -1764,10 +1760,9 @@ private fun HeroActionRow(
         else -> null
     }
     val watchPartyOption = rememberTvWatchPartyDetailOption(watchPartyEntry, watchPartyItem)
-    val automaticAudioTrackOrdinal = resolveTvAutomaticAudioTrackOrdinal(
+    val automaticAudioTrackOrdinal = state.automaticAudioOrdinal(
+        playbackDetail = if (isSeriesOrSeason) nextUpDetail else detail,
         version = selectedVersion,
-        preferredAudioLanguage = state.preferredAudioLanguage,
-        capabilities = state.audioSelectionCapabilities,
     )
     val automaticAudioResolutionKnown = state.audioSelectionCapabilities != null
     val hasTrackOverride = selectorAudioIndex != null || selectorSubtitleIndex != null
@@ -2095,11 +2090,7 @@ internal fun seriesEpisodePlaybackLaunch(
         lastFileId = playbackDetail?.userData?.lastFileId,
         preferredQuality = state.preferredQuality,
     )
-    val automaticAudioTrackOrdinal = resolveTvAutomaticAudioTrackOrdinal(
-        version = selectedVersion,
-        preferredAudioLanguage = state.preferredAudioLanguage,
-        capabilities = state.audioSelectionCapabilities,
-    )
+    val automaticAudioTrackOrdinal = state.automaticAudioOrdinal(playbackDetail, selectedVersion)
     val automaticAudioResolutionKnown = state.audioSelectionCapabilities != null
     val hasTrackOverride = audioTrackIndex != null || subtitleTrackIndex != null
     val subtitleSelection = TvPlaybackFormatting.subtitleLaunchSelection(

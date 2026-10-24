@@ -4,6 +4,7 @@ package org.siloserver.silo.tv.ui.screens.detail
 
 import org.siloserver.silo.model.playback.withPendingSeriesSubtitleChoice
 import org.siloserver.silo.model.playback.withPendingSeriesAudioChoice
+import org.siloserver.silo.model.playback.matchesSignature
 import kotlinx.coroutines.flow.stateIn
 
 import androidx.lifecycle.ViewModel
@@ -228,6 +229,63 @@ internal fun TvItemDetailUiState.subtitleAutoContext(
         showForced = detail?.effectiveShowForcedSubtitles ?: showForcedSubtitles,
         audioLanguage = audioLanguage,
         trackSignature = detail?.effectiveSubtitleTrackSignature,
+    )
+}
+
+/**
+ * The audio and subtitle this process remembered for an item (a pick on its
+ * detail page, or what the last playback of it ended on), kept only where the
+ * series choice does not contradict it. Online the series choice — the
+ * server's effective fields, with an unsent pick laid over them — is newer:
+ * it may come from another device or a later pick, and a stale session value
+ * shown as a selection would also be sent as the start's explicit track.
+ */
+internal fun sessionTracksConsistentWithSeriesChoice(
+    detail: ItemDetail,
+    version: FileVersion?,
+    audio: Int?,
+    subtitle: Int?,
+    pendingSubtitles: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
+    pendingAudio: Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice> = emptyMap(),
+): Pair<Int?, Int?> {
+    version ?: return audio to subtitle
+    val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId)
+    val expectedAudio = version.withPendingSeriesAudioChoice(key?.let(pendingAudio::get)).effectiveAudioTrackIndex
+    val keptAudio = audio?.takeIf { expectedAudio == null || it == expectedAudio }
+    val served = detail.withPendingSeriesSubtitleChoice(key?.let(pendingSubtitles::get))
+    val seriesOff = served.effectiveSubtitleMode?.trim().equals("off", ignoreCase = true)
+    val signature = served.effectiveSubtitleTrackSignature
+    val keptSubtitle = subtitle?.takeIf { index ->
+        when {
+            seriesOff -> index == -1
+            signature != null -> {
+                val expected = org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates(
+                    version.subtitleTracks.orEmpty(),
+                ).firstOrNull { it.matchesSignature(signature) }?.selectionIndex
+                expected == null || index == expected
+            }
+            else -> true
+        }
+    }
+    return keptAudio to keptSubtitle
+}
+
+/**
+ * The audio Auto plays for [version] of [playbackDetail], as the preview
+ * shows it and Play sends it: the server's effective track (it holds the
+ * profile's series choice; an unsent pick is laid over it), else the
+ * device's language with the best track this TV can play. Ranking the
+ * device language first ignored a series choice made here or elsewhere.
+ */
+internal fun TvItemDetailUiState.automaticAudioOrdinal(playbackDetail: ItemDetail?, version: FileVersion?): Int? {
+    version ?: return null
+    val key = playbackDetail?.let { org.siloserver.silo.model.playback.seriesTrackChoiceKey(it.seriesId, it.contentId) }
+    val served = version.withPendingSeriesAudioChoice(key?.let(pendingSeriesAudioChoices::get))
+    served.effectiveAudioTrackIndex?.takeIf { it in served.audioTracks.orEmpty().indices }?.let { return it }
+    return resolveTvAutomaticAudioTrackOrdinal(
+        version = version,
+        preferredAudioLanguage = preferredAudioLanguage,
+        capabilities = audioSelectionCapabilities,
     )
 }
 
@@ -1406,11 +1464,19 @@ class TvItemDetailViewModel(
         val state = _uiState.value
         val version = resolveTvTrackSelectionVersion(detail, saved.fileId, state.preferredQuality)
         val tracksBelongToVersion = saved.trackFileId == null || saved.trackFileId == version?.fileId
+        val (audio, subtitle) = sessionTracksConsistentWithSeriesChoice(
+            detail = detail,
+            version = version,
+            audio = saved.audio.takeIf { tracksBelongToVersion },
+            subtitle = saved.subtitle.takeIf { tracksBelongToVersion },
+            pendingSubtitles = state.pendingSeriesSubtitleChoices,
+            pendingAudio = state.pendingSeriesAudioChoices,
+        )
         _uiState.update {
             it.copy(
                 selectedFileId = saved.fileId?.takeIf { id -> detail.versions.any { version -> version.fileId == id } },
-                selectedAudioIndex = saved.audio.takeIf { tracksBelongToVersion },
-                selectedSubtitleIndex = saved.subtitle.takeIf { tracksBelongToVersion },
+                selectedAudioIndex = audio,
+                selectedSubtitleIndex = subtitle,
             )
         }
     }
@@ -2280,11 +2346,18 @@ class TvItemDetailViewModel(
                 selectedVersion,
                 _uiState.value.pendingSeriesSubtitleChoices,
                 _uiState.value.pendingSeriesAudioChoices,
+                subtitleResetToAuto = subtitleResetToAuto(detail),
             )
             ?.let { restoreTrackSelection(selectedVersion, it) }
 
-        val sessionAudio = session?.audio.takeIf { sessionMatchesSelectedVersion }
-        val sessionSubtitle = session?.subtitle.takeIf { sessionMatchesSelectedVersion }
+        val (sessionAudio, sessionSubtitle) = sessionTracksConsistentWithSeriesChoice(
+            detail = detail,
+            version = selectedVersion,
+            audio = session?.audio.takeIf { sessionMatchesSelectedVersion },
+            subtitle = session?.subtitle.takeIf { sessionMatchesSelectedVersion },
+            pendingSubtitles = _uiState.value.pendingSeriesSubtitleChoices,
+            pendingAudio = _uiState.value.pendingSeriesAudioChoices,
+        )
         return ResolvedNextUpTrackSelection(
             fileId = selectedFileId,
             audioIndex = sessionAudio ?: durable?.audioIndex,

@@ -18,6 +18,38 @@ import kotlin.test.assertTrue
 
 class TvTrackSelectionPersistenceTest {
     @Test
+    fun aRememberedSessionTrackYieldsToTheNewerSeriesChoice() {
+        // Episode tracks: English (0), Japanese (1); subtitles: English (0), English SDH (1).
+        val version = FileVersion(
+            fileId = 4,
+            audioTracks = listOf(AudioTrack(language = "eng", codec = "eac3"), AudioTrack(language = "jpn", codec = "ac3")),
+            subtitleTracks = listOf(
+                SubtitleTrack(index = 2, language = "eng", codec = "subrip", title = "English"),
+                SubtitleTrack(index = 3, language = "eng", codec = "subrip", title = "SDH"),
+            ),
+            effectiveAudioTrackIndex = 1,
+        )
+        val sdh = org.siloserver.silo.model.playback.SubtitleTrackSignature(
+            source = "embedded", language = "en", codec = "subrip", label = "SDH", hearingImpaired = true,
+        )
+        val detail = org.siloserver.silo.model.catalog.ItemDetail(
+            contentId = "e04", type = "episode", title = "E4", seriesId = "show",
+            versions = listOf(version), effectiveSubtitleMode = "always", effectiveSubtitleTrackSignature = sdh,
+        )
+
+        // The last playback ended on English / Off; the series now holds Japanese + SDH.
+        assertEquals(null to null, sessionTracksConsistentWithSeriesChoice(detail, version, audio = 0, subtitle = -1))
+        // Values that agree with the series choice stay.
+        assertEquals(1 to 1, sessionTracksConsistentWithSeriesChoice(detail, version, audio = 1, subtitle = 1))
+        // No series subtitle choice: the session value stands.
+        val noChoice = detail.copy(effectiveSubtitleTrackSignature = null)
+        assertEquals(1 to 0, sessionTracksConsistentWithSeriesChoice(noChoice, version, audio = 1, subtitle = 0))
+        // Off for the series: only Off agrees.
+        val off = detail.copy(effectiveSubtitleMode = "off", effectiveSubtitleTrackSignature = null)
+        assertEquals(1 to null, sessionTracksConsistentWithSeriesChoice(off, version, audio = 1, subtitle = 0))
+    }
+
+    @Test
     fun nextUpSelectionRecordsEpisodeFileAndCombinedSubtitleFingerprint() = runTest {
         val version = version()
         val payload = buildTrackSelectionPersistence(
