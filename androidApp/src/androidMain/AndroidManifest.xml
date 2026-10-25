@@ -80,6 +80,8 @@
                 <data android:host="downloads" />
                 <!-- Watch Party invitation: silo://watch-party?server=…&token=… -->
                 <data android:host="watch-party" />
+                <!-- A Roku's pairing link: silo://cast?v=2&host=…&port=…&id=… -->
+                <data android:host="cast" />
             </intent-filter>
         </activity>
 

@@ -5,6 +5,14 @@ object SiloCastProtocol {
     val supportedVersions: List<Int> = listOf(version)
     const val serviceType: String = "_silocast._tcp"
 
+    /**
+     * The Roku receiver's own DNS-SD type (silo-roku `docs/silocontrol.md`
+     * section 5.1). Roku sockets have no TLS, so a Roku is dialed over plain
+     * TCP or `sealed`, never TLS-PSK; the separate type keeps phones that
+     * only speak TLS from listing a TV they cannot reach.
+     */
+    const val rokuServiceType: String = "_silocast-roku._tcp"
+
     fun negotiatedVersion(peerVersions: List<Int>): Int? =
         supportedVersions.filter(peerVersions::contains).maxOrNull()
 }
@@ -34,6 +42,16 @@ object SiloCastFeature {
 
     /** The receiver accepts `presence`, so a controller can change its `passive` flag without reconnecting. */
     const val Presence = "presence"
+
+    /**
+     * The receiver can only mute, not set a level (Roku). The remote shows a
+     * mute toggle instead of a slider and leaves hardware volume keys alone.
+     * Android TV never lists it.
+     */
+    const val VolumeMuteOnly = "volume_mute_only"
+
+    /** The receiver cannot change playback speed (Roku); the remote hides the speed control. */
+    const val NoPlaybackSpeed = "no_playback_speed"
 
     val receiverFeatures: List<String> = listOf(MultiController, CloseReason, ResumeToken, ReplaceConfirmation, Presence)
     val phoneFeatures: List<String> = listOf(CloseReason, ResumeToken, ReplaceConfirmation)

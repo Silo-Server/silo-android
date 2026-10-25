@@ -1,9 +1,35 @@
 package org.siloserver.silo.android.cast
 
 import org.siloserver.silo.cast.SiloCastCloseReason
+import org.siloserver.silo.cast.SiloCastPlaybackRequest
+import org.siloserver.silo.model.catalog.FileVersion
+import org.siloserver.silo.model.playback.combinedSubtitleSelectionIndexes
 import org.siloserver.silo.cast.SiloCastLaunchRequest
 import org.siloserver.silo.cast.SiloCastNowPlayingSummary
 import org.siloserver.silo.common.cast.SiloCastTarget
+
+/**
+ * A Roku takes `launch` track indexes as the values `/api/v2/playback/start`
+ * takes (silo-roku `docs/silocontrol.md` section 7.2): the audio ordinal,
+ * which is the detail picker's position already, and the COMBINED subtitle
+ * ordinal (externals first), which the picker's catalog position is not.
+ * Other TVs keep receiving the catalog position they have always read.
+ */
+object SiloCastRokuTracks {
+    /**
+     * [playback] with its subtitle index as the combined ordinal in the
+     * launched version, found by `fileId` (or the only version). Off (negative)
+     * stays off. A choice that can't be mapped is dropped so the Roku picks by
+     * its own rules, rather than showing a different track.
+     */
+    fun forRoku(playback: SiloCastPlaybackRequest, versions: List<FileVersion>): SiloCastPlaybackRequest {
+        val position = playback.subtitleTrackIndex ?: return playback
+        if (position < 0) return playback
+        val version = versions.firstOrNull { it.fileId == playback.fileId } ?: versions.singleOrNull()
+        val combined = version?.subtitleTracks?.let(::combinedSubtitleSelectionIndexes)?.getOrNull(position)
+        return playback.copy(subtitleTrackIndex = combined)
+    }
+}
 
 /** What the phone does when the TV closes its session (silo-apple `SiloControlCloseResponse`). */
 sealed interface SiloCastCloseResponse {

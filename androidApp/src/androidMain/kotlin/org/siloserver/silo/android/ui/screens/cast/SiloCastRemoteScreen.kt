@@ -208,6 +208,8 @@ fun SiloCastRemoteScreen(
                         posterUrl = artwork.posterUrl ?: artwork.backdropUrl,
                         posterThumbhash = artwork.posterThumbhash ?: artwork.backdropThumbhash,
                         error = state.error,
+                        volumeMuteOnly = state.volumeMuteOnly,
+                        showSpeed = !state.noPlaybackSpeed,
                         controller = controller,
                     )
                 }
@@ -546,6 +548,8 @@ private fun RemoteNowPlaying(
     posterUrl: String?,
     posterThumbhash: String?,
     error: String?,
+    volumeMuteOnly: Boolean,
+    showSpeed: Boolean,
     controller: SiloCastController,
 ) {
     // 4 Hz tick drives the interpolated playhead between the TV's state
@@ -648,10 +652,14 @@ private fun RemoteNowPlaying(
             RemoteTransport(playback = playback, clockTick = clockTick, controller = controller)
 
             Spacer(modifier = Modifier.height(20.dp))
-            RemoteVolumeRow(playback = playback, controller = controller)
+            if (volumeMuteOnly) {
+                RemoteMuteToggle(playback = playback, controller = controller)
+            } else {
+                RemoteVolumeRow(playback = playback, controller = controller)
+            }
 
             Spacer(modifier = Modifier.height(20.dp))
-            RemoteSecondaryControls(playback = playback, controller = controller)
+            RemoteSecondaryControls(playback = playback, showSpeed = showSpeed, controller = controller)
 
             if (!error.isNullOrEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
@@ -882,6 +890,24 @@ private fun RemoteVolumeRow(
     }
 }
 
+/** A TV that can only mute (Roku, `volume_mute_only`) gets a toggle instead of a level slider. */
+@Composable
+private fun RemoteMuteToggle(
+    playback: SiloCastPlaybackState,
+    controller: SiloCastController,
+) {
+    OutlinedButton(onClick = { controller.setMuted(!playback.isMuted) }) {
+        Icon(
+            if (playback.isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+            contentDescription = null,
+            tint = RemoteOnSurface,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(if (playback.isMuted) "Unmute" else "Mute", color = RemoteOnSurface)
+    }
+}
+
 @Composable
 private fun remoteSliderColors() = SliderDefaults.colors(
     thumbColor = RemoteOnSurface,
@@ -902,6 +928,7 @@ private data class MenuEntry(
 @Composable
 private fun RemoteSecondaryControls(
     playback: SiloCastPlaybackState,
+    showSpeed: Boolean,
     controller: SiloCastController,
 ) {
     Row(
@@ -951,18 +978,21 @@ private fun RemoteSecondaryControls(
             )
         }
 
-        RemoteChipMenu(
-            icon = Icons.Outlined.Speed,
-            caption = "Speed",
-            entries = listOf(0.75, 1.0, 1.25, 1.5, 2.0).map { speed ->
-                MenuEntry(
-                    label = "${speed}×",
-                    selected = kotlin.math.abs(playback.playbackSpeed - speed) < 0.01,
-                    onClick = { controller.setPlaybackSpeed(speed) },
-                )
-            },
-            modifier = Modifier.weight(1f),
-        )
+        // A TV that lists `no_playback_speed` (Roku) has no speed to change.
+        if (showSpeed) {
+            RemoteChipMenu(
+                icon = Icons.Outlined.Speed,
+                caption = "Speed",
+                entries = listOf(0.75, 1.0, 1.25, 1.5, 2.0).map { speed ->
+                    MenuEntry(
+                        label = "${speed}×",
+                        selected = kotlin.math.abs(playback.playbackSpeed - speed) < 0.01,
+                        onClick = { controller.setPlaybackSpeed(speed) },
+                    )
+                },
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
 

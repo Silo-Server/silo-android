@@ -391,6 +391,22 @@ class MainActivity : ComponentActivity() {
     private suspend fun queueExternalRouteFrom(intent: Intent?) {
         if (intent?.getBooleanExtra(EXTRA_EXTERNAL_ROUTE_CONSUMED, false) == true) return
 
+        // A Roku's pairing link (silo://cast), usually its Connect a Phone QR
+        // code scanned with the camera. It names no server or profile and
+        // opens no screen: the Roku joins the TV picker, with its pairing key
+        // when it requires one.
+        if (intent?.dataString?.startsWith("silo://cast", ignoreCase = true) == true) {
+            intent.putExtra(EXTRA_EXTERNAL_ROUTE_CONSUMED, true)
+            val roku = get<SiloCastController>(SiloCastController::class.java).addPairingLink(intent.dataString.orEmpty())
+            val message = if (roku != null) {
+                "Added ${roku.name}. Choose it from Remote Control."
+            } else {
+                "That Roku pairing code isn't valid. Scan it again from Connect a Phone."
+            }
+            android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+
         // NOT gated on the active server. The route carries its issuing origin
         // and the pairing destination refuses — and explains — a mismatch, with
         // a switch action. Dropping it here was silent: the user scanned a code

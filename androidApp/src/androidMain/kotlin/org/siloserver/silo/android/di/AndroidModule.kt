@@ -93,6 +93,7 @@ import org.siloserver.silo.android.ui.screens.player.PlayerViewModel
 import org.siloserver.silo.android.ui.screens.search.SearchViewModel
 import org.siloserver.silo.android.ui.screens.settings.SettingsViewModel
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsViewModel
+import org.siloserver.silo.android.cast.EncryptedPrefsSiloCastRokuStore
 import org.siloserver.silo.android.cast.SharedPrefsSiloCastLastTargetStore
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.cast.SiloCastLastTargetStore
@@ -312,6 +313,8 @@ val androidModule = module {
                 activeProfiles.activeProfile.value?.takeIf { it.id == profileId }?.name
             },
             serverIdentities = get(),
+            // Roku pairing keys live in the encrypted preferences.
+            rokuStore = EncryptedPrefsSiloCastRokuStore(get()),
         )
     }
     single<AndroidPushTokenProvider> { FirebaseAndroidPushTokenProvider(androidContext()) }
