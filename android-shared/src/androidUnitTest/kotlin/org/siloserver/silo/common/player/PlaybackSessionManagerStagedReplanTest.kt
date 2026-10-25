@@ -977,6 +977,30 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
+    fun `quality change may move to another edition that has no subtitles`() = runTest {
+        val noSubtitles = replanPlan(planId = "s2").copy(
+            requestedMediaFileId = 42,
+            effectiveMediaFileId = 84,
+            selectedTracks = SelectedPlaybackTracksV3(audio = audioTrack(fileId = 84)),
+            subtitle = PlaybackSubtitleDecisionV3(mode = PlaybackSubtitleModeV3.OFF),
+        )
+        val harness = Harness(replanResponse = { _, _ -> response(noSubtitles) })
+        harness.start()
+
+        val staged = harness.manager.stageActiveVideoSessionReplan(
+            classification = "quality_changed",
+            positionSeconds = 42.0,
+            audioTrackIndex = 0,
+            subtitleTrackIndex = 4,
+            qualityPreference = "720p-high",
+        )
+
+        val candidate = assertIs<ApiResult.Success<StagedVideoReplan>>(staged).data.candidate
+        assertEquals(84, candidate.plan.effectiveMediaFileId)
+        assertEquals(null, candidate.plan.selectedTracks.subtitle)
+    }
+
+    @Test
     fun `immediate replan wrapper stages and commits replacement`() = runTest {
         val harness = Harness(
             replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },

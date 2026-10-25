@@ -2035,21 +2035,23 @@ open class PlaybackSessionManager(
     ): String? {
         val selected = candidate.selectedTracks.subtitle
         val subtitle = candidate.subtitle
+        val subtitlesOff = selected == null &&
+            subtitle.mode == PlaybackSubtitleModeV3.OFF &&
+            subtitle.trackId == null &&
+            subtitle.artifact == null &&
+            subtitle.hlsRendition == null
         if (requested == null) {
-            return if (selected == null &&
-                subtitle.mode == PlaybackSubtitleModeV3.OFF &&
-                subtitle.trackId == null &&
-                subtitle.artifact == null &&
-                subtitle.hlsRendition == null
-            ) {
-                null
-            } else {
-                "The candidate did not keep subtitles off."
-            }
+            return if (subtitlesOff) null else "The candidate did not keep subtitles off."
         }
         val candidateEffectiveFileId = candidate.effectiveMediaFileId
             ?: candidate.requestedMediaFileId
             ?: currentEffectiveFileId
+        if (candidateEffectiveFileId != currentEffectiveFileId && subtitlesOff) {
+            // The other edition may not carry the requested track, so the server
+            // can turn subtitles off there. It has already committed this plan;
+            // refusing it would leave the player on the old file.
+            return null
+        }
         if (candidateEffectiveFileId == currentEffectiveFileId) {
             if (selected?.id != requested.id ||
                 (selected.index != null && selected.index != requested.index) ||
