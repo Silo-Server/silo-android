@@ -48,7 +48,8 @@ val networkModule = module {
     single { ProfileApi(get(), get(), get()) }
     single { LibrarySectionItemsV2Api(get(), get(), get()) }
     single { HomeSectionsV2Api(get(), get(), get()) }
-    single { SectionApi(get(), get(), get(), get()) }
+    single { org.siloserver.silo.network.api.SectionRowItemLimit(get<HomeSectionsV2Api>()) }
+    single { SectionApi(get(), get(), get(), get(), get()) }
     single { SimilarCardsV2Api(get(), get(), get()) }
     single { TasteProfileV2Api(get(), get(), get()) }
     single { DiscoverV2Api(get(), get(), get()) }

@@ -14,14 +14,15 @@ import org.siloserver.silo.network.apiv2.*
 /** Home and library section reads are viewer-scoped v2 transports; DI supplies the real token manager. */
 class SectionApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client, ApiV2Gate.Unrestricted),
     private val sectionItems: LibrarySectionItemsV2Api = LibrarySectionItemsV2Api(client, TokenManagerImpl(), ApiV2Gate.Unrestricted),
-    private val home: HomeSectionsV2Api = HomeSectionsV2Api(client, TokenManagerImpl(), ApiV2Gate.Unrestricted)) {
+    private val home: HomeSectionsV2Api = HomeSectionsV2Api(client, TokenManagerImpl(), ApiV2Gate.Unrestricted),
+    private val rowItemLimit: SectionRowItemLimit = SectionRowItemLimit.Unsupported) {
 
     // --- Home ---
 
     suspend fun captureHomeAuthority() = home.capture()
     suspend fun isHomeAuthorityCurrent(owner: AuthScopeSnapshot) = home.current(owner)
     suspend fun getHomeSections(owner: AuthScopeSnapshot, widths: ArtworkWidths? = null): ApiResult<SectionsResponse> =
-        home.list(owner, widths)
+        rowItemLimit.read(owner) { limit -> home.list(owner, widths, limit) }
 
     suspend fun getHomeSectionItems(id: String, owner: AuthScopeSnapshot,
         widths: ArtworkWidths? = null): ApiResult<HomeSectionItemsResponse> = home.section(id, owner, widths)
@@ -32,7 +33,8 @@ class SectionApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
     // --- Library Sections ---
 
     suspend fun getLibrarySections(libraryId: Int, owner: AuthScopeSnapshot,
-        widths: ArtworkWidths? = null): ApiResult<SectionsResponse> = sectionItems.list(libraryId, owner, widths)
+        widths: ArtworkWidths? = null): ApiResult<SectionsResponse> =
+        rowItemLimit.read(owner) { limit -> sectionItems.list(libraryId, owner, widths, limit) }
 
     suspend fun captureLibrarySectionAuthority() = sectionItems.capture()
     suspend fun isLibrarySectionAuthorityCurrent(owner: AuthScopeSnapshot) = sectionItems.current(owner)

@@ -23,10 +23,16 @@ class LibrarySectionItemsV2Api(private val client: HttpClient, private val token
             HomeSectionItemsResponse(section, section.items)
         }
     }
-    suspend fun list(libraryId: Int, owner: AuthScopeSnapshot, widths: ArtworkWidths? = null): ApiResult<SectionsResponse> {
+    /** [itemLimit] is sent only when the server advertised it; see [sectionItemLimitParam]. */
+    suspend fun list(libraryId: Int, owner: AuthScopeSnapshot, widths: ArtworkWidths? = null,
+        itemLimit: Int? = null): ApiResult<SectionsResponse> {
         if (libraryId <= 0) return ApiResult.Error(422, "validation_failed", "Invalid library.")
+        var rejected = false
         return ownedV2Call<JsonObject, SectionsResponse>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { scope ->
-            client.get("/api/v2/library/$libraryId/sections") { authScope(scope!!); requireSiloAuth(); artworkWidths(widths, scope) }
-        }) { decodeSectionsV2(it) }
+            client.get("/api/v2/library/$libraryId/sections") {
+                authScope(scope!!); requireSiloAuth(); artworkWidths(widths, scope)
+                itemLimit?.let { parameter("item_limit", it) }
+            }.also { rejected = itemLimit != null && it.rejectsQueryParameter("item_limit") }
+        }) { decodeSectionsV2(it) }.tagItemLimitRejection(rejected)
     }
 }
