@@ -239,6 +239,8 @@ internal enum class TvSubtitleAdoptionResult {
 internal class TvSubtitlePlaybackAdoption internal constructor(
     val playback: TvSubtitleCommittedPlayback,
     val committed: CommittedSubtitle,
+    /** The subtitle the request asked for; [committed] can differ on another file. */
+    val requestedIdentity: SubtitleIdentity,
     val requestedSourcePositionSeconds: Double,
     /** The request carried the buffering-quality controller's own replan. */
     val bufferingQuality: Boolean,
@@ -1407,6 +1409,7 @@ internal class TvSubtitleTransactionAdapter(
                 val adoption = TvSubtitlePlaybackAdoption(
                     playback = playback,
                     committed = validatedState.committed,
+                    requestedIdentity = requested.identity,
                     requestedSourcePositionSeconds = adoptionContext.positionSeconds,
                     bufferingQuality = request.bufferingQuality != null,
                     currentOwner = {

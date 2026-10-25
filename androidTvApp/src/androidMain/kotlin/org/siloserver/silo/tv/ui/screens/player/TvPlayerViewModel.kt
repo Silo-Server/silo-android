@@ -351,6 +351,11 @@ internal fun captureTvEpisodeSelectionHandoff(
     selectedAudioTrack: PlayerTrackEntry? = null,
     selectedCatalogAudio: AudioTrack? = null,
     hasExplicitAudioSelection: Boolean = false,
+    /**
+     * The viewer's subtitle before a move to another version turned subtitles
+     * Off because that file lacks the track. Carried instead of that Off.
+     */
+    subtitleIntentBeforeForcedOff: EpisodeSubtitleIntent? = null,
 ): EpisodeSelectionHandoff = EpisodeSelectionHandoff(
     source = captureEpisodeSourceIntent(activeVersion),
     // Only an explicit choice travels. Carrying whatever the server happened to
@@ -382,25 +387,27 @@ internal fun captureTvEpisodeSelectionHandoff(
         )
         else -> EpisodeAudioIntent.auto()
     },
-    subtitle = if (!hasExplicitSubtitleSelection) {
-        org.siloserver.silo.common.player.video.EpisodeSubtitleIntent.auto()
-    } else {
-        when (committedSubtitleIdentity) {
-            SubtitleIdentity.Off -> captureEpisodeSubtitleIntent(-1, catalogSubtitles)
-            is SubtitleIdentity.ServerSidecar,
-            is SubtitleIdentity.ServerBurnIn,
-            is SubtitleIdentity.Embedded,
-            -> captureEpisodeSubtitleIntent(
-                committedSubtitleIdentity.serverTrackIndexForTv(),
-                catalogSubtitles,
-            )
-            is SubtitleIdentity.Downloaded -> committedSubtitleIdentity.media
-                .toEpisodeSubtitleIntent(external = true)
-            is SubtitleIdentity.LocalMedia3 -> committedSubtitleIdentity.media
-                .toEpisodeSubtitleIntent(external = null)
-        }
+    subtitle = when {
+        !hasExplicitSubtitleSelection ->
+            org.siloserver.silo.common.player.video.EpisodeSubtitleIntent.auto()
+        committedSubtitleIdentity == SubtitleIdentity.Off && subtitleIntentBeforeForcedOff != null ->
+            subtitleIntentBeforeForcedOff
+        else -> tvEpisodeSubtitleIntent(committedSubtitleIdentity, catalogSubtitles)
     },
 )
+
+internal fun tvEpisodeSubtitleIntent(
+    identity: SubtitleIdentity,
+    catalogSubtitles: List<PlayerSubtitleInfo>,
+): EpisodeSubtitleIntent = when (identity) {
+    SubtitleIdentity.Off -> captureEpisodeSubtitleIntent(-1, catalogSubtitles)
+    is SubtitleIdentity.ServerSidecar,
+    is SubtitleIdentity.ServerBurnIn,
+    is SubtitleIdentity.Embedded,
+    -> captureEpisodeSubtitleIntent(identity.serverTrackIndexForTv(), catalogSubtitles)
+    is SubtitleIdentity.Downloaded -> identity.media.toEpisodeSubtitleIntent(external = true)
+    is SubtitleIdentity.LocalMedia3 -> identity.media.toEpisodeSubtitleIntent(external = null)
+}
 
 internal class TvEpisodeSelectionHandoffLease internal constructor(
     val ownerGeneration: Long,
@@ -1315,6 +1322,14 @@ class TvPlayerViewModel(
 
     /** The mount nonce of each subtitle publication not yet confirmed, by session. */
     private val unpublishedSubtitleMounts = mutableMapOf<String, Long>()
+
+    /**
+     * The viewer's subtitle before a move to another version forced it Off;
+     * see [captureTvEpisodeSelectionHandoff]. Pending ones wait, by session,
+     * for their publication to be confirmed.
+     */
+    private var subtitleIntentBeforeForcedOff: EpisodeSubtitleIntent? = null
+    private val unpublishedSubtitleIntents = mutableMapOf<String, EpisodeSubtitleIntent?>()
     private val unpublishedTvLoadUi =
         TvUnpublishedLoadUiOwnership<UiState, TvSubtitlePlaybackContext>()
 
@@ -2067,6 +2082,13 @@ class TvPlayerViewModel(
         lastAdoptedSessionId = ready.session.sessionId
         if (!adoption.isCurrent()) return TvSubtitleAdoptionResult.Superseded
         unpublishedSubtitleUi[ready.session.sessionId] = before
+        unpublishedSubtitleIntents[ready.session.sessionId] = when {
+            adoption.committed.identity != SubtitleIdentity.Off -> null
+            fileId != before.mediaFileId && adoption.requestedIdentity != SubtitleIdentity.Off ->
+                subtitleIntentBeforeForcedOff
+                    ?: tvEpisodeSubtitleIntent(adoption.requestedIdentity, before.subtitleUrls)
+            else -> subtitleIntentBeforeForcedOff
+        }
 
         val subtitleUrls = enrichAuthoritativePlaybackSubtitleChoices(
             catalogTracks = version?.subtitleTracks.orEmpty(),
@@ -2124,6 +2146,9 @@ class TvPlayerViewModel(
     ): Boolean {
         unpublishedSubtitleUi.remove(playback.sessionId)
         unpublishedSubtitleMounts.remove(playback.sessionId)
+        if (unpublishedSubtitleIntents.containsKey(playback.sessionId)) {
+            subtitleIntentBeforeForcedOff = unpublishedSubtitleIntents.remove(playback.sessionId)
+        }
         return true
     }
 
@@ -2132,6 +2157,7 @@ class TvPlayerViewModel(
         restoreUi: Boolean,
     ): Boolean {
         val predecessor = unpublishedSubtitleUi.remove(playback.sessionId)
+        unpublishedSubtitleIntents.remove(playback.sessionId)
         // A replacement the controller adopted sends its summary when the
         // predecessor's remount ends it. One it never adopted sends none, and
         // its identity would go to a later adoption that repeats its plan id.
@@ -2314,6 +2340,7 @@ class TvPlayerViewModel(
         launchSubtitleSelectionApplied = false
         autoSelectedSubtitleIdentity = null
         autoSubtitleSelectionInFlight = false
+        subtitleIntentBeforeForcedOff = null
         // Cleared here and raised only if the carried choice actually RESOLVES
         // against this episode's tracks.
         //
@@ -5112,6 +5139,7 @@ class TvPlayerViewModel(
                 )?.let { activeVersion?.audioTracks?.getOrNull(it) },
             hasExplicitAudioSelection = manualAudioSelectionApplied,
             hasExplicitSubtitleSelection = manualSubtitleSelectionApplied,
+            subtitleIntentBeforeForcedOff = subtitleIntentBeforeForcedOff,
         )
         val outgoingSessionId = exitSessionId
         resolveNextEpisodeJob?.cancel()
@@ -5711,6 +5739,7 @@ class TvPlayerViewModel(
 
     fun selectSubtitleOption(identity: SubtitleIdentity) {
         manualSubtitleSelectionApplied = true
+        subtitleIntentBeforeForcedOff = null
         // The viewer is choosing: drop the automatic marker so this commit
         // writes the durable per-item preference.
         autoSelectedSubtitleIdentity = null
