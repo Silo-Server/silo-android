@@ -204,7 +204,13 @@ fun MovieDetailContent(
                                 TrackSelectorRow(
                                     icon = Icons.Outlined.ClosedCaption,
                                     label = "Subtitles",
-                                    value = formatSubtitleValueLabel(subtitleTracks, selectedSubtitleIndex),
+                                    value = formatSubtitleValueLabel(
+                                        subtitleTracks,
+                                        selectedSubtitleIndex,
+                                        seriesSignature = detail.effectiveSubtitleTrackSignature,
+                                        seriesOff = detail.effectiveSubtitleTrackSignature == null &&
+                                            detail.effectiveSubtitleMode.equals("off", ignoreCase = true),
+                                    ),
                                     onClick = { showSubtitlePicker = true },
                                     interactive = subtitleTracks.size > 1,
                                 )

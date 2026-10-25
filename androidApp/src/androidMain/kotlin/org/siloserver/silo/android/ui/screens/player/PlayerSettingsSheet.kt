@@ -86,6 +86,7 @@ fun PlayerSettingsSheet(
     audioDelayEnabled: Boolean = true,
     onSetAudioDelay: (Int) -> Unit = {},
     subtitleDelayMs: Int = 0,
+    subtitleDelaySavedToProfile: Boolean = true,
     onSetSubtitleDelay: (Int) -> Unit = {},
     sleepTimerState: SleepTimerState = SleepTimerState.Idle,
     tabletopPaneHeight: Dp? = null,
@@ -264,7 +265,8 @@ fun PlayerSettingsSheet(
                     PlayerGroup {
                         PlayerStepperRow(
                             label = "Audio delay",
-                            detail = if (audioDelayEnabled) "PCM audio only" else "Off for passthrough audio",
+                            // Audio delay is always this device's own (its output path).
+                            detail = if (audioDelayEnabled) "PCM audio only · This device" else "Off for passthrough audio",
                             value = formatDelayMs(audioDelayMs),
                             enabled = audioDelayEnabled,
                             onDecrease = { onSetAudioDelay((audioDelayMs - 50).coerceIn(-5000, 5000)) },
@@ -272,7 +274,11 @@ fun PlayerSettingsSheet(
                         )
                         PlayerStepperRow(
                             label = "Subtitle delay",
-                            detail = "Move captions earlier or later",
+                            detail = if (subtitleDelaySavedToProfile) {
+                                "Saved for this profile on all devices"
+                            } else {
+                                "Only on this device"
+                            },
                             value = formatDelayMs(subtitleDelayMs),
                             onDecrease = { onSetSubtitleDelay((subtitleDelayMs - 50).coerceIn(-10000, 10000)) },
                             onIncrease = { onSetSubtitleDelay((subtitleDelayMs + 50).coerceIn(-10000, 10000)) },

@@ -82,9 +82,22 @@ internal data class ItemDetailReadV2(
     val videos: List<ItemVideo>? = null,
     val extras: List<ItemExtra>? = null,
     val themes: ThemeSelection? = null,
+    // The subtitle the profile's preferences resolve to for this item,
+    // including a choice remembered for its series. Detail pages preview it
+    // (and TV starts from that preview), so dropping it showed the profile's
+    // defaults instead of the series choice.
+    @SerialName("effective_subtitle_language") val effectiveSubtitleLanguage: String? = null,
+    @SerialName("effective_subtitle_mode") val effectiveSubtitleMode: String? = null,
+    @SerialName("effective_show_forced_subtitles") val effectiveShowForcedSubtitles: Boolean? = null,
+    @SerialName("effective_subtitle_track_signature")
+    val effectiveSubtitleTrackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
 ) {
     fun toDomain() = ItemDetail(
         contentId = contentId,
+        effectiveSubtitleLanguage = effectiveSubtitleLanguage,
+        effectiveSubtitleMode = effectiveSubtitleMode,
+        effectiveShowForcedSubtitles = effectiveShowForcedSubtitles,
+        effectiveSubtitleTrackSignature = effectiveSubtitleTrackSignature,
         type = type,
         status = status,
         title = title,

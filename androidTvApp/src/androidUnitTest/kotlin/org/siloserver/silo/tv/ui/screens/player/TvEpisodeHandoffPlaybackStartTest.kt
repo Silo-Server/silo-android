@@ -16,6 +16,39 @@ import org.siloserver.silo.playback.audioTrackFingerprint
 
 class TvEpisodeHandoffPlaybackStartTest {
     @Test
+    fun nextUpCarriesTheChosenSubtitleNotTheFallbackThatPlayed() {
+        val sdh = EpisodeSubtitleIntent(EpisodeSubtitleMode.TRACK, language = "en", hearingImpaired = true)
+        val plainEnglish = EpisodeSubtitleIntent(EpisodeSubtitleMode.TRACK, language = "en", hearingImpaired = false)
+        // E03 had only plain English, so the SDH choice carried in fell back.
+        val playedOnE03 = EpisodeSelectionHandoff(subtitle = plainEnglish)
+        val carriedIntoE03 = EpisodeSelectionHandoff(subtitle = sdh)
+
+        assertEquals(sdh, carryEpisodeIntent(playedOnE03, carriedIntoE03, audioPicked = false, subtitlePicked = false).subtitle)
+        // A pick made during E03 is the new choice.
+        assertEquals(plainEnglish, carryEpisodeIntent(playedOnE03, carriedIntoE03, audioPicked = false, subtitlePicked = true).subtitle)
+        // Nothing carried in: what played (an explicit choice) is carried.
+        assertEquals(plainEnglish, carryEpisodeIntent(playedOnE03, null, audioPicked = false, subtitlePicked = false).subtitle)
+    }
+
+    @Test
+    fun nextUpCarriesOnlyAudioTheViewerChose() {
+        val japanese = org.siloserver.silo.common.player.video.EpisodeAudioIntent(
+            org.siloserver.silo.common.player.video.EpisodeAudioMode.TRACK, language = "jpn",
+        )
+        val english = org.siloserver.silo.common.player.video.EpisodeAudioIntent(
+            org.siloserver.silo.common.player.video.EpisodeAudioMode.TRACK, language = "eng",
+        )
+        // E03 has only English audio; an automatic commit made it look chosen.
+        val playedOnE03 = EpisodeSelectionHandoff(audio = english)
+        val auto = org.siloserver.silo.common.player.video.EpisodeAudioMode.AUTO
+
+        assertEquals(auto, carryEpisodeIntent(playedOnE03, null, audioPicked = false, subtitlePicked = false).audio.mode)
+        assertEquals(auto, carryEpisodeIntent(playedOnE03, EpisodeSelectionHandoff(), audioPicked = false, subtitlePicked = false).audio.mode)
+        assertEquals(japanese, carryEpisodeIntent(playedOnE03, EpisodeSelectionHandoff(audio = japanese), audioPicked = false, subtitlePicked = false).audio)
+        assertEquals(english, carryEpisodeIntent(playedOnE03, EpisodeSelectionHandoff(audio = japanese), audioPicked = true, subtitlePicked = false).audio)
+    }
+
+    @Test
     fun explicitDetailFileIdWinsOverEpisodeHandoff() {
         val resolved = resolveTvPlaybackStartSelection(
             preferredFileId = 1080,
@@ -147,7 +180,7 @@ class TvEpisodeHandoffPlaybackStartTest {
     }
 
     @Test
-    fun tvAudioPrecedenceIsManualThenCarryThenPerFileThenLanguage() {
+    fun tvAudioPrecedenceIsManualThenCarryThenServerThenPerFileThenLanguage() {
         val tracks = listOf(
             AudioTrack(codec = "aac", language = "eng", title = "English"),
             AudioTrack(codec = "truehd", language = "jpn", title = "Japanese"),
@@ -161,6 +194,15 @@ class TvEpisodeHandoffPlaybackStartTest {
         assertEquals(1, resolveTvInitialAudioTrackIndex(null, null, false, tracks, durable, "fr", capabilities))
         assertEquals(2, resolveTvInitialAudioTrackIndex(null, null, false, tracks, null, "fr", capabilities))
         assertNull(resolveTvInitialAudioTrackIndex(null, null, true, tracks, durable, "fr", capabilities))
+        // The server's effective track (the series choice) beats this device's
+        // per-file memory and language, never a pick or a carried choice.
+        assertEquals(0, resolveTvInitialAudioTrackIndex(null, null, false, tracks, durable, "fr", capabilities, serverAudioTrackIndex = 0))
+        assertEquals(2, resolveTvInitialAudioTrackIndex(null, 2, false, tracks, durable, "fr", capabilities, serverAudioTrackIndex = 0))
+        assertEquals(1, resolveTvInitialAudioTrackIndex(1, null, false, tracks, durable, "fr", capabilities, serverAudioTrackIndex = 0))
+        // An index the file does not have is no answer.
+        assertEquals(1, resolveTvInitialAudioTrackIndex(null, null, false, tracks, durable, "fr", capabilities, serverAudioTrackIndex = 7))
+        // Auto set and not landed: the language decides, not the older per-file pick.
+        assertEquals(2, resolveTvInitialAudioTrackIndex(null, null, false, tracks, durable, "fr", capabilities, audioResetToAuto = true))
     }
 
     @Test

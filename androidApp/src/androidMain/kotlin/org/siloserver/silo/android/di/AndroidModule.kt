@@ -389,6 +389,7 @@ val androidModule = module {
             reachabilityMonitor = get(),
             userItemStatePort = get(),
             networkEvidenceProvider = get(),
+            seriesTrackChoiceWriter = get(),
         )
     }
     factory {
@@ -493,6 +494,7 @@ val androidModule = module {
             shuffleFeatureStore = get(),
             networkEvidenceProvider = get(),
             throughputMeter = get(),
+            seriesTrackChoiceWriter = get(),
         )
     }
     viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get()) }
@@ -532,6 +534,7 @@ val androidModule = module {
         ItemDetailViewModel(
             get(), get(), get(), get(), get(), get(), get(), params.get(),
             getOrNull<org.siloserver.silo.repository.port.UserItemStatePort>() ?: org.siloserver.silo.repository.port.NoOpUserItemStatePort,
+            seriesTrackChoiceWriter = get(),
         )
     }
     viewModel { params -> PersonDetailViewModel(get(), params.get(), get()) }

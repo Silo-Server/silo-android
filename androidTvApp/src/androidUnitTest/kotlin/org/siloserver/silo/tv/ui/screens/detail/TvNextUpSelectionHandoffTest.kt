@@ -528,6 +528,36 @@ class TvNextUpSelectionHandoffTest {
     }
 
     @Test
+    fun nextUpRefreshAfterPlaybackDropsARefusedEpisodeButKeepsItOnATransientFailure() = runDetailTest {
+        val scenario = Scenario(suffix = "-return-refresh")
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+        fun playbackReturned() = TvDetailTrackSelectionSession.rememberPlaybackReturn(
+            contentId = scenario.episodeOneId,
+            fileId = 101,
+            audio = null,
+            subtitle = null,
+            positionSeconds = 12.0,
+            durationSeconds = 120.0,
+        )
+
+        // A transient failure keeps the Next Up episode on screen.
+        scenario.episodeOneFailure = HttpStatusCode.ServiceUnavailable
+        val before = scenario.episodeOneRequests.get()
+        playbackReturned()
+        fixture.viewModel.refreshOnReturn()
+        awaitCondition { scenario.episodeOneRequests.get() > before }
+        delay(20)
+        assertEquals(scenario.episodeOneId, fixture.viewModel.uiState.value.nextUpPlaybackDetail?.contentId)
+
+        // A refusal clears it, as the Next Up load does.
+        scenario.episodeOneFailure = HttpStatusCode.NotFound
+        playbackReturned()
+        fixture.viewModel.refreshOnReturn()
+        awaitCondition { fixture.viewModel.uiState.value.nextUpPlaybackDetail == null }
+    }
+
+    @Test
     fun staleRefreshCompletionCannotApplyHandoffToAnotherEpisode() = runDetailTest {
         val scenario = Scenario(suffix = "-stale")
         scenario.episodeOneWatchGate = CompletableDeferred()
@@ -944,6 +974,9 @@ class TvNextUpSelectionHandoffTest {
         val pendingEpisodeOneResponses = AtomicInteger()
         var episodeOneDefaultVersions = oldVersions
         val episodeOneResponses = ConcurrentLinkedDeque<DetailResponse>()
+        /** When set, episode one's detail answers with this status instead. */
+        @Volatile var episodeOneFailure: HttpStatusCode? = null
+        val episodeOneRequests = AtomicInteger()
 
         fun client(tokenManager: FakeTokenManager): HttpClient = HttpClient(
             MockEngine { request ->
@@ -989,8 +1022,16 @@ class TvNextUpSelectionHandoffTest {
                         )
                     }
                     "/api/v2/catalog/items/$episodeOneId" -> {
+                        episodeOneRequests.incrementAndGet()
                         val queued = episodeOneResponses.pollFirst()
-                        if (queued == null) {
+                        val failure = episodeOneFailure
+                        if (failure != null) {
+                            respond(
+                                content = """{"error":"refused","message":"refused"}""",
+                                status = failure,
+                                headers = JSON_HEADERS,
+                            )
+                        } else if (queued == null) {
                             json(itemDetailJson(episodeOneId, episodeOneDefaultVersions, oldLastFileId))
                         } else {
                             pendingEpisodeOneResponses.set(episodeOneResponses.size)

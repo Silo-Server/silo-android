@@ -231,6 +231,16 @@ data class ItemDetail(
     val versions: List<FileVersion> = emptyList(),
     @SerialName("playback_variants") val playbackVariants: List<PlaybackVariant> = emptyList(),
     val subtitles: List<SubtitleInfo> = emptyList(),
+    /**
+     * The subtitle choice the viewer's preferences resolve to for this item,
+     * including a choice remembered for its series; absent when it is the
+     * contract default. Same fields as [WatchDetail]'s.
+     */
+    @SerialName("effective_subtitle_language") val effectiveSubtitleLanguage: String? = null,
+    @SerialName("effective_subtitle_mode") val effectiveSubtitleMode: String? = null,
+    @SerialName("effective_show_forced_subtitles") val effectiveShowForcedSubtitles: Boolean? = null,
+    @SerialName("effective_subtitle_track_signature")
+    val effectiveSubtitleTrackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
     @SerialName("overlay_summary") val overlaySummary: OverlaySummary? = null,
     val intro: TimeRange? = null,
     val credits: TimeRange? = null,
@@ -442,6 +452,8 @@ data class AudioTrack(
     @SerialName("sample_rate") val sampleRate: Int? = null,
     val language: String? = null,
     val title: String? = null,
+    /** The title stored in the container; part of the server's audio track signature. */
+    @SerialName("embedded_title") val embeddedTitle: String? = null,
     @SerialName("default") val isDefault: Boolean = false
 )
 
@@ -454,7 +466,8 @@ data class SubtitleTrack(
     val forced: Boolean = false,
     @SerialName("default") val isDefault: Boolean = false,
     val external: Boolean = false,
-    @SerialName("external_path") val externalPath: String? = null
+    @SerialName("external_path") val externalPath: String? = null,
+    @SerialName("hearing_impaired") val hearingImpaired: Boolean = false,
 )
 
 @Serializable
@@ -633,6 +646,9 @@ data class WatchDetail(
     @SerialName("effective_subtitle_language") val effectiveSubtitleLanguage: String? = null,
     @SerialName("effective_subtitle_mode") val effectiveSubtitleMode: String? = null,
     @SerialName("effective_show_forced_subtitles") val effectiveShowForcedSubtitles: Boolean? = null,
+    /** The subtitle track this profile last chose for the series (or movie); absent when none. */
+    @SerialName("effective_subtitle_track_signature")
+    val effectiveSubtitleTrackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
     // Optional forward-compatible artwork. Current servers expose these on
     // ItemDetail rather than WatchDetail, so playback clients must fall back
     // to the full catalog detail when these fields are absent.

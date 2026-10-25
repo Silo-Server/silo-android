@@ -55,6 +55,11 @@ data class VideoPlaybackStartRequest(
      * version switch), so no replan may swap it for another version.
      */
     val versionChosen: Boolean = false,
+    /**
+     * Audio and subtitle the viewer picked earlier in this player session,
+     * laid over the target's effective tracks when it is the same series.
+     */
+    val carriedTrackChoices: org.siloserver.silo.model.playback.CarriedSeriesTrackChoices? = null,
 ) {
     /**
      * `allow_alternate_versions` for this start. False pins the file: a Watch

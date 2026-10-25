@@ -1,0 +1,325 @@
+package org.siloserver.silo.model.playback
+
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.model.catalog.WatchDetail
+import org.siloserver.silo.network.SiloJson
+import org.siloserver.silo.playback.SUBTITLE_OFF_FINGERPRINT
+import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
+import org.siloserver.silo.playback.subtitleTrackFingerprint
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+class SeriesSubtitleChoiceTest {
+
+    private val englishSdh = PlayerSubtitleInfo(
+        index = 3, language = "en", codec = "subrip", label = "English (SDH)", source = "external",
+        url = "/s/3.srt",
+    )
+
+    @Test
+    fun `the server's SDH flag marks a track whose label does not say SDH`() {
+        val catalog = SiloJson.decodeFromString(
+            SubtitleTrack.serializer(),
+            """{"index":0,"language":"eng","codec":"subrip","title":"English","hearing_impaired":true}""",
+        )
+        val row = PlayerSubtitleInfo(
+            index = 0, language = "en", codec = "subrip", label = "English", source = "embedded",
+            url = "/s/0.vtt", hearingImpaired = true,
+        )
+
+        assertTrue(catalog.subtitleTrackSignature().hearingImpaired)
+        assertTrue(row.subtitleTrackSignature().hearingImpaired)
+        assertTrue(row.toAutoSubtitleCandidate().matchesSignature(catalog.subtitleTrackSignature()))
+        assertFalse(row.copy(hearingImpaired = false).toAutoSubtitleCandidate().matchesSignature(catalog.subtitleTrackSignature()))
+    }
+
+    @Test
+    fun `an episode is remembered under its series and a movie under itself`() {
+        assertEquals("series-1", seriesTrackChoiceKey("series-1", "episode-9"))
+        assertEquals("movie-4", seriesTrackChoiceKey(null, "movie-4"))
+        assertEquals("movie-4", seriesTrackChoiceKey("", "movie-4"))
+        assertNull(seriesTrackChoiceKey(null, " "))
+    }
+
+    @Test
+    fun `off is spelled as on web and Apple and never pins forced subtitles`() {
+        val body = SiloJson.encodeToJsonElement(SeriesSubtitleChoice.serializer(), SeriesSubtitleChoice.Off).jsonObject
+        assertEquals(
+            JsonObject(
+                mapOf(
+                    "subtitle_language" to JsonPrimitive(""),
+                    "subtitle_track_index" to JsonPrimitive(-1),
+                    "subtitle_mode" to JsonPrimitive("off"),
+                ),
+            ),
+            body,
+        )
+    }
+
+    @Test
+    fun `a track pick carries the server signature and no forced override`() {
+        val choice = SeriesSubtitleChoice.of(englishSdh)
+        assertEquals("en", choice.subtitleLanguage)
+        assertEquals(3, choice.subtitleTrackIndex)
+        assertEquals("always", choice.subtitleMode)
+        assertEquals(
+            SubtitleTrackSignature(
+                source = "external", language = "en", codec = "subrip", label = "English (SDH)",
+                forced = false, hearingImpaired = true,
+            ),
+            choice.trackSignature,
+        )
+        val body = SiloJson.encodeToJsonElement(SeriesSubtitleChoice.serializer(), choice).jsonObject
+        assertFalse("show_forced_subtitles" in body)
+        assertEquals(JsonPrimitive(true), body["track_signature"]!!.jsonObject["hearing_impaired"])
+    }
+
+    @Test
+    fun `a catalog pick uses the combined selection index`() {
+        val track = SubtitleTrack(index = 2, codec = "pgs", language = "fr", title = "Français", forced = true)
+        val choice = SeriesSubtitleChoice.of(track, selectionIndex = 5)
+        assertEquals(5, choice.subtitleTrackIndex)
+        assertEquals("embedded", choice.trackSignature?.source)
+        assertTrue(choice.trackSignature!!.forced)
+    }
+
+    @Test
+    fun `an identity pick is described from the session inventory`() {
+        assertEquals(SeriesSubtitleChoice.Off, SeriesSubtitleChoice.of(SubtitleIdentity.Off, listOf(englishSdh)))
+        assertEquals(
+            SeriesSubtitleChoice.of(englishSdh),
+            SeriesSubtitleChoice.of(SubtitleIdentity.ServerSidecar(serverIndex = 3), listOf(englishSdh)),
+        )
+        assertNull(SeriesSubtitleChoice.of(SubtitleIdentity.ServerSidecar(serverIndex = 8), listOf(englishSdh)))
+    }
+
+    @Test
+    fun `the watch detail decodes the remembered track`() {
+        val detail = SiloJson.decodeFromString(
+            WatchDetail.serializer(),
+            """{"content_id":"e1","type":"episode","title":"Pilot","effective_subtitle_mode":"always",
+               "effective_subtitle_track_signature":{"source":"embedded","language":"es","codec":"ass",
+               "label":"Latino","forced":false,"hearing_impaired":false}}""",
+        )
+        assertEquals(
+            SubtitleTrackSignature(source = "embedded", language = "es", codec = "ass", label = "Latino"),
+            detail.effectiveSubtitleTrackSignature,
+        )
+    }
+
+    @Test
+    fun `the catalog item detail carries the series subtitle choice too`() {
+        // Detail pages read the v2 catalog item, not the watch detail.
+        val detail = SiloJson.decodeFromString<org.siloserver.silo.network.apiv2.ItemDetailReadV2>(
+            """{"content_id":"e4","type":"episode","title":"E4","series_id":"show","cast":[],"crew":[],
+               "versions":[],"subtitles":[],"effective_subtitle_language":"en","effective_subtitle_mode":"always",
+               "effective_show_forced_subtitles":false,
+               "effective_subtitle_track_signature":{"source":"embedded","language":"en","codec":"subrip",
+               "label":"SDH","forced":false,"hearing_impaired":true}}""",
+        ).toDomain()
+        assertEquals("en", detail.effectiveSubtitleLanguage)
+        assertEquals("always", detail.effectiveSubtitleMode)
+        assertEquals(false, detail.effectiveShowForcedSubtitles)
+        assertEquals(
+            SubtitleTrackSignature(source = "embedded", language = "en", codec = "subrip", label = "SDH", hearingImpaired = true),
+            detail.effectiveSubtitleTrackSignature,
+        )
+    }
+
+    @Test
+    fun `a page pick's baseline is retired only by a refresh of the same item`() {
+        val e1 = org.siloserver.silo.model.catalog.ItemDetail(
+            contentId = "e1", type = "episode", title = "E1", seriesId = "show",
+            effectiveSubtitleLanguage = "en", effectiveSubtitleMode = "auto",
+        )
+        val e2 = e1.copy(contentId = "e2", title = "E2", effectiveSubtitleMode = "always")
+        val subtitle = PickedSubtitleBaseline.of(e1)
+        val audio = PickedAudioBaseline.of(e1.copy(versions = listOf(org.siloserver.silo.model.catalog.FileVersion(fileId = 1, effectiveAudioTrackIndex = 0))))
+
+        // Another episode of the series answers differently: nothing superseded the pick.
+        assertFalse(subtitle.supersededBy(e2))
+        assertFalse(audio.supersededBy(e2.copy(versions = listOf(org.siloserver.silo.model.catalog.FileVersion(fileId = 2, effectiveAudioTrackIndex = 1)))))
+        // The same episode, unchanged: still the stale answer the pick covers.
+        assertFalse(subtitle.supersededBy(e1))
+        // The same episode refreshed with a different answer: retired.
+        assertTrue(subtitle.supersededBy(e1.copy(effectiveSubtitleMode = "always")))
+        assertTrue(audio.supersededBy(e1.copy(versions = listOf(org.siloserver.silo.model.catalog.FileVersion(fileId = 1, effectiveAudioTrackIndex = 1)))))
+    }
+
+    @Test
+    fun `a pending choice overlays the server's effective fields`() {
+        val served = WatchDetail(
+            contentId = "e2", type = "episode", title = "E2", seriesId = "s",
+            effectiveSubtitleLanguage = "en", effectiveSubtitleMode = "always",
+            effectiveSubtitleTrackSignature = SubtitleTrackSignature(language = "en"),
+        )
+        val track = served.withPendingSeriesSubtitleChoice(PendingSeriesSubtitleChoice(SeriesSubtitleChoice.of(englishSdh)))
+        assertEquals("always", track.effectiveSubtitleMode)
+        assertEquals(SeriesSubtitleChoice.of(englishSdh).trackSignature, track.effectiveSubtitleTrackSignature)
+
+        val off = served.withPendingSeriesSubtitleChoice(PendingSeriesSubtitleChoice(SeriesSubtitleChoice.Off))
+        assertEquals("off", off.effectiveSubtitleMode)
+        assertNull(off.effectiveSubtitleTrackSignature)
+
+        val automatic = served.withPendingSeriesSubtitleChoice(PendingSeriesSubtitleChoice(null))
+        assertNull(automatic.effectiveSubtitleTrackSignature)
+        assertNull(automatic.effectiveSubtitleLanguage, "the starters fall back to the profile's")
+        assertNull(automatic.effectiveSubtitleMode)
+
+        // The served Off is the series choice being deleted: it must not keep
+        // subtitles off while the reset waits to land.
+        val servedOff = served.copy(effectiveSubtitleMode = "off", effectiveSubtitleLanguage = "")
+        assertNull(servedOff.withPendingSeriesSubtitleChoice(PendingSeriesSubtitleChoice(null)).effectiveSubtitleMode)
+
+        assertEquals(served, served.withPendingSeriesSubtitleChoice(null))
+    }
+
+    // ---- resolver --------------------------------------------------------
+
+    private val tracks = listOf(
+        AutoSubtitleCandidate(selectionIndex = 0, language = "es", codec = "ass", title = "Castellano", source = AutoSubtitleSource.EMBEDDED),
+        AutoSubtitleCandidate(selectionIndex = 1, language = "es", codec = "ass", title = "Latino", source = AutoSubtitleSource.EMBEDDED),
+        AutoSubtitleCandidate(selectionIndex = 2, language = "en", codec = "srt", title = "English", source = AutoSubtitleSource.EXTERNAL),
+        AutoSubtitleCandidate(selectionIndex = 3, language = "en", codec = "srt", title = "Signs", forced = true, source = AutoSubtitleSource.EXTERNAL),
+    )
+
+    private fun resolve(context: AutoSubtitleContext) =
+        resolveAutoSubtitle(tracks, context).selectedCandidate()?.selectionIndex
+
+    @Test
+    fun `the series signature wins over the language rules`() {
+        val latino = SubtitleTrackSignature(source = "embedded", language = "es", codec = "ass", label = "Latino")
+        // Without the signature, "es always" starts on the first Spanish track.
+        assertEquals(0, resolve(AutoSubtitleContext("es", "always")))
+        assertEquals(1, resolve(AutoSubtitleContext("es", "always", trackSignature = latino)))
+        // A remembered forced track is the viewer's pick, so it is honoured.
+        val signs = SubtitleTrackSignature(source = "external", language = "en", codec = "srt", label = "Signs", forced = true)
+        assertEquals(3, resolve(AutoSubtitleContext("en", "always", showForced = true, trackSignature = signs)))
+    }
+
+    @Test
+    fun `off for the series with forced subtitles off stays off, whatever the signature`() {
+        val latino = SubtitleTrackSignature(source = "embedded", language = "es", codec = "ass", label = "Latino")
+        assertEquals(
+            AutoSubtitleResolution.Disable,
+            resolveAutoSubtitle(
+                tracks,
+                AutoSubtitleContext("es", "off", showForced = false, audioLanguage = "en", trackSignature = latino),
+            ),
+        )
+    }
+
+    @Test
+    fun `off for the series with forced subtitles on starts the forced track for the audio, not the signature`() {
+        val latino = SubtitleTrackSignature(source = "embedded", language = "es", codec = "ass", label = "Latino")
+        assertEquals(
+            3,
+            resolve(AutoSubtitleContext("es", "off", showForced = true, audioLanguage = "en", trackSignature = latino)),
+        )
+    }
+
+    @Test
+    fun `a signature with no exact match breaks ties within the language`() {
+        // Another episode: same "Latino" track but a different codec. The
+        // label still steers the pick away from the first Spanish track.
+        val latinoSrt = SubtitleTrackSignature(source = "embedded", language = "es", codec = "srt", label = "Latino")
+        assertEquals(1, resolve(AutoSubtitleContext("es", "always", trackSignature = latinoSrt)))
+    }
+
+    @Test
+    fun `a signature recorded as eng finds the track listed as en`() {
+        val latino = SubtitleTrackSignature(source = "embedded", language = "spa", codec = "ass", label = "Latino")
+        assertEquals(1, resolve(AutoSubtitleContext("es", "always", trackSignature = latino)))
+        assertFalse(tracks[2].matchesSignature(SubtitleTrackSignature(source = "external", language = "fre", codec = "srt")))
+    }
+
+    @Test
+    fun `forced never outranks the full track without a series choice`() {
+        assertEquals(2, resolve(AutoSubtitleContext("en", "always", showForced = true)))
+    }
+
+    // ---- local memory ----------------------------------------------------
+
+    @Test
+    fun `offline the local memory restores as before`() {
+        assertEquals("x", localSubtitleMemoryForSeriesChoice("x", serverChoiceKnown = false, signature = null))
+    }
+
+    @Test
+    fun `online without a series track choice the local memory restores unless the series is off`() {
+        // A pick whose write never landed is still remembered on this device.
+        val local = encodeSubtitleIdentityPreference(SubtitleIdentity.ServerSidecar(3, SubtitleMediaIdentity(language = "en")))
+        assertEquals(local, localSubtitleMemoryForSeriesChoice(local, serverChoiceKnown = true, signature = null))
+        assertEquals(local, localSubtitleMemoryForSeriesChoice(local, true, null, effectiveMode = "always"))
+        assertEquals(
+            SUBTITLE_OFF_FINGERPRINT,
+            localSubtitleMemoryForSeriesChoice(SUBTITLE_OFF_FINGERPRINT, serverChoiceKnown = true, signature = null),
+        )
+        // Auto set on this device since the pick: the profile's defaults, not the memory.
+        assertNull(localSubtitleMemoryForSeriesChoice(local, true, null, resetToAuto = true))
+        // Off for the series: Auto decides (it may show the forced track), so
+        // neither a track nor an Off memory restores.
+        assertNull(localSubtitleMemoryForSeriesChoice(local, true, null, effectiveMode = "off"))
+        assertNull(localSubtitleMemoryForSeriesChoice(SUBTITLE_OFF_FINGERPRINT, true, null, effectiveMode = "off"))
+    }
+
+    @Test
+    fun `a pick's language is sent the way the server accepts it`() {
+        assertEquals("eng", SeriesSubtitleChoice.of(SubtitleTrack(language = "eng"), 0).subtitleLanguage)
+        assertEquals("en", SeriesSubtitleChoice.of(SubtitleTrack(language = "English"), 0).subtitleLanguage)
+        assertEquals("", SeriesSubtitleChoice.of(SubtitleTrack(language = "Português"), 0).subtitleLanguage)
+        assertEquals("", SeriesSubtitleChoice.of(englishSdh.copy(language = "und")).subtitleLanguage)
+    }
+
+    @Test
+    fun `online the local memory only restores the series choice itself`() {
+        val signature = SubtitleTrackSignature(language = "eng", label = "English")
+        val sameChoice = encodeSubtitleIdentityPreference(
+            SubtitleIdentity.Downloaded(downloadId = 7, media = SubtitleMediaIdentity(language = "en", forced = false)),
+        )
+        val otherChoice = encodeSubtitleIdentityPreference(
+            SubtitleIdentity.ServerSidecar(3, SubtitleMediaIdentity(language = "fr")),
+        )
+        assertEquals(sameChoice, localSubtitleMemoryForSeriesChoice(sameChoice, true, signature))
+        assertNull(localSubtitleMemoryForSeriesChoice(otherChoice, true, signature))
+        assertNull(localSubtitleMemoryForSeriesChoice(SUBTITLE_OFF_FINGERPRINT, true, signature))
+        val legacy = subtitleTrackFingerprint(SubtitleTrack(index = 1, language = "en", codec = "srt", title = "English"))
+        assertEquals(legacy, localSubtitleMemoryForSeriesChoice(legacy, true, signature))
+    }
+
+    @Test
+    fun `online the local memory of an SDH track does not restore a plain series choice`() {
+        val plain = SubtitleTrackSignature(language = "en", label = "English", hearingImpaired = false)
+        val sdh = plain.copy(label = "English SDH", hearingImpaired = true)
+        val localSdh = encodeSubtitleIdentityPreference(
+            SubtitleIdentity.Downloaded(downloadId = 7, media = SubtitleMediaIdentity(language = "en", forced = false, hearingImpaired = true)),
+        )
+        val localSdhByLabel = encodeSubtitleIdentityPreference(
+            SubtitleIdentity.ServerSidecar(3, SubtitleMediaIdentity(language = "en", label = "English SDH")),
+        )
+        assertNull(localSubtitleMemoryForSeriesChoice(localSdh, true, plain))
+        assertNull(localSubtitleMemoryForSeriesChoice(localSdhByLabel, true, plain))
+        assertEquals(localSdh, localSubtitleMemoryForSeriesChoice(localSdh, true, sdh))
+    }
+
+    @Test
+    fun `online the local memory yields to a series choice the file holds`() {
+        // The series choice is the external English SRT; an older local pick
+        // of another English track agrees on language, forced and SDH, but the
+        // signature finds the chosen track itself, so the memory must not win.
+        val signature = SubtitleTrackSignature(source = "external", language = "eng", codec = "srt", label = "English")
+        val olderPick = encodeSubtitleIdentityPreference(
+            SubtitleIdentity.ServerSidecar(5, SubtitleMediaIdentity(language = "en", codecFamily = "pgs", forced = false)),
+        )
+        assertNull(localSubtitleMemoryForSeriesChoice(olderPick, true, signature, candidates = tracks))
+        // Where the file does not hold it (a downloaded or AI track), the
+        // memory still restores the same choice.
+        assertEquals(olderPick, localSubtitleMemoryForSeriesChoice(olderPick, true, signature, candidates = tracks.take(2)))
+    }
+}

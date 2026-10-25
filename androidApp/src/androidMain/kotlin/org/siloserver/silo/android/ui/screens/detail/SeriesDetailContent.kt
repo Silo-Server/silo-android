@@ -194,6 +194,9 @@ fun SeriesDetailContent(
                             value = if (subtitleTracks.isEmpty()) "Unavailable" else formatSubtitleValueLabel(
                                 subtitleTracks,
                                 selectedSubtitleIndex,
+                                seriesSignature = loadedSelectedEpisodeDetail.effectiveSubtitleTrackSignature,
+                                seriesOff = loadedSelectedEpisodeDetail.effectiveSubtitleTrackSignature == null &&
+                                    loadedSelectedEpisodeDetail.effectiveSubtitleMode.equals("off", ignoreCase = true),
                             ),
                             onClick = { showSubtitlePicker = true },
                             interactive = subtitleTracks.size > 1,

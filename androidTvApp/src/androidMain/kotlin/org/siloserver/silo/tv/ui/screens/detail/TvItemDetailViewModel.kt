@@ -2,6 +2,9 @@
 
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.model.playback.withPendingSeriesSubtitleChoice
+import org.siloserver.silo.model.playback.withPendingSeriesAudioChoice
+import org.siloserver.silo.model.playback.matchesSignature
 import kotlinx.coroutines.flow.stateIn
 
 import androidx.lifecycle.ViewModel
@@ -159,7 +162,167 @@ data class TvItemDetailUiState(
     val preferredSubtitleLanguage: String? = null,
     val subtitleMode: String? = null,
     val showForcedSubtitles: Boolean = true,
-)
+    /**
+     * Series subtitle choices this profile made that have not reached the
+     * server yet, by series key. They outrank the details' effective fields,
+     * which still describe the older choice.
+     */
+    val pendingSeriesSubtitleChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
+    /** [pendingSeriesSubtitleChoices] for audio. */
+    val pendingSeriesAudioChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice> = emptyMap(),
+    /**
+     * Series choices picked on this page, by series key. Kept after their
+     * write lands: the loaded details still describe the older choice until
+     * they are read again, and the previews must not fall back to it.
+     */
+    val pickedSeriesSubtitleChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
+    val pickedSeriesAudioChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice> = emptyMap(),
+    /**
+     * The effective fields each pick was laid over. A pick stops applying once
+     * a refreshed detail answers differently: the server then holds it, or a
+     * newer choice made elsewhere (in the player, on another device).
+     */
+    val pickedSubtitleBaselines: Map<String, org.siloserver.silo.model.playback.PickedSubtitleBaseline> = emptyMap(),
+    val pickedAudioBaselines: Map<String, org.siloserver.silo.model.playback.PickedAudioBaseline> = emptyMap(),
+) {
+    /** What this page knows newer than [detail]: its own picks, and any choice still unsent. */
+    fun subtitleOverlayFor(detail: ItemDetail?): Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> {
+        val picked = pickedSeriesSubtitleChoices.filterKeys { key ->
+            val baseline = pickedSubtitleBaselines[key]
+            baseline == null || detail == null || !baseline.supersededBy(detail)
+        }
+        return picked + pendingSeriesSubtitleChoices
+    }
+
+    /** [subtitleOverlayFor] for audio. */
+    fun audioOverlayFor(detail: ItemDetail?): Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice> {
+        val picked = pickedSeriesAudioChoices.filterKeys { key ->
+            val baseline = pickedAudioBaselines[key]
+            baseline == null || detail == null || !baseline.supersededBy(detail)
+        }
+        return picked + pendingSeriesAudioChoices
+    }
+}
+
+
+
+/**
+ * This device's per-file memory for [version] filtered by the server's series
+ * choices: the Auto preview already shows them, and a stale local pick that
+ * conflicts with them would otherwise override them. See
+ * [org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice] for
+ * subtitles; audio only restores the track the server's effective answer names.
+ */
+internal fun org.siloserver.silo.repository.port.LocalTrackSelection.withSeriesTrackChoices(
+    detail: ItemDetail,
+    version: FileVersion,
+    pendingSubtitles: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
+    pendingAudio: Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice> = emptyMap(),
+    subtitleResetToAuto: Boolean = false,
+): org.siloserver.silo.repository.port.LocalTrackSelection {
+    val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId)
+    val audioTracks = version.audioTracks.orEmpty()
+    val served = detail.withPendingSeriesSubtitleChoice(key?.let(pendingSubtitles::get))
+    return copy(
+        subtitleFingerprint = org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice(
+            localPreference = subtitleFingerprint,
+            serverChoiceKnown = true,
+            signature = served.effectiveSubtitleTrackSignature,
+            candidates = org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates(
+                version.subtitleTracks.orEmpty(),
+            ),
+            effectiveMode = served.effectiveSubtitleMode,
+            resetToAuto = subtitleResetToAuto,
+        ),
+        audioFingerprint = org.siloserver.silo.model.playback.localAudioMemoryForSeriesChoice(
+            localFingerprint = audioFingerprint,
+            tracks = audioTracks,
+            serverOrdinal = version.withPendingSeriesAudioChoice(key?.let(pendingAudio::get)).effectiveAudioTrackIndex,
+            resetToAuto = key?.let(pendingAudio::get)?.let { it.choice == null } == true,
+        ),
+    )
+}
+
+/**
+ * The Auto preview's subtitle context for [playbackDetail] (the item Play
+ * starts): the server-resolved choice the player will also start from —
+ * including a choice remembered for the series and its track signature — over
+ * the profile's own preferences, which remain the fallback.
+ */
+internal fun TvItemDetailUiState.subtitleAutoContext(
+    playbackDetail: ItemDetail?,
+    audioLanguage: String?,
+): TvPlaybackFormatting.SubtitleAutoContext {
+    val detail = playbackDetail?.withPendingSeriesSubtitleChoice(
+        org.siloserver.silo.model.playback.seriesTrackChoiceKey(playbackDetail.seriesId, playbackDetail.contentId)
+            ?.let(subtitleOverlayFor(playbackDetail)::get),
+    )
+    return TvPlaybackFormatting.SubtitleAutoContext(
+        preferredLanguage = detail?.effectiveSubtitleLanguage?.takeIf { it.isNotBlank() }
+            ?: preferredSubtitleLanguage,
+        mode = detail?.effectiveSubtitleMode?.takeIf { it.isNotBlank() } ?: subtitleMode,
+        showForced = detail?.effectiveShowForcedSubtitles ?: showForcedSubtitles,
+        audioLanguage = audioLanguage,
+        trackSignature = detail?.effectiveSubtitleTrackSignature,
+    )
+}
+
+/**
+ * The audio and subtitle this process remembered for an item (a pick on its
+ * detail page, or what the last playback of it ended on), kept only where the
+ * series choice does not contradict it. Online the series choice — the
+ * server's effective fields, with an unsent pick laid over them — is newer:
+ * it may come from another device or a later pick, and a stale session value
+ * shown as a selection would also be sent as the start's explicit track.
+ */
+internal fun sessionTracksConsistentWithSeriesChoice(
+    detail: ItemDetail,
+    version: FileVersion?,
+    audio: Int?,
+    subtitle: Int?,
+    pendingSubtitles: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
+    pendingAudio: Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice> = emptyMap(),
+): Pair<Int?, Int?> {
+    version ?: return audio to subtitle
+    val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId)
+    val expectedAudio = version.withPendingSeriesAudioChoice(key?.let(pendingAudio::get)).effectiveAudioTrackIndex
+    val keptAudio = audio?.takeIf { expectedAudio == null || it == expectedAudio }
+    val served = detail.withPendingSeriesSubtitleChoice(key?.let(pendingSubtitles::get))
+    val seriesOff = served.effectiveSubtitleMode?.trim().equals("off", ignoreCase = true)
+    val signature = served.effectiveSubtitleTrackSignature
+    val keptSubtitle = subtitle?.takeIf { index ->
+        when {
+            seriesOff -> index == -1
+            signature != null -> {
+                val expected = org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates(
+                    version.subtitleTracks.orEmpty(),
+                ).firstOrNull { it.matchesSignature(signature) }?.selectionIndex
+                expected == null || index == expected
+            }
+            else -> true
+        }
+    }
+    return keptAudio to keptSubtitle
+}
+
+/**
+ * The audio Auto plays for [version] of [playbackDetail], as the preview
+ * shows it and Play sends it: the server's effective track (it holds the
+ * profile's series choice; an unsent pick is laid over it), else the
+ * device's language with the best track this TV can play. Ranking the
+ * device language first ignored a series choice made here or elsewhere.
+ */
+internal fun TvItemDetailUiState.automaticAudioOrdinal(playbackDetail: ItemDetail?, version: FileVersion?): Int? {
+    version ?: return null
+    val key = playbackDetail?.let { org.siloserver.silo.model.playback.seriesTrackChoiceKey(it.seriesId, it.contentId) }
+    val served = version.withPendingSeriesAudioChoice(key?.let(audioOverlayFor(playbackDetail)::get))
+    served.effectiveAudioTrackIndex?.takeIf { it in served.audioTracks.orEmpty().indices }?.let { return it }
+    return resolveTvAutomaticAudioTrackOrdinal(
+        version = version,
+        preferredAudioLanguage = preferredAudioLanguage,
+        capabilities = audioSelectionCapabilities,
+    )
+}
 
 internal data class TvTrackSelectionPersistence(
     val contentId: String,
@@ -378,6 +541,8 @@ class TvItemDetailViewModel(
     private val tokenManager: TokenManager,
     private val identityTransitions: IdentityTransitionBarrier,
     private val capabilityDetector: PlaybackCapabilityDetector? = null,
+    /** Remembers a manual subtitle choice for the whole series on the server. */
+    private val seriesTrackChoiceWriter: org.siloserver.silo.common.settings.SeriesTrackChoiceWriter? = null,
 ) : ViewModel() {
     /** Access changes this ViewModel has applied, kept while its screen is away. */
     val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
@@ -634,6 +799,13 @@ class TvItemDetailViewModel(
     }
 
     /**
+     * The profile this page was loaded for. A series track pick is saved for
+     * it, so a pick still being saved when the profile changes is dropped
+     * rather than filed under the next profile.
+     */
+    private var trackChoiceOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null
+
+    /**
      * [afterAccessChange] skips joining a Home warm-up still in flight, whose
      * answer may predate the change.
      */
@@ -647,6 +819,7 @@ class TvItemDetailViewModel(
         _uiState.update { it.copy(moreLikeThis = emptyList(), moreLikeThisLoading = false) }
         detailLoadJob = viewModelScope.launch {
             val similarOwner = recommendationRepository?.captureSimilarAuthority()
+            trackChoiceOwner = catalogRepository.captureWatchAuthority()
             when (val result = catalogRepository.getItemDetail(contentId, libraryId = libraryId, joinWarmup = !afterAccessChange)) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
@@ -732,7 +905,86 @@ class TvItemDetailViewModel(
      * ended. Deliberately NOT [loadAll] — no loading flashes, and the user's
      * season selection is preserved.
      */
-    fun refreshOnReturn() = quietRefresh()
+    fun refreshOnReturn() {
+        // Back on the page (from playback, or the background): its own picks
+        // whose writes have landed are dropped, whatever the page knows about
+        // the playback. The server holds them, or something newer picked in
+        // the player; the refreshes below bring that answer. Comparing it with
+        // the answer a pick was laid over cannot tell, since a newer choice can
+        // equal that older answer, and the playback return may already have
+        // been consumed by another refresh. A pick still on its way stays.
+        val pickedBefore = _uiState.value.pickedSeriesAudioChoices.keys + _uiState.value.pickedSeriesSubtitleChoices.keys
+        _uiState.update {
+            it.copy(
+                pickedSeriesSubtitleChoices = it.pickedSeriesSubtitleChoices.filterKeys(it.pendingSeriesSubtitleChoices::containsKey),
+                pickedSeriesAudioChoices = it.pickedSeriesAudioChoices.filterKeys(it.pendingSeriesAudioChoices::containsKey),
+                pickedSubtitleBaselines = it.pickedSubtitleBaselines.filterKeys(it.pendingSeriesSubtitleChoices::containsKey),
+                pickedAudioBaselines = it.pickedAudioBaselines.filterKeys(it.pendingSeriesAudioChoices::containsKey),
+            )
+        }
+        // Back from playing the Next Up episode (its return is consumed here,
+        // once): its selections picked here before are older than anything
+        // picked in the player. An explicit Off (or track) would otherwise
+        // also ride the next Next Up handoff. A movie or episode page resets
+        // its own selection from the playback return in [quietRefresh].
+        val nextUpPlayed = _uiState.value.nextUpEpisode?.contentId
+            ?.takeIf { it != contentId }
+            ?.let(TvDetailTrackSelectionSession::consumePlaybackReturn) != null
+        if (nextUpPlayed) _uiState.update {
+            it.copy(
+                selectedNextUpAudioIndex = null,
+                nextUpAudioPickedThisSession = false,
+                selectedNextUpSubtitleIndex = null,
+            )
+        }
+        // The Next Up episode's effective fields may predate the playback or
+        // a pick; the series refresh keeps the loaded episode detail, so
+        // re-read it.
+        if (nextUpPlayed || pickedBefore.isNotEmpty()) refreshNextUpPlaybackDetail()
+        quietRefresh()
+    }
+
+    /**
+     * Re-reads the shown Next Up episode's detail, keeping it on screen
+     * meanwhile. Published only while the same load (Next Up generation and
+     * episode) and the same identity still own the page. A refusal (404, 410,
+     * an access-denying 403) clears it as the Next Up load does; a transient
+     * failure keeps it.
+     */
+    private fun refreshNextUpPlaybackDetail() {
+        val episodeId = _uiState.value.nextUpPlaybackDetail?.contentId ?: return
+        val generation = nextUpPlaybackDetailGeneration
+        val identityGeneration = identityTransitions.generation.value
+        viewModelScope.launch {
+            val identity = captureNextUpIdentity(identityGeneration) ?: return@launch
+            val result = catalogRepository.getItemDetail(episodeId, libraryId = libraryId)
+            if (!ownsNextUpPlaybackDetailRequest(episodeId, generation)) return@launch
+            if (captureNextUpIdentity(identityGeneration) != identity) return@launch
+            when {
+                result is ApiResult.Success -> {
+                    val refreshed = withLocalProgress(result.data)
+                    _uiState.update { state ->
+                        if (!ownsNextUpPlaybackDetailRequest(episodeId, generation) ||
+                            state.nextUpPlaybackDetail?.contentId != episodeId
+                        ) state else state.copy(
+                            nextUpPlaybackDetail = state.nextUpEpisode
+                                ?.takeIf { it.contentId == episodeId }
+                                ?.let(refreshed::withEpisodeDescription) ?: refreshed,
+                        )
+                    }
+                }
+                result.isAccessRefusal() -> _uiState.update { state ->
+                    if (!ownsNextUpPlaybackDetailRequest(episodeId, generation)) state else state.copy(
+                        nextUpPlaybackDetail = null,
+                        isLoadingNextUpPlaybackDetail = false,
+                        didLoadNextUpPlaybackDetail = true,
+                    )
+                }
+                // Transient: keep what is shown.
+                else -> Unit
+            }
+        }
+    }
 
     /**
      * [refreshOnReturn] after the server reports an access change, except that
@@ -1186,6 +1438,9 @@ class TvItemDetailViewModel(
             trackFileId = state.detail?.let { selectedVersionFor(state, it)?.fileId },
         )
         persistTrackSelection()
+        state.detail?.let { detail ->
+            rememberSeriesAudioChoice(detail, selectedVersionFor(state, detail), index)
+        }
     }
 
     /** Pre-select a subtitle track for the next Play (-1 = Off, null = auto). */
@@ -1200,6 +1455,62 @@ class TvItemDetailViewModel(
             trackFileId = state.detail?.let { selectedVersionFor(state, it)?.fileId },
         )
         persistTrackSelection()
+        state.detail?.let { detail ->
+            rememberSeriesSubtitleChoice(detail, selectedVersionFor(state, detail), index)
+        }
+    }
+
+    /**
+     * The detail selector's pick applies to the whole series (or the movie)
+     * and the profile's other devices, like a pick in the player: a track or
+     * Off is saved on the server, and Auto (null) deletes the saved choice.
+     */
+    private fun rememberSeriesSubtitleChoice(detail: ItemDetail, version: FileVersion?, index: Int?) {
+        val writer = seriesTrackChoiceWriter ?: return
+        val owner = trackChoiceOwner ?: return
+        if (detail.type != "movie" && detail.type != "episode") return
+        val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId) ?: return
+        val choice = when (index) {
+            null -> null
+            -1 -> org.siloserver.silo.model.playback.SeriesSubtitleChoice.Off
+            else -> {
+                val tracks = version?.subtitleTracks.orEmpty()
+                val track = tracks.getOrNull(combinedSubtitleSelectionIndexes(tracks).indexOf(index)) ?: return
+                org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(track, index)
+            }
+        }
+        _uiState.update {
+            it.copy(
+                pickedSeriesSubtitleChoices = it.pickedSeriesSubtitleChoices +
+                    (key to org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice(choice)),
+                pickedSubtitleBaselines = it.pickedSubtitleBaselines + (key to org.siloserver.silo.model.playback.PickedSubtitleBaseline.of(detail)),
+            )
+        }
+        viewModelScope.launch { writer.saveSubtitle(key, choice, owner) }
+    }
+
+    /** [rememberSeriesSubtitleChoice] for audio: a track is saved, Auto (null) deletes it. */
+    private fun rememberSeriesAudioChoice(detail: ItemDetail, version: FileVersion?, index: Int?) {
+        val writer = seriesTrackChoiceWriter ?: return
+        val owner = trackChoiceOwner ?: return
+        if (detail.type != "movie" && detail.type != "episode") return
+        val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId) ?: return
+        val choice = index?.let {
+            org.siloserver.silo.model.playback.SeriesAudioChoice.of(version?.audioTracks.orEmpty(), it) ?: return
+        }
+        _uiState.update {
+            it.copy(
+                pickedSeriesAudioChoices = it.pickedSeriesAudioChoices +
+                    (key to org.siloserver.silo.model.playback.PendingSeriesAudioChoice(choice)),
+                pickedAudioBaselines = it.pickedAudioBaselines + (key to org.siloserver.silo.model.playback.PickedAudioBaseline.of(detail)),
+            )
+        }
+        viewModelScope.launch { writer.saveAudio(key, choice, owner) }
+    }
+
+    private suspend fun subtitleResetToAuto(detail: ItemDetail): Boolean {
+        val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId) ?: return false
+        return seriesTrackChoiceWriter?.subtitleResetToAuto(key) == true
     }
 
     /** The exact version the Auto/display/player policy currently resolves. */
@@ -1260,7 +1571,15 @@ class TvItemDetailViewModel(
         if (state.selectedSubtitleIndex != null || state.selectedAudioIndex != null) return
         val version = selectedVersionFor(state, detail) ?: return
         viewModelScope.launch {
-            val saved = userItemState.localTrackSelection(contentId, version.fileId) ?: return@launch
+            val saved = userItemState.localTrackSelection(contentId, version.fileId)
+                ?.withSeriesTrackChoices(
+                    detail,
+                    version,
+                    _uiState.value.subtitleOverlayFor(detail),
+                    _uiState.value.audioOverlayFor(detail),
+                    subtitleResetToAuto = subtitleResetToAuto(detail),
+                )
+                ?: return@launch
             val restored = restoreTrackSelection(version, saved)
             val subOrdinal = restored.subtitleIndex
             val audOrdinal = restored.audioIndex
@@ -1283,11 +1602,19 @@ class TvItemDetailViewModel(
         val state = _uiState.value
         val version = resolveTvTrackSelectionVersion(detail, saved.fileId, state.preferredQuality)
         val tracksBelongToVersion = saved.trackFileId == null || saved.trackFileId == version?.fileId
+        val (audio, subtitle) = sessionTracksConsistentWithSeriesChoice(
+            detail = detail,
+            version = version,
+            audio = saved.audio.takeIf { tracksBelongToVersion },
+            subtitle = saved.subtitle.takeIf { tracksBelongToVersion },
+            pendingSubtitles = state.subtitleOverlayFor(detail),
+            pendingAudio = state.audioOverlayFor(detail),
+        )
         _uiState.update {
             it.copy(
                 selectedFileId = saved.fileId?.takeIf { id -> detail.versions.any { version -> version.fileId == id } },
-                selectedAudioIndex = saved.audio.takeIf { tracksBelongToVersion },
-                selectedSubtitleIndex = saved.subtitle.takeIf { tracksBelongToVersion },
+                selectedAudioIndex = audio,
+                selectedSubtitleIndex = subtitle,
             )
         }
     }
@@ -2152,10 +2479,23 @@ class TvItemDetailViewModel(
             targetSubtitles = targetSubtitleChoices,
         )
         val durable = userItemState.localTrackSelection(episodeContentId, selectedVersion.fileId)
+            ?.withSeriesTrackChoices(
+                detail,
+                selectedVersion,
+                _uiState.value.subtitleOverlayFor(detail),
+                _uiState.value.audioOverlayFor(detail),
+                subtitleResetToAuto = subtitleResetToAuto(detail),
+            )
             ?.let { restoreTrackSelection(selectedVersion, it) }
 
-        val sessionAudio = session?.audio.takeIf { sessionMatchesSelectedVersion }
-        val sessionSubtitle = session?.subtitle.takeIf { sessionMatchesSelectedVersion }
+        val (sessionAudio, sessionSubtitle) = sessionTracksConsistentWithSeriesChoice(
+            detail = detail,
+            version = selectedVersion,
+            audio = session?.audio.takeIf { sessionMatchesSelectedVersion },
+            subtitle = session?.subtitle.takeIf { sessionMatchesSelectedVersion },
+            pendingSubtitles = _uiState.value.subtitleOverlayFor(detail),
+            pendingAudio = _uiState.value.audioOverlayFor(detail),
+        )
         return ResolvedNextUpTrackSelection(
             fileId = selectedFileId,
             audioIndex = sessionAudio ?: durable?.audioIndex,
@@ -2296,6 +2636,14 @@ class TvItemDetailViewModel(
         }
         rememberNextUpTrackSelection()
         persistNextUpTrackSelection()
+        val state = _uiState.value
+        state.nextUpPlaybackDetail?.let { detail ->
+            rememberSeriesAudioChoice(
+                detail,
+                resolveTvTrackSelectionVersion(detail, state.selectedNextUpFileId, state.preferredQuality),
+                index,
+            )
+        }
     }
 
     fun onNextUpSubtitleTrackSelected(index: Int?) {
@@ -2303,6 +2651,14 @@ class TvItemDetailViewModel(
         _uiState.update { it.copy(selectedNextUpSubtitleIndex = index) }
         rememberNextUpTrackSelection()
         persistNextUpTrackSelection()
+        val state = _uiState.value
+        state.nextUpPlaybackDetail?.let { detail ->
+            rememberSeriesSubtitleChoice(
+                detail,
+                resolveTvTrackSelectionVersion(detail, state.selectedNextUpFileId, state.preferredQuality),
+                index,
+            )
+        }
     }
 
     private fun markNextUpSelectorInput() {
@@ -2357,7 +2713,15 @@ class TvItemDetailViewModel(
             _uiState.value.preferredQuality,
         ) ?: return
         viewModelScope.launch {
-            val saved = userItemState.localTrackSelection(targetContentId, version.fileId) ?: return@launch
+            val saved = userItemState.localTrackSelection(targetContentId, version.fileId)
+                ?.withSeriesTrackChoices(
+                    playbackDetail,
+                    version,
+                    _uiState.value.subtitleOverlayFor(playbackDetail),
+                    _uiState.value.audioOverlayFor(playbackDetail),
+                    subtitleResetToAuto = subtitleResetToAuto(playbackDetail),
+                )
+                ?: return@launch
             val restored = restoreTrackSelection(version, saved)
             var remembered: TvDetailTrackSelectionSession.Saved? = null
             while (true) {
@@ -2442,6 +2806,18 @@ class TvItemDetailViewModel(
         }
         observePreferredQuality()
         capabilityDetector?.let(::observeAutomaticAudioPolicy)
+        seriesTrackChoiceWriter?.let { writer ->
+            viewModelScope.launch {
+                writer.pendingSubtitleChoices.collect { pending ->
+                    _uiState.update { it.copy(pendingSeriesSubtitleChoices = pending) }
+                }
+            }
+            viewModelScope.launch {
+                writer.pendingAudioChoices.collect { pending ->
+                    _uiState.update { it.copy(pendingSeriesAudioChoices = pending) }
+                }
+            }
+        }
         if (contentId.isNotBlank()) {
             // Restore this title's pre-play track choices (QA 2026-07-08: a
             // manual subtitle selection reset on every return to the page —
@@ -2637,10 +3013,11 @@ internal object TvDetailTrackSelectionSession {
             // A playback return reports the resolved backing file, not a new
             // manual Version choice. Preserve Auto/explicit UI intent.
             fileId = previous?.fileId,
-            // The player currently reports subtitle selection on exit but not
-            // audio selection. Keep the detail page's explicit audio choice
-            // instead of replacing it with an unknown/null value.
-            audio = audio ?: previous?.audio,
+            // The player reports the subtitle it ended on, not the audio. The
+            // page's own audio pick is not kept either: the viewer may have
+            // picked again in the player, and that pick is the series choice
+            // now. Auto shows (and Play resolves) whatever the server holds.
+            audio = audio,
             // A null player result means the mounted track could not be
             // resolved to a stable server index (keep current), not Off.
             subtitle = subtitle ?: previous?.subtitle,
