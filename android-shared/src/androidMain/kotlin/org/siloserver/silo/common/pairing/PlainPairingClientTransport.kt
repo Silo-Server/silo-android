@@ -71,10 +71,12 @@ class PlainPairingClientTransport private constructor(
         private const val TAG = "PlainPairingClient"
         private const val CONNECT_TIMEOUT_MS = 10_000
 
-        suspend fun connect(host: String, port: Int): PlainPairingClientTransport {
+        suspend fun connect(host: String, port: Int): PlainPairingClientTransport = connect(host, port, Socket())
+
+        /** [socket] is a seam for tests that need to hold the connect open. */
+        internal suspend fun connect(host: String, port: Int, socket: Socket): PlainPairingClientTransport {
             // Owned outside withContext: a caller cancelled while the connect runs
             // makes withContext throw on return and drop whatever it built.
-            val socket = Socket()
             try {
                 withContext(Dispatchers.IO) {
                     Log.i(TAG, "Connecting to $host:$port")

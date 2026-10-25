@@ -4,7 +4,10 @@ import android.net.nsd.NsdServiceInfo
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.ServerSocket
+import java.net.Socket
+import java.net.SocketAddress
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import kotlin.test.Test
@@ -113,19 +116,33 @@ class CompanionPairingNsdBrowserTest {
     @Test
     fun aConnectItsCallerAbandonsClosesTheSocket() = runBlocking {
         val listener = ServerSocket(0).apply { soTimeout = 5_000 }
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        // Holds the connect until the caller is cancelled. Over loopback an unheld connect can
+        // finish before withContext suspends, and withContext then returns without a cancel check.
+        val socket = object : Socket() {
+            override fun connect(endpoint: SocketAddress, timeout: Int) {
+                entered.countDown()
+                release.await(5, TimeUnit.SECONDS)
+                super.connect(endpoint, timeout)
+            }
+        }
         try {
             val caller = launch(start = CoroutineStart.UNDISPATCHED) {
-                PlainPairingClientTransport.connect("127.0.0.1", listener.localPort)
+                PlainPairingClientTransport.connect("127.0.0.1", listener.localPort, socket)
             }
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            caller.cancel()
+            release.countDown()
+            caller.join()
+            assertTrue(socket.isClosed)
             listener.accept().use { accepted ->
-                // This thread is still busy, so connect can't hand its transport back before the cancel.
-                caller.cancel()
-                caller.join()
                 accepted.soTimeout = 5_000
                 // A leaked socket stays open and this read times out.
                 assertEquals(-1, accepted.getInputStream().read())
             }
         } finally {
+            release.countDown()
             listener.close()
         }
     }
