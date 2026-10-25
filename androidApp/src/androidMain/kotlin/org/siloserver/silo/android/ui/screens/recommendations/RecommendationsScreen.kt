@@ -275,8 +275,7 @@ fun RecommendationsScreen(
                             items = state.sections,
                             key = { it.id },
                         ) { section ->
-                            // No "See All" — iOS has no such affordance, so the
-                            // row omits it when onSeeAllClick is null.
+                            // For You rows have no full page, so no "Explore all".
                             HomeSectionRow(
                                 section = section,
                                 onItemClick = onItemClick,

@@ -85,6 +85,8 @@ import org.siloserver.silo.android.ui.screens.auth.SignupScreen
 import org.siloserver.silo.android.ui.screens.onboarding.OnboardingTourScreen
 import org.siloserver.silo.android.ui.screens.browse.BrowseScreen
 import org.siloserver.silo.android.ui.screens.browse.BrowseViewModel
+import org.siloserver.silo.android.ui.screens.browse.SectionBrowseScreen
+import org.siloserver.silo.viewmodel.SectionBrowseArgs
 import org.siloserver.silo.android.ui.screens.calendar.CalendarScreen
 import org.siloserver.silo.android.ui.screens.collections.CollectionDetailScreen
 import org.siloserver.silo.android.ui.screens.collections.CollectionsScreen
@@ -1442,6 +1444,40 @@ fun AppNavigation(
                 onItemClick = { contentId ->
                     navController.navigate(Route.ItemDetail(contentId).route)
                 },
+            )
+        }
+
+        composable(
+            route = Route.SectionBrowse.ROUTE,
+            arguments = listOf(
+                navArgument("sectionId") { type = NavType.StringType },
+                navArgument("title") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+                navArgument("libraryId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("mediaScope") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) { backStackEntry ->
+            val libraryId = backStackEntry.arguments?.getString("libraryId")?.toIntOrNull()
+            SectionBrowseScreen(
+                args = SectionBrowseArgs(
+                    sectionId = backStackEntry.arguments?.getString("sectionId").orEmpty(),
+                    title = backStackEntry.arguments?.getString("title").orEmpty(),
+                    libraryId = libraryId,
+                    mediaScope = backStackEntry.arguments?.getString("mediaScope")
+                        ?.takeIf { it in setOf("movie", "series") },
+                ),
+                onBackClick = { navController.popBackStack() },
+                onItemClick = { item -> navController.navigate(sectionBrowseDetailRoute(item, libraryId)) },
             )
         }
 

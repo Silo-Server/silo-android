@@ -20,6 +20,8 @@ import org.siloserver.silo.network.AccessChangeSignals
 @Composable
 fun TvLibrariesScreen(
     onItemClick: (contentId: String, libraryId: Int) -> Unit,
+    /** Opens a Recommended row's full page in that library. */
+    onExploreSection: ((org.siloserver.silo.model.section.ResolvedSection, Int) -> Unit)? = null,
     onLibraryCollectionClick: (
         libraryId: Int,
         collectionId: String,
@@ -64,6 +66,7 @@ fun TvLibrariesScreen(
                     libraryTitle = selectedLibrary.name,
                     libraryType = selectedLibrary.type,
                     onItemClick = { onItemClick(it, selectedLibrary.id) },
+                    onExploreSection = onExploreSection?.let { open -> { section -> open(section, selectedLibrary.id) } },
                     onCollectionClick = { collectionId, title, isUserCollection ->
                         if (isUserCollection) {
                             onUserCollectionClick(collectionId, title)

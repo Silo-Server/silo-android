@@ -49,6 +49,8 @@ import org.siloserver.silo.tv.ui.screens.collections.TvCollectionDetailScreen
 import org.siloserver.silo.tv.ui.screens.detail.TvItemDetailScreen
 import org.siloserver.silo.tv.ui.screens.people.TvPersonDetailScreen
 import org.siloserver.silo.tv.ui.screens.library.TvLibraryCollectionDetailScreen
+import org.siloserver.silo.tv.ui.screens.library.TvSectionBrowseScreen
+import org.siloserver.silo.viewmodel.SectionBrowseArgs
 import org.siloserver.silo.tv.ui.screens.player.TvPlayerScreen
 import org.siloserver.silo.tv.ui.screens.profiles.TvProfileSelectionScreen
 import org.siloserver.silo.tv.ui.screens.servers.TvServerListScreen
@@ -1129,6 +1131,11 @@ fun TvAppNavigation(
                         launchSingleTop = true
                     }
                 },
+                onOpenSectionBrowse = { sectionId, title, libraryId, mediaScope ->
+                    navController.navigate(TvRoute.SectionBrowse(sectionId, title, libraryId, mediaScope).route) {
+                        launchSingleTop = true
+                    }
+                },
                 onSignedOut = {
                     scope.launch {
                         // Full sign-out teardown — parity with the Settings and
@@ -1805,6 +1812,55 @@ fun TvAppNavigation(
                 onShuffleStarted = { shuffle ->
                     navController.navigateToTvShufflePlayback(shuffle, null, lastPlaybackNavigation)
                 },
+            )
+        }
+
+        composable(
+            route = TvRoute.SectionBrowse.ROUTE,
+            arguments = listOf(
+                navArgument(TvRoute.SectionBrowse.ARG_SECTION_ID) { type = NavType.StringType },
+                navArgument(TvRoute.SectionBrowse.ARG_TITLE) {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+                navArgument(TvRoute.SectionBrowse.ARG_LIBRARY_ID) {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+                navArgument(TvRoute.SectionBrowse.ARG_MEDIA_SCOPE) {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+            ),
+        ) { backStack ->
+            val sectionId = backStack.arguments
+                ?.getString(TvRoute.SectionBrowse.ARG_SECTION_ID)
+                ?.takeIf { it.isNotBlank() }
+                ?: return@composable
+            val libraryId = backStack.arguments?.getString(TvRoute.SectionBrowse.ARG_LIBRARY_ID)?.toIntOrNull()
+            TvSectionBrowseScreen(
+                args = SectionBrowseArgs(
+                    sectionId = sectionId,
+                    title = backStack.arguments?.getString(TvRoute.SectionBrowse.ARG_TITLE).orEmpty(),
+                    libraryId = libraryId,
+                    mediaScope = backStack.arguments?.getString(TvRoute.SectionBrowse.ARG_MEDIA_SCOPE)
+                        ?.takeIf { it in setOf("movie", "series") },
+                ),
+                // An episode opens its series at that episode, as Home's rows do.
+                onItemClick = { item ->
+                    val seriesId = item.seriesId?.takeIf { it.isNotBlank() }
+                    if (item.type.equals("episode", ignoreCase = true) && seriesId != null && item.seasonNumber != null) {
+                        navController.navigateToTvItemDetail(
+                            contentId = seriesId,
+                            seasonNumber = item.seasonNumber,
+                            episodeContentId = item.contentId,
+                            libraryId = libraryId,
+                        )
+                    } else {
+                        navController.navigateToTvItemDetail(item.contentId, libraryId = libraryId)
+                    }
+                },
+                onBack = { navController.popBackStack() },
             )
         }
 

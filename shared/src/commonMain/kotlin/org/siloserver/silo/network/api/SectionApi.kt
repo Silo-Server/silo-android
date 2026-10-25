@@ -46,12 +46,26 @@ class SectionApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
      * profile overrides, so callers must not refill a `customized` or `is_custom` section through it.
      */
     suspend fun getLibrarySectionCatalogItems(libraryId: Int, sectionId: String,
-        owner: AuthScopeSnapshot, continuation: CatalogContinuationV2?, widths: ArtworkWidths? = null): ApiResult<CatalogResponse> {
-        if (!sectionItems.current(owner)) return identityChanged()
-        val result = v2.browse(CatalogQueryV2(source = "section", scope = "library",
-            libraryId = libraryId.toString(), sectionId = sectionId, limit = 100), continuation, widths = widths)
+        owner: AuthScopeSnapshot, continuation: CatalogContinuationV2?, widths: ArtworkWidths? = null): ApiResult<CatalogResponse> =
+        getSectionCatalogItems(libraryId, sectionId, owner, continuation, limit = 100, widths = widths)
+
+    /**
+     * Pages a row's full list through `GET /api/v2/catalog?source=section`: the
+     * Home row when [libraryId] is null, else that library's row. The read is
+     * dropped as `identity_changed` if [owner] stops being the acting profile
+     * before or after the exchange, as the row reads are. A row the profile
+     * can no longer see answers 404.
+     */
+    suspend fun getSectionCatalogItems(libraryId: Int?, sectionId: String, owner: AuthScopeSnapshot,
+        continuation: CatalogContinuationV2?, limit: Int = 50, widths: ArtworkWidths? = null): ApiResult<CatalogResponse> {
+        suspend fun current() = if (libraryId == null) home.current(owner) else sectionItems.current(owner)
+        if (sectionId.isBlank() || (libraryId != null && libraryId <= 0))
+            return ApiResult.Error(422, "validation_failed", "Invalid section.")
+        if (!current()) return identityChanged()
+        val result = v2.browse(CatalogQueryV2(source = "section", scope = if (libraryId == null) "home" else "library",
+            libraryId = libraryId?.toString(), sectionId = sectionId, limit = limit), continuation, widths = widths)
             .map { it.toCatalogResponse() }
-        if (!sectionItems.current(owner)) return identityChanged()
+        if (!current()) return identityChanged()
         return result
     }
 

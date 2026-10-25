@@ -30,14 +30,24 @@ import org.siloserver.silo.model.section.ResolvedSection
  * up carries sections the feed never shows and puts every resolved index in a
  * different coordinate space from the rows they are meant to address.
  */
-internal fun List<ResolvedSection>.toTvReturnSections(): List<TvReturnSection> =
+internal fun List<ResolvedSection>.toTvReturnSections(
+    /** Rows ending with an "Explore all" card, which restores like a card at `items.size`. */
+    exploreAll: (ResolvedSection) -> Boolean = { false },
+): List<TvReturnSection> =
     map { section ->
+        val itemIds = section.items.map { it.contentId }
         TvReturnSection(
             id = section.id,
-            itemIds = section.items.map { it.contentId },
+            itemIds = if (exploreAll(section)) itemIds + TvExploreAllItemId else itemIds,
             isComplete = section.items.isNotEmpty() || section.totalCount == 0,
         )
     }
+
+/**
+ * The return-target item id of a row's "Explore all" card, so opening a row's
+ * full page and coming back lands on that card. Content ids never contain NUL.
+ */
+internal const val TvExploreAllItemId = "\u0000explore-all"
 
 /**
  * Projects a flat, paginated surface — a library grid, personal list, people or

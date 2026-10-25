@@ -121,6 +121,15 @@ class SectionRepository(
         sectionApi.getLibrarySectionCatalogItems(libraryId, sectionId, owner, continuation,
             if (continuation == null) artwork.request(ArtworkSurface.HOME) else null)
 
+    /**
+     * One page of a row's full list: the Home row when [libraryId] is null,
+     * else that library's row. Artwork is sized like the browse grid it fills.
+     */
+    suspend fun getSectionCatalogItems(libraryId: Int?, sectionId: String,
+        owner: org.siloserver.silo.network.AuthScopeSnapshot, continuation: CatalogContinuationV2?): ApiResult<CatalogResponse> =
+        sectionApi.getSectionCatalogItems(libraryId, sectionId, owner, continuation,
+            widths = if (continuation == null) artwork.request(ArtworkSurface.BROWSE) else null)
+
     /** Lists collections within a library as a flat list. Callers that need
      *  the grouped layout should use [getLibraryCollectionsGrouped]. */
     suspend fun getLibraryCollections(libraryId: Int): ApiResult<List<LibraryCollection>> =

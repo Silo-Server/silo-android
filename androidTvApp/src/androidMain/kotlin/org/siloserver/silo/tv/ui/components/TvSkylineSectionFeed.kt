@@ -52,6 +52,10 @@ import coil3.request.ImageRequest
 import org.siloserver.silo.common.settings.LocalShowTitleArt
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.section.SECTION_ROW_MAX_ITEMS
+import org.siloserver.silo.model.section.cappedForRow
+import org.siloserver.silo.model.section.offersExploreAll
+import org.siloserver.silo.tv.ui.focus.TvExploreAllItemId
 import org.siloserver.silo.tv.ui.focus.TvReturnResolution
 import org.siloserver.silo.tv.ui.focus.TvReturnTarget
 import org.siloserver.silo.tv.ui.focus.keyedTvReturnTargetSaver
@@ -168,11 +172,22 @@ fun TvSkylineSectionFeed(
     ) -> TvSkylineDetailPrefetchTarget? = { _, _ -> null },
     /** A non-null action replaces the card context menu for that long press. */
     longClickActionForSection: (ResolvedSection, SectionItem) -> (() -> Unit)? = { _, _ -> null },
+    /**
+     * Opens a row's full page. When set, rows show at most
+     * [SECTION_ROW_MAX_ITEMS] cards and every non-featured row ends with an
+     * "Explore all" card; returning from the page restores focus to it.
+     */
+    onExploreAllForSection: ((ResolvedSection) -> Unit)? = null,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
     /** Re-reads [sections] after the marquee translated a card's description. */
     onMarqueeTranslated: () -> Unit = {},
 ) {
-    val rows = remember(sections) { sections.filter { it.items.isNotEmpty() } }
+    val exploresRows = onExploreAllForSection != null
+    val rows = remember(sections, exploresRows) {
+        sections.filter { it.items.isNotEmpty() }
+            .let { nonEmpty -> if (exploresRows) nonEmpty.map { it.cappedForRow() } else nonEmpty }
+    }
+    fun ResolvedSection.showsExploreAll() = exploresRows && offersExploreAll
     val diagnosticsSurface = when {
         surfaceKey == "home" -> DiagnosticsListSurface.TV_HOME
         surfaceKey == "for_you" -> DiagnosticsListSurface.TV_FOR_YOU
@@ -366,13 +381,20 @@ fun TvSkylineSectionFeed(
 
     LaunchedEffect(rows) {
         val previousContentId = focusedContentId
+        // The "Explore all" card is still there while its row still offers it.
         val focusedItemWasRemoved = previousContentId != null &&
-            rows.none { row -> row.items.any { it.contentId == previousContentId } }
+            if (previousContentId == TvExploreAllItemId) {
+                rows.getOrNull(focusedRowIndex)?.showsExploreAll() != true
+            } else {
+                rows.none { row -> row.items.any { it.contentId == previousContentId } }
+            }
         if (focusedRowIndex >= rows.size) {
             focusedRowIndex = (rows.size - 1).coerceAtLeast(-1)
         }
-        if (focusedRowIndex in rows.indices && focusedItemIndex >= rows[focusedRowIndex].items.size) {
-            focusedItemIndex = (rows[focusedRowIndex].items.size - 1).coerceAtLeast(-1)
+        if (focusedRowIndex in rows.indices) {
+            val row = rows[focusedRowIndex]
+            val slots = row.items.size + if (row.showsExploreAll()) 1 else 0
+            if (focusedItemIndex >= slots) focusedItemIndex = (slots - 1).coerceAtLeast(-1)
         }
         // Same guard as browse re-arming: a refresh that removes whatever
         // incidental focus happened to land on must not redefine what the
@@ -423,6 +445,27 @@ fun TvSkylineSectionFeed(
             returnGeneration++
             detailReturnPending = true
         }
+    }
+
+    // The row's "Explore all" card restores like a card one past its last.
+    fun armExploreAllReturn(section: ResolvedSection, rowIndex: Int) {
+        returnTarget = TvReturnTarget(
+            sectionId = section.id,
+            itemId = TvExploreAllItemId,
+            sectionIndex = rowIndex,
+            itemIndex = section.items.size,
+        )
+        returnGeneration++
+        detailReturnPending = true
+    }
+
+    // Focusing it moves the return target as a card does but leaves the
+    // marquee on the last card previewed.
+    val onExploreAllFocused: (ResolvedSection, Int) -> Unit = { section, rowIndex ->
+        focusedRowIndex = rowIndex
+        focusedItemIndex = section.items.size
+        focusedContentId = TvExploreAllItemId
+        if (restorationsInFlight == 0) armExploreAllReturn(section, rowIndex)
     }
 
     // Keep a small window around RESTED focus hot. A raw D-pad move cancels the
@@ -623,7 +666,9 @@ fun TvSkylineSectionFeed(
     // The section map depends on the rows alone; the return target is re-armed
     // on every focus move, so building the map inside the resolution remember
     // copied every content id in the feed per keypress.
-    val returnSections = remember(rows) { rows.toTvReturnSections() }
+    val returnSections = remember(rows, exploresRows) {
+        rows.toTvReturnSections(exploreAll = { it.showsExploreAll() })
+    }
     val returnResolution: TvReturnResolution =
         remember(returnSections, returnTarget, detailReturnPending) {
             if (detailReturnPending) {
@@ -1014,6 +1059,15 @@ fun TvSkylineSectionFeed(
                             longClickAction = { item ->
                                 longClickActionForSection(section, item)
                             },
+                            onExploreAllClick = onExploreAllForSection
+                                ?.takeIf { section.showsExploreAll() }
+                                ?.let { open ->
+                                    {
+                                        armExploreAllReturn(section, rowIndex)
+                                        open(section)
+                                    }
+                                },
+                            onExploreAllFocused = { onExploreAllFocused(section, rowIndex) },
                         )
                     }
                 }

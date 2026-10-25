@@ -542,6 +542,12 @@ val androidTvModule = module {
             collectionSource = params.values.getOrNull(4) as? String ?: "library_collection",
         )
     }
+    // TV never shows reading items, so a row's page drops them as the row does.
+    viewModel { params ->
+        org.siloserver.silo.viewmodel.SectionBrowseViewModel(get(), params.get()) { item ->
+            !org.siloserver.silo.tv.ui.util.isTvHiddenMediaType(item.type)
+        }
+    }
     viewModel { TvSearchViewModel(get(), get(), get()) }
     viewModel { params ->
         TvItemDetailViewModel(

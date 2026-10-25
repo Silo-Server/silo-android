@@ -276,6 +276,28 @@ sealed class TvRoute(val route: String) {
         }
     }
 
+    /**
+     * A Home row's full page ([libraryId] null) or a library row's, opened
+     * from the row's "Explore all" card and titled with the row's title.
+     */
+    data class SectionBrowse(
+        val sectionId: String,
+        val title: String,
+        val libraryId: Int? = null,
+        val mediaScope: String? = null,
+    ) : TvRoute(
+        "section/${sectionId.routeEncode()}?title=${title.routeEncode()}" +
+            "&libraryId=${libraryId?.toString().orEmpty()}&mediaScope=${mediaScope.orEmpty().routeEncode()}",
+    ) {
+        companion object {
+            const val ROUTE = "section/{sectionId}?title={title}&libraryId={libraryId}&mediaScope={mediaScope}"
+            const val ARG_SECTION_ID = "sectionId"
+            const val ARG_TITLE = "title"
+            const val ARG_LIBRARY_ID = "libraryId"
+            const val ARG_MEDIA_SCOPE = "mediaScope"
+        }
+    }
+
     // --- Personal data grids (reachable from Settings) ---
     data object Favorites : TvRoute("favorites")
     data object Watchlist : TvRoute("watchlist")

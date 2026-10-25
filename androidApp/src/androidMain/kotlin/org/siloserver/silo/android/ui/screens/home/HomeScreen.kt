@@ -123,6 +123,8 @@ fun HomeScreen(
     onItemClick: (String) -> Unit,
     onContinueWatchingItemClick: (SectionItem) -> Unit,
     onPlayClick: (String, Double?) -> Unit,
+    /** Opens a row's full page ("Explore all"). */
+    onExploreSection: ((org.siloserver.silo.model.section.ResolvedSection) -> Unit)? = null,
     onBottomNavMinimizedChange: (Boolean) -> Unit = {},
     viewModel: HomeViewModel,
     activeProfile: Profile?,
@@ -458,6 +460,7 @@ fun HomeScreen(
                                 onToggleFavorite = viewModel::toggleFavorite,
                                 onToggleWatchlist = viewModel::toggleWatchlist,
                                 onRemoveFromHome = viewModel::dismissFromHome,
+                                onExploreAllClick = onExploreSection?.let { open -> { open(section) } },
                             )
                         }
 

@@ -35,6 +35,7 @@ import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
 import org.siloserver.silo.tv.ui.theme.tvRailPinOnFocus
 import org.siloserver.silo.tv.ui.theme.Spacing
+import org.siloserver.silo.tv.ui.util.tvArtworkAspectRatioForMediaType
 import org.siloserver.silo.common.diagnostics.DiagnosticsKeyAnomalyLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsKeyCollection
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
@@ -135,6 +136,14 @@ fun TvMediaRow(
     cardActions: (SectionItem) -> TvMediaCardActions = { TvMediaCardActions() },
     /** Optional direct long-press action. Null keeps the card's context menu. */
     longClickAction: (SectionItem) -> (() -> Unit)? = { null },
+    /**
+     * Ends the row with an "Explore all" card that opens the row's full page.
+     * It is an ordinary focusable item after the last card. In the restore
+     * parameters above it sits at index `items.size` of the caller's list.
+     */
+    onExploreAllClick: (() -> Unit)? = null,
+    /** Fired when the "Explore all" card gains focus. */
+    onExploreAllFocused: (() -> Unit)? = null,
 ) {
     val diagnosticsKeySnapshot = remember(items) {
         DiagnosticsListSnapshot.fromKeys(items.map { it.contentId })
@@ -186,17 +195,24 @@ fun TvMediaRow(
             }
         }
     }
-    val resolvedRestoreFocusIndex = remember(rowItems, restoreFocusContentId) {
-        restoreFocusContentId
-            ?.let { contentId -> rowItems.indexOfFirst { it.item.contentId == contentId } }
-            ?: -1
+    val hasExploreAll = onExploreAllClick != null
+    val restoresExploreAll = hasExploreAll && restoreFocusIndex == items.size
+    val resolvedRestoreFocusIndex = remember(rowItems, restoreFocusContentId, restoresExploreAll) {
+        if (restoresExploreAll) {
+            rowItems.size
+        } else {
+            restoreFocusContentId
+                ?.let { contentId -> rowItems.indexOfFirst { it.item.contentId == contentId } }
+                ?: -1
+        }
     }
+    val focusSlotCount = rowItems.size + if (hasExploreAll) 1 else 0
 
     LaunchedEffect(restoreFocusRequest, resolvedRestoreFocusIndex, restoreFocusContentId) {
         val scrolled = prepareTvMediaRowFocusRestore(
             requestId = restoreFocusRequest,
             restoreFocusIndex = resolvedRestoreFocusIndex,
-            itemCount = rowItems.size,
+            itemCount = focusSlotCount,
             scrollToItem = rowState::scrollToItem,
         )
         // A restore scroll that fires while no caller-driven ladder could be
@@ -269,6 +285,47 @@ fun TvMediaRow(
                 bottom = rowBottomPadding,
             ),
         ) {
+            /**
+             * Restore target, Up handling, and rail pinning for the slot at
+             * [index]: the same for a card and for the "Explore all" card.
+             */
+            @Composable
+            fun slotFocusModifier(index: Int, isRestoreFocusTarget: Boolean): Modifier = Modifier.then(
+                if (restoreFocusRequester != null && index == resolvedRestoreFocusIndex) {
+                    Modifier.focusRequester(restoreFocusRequester)
+                } else {
+                    Modifier
+                },
+            ).then(
+                if (isRestoreFocusTarget && onRestoreFocusTargetPlaced != null) {
+                    // Caller's coordinates, matching Disposed below: the
+                    // consumer compares this against the index it passed in.
+                    Modifier.onGloballyPositioned {
+                        onRestoreFocusTargetPlaced(restoreFocusRequest, restoreFocusIndex)
+                    }
+                } else {
+                    Modifier
+                },
+            ).then(
+                if (onDirectionUp != null) {
+                    Modifier.onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
+                            onDirectionUp?.invoke() ?: false
+                        } else {
+                            false
+                        }
+                    }
+                } else {
+                    Modifier
+                },
+            ).then(
+                if (upFocusRequester != null) {
+                    Modifier.focusProperties { up = upFocusRequester }
+                } else {
+                    Modifier
+                },
+            ).tvRailPinOnFocus(rowState, index, startPadding)
+
             itemsIndexed(
                 items = rowItems,
                 key = { _, rowItem -> rowItem.item.contentId },
@@ -294,40 +351,8 @@ fun TvMediaRow(
                 val appliedCardModifier = itemCardModifier.then(
                     if (index == 0) firstItemCardModifier else Modifier,
                 ).then(
-                    if (restoreFocusRequester != null && index == resolvedRestoreFocusIndex) {
-                        Modifier.focusRequester(restoreFocusRequester)
-                    } else {
-                        Modifier
-                    },
-                ).then(
-                    if (isRestoreFocusTarget && onRestoreFocusTargetPlaced != null) {
-                        // Caller's coordinates, matching Disposed below: the
-                        // consumer compares this against the index it passed in.
-                        Modifier.onGloballyPositioned {
-                            onRestoreFocusTargetPlaced(restoreFocusRequest, restoreFocusIndex)
-                        }
-                    } else {
-                        Modifier
-                    },
-                ).then(
-                    if (onDirectionUp != null) {
-                        Modifier.onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
-                                onDirectionUp?.invoke() ?: false
-                            } else {
-                                false
-                            }
-                        }
-                    } else {
-                        Modifier
-                    },
-                ).then(
-                    if (upFocusRequester != null) {
-                        Modifier.focusProperties { up = upFocusRequester }
-                    } else {
-                        Modifier
-                    },
-                ).tvRailPinOnFocus(rowState, index, startPadding)
+                    slotFocusModifier(index, isRestoreFocusTarget),
+                )
                 .then(
                     if (onItemFocused != null || onItemFocusedAtIndex != null) {
                         Modifier.onFocusChanged { st ->
@@ -415,10 +440,43 @@ fun TvMediaRow(
                     }
                 }
             }
+            if (onExploreAllClick != null) {
+                item(key = TvExploreAllItemKey, contentType = "explore-all:${cardLayout.name}:${style.name}") {
+                    val index = rowItems.size
+                    val isRestoreFocusTarget = restoreFocusRequest > 0 && index == resolvedRestoreFocusIndex
+                    if (isRestoreFocusTarget && onRestoreFocusTargetDisposed != null) {
+                        DisposableEffect(restoreFocusRequest, restoreFocusIndex) {
+                            onDispose {
+                                onRestoreFocusTargetDisposed(restoreFocusRequest, restoreFocusIndex)
+                            }
+                        }
+                    }
+                    TvExploreAllCard(
+                        style = style,
+                        cardLayout = cardLayout,
+                        // Square like the row's cards when they are (audiobooks).
+                        artworkAspectRatio = tvArtworkAspectRatioForMediaType(rowItems.lastOrNull()?.item?.type),
+                        posterWidth = posterWidth ?: tvCardWidth(),
+                        onClick = onExploreAllClick,
+                        cardModifier = itemCardModifier
+                            .then(slotFocusModifier(index, isRestoreFocusTarget))
+                            .then(
+                                if (onExploreAllFocused != null) {
+                                    Modifier.onFocusChanged { if (it.isFocused) onExploreAllFocused() }
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                    )
+                }
+            }
         }
         }
     }
 }
+
+/** LazyRow key of the "Explore all" card; content ids never contain NUL. */
+private const val TvExploreAllItemKey = "\u0000explore-all"
 
 internal suspend fun prepareTvMediaRowFocusRestore(
     requestId: Int,

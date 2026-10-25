@@ -990,6 +990,8 @@ private const val ChromeFadeDistanceDp = 80f
 fun LibrariesScreen(
     onItemClick: (String, Int?) -> Unit,
     onCollectionClick: (LibraryCollection, Int, String?) -> Unit,
+    /** Opens a Recommended row's full page: the row, its library, and the Movies/Series scope. */
+    onExploreSection: ((ResolvedSection, Int, String?) -> Unit)? = null,
     viewModel: LibrariesViewModel,
     activeProfile: Profile?,
     onLibrarySelectorClick: () -> Unit,
@@ -1118,6 +1120,9 @@ fun LibrariesScreen(
                             topInset = topInset,
                             onItemClick = { onItemClick(it, state.selectedLibraryId) },
                             onRetry = viewModel::retryCurrentTab,
+                            onExploreSection = state.selectedLibraryId?.let { libraryId ->
+                                onExploreSection?.let { open -> { section -> open(section, libraryId, state.mediaScope) } }
+                            },
                         )
                     }
                     state.selectedTab == LibrariesSubtab.Browse -> {
@@ -1193,6 +1198,7 @@ private fun RecommendedTabContent(
     topInset: Dp,
     onItemClick: (String) -> Unit,
     onRetry: () -> Unit,
+    onExploreSection: ((ResolvedSection) -> Unit)? = null,
 ) {
     val diagnosticsListSnapshot = remember(state.sections) {
         DiagnosticsListSnapshot.fromKeys(
@@ -1255,11 +1261,10 @@ private fun RecommendedTabContent(
                     items = state.sections,
                     key = { section -> section.id },
                 ) { section ->
-                    // No "See All" — iOS has no such affordance (H3, Jim
-                    // 2026-07-10); the row omits it when onSeeAllClick is null.
                     HomeSectionRow(
                         section = section,
                         onItemClick = onItemClick,
+                        onExploreAllClick = onExploreSection?.let { open -> { open(section) } },
                     )
                 }
 

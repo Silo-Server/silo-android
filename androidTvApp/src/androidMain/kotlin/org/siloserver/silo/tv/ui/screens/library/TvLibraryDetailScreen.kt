@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.library
 
+import org.siloserver.silo.model.section.ResolvedSection
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -108,6 +109,8 @@ fun TvLibraryDetailScreen(
     mediaScope: String? = null,
     onItemClick: (contentId: String) -> Unit,
     onCollectionClick: (collectionId: String, title: String, isUserCollection: Boolean) -> Unit,
+    /** Opens a Recommended row's full page from its "Explore all" card. */
+    onExploreSection: ((ResolvedSection) -> Unit)? = null,
     onInitialContentFocus: () -> Unit = {},
     // When the screen is opened from the Skyline cascade with a committed
     // section pill, this drives the initial tab (Recommended / Library /
@@ -169,6 +172,7 @@ fun TvLibraryDetailScreen(
                 onInitialContentFocus = onInitialContentFocus,
                 focusRequest = sectionRequestNonce,
                 onContentUpFallbackChanged = onContentUpFallbackChanged,
+                onExploreSection = onExploreSection,
             )
             // Browse is the tvOS `TVLibraryGridView` embed: Sort/Filter
             // control row over the grid, with the A–Z rail always on.
@@ -289,6 +293,7 @@ private fun RecommendedTab(
     onInitialContentFocus: () -> Unit,
     focusRequest: Int,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)?,
+    onExploreSection: ((ResolvedSection) -> Unit)?,
 ) {
     val rows = remember(state.sections) {
         state.sections.filter { !it.featured && it.items.isNotEmpty() }
@@ -326,6 +331,7 @@ private fun RecommendedTab(
                     focusRequest = focusRequest,
                     onInitialContentFocus = onInitialContentFocus,
                     onContentUpFallbackChanged = onContentUpFallbackChanged,
+                    onExploreAllForSection = onExploreSection,
                 )
                 state.recommendedError?.let { message ->
                     Row(

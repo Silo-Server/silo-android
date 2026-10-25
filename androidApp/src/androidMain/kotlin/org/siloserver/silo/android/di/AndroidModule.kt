@@ -552,6 +552,7 @@ val androidModule = module {
     viewModel { HistoryViewModel(get(), get()) }
     viewModel { CollectionsViewModel(get()) }
     viewModel { params -> CollectionDetailViewModel(get(), get(), params.get()) }
+    viewModel { params -> org.siloserver.silo.viewmodel.SectionBrowseViewModel(get(), params.get()) }
     viewModel { RequestsViewModel(get()) }
     viewModel { RequestSearchViewModel(get()) }
     viewModel { MyRequestsViewModel(get()) }

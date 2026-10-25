@@ -67,6 +67,8 @@ fun TvHomeScreen(
     onPlayItem: (contentId: String, type: String?, resumePositionSeconds: Double?) -> Unit = { _, _, _ -> },
     onSeeAll: () -> Unit = {},
     onOpenForYou: () -> Unit = {},
+    /** Opens a row's full page from its "Explore all" card. */
+    onExploreSection: ((ResolvedSection) -> Unit)? = null,
     onOpenSettings: () -> Unit = {},
     onInitialContentFocus: () -> Unit = {},
     focusRequest: Int = 0,
@@ -144,6 +146,7 @@ fun TvHomeScreen(
                 onPlayItem = onPlayItem,
                 onSeeAll = onSeeAll,
                 onOpenForYou = onOpenForYou,
+                onExploreSection = onExploreSection,
                 onInitialContentFocus = onInitialContentFocus,
                 focusRequest = focusRequest,
                 detailReturnFocusRequest = detailReturnFocusRequest,
@@ -233,6 +236,7 @@ private fun TvHomeContent(
     onPlayItem: (contentId: String, type: String?, resumePositionSeconds: Double?) -> Unit,
     onSeeAll: () -> Unit = {},
     onOpenForYou: () -> Unit = {},
+    onExploreSection: ((ResolvedSection) -> Unit)? = null,
     onInitialContentFocus: () -> Unit,
     focusRequest: Int,
     detailReturnFocusRequest: Int,
@@ -269,6 +273,7 @@ private fun TvHomeContent(
         onSeeAllClickForSection = { section ->
             if (section.isForYouRow()) onOpenForYou else null
         },
+        onExploreAllForSection = onExploreSection,
         showProgressForSection = { section ->
             section.isTvProgressRow()
         },
