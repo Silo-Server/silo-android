@@ -1001,6 +1001,28 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
+    fun `subtitle pick is refused when another edition turns subtitles off`() = runTest {
+        val noSubtitles = replanPlan(planId = "s2").copy(
+            requestedMediaFileId = 42,
+            effectiveMediaFileId = 84,
+            selectedTracks = SelectedPlaybackTracksV3(audio = audioTrack(fileId = 84)),
+            subtitle = PlaybackSubtitleDecisionV3(mode = PlaybackSubtitleModeV3.OFF),
+        )
+        val harness = Harness(replanResponse = { _, _ -> response(noSubtitles) })
+        harness.start()
+
+        val staged = harness.manager.stageActiveVideoSessionReplan(
+            classification = "subtitle_track_changed",
+            positionSeconds = 42.0,
+            audioTrackIndex = 0,
+            subtitleTrackIndex = 4,
+        )
+
+        assertIs<ApiResult.Error>(staged)
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
+    }
+
+    @Test
     fun `immediate replan wrapper stages and commits replacement`() = runTest {
         val harness = Harness(
             replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
