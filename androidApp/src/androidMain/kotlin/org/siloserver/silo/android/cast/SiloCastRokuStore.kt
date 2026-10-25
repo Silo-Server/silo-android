@@ -2,6 +2,9 @@ package org.siloserver.silo.android.cast
 
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -73,9 +76,24 @@ data class SiloCastRememberedRoku(
          */
         fun merge(found: List<SiloCastTarget>, remembered: List<SiloCastRememberedRoku>): List<SiloCastTarget> {
             val foundIds = found.mapTo(HashSet()) { it.deviceId }
+            val byId = remembered.associateBy { it.deviceId }
+            val discovered = found.map { keepSealed(it, byId[it.deviceId]) }
             val missing = remembered.filterNot { it.deviceId in foundIds }.map { it.toTarget() }
-            if (missing.isEmpty()) return found
-            return (found + missing).sortedBy { it.name.lowercase() }
+            if (missing.isEmpty()) return discovered
+            return (discovered + missing).sortedBy { it.name.lowercase() }
+        }
+
+        /**
+         * A Roku paired at level `sealed` stays sealed when an advertisement
+         * with its deviceId says `plain`: anyone on the network can advertise
+         * that, so only a new pairing link or typed address drops the key. A
+         * Roku that really went to `plain` refuses the sealed hello, and the
+         * user is asked to scan its new code.
+         */
+        private fun keepSealed(target: SiloCastTarget, roku: SiloCastRememberedRoku?): SiloCastTarget {
+            val keyId = roku?.pairingKey?.let(SiloCastSealed::keyId)
+            if (target.transport != SiloCastTransport.Plain || keyId == null) return target
+            return target.copy(transport = SiloCastTransport.Sealed, keyId = keyId)
         }
     }
 }
@@ -88,6 +106,32 @@ interface SiloCastRokuStore {
 
     /** Removes the record for [deviceId], pairing key included. */
     fun forget(deviceId: String)
+}
+
+/**
+ * Applies changes to [store] one at a time, in the order they were made, off
+ * the caller's thread, so a forget never lands before the remember it follows.
+ */
+class SiloCastRokuWriter(
+    private val store: SiloCastRokuStore,
+    scope: CoroutineScope,
+    onFailure: (Throwable) -> Unit,
+) {
+    private val changes = Channel<() -> Unit>(Channel.UNLIMITED)
+
+    init {
+        scope.launch {
+            for (change in changes) runCatching { change() }.onFailure(onFailure)
+        }
+    }
+
+    fun remember(roku: SiloCastRememberedRoku) {
+        changes.trySend { store.remember(roku) }
+    }
+
+    fun forget(deviceId: String) {
+        changes.trySend { store.forget(deviceId) }
+    }
 }
 
 /** [SiloCastRokuStore] in the app's encrypted preferences, as one JSON list. */

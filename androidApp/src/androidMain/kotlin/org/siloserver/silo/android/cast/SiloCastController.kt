@@ -250,6 +250,13 @@ class SiloCastController(
      */
     private val rememberedRokus = MutableStateFlow(rokuStore?.let { runCatching { it.all() }.getOrNull() }.orEmpty())
 
+    // Held while changing [rememberedRokus] and queueing the same change for
+    // [rokuWriter], so the store sees changes in the order memory did.
+    private val rokuLock = Any()
+    private val rokuWriter = rokuStore?.let { store ->
+        SiloCastRokuWriter(store, scope) { Log.w(TAG, "Could not update the saved Rokus: ${it.message}") }
+    }
+
     init {
         scope.launch {
             combine(browser.targets, rememberedRokus, SiloCastRememberedRoku::merge).collect { targets ->
@@ -334,9 +341,10 @@ class SiloCastController(
     }
 
     private fun rememberRoku(roku: SiloCastRememberedRoku) {
-        rememberedRokus.update { current -> current.filterNot { it.deviceId == roku.deviceId } + roku }
-        val store = rokuStore ?: return
-        scope.launch { runCatching { store.remember(roku) }.onFailure { Log.w(TAG, "Could not save a Roku: ${it.message}") } }
+        synchronized(rokuLock) {
+            rememberedRokus.update { current -> current.filterNot { it.deviceId == roku.deviceId } + roku }
+            rokuWriter?.remember(roku)
+        }
     }
 
     /** A Roku added by pairing link or address, which [forgetRoku] can remove. */
@@ -344,10 +352,11 @@ class SiloCastController(
 
     /** Forgets a Roku added by pairing link or address, with its pairing key. */
     fun forgetRoku(deviceId: String) {
-        rememberedRokus.update { current -> current.filterNot { it.deviceId == deviceId } }
+        synchronized(rokuLock) {
+            rememberedRokus.update { current -> current.filterNot { it.deviceId == deviceId } }
+            rokuWriter?.forget(deviceId)
+        }
         if (lastTargetStore.load()?.deviceId == deviceId) lastTargetStore.clear()
-        val store = rokuStore ?: return
-        scope.launch { runCatching { store.forget(deviceId) }.onFailure { Log.w(TAG, "Could not forget a Roku: ${it.message}") } }
     }
 
     /** A sealed Roku this phone has no matching pairing key for: the user has to scan its code first. */
