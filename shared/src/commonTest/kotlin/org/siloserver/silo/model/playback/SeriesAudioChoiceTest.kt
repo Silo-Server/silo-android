@@ -10,7 +10,9 @@ import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.playback.audioTrackFingerprint
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class SeriesAudioChoiceTest {
 
@@ -47,6 +49,26 @@ class SeriesAudioChoiceTest {
         // server would refuse is left out.
         assertEquals("en", SeriesAudioChoice.of(main.copy(language = "English"), 0).audioLanguage)
         assertNull(SeriesAudioChoice.of(main.copy(language = "Português"), 0).audioLanguage)
+    }
+
+    @Test
+    fun `a pick that commits on another version is recognized at its new position`() {
+        val uhd = listOf(
+            AudioTrack(language = "eng", codec = "ac3", channels = 6, channelLayout = "5.1"),
+            AudioTrack(language = "jpn", codec = "ac3", channels = 6, channelLayout = "5.1"),
+        )
+        val hd = listOf(
+            AudioTrack(language = "jpn", codec = "aac", channels = 2, channelLayout = "stereo"),
+            AudioTrack(language = "eng", codec = "aac", channels = 2, channelLayout = "stereo"),
+        )
+        val english = SeriesAudioChoice.of(uhd, 0)
+
+        // English is track 0 on the 2160p file and track 1 on the 1080p file.
+        assertTrue(english.isCommittedAt(1, hd, pickedOrdinal = 0, sameFile = false))
+        assertFalse(english.isCommittedAt(0, hd, pickedOrdinal = 0, sameFile = false))
+        // On the file it was picked on, the position decides.
+        assertTrue(english.isCommittedAt(0, uhd, pickedOrdinal = 0, sameFile = true))
+        assertFalse(english.isCommittedAt(1, uhd, pickedOrdinal = 0, sameFile = true))
     }
 
     @Test

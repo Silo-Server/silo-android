@@ -121,6 +121,24 @@ fun SeriesAudioChoice.resolveOn(tracks: List<AudioTrack>): Int? {
 }
 
 /**
+ * Whether the audio a change committed, at [committedOrdinal] of
+ * [committedTracks], is this choice, staged at [pickedOrdinal] of the file it
+ * was picked on. On that file ([sameFile]) it is the same position. A replan
+ * can move to another version, where the same track can sit elsewhere, so
+ * there it is the track this choice names on [committedTracks].
+ */
+fun SeriesAudioChoice?.isCommittedAt(
+    committedOrdinal: Int?,
+    committedTracks: List<AudioTrack>,
+    pickedOrdinal: Int,
+    sameFile: Boolean,
+): Boolean = when {
+    committedOrdinal == null -> false
+    sameFile -> committedOrdinal == pickedOrdinal
+    else -> this?.resolveOn(committedTracks) == committedOrdinal
+}
+
+/**
  * The server's `AudioTrackDecodable` for a track list: a track whose probe
  * named no codec, or `unknown`, cannot be converted or copied.
  */

@@ -91,6 +91,7 @@ import org.siloserver.silo.domain.player.BufferingQualityNoticeSlot
 import org.siloserver.silo.domain.player.BufferingQualityPill
 import org.siloserver.silo.domain.player.BufferingQualityReplan
 import org.siloserver.silo.domain.player.toBufferingQualityPlan
+import org.siloserver.silo.model.playback.isCommittedAt
 import org.siloserver.silo.model.playback.LEARNED_LIMIT_CLEAR
 import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.domain.player.IntroAutoSkipController
@@ -5954,6 +5955,7 @@ class TvPlayerViewModel(
             choice = org.siloserver.silo.model.playback.SeriesAudioChoice.of(catalogAudioTracks(state), catalogOrdinal),
             owner = trackChoiceOwner,
             catalogOrdinal = catalogOrdinal,
+            fileId = state.selectedFileId ?: state.mediaFileId,
         )
         stagedAudioWrite.set(write)
     }
@@ -5987,6 +5989,8 @@ class TvPlayerViewModel(
         val choice: org.siloserver.silo.model.playback.SeriesAudioChoice?,
         val owner: org.siloserver.silo.network.AuthScopeSnapshot?,
         val catalogOrdinal: Int,
+        /** The file it was picked on; a replan can commit it on another. */
+        val fileId: Int?,
     )
 
     /**
@@ -6024,8 +6028,16 @@ class TvPlayerViewModel(
             ?.takeIf { it.identity == committed.identity && stagedSubtitleWrite.compareAndSet(it, null) }
             ?.let(::saveSeriesSubtitle)
         if (committed.audioPreferenceSpecified) {
+            val state = _uiState.value
             stagedAudioWrite.get()
-                ?.takeIf { it.catalogOrdinal == committed.audioTrackIndex && stagedAudioWrite.compareAndSet(it, null) }
+                ?.takeIf {
+                    it.choice.isCommittedAt(
+                        committedOrdinal = committed.audioTrackIndex,
+                        committedTracks = catalogAudioTracks(state),
+                        pickedOrdinal = it.catalogOrdinal,
+                        sameFile = it.fileId == (state.selectedFileId ?: state.mediaFileId),
+                    ) && stagedAudioWrite.compareAndSet(it, null)
+                }
                 ?.let(::saveSeriesAudio)
         }
     }

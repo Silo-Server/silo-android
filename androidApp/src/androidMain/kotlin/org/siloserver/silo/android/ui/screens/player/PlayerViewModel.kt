@@ -84,6 +84,7 @@ import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.settings.SubtitleAppearance
+import org.siloserver.silo.model.playback.isCommittedAt
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.SUBTITLE_HLS_RENDITION_FAILED_CLASSIFICATION
 import org.siloserver.silo.model.playback.PlaybackDelivery
@@ -4934,6 +4935,7 @@ class PlayerViewModel(
             choice = choice,
             owner = trackChoiceOwner,
             catalogOrdinal = catalogOrdinal,
+            fileId = state.mediaFileId,
             save = !state.isLocalFilePlayback(),
         )
         stagedAudioWrite.set(write)
@@ -4980,6 +4982,8 @@ class PlayerViewModel(
         val choice: org.siloserver.silo.model.playback.SeriesAudioChoice,
         val owner: org.siloserver.silo.network.AuthScopeSnapshot?,
         val catalogOrdinal: Int,
+        /** The file it was picked on; a replan can commit it on another. */
+        val fileId: Int?,
         val save: Boolean = true,
     )
 
@@ -5017,8 +5021,16 @@ class PlayerViewModel(
             ?.takeIf { it.identity == committed.identity && stagedSubtitleWrite.compareAndSet(it, null) }
             ?.let(::saveSeriesSubtitle)
         if (committed.audioPreferenceSpecified) {
+            val state = _uiState.value
             stagedAudioWrite.get()
-                ?.takeIf { it.catalogOrdinal == committed.audioTrackIndex && stagedAudioWrite.compareAndSet(it, null) }
+                ?.takeIf {
+                    it.choice.isCommittedAt(
+                        committedOrdinal = committed.audioTrackIndex,
+                        committedTracks = state.audioTracks,
+                        pickedOrdinal = it.catalogOrdinal,
+                        sameFile = it.fileId == state.mediaFileId,
+                    ) && stagedAudioWrite.compareAndSet(it, null)
+                }
                 ?.let(::saveSeriesAudio)
         }
     }
