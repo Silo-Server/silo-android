@@ -11,4 +11,11 @@ object PairingProtocol {
 
     /** Bonjour/NSD service type the TV advertises and the phone browses for. */
     const val SERVICE_TYPE = "_silopair._tcp"
+
+    /**
+     * The Roku's pairing service (silo-roku `docs/companion-pairing.md`). Roku
+     * has no TLS on a listening socket, so it speaks the same messages over
+     * plain TCP; the separate type keeps it off the TLS path.
+     */
+    const val ROKU_SERVICE_TYPE = "_silopair-roku._tcp"
 }

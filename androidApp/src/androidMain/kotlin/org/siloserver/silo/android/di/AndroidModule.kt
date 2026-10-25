@@ -26,7 +26,7 @@ import org.siloserver.silo.common.pairing.CompanionPairingServerStore
 import org.siloserver.silo.common.pairing.CompanionPairingTransportFactory
 import org.siloserver.silo.common.pairing.RegistryCompanionPairingServerStore
 import org.siloserver.silo.common.pairing.RepositoryCompanionDeviceLoginApprover
-import org.siloserver.silo.common.pairing.TlsPskPairingClientTransport
+import org.siloserver.silo.common.pairing.CompanionPairingTransports
 import org.siloserver.silo.common.player.AudioCapabilityManager
 import org.siloserver.silo.common.player.AudioTrackManager
 import org.siloserver.silo.common.player.AndroidSubtitlePresentation
@@ -275,11 +275,8 @@ val androidModule = module {
         // The nearby approval card names the account approving signs the TV in as.
         RepositoryCompanionDeviceLoginApprover(get(), get(), accountNameOf = { scope -> accountNameOn(authRepository, scope) })
     }
-    single<CompanionPairingTransportFactory> {
-        CompanionPairingTransportFactory { target ->
-            TlsPskPairingClientTransport.connect(target.host, target.port)
-        }
-    }
+    // TLS-PSK to Apple TV and Android TV, plain TCP to a Roku.
+    single<CompanionPairingTransportFactory> { CompanionPairingTransports }
     single {
         CompanionPairingCoordinator(
             serverStore = get(),

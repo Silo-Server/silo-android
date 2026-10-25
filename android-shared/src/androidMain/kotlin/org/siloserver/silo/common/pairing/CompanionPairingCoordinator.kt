@@ -49,7 +49,15 @@ data class CompanionPairingTarget(
     val serviceName: String = name,
     /** TXT `srv`: the deployment identity a signed-out (`st=login`) TV wants. */
     val serverIdentity: String? = null,
+    /** Found as `_silopair-roku._tcp`: dialed over plain TCP, never TLS-PSK, and signed in to one server. */
+    val isRoku: Boolean = false,
 ) {
+    /** A Roku keeps one server, so setup pushes exactly one (silo-roku `docs/companion-pairing.md` section 4). */
+    val keepsOneServer: Boolean get() = isRoku
+
+    /** What the phone calls this device in its copy. */
+    val deviceNoun: String get() = if (isRoku) "Roku" else "TV"
+
     /**
      * A TV on its sign-in screen for one server. Older TVs advertise no `st`
      * (or `setup`); anything that isn't `login` is treated as a setup TV.
@@ -306,6 +314,8 @@ class CompanionPairingCoordinator(
                     _status.value = CompanionPairingStatus.PickServers(target.name)
                     val selectedServers = (if (signedOutServer != null) orderedServers else chooseServers(orderedServers))
                         .filter { selected -> orderedServers.any { it.id == selected.id } }
+                        // A Roku refuses a second push once one has signed in.
+                        .let { if (target.keepsOneServer) it.take(1) else it }
                     if (selectedServers.isEmpty()) {
                         error("Choose at least one server to continue.")
                     }
@@ -363,7 +373,7 @@ class CompanionPairingCoordinator(
                     "${target.name} cancelled."
                 }
                 is ClosedReceiveChannelException -> "${target.name} closed the connection. Try again."
-                else -> t.userFacingPairingMessage()
+                else -> t.userFacingPairingMessage(target)
             }
             _status.value = CompanionPairingStatus.Failed(target.name, message)
             return CompanionPairingResult.Failed(message)
@@ -377,20 +387,24 @@ class CompanionPairingCoordinator(
     }
 
     /** What the phone says when the TV reports [this] failure for [serverName]. */
-    private fun PairingFailureCode.phoneMessage(tvName: String, serverName: String): String = when (this) {
-        PairingFailureCode.Denied -> "The sign-in was declined."
-        PairingFailureCode.Expired -> "The code on $tvName expired. Try again."
-        PairingFailureCode.Unreachable -> "$tvName can't reach $serverName. Check the TV's network connection."
-        PairingFailureCode.IdentityMismatch -> "$tvName reached a different server at that address. Nothing was signed in."
-        PairingFailureCode.UpdateRequired -> "$serverName or the Silo app on $tvName needs an update first."
-        PairingFailureCode.AuthFailed -> "$tvName couldn't finish signing in to $serverName."
+    private fun PairingFailureCode.phoneMessage(target: CompanionPairingTarget, serverName: String): String {
+        val tvName = target.name
+        return when (this) {
+            PairingFailureCode.Denied -> "The sign-in was declined."
+            PairingFailureCode.Expired -> "The code on $tvName expired. Try again."
+            PairingFailureCode.Unreachable ->
+                "$tvName can't reach $serverName. Check the ${target.deviceNoun}'s network connection."
+            PairingFailureCode.IdentityMismatch -> "$tvName reached a different server at that address. Nothing was signed in."
+            PairingFailureCode.UpdateRequired -> "$serverName or the Silo app on $tvName needs an update first."
+            PairingFailureCode.AuthFailed -> "$tvName couldn't finish signing in to $serverName."
+        }
     }
 
-    private fun Throwable.userFacingPairingMessage(): String {
+    private fun Throwable.userFacingPairingMessage(target: CompanionPairingTarget): String {
         val detail = generateSequence(this) { it.cause }
             .mapNotNull { it.message?.takeIf(String::isNotBlank) }
             .firstOrNull()
-        return detail ?: "Couldn't connect to the TV. Keep its setup screen open and try again."
+        return detail ?: "Couldn't connect to the ${target.deviceNoun}. Keep its setup screen open and try again."
     }
 
     private suspend fun pushAndApproveServer(
@@ -422,7 +436,7 @@ class CompanionPairingCoordinator(
         ) {
             is PairingMessage.DeviceStarted -> first
             is PairingMessage.ServerResult ->
-                error(PairingFailureCode.fromWire(first.error).phoneMessage(target.name, server.displayName))
+                error(PairingFailureCode.fromWire(first.error).phoneMessage(target, server.displayName))
             else -> error("Unexpected TV setup message.")
         }
         val lookup = when (val result = deviceLoginApprover.lookup(server, started.userCode)) {
@@ -473,7 +487,7 @@ class CompanionPairingCoordinator(
             timeoutMs = SERVER_RESULT_TIMEOUT_MS,
         ) { it.serverURL == server.url }
         if (result.status != PairingServerStatus.SignedIn) {
-            error(PairingFailureCode.fromWire(result.error).phoneMessage(target.name, server.displayName))
+            error(PairingFailureCode.fromWire(result.error).phoneMessage(target, server.displayName))
         }
     }
 

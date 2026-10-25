@@ -435,4 +435,27 @@ class CompanionPairingCoordinatorTest {
         onCoordinator(coordinator)
         return coordinator.pair(CompanionPairingTarget("tv-1", "Den TV", "127.0.0.1", 9999))
     }
+
+    /** A Roku keeps one server and refuses a second push (silo-roku `docs/companion-pairing.md` section 4). */
+    @Test
+    fun aRokuIsSentOneServerEvenIfMoreAreChosen() = runTest {
+        val transport = ScriptedPhoneTransport()
+        val home = CompanionPairingServer(id = "srv-home", url = "https://home.example", displayName = "Home")
+        val cabin = CompanionPairingServer(id = "srv-cabin", url = "https://cabin.example", displayName = "Cabin")
+        val coordinator = CompanionPairingCoordinator(
+            serverStore = FakeCompanionServerStore(
+                CompanionPairingServerSnapshot(activeServerId = home.id, servers = listOf(home, cabin)),
+            ),
+            deviceLoginApprover = FakeCompanionApprover(onApprove = { transport.signIn(home.url) }),
+            transportFactory = { transport },
+        )
+
+        val result = coordinator.pair(
+            target = CompanionPairingTarget("roku-1", "Den Roku", "127.0.0.1", 52827, isRoku = true),
+            chooseServers = { it },
+        )
+
+        assertEquals(CompanionPairingResult.Completed(serverCount = 1), result)
+        assertEquals(listOf(home.url), transport.sent.filterIsInstance<PairingMessage.PushServer>().map { it.serverURL })
+    }
 }

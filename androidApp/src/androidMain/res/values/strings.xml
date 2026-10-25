@@ -119,6 +119,7 @@
     <!-- Unauthenticated discovery: the name and state are the TV's claim,
          checked against its code on the next step. -->
     <string name="companion_offer_signin_body">A TV nearby named “%1$s” says it\'s on its sign-in screen. You\'ll check its code before approving.</string>
+    <string name="companion_offer_signin_body_roku">A Roku nearby named “%1$s” says it\'s on its sign-in screen. You\'ll check its code before approving.</string>
     <string name="companion_offer_signin_action">Sign in</string>
     <string name="companion_offer_not_now">Not now</string>
     <string name="companion_confirm_check">Check that %1$s shows</string>
@@ -131,8 +132,10 @@
     <string name="companion_signin_failed_title">Sign-in didn\'t finish</string>
     <string name="companion_confirm_older_tv">Older TV apps show %1$s instead.</string>
     <string name="companion_pane_title">Nearby TV</string>
+    <string name="companion_pane_title_roku">Nearby Roku</string>
     <string name="companion_setup_done_title">Set up %1$s</string>
     <string name="companion_setup_done_title_generic">TV setup complete</string>
+    <string name="companion_setup_done_title_generic_roku">Roku setup complete</string>
     <string name="companion_setup_done_body">%1$s is ready.</string>
     <string name="companion_setup_failed_title">Setup didn\'t finish</string>
     <string name="companion_setup_progress_title">Setting up…</string>
@@ -143,6 +146,8 @@
     <string name="companion_progress_signed_in">%1$s signed in.</string>
     <string name="companion_progress_wait">Please wait.</string>
     <string name="companion_choose_servers_title">Choose servers</string>
+    <!-- A Roku keeps one server, so its chooser is single-select. -->
+    <string name="companion_choose_server_title">Choose a server</string>
     <string name="companion_choose_servers_body">Sign %1$s in to…</string>
     <string name="companion_continue">Continue</string>
     <string name="companion_cancel">Cancel</string>

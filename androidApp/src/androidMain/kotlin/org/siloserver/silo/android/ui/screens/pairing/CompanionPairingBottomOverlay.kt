@@ -43,6 +43,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -225,7 +226,7 @@ private fun PairingCard(
     // A signed-out TV (`st=login`) is being signed in, not set up; the
     // progress and result copy says so.
     val signIn = signInServerName != null
-    val paneTitle = stringResource(R.string.companion_pane_title)
+    val paneTitle = stringResource(if (target.isRoku) R.string.companion_pane_title_roku else R.string.companion_pane_title)
 
     Card(
         modifier = Modifier
@@ -270,6 +271,7 @@ private fun PairingCard(
                 )
                 serverChoices != null -> ServerPicker(
                     targetName = target.name,
+                    singleSelect = target.keepsOneServer,
                     servers = serverChoices,
                     onContinue = onServersSelected,
                     onCancel = onDismiss,
@@ -287,7 +289,13 @@ private fun PairingCard(
                     } else {
                         status.serverNames.takeIf { it.isNotEmpty() }
                             ?.let { stringResource(R.string.companion_setup_done_title, it.joinToString()) }
-                            ?: stringResource(R.string.companion_setup_done_title_generic)
+                            ?: stringResource(
+                                if (target.isRoku) {
+                                    R.string.companion_setup_done_title_generic_roku
+                                } else {
+                                    R.string.companion_setup_done_title_generic
+                                },
+                            )
                     },
                     message = if (signIn) {
                         stringResource(R.string.companion_signin_done_body, signInServerName.orEmpty())
@@ -318,13 +326,15 @@ private fun PairingCard(
 @Composable
 private fun ServerPicker(
     targetName: String,
+    /** A Roku keeps one server: picking one replaces the choice. */
+    singleSelect: Boolean,
     servers: List<CompanionPairingServer>,
     onContinue: (Set<String>) -> Unit,
     onCancel: () -> Unit,
 ) {
     // The phone's active server is preselected (the usual answer).
-    var selectedIds by remember(servers) {
-        mutableStateOf(servers.filter { it.isActive }.map { it.id }.toSet())
+    var selectedIds by remember(servers, singleSelect) {
+        mutableStateOf(companionInitialServerSelection(servers, singleSelect))
     }
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -340,7 +350,12 @@ private fun ServerPicker(
                 modifier = Modifier.size(40.dp),
             )
             Column(modifier = Modifier.padding(start = 12.dp)) {
-                Text(stringResource(R.string.companion_choose_servers_title), style = MaterialTheme.typography.titleLarge)
+                Text(
+                    stringResource(
+                        if (singleSelect) R.string.companion_choose_server_title else R.string.companion_choose_servers_title,
+                    ),
+                    style = MaterialTheme.typography.titleLarge,
+                )
                 Text(
                     text = stringResource(R.string.companion_choose_servers_body, targetName),
                     style = MaterialTheme.typography.bodyMedium,
@@ -352,9 +367,7 @@ private fun ServerPicker(
         servers.forEach { server ->
             val selected = server.id in selectedIds
             Surface(
-                onClick = {
-                    selectedIds = if (selected) selectedIds - server.id else selectedIds + server.id
-                },
+                onClick = { selectedIds = companionToggleServer(selectedIds, server.id, singleSelect) },
                 shape = RoundedCornerShape(14.dp),
                 color = if (selected) {
                     MaterialTheme.colorScheme.primaryContainer
@@ -389,7 +402,11 @@ private fun ServerPicker(
                         }
                     }
                     Spacer(modifier = Modifier.width(12.dp))
-                    Checkbox(checked = selected, onCheckedChange = null)
+                    if (singleSelect) {
+                        RadioButton(selected = selected, onClick = null)
+                    } else {
+                        Checkbox(checked = selected, onCheckedChange = null)
+                    }
                 }
             }
         }
@@ -408,6 +425,19 @@ private fun ServerPicker(
             Text(stringResource(R.string.companion_cancel))
         }
     }
+}
+
+/** The chooser's starting selection: the phone's active server (the usual answer), only one for a Roku. */
+internal fun companionInitialServerSelection(servers: List<CompanionPairingServer>, singleSelect: Boolean): Set<String> {
+    val active = servers.filter { it.isActive }.map { it.id }
+    return if (singleSelect) active.take(1).toSet() else active.toSet()
+}
+
+/** A tap on [serverId]: a toggle, or for a single-select chooser, that server alone. */
+internal fun companionToggleServer(selected: Set<String>, serverId: String, singleSelect: Boolean): Set<String> = when {
+    singleSelect -> setOf(serverId)
+    serverId in selected -> selected - serverId
+    else -> selected + serverId
 }
 
 /**
@@ -457,7 +487,10 @@ private fun DiscoveryStep(
         )
         Text(
             text = if (signInServerName != null) {
-                stringResource(R.string.companion_offer_signin_body, target.name)
+                stringResource(
+                    if (target.isRoku) R.string.companion_offer_signin_body_roku else R.string.companion_offer_signin_body,
+                    target.name,
+                )
             } else {
                 stringResource(R.string.companion_offer_setup_body, target.name)
             },
