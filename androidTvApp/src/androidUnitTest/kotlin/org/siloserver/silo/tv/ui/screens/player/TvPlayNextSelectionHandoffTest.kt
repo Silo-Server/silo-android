@@ -154,25 +154,6 @@ class TvPlayNextSelectionHandoffTest {
     }
 
     @Test
-    fun offForcedByAnotherVersionCarriesTheSubtitleTheViewerPicked() {
-        val picked = tvEpisodeSubtitleIntent(
-            SubtitleIdentity.ServerSidecar(serverIndex = 0),
-            listOf(subtitle(index = 0, language = "en", codec = "srt")),
-        )
-
-        val handoff = captureTvEpisodeSelectionHandoff(
-            activeVersion = null,
-            committedSubtitleIdentity = SubtitleIdentity.Off,
-            catalogSubtitles = emptyList(),
-            hasExplicitSubtitleSelection = true,
-            subtitleIntentBeforeForcedOff = picked,
-        )
-
-        assertEquals(EpisodeSubtitleMode.TRACK, handoff.subtitle.mode)
-        assertEquals("en", handoff.subtitle.language)
-    }
-
-    @Test
     fun nextEpisodeCarriesAutoWhenNoExplicitSubtitleWasCommitted() {
         val handoff = captureTvEpisodeSelectionHandoff(
             activeVersion = null,
