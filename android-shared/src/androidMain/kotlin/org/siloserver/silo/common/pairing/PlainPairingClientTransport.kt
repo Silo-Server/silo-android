@@ -3,6 +3,7 @@ package org.siloserver.silo.common.pairing
 import android.util.Log
 import java.net.InetSocketAddress
 import java.net.Socket
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -70,20 +71,23 @@ class PlainPairingClientTransport private constructor(
         private const val TAG = "PlainPairingClient"
         private const val CONNECT_TIMEOUT_MS = 10_000
 
-        suspend fun connect(host: String, port: Int): PlainPairingClientTransport =
-            withContext(Dispatchers.IO) {
-                val socket = Socket()
-                try {
+        suspend fun connect(host: String, port: Int): PlainPairingClientTransport {
+            // Owned outside withContext: a caller cancelled while the connect runs
+            // makes withContext throw on return and drop whatever it built.
+            val socket = Socket()
+            try {
+                withContext(Dispatchers.IO) {
                     Log.i(TAG, "Connecting to $host:$port")
                     socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
                     socket.tcpNoDelay = true
-                    PlainPairingClientTransport(socket)
-                } catch (t: Throwable) {
-                    Log.e(TAG, "Plain pairing connection failed to $host:$port", t)
-                    runCatching { socket.close() }
-                    throw t
                 }
+                return PlainPairingClientTransport(socket)
+            } catch (t: Throwable) {
+                if (t !is CancellationException) Log.e(TAG, "Plain pairing connection failed to $host:$port", t)
+                runCatching { socket.close() }
+                throw t
             }
+        }
     }
 }
 

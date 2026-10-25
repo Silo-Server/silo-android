@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.pairing
 
+import android.net.nsd.NsdServiceInfo
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.ServerSocket
@@ -12,7 +13,9 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
@@ -104,5 +107,72 @@ class CompanionPairingNsdBrowserTest {
             listener.close()
             worker.join(5_000)
         }
+    }
+
+    /** Pairing dismissed while the Roku connect runs: the socket it opened must not outlive it. */
+    @Test
+    fun aConnectItsCallerAbandonsClosesTheSocket() = runBlocking {
+        val listener = ServerSocket(0).apply { soTimeout = 5_000 }
+        try {
+            val caller = launch(start = CoroutineStart.UNDISPATCHED) {
+                PlainPairingClientTransport.connect("127.0.0.1", listener.localPort)
+            }
+            listener.accept().use { accepted ->
+                // This thread is still busy, so connect can't hand its transport back before the cancel.
+                caller.cancel()
+                caller.join()
+                accepted.soTimeout = 5_000
+                // A leaked socket stays open and this read times out.
+                assertEquals(-1, accepted.getInputStream().read())
+            }
+        } finally {
+            listener.close()
+        }
+    }
+
+    private fun found(name: String, roku: Boolean) = PairingResolve(NsdServiceInfo(), roku, serviceName = name)
+
+    /** Legacy NsdManager resolves one service at a time, across both pairing types. */
+    @Test
+    fun aTvAndARokuFoundTogetherResolveOneAtATime() {
+        val queue = PairingResolveQueue()
+        val tv = found("Living Room", roku = false)
+        val roku = found("Den Roku", roku = true)
+        assertSame(tv, queue.enqueue(tv))
+        assertNull(queue.enqueue(roku), "the Roku waits while the TV holds the slot")
+        assertNull(queue.enqueue(found("Living Room", roku = false)), "a repeat of a resolving service is dropped")
+        assertTrue(queue.shouldPublish(tv))
+        assertSame(roku, queue.finish(tv))
+        assertNull(queue.finish(tv), "a second callback for the same resolve starts nothing")
+        assertNull(queue.finish(roku))
+    }
+
+    @Test
+    fun aServiceLostWhileResolvingKeepsTheSlotButPublishesNothing() {
+        val queue = PairingResolveQueue()
+        val tv = found("Living Room", roku = false)
+        val queuedRoku = found("Den Roku", roku = true)
+        val otherRoku = found("Bedroom Roku", roku = true)
+        queue.enqueue(tv)
+        queue.enqueue(queuedRoku)
+        queue.enqueue(otherRoku)
+        queue.lose("Living Room", roku = false)
+        queue.lose("Den Roku", roku = true)
+        assertFalse(queue.shouldPublish(tv))
+        assertNull(queue.enqueue(found("Kitchen", roku = false)), "the lost resolve still holds the slot")
+        assertSame(otherRoku, queue.finish(tv), "the lost Roku left the queue")
+    }
+
+    @Test
+    fun aResolveFinishingAfterBrowsingStopsPublishesNothing() {
+        val queue = PairingResolveQueue()
+        val stale = found("Living Room", roku = false)
+        queue.enqueue(stale)
+        queue.clear()
+        val fresh = found("Den Roku", roku = true)
+        assertSame(fresh, queue.enqueue(fresh))
+        assertFalse(queue.shouldPublish(stale))
+        assertNull(queue.finish(stale), "the stale callback must not free the new resolve's slot")
+        assertTrue(queue.shouldPublish(fresh))
     }
 }
