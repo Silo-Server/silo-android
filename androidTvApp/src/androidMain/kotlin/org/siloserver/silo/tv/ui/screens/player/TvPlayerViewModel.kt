@@ -1318,10 +1318,15 @@ class TvPlayerViewModel(
 
     /**
      * Unconfirmed publications that moved to another version, which turned the
-     * requested subtitle Off because that file lacks it. Once confirmed, the Off
-     * is not the viewer's choice, so it isn't carried to the next episode.
+     * requested subtitle Off because that file lacks it, by session, with the
+     * [subtitleChoiceGeneration] they were adopted under. Once confirmed, the Off
+     * is not the viewer's choice: it isn't carried to the next episode or saved
+     * as their preference, unless they picked a subtitle in the meantime.
      */
-    private val unpublishedForcedSubtitleOff = mutableSetOf<String>()
+    private val unpublishedForcedSubtitleOff = mutableMapOf<String, Long>()
+
+    /** Counts the viewer's subtitle picks; see [unpublishedForcedSubtitleOff]. */
+    private var subtitleChoiceGeneration = 0L
     private val unpublishedTvLoadUi =
         TvUnpublishedLoadUiOwnership<UiState, TvSubtitlePlaybackContext>()
 
@@ -2078,7 +2083,7 @@ class TvPlayerViewModel(
             adoption.committed.identity == SubtitleIdentity.Off &&
             adoption.requestedIdentity != SubtitleIdentity.Off
         ) {
-            unpublishedForcedSubtitleOff += ready.session.sessionId
+            unpublishedForcedSubtitleOff[ready.session.sessionId] = subtitleChoiceGeneration
         }
 
         val subtitleUrls = enrichAuthoritativePlaybackSubtitleChoices(
@@ -2137,7 +2142,10 @@ class TvPlayerViewModel(
     ): Boolean {
         unpublishedSubtitleUi.remove(playback.sessionId)
         unpublishedSubtitleMounts.remove(playback.sessionId)
-        if (unpublishedForcedSubtitleOff.remove(playback.sessionId)) manualSubtitleSelectionApplied = false
+        if (unpublishedForcedSubtitleOff.remove(playback.sessionId) == subtitleChoiceGeneration) {
+            manualSubtitleSelectionApplied = false
+            autoSelectedSubtitleIdentity = SubtitleIdentity.Off
+        }
         return true
     }
 
@@ -5726,6 +5734,7 @@ class TvPlayerViewModel(
 
     fun selectSubtitleOption(identity: SubtitleIdentity) {
         manualSubtitleSelectionApplied = true
+        subtitleChoiceGeneration += 1
         // The viewer is choosing: drop the automatic marker so this commit
         // writes the durable per-item preference.
         autoSelectedSubtitleIdentity = null
