@@ -4694,6 +4694,7 @@ class TvPlayerViewModel(
         )
         if (identity != null) {
             _pendingRemoteSubtitleIndex.compareAndSet(index, null)
+            subtitleChoiceGeneration += 1
             playbackMutationFence.beginReplan()
             launchSubtitleTransaction(_uiState.value) {
                 subtitleTransactions.select(identity)
