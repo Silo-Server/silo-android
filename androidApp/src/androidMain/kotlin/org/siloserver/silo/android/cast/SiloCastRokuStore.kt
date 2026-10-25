@@ -15,8 +15,8 @@ import org.siloserver.silo.common.cast.SiloCastTransport
 import org.siloserver.silo.common.lan.SiloCastSealed
 
 /**
- * A Roku added from its pairing link or a typed address (silo-roku
- * `docs/silocontrol.md` section 5.3). The phone finds it again by [deviceId]
+ * A Roku added from its pairing link (silo-roku `docs/silocontrol.md`
+ * section 5.3). The phone finds it again by [deviceId]
  * over DNS-SD and dials [host]:[port] only when DNS-SD finds nothing. At
  * level `sealed` it keeps the Roku's pairing key, so the record lives in the
  * app's encrypted preferences.
@@ -86,9 +86,9 @@ data class SiloCastRememberedRoku(
         /**
          * A Roku paired at level `sealed` stays sealed when an advertisement
          * with its deviceId says `plain`: anyone on the network can advertise
-         * that, so only a new pairing link or typed address drops the key. A
-         * Roku that really went to `plain` refuses the sealed hello, and the
-         * user is asked to scan its new code.
+         * that, so only a new pairing link drops the key. A Roku that really
+         * went to `plain` refuses the sealed hello, and the user is asked to
+         * scan its new code.
          */
         private fun keepSealed(target: SiloCastTarget, roku: SiloCastRememberedRoku?): SiloCastTarget {
             val keyId = roku?.pairingKey?.let(SiloCastSealed::keyId)

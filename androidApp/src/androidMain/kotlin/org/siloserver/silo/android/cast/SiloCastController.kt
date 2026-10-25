@@ -317,29 +317,6 @@ class SiloCastController(
         return link.target
     }
 
-    /**
-     * Adds a Roku from what the user typed: a pairing link, or the address on
-     * the Roku's Connect a Phone screen. An address is checked by reading the
-     * hello a Roku at level `plain` sends on connect; a Roku that requires
-     * pairing needs its link. Throws with a message for the user otherwise.
-     */
-    suspend fun addRoku(text: String): SiloCastTarget {
-        addPairingLink(text)?.let { return it }
-        require(!text.trim().startsWith("silo://", ignoreCase = true)) {
-            "That pairing link isn't valid. Scan the code on your Roku's Connect a Phone screen again."
-        }
-        val (host, port) = SiloCastPairingLink.parseAddress(text)
-            ?: error("Enter the address shown on your Roku, like 192.168.1.20:52817.")
-        val target = withContext(Dispatchers.IO) {
-            runCatching { SiloCastDialer.probeRoku(host, port, CONNECT_TIMEOUT_MS) }.getOrNull()
-        } ?: error(
-            "No Silo Roku answered at $host:$port. Open Silo on your Roku and check the address on its " +
-                "Connect a Phone screen. If it requires pairing, scan its code instead.",
-        )
-        rememberRoku(SiloCastRememberedRoku.from(target, pairingKey = null))
-        return target
-    }
-
     private fun rememberRoku(roku: SiloCastRememberedRoku) {
         synchronized(rokuLock) {
             rememberedRokus.update { current -> current.filterNot { it.deviceId == roku.deviceId } + roku }

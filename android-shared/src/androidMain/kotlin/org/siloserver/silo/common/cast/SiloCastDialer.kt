@@ -4,10 +4,6 @@ import java.io.EOFException
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
-import kotlinx.serialization.json.Json
-import org.siloserver.silo.cast.SiloCastMessage
-import org.siloserver.silo.cast.SiloCastPeerRole
-import org.siloserver.silo.cast.SiloCastProtocol
 import org.siloserver.silo.common.lan.SealedSiloCastConnection
 import org.siloserver.silo.common.lan.SiloCastConnection
 import org.siloserver.silo.common.lan.SiloCastSealed
@@ -26,8 +22,6 @@ class SiloCastPairingRefusedException : IOException("The TV refused the pairing 
  */
 object SiloCastDialer {
     private const val HANDSHAKE_TIMEOUT_MS = 10_000
-    private const val PROBE_TIMEOUT_MS = 3_000
-    private val json = Json { ignoreUnknownKeys = true }
 
     fun dial(target: SiloCastTarget, pairingKey: ByteArray?, connectTimeoutMs: Int): SiloCastConnection =
         when (target.transport) {
@@ -40,37 +34,6 @@ object SiloCastDialer {
                 requireNotNull(pairingKey) { "A sealed TV needs its pairing key." },
             )
         }
-
-    /**
-     * The hello a Roku at level `plain` writes as soon as it accepts a
-     * connection, read to add a Roku by typed address. Null when none comes
-     * (a sealed Roku waits for the phone's `sealed_hello`). The connection
-     * closes without a phone hello, so the Roku never counts it as a controller.
-     */
-    fun probeRoku(host: String, port: Int, connectTimeoutMs: Int): SiloCastTarget? {
-        val (socket, connection) = plain(host, port, connectTimeoutMs)
-        try {
-            socket.soTimeout = PROBE_TIMEOUT_MS
-            val payload = connection.readFrame() ?: return null
-            val hello = (SiloCastMessage.decodeOrNull(json, payload.decodeToString()) as? SiloCastMessage.Hello)?.hello
-                ?: return null
-            if (hello.role != SiloCastPeerRole.Tv || hello.deviceId.isBlank()) return null
-            return SiloCastTarget(
-                deviceId = hello.deviceId,
-                name = hello.deviceName,
-                host = host,
-                port = port,
-                version = SiloCastProtocol.negotiatedVersion(hello.supportedVersions) ?: 1,
-                serviceName = hello.deviceName,
-                serverId = hello.serverId,
-                serverName = hello.serverName,
-                serverIdentity = hello.serverIdentity,
-                transport = SiloCastTransport.Plain,
-            )
-        } finally {
-            connection.close()
-        }
-    }
 
     private fun plain(host: String, port: Int, connectTimeoutMs: Int): Pair<Socket, SiloCastConnection> {
         val socket = Socket()

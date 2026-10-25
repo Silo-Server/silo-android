@@ -65,11 +65,6 @@ class SiloCastRokuTransportTest {
         assertNull(SiloCastPairingLink.parse("silo://cast?v=2&host=roku.local&port=52818&id=roku-2"))
         assertNull(SiloCastPairingLink.parse("silo://cast?v=2&host=10.0.0.5&port=52818&id=roku-2&security=sealed"))
         assertNull(SiloCastPairingLink.parse("silo://play?v=2&host=10.0.0.5&port=52818&id=roku-2"))
-
-        assertEquals("192.168.1.20" to 52817, SiloCastPairingLink.parseAddress(" 192.168.1.20:52817 "))
-        assertEquals("192.168.1.20" to SiloCastPairingLink.DEFAULT_ROKU_PORT, SiloCastPairingLink.parseAddress("192.168.1.20"))
-        assertNull(SiloCastPairingLink.parseAddress("192.168.1.300:52817"))
-        assertNull(SiloCastPairingLink.parseAddress("192.168.1.20:0"))
     }
 
     @Test
@@ -119,19 +114,6 @@ class SiloCastRokuTransportTest {
         assertFailsWith<SiloCastPairingRefusedException> {
             SiloCastDialer.dial(roku(port, SiloCastTransport.Sealed), pairingKey = key, connectTimeoutMs = 5_000)
         }
-    }
-
-    @Test
-    fun probesATypedAddressThroughTheRokusHello() = withRoku({ socket ->
-        frame(socket, tvHello.encodeToByteArray())
-        ""
-    }) { port, _ ->
-        val target = assertNotNull(SiloCastDialer.probeRoku("127.0.0.1", port, 5_000))
-        assertEquals("roku-1", target.deviceId)
-        assertEquals("Den Roku", target.name)
-        assertEquals("c3J2", target.serverId)
-        assertEquals(SiloCastTransport.Plain, target.transport)
-        assertEquals(SiloCastProtocol.version, target.version)
     }
 
     private fun record(txt: Map<String, String>, type: String) =

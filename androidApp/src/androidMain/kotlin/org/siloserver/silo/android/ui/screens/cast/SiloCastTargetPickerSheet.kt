@@ -12,8 +12,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Tv
@@ -23,7 +21,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -33,18 +30,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.cast.SiloCastLaunchRequest
@@ -65,9 +57,8 @@ import org.siloserver.silo.network.ServerRegistry
  *
  * Rokus (silo-roku `docs/silocontrol.md` section 4.4) list beside the other
  * TVs. A phone cannot open the Roku app, so a remembered Roku that discovery
- * doesn't find gets "Open Silo on your Roku", and Connect by Address adds one
- * from its pairing link or the address its Connect a Phone screen shows, for
- * networks that block multicast.
+ * doesn't find gets "Open Silo on your Roku". Scanning a Roku's pairing code
+ * with the camera adds one on networks that block multicast.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -86,7 +77,6 @@ fun SiloCastTargetPickerSheet(
     // Remote-only mode keeps the sheet open through the connect (the row shows
     // a spinner, like Apple's picker) and dismisses once the session is up.
     var pendingConnectDeviceId by remember { mutableStateOf<String?>(null) }
-    var showAddressEntry by remember { mutableStateOf(false) }
 
     fun select(target: SiloCastTarget) {
         if (launchRequest == null) {
@@ -223,15 +213,6 @@ fun SiloCastTargetPickerSheet(
                 )
             }
 
-            if (showAddressEntry) {
-                AddRokuByAddress(controller = controller, onAdded = ::select)
-            } else {
-                TextButton(
-                    onClick = { showAddressEntry = true },
-                    modifier = Modifier.padding(top = 4.dp),
-                ) { Text("Connect by Address") }
-            }
-
             state.error?.let { error ->
                 Text(
                     error,
@@ -325,77 +306,6 @@ private fun TargetRow(
                     modifier = Modifier.size(18.dp),
                 )
             }
-        }
-    }
-}
-
-/**
- * Adds a Roku from a typed (or pasted) pairing link or address, then selects
- * it. Scanning the Roku's QR code with the camera opens the same link.
- */
-@Composable
-private fun AddRokuByAddress(
-    controller: SiloCastController,
-    onAdded: (SiloCastTarget) -> Unit,
-) {
-    val scope = rememberCoroutineScope()
-    var text by remember { mutableStateOf("") }
-    var adding by remember { mutableStateOf(false) }
-    var problem by remember { mutableStateOf<String?>(null) }
-
-    fun add() {
-        if (adding || text.isBlank()) return
-        adding = true
-        problem = null
-        scope.launch {
-            try {
-                onAdded(controller.addRoku(text))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                problem = e.message ?: "Couldn't add that Roku."
-            } finally {
-                adding = false
-            }
-        }
-    }
-
-    Column(
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp),
-    ) {
-        Text(
-            "On your Roku, open Silo's profile menu and choose Connect a Phone. Enter the address it shows, " +
-                "or scan its code with your camera.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            OutlinedTextField(
-                value = text,
-                onValueChange = {
-                    text = it
-                    problem = null
-                },
-                singleLine = true,
-                placeholder = { Text("192.168.1.20:52817") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
-                keyboardActions = KeyboardActions(onGo = { add() }),
-                modifier = Modifier.weight(1f),
-            )
-            if (adding) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-            } else {
-                TextButton(onClick = ::add, enabled = text.isNotBlank()) { Text("Connect") }
-            }
-        }
-        problem?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
     }
 }

@@ -17,9 +17,6 @@ import org.siloserver.silo.common.lan.SiloCastSealed
  */
 class SiloCastPairingLink(val target: SiloCastTarget, val pairingKey: ByteArray?) {
     companion object {
-        /** The Roku receiver's first-choice port, for a typed address without one. */
-        const val DEFAULT_ROKU_PORT = 52817
-
         fun parse(text: String): SiloCastPairingLink? {
             val trimmed = text.trim()
             val prefix = "silo://cast?"
@@ -55,22 +52,6 @@ class SiloCastPairingLink(val target: SiloCastTarget, val pairingKey: ByteArray?
                 ),
                 pairingKey = key,
             )
-        }
-
-        /**
-         * A typed `host` or `host:port` (IPv4 only, as the Roku listens): the
-         * address to probe for a Roku at level `plain`. Null when it isn't one.
-         */
-        fun parseAddress(text: String): Pair<String, Int>? {
-            val trimmed = text.trim()
-            val host = trimmed.substringBefore(':')
-            if (!isIpv4Literal(host)) return null
-            val port = if (':' in trimmed) {
-                trimmed.substringAfter(':').toIntOrNull()?.takeIf { it in 1..65535 } ?: return null
-            } else {
-                DEFAULT_ROKU_PORT
-            }
-            return host to port
         }
 
         private fun isIpv4Literal(host: String): Boolean {
