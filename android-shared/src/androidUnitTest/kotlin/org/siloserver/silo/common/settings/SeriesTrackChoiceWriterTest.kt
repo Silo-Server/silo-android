@@ -172,6 +172,44 @@ class SeriesTrackChoiceWriterTest {
     }
 
     @Test
+    fun `a pick that lands while the start reads again is not lost`() = runTest {
+        val recorder = Recorder()
+        val writer = writer(recorder) { profileA }
+        val stale = org.siloserver.silo.model.catalog.WatchDetail(
+            contentId = "episode-2", type = "episode", title = "E2", seriesId = "series-1",
+            effectiveSubtitleLanguage = "en", effectiveSubtitleMode = "always",
+        )
+        val landedBefore = writer.landedWrites
+        writer.saveSubtitle("series-1", SeriesSubtitleChoice.Off)
+        advanceUntilIdle()
+        // A newer pick fails, fails again in the start's own flush, then lands
+        // after the server answered the second read.
+        repeat(2) { recorder.results += ApiResult.NetworkError(IllegalStateException("offline")) }
+        val spanish = SeriesSubtitleChoice.of(
+            org.siloserver.silo.model.playback.PlayerSubtitleInfo(
+                index = 1, language = "es", codec = "subrip", label = "Spanish SRT", source = "embedded", url = "/s/1.vtt",
+            ),
+        )
+        writer.saveSubtitle("series-1", spanish)
+        runCurrent()
+        var reads = 0
+        val reconciled = writer.reconcileStart(landedBefore, stale) {
+            reads++
+            if (reads == 1) {
+                val beforeSpanish = stale.copy(effectiveSubtitleMode = "off")
+                writer.flushNow()
+                beforeSpanish
+            } else {
+                stale.copy(effectiveSubtitleLanguage = "es")
+            }
+        }
+
+        assertEquals(null, writer.pendingSubtitle("series-1"), "the newer pick landed")
+        assertEquals("es", reconciled.effectiveSubtitleLanguage)
+        assertEquals("always", reconciled.effectiveSubtitleMode)
+    }
+
+    @Test
     fun `an Auto reset that lands during the start takes the server's inherited subtitle settings`() = runTest {
         val recorder = Recorder().apply { results += ApiResult.NetworkError(IllegalStateException("offline")) }
         val writer = writer(recorder) { profileA }

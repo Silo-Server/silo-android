@@ -789,6 +789,29 @@ class MobileSubtitleAutoSelectionTest {
     }
 
     @Test
+    fun theServersSdhFlagFindsAnSdhTrackLabelledLikeThePlainOne() {
+        val rows = listOf(
+            subtitle(index = 0, label = "English", language = "en"),
+            subtitle(index = 1, label = "English", language = "en").copy(hearingImpaired = true),
+        )
+        val signature = org.siloserver.silo.model.playback.SubtitleTrackSignature(
+            language = "en", codec = "srt", label = "English", hearingImpaired = true,
+        )
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(1),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = rows,
+                preferredLanguage = "en",
+                subtitleMode = "always",
+                showForcedSubtitles = false,
+                trackSignature = signature,
+            ),
+        )
+    }
+
+    @Test
     fun initialDetailOrdinalTranslatesFromCatalogToMountedList() {
         // Catalog order: [Signs (forced), English] with demux indices 3/5;
         // mounted order is reversed — the detail pick must land by match,

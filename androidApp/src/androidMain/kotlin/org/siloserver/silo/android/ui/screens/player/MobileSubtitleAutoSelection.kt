@@ -204,14 +204,16 @@ private fun normalizedSubtitleCodec(codecOrMime: String?): String? {
 }
 
 /**
- * The phone's SDH predicate reads the runtime label, source and URL rather
- * than the catalog title, so it replaces the shared title check.
+ * The phone's SDH predicate reads the server's flag, then the runtime label,
+ * source and URL rather than the catalog title, so it replaces the shared
+ * title check.
  */
 internal fun PlayerSubtitleInfo.toMobileAutoSubtitleCandidate(): AutoSubtitleCandidate =
     toAutoSubtitleCandidate().copy(title = label, hearingImpaired = isEffectivelyHearingImpaired())
 
 private fun PlayerSubtitleInfo.isEffectivelyHearingImpaired(): Boolean =
-    subtitleLabelIndicatesHearingImpaired(label) ||
+    hearingImpaired == true ||
+        subtitleLabelIndicatesHearingImpaired(label) ||
         subtitleLabelIndicatesHearingImpaired(source) ||
         subtitleLabelIndicatesHearingImpaired(url)
 

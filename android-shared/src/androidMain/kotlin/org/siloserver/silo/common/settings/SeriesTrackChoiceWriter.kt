@@ -121,17 +121,29 @@ suspend fun SeriesTrackChoiceWriter.reconcile(detail: WatchDetail): WatchDetail 
  * clears the effective subtitle fields, which skips the library and device
  * settings the server resolves under the series choice. So when any write
  * landed meanwhile, [reread] asks again and only what is still unsent is laid
- * over the fresh answer. Null from [reread] keeps the reconciled [detail].
+ * over the fresh answer. A write can also land while [reread] is in flight:
+ * like [reconcile], what was pending before it still applies, and the next
+ * pass reads again. Null from [reread] keeps the last answer.
  */
 suspend fun SeriesTrackChoiceWriter.reconcileStart(
     landedBefore: Long,
     detail: WatchDetail,
     reread: suspend () -> WatchDetail?,
 ): WatchDetail {
-    val reconciled = reconcile(detail)
-    if (landedWrites == landedBefore) return reconciled
-    val fresh = reread() ?: return reconciled
-    return overlayPendingChoice(fresh)
+    var result = reconcile(detail)
+    val key = seriesTrackChoiceKey(detail.seriesId, detail.contentId) ?: return result
+    var landed = landedBefore
+    repeat(START_REREAD_ATTEMPTS) {
+        if (landedWrites == landed) return result
+        landed = landedWrites
+        val subtitleBeforeRead = pendingSubtitle(key)
+        val audioBeforeRead = pendingAudio(key)
+        val fresh = reread() ?: return result
+        result = fresh
+            .withPendingSeriesSubtitleChoice(pendingSubtitle(key) ?: subtitleBeforeRead)
+            .withPendingSeriesAudioChoice(pendingAudio(key) ?: audioBeforeRead)
+    }
+    return result
 }
 
 /** Whether the series audio was set back to Auto here and that has not landed. */
@@ -148,6 +160,9 @@ suspend fun SeriesTrackChoiceWriter.overlayPendingChoice(detail: WatchDetail): W
 
 /** How long opening an item waits for a queued choice to land. */
 private const val LOAD_FLUSH_TIMEOUT_MS = 1_500L
+
+/** How many times a start reads again while writes keep landing. */
+private const val START_REREAD_ATTEMPTS = 2
 
 /**
  * Application-scoped, in-memory queue: the latest intent per (profile,
