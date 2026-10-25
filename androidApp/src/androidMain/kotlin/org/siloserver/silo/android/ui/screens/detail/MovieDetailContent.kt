@@ -207,9 +207,7 @@ fun MovieDetailContent(
                                     value = formatSubtitleValueLabel(
                                         subtitleTracks,
                                         selectedSubtitleIndex,
-                                        seriesSignature = detail.effectiveSubtitleTrackSignature,
-                                        seriesOff = detail.effectiveSubtitleTrackSignature == null &&
-                                            detail.effectiveSubtitleMode.equals("off", ignoreCase = true),
+                                        autoContext = subtitleAutoPreviewContext(detail, selectedVersion, selectedAudioIndex),
                                     ),
                                     onClick = { showSubtitlePicker = true },
                                     interactive = subtitleTracks.size > 1,

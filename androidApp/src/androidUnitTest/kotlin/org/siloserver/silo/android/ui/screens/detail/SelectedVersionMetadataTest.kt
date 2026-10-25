@@ -55,6 +55,38 @@ class SelectedVersionMetadataTest {
     }
 
     @Test
+    fun subtitleAutoPreviewsTheTrackTheResolvedAudioStartsWith() {
+        val version = FileVersion(
+            fileId = 1,
+            audioTracks = listOf(
+                AudioTrack(index = 1, language = "en", isDefault = true),
+                AudioTrack(index = 2, language = "ja"),
+            ),
+            subtitleTracks = listOf(
+                SubtitleTrack(index = 3, codec = "subrip", language = "en"),
+                SubtitleTrack(index = 4, codec = "subrip", language = "en", forced = true),
+            ),
+            effectiveAudioTrackIndex = 1,
+        )
+        val tracks = version.subtitleTracks.orEmpty()
+        fun label(mode: String, selectedAudio: Int?): String {
+            val detail = ItemDetail(
+                contentId = "movie", type = "movie", title = "Movie", versions = listOf(version),
+                effectiveSubtitleLanguage = "en", effectiveSubtitleMode = mode, effectiveShowForcedSubtitles = true,
+            )
+            return formatSubtitleValueLabel(tracks, null, subtitleAutoPreviewContext(detail, version, selectedAudio))
+        }
+
+        // The server's audio is Japanese: Auto shows full English subtitles,
+        // and Off with forced on shows nothing (no Japanese forced track).
+        assertEquals("Auto - English", label("auto", selectedAudio = null))
+        assertEquals("Auto - Off", label("off", selectedAudio = null))
+        // English audio picked here: Auto and Off both start the forced track.
+        assertEquals("Auto - English · Forced", label("auto", selectedAudio = 0))
+        assertEquals("Auto - English · Forced", label("off", selectedAudio = 0))
+    }
+
+    @Test
     fun trackHeadlineKeepsWhatTheTitleAddsAndDropsCodecNames() {
         val cases = listOf(
             Triple("eng", "AAC (Advanced Audio Coding)", "English"),

@@ -1,6 +1,5 @@
 package org.siloserver.silo.android.ui.screens.detail
 
-import org.siloserver.silo.model.playback.matchesSignature
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -581,43 +580,65 @@ fun formatAudioValueLabel(
     selectedIndex: Int?,
     effectiveIndex: Int? = null,
 ): String {
-    if (tracks.isEmpty()) return "Unknown"
-    val resolved = selectedIndex?.takeIf { it in tracks.indices }
+    val resolved = resolvedAudioOrdinal(tracks, selectedIndex, effectiveIndex) ?: return "Unknown"
+    val label = formatAudioLabel(tracks[resolved])
+    return if (selectedIndex == null) "Auto - $label" else label
+}
+
+/** The audio track playback starts with: selected → effective → default → first. */
+private fun resolvedAudioOrdinal(tracks: List<AudioTrack>, selectedIndex: Int?, effectiveIndex: Int?): Int? {
+    if (tracks.isEmpty()) return null
+    return selectedIndex?.takeIf { it in tracks.indices }
         ?: effectiveIndex?.takeIf { it in tracks.indices }
         ?: tracks.indexOfFirst { it.isDefault }.takeIf { it >= 0 }
         ?: 0
-    val label = formatAudioLabel(tracks[resolved])
-    return if (selectedIndex == null) "Auto - $label" else label
+}
+
+/**
+ * What the Subtitles row's Auto previews, from [detail]'s server-resolved
+ * preferences (a series choice included) and the audio playback will start
+ * with, as the player resolves them at start.
+ */
+fun subtitleAutoPreviewContext(
+    detail: ItemDetail,
+    version: FileVersion?,
+    selectedAudioIndex: Int?,
+): org.siloserver.silo.model.playback.AutoSubtitleContext {
+    val audioTracks = version?.audioTracks.orEmpty()
+    return org.siloserver.silo.model.playback.AutoSubtitleContext(
+        preferredLanguage = detail.effectiveSubtitleLanguage,
+        mode = detail.effectiveSubtitleMode,
+        showForced = detail.effectiveShowForcedSubtitles ?: true,
+        audioLanguage = resolvedAudioOrdinal(audioTracks, selectedAudioIndex, version?.effectiveAudioTrackIndex)
+            ?.let { audioTracks[it].language },
+        trackSignature = detail.effectiveSubtitleTrackSignature,
+    )
 }
 
 /**
  * Selector value for the Subtitles row.
  *
- * [selectedIndex] null = Auto. The player's real subtitle resolver
- * (preferred-language / audio-match / forced / SDH rules in
- * `resolveMobileAutoSubtitleSelection`) decides the concrete track at playback,
- * and it needs profile prefs + the selected audio track that the detail page
- * doesn't have — so a multi-track Auto stays a bare "Auto" (previewing a
- * fabricated track could contradict what actually plays). When Auto can only
- * land on one track (a lone track), we DO know the result, so we show it in the
- * tvOS-style "Auto - <track>" form for consistency with the Video/Audio rows
- * (Jim 2026-07-09). -1 = Off.
+ * [selectedIndex] null = Auto, which previews the track the player starts
+ * with ("Auto - <track>", or "Auto - Off"): [autoContext] runs the player's
+ * own resolver ([org.siloserver.silo.model.playback.resolveAutoSubtitle]) over
+ * this file's tracks, so a series choice, the language and mode, and the
+ * forced track for the audio that plays all show here as they will play, as
+ * on TV and Apple. When the resolver leaves the choice to the file, a lone
+ * track is named and anything else stays a bare "Auto". -1 = Off.
  */
 fun formatSubtitleValueLabel(
     tracks: List<SubtitleTrack>,
     selectedIndex: Int?,
-    seriesSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
-    seriesOff: Boolean = false,
+    autoContext: org.siloserver.silo.model.playback.AutoSubtitleContext? = null,
 ): String {
     if (selectedIndex == null) {
-        // A remembered series choice is what Auto plays, so it can be named:
-        // the track its signature finds in this file, or Off.
-        if (seriesOff) return "Auto - Off"
-        seriesSignature?.let { signature ->
-            val candidates = org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates(tracks)
-            candidates.indexOfFirst { it.matchesSignature(signature) }
-                .takeIf { it >= 0 }
-                ?.let { return "Auto - ${formatSubtitleLabel(tracks[it])}" }
+        val candidates = org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates(tracks)
+        when (val resolution = autoContext?.let { org.siloserver.silo.model.playback.resolveAutoSubtitle(candidates, it) }) {
+            is org.siloserver.silo.model.playback.AutoSubtitleResolution.Select ->
+                tracks.getOrNull(candidates.indexOf(resolution.candidate))
+                    ?.let { return "Auto - ${formatSubtitleLabel(it)}" }
+            org.siloserver.silo.model.playback.AutoSubtitleResolution.Disable -> return "Auto - Off"
+            org.siloserver.silo.model.playback.AutoSubtitleResolution.NoChange, null -> Unit
         }
         val single = tracks.singleOrNull() ?: return "Auto"
         return "Auto - ${formatSubtitleLabel(single)}"
