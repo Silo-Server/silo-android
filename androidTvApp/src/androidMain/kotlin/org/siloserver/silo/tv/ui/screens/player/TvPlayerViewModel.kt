@@ -3620,13 +3620,20 @@ class TvPlayerViewModel(
 
     fun onPlayingChanged(isPlaying: Boolean) {
         if (isPlaying) reopenedAfterOutage = false
-        // Audio never renders a frame; playing is its first-frame milestone.
-        _uiState.update {
-            it.copy(isPlaying = isPlaying, startedContentId = if (isPlaying) it.contentId else it.startedContentId)
-        }
+        _uiState.update { it.copy(isPlaying = isPlaying) }
         if (!isPlaying) {
             maybeRecordPosition(_uiState.value.position, _uiState.value.duration, force = true)
         }
+    }
+
+    /**
+     * A mount with audio and no video started playing. It renders no frame, so
+     * playing ends its first load instead; a callback from an earlier mount is
+     * ignored, as for [onFirstVideoFrameRendered].
+     */
+    fun onAudioOnlyPlaybackStarted(transportMountNonce: Long) {
+        if (transportMountNonce != _uiState.value.transportMountNonce) return
+        _uiState.update { it.copy(startedContentId = it.contentId) }
     }
 
     fun onFirstVideoFrameRendered(transportMountNonce: Long?) {

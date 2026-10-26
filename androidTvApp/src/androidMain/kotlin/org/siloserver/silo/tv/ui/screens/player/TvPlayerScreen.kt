@@ -1648,6 +1648,17 @@ fun TvPlayerScreen(
                     postResumeStallDetector.onFirstFrameRendered()
                     viewModel.onFirstVideoFrameRendered(mountToken)
                 }
+
+                // Audio renders no frame, so a mount with audio and no video
+                // ends its first load when it plays. A video mount waits for
+                // its frame: audio can start ahead of a wedged video decoder.
+                override fun onIsPlayingChanged(eventTime: AnalyticsListener.EventTime, isPlaying: Boolean) {
+                    if (!isPlaying) return
+                    val mountToken = eventTime.videoMountToken() ?: return
+                    val tracks = player.currentTracks
+                    if (tracks.containsType(C.TRACK_TYPE_VIDEO) || !tracks.containsType(C.TRACK_TYPE_AUDIO)) return
+                    viewModel.onAudioOnlyPlaybackStarted(mountToken)
+                }
             }
             player.addAnalyticsListener(listener)
             // The buffering-quality adapter hears the in-process player.

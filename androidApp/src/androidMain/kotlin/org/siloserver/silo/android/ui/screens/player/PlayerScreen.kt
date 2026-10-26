@@ -58,6 +58,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.media3.common.C
 import androidx.media3.common.Player
 import org.siloserver.silo.common.player.PlayWhenReadyReconciliationGate
 import org.siloserver.silo.android.ui.components.rememberVideoSeekIntervals
@@ -1224,6 +1225,17 @@ fun PlayerScreen(
                     postResumeStallDetector.onFirstFrameRendered()
                     viewModel.onFirstVideoFrameRendered(mountToken)
                 }
+
+                // Audio renders no frame, so a mount with audio and no video
+                // ends its first load when it plays. A video mount waits for
+                // its frame: audio can start ahead of a wedged video decoder.
+                override fun onIsPlayingChanged(eventTime: AnalyticsListener.EventTime, isPlaying: Boolean) {
+                    if (!isPlaying) return
+                    val mountToken = eventTime.videoMountToken() ?: return
+                    val tracks = player.currentTracks
+                    if (tracks.containsType(C.TRACK_TYPE_VIDEO) || !tracks.containsType(C.TRACK_TYPE_AUDIO)) return
+                    viewModel.onAudioOnlyPlaybackStarted(mountToken)
+                }
             }
             player.addAnalyticsListener(listener)
             onDispose { player.removeAnalyticsListener(listener) }
@@ -1725,11 +1737,13 @@ fun PlayerScreen(
         }
     }
 
-    // One spinner for the whole load: the session request, the player's first
-    // buffer, a rebuffer, and an outage the player itself can't see. Hoisted
-    // here so it carries across the loading branch giving way to the video.
+    // One spinner for the whole load: the session request (also one that keeps
+    // the old picture up, such as a version switch or Next Up), the player's
+    // first buffer, a rebuffer, and an outage the player itself can't see.
+    // Hoisted here so it carries across the loading branch giving way to the
+    // video.
     val spinnerVisible = rememberPlayerSpinnerVisible(
-        (uiState.isLoading && uiState.streamUrl == null) ||
+        uiState.isLoading ||
             uiState.isBuffering ||
             sessionState is SessionState.Reconnecting,
     )
