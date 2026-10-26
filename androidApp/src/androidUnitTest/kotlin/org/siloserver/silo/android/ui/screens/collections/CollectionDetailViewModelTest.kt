@@ -162,6 +162,42 @@ class CollectionDetailViewModelTest {
         assertEquals(org.siloserver.silo.model.shuffle.ShuffleScopeKind.USER_COLLECTION, viewModel.shuffleScopeKind)
     }
 
+    @Test
+    fun unavailableAndUnknownCountsDoNotSuppressActualMembersOrManagement() = runCollectionTest { requests ->
+        for (status in listOf("unavailable", "future")) {
+            val fixture = fixture(requests) { path, _ ->
+                when (path) {
+                    "/api/v2/collections" -> """
+                        {"items":[{"id":"personal-1","name":"Synthetic picks","item_count":0,"item_count_status":"$status"}],"groups":[]}
+                    """.trimIndent()
+                    "/api/v2/catalog" -> """
+                        {"items":[{"content_id":"film","type":"movie","title":"Synthetic film"}],
+                         "page":{"has_more":false},"total":1,"total_exact":true}
+                    """.trimIndent()
+                    else -> error("Unexpected path $path")
+                }
+            }
+            try {
+                val viewModel = fixture.viewModel(SavedStateHandle())
+                fixture.store.put("detail", viewModel)
+                viewModel.initialize("personal-1")
+                awaitState(viewModel) { !it.isLoading }
+                val state = viewModel.uiState.value
+                assertEquals(null, state.error)
+                assertEquals("Count unavailable", state.collection?.itemCountLabel)
+                assertEquals(listOf("film"), state.items.map { it.contentId })
+                assertEquals(1, state.total)
+                assertTrue(state.canManage)
+                viewModel.refresh()
+                awaitState(viewModel) { !it.isRefreshing }
+                assertEquals(listOf("film"), viewModel.uiState.value.items.map { it.contentId })
+            } finally {
+                fixture.store.clear()
+                fixture.client.close()
+            }
+        }
+    }
+
     private fun runCollectionTest(block: suspend (MutableList<CapturedRequest>) -> Unit) = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val requests = mutableListOf<CapturedRequest>()

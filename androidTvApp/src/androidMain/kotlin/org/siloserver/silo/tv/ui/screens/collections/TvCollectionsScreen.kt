@@ -270,7 +270,11 @@ private fun CollectionCard(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = collection.collectionType.replaceFirstChar { it.uppercase() },
+                    text = if (collection.itemCountStatus != null) {
+                        "${collection.collectionType.replaceFirstChar { it.uppercase() }} - ${collection.itemCountLabel}"
+                    } else {
+                        collection.collectionType.replaceFirstChar { it.uppercase() }
+                    },
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),

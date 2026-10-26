@@ -200,10 +200,5 @@ private fun CollectionCard(
 
 private fun rowSubtitle(collection: Collection): String {
     val kind = collection.collectionType.replaceFirstChar { it.uppercase() }
-    val count = collection.itemCount
-    return if (count != null && count > 0) {
-        "$kind - $count item${if (count == 1) "" else "s"}"
-    } else {
-        kind
-    }
+    return "$kind - ${collection.itemCountLabel}"
 }

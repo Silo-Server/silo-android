@@ -60,7 +60,7 @@ class SectionApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
             val definitions = tab.collections.associateBy { it.id }
             fun LibraryCollectionCardV2.card(kind: String) = LibraryCollection(
                 id, title, definitions[id]?.collectionType, itemCount, posterUrl, posterThumbhash,
-                if (kind == "admin") "regular" else kind, creatorProfileId,
+                if (kind == "admin") "regular" else kind, creatorProfileId, itemCountStatus,
             )
             val groups = tab.groups.map { group ->
                 LibraryCollectionGroup(group.id, group.name, if (group.kind == "admin") "regular" else group.kind,
@@ -72,7 +72,8 @@ class SectionApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
             val flat = if (groups.isNotEmpty() || ungrouped != null) {
                 (groups.flatMap { it.collections } + ungrouped?.collections.orEmpty()).distinctBy { it.id }
             } else tab.collections.map {
-                LibraryCollection(it.id, it.title, it.collectionType, it.itemCount, it.posterUrl, it.posterThumbhash, "regular")
+                LibraryCollection(it.id, it.title, it.collectionType, it.itemCount, it.posterUrl, it.posterThumbhash,
+                    "regular", itemCountStatus = it.itemCountStatus)
             }
             LibraryCollectionsResponse(flat, groups, ungrouped)
         }

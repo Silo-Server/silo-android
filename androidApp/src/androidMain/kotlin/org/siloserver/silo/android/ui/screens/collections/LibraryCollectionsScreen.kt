@@ -301,7 +301,7 @@ private fun LibraryCollectionCard(
     // showsTitle, the type line showsMetadata. The count badge sits on the
     // artwork, so it stays either way.
     val caption = LocalCardPresentation.current.caption
-    val countLabel = collection.itemCount?.takeIf { it > 0 }?.toString() ?: "Smart"
+    val countLabel = collection.itemCountLabel
     val typeLabel = when {
         collection.kind == "user_collections" -> "User collection"
         else -> collection.collectionType
