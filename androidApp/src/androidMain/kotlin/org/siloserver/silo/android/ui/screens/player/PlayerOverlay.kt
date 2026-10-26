@@ -581,7 +581,7 @@ fun PlayerOverlay(
         }
 
         if (!state.showUpNext && !introSkipState.isVisible && seekEnabled && !state.isLoading) {
-            val target = markerSkipTarget(state.position, state.recap, state.credits)
+            val target = markerSkipTarget(state.position, state.markerTimeline)
             if (target != null) {
                 Box(modifier = bottomEndSlotModifier, contentAlignment = Alignment.BottomEnd) {
                     MarkerSkipPill(

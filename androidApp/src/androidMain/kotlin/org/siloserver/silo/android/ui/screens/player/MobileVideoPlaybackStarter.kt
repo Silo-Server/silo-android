@@ -585,6 +585,7 @@ internal class MobileVideoPlaybackStarter(
                 credits = effectiveVersion?.credits,
                 recap = effectiveVersion?.recap,
                 preview = effectiveVersion?.preview,
+                markerSegments = effectiveVersion?.markerSegments,
                 chapters = effectiveVersion?.chapters.orEmpty(),
                 seriesId = watchDetail.seriesId,
                 seriesTitle = watchDetail.seriesTitle,
