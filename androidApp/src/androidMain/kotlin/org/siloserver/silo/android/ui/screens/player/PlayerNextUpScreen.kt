@@ -73,6 +73,8 @@ fun PlayerNextUpScreen(
     onPlayOnDeckItem: (String) -> Unit,
     onBack: () -> Unit,
     onVideoBoundsChanged: (Rect) -> Unit,
+    // The video playing in the frame is loading; the spinner sits on it.
+    spinnerVisible: Boolean = false,
     compactTabletop: Boolean = false,
     // Set while a shuffle plays: the next item is a random pick, and the
     // viewer can pick another or stop shuffling.
@@ -236,7 +238,7 @@ fun PlayerNextUpScreen(
                     horizontalArrangement = Arrangement.spacedBy(24.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    NextUpVideoPane(onVideoBoundsChanged, Modifier.weight(0.45f))
+                    NextUpVideoPane(onVideoBoundsChanged, spinnerVisible, Modifier.weight(0.45f))
                     panel(Modifier.weight(0.55f).verticalScroll(scrollState))
                 }
             } else {
@@ -247,7 +249,11 @@ fun PlayerNextUpScreen(
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
                     if (!compactTabletop) {
-                        NextUpVideoPane(onVideoBoundsChanged, Modifier.widthIn(max = 620.dp).fillMaxWidth())
+                        NextUpVideoPane(
+                            onVideoBoundsChanged,
+                            spinnerVisible,
+                            Modifier.widthIn(max = 620.dp).fillMaxWidth(),
+                        )
                     }
                     panel(Modifier)
                 }
@@ -257,12 +263,15 @@ fun PlayerNextUpScreen(
 }
 
 @Composable
-private fun NextUpVideoPane(onBoundsChanged: (Rect) -> Unit, modifier: Modifier) {
+private fun NextUpVideoPane(onBoundsChanged: (Rect) -> Unit, spinnerVisible: Boolean, modifier: Modifier) {
     Box(
         modifier = modifier.aspectRatio(16f / 9f)
             .onGloballyPositioned { onBoundsChanged(it.videoViewportBounds()) }
             .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(8.dp)),
-    )
+        contentAlignment = Alignment.Center,
+    ) {
+        if (spinnerVisible) PlayerLoadingSpinner()
+    }
 }
 
 private class PickAnotherAction(val enabled: Boolean, val onClick: () -> Unit)

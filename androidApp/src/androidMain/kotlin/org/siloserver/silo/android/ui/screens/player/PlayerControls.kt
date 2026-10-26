@@ -97,6 +97,8 @@ fun PlayerControls(
     subtitle: String,
     isPlaying: Boolean,
     isPaused: Boolean,
+    // The loading spinner is up: it takes the play disc's place.
+    isLoading: Boolean = false,
     position: Double,
     duration: Double,
     bufferedPosition: Double,
@@ -233,6 +235,7 @@ fun PlayerControls(
             PlayerTransportControls(
                 isPlaying = isPlaying,
                 isPaused = isPaused,
+                isLoading = isLoading,
                 seekEnabled = seekEnabled,
                 playPauseEnabled = playPauseEnabled,
                 skipBackSeconds = skipBackSeconds,
@@ -419,6 +422,7 @@ private fun Modifier.playerDiscSurface(): Modifier = this
 private fun PlayerTransportControls(
     isPlaying: Boolean,
     isPaused: Boolean,
+    isLoading: Boolean,
     seekEnabled: Boolean,
     playPauseEnabled: Boolean,
     skipBackSeconds: Int,
@@ -448,24 +452,31 @@ private fun PlayerTransportControls(
                 modifier = Modifier.size(31.dp),
             )
         }
+        // While loading, the spinner stands where the disc was; the slot still
+        // plays or pauses, so a stall never takes the control away.
         PlayerDisc(
             contentDescription = if (showPlay) "Play" else "Pause",
             onClick = onPlayPause,
             size = 70.dp,
             enabled = playPauseEnabled,
-            fill = PlayerChrome.Paper,
+            fill = if (isLoading) Color.Transparent else PlayerChrome.Paper,
             contentColor = PlayerChrome.Ink,
             stroke = Color.Transparent,
+            stateDescription = "Loading".takeIf { isLoading },
         ) {
-            Icon(
-                imageVector = if (showPlay) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
-                contentDescription = null,
-                tint = PlayerChrome.Ink,
-                // The play triangle's visual centre sits left of its box.
-                modifier = Modifier
-                    .size(44.dp)
-                    .offset(x = if (showPlay) 2.dp else 0.dp),
-            )
+            if (isLoading) {
+                PlayerLoadingSpinner()
+            } else {
+                Icon(
+                    imageVector = if (showPlay) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                    contentDescription = null,
+                    tint = PlayerChrome.Ink,
+                    // The play triangle's visual centre sits left of its box.
+                    modifier = Modifier
+                        .size(44.dp)
+                        .offset(x = if (showPlay) 2.dp else 0.dp),
+                )
+            }
         }
         PlayerDisc(
             contentDescription = "Skip forward $skipForwardSeconds seconds",

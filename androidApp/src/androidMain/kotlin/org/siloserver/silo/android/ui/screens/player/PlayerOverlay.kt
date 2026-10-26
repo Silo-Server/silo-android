@@ -26,7 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Groups
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -57,7 +56,6 @@ import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.android.R
 import org.siloserver.silo.common.player.NoticeTone
 import org.siloserver.silo.common.player.PlayerNotice
-import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.domain.player.BufferingQualityNotice
 import org.siloserver.silo.domain.player.BufferingQualityPill
@@ -109,7 +107,9 @@ fun PlayerOverlay(
     onNextUpVideoBoundsChanged: (Rect) -> Unit,
     brightnessFraction: Float,
     onSetBrightness: (Float) -> Unit,
-    showBufferingIndicator: Boolean = true,
+    // The loading spinner is up (PlayerScreen owns its timing). It fills the
+    // play disc while the controls show and stands alone while they don't.
+    spinnerVisible: Boolean = false,
     onBack: () -> Unit,
     onPlayPause: () -> Unit,
     onSeek: (Double) -> Unit,
@@ -245,7 +245,6 @@ fun PlayerOverlay(
     val videoGravity by viewModel.videoGravity.collectAsState()
     val playbackSpeed by viewModel.playbackSpeed.collectAsState()
     val notice by viewModel.notice.collectAsState()
-    val sessionState by viewModel.sessionState.collectAsState()
     val subtitleTools by viewModel.subtitleTools.collectAsState()
     val subtitleSync by viewModel.subtitleSyncState.collectAsState()
     val subtitleSyncNotice by viewModel.subtitleSyncNotice.collectAsState()
@@ -330,7 +329,8 @@ fun PlayerOverlay(
         ) {
         // Gesture layer stays out of the tree while controls are visible so
         // full-screen pointer handlers cannot consume taps meant for buttons.
-        if (!alwaysShowControls && !state.showControls && !state.showUpNext) {
+        // Nothing to toggle or skip until the item's first frame.
+        if (!alwaysShowControls && !state.showControls && !state.showUpNext && !state.awaitingFirstFrame) {
             PlayerGestureHandler(
                 onToggleControls = onToggleControls,
                 onSkipForward = gatedSkipForward,
@@ -349,19 +349,13 @@ fun PlayerOverlay(
             )
         }
 
-        // Buffering indicator. Shown during ExoPlayer buffering AND during outage
-        // recovery — the lifecycle's Reconnecting state isn't visible to the player,
-        // so we surface the spinner ourselves so the screen doesn't appear frozen.
-        if (showBufferingIndicator &&
-            (state.isBuffering || sessionState is SessionState.Reconnecting)
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier
-                    .size(56.dp)
-                    .align(Alignment.Center),
-                color = PlayerChrome.Paper,
-                strokeWidth = 3.dp,
-            )
+        // The first load shows only the spinner; the controls arrive with the
+        // item's first frame.
+        val controlsShown = (alwaysShowControls || state.showControls) && !state.showUpNext && !menuDocked &&
+            !state.awaitingFirstFrame
+        // Up Next draws the spinner in its own video frame.
+        if (spinnerVisible && !controlsShown && !state.showUpNext) {
+            PlayerLoadingSpinner(modifier = Modifier.align(Alignment.Center))
         }
 
         AnimatedVisibility(
@@ -482,7 +476,7 @@ fun PlayerOverlay(
 
         // Transport controls (shown/hidden with animation)
         AnimatedVisibility(
-            visible = (alwaysShowControls || state.showControls) && !state.showUpNext && !menuDocked,
+            visible = controlsShown,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
@@ -500,6 +494,7 @@ fun PlayerOverlay(
                 onEnterPictureInPicture = onEnterPictureInPicture,
                 isPlaying = state.isPlaying,
                 isPaused = state.isPaused,
+                isLoading = spinnerVisible,
                 position = shownPosition,
                 duration = state.duration,
                 bufferedPosition = state.bufferedPosition,
@@ -627,6 +622,7 @@ fun PlayerOverlay(
                 nextEpisode = state.nextEpisode
                     ?: retainedUpNextInfo.takeUnless { state.showUpNext && state.shuffle != null },
                 onVideoBoundsChanged = onNextUpVideoBoundsChanged,
+                spinnerVisible = spinnerVisible,
                 onDeckItems = state.onDeckItems,
                 videoEnded = state.upNextVideoEnded,
                 countdownSeconds = state.upNextCountdownSeconds,

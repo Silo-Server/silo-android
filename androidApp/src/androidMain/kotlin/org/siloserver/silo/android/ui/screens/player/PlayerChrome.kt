@@ -33,6 +33,7 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Switch
@@ -60,6 +61,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -177,6 +179,8 @@ internal fun PlayerDisc(
     fill: Color = PlayerChrome.Disc,
     contentColor: Color = PlayerChrome.Paper,
     stroke: Color = PlayerChrome.DiscStroke,
+    // Read after the name, e.g. "Loading" while the spinner fills the play disc.
+    stateDescription: String? = null,
     content: @Composable () -> Unit,
 ) {
     Box(
@@ -187,7 +191,10 @@ internal fun PlayerDisc(
             .background(fill)
             .border(1.dp, stroke, CircleShape)
             // The disc is the control a screen reader names; its glyph says nothing.
-            .semantics { this.contentDescription = contentDescription }
+            .semantics {
+                this.contentDescription = contentDescription
+                stateDescription?.let { this.stateDescription = it }
+            }
             .clickable(
                 enabled = enabled,
                 role = Role.Button,
@@ -203,6 +210,21 @@ internal fun PlayerDisc(
             }
         }
     }
+}
+
+/**
+ * The player's one loading indicator: a plain spinner with no label, centered
+ * on the picture or in the play disc's place. Screen readers hear "Loading".
+ */
+@Composable
+internal fun PlayerLoadingSpinner(modifier: Modifier = Modifier) {
+    CircularProgressIndicator(
+        modifier = modifier
+            .size(56.dp)
+            .semantics { contentDescription = "Loading" },
+        color = PlayerChrome.Paper,
+        strokeWidth = 3.dp,
+    )
 }
 
 @Composable

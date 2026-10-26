@@ -1343,7 +1343,16 @@ class TvPlayerViewModel(
         // Video surface fill mode (letterbox vs zoom). Session-scoped — resets
         // to Fit on each new playback to match tvOS video-gravity behavior.
         val videoFillMode: VideoFillMode = VideoFillMode.Fit,
-    )
+        // The item whose first frame (or, for audio, first play) has shown.
+        // Until it matches [contentId] the item is on its first load: no
+        // controls, only the spinner. A retry, renewal, reconnect or replan
+        // keeps the content id, so only a new item brings that state back.
+        val startedContentId: String? = null,
+    ) {
+        /** The current item has not shown its first frame yet; see [startedContentId]. */
+        val awaitingFirstFrame: Boolean
+            get() = startedContentId != contentId
+    }
 
     private val _uiState = MutableStateFlow(
         UiState(
@@ -3611,7 +3620,10 @@ class TvPlayerViewModel(
 
     fun onPlayingChanged(isPlaying: Boolean) {
         if (isPlaying) reopenedAfterOutage = false
-        _uiState.update { it.copy(isPlaying = isPlaying) }
+        // Audio never renders a frame; playing is its first-frame milestone.
+        _uiState.update {
+            it.copy(isPlaying = isPlaying, startedContentId = if (isPlaying) it.contentId else it.startedContentId)
+        }
         if (!isPlaying) {
             maybeRecordPosition(_uiState.value.position, _uiState.value.duration, force = true)
         }
@@ -3620,6 +3632,7 @@ class TvPlayerViewModel(
     fun onFirstVideoFrameRendered(transportMountNonce: Long?) {
         if (transportMountNonce != _uiState.value.transportMountNonce) return
         hasRenderedFirstFrame = true
+        _uiState.update { it.copy(startedContentId = it.contentId) }
         playbackSessionManager.reportFirstVideoFrame(_uiState.value.stats)
         if (nextUpTransitionGate.completeOnFirstFrame(transportMountNonce)) {
             _uiState.update {
