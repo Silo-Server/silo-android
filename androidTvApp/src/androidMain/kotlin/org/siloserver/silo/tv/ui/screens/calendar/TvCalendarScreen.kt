@@ -1666,8 +1666,8 @@ private fun CalendarMessage(
 // MARK: - Formatting helpers
 
 private fun badgeLabel(badge: String): String? = when (badge) {
-    // tvOS says "SERIES PREMIERE", which does not fit a poster at 14sp;
-    // NEW SEASON already marks season premieres.
+    // Same labels as web, iOS, and tvOS. PREMIERE, not SERIES PREMIERE, fits a
+    // poster badge, and NEW SEASON already marks season premieres.
     CalendarBadge.SeriesPremiere -> "PREMIERE"
     CalendarBadge.SeasonPremiere -> "NEW SEASON"
     CalendarBadge.Finale -> "FINALE"

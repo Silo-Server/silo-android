@@ -888,9 +888,8 @@ private fun EmptyState(filter: String, onSelectFilter: (String) -> Unit) {
 }
 
 private fun badgeLabel(badge: String): String? = when (badge) {
-    // iOS CalendarBadge labels (uppercased editorial). iOS says "SERIES
-    // PREMIERE", which does not fit a poster at the 11sp badge floor;
-    // NEW SEASON already marks season premieres.
+    // Same labels as web, iOS, and tvOS. PREMIERE, not SERIES PREMIERE, fits a
+    // poster badge, and NEW SEASON already marks season premieres.
     CalendarBadge.SeriesPremiere -> "PREMIERE"
     CalendarBadge.SeasonPremiere -> "NEW SEASON"
     CalendarBadge.Finale -> "FINALE"
