@@ -95,7 +95,6 @@ class SectionBrowseViewModel(
             }
             owner = scope
             var cursor = if (reset) null else continuation
-            var skippedPages = 0
             while (true) {
                 val result = repository.getSectionCatalogItems(args.libraryId, args.sectionId, scope, cursor)
                 if (requestGeneration != generation) return@launch
@@ -106,9 +105,10 @@ class SectionBrowseViewModel(
                         cursor = page.continuation
                         continuation = cursor
                         val more = page.hasMore && cursor != null
-                        // A filtered page can come back empty; read on rather
-                        // than leave a grid with nothing to scroll toward.
-                        if (more && added.isEmpty() && skippedPages++ < MAX_SKIPPED_PAGES) continue
+                        // A filtered page can come back empty; read on until a
+                        // card matches or the row ends, since neither grid can
+                        // page past a load that added nothing.
+                        if (more && added.isEmpty()) continue
                         state.update { current ->
                             current.copy(
                                 items = (if (reset) added else current.items + added).distinctBy { it.contentId },
@@ -136,9 +136,5 @@ class SectionBrowseViewModel(
                 }
             }
         }
-    }
-
-    private companion object {
-        const val MAX_SKIPPED_PAGES = 4
     }
 }
