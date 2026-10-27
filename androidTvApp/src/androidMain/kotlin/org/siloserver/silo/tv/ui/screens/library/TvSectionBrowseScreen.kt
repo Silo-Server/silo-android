@@ -8,17 +8,13 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -29,8 +25,7 @@ import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
 import org.siloserver.silo.tv.ui.components.TvCatalogGrid
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
-import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
-import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.tv.ui.focus.rememberTvFlatReturnRestoration
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.tvPresetGridColumns
 import org.siloserver.silo.viewmodel.SectionBrowseArgs
@@ -46,29 +41,33 @@ fun TvSectionBrowseScreen(
     onItemClick: (BrowseItem) -> Unit,
     onBack: () -> Unit,
     viewModel: SectionBrowseViewModel = koinViewModel(
-        key = "section-${args.libraryId ?: "home"}-${args.sectionId}-${args.mediaScope.orEmpty()}",
+        key = sectionBrowseKey(args),
         parameters = { parametersOf(args) },
     ),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val gridState = rememberLazyGridState()
 
     BackHandler(onBack = onBack)
 
-    // Land on the first card once, so the D-pad responds without a hunt; a
-    // later page must not pull focus back to the top.
-    val firstItemFocusRequester = remember { FocusRequester() }
-    var firstCardHasFocus by remember { mutableStateOf(false) }
-    var initialFocusRequested by remember { mutableStateOf(false) }
-    LaunchedEffect(state.items.isNotEmpty()) {
-        if (initialFocusRequested || state.items.isEmpty()) return@LaunchedEffect
-        requestFocusUntilObserved(
-            maxAttempts = TvContentInitialFocusMaxAttempts,
-            awaitAttempt = { withFrameNanos { } },
-            requestFocus = firstItemFocusRequester::requestFocus,
-            isFocused = { firstCardHasFocus },
-        )
-        initialFocusRequested = true
-    }
+    // First entry lands on the first card, so the D-pad responds without a
+    // hunt; a return from a title's detail lands on the card the viewer
+    // opened, paging back to it if needed. A later page never pulls focus.
+    val restoreItemFocusRequester = remember { FocusRequester() }
+    val restoration = rememberTvFlatReturnRestoration(
+        itemIds = state.items.map { it.contentId },
+        hasMore = state.hasMore,
+        isLoadingMore = state.isLoadingMore,
+        // Retry reloads the row from its first page.
+        isReplacingContent = state.isLoading,
+        errorMessage = state.error ?: state.loadMoreError,
+        surfaceKey = sectionBrowseKey(args),
+        onLoadMore = viewModel::loadMore,
+        // The title is a spanning grid item ahead of the cards.
+        scrollToItem = { itemIndex -> gridState.scrollToItem(itemIndex + 1) },
+        requestFocus = restoreItemFocusRequester::requestFocus,
+        onRestored = {},
+    )
 
     Box(
         modifier = Modifier
@@ -87,7 +86,11 @@ fun TvSectionBrowseScreen(
                 isLoading = state.isLoadingMore,
                 hasMore = state.hasMore,
                 onItemClick = { contentId ->
-                    state.items.firstOrNull { it.contentId == contentId }?.let(onItemClick)
+                    val index = state.items.indexOfFirst { it.contentId == contentId }
+                    if (index >= 0) {
+                        restoration.onItemClicked(itemId = contentId, index = index)
+                        onItemClick(state.items[index])
+                    }
                 },
                 onLoadMore = viewModel::loadMore,
                 fixedColumnCount = tvPresetGridColumns(6),
@@ -99,14 +102,26 @@ fun TvSectionBrowseScreen(
                 ),
                 horizontalSpacing = 20.dp,
                 verticalSpacing = 30.dp,
-                firstItemFocusRequester = firstItemFocusRequester,
-                firstItemCardModifier = Modifier.onFocusChanged { firstCardHasFocus = it.isFocused },
+                gridState = gridState,
+                restoreItemIndex = restoration.requesterItemIndex,
+                restoreItemFocusRequester = restoreItemFocusRequester,
+                onRestoreRequesterAttached = restoration::onRequesterAttached,
+                onItemFocusedAtIndex = { item, index, focused ->
+                    if (focused) {
+                        restoration.onItemFocused(item.contentId, index)
+                    } else {
+                        restoration.onItemFocusLost(item.contentId)
+                    }
+                },
                 header = { PageTitle(args.title) },
                 emptyState = { TvCatalogEmptyState(message = "This row has no titles right now.") },
             )
         }
     }
 }
+
+private fun sectionBrowseKey(args: SectionBrowseArgs) =
+    "section-${args.libraryId ?: "home"}-${args.sectionId}-${args.mediaScope.orEmpty()}"
 
 @Composable
 private fun PageTitle(title: String) {
