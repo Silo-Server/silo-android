@@ -108,9 +108,17 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
 
 internal fun List<CatalogQueryGroup>.toV2Groups() = map { group ->
     CatalogRuleGroupV2(group.match, group.rules.map { rule ->
-        CatalogRuleV2(rule.field, rule.op, if (rule.values.isNotEmpty()) JsonArray(rule.values.map(::JsonPrimitive)) else JsonPrimitive(rule.value))
+        val value = when {
+            rule.values.isNotEmpty() -> JsonArray(rule.values.map(::JsonPrimitive))
+            // The server rejects flag rules whose value is not a JSON boolean (iOS CatalogQueryBuilder).
+            rule.field in BOOLEAN_RULE_FIELDS -> JsonPrimitive(rule.value == "true")
+            else -> JsonPrimitive(rule.value)
+        }
+        CatalogRuleV2(rule.field, rule.op, value)
     })
 }
+
+private val BOOLEAN_RULE_FIELDS = setOf("hdr", "dolby_vision", "watched", "in_progress", "favorited", "in_watchlist")
 
 internal fun CatalogPageV2<BrowseItem>.toCatalogResponse() = CatalogResponse(
     total = total, totalExact = totalExact, hasMore = continuation != null, items = items,
