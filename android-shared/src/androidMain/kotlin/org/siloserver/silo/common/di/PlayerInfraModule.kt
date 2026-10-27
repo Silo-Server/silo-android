@@ -281,7 +281,7 @@ val playerInfraModule = module {
         )
     }
 
-    // Card-presentation preference (poster size + captions). Same lifetime
+    // Card-presentation preference (poster size). Same lifetime
     // rationale as the overlay store; the extra lambdas feed the last-known
     // SharedPreferences cache identity (server|profile|family|device).
     single<CardPresentationStore> {

@@ -1522,9 +1522,7 @@ private fun InlineLibraryCollectionCard(
     // iOS `LibraryCollectionCard`: VStack(spacing: 6) of a 2:3.3 poster
     // (smallCornerRadius = 6) carrying a bottom-trailing count badge, a
     // siloCaption (12) name (2 lines), and a siloSmall (11) secondary
-    // type label. The two text lines follow the caption preference
-    // (showsTitle / showsMetadata); the count badge rides the artwork.
-    val caption = LocalCardPresentation.current.caption
+    // type label; the count badge rides the artwork.
     Column(
         modifier = Modifier.clickable(onClick = onClick),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1555,24 +1553,20 @@ private fun InlineLibraryCollectionCard(
                     .padding(horizontal = 8.dp, vertical = 5.dp),
             )
         }
-        if (caption.showsTitle) {
-            Text(
-                text = collection.name,
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (caption.showsMetadata) {
-            Text(
-                text = if (showItemCount) collection.itemCount?.let { "$it items" } ?: "Collection" else "Collection",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        Text(
+            text = collection.name,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = if (showItemCount) collection.itemCount?.let { "$it items" } ?: "Collection" else "Collection",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

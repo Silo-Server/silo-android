@@ -52,7 +52,7 @@ data class CardPresentationUiState(
 )
 
 /**
- * Cached card-presentation (poster size + caption) state for the signed-in
+ * Cached card-presentation (poster size) state for the signed-in
  * profile. Same shape as [OverlayPrefsStore]: lazy hydration, refresh on
  * foreground/reconnect via [ServerDrivenConfigRefresher], optimistic writes
  * with rollback, and [clear] at sign-out boundaries.
@@ -373,7 +373,7 @@ class DefaultCardPresentationStore(
     override suspend fun clearDeviceOverride() =
         // "Only this device" is off the moment the row is deleted, so demote
         // the source right away rather than leaving it at DeviceOverride until
-        // the refresh lands: the toggle would snap back, and a preset picked
+        // the refresh lands: the toggle would snap back, and a size picked
         // in between would be written at `profile_device` again — resurrecting
         // the override the user just removed.
         deleteScope(optimisticSource = CardPresentationSource.ClientFamily) {

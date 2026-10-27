@@ -191,21 +191,18 @@ fun MediaCard(
             }
         }
 
-        val cardCaption = LocalCardPresentation.current.caption
-        if (cardCaption.showsTitle) {
-            // iOS titleText: .siloSubheadline (14sp), 2 lines.
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
+        // iOS titleText: .siloSubheadline (14sp), 2 lines.
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
 
         val caption = subtitle ?: year?.takeIf { it > 0 }?.toString()
-        if (cardCaption.showsMetadata && caption != null) {
+        if (caption != null) {
             // iOS yearText: .siloCaption (12sp) at secondary text.
             Text(
                 text = caption,

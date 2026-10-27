@@ -93,9 +93,7 @@ fun SettingsInterfaceScreen(viewModel: SettingsViewModel, onBackClick: () -> Uni
         item(key = "cards") {
             MediaCardsSettings(
                 state = state.cardPresentation,
-                onPresetSelected = viewModel::setCardPreset,
                 onPosterSizeSelected = viewModel::setCardPosterSize,
-                onCaptionSelected = viewModel::setCardCaption,
                 onDeviceOnlyChanged = viewModel::setCardDeviceOnly,
                 onUseProfileDefault = viewModel::useCardProfileDefault,
             )

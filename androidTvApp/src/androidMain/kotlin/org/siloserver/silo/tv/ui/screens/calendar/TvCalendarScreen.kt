@@ -88,7 +88,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.calendar.localDisplayAirTime
-import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.calendar.CalendarBadge
@@ -1417,7 +1416,6 @@ private fun CalendarEventCard(
     val isFocused by interactionSource.collectIsFocusedAsState()
     val posterWidth = CalendarPosterWidth.cardScaled()
     val posterHeight = CalendarPosterHeight.cardScaled()
-    val caption = LocalCardPresentation.current.caption
 
     // Both edges. Gain alone made the screen's record of "what has focus"
     // sticky, so a card focus passed over on the way somewhere else still
@@ -1517,37 +1515,31 @@ private fun CalendarEventCard(
 
         // Caption below the poster: titles may wrap to two lines, but a
         // one-line title does not reserve an empty second line before detail.
-        // Artwork-only drops the whole block; the outer spacedBy only applies
-        // between children, so the poster keeps no trailing gap.
-        if (caption.showsTitle) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontSize = 17.5.sp,
+                    lineHeight = 20.5.sp,
+                ),
+                fontWeight = FontWeight.SemiBold,
+                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.85f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            cardSubtitle(item)?.let { subtitle ->
                 Text(
-                    text = item.title,
-                    style = MaterialTheme.typography.labelLarge.copy(
-                        fontSize = 17.5.sp,
-                        lineHeight = 20.5.sp,
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = 14.sp,
+                        lineHeight = 18.sp,
                     ),
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (isFocused) Color.White else Color.White.copy(alpha = 0.85f),
-                    maxLines = 2,
+                    color = Color.White.copy(alpha = 0.75f),
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                if (caption.showsMetadata) {
-                    cardSubtitle(item)?.let { subtitle ->
-                        Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                fontSize = 14.sp,
-                                lineHeight = 18.sp,
-                            ),
-                            color = Color.White.copy(alpha = 0.75f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                }
             }
         }
     }

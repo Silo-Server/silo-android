@@ -1066,11 +1066,10 @@ internal val TvSkylineRowCardVerticalPadding = 7.dp
 internal val TvSkylineRowBandBottomInset = 10.dp
 
 // The band is sized from what its first row actually needs — section header,
-// card at the scaled dense-poster height, and whichever caption lines the
-// card-presentation preference shows — plus a peek of the next section. The
-// previous fixed 0.50 fraction clipped `large` cards against the marquee and
-// wasted marquee room under artwork-only captions. At the standard preset
-// this derivation reproduces the old 270dp band on a 540dp-tall layout.
+// card at the scaled dense-poster height, and the title and details lines —
+// plus a peek of the next section. The previous fixed 0.50 fraction clipped
+// `large` cards against the marquee. At the standard poster size this
+// derivation reproduces the old 270dp band on a 540dp-tall layout.
 private val TvSkylineRowHeaderHeight = 26.dp // TvSectionHeader: 22sp title line + 4dp bottom pad
 private val TvSkylineRowHeaderGap = 12.dp // TvMediaRow header→rail spacing
 private val TvSkylineCaptionTitleHeight = 30.dp // TvMediaCard: 11dp spacer + 18.5sp title line
@@ -1082,12 +1081,7 @@ internal const val TvSkylineRowBandMaxFraction = 0.58f
 
 internal fun tvSkylineRowBandHeight(presentation: CardPresentation): Dp {
     val cardHeight = RowDimens.DensePosterWidth * presentation.posterSize.posterScale * 3f / 2f
-    val captionHeight = when {
-        !presentation.caption.showsTitle -> 0.dp
-        presentation.caption.showsMetadata ->
-            TvSkylineCaptionTitleHeight + TvSkylineCaptionMetadataHeight
-        else -> TvSkylineCaptionTitleHeight
-    }
+    val captionHeight = TvSkylineCaptionTitleHeight + TvSkylineCaptionMetadataHeight
     return TvSkylineRowHeaderHeight + TvSkylineRowHeaderGap +
         TvSkylineRowCardVerticalPadding * 2 + cardHeight + captionHeight +
         TvSkylineRowPreviewSpacing + TvSkylineRowPreviewPeek

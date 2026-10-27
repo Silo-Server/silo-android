@@ -11,16 +11,15 @@ import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.model.settings.CardPresentation
 
 /**
- * Ambient card-presentation preference (poster size + caption style),
+ * Ambient card-presentation preference (poster size),
  * published once near each app shell and consumed by every poster/backdrop
  * card. Same pattern as [org.siloserver.silo.common.overlays.LocalCardOverlayUiState]:
  * the shell hydrates the store once and provides the resolved value down the
  * tree, so cards read `LocalCardPresentation.current.posterSize.posterScale`
- * and the caption flags without injecting the store per instance.
+ * without injecting the store per instance.
  *
  * Default is [CardPresentation.DEFAULT], so any card rendered outside a
- * [ProvideCardPresentation] scope draws at the standard size with full
- * captions.
+ * [ProvideCardPresentation] scope draws at the standard size.
  */
 val LocalCardPresentation: ProvidableCompositionLocal<CardPresentation> =
     staticCompositionLocalOf { CardPresentation.DEFAULT }

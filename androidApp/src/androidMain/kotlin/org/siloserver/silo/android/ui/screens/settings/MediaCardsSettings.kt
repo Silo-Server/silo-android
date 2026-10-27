@@ -5,16 +5,11 @@ import androidx.compose.ui.Modifier
 import org.siloserver.silo.common.settings.CardPresentationSource
 import org.siloserver.silo.common.settings.CardPresentationSupport
 import org.siloserver.silo.common.settings.CardPresentationUiState
-import org.siloserver.silo.model.settings.CardCaption
 import org.siloserver.silo.model.settings.CardPosterSize
-import org.siloserver.silo.model.settings.CardPresentationPreset
-
-private const val CustomPresetLabel = "Custom"
 
 /**
  * Interface → "Cards & Posters" (Apple `InterfaceCustomizationView`) — the
- * cross-client `ui.card_presentation` preference (poster size + caption style,
- * plus the client-side presets over the pair).
+ * cross-client `ui.card_presentation` preference (poster size).
  *
  * Writes go to `profile_client` so the choice roams among this profile's
  * phones/tablets, unless "Only this device" pins a `profile_device` override.
@@ -23,9 +18,7 @@ private const val CustomPresetLabel = "Custom"
 @Composable
 fun MediaCardsSettings(
     state: CardPresentationUiState,
-    onPresetSelected: (CardPresentationPreset) -> Unit,
     onPosterSizeSelected: (CardPosterSize) -> Unit,
-    onCaptionSelected: (CardCaption) -> Unit,
     onDeviceOnlyChanged: (Boolean) -> Unit,
     onUseProfileDefault: () -> Unit,
     modifier: Modifier = Modifier,
@@ -36,8 +29,7 @@ fun MediaCardsSettings(
         footer = if (unsupported) {
             null
         } else {
-            "Start with Balanced, Compact, Cinema, or Artwork Only, then fine-tune size and captions. These " +
-                "choices sync with other phones and tablets on this profile unless Only This Device is on."
+            "Poster size syncs with other phones and tablets on this profile unless Only This Device is on."
         },
         modifier = modifier,
     ) {
@@ -47,22 +39,6 @@ fun MediaCardsSettings(
         }
 
         val presentation = state.presentation
-        val activePreset = presentation.preset
-        // "Custom" is a synthetic display state (the pair matches no preset),
-        // not a choice — it appears in the menu only while it is active.
-        val presetOptions = CardPresentationPreset.entries.map { it.displayName } +
-            listOfNotNull(CustomPresetLabel.takeIf { activePreset == null })
-        SettingsDropdownRow(
-            label = "Preset",
-            value = activePreset?.displayName ?: CustomPresetLabel,
-            options = presetOptions,
-            onOptionSelected = { label ->
-                CardPresentationPreset.entries
-                    .firstOrNull { it.displayName == label }
-                    ?.let(onPresetSelected)
-            },
-        )
-
         SettingsDropdownRow(
             label = "Poster Size",
             value = presentation.posterSize.displayName,
@@ -71,17 +47,6 @@ fun MediaCardsSettings(
                 CardPosterSize.entries
                     .firstOrNull { it.displayName == label }
                     ?.let(onPosterSizeSelected)
-            },
-        )
-
-        SettingsDropdownRow(
-            label = "Captions",
-            value = presentation.caption.displayName,
-            options = CardCaption.entries.map { it.displayName },
-            onOptionSelected = { label ->
-                CardCaption.entries
-                    .firstOrNull { it.displayName == label }
-                    ?.let(onCaptionSelected)
             },
         )
 

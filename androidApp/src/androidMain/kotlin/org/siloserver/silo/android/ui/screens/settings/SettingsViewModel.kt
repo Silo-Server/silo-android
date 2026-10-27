@@ -26,10 +26,8 @@ import org.siloserver.silo.model.download.effectiveDefault
 import org.siloserver.silo.model.download.labelFor
 import org.siloserver.silo.repository.DownloadsRepository
 import org.siloserver.silo.model.notifications.NotificationPreferencesUpdate
-import org.siloserver.silo.model.settings.CardCaption
 import org.siloserver.silo.model.settings.CardPosterSize
 import org.siloserver.silo.model.settings.CardPresentation
-import org.siloserver.silo.model.settings.CardPresentationPreset
 import org.siloserver.silo.model.settings.CellularQuality
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.network.ApiResult
@@ -491,19 +489,9 @@ class SettingsViewModel(
         viewModelScope.launch { cardPresentationStore.hydrateIfNeeded() }
     }
 
-    fun setCardPreset(preset: CardPresentationPreset) {
-        setCardPresentation(preset.presentation)
-    }
-
     fun setCardPosterSize(size: CardPosterSize) {
         setCardPresentation(
             _uiState.value.cardPresentation.presentation.copy(posterSize = size),
-        )
-    }
-
-    fun setCardCaption(caption: CardCaption) {
-        setCardPresentation(
-            _uiState.value.cardPresentation.presentation.copy(caption = caption),
         )
     }
 

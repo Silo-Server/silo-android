@@ -63,7 +63,6 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.section.LibraryCollection
@@ -873,7 +872,6 @@ private fun TvAudiobookGroupCard(
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
 ) {
-    val caption = LocalCardPresentation.current.caption
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Card(
@@ -909,29 +907,25 @@ private fun TvAudiobookGroupCard(
             }
         }
 
-        if (caption.showsTitle) {
-            Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
+        Text(
+            text = group.name,
+            style = MaterialTheme.typography.titleSmall,
+            color = Color.White.copy(alpha = 0.92f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        audiobookGroupSubtitle(group)?.let { subtitle ->
             Text(
-                text = group.name,
-                style = MaterialTheme.typography.titleSmall,
-                color = Color.White.copy(alpha = 0.92f),
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.68f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth(),
             )
-            if (caption.showsMetadata) {
-                audiobookGroupSubtitle(group)?.let { subtitle ->
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.68f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
         }
     }
 }
@@ -1174,7 +1168,6 @@ private fun TvCollectionCard(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val cardFocus = siloCardDefaults(shape = TvCollectionCardShape)
-    val caption = LocalCardPresentation.current.caption
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Card(
@@ -1215,23 +1208,20 @@ private fun TvCollectionCard(
 
         // Title-only caption, start-aligned like every other poster caption in
         // the app. The item count was dropped: it doubled the caption height
-        // and made the rows read differently from Browse. Gated like
-        // `TvMediaCard` so both card families agree in the same Library tab.
-        if (caption.showsTitle) {
-            Spacer(modifier = Modifier.height(11.dp))
+        // and made the rows read differently from Browse.
+        Spacer(modifier = Modifier.height(11.dp))
 
-            Text(
-                text = collection.name,
-                style = MaterialTheme.typography.titleSmall.copy(
-                    fontSize = 15.5.sp,
-                    lineHeight = 18.5.sp,
-                ),
-                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
+        Text(
+            text = collection.name,
+            style = MaterialTheme.typography.titleSmall.copy(
+                fontSize = 15.5.sp,
+                lineHeight = 18.5.sp,
+            ),
+            color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 

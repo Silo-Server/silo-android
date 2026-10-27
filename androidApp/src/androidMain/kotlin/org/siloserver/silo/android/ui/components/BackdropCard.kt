@@ -52,8 +52,7 @@ import org.siloserver.silo.overlays.OverlayData
 
 /**
  * Reserved height for the text block under a backdrop card: title (bodySmall)
- * plus up to two label lines (episode subtitle + "Xm left") when the caption
- * preference shows metadata. Computed from the ACTUAL line heights at the
+ * plus up to two label lines (episode subtitle + "Xm left"). Computed from the ACTUAL line heights at the
  * current density & font scale — a fixed dp constant doesn't grow with
  * fontScale, so accessibility text sizes (>=~1.25) sheared the last line.
  * Every card in a row resolves the identical value (theme-driven, not
@@ -61,11 +60,10 @@ import org.siloserver.silo.overlays.OverlayData
  * episode card with a remaining-time line) so shorter movie cards fit too.
  */
 @Composable
-private fun backdropInfoBlockHeight(showsMetadata: Boolean): Dp =
+private fun backdropInfoBlockHeight(): Dp =
     with(LocalDensity.current) {
         val typography = MaterialTheme.typography
-        typography.bodySmall.lineHeight.toDp() +
-            if (showsMetadata) typography.labelSmall.lineHeight.toDp() * 2 else 0.dp
+        typography.bodySmall.lineHeight.toDp() + typography.labelSmall.lineHeight.toDp() * 2
     }
 
 /**
@@ -193,27 +191,24 @@ fun BackdropCard(
             }
         }
 
-        val cardCaption = LocalCardPresentation.current.caption
-        if (cardCaption.showsTitle) {
         Spacer(modifier = Modifier.height(6.dp))
 
         // Fixed-height info block: episode cards draw up to three text lines,
         // movie cards as few as one. In a mixed row (Continue Watching) the
         // LazyRow's height would otherwise change with whichever items are
         // visible, bouncing every row below it during horizontal scrolls.
-        Column(modifier = Modifier.height(backdropInfoBlockHeight(cardCaption.showsMetadata))) {
-        if (seriesTitle != null) {
-            // Episode card: show series title, then episode tag + episode title
-            Text(
-                text = seriesTitle,
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (cardCaption.showsMetadata) {
+        Column(modifier = Modifier.height(backdropInfoBlockHeight())) {
+            if (seriesTitle != null) {
+                // Episode card: show series title, then episode tag + episode title
+                Text(
+                    text = seriesTitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 val episodeTag = formatEpisodeTag(seasonNumber, episodeNumber)
                 val subtitle = if (episodeTag != null) "$episodeTag \u2022 $title" else title
                 Text(
@@ -224,29 +219,26 @@ fun BackdropCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth(),
                 )
+            } else {
+                // Movie card: just show the title
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
-        } else {
-            // Movie card: just show the title
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
 
-        // Remaining time
-        if (cardCaption.showsMetadata && remainingMinutes != null && remainingMinutes > 0) {
-            Text(
-                text = "${remainingMinutes}m left",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        }
+            // Remaining time
+            if (remainingMinutes != null && remainingMinutes > 0) {
+                Text(
+                    text = "${remainingMinutes}m left",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
 
         MediaCardContextMenu(

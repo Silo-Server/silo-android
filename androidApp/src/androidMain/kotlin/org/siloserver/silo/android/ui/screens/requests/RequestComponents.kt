@@ -144,7 +144,6 @@ private fun RequestPosterCard(
     modifier: Modifier,
     width: Dp,
 ) {
-    val caption = LocalCardPresentation.current.caption
     val label = listOfNotNull(title, year?.takeIf { it > 0 }?.toString(), progress?.shortLabel).joinToString(", ")
     Column(
         modifier = modifier
@@ -190,26 +189,24 @@ private fun RequestPosterCard(
                 )
             }
         }
-        if (caption.showsTitle) {
-            Text(
-                text = title,
-                fontSize = 14.sp,
-                lineHeight = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = SiloOnSurface,
-                maxLines = 2,
-                minLines = 2,
-                overflow = TextOverflow.Ellipsis,
+        Text(
+            text = title,
+            fontSize = 14.sp,
+            lineHeight = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = SiloOnSurface,
+            maxLines = 2,
+            minLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        when {
+            showsStatusInCaption && progress != null -> RequestStatusLabel(progress = progress)
+            year != null && year > 0 -> Text(
+                text = year.toString(),
+                fontSize = 12.sp,
+                color = SiloSecondaryText,
+                maxLines = 1,
             )
-            when {
-                showsStatusInCaption && progress != null -> RequestStatusLabel(progress = progress)
-                caption.showsMetadata && year != null && year > 0 -> Text(
-                    text = year.toString(),
-                    fontSize = 12.sp,
-                    color = SiloSecondaryText,
-                    maxLines = 1,
-                )
-            }
         }
     }
 }

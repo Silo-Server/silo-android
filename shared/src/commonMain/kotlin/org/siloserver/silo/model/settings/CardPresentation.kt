@@ -5,14 +5,14 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Wire models for the canonical `ui.card_presentation` setting — the
- * cross-client "Cards & Posters" preference (poster size + caption style).
- * The stored value is ALWAYS the complete two-field object; there is no
- * partial patch or per-field merging, matching iOS
- * `CardPresentationPreference` and the server contract exactly.
+ * cross-client "Cards & Posters" preference (poster size). The stored value
+ * is ALWAYS the complete two-field object; there is no partial patch or
+ * per-field merging, matching iOS `CardPresentationPreference` and the
+ * server contract exactly.
  */
 
 @Serializable
@@ -47,47 +47,33 @@ enum class CardPosterSize(val raw: String) {
     }
 }
 
-@Serializable
-enum class CardCaption(val raw: String) {
-    @SerialName("title_metadata") TitleMetadata("title_metadata"),
-    @SerialName("title") Title("title"),
-    @SerialName("artwork") Artwork("artwork"),
-    ;
-
-    /** Gates the title line under every browse/rail/grid card. */
-    val showsTitle: Boolean get() = this != Artwork
-
-    /** Gates the metadata/year line under every browse/rail/grid card. */
-    val showsMetadata: Boolean get() = this == TitleMetadata
-
-    val displayName: String
-        get() = when (this) {
-            TitleMetadata -> "Title & Metadata"
-            Title -> "Title Only"
-            Artwork -> "Artwork Only"
-        }
-
-    companion object {
-        fun fromRaw(value: String?): CardCaption? =
-            value?.let { v -> entries.firstOrNull { it.raw == v } }
-    }
-}
-
-@Serializable
+/**
+ * Card presentation the client renders from `ui.card_presentation`. Poster size
+ * is the only choice: the caption choice is retired and every card shows its
+ * title and details.
+ */
 data class CardPresentation(
-    @SerialName("poster_size") val posterSize: CardPosterSize = CardPosterSize.Standard,
-    val caption: CardCaption = CardCaption.TitleMetadata,
+    val posterSize: CardPosterSize = CardPosterSize.Standard,
 ) {
-    /** The client-side preset this pair matches, or null when "Custom". */
-    val preset: CardPresentationPreset?
-        get() = CardPresentationPreset.entries.firstOrNull { it.presentation == this }
+    fun toJsonElement(): JsonElement = json.encodeToJsonElement(Wire.serializer(), Wire(posterSize))
 
-    fun toJsonElement(): JsonElement = json.encodeToJsonElement(this)
+    fun serialize(): String = json.encodeToString(Wire.serializer(), Wire(posterSize))
 
-    fun serialize(): String = json.encodeToString(serializer(), this)
+    /**
+     * The stored contract object. The schema still requires `caption`, so it
+     * is always written as `title_metadata`; a stored value of any shape is
+     * read and ignored.
+     */
+    @Serializable
+    private data class Wire(
+        @SerialName("poster_size") val posterSize: CardPosterSize = CardPosterSize.Standard,
+        val caption: JsonElement = JsonPrimitive(RETIRED_CAPTION),
+    )
 
     companion object {
         val DEFAULT = CardPresentation()
+
+        private const val RETIRED_CAPTION = "title_metadata"
 
         // encodeDefaults: the contract requires the complete two-field object
         // (additionalProperties:false, both fields required), so default-valued
@@ -98,19 +84,21 @@ data class CardPresentation(
         }
 
         /**
-         * Defensive wire decode: null/malformed JSON or an unknown enum value
-         * (a newer server's `poster_size`/`caption`) yields null so callers
-         * fall back to [DEFAULT] instead of crashing. A missing field decodes
-         * to its default per the contract's whole-object semantics.
+         * Defensive wire decode: null/malformed JSON or an unknown
+         * `poster_size` (a newer server's) yields null so callers fall back
+         * to [DEFAULT] instead of crashing. A missing field decodes to its
+         * default per the contract's whole-object semantics.
          */
         fun decodeOrNull(element: JsonElement?): CardPresentation? {
             if (element == null || element is JsonNull) return null
-            return runCatching { json.decodeFromJsonElement(serializer(), element) }.getOrNull()
+            return runCatching { json.decodeFromJsonElement(Wire.serializer(), element) }
+                .getOrNull()?.let { CardPresentation(it.posterSize) }
         }
 
         fun decodeOrNull(raw: String?): CardPresentation? {
             if (raw.isNullOrBlank()) return null
-            return runCatching { json.decodeFromString(serializer(), raw) }.getOrNull()
+            return runCatching { json.decodeFromString(Wire.serializer(), raw) }
+                .getOrNull()?.let { CardPresentation(it.posterSize) }
         }
 
         fun decodeOrDefault(element: JsonElement?): CardPresentation =
@@ -119,35 +107,4 @@ data class CardPresentation(
         fun decodeOrDefault(raw: String?): CardPresentation =
             decodeOrNull(raw) ?: DEFAULT
     }
-}
-
-/**
- * Friendly cross-client recipes over the two contract axes. Never on the
- * wire — the server only ever stores the normalized size/caption object — so
- * a user can start from a preset and still fine-tune either control. A pair
- * matching no preset renders as a synthetic "Custom" in pickers
- * ([CardPresentation.preset] == null).
- */
-enum class CardPresentationPreset {
-    Balanced,
-    Compact,
-    Cinema,
-    ArtworkOnly,
-    ;
-
-    val presentation: CardPresentation
-        get() = when (this) {
-            Balanced -> CardPresentation.DEFAULT
-            Compact -> CardPresentation(CardPosterSize.Compact, CardCaption.Title)
-            Cinema -> CardPresentation(CardPosterSize.Large, CardCaption.Title)
-            ArtworkOnly -> CardPresentation(CardPosterSize.Large, CardCaption.Artwork)
-        }
-
-    val displayName: String
-        get() = when (this) {
-            Balanced -> "Balanced"
-            Compact -> "Compact"
-            Cinema -> "Cinema"
-            ArtworkOnly -> "Artwork Only"
-        }
 }
