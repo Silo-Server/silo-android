@@ -111,6 +111,24 @@ class RemotePlaybackServerAddressTest {
         assertEquals(TAILNET_URL, api.serverUrls.single())
     }
 
+    @Test fun aLongEndpointListCostsABoundedNumberOfConsentLookups() = runTest {
+        var lookups = 0
+        val counting = RemotePlaybackIdentityManager(
+            api,
+            tokens,
+            deviceNameProvider = { "TV" },
+            identityProbe = { ServerIdentityProbe.Unreachable },
+            cleartextApproved = { lookups += 1; false },
+        )
+        val endpoints = (1..1_000).map { "http://10.0.${it / 256}.${it % 256}:8090" }
+
+        assertFails {
+            counting.prepare(offer(endpoints = endpoints), "phone-1", null, 1L, allowReuse = true) {}
+        }
+
+        assertEquals(RemotePlaybackCandidatePolicy.MAX_ENDPOINTS_READ, lookups)
+    }
+
     @Test fun anOfferedAddressIsTriedWhenNeitherTheTvsNorThePhonesAnswers() = runTest {
         answers[TAILNET_URL] = ServerIdentityProbe.Identity(IDENTITY)
 
@@ -177,7 +195,7 @@ class RemotePlaybackServerAddressTest {
         )
     }
 
-    @Test fun candidatesPutTheTvsAddressFirstAndDropRepeats() {
+    @Test fun candidatesPutTheTvsAddressFirstAndDropRepeats() = runTest {
         assertEquals(
             listOf(LAN_URL, PUBLIC_URL, TAILNET_URL),
             RemotePlaybackCandidatePolicy.candidateUrls(
