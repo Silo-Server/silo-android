@@ -395,6 +395,34 @@ class SiloCastMessageTest {
     }
 
     @Test
+    fun offerCarriesTheServersOtherAddresses() {
+        assertWireEquals(
+            """{"type":"handoff_offer","v":2,"handoffOffer":{"requestId":"req-3","serverId":"srv-1",""" +
+                """"serverURL":"https://silo.example","profileId":"p","serverIdentity":"deploy-1",""" +
+                """"serverEndpoints":[{"url":"https://silo.example","kind":"public"},""" +
+                """{"url":"https://silo.tail.ts.net","kind":"provider","provider":"tailscale","displayName":"Tailscale"}]}}""",
+            SiloCastMessage.HandoffOffer(
+                SiloCastHandoffOffer(
+                    requestId = "req-3",
+                    serverId = "srv-1",
+                    serverURL = "https://silo.example",
+                    profileId = "p",
+                    serverIdentity = "deploy-1",
+                    serverEndpoints = listOf(
+                        SiloCastServerEndpoint(url = "https://silo.example", kind = "public"),
+                        SiloCastServerEndpoint(
+                            url = "https://silo.tail.ts.net",
+                            kind = "provider",
+                            provider = "tailscale",
+                            displayName = "Tailscale",
+                        ),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun decodesAppleReadyWithResumeTokenAndCancelWithNowPlaying() {
         val ready = assertIs<SiloCastMessage.HandoffReady>(
             json.decodeFromString(

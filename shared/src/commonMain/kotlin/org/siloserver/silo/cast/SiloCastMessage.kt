@@ -232,12 +232,33 @@ data class SiloCastHandoffOffer(
     val title: String? = null,
     /** The deployment identity the phone verified at [serverURL]. */
     val serverIdentity: String? = null,
+    /**
+     * Other addresses the deployment offers, from its connections document,
+     * public first, then providers. The TV may use one that reports
+     * [serverIdentity]; reachability is the TV's to test.
+     */
+    val serverEndpoints: List<SiloCastServerEndpoint>? = null,
     /** The token from an earlier `handoff_ready`, to reuse that identity from a new connection without another approval. */
     val resumeToken: String? = null,
     /** The user agreed to replace a title another profile started, after the TV answered `replace_confirmation_required`. */
     val replaceConfirmed: Boolean? = null,
     /** With [replaceConfirmed]: the title the user agreed to replace. The TV honors it only while that title is on screen. */
     val replacingContentId: String? = null,
+)
+
+/**
+ * One address in [SiloCastHandoffOffer.serverEndpoints]. Mirrors silo-apple
+ * `ServerEndpoint`: [kind] is `public` or `provider`, kept as a string so a
+ * kind this build doesn't know still decodes.
+ */
+@Serializable
+data class SiloCastServerEndpoint(
+    val url: String,
+    val kind: String,
+    /** Provider slug for a `provider` endpoint, e.g. `tailscale`. */
+    val provider: String? = null,
+    /** Provider display name from its manifest. */
+    val displayName: String? = null,
 )
 
 @Serializable

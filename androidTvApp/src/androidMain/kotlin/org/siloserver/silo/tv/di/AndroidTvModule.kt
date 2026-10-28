@@ -408,10 +408,22 @@ val androidTvModule = module {
     }
     single { SiloCastNsdAdvertiser(androidContext()) }
     single {
+        val identityApi = get<org.siloserver.silo.network.api.ServerIdentityApi>()
+        val identities = get<org.siloserver.silo.repository.ServerIdentityRepository>()
+        val registry = get<ServerRegistry>()
+        val cleartextConsent = get<CleartextConsentStore>()
         RemotePlaybackIdentityManager(
             deviceLoginApi = get(),
             tokenManager = get(),
             deviceNameProvider = ::tvDeviceName,
+            identityProbe = { url -> identityApi.probeIdentity(url) },
+            savedUrlsFor = { identity ->
+                val activeId = registry.activeServerId.value
+                identities.entriesFor(identity)
+                    .sortedBy { it.id != activeId }
+                    .map { it.url }
+            },
+            cleartextApproved = { url -> cleartextConsent.isApproved(url) },
         )
     }
     single {
