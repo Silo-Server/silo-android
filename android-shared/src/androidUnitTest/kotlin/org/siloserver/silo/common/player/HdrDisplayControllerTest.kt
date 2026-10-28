@@ -62,6 +62,17 @@ class HdrDisplayControllerTest {
     }
 
     @Test
+    fun refreshRateNoiseDoesNotDecideAmongJudderingModes() {
+        // No mode is a multiple of 23.976, so both carry the judder penalty.
+        val modes = listOf(
+            mode(1, 1920, 1080, 59.94031f),
+            mode(2, 3840, 2160, 59.94529f),
+            mode(0, 3840, 2160, 60f),
+        )
+        assertEquals(2, appliedModeFor(modes, 1920, 800, 23.976f))
+    }
+
+    @Test
     fun exactResolutionMatchStillWins() {
         assertEquals(1, appliedModeFor(tvModes, 1920, 1080, 23.976f))
         assertEquals(4, appliedModeFor(tvModes, 3840, 2160, 59.94f))
