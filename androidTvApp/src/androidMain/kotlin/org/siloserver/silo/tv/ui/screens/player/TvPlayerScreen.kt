@@ -2790,22 +2790,26 @@ private fun TvPlayerCommandEffects(
     playbackSpeed: Double,
 ) {
     // Position polling — lifecycle-bounded so it doesn't outlive the screen.
-    LaunchedEffect(mediaController, sessionId, lifecycleOwner) {
-        val controller = mediaController ?: return@LaunchedEffect
+    // Reads the player the backend mounts on, not the MediaController: a mount
+    // on the session's ExoPlayer reaches the controller one main-looper hop
+    // later, and a tick in that gap reported the previous item's position
+    // (issue #715: Up Next replanned the next episode at the old one's credits).
+    LaunchedEffect(videoBackend, sessionId, lifecycleOwner) {
+        val player = videoBackend?.player ?: return@LaunchedEffect
         val timelineWindow = Timeline.Window()
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive && sessionId != null) {
                 viewModel.onPositionChanged(
-                    controller.currentPosition,
-                    controller.duration.coerceAtLeast(0L),
+                    player.currentPosition,
+                    player.duration.coerceAtLeast(0L),
                 )
                 // Mounted-transport extent for the VM's native-first seek
                 // decision (see TvPlayerViewModel.mountedSeekableSourceRange).
                 // A seekable window with a known length can serve any target
                 // it spans without a server reanchor.
-                if (!controller.currentTimeline.isEmpty) {
-                    controller.currentTimeline.getWindow(
-                        controller.currentMediaItemIndex,
+                if (!player.currentTimeline.isEmpty) {
+                    player.currentTimeline.getWindow(
+                        player.currentMediaItemIndex,
                         timelineWindow,
                     )
                     viewModel.onPlayerWindowChanged(
