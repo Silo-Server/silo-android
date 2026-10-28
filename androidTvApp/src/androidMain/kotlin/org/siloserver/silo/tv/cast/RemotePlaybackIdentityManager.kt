@@ -384,21 +384,23 @@ class RemotePlaybackIdentityManager(
  */
 internal object RemotePlaybackCandidatePolicy {
     const val MAX_ENDPOINTS = 6
+    const val MAX_SAVED = 6
 
     /**
-     * This TV's saved addresses for [identity], the active server first:
-     * those recorded under it, and the active server unless it is recorded
-     * as another deployment. Every candidate is probed, so an unverified
-     * one is safe to try.
+     * This TV's saved addresses that may serve [identity], at most
+     * [MAX_SAVED]: those recorded under it, then those with no recorded
+     * identity, the active server first within each. Every candidate is
+     * probed and an unverified one that answers for another deployment is
+     * skipped, so trying them is safe.
      */
-    fun savedUrls(entries: List<ServerEntry>, activeId: String?, identity: String): List<String> =
-        entries
-            .filter { entry ->
-                val recorded = entry.verifiedServerId?.takeIf { it.isNotBlank() }
-                recorded == identity || (entry.id == activeId && recorded == null)
-            }
-            .sortedBy { it.id != activeId }
+    fun savedUrls(entries: List<ServerEntry>, activeId: String?, identity: String): List<String> {
+        fun recorded(entry: ServerEntry) = entry.verifiedServerId?.takeIf { it.isNotBlank() }
+        return entries
+            .filter { recorded(it) == identity || recorded(it) == null }
+            .sortedWith(compareBy({ recorded(it) == null }, { it.id != activeId }))
+            .take(MAX_SAVED)
             .map { it.url }
+    }
 
     fun candidateUrls(savedUrls: List<String>, offeredUrl: String, endpointUrls: List<String>): List<String> =
         (savedUrls + offeredUrl + endpointUrls.take(MAX_ENDPOINTS))

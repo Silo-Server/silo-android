@@ -138,20 +138,22 @@ class RemotePlaybackServerAddressTest {
         assertEquals(1 + RemotePlaybackCandidatePolicy.MAX_ENDPOINTS, probed.size)
     }
 
-    @Test fun savedAddressesIncludeAnUnverifiedActiveServerButNotAnotherDeployment() {
+    @Test fun savedAddressesAreRecordedMatchesThenUnverifiedServersButNeverAnotherDeployment() {
         val entries = listOf(
             entry("https://elsewhere.test", verified = "other-deployment"),
+            entry("https://unverified.test", verified = null),
             entry("https://recorded.test", verified = IDENTITY),
             entry(LAN_URL, verified = null),
-            entry("https://unrelated.test", verified = null),
         )
 
+        // An unverified active server comes first among the unverified.
         assertEquals(
-            listOf(LAN_URL, "https://recorded.test"),
-            RemotePlaybackCandidatePolicy.savedUrls(entries, activeId = entries[2].id, identity = IDENTITY),
+            listOf("https://recorded.test", LAN_URL, "https://unverified.test"),
+            RemotePlaybackCandidatePolicy.savedUrls(entries, activeId = entries[3].id, identity = IDENTITY),
         )
+        // Another deployment being active doesn't hide unverified saved servers.
         assertEquals(
-            listOf("https://recorded.test"),
+            listOf("https://recorded.test", "https://unverified.test", LAN_URL),
             RemotePlaybackCandidatePolicy.savedUrls(entries, activeId = entries[0].id, identity = IDENTITY),
         )
     }
