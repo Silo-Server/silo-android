@@ -120,7 +120,9 @@ private fun LazyListScope.discover(
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 // Only the server's own rows page; the merged carousels an
                 // older server gets have no single row behind them.
-                val browsable = state.rowsBrowsable && section.totalPages > 1
+                // A row trimmed to its size has more titles even on a one-page source.
+                val browsable = state.rowsBrowsable &&
+                    (section.totalPages > 1 || section.totalResults > section.results.size)
                 RequestsSectionHeader(
                     title = section.title,
                     label = if (index == 0) "Discover" else null,
