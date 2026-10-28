@@ -18,7 +18,7 @@ import org.siloserver.silo.repository.RequestsRepository
 data class RequestDiscoverRowUiState(
     val title: String = "",
     val results: List<RequestMediaResult> = emptyList(),
-    val isLoading: Boolean = true,
+    val isLoading: Boolean = false,
     val isLoadingMore: Boolean = false,
     val endReached: Boolean = false,
     /** A first page that failed; a later page's failure keeps what loaded. */
@@ -64,9 +64,12 @@ class RequestDiscoverRowViewModel(
     fun loadMore() {
         val page = nextPage ?: return
         val state = _uiState.value
-        if (state.isLoadingMore || (state.isLoading && page != 1) || state.notFound) return
+        if (state.isLoading || state.isLoadingMore || state.notFound) return
+        // With nothing shown yet (a first page, or empty pages before it),
+        // loading and failing are the screen's; after that, the grid's.
         _uiState.update {
-            it.copy(isLoadingMore = page != 1, isLoading = page == 1 && it.results.isEmpty(), error = null, moreFailed = false)
+            val nothingShown = it.results.isEmpty()
+            it.copy(isLoadingMore = !nothingShown, isLoading = nothingShown, error = null, moreFailed = false)
         }
         viewModelScope.launch {
             when (val result = repository.discoverRow(rowKey, page)) {
@@ -91,24 +94,26 @@ class RequestDiscoverRowViewModel(
                 is ApiResult.Error -> {
                     // A row removed mid-scroll ends where it is.
                     val gone = result.code == 404
-                    if (gone && page != 1) nextPage = null
+                    val nothingShown = _uiState.value.results.isEmpty()
+                    if (gone && !nothingShown) nextPage = null
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             isLoadingMore = false,
-                            notFound = gone && page == 1,
+                            notFound = gone && nothingShown,
                             endReached = nextPage == null,
-                            error = if (page == 1 && !gone) result.message.ifBlank { LOAD_FAILED } else null,
-                            moreFailed = page != 1 && !gone,
+                            error = if (nothingShown && !gone) result.message.ifBlank { LOAD_FAILED } else null,
+                            moreFailed = !nothingShown && !gone,
                         )
                     }
                 }
                 is ApiResult.NetworkError -> _uiState.update {
+                    val nothingShown = it.results.isEmpty()
                     it.copy(
                         isLoading = false,
                         isLoadingMore = false,
-                        error = if (page == 1) LOAD_FAILED else null,
-                        moreFailed = page != 1,
+                        error = if (nothingShown) LOAD_FAILED else null,
+                        moreFailed = !nothingShown,
                     )
                 }
             }

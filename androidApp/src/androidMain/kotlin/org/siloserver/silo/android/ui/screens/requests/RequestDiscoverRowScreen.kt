@@ -2,8 +2,11 @@ package org.siloserver.silo.android.ui.screens.requests
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -27,6 +30,7 @@ import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
+import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.components.skeleton
 import org.siloserver.silo.common.requests.rememberRequestRouter
@@ -50,11 +54,16 @@ fun RequestDiscoverRowScreen(
     val state by viewModel.uiState.collectAsState()
     val router = rememberRequestRouter(koinInject(), onLibraryItemClick, onRequestDetailClick)
 
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    // A row can grow to hundreds of titles, so each grid row is its own lazy item.
+    val (columns, cellWidth) = searchGridLayout(maxWidth)
+    val gridRows = state.results.chunked(columns)
     RequestsLargeTitlePage(
         title = state.title,
         onBackClick = onBackClick,
         isRefreshing = false,
         onRefresh = {},
+        itemSpacing = MediaGridDefaults.PosterGridVerticalSpacing,
     ) {
         when {
             state.notFound -> item(key = "gone") {
@@ -86,10 +95,15 @@ fun RequestDiscoverRowScreen(
                 )
             }
             else -> {
-                item(key = "grid") {
-                    SearchGrid(count = state.results.size) { width, index ->
-                        val result = state.results[index]
-                        RequestMediaCard(item = result, width = width, onClick = { router.openResult(result) })
+                items(gridRows.size, key = { "row-$it" }, contentType = { "grid-row" }) { index ->
+                    Row(
+                        // The page spaces items for the grid; the first row keeps the title's gap.
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = if (index == 0) 8.dp else 0.dp),
+                        horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),
+                    ) {
+                        gridRows[index].forEach { result ->
+                            RequestMediaCard(item = result, width = cellWidth, onClick = { router.openResult(result) })
+                        }
                     }
                 }
                 if (!state.endReached) {
@@ -107,5 +121,6 @@ fun RequestDiscoverRowScreen(
                 }
             }
         }
+    }
     }
 }

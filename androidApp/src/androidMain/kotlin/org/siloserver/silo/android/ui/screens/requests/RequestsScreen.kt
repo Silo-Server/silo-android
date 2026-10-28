@@ -193,13 +193,22 @@ private fun LazyListScope.searchResults(state: RequestsUiState, onOpen: (Request
     }
 }
 
+/** How many columns [SearchGrid] lays out in [width], and how wide each cell is. */
+internal data class SearchGridLayout(val columns: Int, val cellWidth: Dp)
+
+@Composable
+internal fun searchGridLayout(width: Dp): SearchGridLayout {
+    val columns = requestGridColumns(width, MediaGridDefaults.scaledPosterGridMinWidth)
+    val spacing = MediaGridDefaults.PosterGridHorizontalSpacing
+    return SearchGridLayout(columns, (width - 32.dp - spacing * (columns - 1)) / columns)
+}
+
 /** Poster cells in adaptive columns, as library search lays them out. */
 @Composable
 internal fun SearchGrid(count: Int, cell: @Composable (width: Dp, index: Int) -> Unit) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val columns = requestGridColumns(maxWidth, MediaGridDefaults.scaledPosterGridMinWidth)
+        val (columns, cellWidth) = searchGridLayout(maxWidth)
         val spacing = MediaGridDefaults.PosterGridHorizontalSpacing
-        val cellWidth = (maxWidth - 32.dp - spacing * (columns - 1)) / columns
         Column(
             modifier = Modifier.padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),

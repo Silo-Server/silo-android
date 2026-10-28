@@ -14,8 +14,13 @@ import org.siloserver.silo.model.request.RequestsDiscoverResponse
 fun discoverCarousels(response: RequestsDiscoverResponse): List<RequestDiscoverySection> {
     if (response.rowOrder.isEmpty()) return mergeDiscoverCarousels(response.sections)
     val sections = response.sections.associateBy { it.key }
-    return response.rowOrder.mapNotNull { row -> sections[row.key]?.takeIf { it.results.isNotEmpty() } }
+    return response.rowOrder.mapNotNull { row ->
+        if (row.type in BRAND_ROW_TYPES) null else sections[row.key]?.takeIf { it.results.isNotEmpty() }
+    }
 }
+
+/** The studio, network and genre card rows, which the apps do not draw. */
+private val BRAND_ROW_TYPES = setOf("studios", "networks", "genres")
 
 /**
  * The page after [last] in a row's See all page. When the server read
