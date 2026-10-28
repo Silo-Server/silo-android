@@ -2889,12 +2889,15 @@ private fun TvPlayerCommandEffects(
         }
     }
 
-    LaunchedEffect(mediaController) {
-        val controller = mediaController ?: return@LaunchedEffect
+    // Seeks go to the same player the position poll reads. Through the
+    // controller, the session player kept its pre-seek position for a looper
+    // hop, and a poll in that gap could publish it.
+    LaunchedEffect(videoBackend) {
+        val player = videoBackend?.player ?: return@LaunchedEffect
         viewModel.seekRequests.collect { targetSec ->
             val targetMs = (targetSec * 1000).toLong()
             watchParty?.recordIssuedSeek(targetMs)
-            controller.seekTo(targetMs)
+            player.seekTo(targetMs)
         }
     }
 

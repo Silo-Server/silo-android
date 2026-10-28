@@ -60,6 +60,45 @@ class TvMountedPositionReportTest {
     }
 
     @Test
+    fun `a seek through the controller leaves the session player at the old position until the looper runs`() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val player = ExoPlayer.Builder(context).build()
+        val session = MediaSession.Builder(context, player).build()
+        val controllerFuture = MediaController.Builder(context, session.token).buildAsync()
+        shadowOf(Looper.getMainLooper()).idle()
+        val controller = controllerFuture.get()
+        try {
+            player.setMediaItem(episode("s2e06"), 10_000L)
+            shadowOf(Looper.getMainLooper()).idle()
+
+            // Skip Intro: the old route sent the seek through the controller.
+            controller.seekTo(110_000L)
+            assertEquals(10_000L, player.currentPosition, "session player should still be stale")
+
+            // The seek effect now seeks the player the poll reads.
+            player.seekTo(110_000L)
+            assertEquals(110_000L, player.currentPosition)
+        } finally {
+            controller.release()
+            session.release()
+            player.release()
+        }
+    }
+
+    @Test
+    fun `seeks go to the player the position poll reads`() {
+        val seekEffect = screenSource
+            .substringAfter("private fun TvPlayerCommandEffects(")
+            .substringBefore("viewModel.seekRequests.collect")
+            .substringAfterLast("LaunchedEffect(")
+
+        assertTrue(
+            "videoBackend?.player" in seekEffect,
+            "seeks must reach the polled player synchronously, or a poll can publish the pre-seek position",
+        )
+    }
+
+    @Test
     fun `the position poll reads the player the backend mounts on`() {
         val poll = screenSource
             .substringAfter("private fun TvPlayerCommandEffects(")
