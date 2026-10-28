@@ -417,6 +417,7 @@ val androidTvModule = module {
     single {
         val playbackLifecycle = get<org.siloserver.silo.common.player.PlaybackSessionLifecycle>()
         val activeProfiles = get<org.siloserver.silo.model.profile.ActiveProfileStore>()
+        val serverIdentities = get<org.siloserver.silo.repository.ServerIdentityRepository>()
         TvSiloCastReceiver(
             advertiser = get(),
             serverRegistry = get(),
@@ -433,6 +434,7 @@ val androidTvModule = module {
             },
             ownProfileNameProvider = { activeProfiles.activeProfile.value?.name },
             nowPlayingMetadataLoader = SiloCastNowPlayingMetadataResolver.catalogLoader(get()),
+            recordServerIdentity = { entry -> serverIdentities.identityOf(entry) },
         )
     }
 

@@ -52,6 +52,7 @@ import org.siloserver.silo.common.cast.SiloCastFrameBuffer
 import org.siloserver.silo.common.cast.SiloCastNsdAdvertiser
 import org.siloserver.silo.common.lan.SiloCastTls
 import org.siloserver.silo.common.lan.SiloCastTlsSession
+import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.IdentityTransitionBarrier
@@ -111,6 +112,13 @@ class TvSiloCastReceiver(
     /** Poster and synopsis for a content ID; see [SiloCastNowPlayingMetadataResolver]. */
     nowPlayingMetadataLoader: suspend (contentId: String, allowCached: Boolean) -> SiloCastNowPlayingMetadata? =
         { _, _ -> null },
+    /**
+     * Probes a saved server's deployment identity and records it on the entry,
+     * returning it, or null when the server can't be reached or predates the
+     * contract. See
+     * [org.siloserver.silo.repository.ServerIdentityRepository.identityOf].
+     */
+    private val recordServerIdentity: suspend (ServerEntry) -> String? = { null },
     wallClockMs: () -> Long = System::currentTimeMillis,
 ) {
     data class StandbyState(
@@ -259,6 +267,22 @@ class TvSiloCastReceiver(
                     // Re-advertises under the lock, and is a no-op once stop()
                     // has cleared the socket.
                     refreshAdvertisement()
+                }
+        }
+        // Phones on another address of this server find the TV by its
+        // deployment identity. Release builds record that identity only when
+        // a phone pairs the TV, so a TV signed in any other way advertised
+        // none and those phones didn't list it. Record it once per server
+        // while the receiver runs; an unreachable server is tried again on
+        // the next start.
+        newScope.launch {
+            serverRegistry.activeEntry
+                .distinctUntilChangedBy { it?.id }
+                .collect { entry ->
+                    if (entry == null || !entry.verifiedServerId.isNullOrBlank()) return@collect
+                    runRecovering("server identity check") {
+                        if (recordServerIdentity(entry) != null) refreshAdvertisedIdentity()
+                    }
                 }
         }
         // One state tick for every controller, built once. These jobs are
@@ -1607,6 +1631,13 @@ class TvSiloCastReceiver(
             playing = activePlayer != null,
             serverIdentity = advertisedServerIdentity(),
         )
+    }
+
+    /** Re-advertises only when the presented identity changed: every registration re-registers with NSD. */
+    @Synchronized
+    private fun refreshAdvertisedIdentity() {
+        val advertised = advertiser.currentAdvertisement()?.third?.get("serverIdentity")
+        if (advertised != advertisedServerIdentity()) refreshAdvertisement()
     }
 
     /** The deployment identity the TV presents: the borrowed identity's while one is active, else its own server's. */
