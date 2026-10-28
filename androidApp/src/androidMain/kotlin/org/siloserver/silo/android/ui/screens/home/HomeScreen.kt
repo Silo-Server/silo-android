@@ -141,24 +141,15 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
-    val sectionPreferences: HomeSectionPreferencesStore = koinInject()
-    val preferenceRevision by sectionPreferences.revision.collectAsState()
     val serverRegistry: ServerRegistry = koinInject()
     val activeServerId by serverRegistry.activeServerId.collectAsState()
     val activeEntry by serverRegistry.activeEntry.collectAsState()
     val sections = state.sections
     val profileScopeId = activeEntry?.profileId ?: activeProfile?.id
-    val populatedServerSections = remember(sections) { sections.filter { it.items.isNotEmpty() } }
     // No hero billboard on phone (matches iOS): a `featured` section is just
-    // another row, rendered in the order the server configured it.
-    val regularSections = remember(
-        sections,
-        preferenceRevision,
-        activeServerId,
-        profileScopeId,
-    ) {
-        sectionPreferences.arrangedSections(sections, profileId = profileScopeId)
-    }
+    // another row. The server already orders and hides rows for this
+    // profile, so Home shows its populated rows exactly in that order.
+    val regularSections = remember(sections) { sections.filter { it.items.isNotEmpty() } }
     val context = LocalContext.current
     val catalogRepository: CatalogRepository = koinInject()
     val catalogLanguage: CatalogLanguageRevision = koinInject()
@@ -335,19 +326,10 @@ fun HomeScreen(
                 message = state.error ?: "Something went wrong",
                 onRetry = { viewModel.loadSections() },
             )
-            regularSections.isEmpty() -> {
-                if (populatedServerSections.isNotEmpty()) {
-                    EmptyStateView(
-                        title = "Home sections are hidden",
-                        subtitle = "Choose which rows appear in Settings → Interface → Home Sections.",
-                    )
-                } else {
-                    EmptyStateView(
-                        title = "Nothing to watch yet",
-                        subtitle = "Add media to your libraries or start watching to see it here.",
-                    )
-                }
-            }
+            regularSections.isEmpty() -> EmptyStateView(
+                title = "Nothing to watch yet",
+                subtitle = "Add media to your libraries or start watching to see it here.",
+            )
             else -> PullToRefreshBox(
                 isRefreshing = state.isRefreshing,
                 onRefresh = { viewModel.refresh() },

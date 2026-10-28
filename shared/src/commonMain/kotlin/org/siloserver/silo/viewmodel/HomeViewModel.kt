@@ -80,6 +80,8 @@ class HomeViewModel(
      * never reports and stays shown.
      */
     startShown: Boolean = true,
+    /** Home layout saves from the Home Sections editor; each one re-reads Home in the new order. */
+    private val homeLayoutChanges: org.siloserver.silo.repository.HomeLayoutChanges? = null,
 ) : ViewModel() {
 
     private var displayedOwner: AuthScopeSnapshot? = null
@@ -139,6 +141,14 @@ class HomeViewModel(
         homeRealtime?.let { coordinator ->
             viewModelScope.launch {
                 coordinator.refreshSignals.collect { refreshFromRealtime() }
+            }
+        }
+        homeLayoutChanges?.let { changes ->
+            viewModelScope.launch {
+                // A saved row order or visibility re-reads Home quietly, as a
+                // realtime update does: at once while Home is shown, else when
+                // it is shown again.
+                changes.revision.drop(1).collect { refreshFromRealtime() }
             }
         }
     }

@@ -6,7 +6,6 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.SettingsRepository
 import org.siloserver.silo.tv.BuildConfig
 import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
-import org.siloserver.silo.tv.data.preferences.TvHomeSectionPreferences
 import org.siloserver.silo.tv.data.preferences.TvLibrarySelectionStore
 import org.siloserver.silo.common.network.AndroidDeviceMetadataProvider
 import org.siloserver.silo.common.network.SiloClientBuildIdentity
@@ -303,9 +302,9 @@ val androidTvModule = module {
         org.siloserver.silo.common.settings.BrowsePrefsStore(androidContext(), get(), keyPrefix = "androidtv")
     }
 
-    // tvOS-parity Home row visibility/order, local to this TV and partitioned
-    // by active server + profile.
-    single { TvHomeSectionPreferences(androidContext(), get()) }
+    // Home Sections editor: the active profile's Home row order and
+    // visibility, read from and saved to the server.
+    viewModel { org.siloserver.silo.viewmodel.HomeSectionsEditorViewModel(get()) }
 
     // One-shot legacy `tv_prefs` import (playback settings → server device
     // overrides; selected-library id → active profile's selection store).
@@ -484,7 +483,7 @@ val androidTvModule = module {
 
     // Content ViewModels
     // Starts hidden: the screens that show its rows report when they are on screen.
-    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get(), startShown = false) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get(), startShown = false, homeLayoutChanges = get()) }
     viewModel { org.siloserver.silo.tv.ui.screens.home.TvUpcomingViewModel(get()) }
     viewModel { RecommendationsViewModel(get(), catalogLanguage = get()) }
     // The Requests page loads its view models when it composes.

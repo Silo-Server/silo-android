@@ -3,8 +3,6 @@ package org.siloserver.silo.tv.ui.screens.home
 import java.io.File
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
-import org.siloserver.silo.tv.data.preferences.TvHomeSectionLayout
-import org.siloserver.silo.tv.data.preferences.TvHomeSectionPreferences
 import org.siloserver.silo.tv.ui.components.isTvContinueWatchingRow
 import org.siloserver.silo.tv.ui.components.TvRowStyle
 import kotlin.test.Test
@@ -123,40 +121,6 @@ class TvHomeSectionsTest {
         assertEquals("continue_listening", normalized.single().sectionType)
         assertTrue(normalized.single().isTvAudioProgressSection())
         assertEquals(TvRowStyle.Poster, normalized.single().tvHomeRowStyle())
-    }
-
-    @Test
-    fun savedOrderAndVisibilityProjectPopulatedRowsWithoutAGap() {
-        val sections = listOf(
-            homeSection("continue", "Continue Watching"),
-            homeSection("recent", "Recently Added"),
-            homeSection("because", "Because You Watched"),
-        )
-        val layout = TvHomeSectionLayout(
-            orderedSectionIds = listOf("recent", "continue"),
-            hiddenSectionIds = setOf("recent"),
-        )
-
-        val visible = TvHomeSectionPreferences.arrange(sections, layout)
-        val editor = TvHomeSectionPreferences.arrange(
-            sections,
-            layout,
-            includingHidden = true,
-        )
-
-        assertEquals(listOf("continue", "because"), visible.map { it.id })
-        assertEquals(listOf("recent", "continue", "because"), editor.map { it.id })
-    }
-
-    @Test
-    fun reorderedKnownRowsRetainTemporarilyAbsentRememberedRows() {
-        assertEquals(
-            listOf("recent", "continue", "temporarily-empty"),
-            TvHomeSectionPreferences.retainedOrder(
-                sectionIds = listOf("recent", "continue", "recent"),
-                rememberedSectionIds = listOf("continue", "temporarily-empty"),
-            ),
-        )
     }
 
     @Test

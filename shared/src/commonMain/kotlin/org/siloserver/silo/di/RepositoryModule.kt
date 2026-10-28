@@ -116,6 +116,8 @@ val repositoryModule = module {
         )
     }
     single { RecommendationRepository(get(), get()) }
+    single { org.siloserver.silo.repository.HomeLayoutChanges() }
+    single { org.siloserver.silo.repository.ProfileHomeLayoutRepository(get(), get()) }
     single {
         RequestsRepository(
             api = get(),
