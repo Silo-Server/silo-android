@@ -605,7 +605,11 @@ fun DetailHero(
         val seriesBackdrop = detail.seriesHeroBackdrop()
         DetailHeroArtwork(
             artworkUrl = seriesBackdrop?.url ?: detail.backdropUrl ?: detail.posterUrl,
-            artworkThumbhash = seriesBackdrop?.thumbhash ?: detail.backdropThumbhash ?: detail.posterThumbhash,
+            artworkThumbhash = if (seriesBackdrop != null) {
+                seriesBackdrop.thumbhash
+            } else {
+                detail.backdropThumbhash ?: detail.posterThumbhash
+            },
             hidden = seriesBackdrop == null && detail.hidesEpisodeArtwork(
                 if (detail.backdropUrl != null) detail.backdropIsEpisodeStill else detail.posterIsEpisodeStill,
             ),

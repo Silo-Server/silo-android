@@ -34,4 +34,7 @@ internal fun JsonElement.resolveArtworkUrls(serverUrl: String): JsonElement = wh
     else -> this
 }
 
-private val artworkUrlFields = setOf("poster_url", "backdrop_url", "logo_url", "avatar_url", "photo_url", "still_url", "thumbnail_url")
+private val artworkUrlFields = setOf(
+    "poster_url", "backdrop_url", "logo_url", "avatar_url", "photo_url", "still_url", "thumbnail_url",
+    "series_poster_url", "series_backdrop_url", "season_poster_url",
+)

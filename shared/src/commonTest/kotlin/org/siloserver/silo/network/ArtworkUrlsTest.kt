@@ -38,9 +38,10 @@ class ArtworkUrlsTest {
 
     @Test
     fun nestedArtworkAndGroupedPostersResolveWithoutChangingTmdbPathsOrOtherUrls() {
-        val json = SiloJson.parseToJsonElement("""{"items":[{"poster_url":"$signed","backdrop_url":"$signed","logo_url":"$signed","photo_url":"$signed","still_url":"$signed","thumbnail_url":"$signed","avatar_url":"$signed","poster_urls":["$signed", "https://s3.test/p.jpg"],"poster_path":"/tmdb.jpg","backdrop_path":"/tmdb-backdrop.jpg","url":"/stream","poster_thumbhash":"unchanged"}]}""")
+        val json = SiloJson.parseToJsonElement("""{"items":[{"poster_url":"$signed","backdrop_url":"$signed","logo_url":"$signed","photo_url":"$signed","still_url":"$signed","thumbnail_url":"$signed","avatar_url":"$signed","series_poster_url":"$signed","series_backdrop_url":"$signed","season_poster_url":"$signed","poster_urls":["$signed", "https://s3.test/p.jpg"],"poster_path":"/tmdb.jpg","backdrop_path":"/tmdb-backdrop.jpg","url":"/stream","poster_thumbhash":"unchanged"}]}""")
             .resolveArtworkUrls("https://a.test/base").jsonObject["items"]!!.jsonArray.single().jsonObject
-        listOf("poster_url", "backdrop_url", "logo_url", "photo_url", "still_url", "thumbnail_url", "avatar_url").forEach {
+        listOf("poster_url", "backdrop_url", "logo_url", "photo_url", "still_url", "thumbnail_url", "avatar_url",
+            "series_poster_url", "series_backdrop_url", "season_poster_url").forEach {
             assertEquals("https://a.test$signed", json[it]!!.jsonPrimitive.content, it)
         }
         assertEquals(listOf("https://a.test$signed", "https://s3.test/p.jpg"), json["poster_urls"]!!.jsonArray.map { it.jsonPrimitive.content })
