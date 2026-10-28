@@ -10,6 +10,7 @@ import org.siloserver.silo.model.request.RequestsDiscoverResponse
 import org.siloserver.silo.model.request.RequestsFeatureStatus
 import org.siloserver.silo.model.request.applyingFollow
 import org.siloserver.silo.model.request.applyingFollowUpdate
+import org.siloserver.silo.model.request.RequestDiscoverySection
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.RequestsApi
 import org.siloserver.silo.network.map
@@ -72,8 +73,8 @@ class RequestsRepository(
 
     suspend fun discover(): ApiResult<RequestsDiscoverResponse> = api.discover()
 
-    suspend fun discoverSection(section: String, page: Int = 1): ApiResult<RequestMediaPage> =
-        api.discoverSection(section, page)
+    suspend fun discoverRow(rowKey: String, page: Int = 1): ApiResult<RequestDiscoverySection> =
+        api.discoverRow(rowKey, page)
 
     suspend fun search(
         query: String,

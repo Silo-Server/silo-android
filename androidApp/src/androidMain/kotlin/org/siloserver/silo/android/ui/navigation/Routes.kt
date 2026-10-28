@@ -139,6 +139,14 @@ sealed class Route(val route: String) {
     // --- Requests ---
     data object Requests : Route("requests")
     data object MyRequests : Route("requests/mine")
+    data class RequestDiscoverRow(
+        val key: String,
+        val title: String,
+    ) : Route("requests/discover/${Uri.encode(key)}?title=${Uri.encode(title)}") {
+        companion object {
+            const val ROUTE = "requests/discover/{key}?title={title}"
+        }
+    }
     data class RequestDetail(
         val mediaType: String,
         val tmdbId: Int,

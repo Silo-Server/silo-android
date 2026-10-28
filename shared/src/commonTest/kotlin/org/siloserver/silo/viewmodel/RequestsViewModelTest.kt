@@ -409,8 +409,8 @@ private class FakeRequestsApi(
         return discoverResult
     }
 
-    override suspend fun discoverSection(section: String, page: Int): ApiResult<RequestMediaPage> =
-        ApiResult.Success(RequestMediaPage(page = page))
+    override suspend fun discoverRow(rowKey: String, page: Int): ApiResult<RequestDiscoverySection> =
+        ApiResult.Success(RequestDiscoverySection(key = rowKey, title = rowKey, page = page))
 
     override suspend fun search(
         query: String,

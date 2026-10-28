@@ -110,11 +110,31 @@ data class RequestDiscoverySection(
     @SerialName("total_pages") val totalPages: Int = 1,
     @SerialName("total_results") val totalResults: Int = 0,
     val results: List<RequestMediaResult> = emptyList(),
+    /**
+     * The page to ask for next when the server read several pages to fill
+     * this one (page + 1 would repeat titles); past [totalPages] when that
+     * read reached the end. Null when page + 1 applies.
+     */
+    @SerialName("next_page") val nextPage: Int? = null,
+)
+
+/** One row of the server's Discover layout, in page order. */
+@Serializable
+data class RequestDiscoverRowRef(
+    val key: String,
+    /**
+     * tmdb_chart, tmdb_discover, tmdb_list or mdblist for a row of titles;
+     * studios, networks or genres for a brand row. The server may add more.
+     */
+    val type: String = "",
+    val title: String = "",
 )
 
 @Serializable
 data class RequestsDiscoverResponse(
     @kotlinx.serialization.Required @SerialName("items") val sections: List<RequestDiscoverySection> = emptyList(),
+    /** Every row the server's layout shows, in order; empty from a server without layouts. */
+    @SerialName("row_order") val rowOrder: List<RequestDiscoverRowRef> = emptyList(),
 )
 
 @Serializable

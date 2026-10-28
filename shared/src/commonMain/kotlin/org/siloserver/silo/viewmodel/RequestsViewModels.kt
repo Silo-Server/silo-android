@@ -36,6 +36,8 @@ data class RequestsUiState(
     val isRefreshing: Boolean = false,
     val hasLoaded: Boolean = false,
     val sections: List<RequestDiscoverySection> = emptyList(),
+    /** The sections are the server's own Discover rows, each with a See all page. */
+    val rowsBrowsable: Boolean = false,
     /** The signed-in user's requests, needs-attention first, newest first within each group. */
     val myRequests: List<MediaRequest> = emptyList(),
     val error: String? = null,
@@ -119,11 +121,13 @@ class RequestsViewModel(
         if (succeeded) {
             val records = repository.mine.value
             val ordered = MyRequestsBucket.bucket(records).flatMap { it.second }
+            val layout = (sections as ApiResult.Success).data
             _uiState.update {
                 it.copy(
                     isLoading = false,
                     hasLoaded = true,
-                    sections = mergeDiscoverCarousels((sections as ApiResult.Success).data.sections),
+                    sections = discoverCarousels(layout),
+                    rowsBrowsable = layout.rowOrder.isNotEmpty(),
                     myRequests = ordered,
                     error = null,
                 )

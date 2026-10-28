@@ -8,6 +8,7 @@ import org.siloserver.silo.model.request.RequestState
 import org.siloserver.silo.model.request.RequestsDiscoverResponse
 import org.siloserver.silo.model.request.RequestsFeatureStatus
 import org.siloserver.silo.model.request.RequestsListResponse
+import org.siloserver.silo.model.request.RequestDiscoverySection
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.network.apiv2.OwnerPolicy
 import org.siloserver.silo.network.apiv2.ownedV2Call
@@ -24,6 +25,7 @@ import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
+import io.ktor.http.encodeURLPathPart
 
 /**
  * User-facing media request endpoints. Kept behind an interface so repository
@@ -35,7 +37,8 @@ interface RequestsApi {
 
     suspend fun discover(): ApiResult<RequestsDiscoverResponse>
 
-    suspend fun discoverSection(section: String, page: Int = 1): ApiResult<RequestMediaPage>
+    /** One page of a row of the server's Discover layout, for its See all page. */
+    suspend fun discoverRow(rowKey: String, page: Int = 1): ApiResult<RequestDiscoverySection>
 
     suspend fun search(
         query: String,
@@ -86,8 +89,8 @@ class DefaultRequestsApi(
         client.get("/api/v2/requests/discover")
     }
 
-    override suspend fun discoverSection(section: String, page: Int): ApiResult<RequestMediaPage> = safeApiV2Call(gate) {
-        client.get("/api/v2/requests/discover/$section") {
+    override suspend fun discoverRow(rowKey: String, page: Int): ApiResult<RequestDiscoverySection> = safeApiV2Call(gate) {
+        client.get("/api/v2/requests/discover/rows/${rowKey.encodeURLPathPart()}") {
             parameter("page", page)
         }
     }

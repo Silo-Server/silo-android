@@ -112,6 +112,7 @@ import org.siloserver.silo.android.ui.screens.profiles.CreateProfileScreen
 import org.siloserver.silo.android.ui.screens.profiles.EditProfileScreen
 import org.siloserver.silo.android.ui.screens.profiles.ProfileSelectionScreen
 import org.siloserver.silo.android.ui.screens.requests.MyRequestsScreen
+import org.siloserver.silo.android.ui.screens.requests.RequestDiscoverRowScreen
 import org.siloserver.silo.android.ui.screens.requests.RequestDetailScreen
 import org.siloserver.silo.android.ui.screens.requests.RequestsScreen
 import org.siloserver.silo.android.ui.screens.search.MobileSearchMediaType
@@ -1352,6 +1353,22 @@ fun AppNavigation(
             RequestsScreen(
                 onBackClick = { navController.popBackStack() },
                 onMyRequestsClick = { navController.navigate(Route.MyRequests.route) },
+                onRequestDetailClick = openRequestDetail,
+                onLibraryItemClick = openRequestLibraryItem,
+                onDiscoverRowClick = { key, title -> navController.navigate(Route.RequestDiscoverRow(key, title).route) },
+            )
+        }
+        composable(
+            route = Route.RequestDiscoverRow.ROUTE,
+            arguments = listOf(
+                navArgument("key") { type = NavType.StringType },
+                navArgument("title") { type = NavType.StringType; defaultValue = "" },
+            ),
+        ) { backStackEntry ->
+            RequestDiscoverRowScreen(
+                rowKey = backStackEntry.arguments?.getString("key").orEmpty(),
+                title = backStackEntry.arguments?.getString("title").orEmpty(),
+                onBackClick = { navController.popBackStack() },
                 onRequestDetailClick = openRequestDetail,
                 onLibraryItemClick = openRequestLibraryItem,
             )

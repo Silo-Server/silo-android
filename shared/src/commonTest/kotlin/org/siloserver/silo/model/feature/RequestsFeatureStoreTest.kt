@@ -14,6 +14,7 @@ import org.siloserver.silo.model.request.RequestMediaType
 import org.siloserver.silo.model.request.RequestsDiscoverResponse
 import org.siloserver.silo.model.request.RequestsFeatureStatus
 import org.siloserver.silo.model.request.RequestsListResponse
+import org.siloserver.silo.model.request.RequestDiscoverySection
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.RequestsApi
 import org.siloserver.silo.repository.RequestDetailCache
@@ -100,7 +101,7 @@ private class FakeRequestsApi(
     override suspend fun discover(): ApiResult<RequestsDiscoverResponse> =
         ApiResult.NetworkError(IllegalStateException("not used"))
 
-    override suspend fun discoverSection(section: String, page: Int): ApiResult<RequestMediaPage> =
+    override suspend fun discoverRow(rowKey: String, page: Int): ApiResult<RequestDiscoverySection> =
         ApiResult.NetworkError(IllegalStateException("not used"))
 
     override suspend fun search(

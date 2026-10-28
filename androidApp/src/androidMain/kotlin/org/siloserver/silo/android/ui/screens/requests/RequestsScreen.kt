@@ -49,6 +49,7 @@ fun RequestsScreen(
     onMyRequestsClick: () -> Unit,
     onRequestDetailClick: (mediaType: String, tmdbId: Int) -> Unit,
     onLibraryItemClick: (String) -> Unit,
+    onDiscoverRowClick: (key: String, title: String) -> Unit,
     viewModel: RequestsViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -87,7 +88,7 @@ fun RequestsScreen(
                     modifier = Modifier.padding(top = 80.dp),
                 )
             }
-            else -> discover(state, router, onMyRequestsClick)
+            else -> discover(state, router, onMyRequestsClick, onDiscoverRowClick)
         }
     }
 }
@@ -96,6 +97,7 @@ private fun LazyListScope.discover(
     state: RequestsUiState,
     router: RequestRouter,
     onMyRequestsClick: () -> Unit,
+    onDiscoverRowClick: (key: String, title: String) -> Unit,
 ) {
     val moving = state.inProgressCount + state.needsAttentionCount
     if (moving > 0) {
@@ -116,7 +118,15 @@ private fun LazyListScope.discover(
     state.sections.forEachIndexed { index, section ->
         item(key = "discover:${section.key}", contentType = "rail") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                RequestsSectionHeader(title = section.title, label = if (index == 0) "Discover" else null)
+                // Only the server's own rows page; the merged carousels an
+                // older server gets have no single row behind them.
+                val browsable = state.rowsBrowsable && section.totalPages > 1
+                RequestsSectionHeader(
+                    title = section.title,
+                    label = if (index == 0) "Discover" else null,
+                    trailing = if (browsable) "See all" else null,
+                    onTrailingClick = if (browsable) ({ onDiscoverRowClick(section.key, section.title) }) else null,
+                )
                 RequestCardRail(items = section.results, key = { "${it.mediaType}:${it.tmdbId}" }) { result ->
                     RequestMediaCard(item = result, onClick = { router.openResult(result) })
                 }
@@ -183,8 +193,9 @@ private fun LazyListScope.searchResults(state: RequestsUiState, onOpen: (Request
     }
 }
 
+/** Poster cells in adaptive columns, as library search lays them out. */
 @Composable
-private fun SearchGrid(count: Int, cell: @Composable (width: Dp, index: Int) -> Unit) {
+internal fun SearchGrid(count: Int, cell: @Composable (width: Dp, index: Int) -> Unit) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val columns = requestGridColumns(maxWidth, MediaGridDefaults.scaledPosterGridMinWidth)
         val spacing = MediaGridDefaults.PosterGridHorizontalSpacing
