@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.home
 
+import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.domain.settings.CatalogLanguageRevision
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
@@ -418,6 +419,9 @@ fun HomeScreen(
                                                     thumbhash = it.backdropThumbhash
                                                         ?: it.posterThumbhash,
                                                 )
+                                            }
+                                            ?: item.seriesHeroBackdrop()?.let {
+                                                WarmedSeriesArtwork(url = it.url, thumbhash = it.thumbhash)
                                             }
                                         // MediaRow hands off the episode still, which
                                         // the series page never shows. Load with the

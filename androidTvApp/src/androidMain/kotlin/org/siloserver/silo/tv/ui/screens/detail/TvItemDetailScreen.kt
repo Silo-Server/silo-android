@@ -99,6 +99,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
+import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.common.ui.OnViewerAccessChanged
 import org.siloserver.silo.network.AccessChangeSignals
 import org.koin.compose.viewmodel.koinViewModel
@@ -2727,8 +2728,8 @@ internal data class TvDetailHeroArtwork(
 
 /**
  * Item detail responses can legitimately omit series/season artwork even
- * though their loaded episode rows carry landscape stills. Prefer the real
- * backdrop, then an episodic landscape still; never stretch a portrait poster
+ * though their loaded episode rows carry landscape stills. Prefer an episode's
+ * series backdrop, then the real backdrop, then an episodic landscape still; never stretch a portrait poster
  * across a movie/series hero. A still that spoiler protection hides is never
  * shown full-size here: only its ThumbHash colour field is used.
  */
@@ -2737,6 +2738,8 @@ internal fun resolveTvDetailHeroArtwork(
     nextUpEpisode: EpisodeListItem?,
     spoilerPrefs: EpisodeSpoilerPrefs = EpisodeSpoilerPrefs.NONE,
 ): TvDetailHeroArtwork {
+    // An episode's series backdrop is never a still, so protection keeps it.
+    detail.seriesHeroBackdrop()?.let { return TvDetailHeroArtwork(it.url, it.thumbhash) }
     if (!detail.backdropUrl.isNullOrBlank() || !detail.backdropThumbhash.isNullOrBlank()) {
         val hidesBackdrop = detail.type.equals("episode", ignoreCase = true) &&
             spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(detail.userData), detail.backdropIsEpisodeStill)

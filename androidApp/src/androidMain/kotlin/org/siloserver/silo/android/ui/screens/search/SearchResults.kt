@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.search
 
+import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 
@@ -132,15 +133,19 @@ fun SearchResults(
             val (actions, userState, positionSeconds) = rememberBrowseItemCardActions(item)
             val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
             val hideArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, positionSeconds = positionSeconds)
-            val hideDetailArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, selectBackdrop = true, positionSeconds = positionSeconds)
+            // An episode opens on its series page: hand off the series
+            // backdrop when the card carries it. It is never a still.
+            val seriesBackdrop = item.seriesHeroBackdrop()
+            val hideDetailArtwork = seriesBackdrop == null &&
+                EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, selectBackdrop = true, positionSeconds = positionSeconds)
             MediaCard(
                 hideArtwork = hideArtwork,
                 hideDetailArtwork = hideDetailArtwork,
                 title = item.title,
                 posterUrl = item.posterUrl,
                 posterThumbhash = item.posterThumbhash,
-                detailBackdropUrl = item.backdropUrl,
-                detailBackdropThumbhash = item.backdropThumbhash,
+                detailBackdropUrl = seriesBackdrop?.url ?: item.backdropUrl,
+                detailBackdropThumbhash = if (seriesBackdrop != null) seriesBackdrop.thumbhash else item.backdropThumbhash,
                 year = item.year,
                 type = item.type,
                 userState = userState,

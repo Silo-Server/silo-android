@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.components
 
+import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -463,8 +464,9 @@ fun TvSkylineSectionFeed(
             window.map { item ->
                 async {
                     coroutineScope {
+                        val seriesBackdrop = item.seriesHeroBackdrop()
                         val artwork = buildList {
-                            item.backdropUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                            (seriesBackdrop?.url ?: item.backdropUrl)?.takeIf { it.isNotBlank() }?.let { url ->
                                 add(
                                     ImageRequest.Builder(context)
                                         .data(url)
@@ -493,7 +495,8 @@ fun TvSkylineSectionFeed(
                                     ?: return@async
                                 val enrichment = TvMarqueeEnrichment.from(detail)
                                 marquee.applyEnrichment(contentId, enrichment)
-                                enrichment.backdropUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                                // The hero keeps a card's own series backdrop.
+                                enrichment.backdropUrl?.takeIf { seriesBackdrop == null && it.isNotBlank() }?.let { url ->
                                     runCatching {
                                         loader.execute(
                                             ImageRequest.Builder(context)

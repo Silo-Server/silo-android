@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import org.siloserver.silo.android.ui.components.SiloDialogActionStyle
@@ -292,10 +293,11 @@ private fun ExpandedDetailHero(
     ) {
         // This cinematic box is measured by the row. Its last opaque gradient
         // stop therefore lands exactly at the bottom of the poster/buttons.
+        val seriesBackdrop = detail.seriesHeroBackdrop()
         ExpandedDetailHeroBackdrop(
-            artworkUrl = detail.backdropUrl,
-            artworkThumbhash = detail.backdropThumbhash,
-            hidden = detail.hidesEpisodeArtwork(detail.backdropIsEpisodeStill),
+            artworkUrl = seriesBackdrop?.url ?: detail.backdropUrl,
+            artworkThumbhash = if (seriesBackdrop != null) seriesBackdrop.thumbhash else detail.backdropThumbhash,
+            hidden = seriesBackdrop == null && detail.hidesEpisodeArtwork(detail.backdropIsEpisodeStill),
             pageSurface = pageSurface,
         ) {
             Row(
@@ -599,10 +601,12 @@ fun DetailHero(
     actions: @Composable () -> Unit,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
+        // An episode's series backdrop is never a still, so protection keeps it.
+        val seriesBackdrop = detail.seriesHeroBackdrop()
         DetailHeroArtwork(
-            artworkUrl = detail.backdropUrl ?: detail.posterUrl,
-            artworkThumbhash = detail.backdropThumbhash ?: detail.posterThumbhash,
-            hidden = detail.hidesEpisodeArtwork(
+            artworkUrl = seriesBackdrop?.url ?: detail.backdropUrl ?: detail.posterUrl,
+            artworkThumbhash = seriesBackdrop?.thumbhash ?: detail.backdropThumbhash ?: detail.posterThumbhash,
+            hidden = seriesBackdrop == null && detail.hidesEpisodeArtwork(
                 if (detail.backdropUrl != null) detail.backdropIsEpisodeStill else detail.posterIsEpisodeStill,
             ),
             contentDescription = detail.title,

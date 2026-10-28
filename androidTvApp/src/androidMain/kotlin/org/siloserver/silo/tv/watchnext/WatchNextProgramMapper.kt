@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.watchnext
 
 import org.siloserver.silo.model.catalog.isAudiobookItemType
+import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
@@ -34,8 +35,13 @@ object WatchNextProgramMapper {
             spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(item))
         val backdrop = item.backdropUrl?.takeIf { it.isNotBlank() && (!protect || item.backdropIsEpisodeStill == false) }
         val portrait = item.posterUrl?.takeIf { it.isNotBlank() && (!protect || item.posterIsEpisodeStill == false) }
-        val seriesBackdrop = seriesArtwork?.takeIf { it.type == "series" }?.backdropUrl?.takeIf { it.isNotBlank() }
-        val seriesPoster = seriesArtwork?.takeIf { it.type == "series" }?.posterUrl?.takeIf { it.isNotBlank() }
+        // Safe series art: the card's own when the server sends it, else the
+        // fetched series detail's.
+        val fetchedSeries = seriesArtwork?.takeIf { it.type == "series" }
+        val seriesBackdrop = item.seriesHeroBackdrop()?.url
+            ?: fetchedSeries?.backdropUrl?.takeIf { it.isNotBlank() }
+        val seriesPoster = item.seriesPosterUrl?.takeIf { item.type.equals("episode", ignoreCase = true) && it.isNotBlank() }
+            ?: fetchedSeries?.posterUrl?.takeIf { it.isNotBlank() }
         val poster = backdrop ?: seriesBackdrop ?: portrait ?: seriesPoster ?: return null
         val watchNextType = when (sectionType) {
             "continue_watching" -> WATCH_NEXT_TYPE_CONTINUE

@@ -498,7 +498,7 @@ class ItemDetailViewModel(
                         val seriesId = detail.seriesId
                         val seasonNumber = detail.seasonNumber
                         if (seriesId != null && seasonNumber != null) {
-                            loadEpisodeSiblings(seriesId, seasonNumber)
+                            loadEpisodeSiblings(seriesId, seasonNumber, detail)
                         } else {
                             // No parent to look up, so no series poster is coming.
                             _uiState.update { it.copy(episodeSeriesPosterResolved = true) }
@@ -843,7 +843,7 @@ class ItemDetailViewModel(
     /** Episode pages: seasons + this season's siblings, mirroring iOS's
      *  episode detail (the episode's own season stays selected; no series
      *  download roll-up — that's a series-page concern). */
-    private fun loadEpisodeSiblings(seriesId: String, seasonNumber: Int) {
+    private fun loadEpisodeSiblings(seriesId: String, seasonNumber: Int, episode: ItemDetail) {
         _uiState.update { it.copy(selectedSeasonNumber = seasonNumber) }
         loadEpisodes(seriesId, seasonNumber)
         viewModelScope.launch {
@@ -855,6 +855,21 @@ class ItemDetailViewModel(
                 else -> { /* Season load failure is non-critical */ }
             }
 
+            // An episode that carries its series poster and title needs no
+            // parent fetch for them.
+            val seriesPoster = episode.seriesPosterUrl?.takeIf { it.isNotBlank() }
+            val seriesTitle = episode.seriesTitle?.takeIf { it.isNotBlank() }
+            if (seriesPoster != null && seriesTitle != null) {
+                _uiState.update {
+                    it.copy(
+                        episodeSeriesPosterUrl = seriesPoster,
+                        episodeSeriesPosterThumbhash = episode.seriesPosterThumbhash,
+                        episodeSeriesTitle = seriesTitle,
+                        episodeSeriesPosterResolved = true,
+                    )
+                }
+                return@launch
+            }
             // Resolve seasons before the series fallback. Otherwise a cache-fast
             // series poster can paint for a frame and then be replaced by the
             // selected season poster when its request completes.

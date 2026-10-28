@@ -14,6 +14,28 @@ import kotlin.test.assertTrue
 
 class TvFocusMarqueeModelTest {
     @Test
+    fun anEpisodeHeroUsesItsCardsSeriesBackdropEvenWhenStillsAreHidden() {
+        val episode = SectionItem(
+            contentId = "episode", type = "episode", title = "Episode",
+            backdropUrl = "https://example.test/still.jpg", backdropThumbhash = "STILL",
+            backdropIsEpisodeStill = true,
+            seriesBackdropUrl = "https://example.test/series.jpg", seriesBackdropThumbhash = "SERIES",
+        )
+        val shown = TvMarqueeContent.from(episode, "Next Up", "row")
+        assertEquals("https://example.test/series.jpg", shown.heroBackdropUrl)
+        assertEquals("SERIES", shown.heroBackdropThumbhash)
+
+        val protected = TvMarqueeContent.from(episode, "Next Up", "row", EpisodeSpoilerPrefs(hideImages = true))
+        assertEquals("https://example.test/series.jpg", protected.heroBackdropUrl)
+        assertEquals("https://example.test/series.jpg", shown.underPrefs(EpisodeSpoilerPrefs(hideImages = true)).heroBackdropUrl)
+
+        // Enrichment keeps the card's series backdrop instead of swapping again.
+        val enriched = shown.withEnrichment(TvMarqueeEnrichment("Aired", "https://example.test/detail.jpg", null, false))
+        assertEquals("https://example.test/series.jpg", enriched.heroBackdropUrl)
+        assertEquals("Aired", enriched.detailLine)
+    }
+
+    @Test
     fun rowUpdatesRefreshWatchStateWithoutChangingFocusOrEnrichment() {
         val state = TvFocusMarqueeState()
         state.spoilerPrefs = EpisodeSpoilerPrefs(true, true)

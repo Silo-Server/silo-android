@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import org.siloserver.silo.model.catalog.ExternalRatings
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.OverlaySummary
+import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
@@ -114,7 +115,10 @@ data class TvMarqueeContent(
      * preserved, so the swap reads as an in-place refresh, not a new block.
      */
     fun withEnrichment(enrichment: TvMarqueeEnrichment): TvMarqueeContent {
-        val upgradeBackdrop = isEpisode && !enrichment.backdropUrl.isNullOrBlank() &&
+        // A card that carries its series backdrop already shows the art the
+        // detail would bring, so the hero never swaps a second time.
+        val upgradeBackdrop = isEpisode && source.seriesHeroBackdrop() == null &&
+            !enrichment.backdropUrl.isNullOrBlank() &&
             (!hidesStills || enrichment.backdropIsEpisodeStill == false)
         return copy(
             detailLine = enrichment.detailLine ?: detailLine,
@@ -161,9 +165,13 @@ data class TvMarqueeContent(
                 ?.let(::listOf)
                 .orEmpty()
 
-            val hidesBackdrop = spoilers.hidesImage(unwatchedEpisode, item.backdropIsEpisodeStill)
+            // An episode's hero is its series backdrop when the card carries
+            // one; it is never a still, so spoiler protection keeps it.
+            val seriesBackdrop = item.seriesHeroBackdrop()
+            val hidesBackdrop = seriesBackdrop == null &&
+                spoilers.hidesImage(unwatchedEpisode, item.backdropIsEpisodeStill)
             val hidesPoster = spoilers.hidesImage(unwatchedEpisode, item.posterIsEpisodeStill)
-            val sectionBackdropUrl = item.backdropUrl?.takeIf { it.isNotBlank() }
+            val sectionBackdropUrl = seriesBackdrop?.url ?: item.backdropUrl?.takeIf { it.isNotBlank() }
             val sectionPosterUrl = item.posterUrl?.takeIf { it.isNotBlank() }
             return TvMarqueeContent(
                 id = "$rowIdentity#${item.contentId}",
@@ -176,11 +184,13 @@ data class TvMarqueeContent(
                 detailLine = null,
                 specLine = specLine(item.overlaySummary),
                 // Match tvOS: a section backdrop (or poster fallback) is always
-                // available for the first rested frame. Episode enrichment may
-                // replace it with series art later. Hidden stills also drop
+                // available for the first rested frame. An episode whose card
+                // lacks series art may upgrade to it on enrichment. Hidden stills also drop
                 // their ThumbHash so the placeholder cannot reveal them.
                 backdropUrl = (if (hidesBackdrop) null else sectionBackdropUrl) ?: (if (hidesPoster) null else sectionPosterUrl),
-                backdropThumbhash = if (!hidesBackdrop && sectionBackdropUrl != null) {
+                backdropThumbhash = if (seriesBackdrop != null) {
+                    seriesBackdrop.thumbhash
+                } else if (!hidesBackdrop && sectionBackdropUrl != null) {
                     item.backdropThumbhash
                 } else if (!hidesPoster) {
                     item.posterThumbhash
@@ -190,7 +200,9 @@ data class TvMarqueeContent(
                 isEpisode = isEpisode,
                 source = item,
                 hidesStills = spoilers.hidesImage(unwatchedEpisode),
-                backdropIsEpisodeStill = if (!hidesBackdrop && sectionBackdropUrl != null) {
+                backdropIsEpisodeStill = if (seriesBackdrop != null) {
+                    false
+                } else if (!hidesBackdrop && sectionBackdropUrl != null) {
                     item.backdropIsEpisodeStill
                 } else {
                     item.posterIsEpisodeStill

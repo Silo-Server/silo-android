@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.PlayArrow
+import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.model.catalog.isBookLikeItemType
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -223,6 +224,14 @@ fun MediaRow(
         // vertical fling (the helper ORs in any deferral already in scope).
         val rowState = rememberLazyListState()
         fun openDetail(item: SectionItem) {
+            // An episode opens on its series page, so hand off the series
+            // backdrop its card carries. It is never a still.
+            item.seriesHeroBackdrop()?.let { series ->
+                heroHandoff?.pendingArtworkUrl = series.url
+                heroHandoff?.pendingArtworkThumbhash = series.thumbhash
+                onItemClick(item.contentId)
+                return
+            }
             // A blurred episode still must not reappear sharp as the detail
             // page's loading artwork, so it is neither warmed nor handed off.
             // (Home swaps in the parent series artwork when it knows it.)

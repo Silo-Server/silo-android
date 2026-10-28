@@ -24,6 +24,22 @@ class WatchNextProgramMapperTest {
     }
 
     @Test
+    fun `protected episode uses its card's series backdrop without a series lookup`() {
+        val episode = sectionItem(type = "episode").copy(
+            backdropIsEpisodeStill = true, posterIsEpisodeStill = true,
+            seriesBackdropUrl = "card-series-backdrop", seriesPosterUrl = "card-series-poster",
+        )
+        val prefs = EpisodeSpoilerPrefs(hideImages = true)
+        val mapped = WatchNextProgramMapper.map(episode, "next_up", prefs)
+        assertEquals("card-series-backdrop", mapped?.posterArtUri)
+        assertEquals(WatchNextProgramMapper.ASPECT_RATIO_16_9, mapped?.posterArtAspectRatio)
+        assertEquals("card-series-poster",
+            WatchNextProgramMapper.map(episode.copy(seriesBackdropUrl = null), "next_up", prefs)?.posterArtUri)
+        // Unprotected tiles keep the card's own artwork.
+        assertEquals(episode.backdropUrl, WatchNextProgramMapper.map(episode, "next_up")?.posterArtUri)
+    }
+
+    @Test
     fun `legacy protected artwork is replaced but watched and in progress stills remain`() {
         val episode = sectionItem(type = "episode")
         val prefs = EpisodeSpoilerPrefs(hideImages = true)

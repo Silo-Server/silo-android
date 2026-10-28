@@ -3454,13 +3454,19 @@ private fun TvPlayerNextUpOverlay(
         val cardSpacing = 20.dp
         val onDeckCardWidth = (maxWidth - 160.dp - cardSpacing * 4) / 5
         // tvOS backgroundArtwork: the next episode's still, else the first
-        // On Deck item's art. Art spoiler protection hides is skipped.
+        // On Deck item's art (an episode's series backdrop when its card
+        // carries one). Art spoiler protection hides is skipped.
         val spoilers = org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs.current
         val backdrop = nextEpisode
             ?.takeUnless { it.isEpisode && spoilers.hidesImage(it.isUnwatched, it.stillIsEpisodeStill) }
             ?.stillUrl?.takeIf { it.isNotBlank() }?.let { it to null }
-            ?: onDeckItems.firstOrNull { !spoilers.hidesImage(it.unwatchedEpisode, it.artIsEpisodeStill) }
-                ?.let { it.artUrl to it.artThumbhash }
+            ?: onDeckItems.firstNotNullOfOrNull { item ->
+                when {
+                    item.seriesBackdropUrl != null -> item.seriesBackdropUrl to item.seriesBackdropThumbhash
+                    spoilers.hidesImage(item.unwatchedEpisode, item.artIsEpisodeStill) -> null
+                    else -> item.artUrl to item.artThumbhash
+                }
+            }
         TvNextUpBackdrop(
             url = backdrop?.first,
             thumbhash = backdrop?.second,
