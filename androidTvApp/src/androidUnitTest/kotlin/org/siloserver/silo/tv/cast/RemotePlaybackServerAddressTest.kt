@@ -2,12 +2,15 @@ package org.siloserver.silo.tv.cast
 
 import android.app.Application
 import kotlin.test.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.siloserver.silo.cast.SiloCastHandoffOffer
 import org.siloserver.silo.cast.SiloCastServerEndpoint
+import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.TokenManagerImpl
 import org.siloserver.silo.network.api.ServerIdentityProbe
@@ -27,6 +30,8 @@ class RemotePlaybackServerAddressTest {
     private val probed = mutableListOf<String>()
     private var savedUrls = listOf<String>()
     private val approvedCleartext = mutableSetOf<String>()
+    /** Addresses whose probe hangs for the production timeout before failing. */
+    private val stalled = mutableSetOf<String>()
 
     private val manager = RemotePlaybackIdentityManager(
         api,
@@ -34,6 +39,7 @@ class RemotePlaybackServerAddressTest {
         deviceNameProvider = { "TV" },
         identityProbe = { url ->
             probed += url
+            if (url in stalled) delay(PROBE_TIMEOUT_MS)
             answers[url] ?: ServerIdentityProbe.Unreachable
         },
         savedUrlsFor = { identity -> if (identity == IDENTITY) savedUrls else emptyList() },
@@ -48,7 +54,6 @@ class RemotePlaybackServerAddressTest {
 
         prepare(offer())
 
-        assertEquals(listOf(LAN_URL), probed)
         assertEquals(LAN_URL, api.serverUrls.single())
         assertEquals(LAN_URL, manager.activeIdentity?.serverUrl)
         assertEquals(LAN_URL, tokens.getServerUrl())
@@ -113,6 +118,44 @@ class RemotePlaybackServerAddressTest {
         assertEquals(PUBLIC_URL, api.serverUrls.single())
     }
 
+    @Test fun staleSavedAddressesCostOneProbeTimeoutInTotal() = runTest {
+        // Android phones give up on the challenge after 15 s.
+        savedUrls = listOf("https://old-1.example.test", "https://old-2.example.test")
+        stalled += savedUrls
+        answers[PUBLIC_URL] = ServerIdentityProbe.Identity(IDENTITY)
+
+        prepare(offer())
+
+        assertEquals(PUBLIC_URL, api.serverUrls.single())
+        assertTrue(currentTime <= PROBE_TIMEOUT_MS, "took ${currentTime} ms")
+    }
+
+    @Test fun anOfferProbesABoundedNumberOfAddresses() = runTest {
+        val endpoints = (1..20).map { "https://e$it.example.test" }
+
+        assertFails { prepare(offer(endpoints = endpoints)) }
+
+        assertEquals(1 + RemotePlaybackCandidatePolicy.MAX_ENDPOINTS, probed.size)
+    }
+
+    @Test fun savedAddressesIncludeAnUnverifiedActiveServerButNotAnotherDeployment() {
+        val entries = listOf(
+            entry("https://elsewhere.test", verified = "other-deployment"),
+            entry("https://recorded.test", verified = IDENTITY),
+            entry(LAN_URL, verified = null),
+            entry("https://unrelated.test", verified = null),
+        )
+
+        assertEquals(
+            listOf(LAN_URL, "https://recorded.test"),
+            RemotePlaybackCandidatePolicy.savedUrls(entries, activeId = entries[2].id, identity = IDENTITY),
+        )
+        assertEquals(
+            listOf("https://recorded.test"),
+            RemotePlaybackCandidatePolicy.savedUrls(entries, activeId = entries[0].id, identity = IDENTITY),
+        )
+    }
+
     @Test fun candidatesPutTheTvsAddressFirstAndDropRepeats() {
         assertEquals(
             listOf(LAN_URL, PUBLIC_URL, TAILNET_URL),
@@ -141,7 +184,11 @@ class RemotePlaybackServerAddressTest {
         serverEndpoints = endpoints.map { SiloCastServerEndpoint(url = it, kind = "public") }.ifEmpty { null },
     )
 
+    private fun entry(url: String, verified: String?) =
+        ServerEntry(id = AndroidServerRegistry.idFor(url), url = url, verifiedServerId = verified)
+
     private companion object {
+        const val PROBE_TIMEOUT_MS = 8_000L
         const val IDENTITY = "deployment-1"
         const val PUBLIC_URL = "https://media.example.test"
         const val LAN_URL = "http://192.168.1.20:8090"
