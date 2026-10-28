@@ -299,11 +299,12 @@ class RemotePlaybackIdentityManager(
         val saved = savedUrlsFor(expected).map(::normalizedUrl)
         // The phone's own address keeps its old treatment; any other
         // plain-HTTP address needs this TV's earlier approval.
-        val candidates = RemotePlaybackCandidatePolicy.candidateUrls(
+        val eligible = RemotePlaybackCandidatePolicy.candidateUrls(
             savedUrls = saved,
             offeredUrl = offered,
             endpointUrls = offer.serverEndpoints.orEmpty().map { it.url },
         ).filter { it == offered || !isCleartext(it) || cleartextApproved(it) }
+        val candidates = RemotePlaybackCandidatePolicy.limitEndpoints(eligible, saved, offered)
         return coroutineScope {
             val probes = candidates.map { it to async { identityProbe(it) } }
             try {
@@ -327,8 +328,8 @@ class RemotePlaybackIdentityManager(
                     if (answer.serverId == expected) return candidate
                     // The phone vouches for its addresses, so another server
                     // answering at one ends the handoff. A saved address of
-                    // this TV's may since point elsewhere; it is just skipped.
-                    if (candidate !in saved) error("The phone's server address reached a different Silo server.")
+                    // this TV's alone may since point elsewhere; it is skipped.
+                    if (candidate == offered || candidate !in saved) error("The phone's server address reached a different Silo server.")
                 }
                 // Reachable, but it can't prove who it is: only the phone's
                 // own address is trusted that way, as before.
@@ -379,8 +380,9 @@ class RemotePlaybackIdentityManager(
  * The addresses a TV tries for a handoff, in order, de-duplicated: its own
  * saved addresses for the deployment (already known to work from here), the
  * phone's address, then the deployment's other addresses in the server's
- * order, at most [MAX_ENDPOINTS] of them, so one offer can't make the TV
- * probe without bound. Mirrors silo-apple `RemotePlaybackCandidatePolicy`.
+ * order. [limitEndpoints] keeps at most [MAX_ENDPOINTS] of those, so one
+ * offer can't make the TV probe without bound. Mirrors silo-apple
+ * `RemotePlaybackCandidatePolicy`.
  */
 internal object RemotePlaybackCandidatePolicy {
     const val MAX_ENDPOINTS = 6
@@ -403,8 +405,18 @@ internal object RemotePlaybackCandidatePolicy {
     }
 
     fun candidateUrls(savedUrls: List<String>, offeredUrl: String, endpointUrls: List<String>): List<String> =
-        (savedUrls + offeredUrl + endpointUrls.take(MAX_ENDPOINTS))
+        (savedUrls + offeredUrl + endpointUrls)
             .map { it.trim().trimEnd('/') }
             .filter { it.isNotEmpty() }
             .distinct()
+
+    /**
+     * [candidates] (already de-duplicated and filtered to the ones this TV
+     * may use) with at most [MAX_ENDPOINTS] that came only from the phone's
+     * endpoint list, so the cap counts addresses that will be probed.
+     */
+    fun limitEndpoints(candidates: List<String>, savedUrls: List<String>, offeredUrl: String): List<String> {
+        val (own, endpoints) = candidates.partition { it == offeredUrl || it in savedUrls }
+        return own + endpoints.take(MAX_ENDPOINTS)
+    }
 }

@@ -92,6 +92,25 @@ class RemotePlaybackServerAddressTest {
         assertNull(manager.activeIdentity)
     }
 
+    @Test fun anotherServerAtThePhonesAddressEndsTheHandoffEvenWhenTheTvSavedIt() = runTest {
+        savedUrls = listOf(PUBLIC_URL)
+        answers[PUBLIC_URL] = ServerIdentityProbe.Identity("other-deployment")
+        answers[TAILNET_URL] = ServerIdentityProbe.Identity(IDENTITY)
+
+        assertFails { prepare(offer(endpoints = listOf(TAILNET_URL))) }
+
+        assertTrue(api.serverUrls.isEmpty())
+    }
+
+    @Test fun theEndpointCapCountsOnlyAddressesTheTvMayProbe() = runTest {
+        val unapproved = (1..RemotePlaybackCandidatePolicy.MAX_ENDPOINTS).map { "http://10.0.0.$it:8090" }
+        answers[TAILNET_URL] = ServerIdentityProbe.Identity(IDENTITY)
+
+        prepare(offer(endpoints = listOf(PUBLIC_URL) + unapproved + TAILNET_URL))
+
+        assertEquals(TAILNET_URL, api.serverUrls.single())
+    }
+
     @Test fun anOfferedAddressIsTriedWhenNeitherTheTvsNorThePhonesAnswers() = runTest {
         answers[TAILNET_URL] = ServerIdentityProbe.Identity(IDENTITY)
 
