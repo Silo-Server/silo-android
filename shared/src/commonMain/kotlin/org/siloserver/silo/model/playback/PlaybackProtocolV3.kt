@@ -659,15 +659,20 @@ sealed interface PlaybackV3Validation {
 /**
  * Subtitle codecs, by source container, that Android selects natively from an
  * original-HTTP stream by `container_track_id`. MP4 `mov_text` maps to the
- * `tkhd` track ID and MKV SubRip/ASS to the Matroska TrackNumber, both of which
+ * `tkhd` track ID and MKV tracks to the Matroska TrackNumber, both of which
  * Media3 sets as `Format.id`. The capability detector advertises these pairs
  * and [validateForMedia3] accepts them, so the two share one container/codec
  * list. Both also assume every entry is identified by `container_track_id`:
  * only add a pair whose Media3 track ID is the container's own track ID.
+ *
+ * The MKV bitmap codecs are Media3 1.11's `S_HDMV/PGS`, `S_VOBSUB` and
+ * `S_DVBSUB` tracks, which `DefaultSubtitleParserFactory` decodes. Drawing
+ * them from the stream replaces the PGS `.sup` whole-file extraction and the
+ * VobSub/DVB burn-in transcode in direct play.
  */
 val NATIVE_EMBEDDED_SUBTITLE_CODECS: Map<String, List<String>> = mapOf(
     "mp4" to listOf("mov_text"),
-    "mkv" to listOf("subrip", "ass"),
+    "mkv" to listOf("subrip", "ass", "hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle"),
 )
 
 /**
@@ -678,6 +683,9 @@ private fun nativeEmbeddedSubtitleCodec(codec: String?): String? =
     when (val normalized = codec?.trim()?.lowercase()) {
         "srt" -> "subrip"
         "tx3g" -> "mov_text"
+        "pgs", "pgssub" -> "hdmv_pgs_subtitle"
+        "dvdsub", "vobsub" -> "dvd_subtitle"
+        "dvbsub" -> "dvb_subtitle"
         else -> normalized
     }
 

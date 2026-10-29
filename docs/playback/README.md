@@ -80,6 +80,14 @@ includes a `native_embedded` capability. Both supported entries use
   `ass_styling` and `font_attachments` report whether libass renders the stream
   with its attached fonts; when they are false and the user prefers preserved
   styling, the server keeps ASS on its sidecar path.
+- MKV with `hdmv_pgs_subtitle`, `dvd_subtitle` and `dvb_subtitle`: the same
+  extractor exposes `S_HDMV/PGS`, `S_VOBSUB` and `S_DVBSUB` tracks, and
+  Media3's `DefaultSubtitleParserFactory` decodes them. In direct play a PGS
+  track no longer needs the server's `.sup` extraction, and VobSub and DVB no
+  longer need a burn-in transcode. Their inventory rows still say
+  `burn_in_only`, because the server has no sidecar for them; the plan's
+  `subtitle.embedded` is what makes them native. A remembered VobSub or DVB
+  track is restored as `embedded` and the server decides its route again.
 
 The server must record each Matroska subtitle's `TrackNumber` as
 `container_track_id` (proposed in Silo-Server/silo-server#1890). Tracks without
