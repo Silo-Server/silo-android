@@ -778,6 +778,27 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
+    fun `copy remux rendition candidate commits without sidecar artifact`() = runTest {
+        val harness = Harness(
+            replanResponse = { _, _ ->
+                response(renditionPlan("s2", delivery = PlaybackDelivery.SERVER_REMUX_HLS))
+            },
+        )
+        harness.start()
+
+        val staged = harness.stageSidecar()
+        val committed = assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
+            harness.manager.commitStagedVideoReplan(staged),
+        ).data
+
+        assertEquals(PlaybackDelivery.SERVER_REMUX_HLS, committed.plan.delivery)
+        val selected = committed.session.subtitleUrls!!.single { it.index == 4 }
+        assertEquals("subs", selected.hlsRendition?.groupId)
+        assertEquals("", selected.url)
+        assertEquals(emptyList(), harness.stoppedSessions)
+    }
+
+    @Test
     fun `off candidate that still carries a rendition is rejected`() = runTest {
         val harness = Harness(
             replanResponse = { _, _ ->
@@ -1934,11 +1955,15 @@ class PlaybackSessionManagerStagedReplanTest {
             planId = "plan-$planId", planAttemptKey = "v3:test:$planId",
         )
 
-        fun renditionPlan(planId: String, sessionId: String = "s1") = replanPlan(planId, sessionId).let { plan ->
+        fun renditionPlan(
+            planId: String,
+            sessionId: String = "s1",
+            delivery: PlaybackDelivery = PlaybackDelivery.SERVER_TRANSCODE_HLS,
+        ) = replanPlan(planId, sessionId).let { plan ->
             plan.copy(
                 planId = "plan-rendition-$planId",
                 planAttemptKey = "v3:test:rendition-$planId",
-                delivery = PlaybackDelivery.SERVER_TRANSCODE_HLS,
+                delivery = delivery,
                 stream = plan.stream.copy(url = "/api/v2/playback/transcode/$sessionId/master.m3u8"),
                 subtitle = plan.subtitle.copy(
                     mode = PlaybackSubtitleModeV3.RENDER,

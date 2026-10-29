@@ -103,10 +103,13 @@ evidence.
 ## HLS subtitle renditions
 
 Android sends `hls_subtitle_renditions_v1` when its HLS delivery carries
-`native_hls_playback_v1`, so the Cast context never negotiates it. A
-`server_transcode_hls` plan with `subtitle.hls_rendition` carries the selected
-embedded text track as a WebVTT `SUBTITLES` rendition of its multivariant
-playlist. The selected inventory row keeps its server URL on the wire, but the
+`native_hls_playback_v1`, so the Cast context never negotiates it. It adds
+`hls_remux_subtitle_renditions_v1` only when the server's `/api/v2` capability
+`features` (or a decision's `server_features`) advertises it; both are
+attempt-sticky on the server. A `server_transcode_hls` plan, and with the remux
+feature a `server_remux_hls` plan, with `subtitle.hls_rendition` carries the
+selected embedded text track as a WebVTT `SUBTITLES` rendition of its
+multivariant playlist instead of a whole-file sidecar extraction. The selected inventory row keeps its server URL on the wire, but the
 client projects it with `hls_rendition` and no URL, so it is never mounted as a
 sidecar; other rows keep their URLs.
 
