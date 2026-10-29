@@ -17,6 +17,7 @@ import org.siloserver.silo.model.playback.LEARNED_LIMIT_IGNORE
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_SUMMARY_V1_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.gatedForBufferingQuality
+import org.siloserver.silo.model.playback.carriesHlsSubtitleRendition
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PlaybackStartRequestV3
@@ -2077,9 +2078,10 @@ open class PlaybackSessionManager(
                 if (subtitle.embedded != null && candidate.delivery == org.siloserver.silo.model.playback.PlaybackDelivery.ORIGINAL_HTTP &&
                     subtitle.embedded?.containerTrackId != null && subtitle.artifact == null
                 ) return null
-                // The transcode carries the track in its own playlist; there is
-                // no artifact to check, and validateForMedia3 vetted the shape.
-                if (subtitle.hlsRendition != null && candidate.delivery == org.siloserver.silo.model.playback.PlaybackDelivery.SERVER_TRANSCODE_HLS &&
+                // The transcode or copy remux carries the track in its own
+                // playlist; there is no artifact to check, and
+                // validateForMedia3 vetted the shape.
+                if (subtitle.hlsRendition != null && candidate.delivery.carriesHlsSubtitleRendition() &&
                     subtitle.artifact == null
                 ) return null
                 val artifact = subtitle.artifact

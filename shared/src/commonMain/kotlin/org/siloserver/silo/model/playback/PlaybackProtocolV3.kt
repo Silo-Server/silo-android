@@ -33,6 +33,15 @@ const val NATIVE_HLS_PLAYBACK_V1_FEATURE = "native_hls_playback_v1"
 const val HLS_SUBTITLE_RENDITIONS_V1_FEATURE = "hls_subtitle_renditions_v1"
 
 /**
+ * Extends [HLS_SUBTITLE_RENDITIONS_V1_FEATURE], which it requires, to
+ * `server_remux_hls`: a copy remux then carries its embedded text track as a
+ * rendition instead of a whole-file sidecar extraction. Sent only to a server
+ * that advertises it ([gatedForHlsRemuxSubtitleRenditions]). `/api/v2` only,
+ * and attempt-sticky on the server.
+ */
+const val HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE = "hls_remux_subtitle_renditions_v1"
+
+/**
  * The decision's plan reports [PlaybackPlanV3.activeQuality], so an absent
  * value means the plan delivers no menu entry. Without it, an absent value
  * says nothing and the client infers the entry. `/api/v2` only.
@@ -180,6 +189,36 @@ fun playbackClientFeaturesV3(context: ClientPlaybackContext): List<String> = bui
     // keeps its sidecars.
     if (NATIVE_HLS_PLAYBACK_V1_FEATURE in context.deliveries[DELIVERY_CLASS_HLS]?.features.orEmpty()) {
         add(HLS_SUBTITLE_RENDITIONS_V1_FEATURE)
+    }
+}
+
+/**
+ * The start request to send to a server advertising [serverFeatures]: it lists
+ * [HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE] only when the server advertises
+ * it and the request already lists [HLS_SUBTITLE_RENDITIONS_V1_FEATURE].
+ * Pure and idempotent.
+ */
+fun PlaybackStartRequestV3.gatedForHlsRemuxSubtitleRenditions(
+    serverFeatures: Collection<String>,
+): PlaybackStartRequestV3 = copy(clientFeatures = clientFeatures.gatedForHlsRemuxSubtitleRenditions(serverFeatures))
+
+/**
+ * The replan request to send to a server advertising [serverFeatures]. The
+ * server pins the feature to what the start negotiated, so this only keeps the
+ * replan's list consistent with it.
+ */
+fun PlaybackReplanRequestV3.gatedForHlsRemuxSubtitleRenditions(
+    serverFeatures: Collection<String>,
+): PlaybackReplanRequestV3 = copy(clientFeatures = clientFeatures.gatedForHlsRemuxSubtitleRenditions(serverFeatures))
+
+private fun List<String>.gatedForHlsRemuxSubtitleRenditions(serverFeatures: Collection<String>): List<String> {
+    val wanted = HLS_SUBTITLE_RENDITIONS_V1_FEATURE in this &&
+        HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in serverFeatures
+    val listed = HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in this
+    return when {
+        wanted && !listed -> this + HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE
+        !wanted && listed -> filterNot { it == HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE }
+        else -> this
     }
 }
 
@@ -686,6 +725,14 @@ private fun isNativeEmbeddedSubtitlePair(container: String?, codec: String?): Bo
     return nativeEmbeddedSubtitleCodec(codec) in codecs
 }
 
+/**
+ * Whether this delivery's HLS stream can carry the selected embedded text
+ * track as a `SUBTITLES` rendition: a transcode, and a copy remux once the
+ * client lists [HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE].
+ */
+fun PlaybackDelivery.carriesHlsSubtitleRendition(): Boolean =
+    this == PlaybackDelivery.SERVER_TRANSCODE_HLS || this == PlaybackDelivery.SERVER_REMUX_HLS
+
 fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
     if (protocolVersion != PLAYBACK_PROTOCOL_V3 ||
         PLAYBACK_PLAN_V3_FEATURE !in serverFeatures ||
@@ -759,7 +806,7 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
         ) return PlaybackV3Validation.ReplanRequired(SUBTITLE_EMBEDDED_FAILED_CLASSIFICATION, plan, resolvedSessionId)
     }
     plan.subtitle.hlsRendition?.let { rendition ->
-        if (plan.delivery != PlaybackDelivery.SERVER_TRANSCODE_HLS || plan.stream.protocol != PlaybackStreamProtocol.HLS ||
+        if (!plan.delivery.carriesHlsSubtitleRendition() || plan.stream.protocol != PlaybackStreamProtocol.HLS ||
             (plan.subtitle.mode != PlaybackSubtitleModeV3.RENDER && plan.subtitle.mode != PlaybackSubtitleModeV3.CONVERT) ||
             plan.subtitle.artifact != null || plan.subtitle.embedded != null ||
             rendition.groupId.isBlank() || rendition.name.isBlank() ||

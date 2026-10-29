@@ -16,6 +16,7 @@ import org.siloserver.silo.model.playback.SelectedPlaybackTracks
 import org.siloserver.silo.model.playback.SubtitleHlsRendition
 import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_BURN_IN_ONLY
 import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
+import org.siloserver.silo.model.playback.carriesHlsSubtitleRendition
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 
@@ -80,7 +81,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
         )
     }
     val selectedHlsRendition = subtitle.hlsRendition?.takeIf {
-        delivery == PlaybackDelivery.SERVER_TRANSCODE_HLS &&
+        delivery.carriesHlsSubtitleRendition() &&
             (subtitle.mode == PlaybackSubtitleModeV3.CONVERT || subtitle.mode == PlaybackSubtitleModeV3.RENDER)
     }?.let { SubtitleHlsRendition(groupId = it.groupId, name = it.name) }
     // Neutral v3 publishes the complete subtitle inventory on every plan,
