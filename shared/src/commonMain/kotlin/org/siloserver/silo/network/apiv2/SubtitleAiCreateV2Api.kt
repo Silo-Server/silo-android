@@ -19,7 +19,12 @@ private data class AiCreationReceipt(
     @SerialName("live_delivery_attached") val liveDeliveryAttached: Boolean,
 )
 
-/** One-send foreground creation. Android polls persisted jobs instead of requesting live cues. */
+/**
+ * Foreground creation, never resent once its outcome is uncertain. The request names the
+ * playback session it came from, so the server can attach the job to it; when the server
+ * can't find the session, the job runs as a background job instead. Android polls persisted
+ * jobs and ignores the live cues the server streams to the session.
+ */
 class SubtitleAiCreateV2Api(
     private val client: HttpClient,
     private val tokens: TokenManager,
@@ -44,9 +49,8 @@ class SubtitleAiCreateV2Api(
             request.sourceLanguage.orEmpty(), request.targetLanguage.orEmpty())
         if (!mutex.withLock { unresolved.add(intent) }) return ApiResult.Error(0, "subtitle_creation_uncertain",
             "This subtitle request is pending or may have started. It has not been sent again.")
-        var settled = false
-        try {
-            val result = ownedV2Call<AiCreationReceipt, SubtitleAiJobResponse>(gate, tokens, owner, OwnerPolicy.PROFILE, HttpStatusCode.Accepted, { pinned ->
+        suspend fun send(sessionId: String?) =
+            ownedV2Call<AiCreationReceipt, SubtitleAiJobResponse>(gate, tokens, owner, OwnerPolicy.PROFILE, HttpStatusCode.Accepted, { pinned ->
                 client.post("/api/v2/subtitles/ai/translate") {
                     authScope(pinned!!); requireSiloAuth(); singleAttempt()
                     contentType(ContentType.Application.Json)
@@ -57,6 +61,7 @@ class SubtitleAiCreateV2Api(
                         put("source_language", request.sourceLanguage.orEmpty())
                         put("target_language", request.targetLanguage.orEmpty())
                         put("start_position", position)
+                        if (sessionId != null) put("session_id", sessionId)
                     })
                 }
             }) { receipt ->
@@ -66,6 +71,15 @@ class SubtitleAiCreateV2Api(
                 }
                 SubtitleAiJobResponse(job, receipt.liveDeliveryAttached)
             }
+        var settled = false
+        try {
+            val sessionId = request.sessionId?.takeIf { it.isNotBlank() }
+            var result = send(sessionId)
+            // The server binds the session before it creates a job, so a 404
+            // created nothing. When it can't find the session (it ended, or
+            // another API replica holds it), resend without one; the job then
+            // runs as a background job.
+            if (sessionId != null && result is ApiResult.Error && result.code == 404) result = send(null)
             return when (result) {
                 is ApiResult.Success -> { settled = true; result }
                 is ApiResult.Error -> {

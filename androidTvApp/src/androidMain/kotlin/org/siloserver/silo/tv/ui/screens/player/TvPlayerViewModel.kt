@@ -6923,9 +6923,10 @@ class TvPlayerViewModel(
 
     /**
      * Submit an AI job and poll to completion. `start_position` = current
-     * playhead (web parity); no `session_id` — Android polls instead of
-     * streaming live cues. Runs in viewModelScope so player exit cancels the
-     * poll via structured concurrency (the server job itself keeps running).
+     * playhead and `session_id` = the playback session (web parity), so the
+     * server can run it as a foreground job; Android polls instead of showing
+     * live cues. Runs in viewModelScope so player exit cancels the poll via
+     * structured concurrency (the server job itself keeps running).
      */
     private var aiCreationInFlight = false
     private var aiCancelOwner: Pair<Long, org.siloserver.silo.network.AuthScopeSnapshot>? = null
@@ -6962,6 +6963,7 @@ class TvPlayerViewModel(
                 sourceLanguage = sourceLanguage?.ifBlank { null },
                 targetLanguage = targetLanguage.ifBlank { null },
                 startPosition = state.position,
+                sessionId = state.sessionId,
             )
             val r = subtitlesRepository.translate(request, owner)
             if (!ownsRequest()) return@launch

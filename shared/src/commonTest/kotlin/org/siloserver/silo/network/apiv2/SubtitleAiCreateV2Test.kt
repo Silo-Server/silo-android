@@ -92,6 +92,56 @@ class SubtitleAiCreateV2Test {
         } finally { c.close() }
     }
 
+    // Built from the wire form, so these tests also run against code that predates the field.
+    private val attached = SiloJson.decodeFromString<SubtitleTranslateRequest>(
+        """{"media_file_id":42,"kind":"transcribe","source_index":-1,"start_position":12.5,"session_id":"sess-1"}""")
+    private suspend fun sentSession(it: io.ktor.client.request.HttpRequestData) =
+        SiloJson.parseToJsonElement(it.body.toByteArray().decodeToString()).jsonObject["session_id"]?.jsonPrimitive?.content
+
+    @Test fun playerJobCarriesItsPlaybackSession() = runTest {
+        val sessions = mutableListOf<String?>()
+        val c = client { sessions += sentSession(it); receipt("""{"job":$job,"live_delivery_attached":true}""") }
+        try {
+            val result = assertIs<ApiResult.Success<SubtitleAiJobResponse>>(SubtitleAiCreateV2Api(c, tokens, ApiV2Gate.Unrestricted).create(attached,owner))
+            assertTrue(result.data.liveDeliveryAttached)
+            assertEquals(listOf<String?>("sess-1"), sessions)
+        } finally { c.close() }
+    }
+
+    @Test fun sessionTheServerCannotFindIsSentOnceMoreWithoutIt() = runTest {
+        val sessions = mutableListOf<String?>()
+        val c = client { sessions += sentSession(it); if (sessions.size == 1) respond("",HttpStatusCode.NotFound) else receipt() }
+        try {
+            val result = assertIs<ApiResult.Success<SubtitleAiJobResponse>>(SubtitleAiCreateV2Api(c, tokens, ApiV2Gate.Unrestricted).create(attached,owner))
+            assertFalse(result.data.liveDeliveryAttached)
+            assertEquals(listOf("sess-1", null), sessions)
+        } finally { c.close() }
+    }
+
+    @Test fun onlyADefiniteSessionMissIsResentAndTheFenceSpansBothSends() = runTest {
+        var sends = 0
+        // A lost receipt on the resend keeps the intent fenced.
+        val c = client { sends++; if (sends == 1) respond("",HttpStatusCode.NotFound) else error("lost response") }
+        try {
+            val api = SubtitleAiCreateV2Api(c, tokens, ApiV2Gate.Unrestricted)
+            assertEquals("subtitle_creation_uncertain",assertIs<ApiResult.Error>(api.create(attached,owner)).error)
+            assertEquals("subtitle_creation_uncertain",assertIs<ApiResult.Error>(api.create(attached,owner)).error)
+            assertEquals(2,sends)
+        } finally { c.close() }
+        sends = 0
+        val refused = client { sends++; respond("",HttpStatusCode.TooManyRequests) }
+        try {
+            assertEquals(429,assertIs<ApiResult.Error>(SubtitleAiCreateV2Api(refused, tokens, ApiV2Gate.Unrestricted).create(attached,owner)).code)
+            assertEquals(1,sends)
+        } finally { refused.close() }
+        sends = 0
+        val replaced = client { sends++; owner = owner.copy(profileToken = "new-proof"); respond("",HttpStatusCode.NotFound) }
+        try {
+            assertEquals("identity_changed",assertIs<ApiResult.Error>(SubtitleAiCreateV2Api(replaced, tokens, ApiV2Gate.Unrestricted).create(attached,owner)).error)
+            assertEquals(1,sends)
+        } finally { replaced.close() }
+    }
+
     @Test fun replacedOwnerCannotSendAndLatePinCannotPublishOrStartPoll() = runTest {
         var sends = 0
         val captured = owner
