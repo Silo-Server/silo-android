@@ -187,6 +187,14 @@ internal class MobileSubtitleTransactionAdapter(
     private val onCommittedPlaybackFailure: suspend (String) -> Unit = {},
     private val onEmbeddedSubtitleFailure: (Int) -> Unit = {},
     private val onHlsRenditionSubtitleFailure: (Int) -> Unit = {},
+    /**
+     * Whether the player currently exposes any text track to mount against.
+     * The mount deadline must not run while the answer is "none": a freshly
+     * replanned stream reports READY seconds before publishing its tracks, and
+     * a native track that misses a fixed deadline falls back to a whole-file
+     * sidecar extraction on the server.
+     */
+    private val hasMountableTracks: () -> Boolean = { true },
 ) {
     private data class PendingLocalSelection(
         val generation: Long,
@@ -1122,8 +1130,17 @@ internal class MobileSubtitleTransactionAdapter(
     }
 
     private fun scheduleLocalMountTimeout(generation: Long) {
+        localMountTimeout?.cancel()
         localMountTimeout = scope.launch {
-            delay(LOCAL_MOUNT_TIMEOUT_MS)
+            var waited = 0L
+            while (true) {
+                delay(LOCAL_MOUNT_TIMEOUT_MS)
+                waited += LOCAL_MOUNT_TIMEOUT_MS
+                // Only count against the mount once there is something to
+                // mount; the onTracksChanged callback may not arrive inside the
+                // window at all, so ask rather than wait to be told.
+                if (hasMountableTracks() || waited >= MAX_LOCAL_MOUNT_WAIT_MS) break
+            }
             failLocalMount(generation)
         }
     }
@@ -1222,6 +1239,7 @@ internal class MobileSubtitleTransactionAdapter(
 
     private companion object {
         const val LOCAL_MOUNT_TIMEOUT_MS = 5_000L
+        const val MAX_LOCAL_MOUNT_WAIT_MS = 30_000L
         const val PERSISTENCE_ATTEMPTS = 2
         const val PRIMARY_PERSISTENCE_TIMEOUT_MS = 5_000L
         const val DURABLE_PERSISTENCE_TIMEOUT_MS = 5_000L

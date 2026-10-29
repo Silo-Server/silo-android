@@ -1408,6 +1408,10 @@ fun PlayerScreen(
                     val backend = videoBackend ?: return
                     if (!viewModel.isCurrentSubtitleMount(mount)) return
                     val currentTracks = backend.player.currentTracks
+                    viewModel.onMountedTextTracksChanged(
+                        mount = mount,
+                        present = currentTracks.containsType(androidx.media3.common.C.TRACK_TYPE_TEXT),
+                    )
                     // A downloaded file's own text tracks are only known now;
                     // this completes its subtitle menu and runs auto-selection
                     // before the selection below reads the live state.
@@ -1674,6 +1678,11 @@ fun PlayerScreen(
         val backend = videoBackend ?: return@LaunchedEffect
         val mount = mountedSubtitleMount
         if (!viewModel.isCurrentSubtitleMount(mount)) return@LaunchedEffect
+        // Tracks published before this mount was applied reached no callback for it.
+        viewModel.onMountedTextTracksChanged(
+            mount = mount,
+            present = backend.player.currentTracks.containsType(androidx.media3.common.C.TRACK_TYPE_TEXT),
+        )
         val pendingIdentity = uiState.localSubtitleMountIdentity
         val targetIdentity = pendingIdentity ?: uiState.committedSubtitleIdentity
         val selectedIndex = resolveMobileSubtitleOrdinal(targetIdentity, uiState.subtitleTracks)
