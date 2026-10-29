@@ -41,8 +41,10 @@ don't skip changes no tester got.
 2. In Play Console → Production, review the draft release and send it for
    review.
 3. On GitHub → Releases, edit the `v1.0.0` draft notes.
-4. When Play approves, publish the GitHub release. The Downloader codes and the
-   `releases/latest` APK links then serve this version.
+4. When Play approves, publish the GitHub release. The store Downloader codes
+   and the `releases/latest` APK links then serve this version. After the first
+   store release, switch the README, the user manual, and the community bot's
+   answers from the beta codes to the store codes.
 
 While the draft exists, version 1.0.0 counts as released: Release refuses
 `bump: build`, and `bump: minor` starts 1.1.0. If Play rejects the build, delete
@@ -71,18 +73,21 @@ released.
 
 ## Downloader and APK links
 
-Downloader by AFTVnews codes 1141108 (phones) and 2249835 (Android TV), the
-README, and the user manual link to
-`releases/latest/download/silo-android-latest-universal-release.apk` and
-`releases/latest/download/silo-android-tv-latest-universal-release.apk`. When a
-store release is published, `published.yml` copies its APKs to those names.
-Tester builds are prereleases, so they never move these links.
-
-The beta Downloader codes, 2988950 (phones) and 6033910 (Android TV), link to
-the newest tester build instead:
+Until the first store release, give out the beta Downloader codes by AFTVnews,
+2988950 (phones) and 6033910 (Android TV). The README, the user manual, and the
+community bot's answers use them. They link to the newest tester build:
 `releases/download/beta-latest/silo-android-latest-beta.apk` and
 `releases/download/beta-latest/silo-android-tv-latest-beta.apk`. Every Release
 run moves the `beta-latest` tag to its commit and replaces those two files on
 the "Latest tester build" prerelease, unless a newer tester build already
-exists. Someone moving from a beta build back to the store code has to uninstall
-first, because tester builds have higher version codes than the store build.
+exists.
+
+The store Downloader codes, 1141108 (phones) and 2249835 (Android TV), link to
+`releases/latest/download/silo-android-latest-universal-release.apk` and
+`releases/latest/download/silo-android-tv-latest-universal-release.apk`. When a
+store release is published, `published.yml` copies its APKs to those names.
+Tester builds are prereleases, so they never move these links. Until the first
+store release, `releases/latest` is the old `v1.0.0+21` tester build, so don't
+give out the store codes yet. Someone moving from a beta build to a store code
+has to uninstall first, because tester builds have higher version codes than the
+store build.
