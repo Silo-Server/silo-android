@@ -8,6 +8,7 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import org.siloserver.silo.common.diagnostics.SiloLog
+import org.siloserver.silo.common.diagnostics.SiloLogAttribute
 import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
 import java.io.EOFException
 import java.net.ConnectException
@@ -100,28 +101,41 @@ internal class SiloMediaLoadErrorHandlingPolicy(
         val transportFailure = loadErrorInfo.exception.findResumableTransportFailure() ?: return
         val resumeOffset = loadErrorInfo.loadEventInfo.dataSpec.position.coerceAtLeast(0L) +
             bytesLoaded.coerceAtLeast(0L)
-        val errorDescription = buildString {
+        // Byte counts and offsets ride as attributes, not message text: the
+        // hosted collector reads any bare 7-10 digit number as a possible
+        // integer-encoded IPv4 address and withholds the whole message, so a
+        // 1 MB `bytes_loaded` used to turn this line into a lone redaction
+        // marker. "attempt" is likewise a redacted key there, hence "try".
+        // The failure is named by class (and HTTP/2 reset code), never by its
+        // message, which can carry the stream URL.
+        val failure = buildString {
             append(transportFailure.javaClass.simpleName)
-            transportFailure.message?.takeIf(String::isNotBlank)?.let {
-                append(": ")
-                append(it)
+            (transportFailure as? StreamResetException)?.let {
+                append(' ')
+                append(it.errorCode.name)
             }
+        }
+        val attributes = buildMap {
+            put("error_class", SiloLogAttribute.Text(transportFailure.javaClass.simpleName))
+            put("bytes_loaded", SiloLogAttribute.Integer(bytesLoaded.coerceAtLeast(0L)))
+            put("resume_offset", SiloLogAttribute.Integer(resumeOffset))
+            put("attempt", SiloLogAttribute.Integer(loadErrorInfo.errorCount.toLong()))
+            if (delayMs != C.TIME_UNSET) put("retry_delay_ms", SiloLogAttribute.Integer(delayMs))
         }
         if (delayMs != C.TIME_UNSET) {
             SiloLog.i(
                 DiagnosticsLogCategory.PLAYBACK,
                 TAG,
-                "progressive direct-play retry error=$errorDescription " +
-                    "bytes_loaded=$bytesLoaded resume_offset=$resumeOffset " +
-                    "attempt=${loadErrorInfo.errorCount} retry_delay_ms=$delayMs",
+                "progressive direct-play retry ($failure, try ${loadErrorInfo.errorCount}, " +
+                    "retry_delay_ms=$delayMs)",
+                attributes,
             )
         } else {
             SiloLog.w(
                 DiagnosticsLogCategory.PLAYBACK,
                 TAG,
-                "progressive direct-play retry exhausted error=$errorDescription " +
-                    "bytes_loaded=$bytesLoaded resume_offset=$resumeOffset " +
-                    "attempt=${loadErrorInfo.errorCount}",
+                "progressive direct-play retry exhausted ($failure, try ${loadErrorInfo.errorCount})",
+                attributes,
             )
         }
     }
