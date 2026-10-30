@@ -114,6 +114,7 @@
     <!-- Nearby TV offer (LAN companion pairing) -->
     <string name="companion_offer_setup_title">Set up %1$s</string>
     <string name="companion_offer_setup_body">Sign %1$s in to your servers from this phone.</string>
+    <string name="companion_offer_setup_body_tablet">Sign %1$s in to your servers from this tablet.</string>
     <string name="companion_offer_setup_action">Set up</string>
     <string name="companion_offer_signin_title">Sign in %1$s to %2$s?</string>
     <!-- Unauthenticated discovery: the name and state are the TV's claim,
@@ -140,6 +141,7 @@
     <string name="companion_setup_failed_title">Setup didn\'t finish</string>
     <string name="companion_setup_progress_title">Setting up…</string>
     <string name="companion_setup_progress_allow">Continue on %1$s — allow this phone to set it up.</string>
+    <string name="companion_setup_progress_allow_tablet">Continue on %1$s — allow this tablet to set it up.</string>
     <string name="companion_connecting">Connecting…</string>
     <string name="companion_progress_waiting_code">Waiting for %1$s to show its code.</string>
     <string name="companion_progress_approving">Approving %1$s on %2$s.</string>
