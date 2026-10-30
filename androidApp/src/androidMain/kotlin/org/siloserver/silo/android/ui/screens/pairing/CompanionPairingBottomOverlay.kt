@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.pairing
 
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -65,6 +67,8 @@ import androidx.compose.ui.text.font.FontFamily
 import org.siloserver.silo.android.R
 import org.siloserver.silo.model.auth.DeviceCodeFormat
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -492,7 +496,10 @@ private fun DiscoveryStep(
                     target.name,
                 )
             } else {
-                stringResource(R.string.companion_offer_setup_body, target.name)
+                stringResource(
+                    if (isTablet()) R.string.companion_offer_setup_body_tablet else R.string.companion_offer_setup_body,
+                    target.name,
+                )
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -597,7 +604,10 @@ private fun ProgressStep(status: CompanionPairingStatus, signIn: Boolean, onCanc
         is CompanionPairingStatus.PushingServer -> working to if (signIn) {
             stringResource(R.string.companion_signin_progress_allow, status.targetName)
         } else {
-            stringResource(R.string.companion_setup_progress_allow, status.targetName)
+            stringResource(
+                if (isTablet()) R.string.companion_setup_progress_allow_tablet else R.string.companion_setup_progress_allow,
+                status.targetName,
+            )
         }
         is CompanionPairingStatus.AwaitingMatchConfirmation ->
             working to stringResource(R.string.companion_progress_waiting_code, status.approval.targetName)
@@ -682,3 +692,22 @@ private fun PrimaryAction(
         Text(label, style = MaterialTheme.typography.titleMedium)
     }
 }
+
+/**
+ * Whether the card calls this device a tablet rather than a phone, as the
+ * iPhone app names its own model. A folding phone stays a phone, open or closed.
+ */
+@Composable
+private fun isTablet(): Boolean {
+    val context = LocalContext.current
+    val smallestWidthDp = LocalConfiguration.current.smallestScreenWidthDp
+    return remember(smallestWidthDp) {
+        smallestWidthDp >= TABLET_SMALLEST_WIDTH_DP &&
+            !(
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                    context.packageManager.hasSystemFeature(PackageManager.FEATURE_SENSOR_HINGE_ANGLE)
+                )
+    }
+}
+
+private const val TABLET_SMALLEST_WIDTH_DP = 600
