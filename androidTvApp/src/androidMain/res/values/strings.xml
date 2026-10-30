@@ -59,7 +59,7 @@
     <string name="tv_signin_status_signed_in_as">Signed in as %1$s</string>
     <string name="tv_signin_status_signed_in">Signed in</string>
     <string name="tv_signin_status_couldnt_finish">Couldn\'t finish signing in on this TV.</string>
-    <string name="tv_signin_status_denied">Sign-in was declined on your phone.</string>
+    <string name="tv_signin_status_denied">Sign-in was declined.</string>
     <string name="tv_signin_status_paused">Sign-in paused.</string>
     <string name="tv_signin_status_unreachable">Can\'t reach %1$s. Check this TV\'s connection.</string>
     <string name="tv_signin_status_too_many">Too many sign-in attempts. Trying again shortly.</string>
@@ -70,6 +70,9 @@
     <string name="tv_signin_action_change_server">Change server</string>
     <string name="tv_signin_action_try_again">Try again</string>
     <string name="tv_signin_action_new_code">Show a new code</string>
+    <!-- Replaces the scan-and-approve text once a sign-in is declined: the
+         code is gone, and the decline may have come from a phone or a browser. -->
+    <string name="tv_signin_declined_lead">Show a new code to try again.</string>
 
     <!-- Pair a device: this TV approves another device\'s sign-in -->
     <string name="tv_pair_error_enter_code">Enter the code shown on the other device.</string>
@@ -96,7 +99,7 @@
     <string name="tv_signin_form_hide_password">Hide password</string>
     <string name="tv_signin_error_username_required">Username is required</string>
     <string name="tv_signin_error_password_required">Password is required</string>
-    <string name="tv_signin_error_invalid_credentials">Invalid username or password</string>
+    <string name="tv_signin_error_invalid_credentials">Incorrect username or password.</string>
     <string name="tv_signin_error_account_disabled">Account is disabled</string>
     <string name="tv_signin_error_network">Network error. Check your connection.</string>
     <string name="tv_signin_error_local_login_disabled">Password sign-in is turned off on this server. Use your phone instead.</string>
@@ -104,7 +107,7 @@
     <string name="tv_signin_error_password_expired">Your password has expired. Change it, then sign in again.</string>
     <string name="tv_signin_error_provider_unavailable">The sign-in service can\'t be reached right now. Try again later.</string>
     <string name="tv_signin_error_login_failed">Login failed</string>
-    <string name="tv_signin_error_invalid_credentials_provider">Invalid username or password. If you sign in with %1$s, use your phone instead.</string>
+    <string name="tv_signin_error_invalid_credentials_provider">Incorrect username or password. If you sign in with %1$s, use your phone instead.</string>
     <string name="tv_signin_form_provider_hint">If you sign in with %1$s, use your phone instead.</string>
     <string name="tv_signin_error_account_required">You don\'t have an account on this server yet. Ask an admin to add you.</string>
     <string name="tv_signin_error_email_in_use">An account with this email already exists. Ask an admin to connect it to %1$s.</string>

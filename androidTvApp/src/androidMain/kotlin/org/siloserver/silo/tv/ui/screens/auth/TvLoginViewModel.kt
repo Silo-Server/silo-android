@@ -298,16 +298,12 @@ class TvLoginViewModel(
     private var machineObserver: Job? = null
     private var deviceLoginJob: Job? = null
     private var credentialLoginJob: Job? = null
-    private var newCodeJob: Job? = null
     private var signInOptionsJob: Job? = null
 
     /** Saves an approval's tokens and routes on; [onStop] never cancels it. */
     private var approvalJob: Job? = null
     private var authCompleted = false
     private var visible = true
-
-    /** [onStop] ran since the last [onStart]: the next start re-reads the sign-in options. */
-    private var lastDeviceCode: String? = null
 
     /** A device approval that arrived while a password (or network) save held the sign-in. */
     private var heldApproval: Pair<DeviceLoginPollResponse, AccountSessionExpectation>? = null
@@ -612,13 +608,11 @@ class TvLoginViewModel(
         _deviceSignIn.value = when (state) {
             DeviceSignInState.GettingCode -> TvDeviceSignInUi(status = TvSignInStatus.GettingCode)
             is DeviceSignInState.ShowingCode -> {
-                val renewedNow = state.renewed && lastDeviceCode != null && lastDeviceCode != state.session.deviceCode
-                lastDeviceCode = state.session.deviceCode
-                if (renewedNow) announceNewCode()
+                // A code that replaced an expired one says so for as long as
+                // it shows, as on Apple TV; asking for a new code starts over.
                 val status = when {
                     state.opened -> TvSignInStatus.Opened
-                    renewedNow || (previous.status == TvSignInStatus.NewCode && newCodeJob?.isActive == true) ->
-                        TvSignInStatus.NewCode
+                    state.renewed -> TvSignInStatus.NewCode
                     else -> TvSignInStatus.Waiting
                 }
                 TvDeviceSignInUi(code = state.session.display(), status = status)
@@ -633,17 +627,6 @@ class TvLoginViewModel(
             DeviceSignInState.UpdateRequired -> TvDeviceSignInUi(status = TvSignInStatus.UpdateRequired)
             DeviceSignInState.Failed -> TvDeviceSignInUi(status = TvSignInStatus.Failed)
             is DeviceSignInState.Approved -> previous
-        }
-    }
-
-    /** "New code" is a brief, polite announcement, then the status reads "Waiting" again. */
-    private fun announceNewCode() {
-        newCodeJob?.cancel()
-        newCodeJob = viewModelScope.launch {
-            delay(NEW_CODE_ANNOUNCEMENT_MS)
-            _deviceSignIn.update { ui ->
-                if (ui.status == TvSignInStatus.NewCode) ui.copy(status = TvSignInStatus.Waiting) else ui
-            }
         }
     }
 
@@ -901,7 +884,6 @@ class TvLoginViewModel(
     private companion object {
         const val EXPECTATION_ATTEMPTS = 3
         const val EXPECTATION_RETRY_MS = 250L
-        const val NEW_CODE_ANNOUNCEMENT_MS = 5_000L
         const val SIGNED_IN_DWELL_MS = 1_000L
 
         /** How long a nearby phone waits for a code that is still being fetched. */
