@@ -91,7 +91,11 @@ data class AudiobookPlayerUiState(
     val sessionId: String? = null,
     val selectedFileId: Int? = null,
     val error: String? = null,
-)
+) {
+    /** Playback stopped on an error with no stream left: Play starts it again. */
+    val canRetryPlayback: Boolean
+        get() = error != null && streamUrl == null && sessionId == null && !isLoading
+}
 
 /**
  * Drives the [AudiobookPlayerScreen]. Wraps Media3 for actual decoding
@@ -261,67 +265,93 @@ class AudiobookPlayerViewModel(
                 ) {
                     return@collect
                 }
-                val profileId = profileRepository.getActiveProfileId() ?: return@collect
-                val generation = ++loadGeneration
-                val trackIndex = activeTrackIndex
-                when (
-                    val playback = startPartSession(
-                        fileId = renewal.startParams.fileId,
-                        profileId = profileId,
-                        startPosition = renewal.positionSeconds,
-                        capabilities = renewal.startParams.capabilities,
-                        clientPlaybackContext = renewal.startParams.clientPlaybackContext,
-                    )
-                ) {
-                    is ApiResult.Success -> {
-                        val start = playback.data
-                        if (generation != loadGeneration || isClosing) {
-                            if (start is VideoSessionStartV3.Ready) {
-                                runCatching {
-                                    playbackSessionManager.stopSession(start.session.sessionId)
-                                }
-                            }
-                        } else if (start is VideoSessionStartV3.Ready) {
-                            applyStartedSession(
-                                ready = start,
-                                localSeek = renewal.positionSeconds,
-                                globalPosition = state.positionSeconds,
-                                trackIndex = trackIndex,
-                                fileId = renewal.startParams.fileId,
-                                isCurrent = {
-                                    generation == loadGeneration &&
-                                        !isClosing &&
-                                        _uiState.value.sessionId == renewal.staleSessionId
-                                },
-                            )
-                        } else {
-                            applyFailedSessionStart(
-                                start.failureMessage(),
-                                expectedSessionId = renewal.staleSessionId,
-                            )
+                renewExpiredSession(
+                    staleSessionId = renewal.staleSessionId,
+                    fileId = renewal.startParams.fileId,
+                    localPosition = renewal.positionSeconds,
+                    globalPosition = state.positionSeconds,
+                    capabilities = renewal.startParams.capabilities,
+                    clientPlaybackContext = renewal.startParams.clientPlaybackContext,
+                )
+            }
+        }
+    }
+
+    /**
+     * Replace [staleSessionId], which the server no longer knows, with a fresh
+     * session for [fileId] at the file-local [localPosition]. The stale session
+     * stays published until the new one is adopted, so a close or a newer seek
+     * in the meantime wins and the late session is released.
+     */
+    private suspend fun renewExpiredSession(
+        staleSessionId: String,
+        fileId: Int,
+        localPosition: Double,
+        globalPosition: Double,
+        capabilities: ClientCodecCapabilities? = null,
+        clientPlaybackContext: ClientPlaybackContext? = null,
+    ) {
+        // A seek, track load or close can land while the profile lookup
+        // suspends. Claiming the generation after it would make this renewal
+        // current again and replace that newer request with the old position.
+        val observedGeneration = loadGeneration
+        val profileId = profileRepository.getActiveProfileId() ?: return
+        if (
+            observedGeneration != loadGeneration ||
+            isClosing ||
+            _uiState.value.sessionId != staleSessionId
+        ) {
+            return
+        }
+        val generation = ++loadGeneration
+        val trackIndex = activeTrackIndex
+        fun isCurrent() = generation == loadGeneration &&
+            !isClosing &&
+            _uiState.value.sessionId == staleSessionId
+        when (
+            val playback = startPartSession(
+                fileId = fileId,
+                profileId = profileId,
+                startPosition = localPosition,
+                capabilities = capabilities,
+                clientPlaybackContext = clientPlaybackContext,
+            )
+        ) {
+            is ApiResult.Success -> {
+                val start = playback.data
+                if (generation != loadGeneration || isClosing) {
+                    if (start is VideoSessionStartV3.Ready) {
+                        runCatching {
+                            playbackSessionManager.stopSession(start.session.sessionId)
                         }
                     }
-                    is ApiResult.Error -> if (
-                        generation == loadGeneration &&
-                        !isClosing &&
-                        _uiState.value.sessionId == renewal.staleSessionId
-                    ) {
-                        applyFailedSessionStart(
-                            playback.message,
-                            expectedSessionId = renewal.staleSessionId,
-                        )
-                    }
-                    is ApiResult.NetworkError -> if (
-                        generation == loadGeneration &&
-                        !isClosing &&
-                        _uiState.value.sessionId == renewal.staleSessionId
-                    ) {
-                        applyFailedSessionStart(
-                            playback.exception.message ?: "Network error",
-                            expectedSessionId = renewal.staleSessionId,
-                        )
-                    }
+                } else if (start is VideoSessionStartV3.Ready) {
+                    applyStartedSession(
+                        ready = start,
+                        localSeek = localPosition,
+                        globalPosition = globalPosition,
+                        trackIndex = trackIndex,
+                        fileId = fileId,
+                        isCurrent = ::isCurrent,
+                    )
+                } else {
+                    applyFailedSessionStart(
+                        start.failureMessage(),
+                        expectedSessionId = staleSessionId,
+                    )
                 }
+            }
+            is ApiResult.Error -> if (isCurrent()) {
+                applyFailedSessionStart(
+                    playback.message.ifBlank { "Audiobook playback failed" },
+                    expectedSessionId = staleSessionId,
+                )
+            }
+            is ApiResult.NetworkError -> if (isCurrent()) {
+                applyFailedSessionStart(
+                    playback.exception.message ?: "Network error",
+                    expectedSessionId = staleSessionId,
+                )
             }
         }
     }
@@ -670,6 +700,9 @@ class AudiobookPlayerViewModel(
         startGlobal: Double,
         generation: Int,
     ) {
+        // Publish the start position now, as [loadTrack] does, so a failed
+        // start leaves Retry resuming here rather than at 0:00.
+        _uiState.update { it.copy(positionSeconds = startGlobal) }
         when (val playback = startPartSession(fileId, profileId, startGlobal)) {
             is ApiResult.Success -> {
                 val start = playback.data
@@ -1035,6 +1068,10 @@ class AudiobookPlayerViewModel(
      * whole-book and this is the pre-timeline behaviour.
      */
     fun onPositionChanged(seconds: Double, streamUri: String?) {
+        // No stream published (before the first start, or after a failure
+        // cleared it): the engine is empty or still holds the outgoing item, so
+        // its time would overwrite the position Retry resumes from.
+        if (_uiState.value.streamUrl == null) return
         val tl = timeline
         val active = activeTrackIndex?.let { idx -> tl?.tracks?.firstOrNull { it.index == idx } }
 
@@ -1166,10 +1203,18 @@ class AudiobookPlayerViewModel(
                     !isClosing &&
                     _uiState.value.sessionId == sessionId
                 ) {
-                    applyFailedSessionStart(
-                        result.message.ifBlank { "Audiobook playback failed" },
-                        expectedSessionId = sessionId,
-                    )
+                    when (audiobookReplanRecovery(result)) {
+                        AudiobookReplanRecovery.StartFreshSession -> renewExpiredSession(
+                            staleSessionId = sessionId,
+                            fileId = fileId,
+                            localPosition = sourcePosition,
+                            globalPosition = globalPosition,
+                        )
+                        AudiobookReplanRecovery.Fail -> applyFailedSessionStart(
+                            result.message.ifBlank { "Audiobook playback failed" },
+                            expectedSessionId = sessionId,
+                        )
+                    }
                 }
                 is ApiResult.NetworkError -> if (
                     generation == loadGeneration &&
@@ -1186,7 +1231,47 @@ class AudiobookPlayerViewModel(
     }
 
     fun togglePlay() {
+        if (_uiState.value.canRetryPlayback) {
+            retryPlayback()
+            return
+        }
         _uiState.update { it.copy(isPaused = !it.isPaused) }
+    }
+
+    /**
+     * Start playback again after it stopped on an error, at the position the
+     * player last held. Used once the server is reachable again after an
+     * outage that outlived the session, or after any other failed start.
+     */
+    fun retryPlayback() {
+        val state = _uiState.value
+        if (isClosing || !state.canRetryPlayback || contentId.isBlank()) return
+        val fileId = state.selectedFileId
+        if (fileId == null) {
+            // The item never loaded: load it from the start.
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            loadDetail()
+            return
+        }
+        _uiState.update { it.copy(error = null, isPaused = false) }
+        if (timeline != null) {
+            loadTrack(atGlobalTime = state.positionSeconds, autoplay = true)
+            return
+        }
+        val generation = ++startGeneration
+        viewModelScope.launch {
+            val profileId = profileRepository.getActiveProfileId()
+            if (profileId == null) {
+                _uiState.update { it.copy(error = "No active profile") }
+                return@launch
+            }
+            startSingleFileSession(
+                fileId = fileId,
+                profileId = profileId,
+                startGlobal = state.positionSeconds,
+                generation = generation,
+            )
+        }
     }
 
     /** Audiobook-style ±30s seek. The Compose layer reads the requested
@@ -1220,6 +1305,9 @@ class AudiobookPlayerViewModel(
                     fileId = _uiState.value.selectedFileId ?: return,
                 )
             } else {
+                // Polls are ignored while no stream is published, so record a
+                // seek made in the error state here for Retry to resume from.
+                _uiState.update { it.copy(positionSeconds = target) }
                 _pendingSeek.value = target
             }
             return
@@ -1302,7 +1390,16 @@ class AudiobookPlayerViewModel(
                             !isClosing &&
                             _uiState.value.sessionId == sessionId
                         ) {
-                            _uiState.update { it.copy(error = result.message.ifBlank { "Seek failed" }) }
+                            when (audiobookReplanRecovery(result)) {
+                                AudiobookReplanRecovery.StartFreshSession -> renewExpiredSession(
+                                    staleSessionId = sessionId,
+                                    fileId = fileId,
+                                    localPosition = decision.targetSourcePositionSeconds,
+                                    globalPosition = globalSeconds,
+                                )
+                                AudiobookReplanRecovery.Fail ->
+                                    _uiState.update { it.copy(error = result.message.ifBlank { "Seek failed" }) }
+                            }
                         }
                         is ApiResult.NetworkError -> if (
                             generation == loadGeneration &&
@@ -1776,4 +1873,20 @@ private fun androidx.media3.common.PlaybackException.audiobookFailureClassificat
         androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "http_failure"
         androidx.media3.common.PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND -> "source_unavailable"
         else -> "player_error"
+    }
+
+/** What the audiobook player does after a replan or reanchor request failed. */
+internal enum class AudiobookReplanRecovery { StartFreshSession, Fail }
+
+/**
+ * A replan or reanchor names the session it replaces. Once the server has
+ * expired that session (the player was cut off past the server's grace), it
+ * answers 404 "Playback session not found" and no replan can succeed; the
+ * only way back is a fresh session at the same position.
+ */
+internal fun audiobookReplanRecovery(result: ApiResult<*>): AudiobookReplanRecovery =
+    if (result.isPlaybackSessionMissingError()) {
+        AudiobookReplanRecovery.StartFreshSession
+    } else {
+        AudiobookReplanRecovery.Fail
     }
