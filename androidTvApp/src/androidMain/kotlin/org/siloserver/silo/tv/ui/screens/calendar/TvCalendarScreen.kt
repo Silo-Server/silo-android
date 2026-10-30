@@ -90,7 +90,7 @@ import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.calendar.localDisplayAirTime
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.model.calendar.CalendarBadge
+import org.siloserver.silo.model.calendar.calendarBadgeLabel
 import org.siloserver.silo.model.calendar.CalendarFilter
 import org.siloserver.silo.model.calendar.CalendarItem
 import org.siloserver.silo.model.calendar.CalendarItemType
@@ -1456,7 +1456,7 @@ private fun CalendarEventCard(
                 )
 
                 // Badge pills (top-leading) — tvOS CalendarBadgePill.
-                val badges = item.badges.mapNotNull(::badgeLabel)
+                val badges = item.badges.mapNotNull(::calendarBadgeLabel)
                 if (badges.isNotEmpty()) {
                     Column(
                         modifier = Modifier
@@ -1656,15 +1656,6 @@ private fun CalendarMessage(
 }
 
 // MARK: - Formatting helpers
-
-private fun badgeLabel(badge: String): String? = when (badge) {
-    // Same labels as web, iOS, and tvOS. PREMIERE, not SERIES PREMIERE, fits a
-    // poster badge, and NEW SEASON already marks season premieres.
-    CalendarBadge.SeriesPremiere -> "PREMIERE"
-    CalendarBadge.SeasonPremiere -> "NEW SEASON"
-    CalendarBadge.Finale -> "FINALE"
-    else -> null
-}
 
 /** "S5 · E14 · Title" for episodes, "Movie" for films — mirrors tvOS card caption. */
 private fun cardSubtitle(item: CalendarItem): String? {
