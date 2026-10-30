@@ -1490,8 +1490,10 @@ class TvPlayerViewModel(
                 lastAdapterMountIdentity = localMountIdentity
                 // In-stream captions can already be present and need no media
                 // rebuild, so settle them against the current snapshot now.
+                // Off needs no track, and a title without text tracks may
+                // publish no later snapshot to act on.
                 _uiState.value.subtitleTracks
-                    .takeIf(List<PlayerTrackEntry>::isNotEmpty)
+                    .takeIf { it.isNotEmpty() || localMountIdentity == SubtitleIdentity.Off }
                     ?.let(::resolveSubtitleRemountReselection)
             } else if (localMountIdentity == null) {
                 lastAdapterMountGeneration?.let { generation ->
@@ -5765,7 +5767,17 @@ class TvPlayerViewModel(
             // sidecar reached this line and returned, and nobody ever told the
             // player. Ask the adapter to mount its committed identity through
             // the same local-restore path the replan/recovery loads use.
-            if (identity != SubtitleIdentity.Off && !playerHasSelectedSubtitle(identity, state)) {
+            //
+            // Off too: until text is disabled, Media3 turns on a track the file
+            // flags Default, now or on a later snapshot, and
+            // reconcileExternallySelectedSubtitle adopted it over "Auto - None".
+            if (identity == SubtitleIdentity.Off) {
+                SubDiag.log("AUTO committed Off -> restoreCommittedOff")
+                nextSubtitleMountPriority = priority
+                if (!subtitleTransactions.restoreCommittedOff()) {
+                    nextSubtitleMountPriority = TvSubtitleMountPriority.UserTransaction
+                }
+            } else if (!playerHasSelectedSubtitle(identity, state)) {
                 SubDiag.log("AUTO committed-but-unmounted -> restoreCommittedLocalMount $identity")
                 nextSubtitleMountPriority = priority
                 subtitleTransactions.restoreCommittedLocalMount()

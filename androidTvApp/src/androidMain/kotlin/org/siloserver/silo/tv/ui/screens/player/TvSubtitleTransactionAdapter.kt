@@ -922,6 +922,23 @@ internal class TvSubtitleTransactionAdapter(
         }
     }
 
+    /**
+     * Disables text on the player for a committed Off. Returns false, and does
+     * nothing, when there is no playback context, the committed identity is not
+     * Off, or a transaction is in flight.
+     */
+    fun restoreCommittedOff(): Boolean {
+        if (
+            context == null ||
+            transition.committed.identity != SubtitleIdentity.Off ||
+            hasActiveTransaction
+        ) {
+            return false
+        }
+        beginLocalRestore(SubtitleIdentity.Off)
+        return true
+    }
+
     fun beginRefresh(
         source: TvSubtitleRefreshSource = TvSubtitleRefreshSource.Realtime,
     ): TvSubtitleRefreshOwner {
@@ -2295,8 +2312,11 @@ internal class TvSubtitleTransactionAdapter(
             requestCompensationSettlement(selection)
             return
         }
+        // Only restoreCommittedOff restores Off, for an Off nobody picked, so
+        // there is no selected subtitle to report as failed.
+        val restoringOff = ownedRestore && pendingLocalRestore?.identity == SubtitleIdentity.Off
         invalidateLocalMount()
-        failureMessage = "The selected subtitle could not be mounted."
+        if (!restoringOff) failureMessage = "The selected subtitle could not be mounted."
         publish()
     }
 
