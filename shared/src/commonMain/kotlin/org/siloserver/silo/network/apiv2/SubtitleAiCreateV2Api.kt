@@ -49,8 +49,12 @@ class SubtitleAiCreateV2Api(
             request.sourceLanguage.orEmpty(), request.targetLanguage.orEmpty())
         if (!mutex.withLock { unresolved.add(intent) }) return ApiResult.Error(0, "subtitle_creation_uncertain",
             "This subtitle request is pending or may have started. It has not been sent again.")
+        // Whether the attempt in flight may have reached the server. Until one
+        // has, no job can exist and the intent has nothing to fence.
+        var dispatched = false
         suspend fun send(sessionId: String?) =
             ownedV2Call<AiCreationReceipt, SubtitleAiJobResponse>(gate, tokens, owner, OwnerPolicy.PROFILE, HttpStatusCode.Accepted, { pinned ->
+                dispatched = true
                 client.post("/api/v2/subtitles/ai/translate") {
                     authScope(pinned!!); requireSiloAuth(); singleAttempt()
                     contentType(ContentType.Application.Json)
@@ -79,7 +83,10 @@ class SubtitleAiCreateV2Api(
             // created nothing. When it can't find the session (it ended, or
             // another API replica holds it), resend without one; the job then
             // runs as a background job.
-            if (sessionId != null && result is ApiResult.Error && result.code == 404) result = send(null)
+            if (sessionId != null && result is ApiResult.Error && result.code == 404) {
+                dispatched = false
+                result = send(null)
+            }
             return when (result) {
                 is ApiResult.Success -> { settled = true; result }
                 is ApiResult.Error -> {
@@ -91,7 +98,7 @@ class SubtitleAiCreateV2Api(
                 is ApiResult.NetworkError -> ApiResult.Error(0, "subtitle_creation_uncertain", "The request may have started. It has not been sent again.")
             }
         } finally {
-            if (settled) withContext(NonCancellable) { mutex.withLock { unresolved.remove(intent) } }
+            if (settled || !dispatched) withContext(NonCancellable) { mutex.withLock { unresolved.remove(intent) } }
         }
     }
 }

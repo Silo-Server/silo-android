@@ -142,6 +142,29 @@ class SubtitleAiCreateV2Test {
         } finally { replaced.close() }
     }
 
+    @Test fun cancellationBeforeTheResendLeavesFreesTheIntent() = runTest {
+        var sends = 0
+        var checksAfterMiss = -1
+        val resendHeld = CompletableDeferred<Unit>()
+        // After the 404, the first owner check closes that exchange and the second is the resend's pre-send guard.
+        val heldTokens = object : TokenManager by TokenManagerImpl() {
+            override suspend fun snapshotCurrentScope(): AuthScopeSnapshot? {
+                if (checksAfterMiss >= 0 && ++checksAfterMiss == 2) { resendHeld.complete(Unit); awaitCancellation() }
+                return owner
+            }
+        }
+        val c = client { sends++; if (sends == 1) { checksAfterMiss = 0; respond("",HttpStatusCode.NotFound) } else receipt() }
+        try {
+            val api = SubtitleAiCreateV2Api(c, heldTokens, ApiV2Gate.Unrestricted)
+            val first = launch { api.create(attached,owner) }
+            resendHeld.await()
+            first.cancelAndJoin()
+            assertEquals(1,sends)
+            assertIs<ApiResult.Success<SubtitleAiJobResponse>>(api.create(attached,owner))
+            assertEquals(2,sends)
+        } finally { c.close() }
+    }
+
     @Test fun replacedOwnerCannotSendAndLatePinCannotPublishOrStartPoll() = runTest {
         var sends = 0
         val captured = owner
