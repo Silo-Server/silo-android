@@ -2483,6 +2483,10 @@ class TvPlayerViewModel(
         beginBufferingQualityLoad()
         manualSubtitleSelectionApplied = false
         launchSubtitleSelectionApplied = false
+        // A replacement load (version switch, retry) decides Auto again for its
+        // own file: an earlier automatic Off left text disabled, and only a new
+        // decision mounts the subtitle this plan commits.
+        autoTextSubtitleSelectionAttempted = false
         autoSelectedSubtitleIdentity = null
         autoSubtitleSelectionInFlight = false
         // Cleared here and raised only if the carried choice actually RESOLVES
