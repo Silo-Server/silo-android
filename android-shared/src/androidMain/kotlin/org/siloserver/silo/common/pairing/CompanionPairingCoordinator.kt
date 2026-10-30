@@ -27,6 +27,7 @@ import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.signedInEntries
 import org.siloserver.silo.network.api.ServerIdentityApi
+import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.pairing.PairingEndpoint
 import org.siloserver.silo.pairing.PairingFailureCode
 import org.siloserver.silo.pairing.PairingMessage
@@ -570,6 +571,8 @@ internal fun approverFailure(
     server: CompanionPairingServer,
     otherwise: String,
 ): String = when {
+    // The app's own update notice (no request was sent): retrying can't help.
+    result.code == 0 && result.error == ApiV2Gate.UPDATE_REQUIRED_ERROR -> result.message
     result.code == 503 && result.error == SiloAuthUnavailableException.PROVIDER_UNAVAILABLE_PROBLEM ->
         APPROVER_PROVIDER_UNAVAILABLE
     result.code == 401 -> signInAgain(server)

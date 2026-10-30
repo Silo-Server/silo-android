@@ -6,7 +6,9 @@ import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.model.auth.DeviceLoginDecisionResponse
 import org.siloserver.silo.model.auth.DeviceLoginLookupResponse
+import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.pairing.PairingEndpoint
 import org.siloserver.silo.pairing.PairingMessage
 import org.siloserver.silo.pairing.PairingReceiverState
@@ -422,6 +424,9 @@ class CompanionPairingCoordinatorTest {
                 "The code expired before it was approved. Start again on Living Room.",
             ApiResult.Error(409, "conflict", "Device login request was canceled on the device") to
                 "This sign-in request was already approved or declined. Start again on Living Room.",
+            // The app's own notice for a server it won't call until updated is kept.
+            ApiResult.Error(0, ApiV2Gate.UPDATE_REQUIRED_ERROR, ServerContract.UPDATE_REQUIRED_MESSAGE) to
+                ServerContract.UPDATE_REQUIRED_MESSAGE,
         )
         for ((failure, expected) in approveFailures) {
             val transport = ScriptedPhoneTransport()
