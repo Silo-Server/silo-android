@@ -87,6 +87,7 @@ import org.siloserver.silo.common.player.SubtitleManager
 import org.siloserver.silo.common.player.videoPlayerViewport
 import org.siloserver.silo.common.player.VideoPlayerMediaSpec
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
+import org.siloserver.silo.common.player.mountedPlaybackKey
 import org.siloserver.silo.common.player.videoMountToken
 import org.siloserver.silo.common.player.validatedColorRangeFallback
 import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
@@ -101,6 +102,7 @@ import org.siloserver.silo.common.player.video.PlaybackRuntimeCorrectionMetrics
 import org.siloserver.silo.common.player.video.PostResumeVideoStallDetector
 import org.siloserver.silo.common.player.isSubtitleSelected
 import org.siloserver.silo.common.player.renderableMountedTextTracks
+import org.siloserver.silo.common.player.isSubtitleSelectionApplied
 import org.siloserver.silo.common.player.video.VideoPlayerTrackEntry
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
@@ -1059,16 +1061,14 @@ fun PlayerScreen(
             PlaybackRuntimeCorrectionMetrics.reset()
             dvSanitizerReported = false
             startupStallDetector.onMounted(
-                sessionKey = "${uiState.sessionId}:$effectiveStreamUrl:${plan?.planId.orEmpty()}:" +
-                    "${plan?.decisionTrace?.size ?: 0}:${uiState.mediaMountGeneration}",
+                sessionKey = mountedPlaybackKey(uiState.sessionId, effectiveStreamUrl, plan, uiState.mediaMountGeneration),
                 playMethod = playMethod,
                 startPositionMs = mediaSpec.startPositionMs,
                 nowMs = SystemClock.elapsedRealtime(),
                 clientTransformations = mediaSpec.transformations,
             )
             postResumeStallDetector.onMounted(
-                "${uiState.sessionId}:$effectiveStreamUrl:${plan?.planId.orEmpty()}:" +
-                    "${plan?.decisionTrace?.size ?: 0}:${uiState.mediaMountGeneration}",
+                mountedPlaybackKey(uiState.sessionId, effectiveStreamUrl, plan, uiState.mediaMountGeneration),
             )
         }
         viewModel.onSubtitleMediaMountChanging()
@@ -1307,8 +1307,7 @@ fun PlayerScreen(
                     if (watchParty != null) sampleRoomEngine(controller)
                     val live = viewModel.uiState.value
                     val key = live.sessionId?.let { sessionId ->
-                        "$sessionId:${live.streamUrl}:${live.playbackPlan?.planId.orEmpty()}:" +
-                            "${live.playbackPlan?.decisionTrace?.size ?: 0}:${live.mediaMountGeneration}"
+                        mountedPlaybackKey(sessionId, live.streamUrl, live.playbackPlan, live.mediaMountGeneration)
                     }
                     if (key != null) {
                         val rendered = (activePlayerHolder.player.value as? androidx.media3.exoplayer.ExoPlayer)
@@ -1411,6 +1410,7 @@ fun PlayerScreen(
                     viewModel.onMountedTextTracksChanged(
                         mount = mount,
                         present = currentTracks.containsType(androidx.media3.common.C.TRACK_TYPE_TEXT),
+                        renderable = renderableMountedTextTracks(currentTracks),
                     )
                     // A downloaded file's own text tracks are only known now;
                     // this completes its subtitle menu and runs auto-selection
@@ -1427,12 +1427,15 @@ fun PlayerScreen(
                     val selected = isSubtitleSelected(currentTracks, targetIdentity)
                     if (selected) viewModel.onMountedSubtitleSelected()
                     if (pendingIdentity != null) {
+                        // Off is applied with no text track selected, which
+                        // `selected` above never reports.
+                        val applied = isSubtitleSelectionApplied(currentTracks, pendingIdentity)
                         viewModel.onPendingSubtitleMountResult(
                             mount = mount,
                             identity = pendingIdentity,
-                            selected = selected,
+                            selected = applied,
                             snapshotKey = media3TextTrackSnapshotKey(currentTracks),
-                            settled = backend.player.playbackState == Player.STATE_READY && (selected || !accepted),
+                            settled = backend.player.playbackState == Player.STATE_READY && (applied || !accepted),
                         )
                     }
                 }
@@ -1467,15 +1470,13 @@ fun PlayerScreen(
         uiState.sessionId,
         uiState.streamUrl,
         uiState.playMethod,
-        uiState.playbackPlan?.planId,
         uiState.playbackPlan?.decisionTrace?.size,
         uiState.mediaMountGeneration,
     ) {
         val controller = mediaController ?: return@LaunchedEffect
         val sessionId = uiState.sessionId ?: return@LaunchedEffect
         val streamUrl = uiState.streamUrl ?: return@LaunchedEffect
-        val sessionKey = "$sessionId:$streamUrl:${uiState.playbackPlan?.planId.orEmpty()}:" +
-            "${uiState.playbackPlan?.decisionTrace?.size ?: 0}:${uiState.mediaMountGeneration}"
+        val sessionKey = mountedPlaybackKey(sessionId, streamUrl, uiState.playbackPlan, uiState.mediaMountGeneration)
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
                 val decoderCounters = (sessionPlayer as? androidx.media3.exoplayer.ExoPlayer)?.videoDecoderCounters
@@ -1682,6 +1683,7 @@ fun PlayerScreen(
         viewModel.onMountedTextTracksChanged(
             mount = mount,
             present = backend.player.currentTracks.containsType(androidx.media3.common.C.TRACK_TYPE_TEXT),
+            renderable = renderableMountedTextTracks(backend.player.currentTracks),
         )
         val pendingIdentity = uiState.localSubtitleMountIdentity
         val targetIdentity = pendingIdentity ?: uiState.committedSubtitleIdentity
@@ -1709,6 +1711,16 @@ fun PlayerScreen(
             }
         } else {
             backend.selectSubtitle(subtitleTrackEntry(uiState.subtitleTracks, selectedIndex))
+            if (pendingIdentity == SubtitleIdentity.Off) {
+                // Off ahead of its replan: a local switch on the playing stream.
+                viewModel.onPendingSubtitleMountResult(
+                    mount = mount,
+                    identity = pendingIdentity,
+                    selected = isSubtitleSelectionApplied(backend.player.currentTracks, pendingIdentity),
+                    snapshotKey = media3TextTrackSnapshotKey(backend.player.currentTracks),
+                    settled = false,
+                )
+            }
         }
     }
 

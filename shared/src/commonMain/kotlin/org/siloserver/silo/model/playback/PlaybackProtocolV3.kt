@@ -1080,6 +1080,30 @@ fun PlaybackPlanV3.appliesInPlaceOver(current: PlaybackPlanV3, sessionId: String
     }
 }
 
+/**
+ * This plan as the player renders it after an audio switch it made on the
+ * mounted file alone, with no replan. On `original_http` every audio track is
+ * in the file, and a subtitle pick's replan carries the audio the viewer has,
+ * the plan's or one switched that way. When [requestedAudio] is not this
+ * plan's audio and [answer] selects it, the player already renders [answer]'s
+ * audio, so its track, claims and recipe stand in for this plan's and
+ * [appliesInPlaceOver] compares what is actually playing.
+ */
+fun PlaybackPlanV3.withPlayerSwitchedAudio(requestedAudio: PlaybackTrackIdentityV3?, answer: PlaybackPlanV3): PlaybackPlanV3 {
+    val requested = requestedAudio?.index ?: return this
+    if (delivery != PlaybackDelivery.ORIGINAL_HTTP || answer.delivery != PlaybackDelivery.ORIGINAL_HTTP) return this
+    if (selectedTracks.audio?.index == requested || answer.selectedTracks.audio?.index != requested) return this
+    return copy(
+        selectedTracks = selectedTracks.copy(audio = answer.selectedTracks.audio),
+        claims = claims.copy(audio = answer.claims.audio),
+        effectiveRecipe = effectiveRecipe.copy(
+            audioCodec = answer.effectiveRecipe.audioCodec,
+            audioChannels = answer.effectiveRecipe.audioChannels,
+            audioLayout = answer.effectiveRecipe.audioLayout,
+        ),
+    )
+}
+
 fun PlaybackPlanV3.executableMedia3ClientTransformations(): List<String> =
     transformations.executableMedia3ClientTransformations()
 

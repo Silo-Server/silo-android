@@ -156,6 +156,26 @@ class SubtitleInPlaceSwitchTest {
         assertFalse(switch.appliesInPlaceOver(original, null, null))
     }
 
+    @Test fun audioThePlayerSwitchedOnItsOwnCountsAsPlaying() {
+        val commentary = PlaybackTrackIdentityV3("file:42:audio:1", 1)
+        val switch = nativeSwitch(1).copy(
+            selectedTracks = nativeSwitch(1).selectedTracks.copy(audio = commentary),
+            claims = PlaybackValidationClaims(audio = AudioValidationClaims(codec = "aac")),
+            effectiveRecipe = PlaybackEffectiveRecipeV3(audioCodec = "aac", audioChannels = 2),
+        )
+        val playing = original.copy(
+            claims = PlaybackValidationClaims(audio = AudioValidationClaims(codec = "eac3", passthrough = true)),
+            effectiveRecipe = PlaybackEffectiveRecipeV3(audioCodec = "eac3", audioChannels = 6),
+        )
+        assertFalse(switch.appliesInPlaceOver(playing, "s1", "s1"))
+        assertTrue(switch.appliesInPlaceOver(playing.withPlayerSwitchedAudio(commentary, switch), "s1", "s1"))
+        // The plan's own audio, an answer with other audio, or an HLS stream: nothing to stand in.
+        assertEquals(playing, playing.withPlayerSwitchedAudio(original.selectedTracks.audio, switch))
+        assertEquals(playing, playing.withPlayerSwitchedAudio(PlaybackTrackIdentityV3("file:42:audio:2", 2), switch))
+        assertEquals(playing, playing.withPlayerSwitchedAudio(null, switch))
+        assertEquals(transcode, transcode.withPlayerSwitchedAudio(commentary, renditionSwitch(1)))
+    }
+
     @Test fun aRenditionSwitchOrOffKeepsTheRunningHlsStream() {
         assertTrue(renditionSwitch(1).appliesInPlaceOver(transcode, "s1", "s1"))
         val hlsOff = transcode.copy(

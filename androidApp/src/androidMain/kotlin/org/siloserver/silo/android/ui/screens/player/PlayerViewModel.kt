@@ -32,6 +32,9 @@ import org.siloserver.silo.common.player.usesCellularQuality
 import org.siloserver.silo.common.player.PlaybackTeardownGate
 import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
+import org.siloserver.silo.common.player.canSwitchSubtitleInPlace
+import org.siloserver.silo.common.player.withInPlaceAdoption
+import org.siloserver.silo.common.player.resolveMountedSubtitle
 import org.siloserver.silo.common.player.cast.CastMediaSpec
 import org.siloserver.silo.common.player.cast.CastPrepareRequest
 import org.siloserver.silo.common.player.PlayerNotice
@@ -682,6 +685,11 @@ class PlayerViewModel(
         },
         onCommittedPlaybackFailure = ::recoverFromSubtitleAdoptionFailure,
         hasMountableTracks = ::hasMountableTextTracks,
+        canSwitchInPlace = { committed, target ->
+            val state = _uiState.value
+            canSwitchSubtitleInPlace(state.playbackPlan, state.subtitleTracks, committed, target)
+        },
+        isLocallyMountable = ::isMountedTextTrack,
     )
 
     /**
@@ -1050,18 +1058,32 @@ class PlayerViewModel(
         _mountedSubtitleMount.value = mount
     }
 
-    /** Whether the last Media3 snapshot for [mount] listed any text track. */
-    private data class MountedTextTracks(val mount: MobileSubtitleMount?, val present: Boolean)
+    /** The text tracks of the last Media3 snapshot for [mount]. */
+    private data class MountedTextTracks(
+        val mount: MobileSubtitleMount?,
+        val present: Boolean,
+        val renderable: List<MountedSubtitleTrack>,
+    )
     private var mountedTextTracks: MountedTextTracks? = null
 
-    internal fun onMountedTextTracksChanged(mount: MobileSubtitleMount?, present: Boolean) {
+    internal fun onMountedTextTracksChanged(
+        mount: MobileSubtitleMount?,
+        present: Boolean,
+        renderable: List<MountedSubtitleTrack> = emptyList(),
+    ) {
         if (!isCurrentSubtitleMount(mount)) return
-        mountedTextTracks = MountedTextTracks(mount, present)
+        mountedTextTracks = MountedTextTracks(mount, present, renderable)
     }
 
+    private fun currentMountedTextTracks(): MountedTextTracks? =
+        mountedTextTracks?.takeIf { isCurrentSubtitleMount(it.mount) }
+
     /** What the subtitle mount deadline polls; a snapshot from an earlier mount does not count. */
-    private fun hasMountableTextTracks(): Boolean =
-        mountedTextTracks?.takeIf { isCurrentSubtitleMount(it.mount) }?.present == true
+    private fun hasMountableTextTracks(): Boolean = currentMountedTextTracks()?.present == true
+
+    /** Whether the mounted media lists a track for [identity], so a local switch can show it. */
+    private fun isMountedTextTrack(identity: SubtitleIdentity): Boolean =
+        currentMountedTextTracks()?.renderable?.let { resolveMountedSubtitle(identity, it) != null } == true
 
     private var mediaMountSequence = 0L
     private var awaitingMediaMountGeneration: Long? = null
@@ -4811,8 +4833,44 @@ class PlayerViewModel(
             return MobileSubtitleAdoptionResult.Superseded
         }
 
-        val mountGeneration = expectNextMediaMount()
         val pendingIdentity = adoption.pendingIdentity()
+        val mountedPlan = before.playbackPlan
+        val adoptedPlan = ready.session.playbackPlan
+        if (ready.inPlace &&
+            effectiveFileId == predecessorFileId &&
+            playback.sessionId == before.sessionId &&
+            mountedPlan != null &&
+            adoptedPlan != null
+        ) {
+            // The server kept the transport and changed only a subtitle the
+            // mounted media already carries, which the adapter has selected
+            // (or turned off) on the player. Remounting would rebuffer the
+            // same stream for nothing, so the mount generation, position and
+            // MediaItem stay; the adapter confirms the selection against the
+            // current mount.
+            _uiState.update { current ->
+                current.copy(
+                    error = null,
+                    playbackPlan = (current.playbackPlan ?: mountedPlan).withInPlaceAdoption(adoptedPlan),
+                    delivery = ready.plan.delivery,
+                    versions = effectiveVersions,
+                    selectedVersionIndex = effectiveVersionIndex,
+                    subtitleTracks = effectiveSubtitles,
+                    selectedSubtitleIndex = resolveMobileSubtitleOrdinal(
+                        committed.identity,
+                        effectiveSubtitles,
+                    ) ?: current.selectedSubtitleIndex,
+                    committedSubtitleIdentity = committed.identity,
+                    pendingSubtitleIdentity = pendingIdentity,
+                    localSubtitleMountIdentity = null,
+                    subtitleApplying = pendingIdentity != null,
+                )
+            }
+            Log.i(TAG, "subtitle_replan_in_place plan_id=${ready.plan.planId}")
+            return MobileSubtitleAdoptionResult.Adopted
+        }
+
+        val mountGeneration = expectNextMediaMount()
         _uiState.update { current ->
             current.copy(
                 error = null,
