@@ -768,9 +768,16 @@ fun TvMainShell(
             // are scrolled it is no longer composed and cannot take focus.
             // Fall back to the content group, which restores the last focused
             // card, rather than failing and parking the viewer on the bar.
+            //
+            // Only when Search was already on screen as this claim began
+            // (currentRoute is this composition's value). Entering Search from
+            // another tab, the content group still holds the outgoing screen:
+            // the fallback would focus that and end the retries that wait for
+            // the field to compose.
             route == TvMainRoute.Search.route ->
                 runCatching { searchInputFocusRequester.requestFocus() }.getOrDefault(false) ||
-                    runCatching { contentFocusRequester.requestFocus() }.getOrDefault(false)
+                    (currentRoute == TvMainRoute.Search.route &&
+                        runCatching { contentFocusRequester.requestFocus() }.getOrDefault(false))
 
             route == TvMainRoute.Home.route || route == TvMainRoute.Video.route -> {
                 val content =
