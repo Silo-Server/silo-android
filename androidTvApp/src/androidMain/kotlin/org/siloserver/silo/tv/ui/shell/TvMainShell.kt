@@ -398,7 +398,10 @@ fun TvMainShell(
     val forYouFirstRowContainerFocusRequester = remember { FocusRequester() }
     val searchInputFocusRequester = remember { FocusRequester() }
     var searchInputHasFocus by remember { mutableStateOf(false) }
-    var searchBackToInputRequest by remember { mutableIntStateOf(0) }
+    // Saveable to match the Search screen's record of the last request it
+    // handled: a counter that reset on recreation while that record survived
+    // would read as a new request and replay the scroll and field focus.
+    var searchBackToInputRequest by rememberSaveable { mutableIntStateOf(0) }
     // Same failure as the bar handoff: Back asks the search field to take
     // focus and consumes the press. If the field never reports focus, every
     // Back repeats that forever and Search cannot be left. Records the attempt
