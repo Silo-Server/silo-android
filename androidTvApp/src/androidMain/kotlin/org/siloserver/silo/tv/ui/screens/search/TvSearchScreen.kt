@@ -750,16 +750,18 @@ fun TvSearchScreen(
                             index,
                         )
                     },
-                    // Same precedence as the handoff: UP from the request row
-                    // goes to the results, else the error's "Try again", else
-                    // the chips. Spatial search alone skipped the button and
-                    // landed on the chips or the field.
+                    // With results above, spatial search takes UP to the card
+                    // just above. Pinning it to the first result failed once
+                    // the grid scrolled that card out of composition, and the
+                    // shell parked focus on the top bar. Otherwise the same
+                    // precedence as the handoff: spatial search alone skipped
+                    // "Try again" and landed on the chips or the field.
                     cardModifier = Modifier.focusProperties {
-                        up = when {
-                            state.items.isNotEmpty() -> firstResultFocusRequester
-                            state.error != null -> feedbackActionFocusRequester
-                            state.people.isNotEmpty() -> firstPersonFocusRequester
-                            else -> firstFilterChipFocusRequester
+                        when {
+                            state.items.isNotEmpty() -> Unit
+                            state.error != null -> up = feedbackActionFocusRequester
+                            state.people.isNotEmpty() -> up = firstPersonFocusRequester
+                            else -> up = firstFilterChipFocusRequester
                         }
                     },
                     onOpenRequestDetail = onOpenRequestDetail,
