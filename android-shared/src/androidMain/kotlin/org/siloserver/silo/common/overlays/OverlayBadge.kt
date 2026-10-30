@@ -66,7 +66,7 @@ internal data class OverlayBadgeRenderState(
             val cfg = prefs.items[def.id]
             val dynamicIcon = def.getIcon?.invoke(data)
             val iconId = dynamicIcon ?: def.iconId
-            val accentHex = cfg?.accentColor ?: def.defaultAccent
+            val accentHex = cfg?.accentColor ?: def.getAccent?.invoke(data) ?: def.defaultAccent
             val showIcon = iconId != null && def.iconCapable && (cfg?.showIcon ?: preset.preferIcon)
             return OverlayBadgeRenderState(
                 id = def.id,
