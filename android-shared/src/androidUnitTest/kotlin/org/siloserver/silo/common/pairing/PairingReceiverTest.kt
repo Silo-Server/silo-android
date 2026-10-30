@@ -62,6 +62,9 @@ private class FakeAuthPort : PairingAuthPort {
     val verifiedIds = mutableListOf<String?>()
     var failPersist = false
 
+    /** Holds a save until completed; like the real one, it ignores cancellation. */
+    var persistGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
     override suspend fun persistApprovedSession(
         serverUrl: String,
         serverName: String?,
@@ -71,6 +74,7 @@ private class FakeAuthPort : PairingAuthPort {
         expectedIdentity: org.siloserver.silo.network.AccountSessionExpectation?,
         verifiedServerId: String?,
     ) {
+        persistGate?.let { gate -> kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { gate.await() } }
         if (failPersist) throw IllegalStateException("disk full")
         verifiedIds += verifiedServerId
         committedSessions += CommittedSession(
@@ -697,5 +701,39 @@ class PairingReceiverTest {
             val expected = if (withdraws) listOf("https://srv.test" to "dev-code") else emptyList()
             assertEquals(expected, login.withdrawn, case)
         }
+    }
+
+    @Test
+    fun aSaveThatOutlivesItsConnectionLeavesTheNextRequestAlone() = runTest {
+        val auth = FakeAuthPort().apply { persistGate = kotlinx.coroutines.CompletableDeferred() }
+        val login = FakeDeviceLogin()
+        val recv = receiver(auth, login)
+        val first = FakeTransport()
+        val firstRun = launch { recv.run(first) }
+        yield()
+        first.deliver(PairingMessage.PushServer("https://srv.test", "Srv"))
+        settle()
+        recv.allowPendingServer()
+        settle()
+        login.approve()
+        settle() // the first attempt is now saving its session
+        firstRun.cancel() // the advertiser restarts
+
+        val second = FakeTransport()
+        val secondRun = launch { recv.run(second) }
+        yield()
+        second.deliver(PairingMessage.PushServer("https://srv.test", "Srv"))
+        settle()
+        recv.allowPendingServer()
+        settle()
+        assertIs<DeviceLoginRepository.DeviceLoginState.Awaiting>(login.state.value)
+
+        auth.persistGate!!.complete(Unit)
+        settle()
+        assertEquals(emptyList(), login.withdrawn, "the newer request stays pending")
+        assertIs<DeviceLoginRepository.DeviceLoginState.Awaiting>(login.state.value)
+        second.deliver(PairingMessage.Done)
+        secondRun.join()
+        firstRun.join()
     }
 }

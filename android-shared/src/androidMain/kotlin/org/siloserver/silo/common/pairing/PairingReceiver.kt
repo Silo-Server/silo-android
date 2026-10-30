@@ -233,6 +233,14 @@ class PairingReceiver(
 
     private val signedInNames = mutableListOf<String>()
 
+    /**
+     * The setup attempt that owns [deviceLogin]'s shared state. An attempt
+     * can outlive its connection (saving a session can't be cancelled) while
+     * a newer one starts; only the owner reads or resets that state.
+     */
+    private var deviceLoginOwner: Any? = null
+    private val deviceLoginLock = Any()
+
     private enum class AlternateChoice { UseAlternate, Retry }
 
     /** An attempt failure with its wire code. */
@@ -568,6 +576,7 @@ class PairingReceiver(
         // TV cancelled) withdraws it and its code can't be approved later.
         var loginUrl: String? = null
         var openCode: String? = null
+        val owner = Any()
         try {
             _status.value = PairingReceiverStatus.Pairing(pushedUrl, displayName)
             val target = resolveLoginTarget(push, displayName)
@@ -576,6 +585,7 @@ class PairingReceiver(
                 ?: throw AttemptFailure(PairingFailureCode.AuthFailed)
             val device = identityProvider()
 
+            synchronized(deviceLoginLock) { deviceLoginOwner = owner }
             val terminal = coroutineScope {
                 var deviceStartedSent = false
                 val observer = launch {
@@ -632,14 +642,19 @@ class PairingReceiver(
         } catch (failure: AttemptFailure) {
             reportFailure(pushedUrl, displayName, failure.code, transport)
         } finally {
-            // A cancel can land before the observer saw the request open.
-            val code = openCode
-                ?: (deviceLogin.state.value as? DeviceLoginRepository.DeviceLoginState.Awaiting)?.session?.deviceCode
+            // Release the shared state before the withdraw suspends, and only
+            // while this attempt still owns it: a newer attempt (after an
+            // advertiser restart) keeps its request. A cancel can land before
+            // the observer saw the request open, so an owner still holding
+            // one reads it from the state.
+            val code = synchronized(deviceLoginLock) {
+                if (deviceLoginOwner !== owner) return@synchronized openCode
+                val awaiting = deviceLogin.state.value as? DeviceLoginRepository.DeviceLoginState.Awaiting
+                deviceLogin.reset()
+                deviceLoginOwner = null
+                openCode ?: awaiting?.session?.deviceCode
+            }
             val url = loginUrl
-            // Reset before the withdraw suspends: the repository is shared,
-            // and a newer attempt (after an advertiser restart) must neither
-            // see this request nor be reset by this one finishing late.
-            deviceLogin.reset()
             if (code != null && url != null) withdraw(url, code)
         }
     }
