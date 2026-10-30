@@ -78,8 +78,10 @@ data class FollowedSession(
  * Moves phone playback to the quality pair of the network it is on when that
  * changes between unmetered and cellular or metered mid-playback.
  *
- * A change applies only once it has held for [settleMs], so a brief Wi-Fi
- * drop does not cost two replans; moments without a connection are skipped
+ * A change applies only once it has held for [settleMs]. Each move is a full
+ * reload, and a phone on steady Wi-Fi can sit on mobile data for several
+ * seconds while Android checks or roams its Wi-Fi; leaving Wi-Fi for mobile
+ * data holds far longer than that. Moments without a connection are skipped
  * rather than read as "not cellular".
  */
 class NetworkQualityFollower(
@@ -114,7 +116,19 @@ class NetworkQualityFollower(
             .filter { it.connected }
             .map { it.usesCellularQuality }
             .distinctUntilChanged()
-            .onEach { latestCellular.value = it }
+            .onEach { cellular ->
+                // Without this line a report shows a reload but not what
+                // caused it, and a blip that never reloaded leaves no trace.
+                if (latestCellular.value != null) {
+                    val side = if (cellular) "metered" else "unmetered"
+                    SiloLog.i(
+                        DiagnosticsLogCategory.PLAYBACK,
+                        TAG,
+                        "connection now $side; quality follows if it holds for ${settleMs / 1_000} s",
+                    )
+                }
+                latestCellular.value = cellular
+            }
             .debounce(settleMs)
             .collectLatest { cellular ->
                 for (wait in RETRY_DELAYS_MS) {
@@ -135,6 +149,15 @@ class NetworkQualityFollower(
                         continue
                     }
                     if (wanted == current.pair) return@collectLatest
+                    SiloLog.i(
+                        DiagnosticsLogCategory.PLAYBACK,
+                        TAG,
+                        if (cellular) {
+                            "connection stayed metered; reloading at the cellular quality"
+                        } else {
+                            "connection stayed unmetered; reloading at the main quality"
+                        },
+                    )
                     replan(current, wanted)
                 }
             }
@@ -142,7 +165,7 @@ class NetworkQualityFollower(
 
     companion object {
         private const val TAG = "NetworkQualityFollower"
-        const val DEFAULT_SETTLE_MS = 5_000L
+        const val DEFAULT_SETTLE_MS = 30_000L
 
         /** The wait before each try at a move: at once, then three retries over 50 seconds. */
         val RETRY_DELAYS_MS = listOf(0L, 5_000L, 15_000L, 30_000L)
