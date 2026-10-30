@@ -109,10 +109,10 @@ already shows; the screen polls and saves the session, so there is only one
 request. The TV advertises only while its sign-in screen is visible.
 Advertising `st=login` sits behind a rollout gate shared with silo-apple
 (`PairingProtocol.advertisesSignInTVs` there, `TvLoginViewModel`'s
-`advertisesSignIn`, set from `BuildConfig.DEBUG`, here): on in debug builds,
-off in release until the iOS and Android phone apps that accept `login` TVs
-have both shipped. A phone that predates them offers a sign-in TV the setup
-chooser and pushes servers without an identity, which the TV refuses. First-run
+`advertisesSignIn` here), on in every build now that the iOS and Android phone
+apps that accept `login` TVs have both shipped. A phone that predates them
+offers a sign-in TV the setup chooser and pushes servers without an identity,
+which the TV refuses. First-run
 TVs keep `st=setup` and
 the chooser, with the phone's active server preselected. `pushServer` carries
 `serverIdentity` and `endpoints` (from `GET /api/v2/system/connections`); the

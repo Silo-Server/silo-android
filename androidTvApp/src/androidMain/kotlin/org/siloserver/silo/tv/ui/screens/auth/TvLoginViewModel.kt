@@ -266,8 +266,8 @@ class TvLoginViewModel(
      * `st=login`. Both phone apps must accept `login` TVs before either TV
      * advertises one; a phone that predates them offers a sign-in TV the
      * setup chooser and pushes servers without an identity, which this TV
-     * refuses. The app turns it on for debug builds only; turn it on for
-     * release once the iOS and Android phone apps that handle `login` ship.
+     * refuses. The app turns it on in every build: the iOS and Android phone
+     * apps that handle `login` have shipped.
      */
     private val advertisesSignIn: Boolean = false,
 ) : ViewModel(), NearbySignInCodeSource {
