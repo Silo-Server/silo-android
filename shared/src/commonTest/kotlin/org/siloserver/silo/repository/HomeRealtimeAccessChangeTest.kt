@@ -121,7 +121,7 @@ class HomeRealtimeAccessChangeTest {
     fun `the socket reconnects promptly after an access-changed close`() = runTest {
         // First connection: subscribed, then the server's 4001 close ends it.
         val client = ScriptedClient { attempt ->
-            if (attempt == 1) flowOf(HomeRealtimeEvent.Connected, HomeRealtimeEvent.Closed())
+            if (attempt == 1) flowOf(HomeRealtimeEvent.Connected, HomeRealtimeEvent.Closed(recovery = org.siloserver.silo.network.GenericEventsClose(accessChanged = true)))
             else flow { awaitCancellation() }
         }
         val coordinator = HomeRealtimeCoordinator(client, TokenManagerImpl(), AccessChangeSignals())
@@ -129,7 +129,7 @@ class HomeRealtimeAccessChangeTest {
 
         testScheduler.advanceTimeBy(1_100L)
 
-        assertEquals(2, client.connects, "a fresh connection (and ticket) after the initial backoff")
+        assertEquals(2, client.connects, "a fresh connection (and ticket) without failure backoff")
         job.cancel()
     }
 

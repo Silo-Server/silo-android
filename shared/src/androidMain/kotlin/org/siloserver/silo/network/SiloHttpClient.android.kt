@@ -24,6 +24,7 @@ actual fun createPlatformHttpClient(retryOnConnectionFailure: Boolean): HttpClie
                 connectionPool(SiloOkHttp.connectionPool)
                 retryOnConnectionFailure(retryOnConnectionFailure)
                 localRoute()
+                eventsUpgradeResponses()
             }
         }
     }
