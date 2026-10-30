@@ -109,7 +109,7 @@ fun AiTranslateSheet(
         if (tools.jobJustCompleted) (back ?: { controller.dismiss() })()
     }
 
-    PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
+    PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight, compact = true) {
         PlayerSheetHeader(
             title = "Translate with AI",
             onBack = back,

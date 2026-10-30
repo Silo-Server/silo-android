@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -173,12 +174,17 @@ internal fun rememberPlayerMenuController(onDismiss: () -> Unit): PlayerMenuCont
  * The container every player menu renders into. Content is a column; menus
  * that scroll put their list in [PlayerMenuScrollColumn] so it takes the room
  * left under the header without pushing a footer off screen.
+ *
+ * A [compact] menu holds a short form rather than a list: docked, it becomes a
+ * card in the top-right corner sized to its content instead of a full-height
+ * panel. The portrait sheet already sizes to its content.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PlayerMenu(
     controller: PlayerMenuController,
     tabletopPaneHeight: Dp?,
+    compact: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     when (controller.presentation) {
@@ -199,13 +205,14 @@ internal fun PlayerMenu(
                 )
             }
         }
-        PlayerMenuPresentation.Docked -> PlayerDockedPanel(controller, content)
+        PlayerMenuPresentation.Docked -> PlayerDockedPanel(controller, compact, content)
     }
 }
 
 @Composable
 private fun PlayerDockedPanel(
     controller: PlayerMenuController,
+    compact: Boolean,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val reportDockEdge = LocalPlayerMenuDockReporter.current
@@ -250,14 +257,14 @@ private fun PlayerDockedPanel(
                 fadeIn(tween(180)),
             exit = slideOutHorizontally(tween(180, easing = FastOutSlowInEasing)) { it / 3 } +
                 fadeOut(tween(140)),
-            modifier = Modifier.align(Alignment.CenterEnd),
+            modifier = Modifier.align(if (compact) Alignment.TopEnd else Alignment.CenterEnd),
         ) {
             val shape = RoundedCornerShape(PlayerChrome.PanelRadius)
             Column(
                 modifier = Modifier
                     .padding(top = 10.dp, bottom = 10.dp, end = 10.dp + cutoutEnd)
                     .width(panelWidth)
-                    .fillMaxHeight()
+                    .then(if (compact) Modifier.heightIn(max = maxHeight - 20.dp) else Modifier.fillMaxHeight())
                     .onGloballyPositioned { reportDockEdge(it.boundsInRoot().left) }
                     .clip(shape)
                     .background(PlayerChrome.Smoke)
