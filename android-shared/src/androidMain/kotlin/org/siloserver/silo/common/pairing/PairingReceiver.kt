@@ -21,10 +21,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Identity + state the receiver advertises and announces in its [PairingMessage.Hello].
@@ -193,6 +196,14 @@ class PairingReceiver(
 ) {
     private companion object {
         private const val TAG = "PairingReceiver"
+
+        /**
+         * How long a connected phone may stay silent (no message, no attempt
+         * in flight) before the TV drops it and goes back to advertising. The
+         * advertiser serves one phone at a time, so a phone that loses its
+         * network must not hold setup forever. Same limit as tvOS and Roku.
+         */
+        private val IDLE_TIMEOUT = 180.seconds
     }
 
     private val _status = MutableStateFlow<PairingReceiverStatus>(PairingReceiverStatus.Idle)
@@ -225,6 +236,17 @@ class PairingReceiver(
     private var activeTransport: PairingTransport? = null
 
     private val signedInNames = mutableListOf<String>()
+
+    /** Drops a silent phone after [IDLE_TIMEOUT]; see [armIdleTimer]. */
+    private var idleJob: Job? = null
+
+    /**
+     * Set when the session starts closing (idle expiry or the stream ended):
+     * from then on nothing re-arms the timer or starts an attempt. Guarded by
+     * [sessionLock], which orders expiry against activity.
+     */
+    private var sessionClosing = false
+    private val sessionLock = Any()
 
     private enum class AlternateChoice { UseAlternate, Retry }
 
@@ -313,6 +335,10 @@ class PairingReceiver(
         sessionDenied = false
         activeTransport = transport
         signedInNames.clear()
+        synchronized(sessionLock) {
+            sessionClosing = false
+            idleJob = null
+        }
         var preserveTerminalStatus = false
         try {
             val identity = identityProvider()
@@ -335,7 +361,9 @@ class PairingReceiver(
             coroutineScope {
                 val scope = this
                 sessionScope = scope
+                armIdleTimer(transport, scope)
                 transport.incoming.collectMessage { message ->
+                    armIdleTimer(transport, scope)
                     when (message) {
                         is PairingMessage.PushServer ->
                             handlePushServer(message, transport, scope)
@@ -374,6 +402,7 @@ class PairingReceiver(
                     true
                 }
                 // Stream ended (Done/Cancel/EOF) — cancel any in-flight device-login.
+                beginClosing(transport)
                 pushJob?.cancel()
                 if (!preserveTerminalStatus) {
                     if (signedInNames.isNotEmpty()) {
@@ -397,6 +426,7 @@ class PairingReceiver(
             // restarted while this one unwound): its session, push and status
             // are not this run's to clear.
             if (activeTransport === transport) {
+                beginClosing(transport)
                 pushJob?.cancel()
                 pushJob = null
                 pendingPush = null
@@ -452,19 +482,69 @@ class PairingReceiver(
         // auto-approves only after its user confirmed the first code.
         val automatic = signedInNames.isNotEmpty()
         val ad = advertisement
-        pushJob = sessionScope.launch {
-            if (approveCleartext) {
-                canonicalHttpOrigin(push.serverURL)?.let { cleartextConsent.approve(it) }
-            }
-            if (ad.state == PairingReceiverState.Login) {
-                runLoginAttempt(push, transport, ad)
-            } else {
-                try {
-                    runAttempt(push, transport, automatic)
-                } finally {
-                    deviceLogin.reset()
+        // The idle timer waits while an attempt is in flight: device login is
+        // bounded by the code's own expiry, and the unreachable-address
+        // choice waits on the TV user. Under the lock, so an expired or
+        // ending session never starts one.
+        synchronized(sessionLock) {
+            if (sessionClosing) return
+            idleJob?.cancel()
+            idleJob = null
+            pushJob = sessionScope.launch {
+                if (approveCleartext) {
+                    canonicalHttpOrigin(push.serverURL)?.let { cleartextConsent.approve(it) }
                 }
+                if (ad.state == PairingReceiverState.Login) {
+                    runLoginAttempt(push, transport, ad)
+                } else {
+                    try {
+                        runAttempt(push, transport, automatic)
+                    } finally {
+                        deviceLogin.reset()
+                    }
+                }
+                // A cancelled attempt can still get here (the result sends
+                // swallow cancellation); only a finished one restarts the wait.
+                if (isActive) armIdleTimer(transport, sessionScope)
             }
+        }
+    }
+
+    /**
+     * (Re)start the idle deadline for [transport]'s session. On expiry the
+     * session is closed without a goodbye frame: a write to a dead peer can
+     * block, and both phone apps treat a closed connection as the end.
+     * Closing ends [run], which returns the TV to advertising.
+     */
+    private fun armIdleTimer(transport: PairingTransport, scope: CoroutineScope) {
+        synchronized(sessionLock) {
+            if (sessionClosing || activeTransport !== transport) return
+            idleJob?.cancel()
+            idleJob = scope.launch {
+                delay(IDLE_TIMEOUT)
+                synchronized(sessionLock) {
+                    // Activity that cancelled this timer first wins; otherwise
+                    // expiry wins and a later Allow finds nothing to allow.
+                    if (!isActive) return@launch
+                    sessionClosing = true
+                    pendingPush = null
+                }
+                Log.i(TAG, "pairing session idle timeout; dropping peer")
+                transport.close()
+            }
+        }
+    }
+
+    /**
+     * [transport]'s session is ending: stop the idle timer and refuse new
+     * attempts. A newer connection's session is left alone.
+     */
+    private fun beginClosing(transport: PairingTransport) {
+        synchronized(sessionLock) {
+            if (activeTransport !== transport) return
+            sessionClosing = true
+            idleJob?.cancel()
+            idleJob = null
         }
     }
 
