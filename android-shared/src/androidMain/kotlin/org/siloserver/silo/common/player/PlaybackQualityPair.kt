@@ -149,13 +149,15 @@ class NetworkQualityFollower(
                         continue
                     }
                     if (wanted == current.pair) return@collectLatest
+                    // Logged before [replan], which may still decline the move
+                    // (another change in flight), so it names a request.
                     SiloLog.i(
                         DiagnosticsLogCategory.PLAYBACK,
                         TAG,
                         if (cellular) {
-                            "connection stayed metered; reloading at the cellular quality"
+                            "connection stayed metered; asking playback to move to the cellular quality"
                         } else {
-                            "connection stayed unmetered; reloading at the main quality"
+                            "connection stayed unmetered; asking playback to move to the main quality"
                         },
                     )
                     replan(current, wanted)
