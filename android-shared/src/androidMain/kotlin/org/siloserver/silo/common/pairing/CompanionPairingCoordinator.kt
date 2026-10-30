@@ -509,6 +509,9 @@ class CompanionPairingCoordinator(
                 answer.await()
             }
             if (!confirmed) {
+                // Leaving the scope above waits for the cancelled watcher,
+                // and the TV can end the attempt in that time.
+                ensureAttemptLive()
                 deviceLoginApprover.deny(server, started.userCode)
                 transport.send(PairingMessage.Cancel(reason = "user-cancelled"))
                 error("Cancelled. Nothing was approved.")
