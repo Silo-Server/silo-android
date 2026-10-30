@@ -1,8 +1,12 @@
 package org.siloserver.silo.common.player.subtitle
 
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.StreamKey
+import androidx.media3.common.TrackGroup
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.decoder.DecoderInputBuffer
+import androidx.media3.exoplayer.FormatHolder
 import androidx.media3.exoplayer.LoadingInfo
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.source.MediaPeriod
@@ -11,6 +15,7 @@ import androidx.media3.exoplayer.source.SampleStream
 import androidx.media3.exoplayer.source.TrackGroupArray
 import androidx.media3.exoplayer.source.WrappingMediaSource
 import androidx.media3.exoplayer.trackselection.ExoTrackSelection
+import androidx.media3.exoplayer.trackselection.FixedTrackSelection
 import androidx.media3.exoplayer.upstream.Allocator
 import java.util.concurrent.atomic.AtomicLong
 
@@ -69,6 +74,13 @@ class SidecarSubtitleMediaSource(
     child: MediaSource,
     private val floor: SidecarPlaybackFloor,
     private val maxLookaheadUs: Long = C.TIME_UNSET,
+    /**
+     * The track [child] will publish, known from the `SubtitleConfiguration`
+     * before any byte arrives. With it the period reports itself prepared at
+     * once, so a sidecar can never hold back the video's preparation; see
+     * [NonGatingSidecarPeriod].
+     */
+    private val trackFormat: Format? = null,
 ) : WrappingMediaSource(child) {
 
     override fun createPeriod(
@@ -79,6 +91,7 @@ class SidecarSubtitleMediaSource(
         mediaSource.createPeriod(id, allocator, startPositionUs),
         floor,
         maxLookaheadUs,
+        trackFormat,
     )
 
     override fun releasePeriod(mediaPeriod: MediaPeriod) {
@@ -86,11 +99,25 @@ class SidecarSubtitleMediaSource(
     }
 }
 
+/**
+ * With an [announcedFormat] the period is prepared as soon as it starts: it
+ * publishes that one track, hands the player its own streams, and passes the
+ * selection on to the delegate once the delegate has prepared (its HTTP
+ * response arrived and the extractor declared the track). Until then the
+ * streams read nothing, seeks only move the floor, and the calls a
+ * `ProgressiveMediaPeriod` refuses before preparing are not made. A sidecar
+ * that never answers, or fails before preparing, then costs only its
+ * subtitle: the error reaches the text renderer through the stream, which
+ * Media3 answers by disabling the text track, never the video.
+ *
+ * Without one, the period prepares when the delegate does, as before.
+ */
 @UnstableApi
 internal class NonGatingSidecarPeriod(
     val delegate: MediaPeriod,
     private val floor: SidecarPlaybackFloor,
     private val maxLookaheadUs: Long = C.TIME_UNSET,
+    announcedFormat: Format? = null,
 ) : MediaPeriod, MediaPeriod.Callback {
 
     private var callback: MediaPeriod.Callback? = null
@@ -98,18 +125,43 @@ internal class NonGatingSidecarPeriod(
     /** The delegate parked far enough ahead that it was left parked; see [continueUnlessAhead]. */
     private var heldAhead = false
 
-    /** A delegate's buffered position is only defined once it has prepared. */
+    /** The delegate's track groups, buffered position and seeks are defined only once it has prepared. */
     private var prepared = false
+
+    /** The one track published up front, under the id `ProgressiveMediaPeriod` gives its first group. */
+    private val announcedTrackGroups: TrackGroupArray? =
+        announcedFormat?.let { TrackGroupArray(TrackGroup("0", it)) }
+
+    /** The player's streams and selections for the announced track, by renderer slot. */
+    private var announcedStreams: Array<AnnouncedSampleStream?> = emptyArray()
+    private var announcedSelections: Array<ExoTrackSelection?> = emptyArray()
+
+    /** The delegate's own streams by slot, and which announced stream each serves. */
+    private var delegateStreams: Array<SampleStream?> = emptyArray()
+    private var delegateStreamOwners: Array<AnnouncedSampleStream?> = emptyArray()
+
+    private val awaitingDelegate: Boolean
+        get() = announcedTrackGroups != null && !prepared
 
     override fun prepare(callback: MediaPeriod.Callback, positionUs: Long) {
         this.callback = callback
         floor.set(positionUs)
         delegate.prepare(this, positionUs)
+        if (announcedTrackGroups != null) callback.onPrepared(this)
     }
 
     override fun onPrepared(mediaPeriod: MediaPeriod) {
         prepared = true
-        callback?.onPrepared(this)
+        if (announcedTrackGroups == null) {
+            callback?.onPrepared(this)
+            return
+        }
+        // Already reported prepared: hand over the selection made meanwhile,
+        // at the playhead.
+        if (announcedSelections.any { it != null }) {
+            forwardAnnouncedSelection(floor.get())
+            continueUnlessAhead("prepared")
+        }
     }
 
     override fun onContinueLoadingRequested(source: MediaPeriod) {
@@ -169,7 +221,10 @@ internal class NonGatingSidecarPeriod(
             .build()
         val continued = try {
             delegate.continueLoading(loadingInfo)
-        } catch (_: IllegalStateException) {
+        } catch (error: IllegalStateException) {
+            // An unprepared delegate refuses the seek below. (A real one
+            // only throws here once prepared.)
+            if (awaitingDelegate) throw error
             // A prepared ProgressiveMediaPeriod only starts a new load from a
             // pending reset. A load cancelled because its track was disabled
             // has none, and when the track is enabled again before that
@@ -185,12 +240,16 @@ internal class NonGatingSidecarPeriod(
         )
     }
 
-    override fun maybeThrowPrepareError() = delegate.maybeThrowPrepareError()
+    override fun maybeThrowPrepareError() {
+        // An announced period is prepared whatever the delegate does; its
+        // error reaches the text renderer through the streams instead.
+        if (announcedTrackGroups == null) delegate.maybeThrowPrepareError()
+    }
 
-    override fun getTrackGroups(): TrackGroupArray = delegate.trackGroups
+    override fun getTrackGroups(): TrackGroupArray = announcedTrackGroups ?: delegate.trackGroups
 
     override fun getStreamKeys(trackSelections: List<ExoTrackSelection>): List<StreamKey> =
-        delegate.getStreamKeys(trackSelections)
+        if (announcedTrackGroups == null) delegate.getStreamKeys(trackSelections) else emptyList()
 
     override fun selectTracks(
         selections: Array<out ExoTrackSelection?>,
@@ -199,29 +258,77 @@ internal class NonGatingSidecarPeriod(
         streamResetFlags: BooleanArray,
         positionUs: Long,
     ): Long {
-        val result = delegate.selectTracks(selections, mayRetainStreamFlags, streams, streamResetFlags, positionUs)
-        // Enabling the text track (a subtitle pick after start, or the first
-        // selection once prepared) is what makes the delegate willing to load.
+        if (announcedTrackGroups == null) {
+            val result = delegate.selectTracks(selections, mayRetainStreamFlags, streams, streamResetFlags, positionUs)
+            // Enabling the text track (a subtitle pick after start, or the first
+            // selection once prepared) is what makes the delegate willing to load.
+            if (selections.any { it != null }) continueUnlessAhead("select")
+            return result
+        }
+        for (i in selections.indices) {
+            val current = streams[i] as? AnnouncedSampleStream
+            if (current != null && (selections[i] == null || !mayRetainStreamFlags[i])) {
+                current.inner = null
+                streams[i] = null
+            }
+            if (streams[i] == null && selections[i] != null) {
+                streams[i] = AnnouncedSampleStream()
+                streamResetFlags[i] = true
+            }
+        }
+        announcedStreams = Array(selections.size) { streams[it] as? AnnouncedSampleStream }
+        announcedSelections = Array(selections.size) { selections[it] }
+        if (prepared) forwardAnnouncedSelection(positionUs)
         if (selections.any { it != null }) continueUnlessAhead("select")
-        return result
+        return positionUs
     }
 
     /**
-     * Called on the playing period every playback tick, unlike
-     * [reevaluateBuffer], which stops once the next item starts loading. So
-     * this is what keeps a held sidecar reading through the end of an item.
+     * Mirrors the announced selection onto the delegate's own track, keeping a
+     * delegate stream only while the player keeps the stream it serves.
+     */
+    private fun forwardAnnouncedSelection(positionUs: Long) {
+        val slots = announcedSelections.size
+        if (delegateStreams.size != slots) {
+            delegateStreams = delegateStreams.copyOf(slots)
+            delegateStreamOwners = delegateStreamOwners.copyOf(slots)
+        }
+        val group = delegate.trackGroups.takeIf { it.length > 0 }?.get(0)
+        val selections = arrayOfNulls<ExoTrackSelection>(slots)
+        val retain = BooleanArray(slots)
+        for (i in 0 until slots) {
+            val stream = announcedStreams[i]
+            if (group != null && stream != null && announcedSelections[i] != null) {
+                selections[i] = FixedTrackSelection(group, 0)
+                retain[i] = delegateStreams[i] != null && delegateStreamOwners[i] === stream
+            }
+        }
+        delegate.selectTracks(selections, retain, delegateStreams, BooleanArray(slots), positionUs)
+        for (i in 0 until slots) {
+            val owner = announcedStreams[i].takeIf { delegateStreams[i] != null }
+            delegateStreamOwners[i] = owner
+            owner?.inner = delegateStreams[i]
+        }
+    }
+
+    /**
+     * Calls a `ProgressiveMediaPeriod` refuses before preparing are skipped.
      */
     override fun discardBuffer(positionUs: Long, toKeyframe: Boolean) {
-        delegate.discardBuffer(positionUs, toKeyframe)
+        if (!awaitingDelegate) delegate.discardBuffer(positionUs, toKeyframe)
         floor.set(maxOf(floor.get(), positionUs))
         resumeIfCaughtUp()
     }
 
-    override fun readDiscontinuity(): Long = delegate.readDiscontinuity()
+    override fun readDiscontinuity(): Long =
+        if (awaitingDelegate) C.TIME_UNSET else delegate.readDiscontinuity()
 
     override fun seekToUs(positionUs: Long): Long {
         floor.set(positionUs)
         heldAhead = false
+        // Not prepared yet: the delegate's selection is made at the floor
+        // once it prepares.
+        if (awaitingDelegate) return positionUs
         val result = delegate.seekToUs(positionUs)
         // An idle delegate is left reset-but-parked by a seek; a loading one is
         // cancelled and comes back through onContinueLoadingRequested.
@@ -230,7 +337,7 @@ internal class NonGatingSidecarPeriod(
     }
 
     override fun getAdjustedSeekPositionUs(positionUs: Long, seekParameters: SeekParameters): Long =
-        delegate.getAdjustedSeekPositionUs(positionUs, seekParameters)
+        if (awaitingDelegate) positionUs else delegate.getAdjustedSeekPositionUs(positionUs, seekParameters)
 
     /** Not a participant: the audio/video children decide when playback may start. */
     override fun getBufferedPositionUs(): Long = C.TIME_END_OF_SOURCE
@@ -251,5 +358,34 @@ internal class NonGatingSidecarPeriod(
         floor.set(positionUs)
         delegate.reevaluateBuffer(positionUs)
         resumeIfCaughtUp()
+    }
+
+    /**
+     * The player's stream for the announced track. It reads nothing until
+     * the delegate has prepared and been given the selection, then reads the
+     * delegate's stream. Before that, a delegate that failed to prepare
+     * reports its error here, for the text renderer to disable the track.
+     */
+    private inner class AnnouncedSampleStream : SampleStream {
+        var inner: SampleStream? = null
+
+        override fun isReady(): Boolean = inner?.isReady == true
+
+        override fun maybeThrowError() {
+            val stream = inner
+            if (stream != null) {
+                stream.maybeThrowError()
+            } else if (!prepared) {
+                delegate.maybeThrowPrepareError()
+            }
+        }
+
+        override fun readData(
+            formatHolder: FormatHolder,
+            buffer: DecoderInputBuffer,
+            readFlags: Int,
+        ): Int = inner?.readData(formatHolder, buffer, readFlags) ?: C.RESULT_NOTHING_READ
+
+        override fun skipData(positionUs: Long): Int = inner?.skipData(positionUs) ?: 0
     }
 }
