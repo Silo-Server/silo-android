@@ -1,7 +1,5 @@
 package org.siloserver.silo.tv.ui.screens.auth
 
-import android.os.Build
-import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -59,6 +57,7 @@ import org.siloserver.silo.common.pairing.PairingAdvertisement
 import org.siloserver.silo.common.pairing.PairingReceiver
 import org.siloserver.silo.common.pairing.PairingReceiverStatus
 import org.siloserver.silo.common.pairing.TvPairingAdvertiser
+import org.siloserver.silo.common.pairing.TvDeviceName
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeScene
 import org.siloserver.silo.common.ui.marquee.ServerBranding
@@ -233,15 +232,7 @@ private enum class SetupPage { Phone, Address, Pairing }
 @Composable
 private fun rememberTvName(): String {
     val context = LocalContext.current
-    return remember(context) {
-        // DEVICE_NAME arrived in API 25; older TVs show the generic name.
-        val named = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
-            Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
-        } else {
-            null
-        }
-        named?.takeIf { it.isNotBlank() } ?: "Android TV"
-    }
+    return remember(context) { TvDeviceName.current(context) }
 }
 
 /**

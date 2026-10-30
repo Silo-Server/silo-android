@@ -3,7 +3,6 @@ package org.siloserver.silo.common.pairing
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
-import android.os.Build
 import android.util.Log
 import org.siloserver.silo.pairing.PairingProtocol
 import org.siloserver.silo.pairing.PairingReceiverState
@@ -221,8 +220,7 @@ class TvPairingAdvertiser(
     }
 
     private fun currentIdentity(): PairingDeviceIdentity {
-        val name = Build.MODEL?.trim()?.ifBlank { null } ?: "Android TV"
-        return PairingDeviceIdentity(name = name, deviceId = PairingDeviceId.stable(context))
+        return PairingDeviceIdentity(name = TvDeviceName.current(context), deviceId = PairingDeviceId.stable(context))
     }
 }
 

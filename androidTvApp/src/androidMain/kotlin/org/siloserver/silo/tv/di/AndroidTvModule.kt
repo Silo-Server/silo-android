@@ -9,6 +9,7 @@ import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
 import org.siloserver.silo.tv.data.preferences.TvHomeSectionPreferences
 import org.siloserver.silo.tv.data.preferences.TvLibrarySelectionStore
 import org.siloserver.silo.common.network.AndroidDeviceMetadataProvider
+import org.siloserver.silo.common.pairing.TvDeviceName
 import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.common.network.DataStoreCleartextConsentStore
@@ -379,7 +380,7 @@ val androidTvModule = module {
             ),
             identityProvider = {
                 org.siloserver.silo.common.pairing.PairingDeviceIdentity(
-                    name = tvDeviceName(),
+                    name = TvDeviceName.current(androidContext()),
                     deviceId = org.siloserver.silo.common.pairing.PairingDeviceId
                         .stable(androidContext()),
                 )
@@ -415,7 +416,7 @@ val androidTvModule = module {
         RemotePlaybackIdentityManager(
             deviceLoginApi = get(),
             tokenManager = get(),
-            deviceNameProvider = ::tvDeviceName,
+            deviceNameProvider = { TvDeviceName.current(androidContext()) },
             identityProbe = { url -> identityApi.probeIdentity(url) },
             savedUrlsFor = { identity ->
                 RemotePlaybackCandidatePolicy.savedUrls(registry.entries.value, registry.activeServerId.value, identity)
@@ -433,7 +434,7 @@ val androidTvModule = module {
             tokenManager = get(),
             identityTransitions = get(),
             identityManager = get(),
-            deviceNameProvider = ::tvDeviceName,
+            deviceNameProvider = { TvDeviceName.current(androidContext()) },
             deviceIdProvider = {
                 org.siloserver.silo.common.pairing.PairingDeviceId.stable(androidContext())
             },
@@ -464,6 +465,7 @@ val androidTvModule = module {
             serverIdentities = get(),
             sessionExpired = params.getOrNull<Boolean>() ?: false,
             externalSignIn = get(),
+            deviceName = { TvDeviceName.current(androidContext()) },
             // st=login rollout gate (silo-apple PairingProtocol.advertisesSignInTVs):
             // debug builds only until both phone apps that accept login TVs ship.
             advertisesSignIn = BuildConfig.DEBUG,
@@ -695,5 +697,3 @@ val androidTvModule = module {
     viewModel { TvDiagnosticsViewModel(get()) }
 }
 
-private fun tvDeviceName(): String =
-    android.os.Build.MODEL?.trim()?.ifBlank { null } ?: "Android TV"
