@@ -342,7 +342,11 @@ class SequencedPlaybackTest {
     private val adoptedDecision = """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1","sequenced_progress_v1"],"outcome":"playable","session_id":"session-1","playback_plan":{"plan_id":"plan-0001","plan_attempt_key":"plan-key-0001","session_id":"session-1","delivery":"original_http","stream":{"url":"/api/v2/stream/session-1","protocol":"http_progressive"},"decision_reason":"direct","requested_media_file_id":"42","effective_media_file_id":"42","source":{"media_file_id":"42"}}}"""
 
     /** Start and replan bodies as the wire saw them, for [capabilityFeatures] and [decisionFeatures]. */
-    private suspend fun bufferingQualityBodies(capabilityFeatures: String, decisionFeatures: String): Triple<JsonObject, JsonObject, Set<String>> {
+    private suspend fun bufferingQualityBodies(
+        capabilityFeatures: String,
+        decisionFeatures: String,
+        clientFeatures: List<String> = PLAYBACK_START_CLIENT_FEATURES_V3,
+    ): Triple<JsonObject, JsonObject, Set<String>> {
         val identity = Identity(); val bodies = mutableListOf<JsonObject>()
         val wire = adoptedDecision.replace("\"sequenced_progress_v1\"]", "\"sequenced_progress_v1\"$decisionFeatures]")
         val c = client { req -> when (req.url.encodedPath) {
@@ -354,8 +358,9 @@ class SequencedPlaybackTest {
         } }
         try {
             val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, Store()) { stopId }
-            assertIs<ApiResult.Success<*>>(runtime.start(request().copy(learnedLimit = LEARNED_LIMIT_IGNORE)))
+            assertIs<ApiResult.Success<*>>(runtime.start(request().copy(clientFeatures = clientFeatures, learnedLimit = LEARNED_LIMIT_IGNORE)))
             assertIs<ApiResult.Success<*>>(runtime.replan("session-1", replanRequest().copy(
+                clientFeatures = clientFeatures,
                 operation = QUALITY_CHANGE_V3_OPERATION, bandwidthEstimateKbps = 44100,
                 bandwidthEstimateSource = BANDWIDTH_ESTIMATE_SOURCE_OBSERVED_REBUFFER, learnedLimit = LEARNED_LIMIT_CLEAR)))
             return Triple(bodies[0], bodies[1], runtime.serverFeatures("attempt-1"))
@@ -385,6 +390,25 @@ class SequencedPlaybackTest {
         assertNull(lateStart["learned_limit"])
         assertEquals(JsonPrimitive(LEARNED_LIMIT_CLEAR), lateReplan["learned_limit"])
         assertTrue(BUFFERING_QUALITY_V1_FEATURE in lateReplan.features())
+    }
+
+    @Test fun remuxSubtitleRenditionsAreRequestedOnlyFromAServerThatAdvertisesThem() = runTest {
+        val renditions = PLAYBACK_START_CLIENT_FEATURES_V3 + HLS_SUBTITLE_RENDITIONS_V1_FEATURE
+        val remux = ",\"$HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE\""
+
+        val (start, replan, _) = bufferingQualityBodies(remux, decisionFeatures = "", clientFeatures = renditions)
+        assertTrue(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in start.features())
+        assertTrue(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in replan.features())
+
+        val (oldStart, oldReplan, _) = bufferingQualityBodies("", decisionFeatures = "", clientFeatures = renditions)
+        assertFalse(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in oldStart.features())
+        assertFalse(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in oldReplan.features())
+        assertTrue(HLS_SUBTITLE_RENDITIONS_V1_FEATURE in oldStart.features())
+
+        // It extends the transcode feature, so a context without that one (Cast) never asks.
+        val (castStart, castReplan, _) = bufferingQualityBodies(remux, decisionFeatures = "")
+        assertFalse(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in castStart.features())
+        assertFalse(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in castReplan.features())
     }
 
     @Test fun uncertainReplanIsDurableResendsOnlyItsOwnBodyAndCannotRebase() = runTest {

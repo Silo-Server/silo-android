@@ -12,6 +12,7 @@ import org.siloserver.silo.model.playback.PlaybackStartRequestV3
 import org.siloserver.silo.model.playback.PlaybackReplanRequestV3
 import org.siloserver.silo.model.playback.PlaybackRouteEventV3
 import org.siloserver.silo.model.playback.gatedForBufferingQuality
+import org.siloserver.silo.model.playback.gatedForHlsRemuxSubtitleRenditions
 import org.siloserver.silo.network.*
 import org.siloserver.silo.network.apiv2.*
 import org.siloserver.silo.util.wallClockMillis
@@ -339,7 +340,7 @@ class SequencedPlayback(
             guard()
             // The server rejects fields it does not know, so the journaled body is the gated one.
             val features = capability.features.toSet()
-            val gated = request.gatedForBufferingQuality(features)
+            val gated = request.gatedForBufferingQuality(features).gatedForHlsRemuxSubtitleRenditions(features)
             val entry = PlaybackJournalEntry(current.serverId, current.serverUrl, loginId, account.id,
                 request.profileId, capability.installationId, request.playbackAttemptId, gated.v2Body(capability.installationId))
             save(entry)
@@ -440,8 +441,10 @@ class SequencedPlayback(
         val captured = scope(entry) ?: return@withLock authorityChanged()
         if (entry.terminal || entry.stop != null) return@withLock failure("playback_stopping", "Playback is stopping.")
         if (request.playbackAttemptId != entry.attemptId) return@withLock failure("identity_changed", "The playback attempt changed.")
-        // Every replan passes here, so this is where the buffering-quality wire gate holds.
-        val body = request.gatedForBufferingQuality(serverFeatures(entry.attemptId)).v2Body(entry.installationId)
+        // Every replan passes here, so this is where the server-feature wire gates hold.
+        val features = serverFeatures(entry.attemptId)
+        val body = request.gatedForBufferingQuality(features).gatedForHlsRemuxSubtitleRenditions(features)
+            .v2Body(entry.installationId)
         val previous = entry.replans.find { it.body["replan_request_id"] == body["replan_request_id"] }
         if (previous != null) {
             if (previous.body != body) return@withLock failure("replan_conflict", "A replan identity cannot be reused with a different request.")

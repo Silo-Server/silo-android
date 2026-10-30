@@ -49,6 +49,26 @@ class HlsSubtitleRenditionTest {
         assertTrue(subtitlesForVideoMediaMount(rows, session.playbackPlan, SubtitleIdentity.ServerSidecar(0)).isEmpty())
     }
 
+    @Test fun copyRemuxRenditionRowMountsNoSidecar() {
+        val session = plan.copy(
+            delivery = PlaybackDelivery.SERVER_REMUX_HLS,
+            stream = plan.stream.copy(url = "/playback/remux/session/master.m3u8"),
+        ).toSessionResponse("session", "profile", 42)
+        val rows = session.subtitleUrls!!
+        val selected = rows.single { it.index == 0 }
+        assertEquals(rendition, selected.hlsRendition)
+        assertEquals("", selected.url)
+        assertEquals(otherRow.url, rows.single { it.index == 1 }.url)
+        val identity = assertIs<SubtitleIdentity.Embedded>(playbackSubtitleIdentity(selected))
+        assertTrue(subtitlesForVideoMediaMount(rows, session.playbackPlan, identity).isEmpty())
+        assertTrue(subtitlesForVideoMediaMount(rows, session.playbackPlan, SubtitleIdentity.ServerSidecar(0)).isEmpty())
+        // A progressive remux has no playlist to carry it, so the row keeps its sidecar.
+        val progressive = plan.copy(delivery = PlaybackDelivery.SERVER_REMUX_PROGRESSIVE)
+            .toSessionResponse("session", "profile", 42).subtitleUrls!!.single { it.index == 0 }
+        assertNull(progressive.hlsRendition)
+        assertEquals(selectedRow.url, progressive.url)
+    }
+
     @Test fun plansWithoutARenditionKeepTheirSidecar() {
         val sidecarPlan = plan.copy(
             subtitle = plan.subtitle.copy(

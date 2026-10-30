@@ -39,9 +39,21 @@ class HlsSubtitleRenditionProtocolTest {
         assertEquals(rendition, SiloJson.decodeFromString<PlaybackPlanV3>(json).subtitle.hlsRendition)
     }
 
+    @Test fun copyRemuxRenditionIsPlayable() {
+        val remux = plan.copy(delivery = PlaybackDelivery.SERVER_REMUX_HLS)
+        assertIs<PlaybackV3Validation.Playable>(validate(remux))
+        assertIs<PlaybackV3Validation.Playable>(validate(remux.copy(subtitle = remux.subtitle.copy(mode = PlaybackSubtitleModeV3.CONVERT))))
+        assertEquals(
+            listOf(PlaybackDelivery.SERVER_REMUX_HLS, PlaybackDelivery.SERVER_TRANSCODE_HLS),
+            PlaybackDelivery.entries.filter { it.carriesHlsSubtitleRendition() }.sortedBy { it.name },
+        )
+    }
+
     @Test fun malformedRenditionRequestsSidecarRecovery() {
         listOf(
-            plan.copy(delivery = PlaybackDelivery.SERVER_REMUX_HLS),
+            plan.copy(delivery = PlaybackDelivery.ORIGINAL_HTTP),
+            plan.copy(delivery = PlaybackDelivery.SERVER_REMUX_PROGRESSIVE),
+            plan.copy(delivery = PlaybackDelivery.SERVER_REMUX_HLS, stream = plan.stream.copy(protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE)),
             plan.copy(stream = plan.stream.copy(protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE)),
             withSubtitle { copy(mode = PlaybackSubtitleModeV3.BURN_IN) },
             withSubtitle { copy(artifact = PlaybackSubtitleArtifactV3(track.url!!, "text/vtt", "vtt")) },
@@ -66,6 +78,25 @@ class HlsSubtitleRenditionProtocolTest {
         assertFalse(HLS_SUBTITLE_RENDITIONS_V1_FEATURE in playbackClientFeaturesV3(context(listOf("hls", "buffer_reporting"))))
         assertFalse(HLS_SUBTITLE_RENDITIONS_V1_FEATURE in playbackClientFeaturesV3(context(listOf()).copy(deliveries = emptyMap())))
         assertFalse(HLS_SUBTITLE_RENDITIONS_V1_FEATURE in PLAYBACK_START_CLIENT_FEATURES_V3)
+        // The remux extension needs the server's advertisement, so it is never part of the context's own list.
+        assertFalse(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in playbackClientFeaturesV3(context(listOf("hls", NATIVE_HLS_PLAYBACK_V1_FEATURE))))
+    }
+
+    @Test fun remuxRenditionsAreRequestedOnlyWhenTheServerAdvertisesThemAndTheTranscodeFeatureIsListed() {
+        val start = PlaybackStartRequestV3(
+            clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3 + HLS_SUBTITLE_RENDITIONS_V1_FEATURE,
+            fileId = 42, profileId = "profile", playbackAttemptId = "attempt",
+            subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
+            capabilities = ClientCodecCapabilities(),
+            clientPlaybackContext = ClientPlaybackContext(formFactor = "mobile", appVersion = "test"),
+        )
+        val advertised = setOf(HLS_SUBTITLE_RENDITIONS_V1_FEATURE, HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE)
+        val gated = start.gatedForHlsRemuxSubtitleRenditions(advertised)
+        assertEquals(1, gated.clientFeatures.count { it == HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE })
+        assertEquals(gated, gated.gatedForHlsRemuxSubtitleRenditions(advertised))
+        assertFalse(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in gated.gatedForHlsRemuxSubtitleRenditions(setOf(HLS_SUBTITLE_RENDITIONS_V1_FEATURE)).clientFeatures)
+        val cast = start.copy(clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3)
+        assertEquals(cast, cast.gatedForHlsRemuxSubtitleRenditions(advertised))
     }
 
     @Test fun renditionRowIsAnExactServerSelectionNotASidecar() {
