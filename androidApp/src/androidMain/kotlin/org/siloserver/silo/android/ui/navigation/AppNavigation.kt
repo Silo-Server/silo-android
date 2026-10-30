@@ -1607,7 +1607,7 @@ fun AppNavigation(
                 },
                 onSimilarItemClick = { contentId ->
                     if (!navController.navigateToRelatedItemDetail(contentId)) {
-                        // The tapped card handed off its artwork, but no page
+                        // The tapped card handed off its artwork, but no new page
                         // opened to take it, so clear it for the next detail.
                         heroSourceHandoff.pendingKey = null
                         heroSourceHandoff.pendingArtworkUrl = null
@@ -2103,7 +2103,8 @@ private fun NavHostController.isDisplayingExactPlayerRoute(
  * from, one to wherever that title was opened. Picking the starting title
  * again goes back to it instead of opening a second copy.
  *
- * Returns false when the title is already on screen and nothing changed.
+ * Returns whether a new page opened, so the caller can drop what the tapped
+ * card handed to it otherwise.
  */
 private fun NavHostController.navigateToRelatedItemDetail(contentId: String): Boolean {
     val current = currentBackStackEntry
@@ -2116,7 +2117,7 @@ private fun NavHostController.navigateToRelatedItemDetail(contentId: String): Bo
         val start = previousBackStackEntry?.takeIf { it.destination.route == Route.ItemDetail.ROUTE }
         if (start?.displayedDetailContentId() == contentId) {
             popBackStack()
-            return true
+            return false
         }
         navigate(Route.ItemDetail(contentId).route) {
             popUpTo(Route.ItemDetail.ROUTE) { inclusive = true }
