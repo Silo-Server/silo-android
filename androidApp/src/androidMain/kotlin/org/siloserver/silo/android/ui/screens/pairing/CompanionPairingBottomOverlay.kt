@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.screens.pairing
 
 import android.content.pm.PackageManager
+import android.content.res.Resources
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -67,7 +68,6 @@ import androidx.compose.ui.text.font.FontFamily
 import org.siloserver.silo.android.R
 import org.siloserver.silo.model.auth.DeviceCodeFormat
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -695,14 +695,15 @@ private fun PrimaryAction(
 
 /**
  * Whether the card calls this device a tablet rather than a phone, as the
- * iPhone app names its own model. A folding phone stays a phone, open or closed.
+ * iPhone app names its own model. The device's screen decides, not this
+ * window's, so split screen doesn't turn a tablet into a phone. A folding
+ * phone stays a phone, open or closed.
  */
 @Composable
 private fun isTablet(): Boolean {
     val context = LocalContext.current
-    val smallestWidthDp = LocalConfiguration.current.smallestScreenWidthDp
-    return remember(smallestWidthDp) {
-        smallestWidthDp >= TABLET_SMALLEST_WIDTH_DP &&
+    return remember {
+        Resources.getSystem().configuration.smallestScreenWidthDp >= TABLET_SMALLEST_WIDTH_DP &&
             !(
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
                     context.packageManager.hasSystemFeature(PackageManager.FEATURE_SENSOR_HINGE_ANGLE)
