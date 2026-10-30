@@ -82,7 +82,7 @@ class HlsSubtitleRenditionProtocolTest {
         assertFalse(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in playbackClientFeaturesV3(context(listOf("hls", NATIVE_HLS_PLAYBACK_V1_FEATURE))))
     }
 
-    @Test fun remuxRenditionsAreRequestedOnlyWhenTheServerAdvertisesThemAndTheTranscodeFeatureIsListed() {
+    @Test fun renditionExtensionsAreRequestedOnlyWhenTheServerAdvertisesThemAndTheTranscodeFeatureIsListed() {
         val start = PlaybackStartRequestV3(
             clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3 + HLS_SUBTITLE_RENDITIONS_V1_FEATURE,
             fileId = 42, profileId = "profile", playbackAttemptId = "attempt",
@@ -90,13 +90,19 @@ class HlsSubtitleRenditionProtocolTest {
             capabilities = ClientCodecCapabilities(),
             clientPlaybackContext = ClientPlaybackContext(formFactor = "mobile", appVersion = "test"),
         )
-        val advertised = setOf(HLS_SUBTITLE_RENDITIONS_V1_FEATURE, HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE)
-        val gated = start.gatedForHlsRemuxSubtitleRenditions(advertised)
-        assertEquals(1, gated.clientFeatures.count { it == HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE })
-        assertEquals(gated, gated.gatedForHlsRemuxSubtitleRenditions(advertised))
-        assertFalse(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in gated.gatedForHlsRemuxSubtitleRenditions(setOf(HLS_SUBTITLE_RENDITIONS_V1_FEATURE)).clientFeatures)
+        val extensions = listOf(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE, HLS_SUBTITLE_RENDITIONS_ALL_V1_FEATURE)
+        val advertised = setOf(HLS_SUBTITLE_RENDITIONS_V1_FEATURE) + extensions
+        val gated = start.gatedForHlsSubtitleRenditions(advertised)
+        extensions.forEach { feature -> assertEquals(1, gated.clientFeatures.count { it == feature }, feature) }
+        assertEquals(gated, gated.gatedForHlsSubtitleRenditions(advertised))
+        // Each extension follows its own advertisement.
+        val remuxOnly = gated.gatedForHlsSubtitleRenditions(setOf(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE))
+        assertTrue(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in remuxOnly.clientFeatures)
+        assertFalse(HLS_SUBTITLE_RENDITIONS_ALL_V1_FEATURE in remuxOnly.clientFeatures)
+        assertTrue(extensions.none { it in gated.gatedForHlsSubtitleRenditions(setOf(HLS_SUBTITLE_RENDITIONS_V1_FEATURE)).clientFeatures })
+        // Both extend hls_subtitle_renditions_v1, so a context without it (Cast) never asks.
         val cast = start.copy(clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3)
-        assertEquals(cast, cast.gatedForHlsRemuxSubtitleRenditions(advertised))
+        assertEquals(cast, cast.gatedForHlsSubtitleRenditions(advertised))
     }
 
     @Test fun renditionRowIsAnExactServerSelectionNotASidecar() {

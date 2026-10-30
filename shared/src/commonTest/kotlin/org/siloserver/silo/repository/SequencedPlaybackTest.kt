@@ -395,10 +395,16 @@ class SequencedPlaybackTest {
     @Test fun remuxSubtitleRenditionsAreRequestedOnlyFromAServerThatAdvertisesThem() = runTest {
         val renditions = PLAYBACK_START_CLIENT_FEATURES_V3 + HLS_SUBTITLE_RENDITIONS_V1_FEATURE
         val remux = ",\"$HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE\""
+        val all = ",\"$HLS_SUBTITLE_RENDITIONS_ALL_V1_FEATURE\""
 
         val (start, replan, _) = bufferingQualityBodies(remux, decisionFeatures = "", clientFeatures = renditions)
         assertTrue(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in start.features())
         assertTrue(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in replan.features())
+        assertFalse(HLS_SUBTITLE_RENDITIONS_ALL_V1_FEATURE in start.features())
+
+        val (allStart, allReplan, _) = bufferingQualityBodies(remux + all, decisionFeatures = "", clientFeatures = renditions)
+        assertTrue(HLS_SUBTITLE_RENDITIONS_ALL_V1_FEATURE in allStart.features())
+        assertTrue(HLS_SUBTITLE_RENDITIONS_ALL_V1_FEATURE in allReplan.features())
 
         val (oldStart, oldReplan, _) = bufferingQualityBodies("", decisionFeatures = "", clientFeatures = renditions)
         assertFalse(HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE in oldStart.features())
