@@ -19,12 +19,16 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Identity + state the receiver advertises and announces in its [PairingMessage.Hello].
@@ -193,6 +197,9 @@ class PairingReceiver(
 ) {
     private companion object {
         private const val TAG = "PairingReceiver"
+
+        /** Bound on withdrawing an abandoned request (DeviceSignInMachine's). */
+        private val WITHDRAW_TIMEOUT = 5.seconds
     }
 
     private val _status = MutableStateFlow<PairingReceiverStatus>(PairingReceiverStatus.Idle)
@@ -459,11 +466,7 @@ class PairingReceiver(
             if (ad.state == PairingReceiverState.Login) {
                 runLoginAttempt(push, transport, ad)
             } else {
-                try {
-                    runAttempt(push, transport, automatic)
-                } finally {
-                    deviceLogin.reset()
-                }
+                runAttempt(push, transport, automatic)
             }
         }
     }
@@ -560,9 +563,15 @@ class PairingReceiver(
         // per-server state on the URL they sent.
         val pushedUrl = push.serverURL
         val displayName = push.displayName()
+        // The request this attempt opened and hasn't collected, so an
+        // abandoned attempt (the phone cancelled or left, a newer push, the
+        // TV cancelled) withdraws it and its code can't be approved later.
+        var loginUrl: String? = null
+        var openCode: String? = null
         try {
             _status.value = PairingReceiverStatus.Pairing(pushedUrl, displayName)
             val target = resolveLoginTarget(push, displayName)
+            loginUrl = target.url
             val expectedIdentity = authPort.captureExpectedIdentity()
                 ?: throw AttemptFailure(PairingFailureCode.AuthFailed)
             val device = identityProvider()
@@ -571,6 +580,9 @@ class PairingReceiver(
                 var deviceStartedSent = false
                 val observer = launch {
                     deviceLogin.state.collectMessage { state ->
+                        if (state is DeviceLoginRepository.DeviceLoginState.Awaiting) {
+                            openCode = state.session.deviceCode
+                        }
                         if (state is DeviceLoginRepository.DeviceLoginState.Awaiting && !deviceStartedSent) {
                             deviceStartedSent = true
                             val session = state.session
@@ -603,14 +615,43 @@ class PairingReceiver(
             }
 
             val approved = when (terminal) {
-                is DeviceLoginRepository.DeviceLoginState.Approved -> terminal.response
-                is DeviceLoginRepository.DeviceLoginState.Failed -> throw AttemptFailure(terminal.reason.pairingFailure())
+                is DeviceLoginRepository.DeviceLoginState.Approved -> {
+                    openCode = null // collected: nothing left to withdraw
+                    terminal.response
+                }
+                is DeviceLoginRepository.DeviceLoginState.Failed -> {
+                    // Decided on the server: nothing left to withdraw. An
+                    // expiry may be this TV's own deadline, so it still is.
+                    if (terminal.reason.decidedOnServer()) openCode = null
+                    throw AttemptFailure(terminal.reason.pairingFailure())
+                }
                 else -> throw AttemptFailure(PairingFailureCode.AuthFailed)
             }
             persist(approved, target, push, expectedIdentity)
             reportSignedIn(pushedUrl, displayName, transport)
         } catch (failure: AttemptFailure) {
             reportFailure(pushedUrl, displayName, failure.code, transport)
+        } finally {
+            // A cancel can land before the observer saw the request open.
+            val code = openCode
+                ?: (deviceLogin.state.value as? DeviceLoginRepository.DeviceLoginState.Awaiting)?.session?.deviceCode
+            val url = loginUrl
+            // Reset before the withdraw suspends: the repository is shared,
+            // and a newer attempt (after an advertiser restart) must neither
+            // see this request nor be reset by this one finishing late.
+            deviceLogin.reset()
+            if (code != null && url != null) withdraw(url, code)
+        }
+    }
+
+    /**
+     * Withdraw an abandoned request on the server. Runs even when the attempt
+     * was cancelled, bounded so a slow server can't hold up the session.
+     */
+    private suspend fun withdraw(serverUrl: String, deviceCode: String) {
+        Log.i(TAG, "withdrawing an abandoned sign-in request")
+        withContext(NonCancellable) {
+            withTimeoutOrNull(WITHDRAW_TIMEOUT) { deviceLogin.withdraw(serverUrl, deviceCode) }
         }
     }
 
@@ -709,6 +750,16 @@ class PairingReceiver(
 
     private fun PairingMessage.PushServer.displayName(): String =
         serverName?.takeIf { it.isNotBlank() } ?: normalizeEndpointUrl(serverURL)
+}
+
+/** Whether the server already ended the request: denied, used, or withdrawn. */
+private fun DeviceLoginRepository.FailureReason.decidedOnServer(): Boolean = when (this) {
+    DeviceLoginRepository.FailureReason.Denied,
+    DeviceLoginRepository.FailureReason.Consumed,
+    DeviceLoginRepository.FailureReason.Canceled,
+    DeviceLoginRepository.FailureReason.MissingTokens,
+    -> true
+    else -> false
 }
 
 /** The wire code for a failed device-login attempt. */
