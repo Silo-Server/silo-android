@@ -62,6 +62,9 @@ private class FakeAuthPort : PairingAuthPort {
     val verifiedIds = mutableListOf<String?>()
     var failPersist = false
 
+    /** Holds a save until completed; like the real one, it ignores cancellation. */
+    var persistGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
     override suspend fun persistApprovedSession(
         serverUrl: String,
         serverName: String?,
@@ -71,6 +74,7 @@ private class FakeAuthPort : PairingAuthPort {
         expectedIdentity: org.siloserver.silo.network.AccountSessionExpectation?,
         verifiedServerId: String?,
     ) {
+        persistGate?.let { gate -> kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { gate.await() } }
         if (failPersist) throw IllegalStateException("disk full")
         verifiedIds += verifiedServerId
         committedSessions += CommittedSession(
@@ -113,6 +117,13 @@ private class FakeDeviceLogin : DeviceLoginPort {
     override fun reset() {
         resetCalled = true
         _state.value = DeviceLoginRepository.DeviceLoginState.Idle
+    }
+
+    /** Requests withdrawn on the server, as (server URL, device code). */
+    val withdrawn = mutableListOf<Pair<String, String>>()
+
+    override suspend fun withdraw(serverUrl: String, deviceCode: String) {
+        withdrawn += serverUrl to deviceCode
     }
 
     fun approve() {
@@ -647,5 +658,82 @@ class PairingReceiverTest {
         assertEquals(PairingReceiverStatus.Failed("Srv", PairingFailureCode.AuthFailed), recv.status.value)
         transport.deliver(PairingMessage.Done)
         job.join()
+    }
+
+    @Test
+    fun anAbandonedSetupRequestIsWithdrawnButTheSignInScreensIsNot() = runTest {
+        // How the attempt ends -> whether the TV withdraws its request.
+        val cases = listOf(
+            "phone cancels (iPhone Doesn't match)" to true,
+            "phone connection drops" to true,
+            "phone denies the request on the server" to false,
+            "phone cancels a sign-in screen's code" to false,
+        )
+        for ((case, withdraws) in cases) {
+            val transport = FakeTransport()
+            val login = FakeDeviceLogin()
+            val recv = receiver(FakeAuthPort(), login)
+            val signIn = case.contains("sign-in")
+            if (signIn) {
+                recv.advertisement = PairingAdvertisement.login(
+                    serverIdentity = "S1",
+                    serverUrl = "https://srv.test",
+                    source = FakeCodeSource(),
+                )
+            }
+            val job = launch { recv.run(transport) }
+            yield()
+            transport.deliver(PairingMessage.PushServer("https://srv.test", "Srv", serverIdentity = "S1".takeIf { signIn }))
+            settle()
+            recv.allowPendingServer()
+            settle()
+            assertEquals(1, transport.sent.count { it is PairingMessage.DeviceStarted }, case)
+            when {
+                case.contains("drops") -> transport.close()
+                case.contains("denies") -> {
+                    login.fail("denied")
+                    settle()
+                    transport.deliver(PairingMessage.Done)
+                }
+                else -> transport.deliver(PairingMessage.Cancel(reason = "match_declined"))
+            }
+            job.join()
+            val expected = if (withdraws) listOf("https://srv.test" to "dev-code") else emptyList()
+            assertEquals(expected, login.withdrawn, case)
+        }
+    }
+
+    @Test
+    fun aSaveThatOutlivesItsConnectionLeavesTheNextRequestAlone() = runTest {
+        val auth = FakeAuthPort().apply { persistGate = kotlinx.coroutines.CompletableDeferred() }
+        val login = FakeDeviceLogin()
+        val recv = receiver(auth, login)
+        val first = FakeTransport()
+        val firstRun = launch { recv.run(first) }
+        yield()
+        first.deliver(PairingMessage.PushServer("https://srv.test", "Srv"))
+        settle()
+        recv.allowPendingServer()
+        settle()
+        login.approve()
+        settle() // the first attempt is now saving its session
+        firstRun.cancel() // the advertiser restarts
+
+        val second = FakeTransport()
+        val secondRun = launch { recv.run(second) }
+        yield()
+        second.deliver(PairingMessage.PushServer("https://srv.test", "Srv"))
+        settle()
+        recv.allowPendingServer()
+        settle()
+        assertIs<DeviceLoginRepository.DeviceLoginState.Awaiting>(login.state.value)
+
+        auth.persistGate!!.complete(Unit)
+        settle()
+        assertEquals(emptyList(), login.withdrawn, "the newer request stays pending")
+        assertIs<DeviceLoginRepository.DeviceLoginState.Awaiting>(login.state.value)
+        second.deliver(PairingMessage.Done)
+        secondRun.join()
+        firstRun.join()
     }
 }
