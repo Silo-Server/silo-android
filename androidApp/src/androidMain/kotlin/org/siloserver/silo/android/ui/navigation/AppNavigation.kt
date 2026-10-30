@@ -155,6 +155,9 @@ import org.koin.compose.viewmodel.koinViewModel
  */
 private const val DisplayedDetailContentIdKey = "displayedDetailContentId"
 
+/** Set on a detail entry that a title's "More like this" rail opened. */
+private const val OpenedFromRelatedRailKey = "openedFromRelatedRail"
+
 /** The profile picker and its screens, where a prompt has nothing to add. */
 private val ProfilePromptPickerRoutes: Set<String> = setOf(
     Route.ProfileSelection.route,
@@ -1601,8 +1604,8 @@ fun AppNavigation(
                         )
                     }
                 },
-                onItemDetailClick = { contentId ->
-                    navController.navigate(Route.ItemDetail(contentId).route)
+                onSimilarItemClick = { contentId ->
+                    navController.navigateToRelatedItemDetail(contentId)
                 },
                 onEpisodeDetailClick = { contentId ->
                     navController.navigate(Route.ItemDetail(contentId, libraryId = libraryId).route)
@@ -2083,6 +2086,33 @@ private fun NavHostController.isDisplayingExactPlayerRoute(
     if (arguments.getString("libraryId") != null) return false
     val requestedTarget = playerRouteIntentOrNull(route) ?: return false
     return currentPlayerTarget?.let(requestedTarget::matches) == true
+}
+
+/**
+ * Opens a title picked from another title's "More like this" rail. The first
+ * hop from a title pushes, so Back returns to that title. A hop from a page
+ * such a rail opened replaces that page, so however many recommendations
+ * someone follows, two Backs leave the chain: one to the title it started
+ * from, one to wherever that title was opened. Picking the starting title
+ * again goes back to it instead of opening a second copy.
+ */
+private fun NavHostController.navigateToRelatedItemDetail(contentId: String) {
+    val current = currentBackStackEntry
+    if (current?.savedStateHandle?.get<Boolean>(OpenedFromRelatedRailKey) == true) {
+        val start = previousBackStackEntry?.takeIf { it.destination.route == Route.ItemDetail.ROUTE }
+        val startContentId = start?.savedStateHandle?.get<String>(DisplayedDetailContentIdKey)
+            ?: start?.arguments?.getString("contentId")
+        if (startContentId == contentId) {
+            popBackStack()
+            return
+        }
+        navigate(Route.ItemDetail(contentId).route) {
+            popUpTo(Route.ItemDetail.ROUTE) { inclusive = true }
+        }
+    } else {
+        navigate(Route.ItemDetail(contentId).route)
+    }
+    currentBackStackEntry?.takeIf { it !== current }?.savedStateHandle?.set(OpenedFromRelatedRailKey, true)
 }
 
 /**

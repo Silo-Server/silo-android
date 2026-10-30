@@ -154,8 +154,9 @@ fun ItemDetailScreen(
     onBackClick: () -> Unit,
     /** Content, file, whether the viewer picked that file's version, audio, subtitle, resume position. */
     onPlayClick: (String, Int?, Boolean, Int?, Int?, Double?) -> Unit,
-    onItemDetailClick: (String) -> Unit,
-    onEpisodeDetailClick: (String) -> Unit = onItemDetailClick,
+    /** A title picked from the "More like this" rail. */
+    onSimilarItemClick: (String) -> Unit,
+    onEpisodeDetailClick: (String) -> Unit,
     onPersonClick: (String) -> Unit,
     onSeriesClick: (String) -> Unit,
     onSeriesDetailReplace: (String, Int, String?) -> Unit,
@@ -853,7 +854,7 @@ fun ItemDetailScreen(
                             onWatchlistClick = { viewModel.toggleWatchlist() },
                             onToggleWatched = { viewModel.toggleWatched() },
                             onPersonClick = onPersonClick,
-                            onItemDetailClick = onItemDetailClick,
+                            onSimilarItemClick = onSimilarItemClick,
                             onPlayExtra = { extra ->
                                 guardedPlay(extra.contentId, extra.fileId, false, null, null, 0.0)
                             },
@@ -1038,7 +1039,7 @@ fun ItemDetailScreen(
                                 }
                             },
                             onPersonClick = onPersonClick,
-                            onItemDetailClick = onItemDetailClick,
+                            onSimilarItemClick = onSimilarItemClick,
                             onPlayExtra = { extra ->
                                 guardedPlay(extra.contentId, extra.fileId, false, null, null, 0.0)
                             },

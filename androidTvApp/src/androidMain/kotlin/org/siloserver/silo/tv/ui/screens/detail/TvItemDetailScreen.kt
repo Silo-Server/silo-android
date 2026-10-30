@@ -222,6 +222,8 @@ fun TvItemDetailScreen(
     initialEpisodeContentId: String? = null,
     onPlay: (contentId: String, fileId: Int?, versionChosen: Boolean, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
+    /** A title picked from the Related Movies / Recommended Series rail. */
+    onSimilarItemDetail: (contentId: String) -> Unit = onItemDetail,
     onItemDetailReplace: (contentId: String) -> Unit = onItemDetail,
     onSeriesDetailReplace: (
         seriesContentId: String,
@@ -376,6 +378,7 @@ fun TvItemDetailScreen(
             libraryId = libraryId,
             onPlay = guardedOnPlay,
             onItemDetail = onItemDetail,
+            onSimilarItemDetail = onSimilarItemDetail,
             onItemDetailReplace = onItemDetailReplace,
             onSeriesClick = onSeriesClick,
             onSeasonClick = onSeasonClick,
@@ -397,6 +400,7 @@ private fun TvDetailContent(
     libraryId: Int?,
     onPlay: (contentId: String, fileId: Int?, versionChosen: Boolean, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
+    onSimilarItemDetail: (contentId: String) -> Unit,
     onItemDetailReplace: (contentId: String) -> Unit,
     onSeriesClick: (seriesId: String) -> Unit,
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
@@ -1325,7 +1329,7 @@ private fun TvDetailContent(
                                         pendingSimilarGeneration += 1
                                         pendingSimilarContentId = clickedContentId
                                         similarRestoreFocused.value = false
-                                        onItemDetail(clickedContentId)
+                                        onSimilarItemDetail(clickedContentId)
                                     },
                                     restoreFocusIndex = pendingSimilarIndex,
                                     // Only while a return is pending, so ordinary

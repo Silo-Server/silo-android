@@ -83,7 +83,7 @@ fun MovieDetailContent(
     onAudioSelected: (Int?) -> Unit,
     onSubtitleSelected: (Int?) -> Unit,
     onPersonClick: (String) -> Unit,
-    onItemDetailClick: (String) -> Unit,
+    onSimilarItemClick: (String) -> Unit,
     onSeriesClick: (() -> Unit)? = null,
     onPlayExtra: (ItemExtra) -> Unit = {},
     // Episode pages only: the parent series' seasons + the selected
@@ -349,7 +349,7 @@ fun MovieDetailContent(
             item(contentType = "detail-similar") {
                 SimilarRail(
                     items = similarItems,
-                    onSelect = onItemDetailClick,
+                    onSelect = onSimilarItemClick,
                 )
             }
         }

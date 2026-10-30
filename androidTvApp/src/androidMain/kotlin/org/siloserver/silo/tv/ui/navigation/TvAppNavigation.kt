@@ -367,6 +367,36 @@ private fun NavHostController.navigateToWatchParty(
 private fun tvHasLiveWatchParty(repository: WatchTogetherRepository, roomId: String?): Boolean =
     roomId != null && repository.roomSnapshot.value?.roomId == roomId
 
+/** Set on a detail entry that a title's Related Movies or Recommended Series rail opened. */
+private const val OPENED_FROM_RELATED_RAIL_KEY = "openedFromRelatedRail"
+
+/**
+ * Opens a title picked from another title's Related Movies or Recommended
+ * Series rail. The first hop from a title pushes, so Back returns to that
+ * title. A hop from a page such a rail opened replaces that page, so however
+ * many recommendations someone follows, two Backs leave the chain: one to the
+ * title it started from, one to wherever that title was opened. Picking the
+ * starting title again goes back to it instead of opening a second copy.
+ */
+private fun NavHostController.navigateToTvRelatedItemDetail(contentId: String) {
+    val current = currentBackStackEntry
+    if (current?.savedStateHandle?.get<Boolean>(OPENED_FROM_RELATED_RAIL_KEY) == true) {
+        val start = previousBackStackEntry?.takeIf { it.destination.route == TvRoute.ItemDetail.ROUTE }
+        if (start?.arguments?.getString(TvRoute.ItemDetail.ARG_CONTENT_ID) == contentId) {
+            popBackStack()
+            return
+        }
+        // No launchSingleTop: popUpTo removes the current page first, so
+        // single-top would have nothing left to match.
+        navigate(TvRoute.ItemDetail(contentId).route) {
+            popUpTo(TvRoute.ItemDetail.ROUTE) { inclusive = true }
+        }
+    } else {
+        navigateToTvItemDetail(contentId)
+    }
+    currentBackStackEntry?.takeIf { it !== current }?.savedStateHandle?.set(OPENED_FROM_RELATED_RAIL_KEY, true)
+}
+
 /** Pushes item detail, collapsing only an exact repeat of the current page. */
 private fun NavHostController.navigateToTvItemDetail(
     contentId: String,
@@ -1322,6 +1352,10 @@ fun TvAppNavigation(
                     // open them unscoped. The helper pushes different items and
                     // collapses exact repeats, preserving Back restoration.
                     navController.navigateToTvItemDetail(itemContentId)
+                },
+                // Recommendations are global too, so they also open unscoped.
+                onSimilarItemDetail = { itemContentId ->
+                    navController.navigateToTvRelatedItemDetail(itemContentId)
                 },
                 // Season switching replaces the current detail entry so paging
                 // through seasons never stacks pages — one Back returns to the
