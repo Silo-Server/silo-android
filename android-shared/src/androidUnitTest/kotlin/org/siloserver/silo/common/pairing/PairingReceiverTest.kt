@@ -26,8 +26,12 @@ import kotlin.test.assertTrue
 import kotlin.test.assertIs
 import kotlin.time.Duration.Companion.seconds
 
-/** In-memory transport: inbound via a channel, outbound recorded in a list. */
-private class FakeTransport : PairingTransport {
+/**
+ * In-memory transport: inbound via a channel, outbound recorded in a list.
+ * [closeFails]: [close] ends [incoming] with an error, as closing the real
+ * socket does to its blocked read.
+ */
+private class FakeTransport(private val closeFails: Boolean = false) : PairingTransport {
     private val inbound = Channel<PairingMessage>(Channel.UNLIMITED)
     val sent = mutableListOf<PairingMessage>()
     var closed = false
@@ -41,7 +45,7 @@ private class FakeTransport : PairingTransport {
 
     override fun close() {
         closed = true
-        inbound.close()
+        inbound.close(if (closeFails) java.net.SocketException("Socket closed") else null)
     }
 
     /** Push an inbound message from the "phone". */
@@ -680,7 +684,7 @@ class PairingReceiverTest {
 
     @Test
     fun aFinishedAttemptRestartsTheIdleLimitAndKeepsItsFailure() = runTest {
-        val transport = FakeTransport()
+        val transport = FakeTransport(closeFails = true)
         val login = FakeDeviceLogin()
         val recv = receiver(FakeAuthPort(), login)
         val job = launch { recv.run(transport) }

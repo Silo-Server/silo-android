@@ -363,7 +363,9 @@ class PairingReceiver(
                 sessionScope = scope
                 armIdleTimer(transport, scope)
                 transport.incoming.collectMessage { message ->
-                    armIdleTimer(transport, scope)
+                    // An attempt in flight holds the timer; it restarts when
+                    // the attempt ends (or below, when a push replaces it).
+                    if (pushJob?.isActive != true) armIdleTimer(transport, scope)
                     when (message) {
                         is PairingMessage.PushServer ->
                             handlePushServer(message, transport, scope)
@@ -416,9 +418,13 @@ class PairingReceiver(
         } catch (e: CancellationException) {
             throw e
         } catch (_: Throwable) {
-            // Transport / decode error: connection dropped mid-session.
+            // Transport / decode error: connection dropped mid-session (the
+            // idle timer's close ends a real socket this way too). Like a
+            // clean end: a lone failure keeps its explanation on screen.
             if (signedInNames.isNotEmpty()) {
                 _status.value = PairingReceiverStatus.Completed(signedInNames.toList())
+                preserveTerminalStatus = true
+            } else if (_status.value is PairingReceiverStatus.Failed) {
                 preserveTerminalStatus = true
             }
         } finally {
@@ -461,6 +467,7 @@ class PairingReceiver(
         // consented session: the approval covers that one origin.
         val unencrypted = cleartextConsent.requiresApproval(message.serverURL)
         if (!consented || unencrypted) {
+            armIdleTimer(transport, sessionScope)
             pendingPush = message
             _status.value = PairingReceiverStatus.ConsentRequested(
                 message.serverURL,
@@ -525,7 +532,7 @@ class PairingReceiver(
                 synchronized(sessionLock) {
                     // Activity that cancelled this timer first wins; otherwise
                     // expiry wins and a later Allow finds nothing to allow.
-                    if (!isActive) return@launch
+                    if (!isActive || activeTransport !== transport || sessionClosing) return@launch
                     sessionClosing = true
                     pendingPush = null
                 }
