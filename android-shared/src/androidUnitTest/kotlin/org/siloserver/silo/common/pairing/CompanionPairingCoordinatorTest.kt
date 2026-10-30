@@ -11,6 +11,7 @@ import org.siloserver.silo.pairing.PairingEndpoint
 import org.siloserver.silo.pairing.PairingMessage
 import org.siloserver.silo.pairing.PairingReceiverState
 import org.siloserver.silo.pairing.PairingServerStatus
+import javax.net.ssl.SSLException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -72,6 +73,7 @@ private class FakeCompanionApprover(
     private val matchCodes: Map<String, String> = mapOf("ABCD-0001" to "MATCH-1"),
     private val onApprove: suspend (String) -> Unit = {},
     private val account: String? = "alice",
+    private val approveFailure: ApiResult<DeviceLoginDecisionResponse>? = null,
 ) : CompanionDeviceLoginApprover {
     override suspend fun accountName(server: CompanionPairingServer): String? = account
 
@@ -100,6 +102,7 @@ private class FakeCompanionApprover(
         code: String,
     ): ApiResult<DeviceLoginDecisionResponse> {
         approvals += code
+        approveFailure?.let { return it }
         onApprove(code)
         return ApiResult.Success(DeviceLoginDecisionResponse(status = "approved"))
     }
@@ -408,6 +411,33 @@ class CompanionPairingCoordinatorTest {
         val result = pairWithTvThat(onCoordinator = { coordinator[0] = it }) { _, _ -> }
         assertEquals(CompanionPairingResult.Failed("Den TV stopped responding. Try again."), result)
         assertIs<CompanionPairingStatus.Failed>(coordinator[0]?.status?.value)
+    }
+
+    /** The card never shows the server's or the socket's own error text. */
+    @Test
+    fun failuresAreWordedForPeopleNotCopiedFromTheServerOrSocket() = runTest {
+        val server = CompanionPairingServer(id = "srv-1", url = "https://lib.example", displayName = "Home")
+        val approveFailures = mapOf(
+            ApiResult.Error(410, "device_login_expired", "Device login request has expired.") to
+                "The code expired before it was approved. Start again on Living Room.",
+            ApiResult.Error(409, "conflict", "Device login request was canceled on the device") to
+                "This sign-in request was already approved or declined. Start again on Living Room.",
+        )
+        for ((failure, expected) in approveFailures) {
+            val transport = ScriptedPhoneTransport()
+            val coordinator = CompanionPairingCoordinator(
+                serverStore = FakeCompanionServerStore(CompanionPairingServerSnapshot("srv-1", listOf(server))),
+                deviceLoginApprover = FakeCompanionApprover(approveFailure = failure),
+                transportFactory = { transport },
+            )
+            val result = coordinator.pair(target = CompanionPairingTarget("tv-1", "Living Room", "127.0.0.1", 9999))
+            assertEquals(CompanionPairingResult.Failed(expected), result)
+        }
+
+        val lostMidSession = pairWithTvThat { _, _ ->
+            throw SSLException("Cannot write application data on closed/failed TLS connection")
+        }
+        assertEquals(CompanionPairingResult.Failed("Connection to Den TV was lost. Try again."), lostMidSession)
     }
 
     /** Pairs with a TV whose reaction to the pushed server is [onPush]. */
