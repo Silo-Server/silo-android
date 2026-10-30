@@ -5712,6 +5712,10 @@ class TvPlayerViewModel(
         // re-run auto over a longer track list and override a selection the
         // viewer has since made.
         if (autoTextSubtitleSelectionAttempted) return
+        // A replacement load keeps the outgoing media playing until its own
+        // mount applies. Deciding on the outgoing tracks would spend this
+        // load's only attempt on the wrong file.
+        if (transportMountGate.suppressPositionReports) return
         // Wait for the player to report SOMETHING: an empty snapshot carries no
         // selected audio language for the resolver to rank a subtitle against.
         if (audio.isEmpty() && subtitle.isEmpty()) return
