@@ -8,6 +8,14 @@ import org.siloserver.silo.model.notifications.NotificationRow
 import org.siloserver.silo.model.notifications.NotificationSyncResponse
 import org.siloserver.silo.model.notifications.UnreadCountResponse
 import org.siloserver.silo.model.notifications.WsTicketResponse
+import org.siloserver.silo.network.*
+import org.siloserver.silo.network.apiv2.EventSelectionSession
+import org.siloserver.silo.network.apiv2.eventAttemptFrames
+import kotlinx.coroutines.test.*
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.channels.Channel
+import org.siloserver.silo.model.notifications.WsSubscribe
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.NotificationRealtimeEvent
 import org.siloserver.silo.network.api.NotificationsApi
@@ -590,4 +598,45 @@ class NotificationsRepositoryTest {
         // this is the invariant that non-atomic read-modify-write could break.
         assertEquals(recomputeUnread(currentRows), currentUnread)
     }
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test fun foregroundFactoryRecreationRetainsLogicalRecoveryAcrossProfileReset() = runTest {
+        var authority = AuthScopeSnapshot("server", "profile-a", "https://example.invalid", "proof", identityGeneration = 1)
+        var login = "login-a"
+        val tokens = object : TokenManager by TokenManagerImpl(), DurableLoginAuthorityProvider {
+            override suspend fun snapshotCurrentScope() = authority
+            override suspend fun snapshotDurableLoginAuthority() = DurableLoginAuthority(login, authority)
+        }
+        val recovery = RealtimeBackoff({ testScheduler.currentTime }, { 0 })
+        val clients = mutableListOf<NotificationsRealtimeClient>()
+        val entries = mutableListOf<Long>()
+        val repository = NotificationsRepository(FakeNotificationsApi(), tokens = tokens,
+            realtimeRecovery = recovery, realtimeFactory = { retained ->
+                DefaultNotificationsRealtimeClient(frames = { channels, owner -> flow {
+                    // The transport stub captures ownership exactly as the common API does;
+                    // EventSelectionSession and the complete notification client are production code.
+                    owner.bindAdmissionOwner(tokens.realtimeAdmissionOwner(authority)!!)
+                    entries += owner.remainingAdmissionMs()
+                    val incoming = Channel<String>(Channel.UNLIMITED)
+                    eventAttemptFrames(owner, true, channels,
+                        { incoming.receiveCatching().getOrNull() }, { raw ->
+                            val selection = SiloJson.decodeFromString(WsSubscribe.serializer(), raw)
+                            incoming.send("""{"type":"error","code":"realtime_rate_limited","request_id":"${selection.requestId}","retry_after_ms":45000,"work_started":false}""")
+                            incoming.close()
+                        }, { true }, { null }, {}).collect { emit(it) }
+                } }, recovery = retained).also { clients += it }
+            })
+        suspend fun foreground() {
+            val job = repository.connectRealtime(backgroundScope); runCurrent(); job.cancelAndJoin()
+        }
+        foreground()
+        assertEquals(listOf(0L), entries)
+        authority = authority.copy(profileId = "profile-b", profileToken = "profile-b-proof", identityGeneration = 2, credentialEpoch = 2)
+        repository.reset(); foreground()
+        assertEquals(listOf(0L, 45_000L), entries)
+        assertTrue(clients[0] !== clients[1], "The actual repository factory recreates the physical consumer")
+        login = "login-b"; authority = authority.copy(identityGeneration = 3)
+        repository.reset(); foreground()
+        assertEquals(0L, entries.last(), "A different login cannot inherit the previous consumer's floor")
+    }
+
 }

@@ -90,6 +90,16 @@ interface WatchTogetherRealtimeClient {
     suspend fun lobbyReady(ready: Boolean): Boolean = false
     suspend fun ping(clientSentAt: String): Boolean
 
+    /** Correlated work is pinned to a physical connection; default has no delivery claim. */
+    suspend fun sendWorkOnConnection(connectionId: Long, request: RoomWorkRequest): Boolean = false
+
+    /** Revalidate a selected retry after client suspension, immediately before dispatch. */
+    suspend fun sendWorkOnConnection(
+        connectionId: Long,
+        request: RoomWorkRequest,
+        beforeDispatch: suspend () -> Boolean,
+    ): Boolean = beforeDispatch() && sendWorkOnConnection(connectionId, request)
+
     /** Opaque identity of the currently writable physical socket, if any. */
     suspend fun currentConnectionId(): Long? = null
 
@@ -106,6 +116,7 @@ interface WatchTogetherRealtimeClient {
 }
 
 internal interface WatchTogetherSocketConnection {
+    val workAdmission: RealtimeWorkAdmission? get() = null
     suspend fun receiveText(): String?
     suspend fun sendText(text: String)
     suspend fun close()
@@ -153,7 +164,7 @@ private class KtorWatchTogetherSocketConnector(
             }.also { check(it.status.value !in 200..299 || it.status == HttpStatusCode.OK) }
         }) {
             is ApiResult.Success -> minted.data
-            is ApiResult.Error -> throw RoomTicketRefusedException(minted.code, minted.error)
+            is ApiResult.Error -> throw RoomTicketRefusedException(minted.code, minted.error, minted.retryAfterMs)
             is ApiResult.NetworkError -> throw minted.exception
         }
         check(validRoomTicket(ticket)) { "room_ticket_invalid" }
@@ -163,7 +174,7 @@ private class KtorWatchTogetherSocketConnector(
             runCatching { session.close() }
             throw IllegalStateException("room_socket_protocol_rejected")
         }
-        return KtorWatchTogetherSocketConnection(session)
+        return KtorWatchTogetherSocketConnection(session, ticket.workAdmission)
     }
 }
 
@@ -185,12 +196,17 @@ internal fun HttpRequestBuilder.roomSocketUpgrade(scope: AuthScopeSnapshot, room
 
 private class KtorWatchTogetherSocketConnection(
     private val session: DefaultClientWebSocketSession,
+    override val workAdmission: RealtimeWorkAdmission?,
 ) : WatchTogetherSocketConnection {
     override suspend fun receiveText(): String? {
         while (true) {
             val result = session.incoming.receiveCatching()
             result.exceptionOrNull()?.let { throw it }
-            val frame = result.getOrNull() ?: return null
+            val frame = result.getOrNull() ?: run {
+                val reason = withTimeoutOrNull(1_000) { session.closeReason.await() }
+                if (reason?.code?.toInt() == 1008) throw RealtimeSocketClosed(reason.code, reason.message)
+                return null
+            }
             if (frame is Frame.Text) return frame.readText()
         }
     }
@@ -260,6 +276,7 @@ class DefaultWatchTogetherRealtimeClient private constructor(
                 session = connection
                 activeSessionId = ++sessionId
             }
+            connection.workAdmission?.let { send(RoomRealtimeEvent.Admission(it)) }
             send(RoomRealtimeEvent.Opened)
             while (true) {
                 val raw = connection.receiveText() ?: break
@@ -325,6 +342,22 @@ class DefaultWatchTogetherRealtimeClient private constructor(
                 WsTransportRequest(action = action, positionSeconds = positionSeconds, isPaused = isPaused),
             ),
         )
+
+    override suspend fun sendWorkOnConnection(connectionId: Long, request: RoomWorkRequest): Boolean {
+        val writable = sessionMutex.withLock { session.takeIf { activeSessionId == connectionId } } ?: return false
+        if (request.playbackIntent?.isCurrent == false) return false
+        return deliver(writable, request.encode(json))
+    }
+
+    override suspend fun sendWorkOnConnection(
+        connectionId: Long,
+        request: RoomWorkRequest,
+        beforeDispatch: suspend () -> Boolean,
+    ): Boolean {
+        val writable = sessionMutex.withLock { session.takeIf { activeSessionId == connectionId } } ?: return false
+        if (request.playbackIntent?.isCurrent == false || !beforeDispatch()) return false
+        return deliver(writable, request.encode(json))
+    }
 
     override suspend fun currentConnectionId(): Long? =
         sessionMutex.withLock { activeSessionId }
@@ -466,7 +499,15 @@ fun decodeRoomFrame(json: Json, raw: String, receivedAtMs: Long? = null): RoomRe
             serverSentAt = str("server_sent_at"),
             clientReceivedMs = receivedAtMs,
         )
-        WatchTogetherRealtime.TypeError -> RoomRealtimeEvent.Error(code = str("code"), message = str("message"))
+        WatchTogetherRealtime.TypeError -> {
+            val refusal = try { json.decodeFromJsonElement(RealtimeRefusal.serializer(), obj) } catch (_: Exception) {
+                return RoomRealtimeEvent.Malformed(type)
+            }
+            RoomRealtimeEvent.Error(refusal.code, refusal.message, refusal.requestId, refusal.retryAfterMs, refusal.workStarted)
+        }
+        "action_result" -> RoomRealtimeEvent.ActionResult(
+            (obj["request_id"] as? JsonPrimitive)?.content, str("action"), str("status"),
+        )
         else -> null
     }
 }

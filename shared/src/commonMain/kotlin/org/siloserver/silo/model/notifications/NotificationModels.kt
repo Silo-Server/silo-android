@@ -136,6 +136,7 @@ data class WsTicketResponse(
     @SerialName("expires_in") val expiresIn: Int = 0,
     @SerialName("max_connection_seconds") val maxConnectionSeconds: Int = 0,
     val protocol: String = "",
+    @SerialName("work_admission") val workAdmission: org.siloserver.silo.network.RealtimeWorkAdmission? = null,
 )
 
 /** GET/PUT /api/v2/notifications/preferences (full row). */

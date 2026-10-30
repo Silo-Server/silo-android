@@ -49,8 +49,10 @@ class HomeRealtimeCoordinator(
         var backoffMs = INITIAL_BACKOFF_MS
         while (true) {
             var established = false
+            var retryAfterMs: Long? = null
             try {
                 client.connect().collect { event ->
+                    if (event is HomeRealtimeEvent.Closed) retryAfterMs = event.retryAfterMs
                     if (!established && event !is HomeRealtimeEvent.Closed) {
                         backoffMs = INITIAL_BACKOFF_MS
                         established = true
@@ -64,7 +66,7 @@ class HomeRealtimeCoordinator(
             } catch (_: Throwable) {
                 // fall through to backoff-reconnect
             }
-            delay(backoffMs)
+            delay(retryAfterMs ?: backoffMs)
             backoffMs = (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
         }
     }
