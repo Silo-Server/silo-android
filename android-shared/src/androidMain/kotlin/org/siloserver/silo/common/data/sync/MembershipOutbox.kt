@@ -11,7 +11,7 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.apiv2.MembershipV2Api
 
 /**
- * Storage foundation only. Both inline and worker sends must use [send] after activation.
+ * Storage foundation only. Both inline and worker sends must use [send] or [retry] after activation.
  * [authority] is a persisted login identity, NOT a server/profile pair or process counter.
  * The caller must verify its association with [scope] before constructing an Authority.
  * No credentials are persisted in Room. A process owns one instance and calls [recover]
@@ -51,12 +51,15 @@ class MembershipOutbox(
         ))
     }
 
-    suspend fun send(id: Long, authority: Authority): Result {
+    suspend fun send(id: Long, authority: Authority): Result =
+        sendClaimed(id, authority) { claim -> dao.claimMembership(id, authority.key, claim, processOwner) }
+
+    private suspend fun sendClaimed(id: Long, authority: Authority, claimRow: suspend (String) -> Int): Result {
         if (authority.scope != tokens.snapshotCurrentScope()) return Result(Resolution.NOT_CLAIMED)
         val claim = UUID.randomUUID().toString()
         var resolved = false
         try {
-            if (dao.claimMembership(id, authority.key, claim, processOwner) != 1) return Result(Resolution.NOT_CLAIMED)
+            if (claimRow(claim) != 1) return Result(Resolution.NOT_CLAIMED)
             val command = requireNotNull(dao.getById(id))
             require(command.serverId == authority.scope.serverId && command.profileId == authority.scope.profileId.orEmpty())
             val present = command.payloadJson.toBooleanStrict()
@@ -83,7 +86,25 @@ class MembershipOutbox(
         }
     }
 
-    /** Explicit read-only recovery; a mismatch pauses for a new user command, never resends. */
+    /**
+     * Recovers an unconfirmed command. A read that already shows the desired state resolves it;
+     * otherwise the command is resent, but only while it is still the item's latest choice.
+     * PUT and DELETE are idempotent, so resending a write that did land is harmless.
+     */
+    suspend fun retry(id: Long, authority: Authority): Result {
+        val observed = reconcile(id, authority)
+        if (observed.resolution != Resolution.PAUSED) return observed
+        val command = dao.getById(id) ?: return Result(Resolution.NOT_CLAIMED)
+        val previous = command.membershipClaim ?: return Result(Resolution.NOT_CLAIMED)
+        if (dao.getLatestByCoalesceKey(command.coalesceKey)?.id != id) {
+            // A newer choice for the same item replaces this one.
+            dao.resolveMembership(id, previous, authority.key, PAUSED)
+            return Result(Resolution.NOT_CLAIMED)
+        }
+        return sendClaimed(id, authority) { claim -> dao.reclaimMembership(id, authority.key, previous, claim, processOwner) }
+    }
+
+    /** Read-only check; a mismatch pauses the command until [retry] or a new user command. */
     suspend fun reconcile(id: Long, authority: Authority): Result {
         val command = dao.getById(id) ?: return Result(Resolution.NOT_CLAIMED)
         if (command.membershipAuthority != authority.key || command.serverId != authority.scope.serverId ||

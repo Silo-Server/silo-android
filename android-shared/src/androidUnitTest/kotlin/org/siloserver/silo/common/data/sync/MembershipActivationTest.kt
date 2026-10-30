@@ -86,10 +86,11 @@ class MembershipActivationTest {
         }
     }
 
-    @Test fun actualFavoritesAndWatchlistRetainFailedRowsTotalsAndCursorThenReconcileByGet() = runTest {
+    @Test fun actualFavoritesAndWatchlistRetainFailedRowsTotalsAndCursorThenRecoverByGet() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         for (kind in MembershipPort.Kind.entries) {
             val methods = mutableListOf<HttpMethod>()
+            val allowRead = CompletableDeferred<Unit>()
             val client = client(MockEngine { request ->
                 when {
                     request.url.encodedPath == "/api/v2/catalog" -> {
@@ -99,6 +100,7 @@ class MembershipActivationTest {
                     }
                     request.url.encodedPath.startsWith("/api/v2/${if(kind == MembershipPort.Kind.FAVORITE) "favorites" else "watchlist"}/") -> {
                         methods += request.method
+                        if (request.method == HttpMethod.Get) allowRead.await()
                         respond("", if(request.method == HttpMethod.Get) HttpStatusCode.NotFound else HttpStatusCode.ServiceUnavailable)
                     }
                     else -> error("Unexpected legacy transport ${request.url.encodedPath}")
@@ -115,8 +117,7 @@ class MembershipActivationTest {
             assertEquals(2, vm.uiState.value.total); assertTrue(vm.uiState.value.hasMore)
             vm.loadMore(); vm.uiState.first { it.items.size == 2 }
             assertEquals(listOf("item", "second"), vm.uiState.value.items.map { it.contentId })
-            val intent = repository.memberships.actions.value.values.single().intent
-            repository.memberships.checkStatus(intent)
+            allowRead.complete(Unit) // The automatic retry's GET shows the removal landed.
             vm.uiState.first { it.items.size == 1 }
             assertEquals(listOf("second"), vm.uiState.value.items.map { it.contentId })
             assertEquals(1, vm.uiState.value.total)
@@ -125,7 +126,7 @@ class MembershipActivationTest {
         }
     }
 
-    @Test fun oldLoginAckAndRepeatedUncertainChoiceCannotPublishOrReplayWrite() = runTest {
+    @Test fun oldLoginAckCannotPublishAndRepeatedUncertainChoiceJoinsRecovery() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
         var writes = 0; var reads = 0
@@ -136,10 +137,12 @@ class MembershipActivationTest {
         val (repository, _) = repository(client)
         val actions = repository.memberships
         val first = actions.begin("item", MembershipPort.Kind.FAVORITE, false)
-        val pending = async { actions.perform(first) }; entered.await(); release.complete(Unit); pending.await()
+        val pending = async { actions.perform(first) }; entered.await(); release.complete(Unit)
+        actions.actions.first { it.values.single().completion != null }
         val repeated = actions.begin("item", MembershipPort.Kind.FAVORITE, false)
         assertEquals(first, repeated)
-        actions.perform(repeated)
+        actions.perform(repeated) // Already recovering: no second write.
+        pending.await()
         assertEquals(1, writes); assertEquals(1, reads); assertTrue(actions.confirmed(first))
         val old = actions.begin("item", MembershipPort.Kind.WATCHLIST, true)
         barrier.changing(IdentityTransitionKind.ACCOUNT_REPLACE) {
@@ -160,7 +163,8 @@ class MembershipActivationTest {
         val worker = SyncEngine(db, PersonalDataApi(client), EbookReaderApi(org.siloserver.silo.network.apiv2.EbookReaderV2Api(client, tokens, ApiV2Gate.Unrestricted)), { authority.scope }, memberships = port)
         assertFalse(worker.drainOnce().hasPendingWork)
         assertFalse(worker.drainOnce().hasPendingWork)
-        assertEquals(listOf(HttpMethod.Put), methods)
+        // One write, then three automatic retries whose reads fail before any resend.
+        assertEquals(listOf(HttpMethod.Put, HttpMethod.Get, HttpMethod.Get, HttpMethod.Get), methods)
         assertEquals(1, db.dirtyOperationDao().count())
     }
     @Test fun homeFailedFavoriteDoesNotRollbackConcurrentWatchlistOrRefreshedContent() = runTest {
