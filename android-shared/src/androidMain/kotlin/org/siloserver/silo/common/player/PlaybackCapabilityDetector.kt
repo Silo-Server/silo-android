@@ -706,7 +706,8 @@ class PlaybackCapabilityDetector(
             for (info in MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos) {
                 if (info.isEncoder) continue
                 for (type in info.supportedTypes) {
-                    val codec = platformAudioCodecName(type) ?: continue
+                    val codecs = platformAudioCodecNames(type)
+                    if (codecs.isEmpty()) continue
                     // An unreadable limit is recorded as unknown, distinct from
                     // a stated one. The preflight then treats unknown as
                     // permissive (see canDecodeAudio) — a filter that refused
@@ -715,12 +716,14 @@ class PlaybackCapabilityDetector(
                     val maxChannels = runCatching {
                         info.getCapabilitiesForType(type).audioCapabilities?.maxInputChannelCount
                     }.getOrNull()?.takeIf { it > 0 }
-                    decoders += PlatformAudioDecodeCapability(
-                        mimeType = type,
-                        codec = codec,
-                        decoderName = info.name.orEmpty(),
-                        maxInputChannelCount = maxChannels,
-                    )
+                    codecs.mapTo(decoders) { codec ->
+                        PlatformAudioDecodeCapability(
+                            mimeType = type,
+                            codec = codec,
+                            decoderName = info.name.orEmpty(),
+                            maxInputChannelCount = maxChannels,
+                        )
+                    }
                 }
             }
             PlatformSoftwareAudioProbe(decoders = decoders, exact = true)
@@ -1202,6 +1205,23 @@ internal fun platformCanDecodeAudio(
 internal fun supportsEac3JocFallbackDecoding(
     manufacturer: String? = Build.MANUFACTURER,
 ): Boolean = !manufacturer.equals("Google", ignoreCase = false)
+
+/**
+ * Every wire name a platform audio MIME stands for. Most map to one name; the
+ * raw decoder stands for the integer and float PCM layouts Media3's WAV
+ * extractor emits as `audio/raw`, which the server names with ffmpeg's codec
+ * ids. Without them a WAV audiobook has no route: the audio-only planner only
+ * direct-plays a codec the client lists, and this client's progressive
+ * delivery is disabled.
+ */
+internal fun platformAudioCodecNames(mimeType: String): List<String> =
+    if (mimeType.equals(MimeTypes.AUDIO_RAW, ignoreCase = true)) {
+        PCM_CODEC_NAMES
+    } else {
+        listOfNotNull(platformAudioCodecName(mimeType))
+    }
+
+private val PCM_CODEC_NAMES = listOf("pcm_u8", "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le")
 
 /** The wire name this project uses for a platform audio MIME, if it tracks one. */
 internal fun platformAudioCodecName(mimeType: String): String? = when {
