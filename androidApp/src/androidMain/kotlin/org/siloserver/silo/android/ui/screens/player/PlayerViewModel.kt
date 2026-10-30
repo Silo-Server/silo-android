@@ -681,6 +681,7 @@ class PlayerViewModel(
             )
         },
         onCommittedPlaybackFailure = ::recoverFromSubtitleAdoptionFailure,
+        hasMountableTracks = ::hasMountableTextTracks,
     )
 
     /**
@@ -1048,6 +1049,19 @@ class PlayerViewModel(
     internal fun onSubtitleMediaMountApplied(mount: MobileSubtitleMount) {
         _mountedSubtitleMount.value = mount
     }
+
+    /** Whether the last Media3 snapshot for [mount] listed any text track. */
+    private data class MountedTextTracks(val mount: MobileSubtitleMount?, val present: Boolean)
+    private var mountedTextTracks: MountedTextTracks? = null
+
+    internal fun onMountedTextTracksChanged(mount: MobileSubtitleMount?, present: Boolean) {
+        if (!isCurrentSubtitleMount(mount)) return
+        mountedTextTracks = MountedTextTracks(mount, present)
+    }
+
+    /** What the subtitle mount deadline polls; a snapshot from an earlier mount does not count. */
+    private fun hasMountableTextTracks(): Boolean =
+        mountedTextTracks?.takeIf { isCurrentSubtitleMount(it.mount) }?.present == true
 
     private var mediaMountSequence = 0L
     private var awaitingMediaMountGeneration: Long? = null
