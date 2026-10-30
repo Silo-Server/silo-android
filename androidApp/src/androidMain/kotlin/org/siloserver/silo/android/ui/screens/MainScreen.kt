@@ -457,6 +457,9 @@ fun MainScreen(
                             onItemClick = { contentId, libraryId ->
                                 navController.navigate(Route.ItemDetail(contentId, libraryId = libraryId).route)
                             },
+                            onBoxSetClick = { boxSet ->
+                                navController.navigate(Route.BoxSet(boxSet.id, boxSet.libraryId).route)
+                            },
                             onCollectionClick = { collection, libraryId, mediaScope ->
                                 navController.navigate(
                                     libraryCollectionDetailRoute(collection, libraryId, mediaScope),

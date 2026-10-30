@@ -125,6 +125,10 @@ data class TvItemDetailUiState(
     // browse query until the server exposes an item-specific related endpoint.
     val moreLikeThis: List<SectionItem> = emptyList(),
     val moreLikeThisLoading: Boolean = false,
+    /** The box set this movie belongs to, for the box set row after the extras; null for none. */
+    val boxSet: org.siloserver.silo.model.catalog.CatalogBoxSet? = null,
+    /** [boxSet]'s movies in release order, as row cards. */
+    val boxSetItems: List<SectionItem> = emptyList(),
     // --- Next-up episode (series / season detail only) ---
     // The episode the hero Play button targets: an in-progress episode if one
     // exists, else the first unwatched, else the first. Mirrors silo-apple's
@@ -548,6 +552,8 @@ class TvItemDetailViewModel(
     val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
 
     private var similarGeneration = 0L
+    private var boxSetGeneration = 0L
+    private var boxSetJob: Job? = null
 
     /**
      * The series page draws episode stills narrower than a season's or an
@@ -816,7 +822,12 @@ class TvItemDetailViewModel(
         // gave under an older access policy never lands after it.
         detailLoadJob?.cancel()
         quietDetailJob?.cancel()
-        _uiState.update { it.copy(moreLikeThis = emptyList(), moreLikeThisLoading = false) }
+        // A new load shows no box set row until its own read answers.
+        boxSetGeneration++
+        boxSetJob?.cancel()
+        _uiState.update {
+            it.copy(moreLikeThis = emptyList(), moreLikeThisLoading = false, boxSet = null, boxSetItems = emptyList())
+        }
         detailLoadJob = viewModelScope.launch {
             val similarOwner = recommendationRepository?.captureSimilarAuthority()
             trackChoiceOwner = catalogRepository.captureWatchAuthority()
@@ -865,6 +876,7 @@ class TvItemDetailViewModel(
                         }
                     }
                     loadMoreLikeThis(detail, similarOwner, similarRun)
+                    loadBoxSet(detail)
                 }
                 is ApiResult.Error -> _uiState.update {
                     it.copy(
@@ -1083,6 +1095,9 @@ class TvItemDetailViewModel(
                 is ApiResult.NetworkError -> Unit
             }
         }
+        // Watched badges in the box set row follow the player and
+        // a watched change too.
+        loadBoxSet(current)
         val seriesId = when (current.type.lowercase()) {
             "series" -> current.contentId
             "season", "episode" -> current.seriesId?.takeIf { it.isNotBlank() }
@@ -2767,6 +2782,29 @@ class TvItemDetailViewModel(
                     audio = selection.audio,
                     subtitle = selection.subtitle,
                     trackFileId = selection.trackFileId,
+                )
+            }
+        }
+    }
+
+    /**
+     * Reads the box set row for a movie. A failed read keeps the row on
+     * screen, as a quiet refresh keeps the rest of the page.
+     */
+    private fun loadBoxSet(detail: ItemDetail) {
+        val run = ++boxSetGeneration
+        boxSetJob?.cancel()
+        boxSetJob = viewModelScope.launch {
+            val result = org.siloserver.silo.viewmodel.loadMovieBoxSet(catalogRepository, personalDataRepository, detail, libraryId)
+            if (run != boxSetGeneration || _uiState.value.detail?.contentId != detail.contentId) return@launch
+            if (result !is ApiResult.Success) return@launch
+            val boxSet = result.data
+            _uiState.update {
+                it.copy(
+                    boxSet = boxSet?.boxSet,
+                    boxSetItems = boxSet?.items.orEmpty().map { movie ->
+                        movie.toSectionItem().copy(positionSeconds = movie.positionSeconds, durationSeconds = movie.durationSeconds)
+                    },
                 )
             }
         }

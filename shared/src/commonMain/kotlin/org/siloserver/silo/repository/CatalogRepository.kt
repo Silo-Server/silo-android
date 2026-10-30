@@ -2,6 +2,9 @@ package org.siloserver.silo.repository
 
 import org.siloserver.silo.domain.settings.CatalogLanguageRevision
 import org.siloserver.silo.repository.port.CatalogCacheScope
+import org.siloserver.silo.model.catalog.BOX_SET_GROUP
+import org.siloserver.silo.model.catalog.CatalogBoxSet
+import org.siloserver.silo.model.catalog.CatalogBoxSetDetail
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.model.catalog.CatalogQueryGroup
 import org.siloserver.silo.model.catalog.CatalogResponse
@@ -30,6 +33,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+
+/**
+ * How long search holds its first page of titles for the box sets asked for
+ * beside it, once the titles are in. Past it the query shows no box sets.
+ */
+const val BOX_SET_SEARCH_GRACE_MILLIS = 1_500L
 
 class CatalogRepository(
     private val catalogApi: CatalogApi,
@@ -98,6 +107,8 @@ class CatalogRepository(
         yearMax: Int? = null,
         queryGroups: List<CatalogQueryGroup> = emptyList(),
         match: String? = null,
+        /** [BOX_SET_GROUP] for a library with box sets on; the server does the grouping. */
+        group: String? = null,
     ): ApiResult<CatalogResponse> {
         val requestIdentityGeneration = identityTransitions.generation.value
         val sized = if (continuation == null) artwork.sizedRead(ArtworkSurface.BROWSE) else null
@@ -119,10 +130,14 @@ class CatalogRepository(
             yearMax = yearMax,
             queryGroups = queryGroups,
             match = match,
+            group = group,
         )
 
         // Only the unfiltered, first-page default browse of a single library is
         // cached for offline (every request-shaping param must be at its default).
+        // A box set library's default browse is grouped; its grouped page is
+        // kept apart from the plain one, so a library whose box sets turn off
+        // never serves box set cards offline.
         val cacheableLibraryId = libraryId?.takeIf {
             continuation == null &&
                 query == null && genre == null && contentRating == null &&
@@ -135,16 +150,44 @@ class CatalogRepository(
         if (result is ApiResult.Success) {
             if (sized?.cacheable == true) {
                 writeIfIdentityUnchanged(requestIdentityGeneration, artworkFingerprint) { cacheWriteLease ->
-                    catalogCache.cacheDefaultLibraryPage(cacheableLibraryId, result.data, cacheWriteLease)
+                    catalogCache.cacheDefaultLibraryPage(cacheableLibraryId, result.data, cacheWriteLease, group)
                 }
             }
             return result
         }
         if (result.canServeCache()) {
-            catalogCache.getCachedDefaultLibraryPage(cacheableLibraryId)?.let { return ApiResult.Success(it.copy(hasMore = false, continuation = null)) }
+            catalogCache.getCachedDefaultLibraryPage(cacheableLibraryId, group)?.let { return ApiResult.Success(it.copy(hasMore = false, continuation = null)) }
         }
         return result
     }
+
+    /**
+     * A box set's movies in one library, in collection order. Live only: a box
+     * set is library-scoped, like the library-scoped item reads.
+     */
+    suspend fun getBoxSet(id: String, libraryId: String): ApiResult<CatalogBoxSetDetail> {
+        val detail = artwork.request(ArtworkSurface.DETAIL)
+        // The response sizes the hero and the member cards with one poster
+        // width; a compact phone hero draws no poster, so cards set it then.
+        val widths = detail?.copy(poster = detail.poster ?: artwork.request(ArtworkSurface.BROWSE)?.poster)
+        return catalogApi.getBoxSet(id, libraryId, widths)
+    }
+
+    /**
+     * The box set [contentId] belongs to, for the box set row on a movie's
+     * page, or null when it is in none. Live only, like [getBoxSet]; the
+     * member cards are sized as a poster rail.
+     */
+    suspend fun getItemBoxSet(contentId: String, libraryId: Int? = null): ApiResult<CatalogBoxSetDetail?> =
+        catalogApi.getItemBoxSet(contentId, libraryId, artwork.request(ArtworkSurface.SIMILAR))
+
+    /**
+     * Box sets matching a search, best match first. Box sets only come from
+     * libraries with box sets in search, and a failed read answers none, so it
+     * never fails the search it sits beside.
+     */
+    suspend fun searchBoxSets(query: String, limit: Int = 5): List<CatalogBoxSet> =
+        (catalogApi.searchBoxSets(query, limit) as? ApiResult.Success)?.data.orEmpty()
 
     suspend fun searchFacet(scope: org.siloserver.silo.network.apiv2.CatalogFacetScopeV2, facet: String, prefix: String) =
         catalogApi.searchFacet(scope, facet, prefix)

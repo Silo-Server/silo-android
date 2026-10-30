@@ -27,11 +27,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.android.ui.components.BoxSetCard
 import org.siloserver.silo.android.ui.components.MediaCard
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.CatalogBoxSet
 import org.siloserver.silo.model.catalog.Person
 
 /**
@@ -40,6 +42,7 @@ import org.siloserver.silo.model.catalog.Person
  * Supports infinite scroll to load additional results.
  *
  * @param results The search result items to display.
+ * @param boxSets Box sets matching the query, shown first, in the grid's own columns.
  * @param people Cast and crew matching the query, shown above the titles.
  * @param total Total number of matching results.
  * @param isSearching Whether a search request is in flight.
@@ -52,12 +55,14 @@ import org.siloserver.silo.model.catalog.Person
 @Composable
 fun SearchResults(
     results: List<BrowseItem>,
+    boxSets: List<CatalogBoxSet> = emptyList(),
     people: List<Person>,
     total: Int,
     totalExact: Boolean = true,
     isSearching: Boolean,
     hasMore: Boolean,
     onItemClick: (String) -> Unit,
+    onBoxSetClick: (CatalogBoxSet) -> Unit = {},
     onPersonClick: (Long) -> Unit,
     onLoadMore: () -> Unit,
     modifier: Modifier = Modifier,
@@ -101,6 +106,29 @@ fun SearchResults(
         verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),
         modifier = modifier,
     ) {
+        if (boxSets.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }, contentType = "search-section-title") {
+                Text(
+                    text = "Box sets",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp),
+                )
+            }
+            // One collection can come from two libraries; each opens its own.
+            items(
+                items = boxSets,
+                key = { "box-set:${it.libraryId}:${it.id}" },
+                contentType = { "search-box-set" },
+            ) { boxSet ->
+                BoxSetCard(
+                    boxSet = boxSet,
+                    onClick = { onBoxSetClick(boxSet) },
+                    width = gridCellMinWidth,
+                )
+            }
+        }
+
         if (people.isNotEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }, contentType = "search-people") {
                 SearchPeopleRow(
@@ -112,7 +140,7 @@ fun SearchResults(
         }
 
         // Result count header. A people-only answer has no titles to count.
-        if (results.isNotEmpty() || people.isEmpty()) {
+        if (results.isNotEmpty() || (people.isEmpty() && boxSets.isEmpty())) {
             item(span = { GridItemSpan(maxLineSpan) }, contentType = "search-result-count") {
                 Text(
                     text = "${if (totalExact) "" else "About "}$total result${if (total == 1) "" else "s"}",

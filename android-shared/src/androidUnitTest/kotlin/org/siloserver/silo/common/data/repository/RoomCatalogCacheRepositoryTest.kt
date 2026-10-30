@@ -156,6 +156,20 @@ class RoomCatalogCacheRepositoryTest {
     }
 
     @Test
+    fun keepsALibrarysGroupedAndUngroupedDefaultPagesApart() = runTest {
+        val grouped = CatalogResponse(total = 1, items = listOf(BrowseItem(contentId = "box-set", type = "box_set", title = "Saga")))
+        repo.cacheDefaultLibraryPage(7, grouped, CatalogCacheWriteLease(0L), group = "box_set")
+        // Box sets turned off: the grouped page must not answer the plain browse.
+        assertNull(repo.getCachedDefaultLibraryPage(7))
+        assertEquals(grouped, repo.getCachedDefaultLibraryPage(7, group = "box_set"))
+
+        val plain = CatalogResponse(total = 1, items = listOf(BrowseItem(contentId = "c1", type = "movie", title = "A")))
+        repo.cacheDefaultLibraryPage(7, plain)
+        assertEquals(plain, repo.getCachedDefaultLibraryPage(7))
+        assertEquals(grouped, repo.getCachedDefaultLibraryPage(7, group = "box_set"))
+    }
+
+    @Test
     fun roundTripsLibrarySectionsPerLibraryId() = runTest {
         val section = org.siloserver.silo.model.section.ResolvedSection(
             id = "recently_added",

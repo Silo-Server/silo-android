@@ -71,7 +71,10 @@ import org.siloserver.silo.common.diagnostics.DiagnosticsKeyAnomalyLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsKeyCollection
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
+import org.siloserver.silo.android.ui.components.BoxSetCard
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.CatalogBoxSet
+import org.siloserver.silo.model.catalog.boxSetCard
 import org.siloserver.silo.overlays.OverlayDataExtractor
 import org.siloserver.silo.android.ui.navigation.LocalHeroSourceHandoff
 
@@ -94,6 +97,8 @@ fun CatalogGrid(
     isLoadingMore: Boolean,
     hasMore: Boolean,
     onItemClick: (String) -> Unit,
+    /** Opens a box set card of a `group=box_set` browse. */
+    onBoxSetClick: (CatalogBoxSet) -> Unit = {},
     /** Per-card caption overriding the year (e.g. date for date sorts). */
     cardSubtitle: ((BrowseItem) -> String?)? = null,
     onLoadMore: () -> Unit,
@@ -168,6 +173,17 @@ fun CatalogGrid(
                 key = { it.contentId },
                 contentType = { item -> item.type },
             ) { item ->
+                val boxSet = item.boxSetCard
+                if (boxSet != null) {
+                    BoxSetCard(
+                        boxSet = boxSet,
+                        posterUrl = item.posterUrl ?: boxSet.posterUrl,
+                        posterThumbhash = item.posterThumbhash ?: boxSet.posterThumbhash,
+                        onClick = { onBoxSetClick(boxSet) },
+                        width = cardWidth,
+                    )
+                    return@items
+                }
                 val (actions, userState, positionSeconds) = rememberBrowseItemCardActions(item)
                 val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
                 val hideArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, positionSeconds = positionSeconds)

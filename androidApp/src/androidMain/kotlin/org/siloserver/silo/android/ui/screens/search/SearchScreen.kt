@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.search
 
+import org.siloserver.silo.model.catalog.CatalogBoxSet
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,6 +59,7 @@ import org.siloserver.silo.network.AccessChangeSignals
 @Composable
 fun SearchScreen(
     onItemClick: (String) -> Unit,
+    onBoxSetClick: (CatalogBoxSet) -> Unit,
     onPersonClick: (Long) -> Unit,
     onRequestMediaClick: (mediaType: String, tmdbId: Int) -> Unit,
     onRequestLibraryItemClick: (String) -> Unit,
@@ -89,7 +91,10 @@ fun SearchScreen(
         viewerAccessKey,
     ) {
         value = when (val result = personalDataRepository.listUserLibraries()) {
-            is ApiResult.Success -> result.data.mobileMediaModeCapabilities().mobileModes()
+            is ApiResult.Success -> {
+                viewModel.setBoxSetsAvailable(result.data.any { it.boxSetsEnabled })
+                result.data.mobileMediaModeCapabilities().mobileModes()
+            }
             else -> value
         }
     }
@@ -209,7 +214,7 @@ fun SearchScreen(
                 // until both have, so a person-only match does not flash it.
                 // A title error is final and shows at once with its Retry.
                 (state.isSearching || (state.isLoadingPeople && state.error == null)) &&
-                    state.results.isEmpty() && state.people.isEmpty() -> {
+                    state.results.isEmpty() && state.people.isEmpty() && state.boxSets.isEmpty() -> {
                     // Sits in the top part of the content area, matching the
                     // empty state's offset, so it stays visible above the IME
                     // instead of being centred in the space the keyboard covers.
@@ -268,7 +273,8 @@ fun SearchScreen(
                         }
                     }
                 }
-                state.hasSearched && state.results.isEmpty() && state.people.isEmpty() && !state.isSearching -> {
+                state.hasSearched && state.results.isEmpty() && state.people.isEmpty() &&
+                    state.boxSets.isEmpty() && !state.isSearching -> {
                     Column(modifier = Modifier.fillMaxSize()) {
                         Box(modifier = Modifier.weight(1f)) {
                             SearchEmptyState(
@@ -282,12 +288,14 @@ fun SearchScreen(
                 else -> {
                     SearchResults(
                         results = state.results,
+                        boxSets = state.boxSets,
                         people = state.people,
                         total = state.total,
                         totalExact = state.totalExact,
                         isSearching = state.isSearching,
                         hasMore = state.hasMore,
                         onItemClick = onItemClick,
+                        onBoxSetClick = onBoxSetClick,
                         onPersonClick = onPersonClick,
                         onLoadMore = { viewModel.loadMore() },
                         modifier = Modifier.fillMaxSize(),

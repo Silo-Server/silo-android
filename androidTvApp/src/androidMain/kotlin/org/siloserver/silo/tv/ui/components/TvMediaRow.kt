@@ -144,6 +144,12 @@ fun TvMediaRow(
     onExploreAllClick: (() -> Unit)? = null,
     /** Fired when the "Explore all" card gains focus. */
     onExploreAllFocused: (() -> Unit)? = null,
+    /**
+     * Poster rows: outlines this card and labels its bottom corner with [markedBadge], such as
+     * the movie on screen in its box set row.
+     */
+    markedContentId: String? = null,
+    markedBadge: String? = null,
 ) {
     val diagnosticsKeySnapshot = remember(items) {
         DiagnosticsListSnapshot.fromKeys(items.map { it.contentId })
@@ -436,6 +442,9 @@ fun TvMediaRow(
                             overlay = rowItem.overlay,
                             actions = itemActions,
                             onLongClick = itemLongClick,
+                            // Bottom corner: the top corners hold the quality overlays and watched check.
+                            cornerLabel = markedBadge.takeIf { item.contentId == markedContentId },
+                            highlighted = markedContentId != null && item.contentId == markedContentId,
                         )
                     }
                 }

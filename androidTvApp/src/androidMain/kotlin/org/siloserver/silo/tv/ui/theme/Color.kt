@@ -76,3 +76,13 @@ val StageLightSoft = Color.White.copy(alpha = 0.08f)
 val SiloBlue = SiloOnSurface
 val SiloBlueLight = SiloOnSurface
 val SiloBlueDark = SiloSecondaryText
+
+/**
+ * A box set card's sleeves, from the web's `surface-raised`, `surface-hover`
+ * and `border`; the TV theme has no surface tokens that close to them.
+ */
+val BoxSetSleeves = org.siloserver.silo.common.ui.components.BoxSetSleeveColors(
+    back = Color(0xFF28282E),
+    front = Color(0xFF232328),
+    border = Color(0xFF28282E),
+)

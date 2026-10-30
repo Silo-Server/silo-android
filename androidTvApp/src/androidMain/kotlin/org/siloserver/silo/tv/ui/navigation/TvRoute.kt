@@ -92,6 +92,16 @@ sealed class TvRoute(val route: String) {
         }
     }
 
+    /** A movie box set: one TMDB collection's movies in one library. */
+    data class BoxSet(val boxSetId: String, val libraryId: String) :
+        TvRoute("box_set/${boxSetId.routeEncode()}?libraryId=${libraryId.routeEncode()}") {
+        companion object {
+            const val ROUTE = "box_set/{boxSetId}?libraryId={libraryId}"
+            const val ARG_BOX_SET_ID = "boxSetId"
+            const val ARG_LIBRARY_ID = "libraryId"
+        }
+    }
+
     /**
      * Playback route. An optional `fileId` query param lets the detail screen
      * pre-select a specific file version (e.g. 4K vs 1080p). When absent, the
