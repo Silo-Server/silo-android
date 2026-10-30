@@ -486,8 +486,16 @@ fun TvSearchScreen(
     LaunchedEffect(scrollHeaderIntoView) {
         if (scrollHeaderIntoView > 0) searchGridState.animateScrollToItem(0)
     }
+    // The shell's counter stays raised after it is handled, and this effect
+    // relaunches whenever the screen re-enters composition — a Back out of a
+    // result included. Remember which request was handled so a return does not
+    // replay it, scroll to the top and pull focus off the card being restored.
+    var handledBackToSearchFieldRequest by rememberSaveable {
+        mutableIntStateOf(backToSearchFieldRequest)
+    }
     LaunchedEffect(backToSearchFieldRequest) {
-        if (backToSearchFieldRequest <= 0) return@LaunchedEffect
+        if (backToSearchFieldRequest == handledBackToSearchFieldRequest) return@LaunchedEffect
+        handledBackToSearchFieldRequest = backToSearchFieldRequest
         searchGridState.animateScrollToItem(0)
         requestFocusUntilObserved(
             maxAttempts = TvFrameRelocationMaxAttempts,
