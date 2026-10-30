@@ -4,12 +4,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -55,27 +58,31 @@ fun TvAudiobookSpeedPanel(
         modifier = modifier,
         onAcquisitionFailed = onFocusAcquisitionFailed,
     ) {
-        // Fine adjust grabs initial focus so ◀/▶ work immediately.
-        SpeedFineAdjustRow(
-            speed = currentSpeed,
-            onNudge = { delta ->
-                onSelectSpeed((currentSpeed + delta).coerceIn(MIN_SPEED, MAX_SPEED))
-            },
-            focusRequester = focusRequester,
-        )
-        TvAudiobookOverlayRow(
-            label = "Set ${formatSpeedLabel(currentSpeed)} as default",
-            isCurrent = false,
-            onSelect = { onSetDefault(currentSpeed) },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        SPEED_PRESETS.forEach { speed ->
+        // Eleven rows are taller than a 1080p TV panel; scroll so the focused
+        // row (down to 3×) is always brought into view.
+        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            // Fine adjust grabs initial focus so ◀/▶ work immediately.
+            SpeedFineAdjustRow(
+                speed = currentSpeed,
+                onNudge = { delta ->
+                    onSelectSpeed((currentSpeed + delta).coerceIn(MIN_SPEED, MAX_SPEED))
+                },
+                focusRequester = focusRequester,
+            )
             TvAudiobookOverlayRow(
-                label = formatSpeedLabel(speed),
-                isCurrent = abs(speed - currentSpeed) < 0.001f,
-                onSelect = { onSelectSpeed(speed) },
+                label = "Set ${formatSpeedLabel(currentSpeed)} as default",
+                isCurrent = false,
+                onSelect = { onSetDefault(currentSpeed) },
                 modifier = Modifier.fillMaxWidth(),
             )
+            SPEED_PRESETS.forEach { speed ->
+                TvAudiobookOverlayRow(
+                    label = formatSpeedLabel(speed),
+                    isCurrent = abs(speed - currentSpeed) < 0.001f,
+                    onSelect = { onSelectSpeed(speed) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }

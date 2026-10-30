@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.audiobook
 
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.background
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.foundation.focusGroup
@@ -63,7 +64,8 @@ private val TvAudiobookPanelFocusConfirmAttempts =
 /**
  * Right-aligned full-screen overlay panel over a dimming scrim, shared by the
  * chapters / speed / sleep audiobook panels (spec §4.9 — focusable overlays,
- * not phone bottom sheets). Back is handled by the host screen.
+ * not phone bottom sheets). Back is handled by the host screen's BackHandler;
+ * the scaffold only makes sure the key reaches it (see the key handler below).
  *
  * Acquisition lives here rather than in each panel because every panel needs it
  * and the ones that hand-rolled it got it wrong in the same way: a single
@@ -96,6 +98,7 @@ internal fun TvAudiobookOverlayScaffold(
 ) {
     var panelHasFocus by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
+    val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
 
     LaunchedEffect(initialFocus) {
         val result = requestFocusUntilObserved(
@@ -145,6 +148,28 @@ internal fun TvAudiobookOverlayScaffold(
                 .focusGroup()
                 .focusProperties { exit = { FocusRequester.Cancel } }
                 .onFocusChanged { panelHasFocus = it.hasFocus }
+                // Before Android 16, Back reaches the app as a key event, and
+                // Compose turns an unconsumed Back KeyDown into a
+                // FocusDirection.Exit search. When the focused row sits directly
+                // in this column (Speed, for one), the exit = Cancel above
+                // cancels that search, which consumes the KeyDown, so the
+                // activity never tracks the press and the KeyUp never reaches
+                // the host's BackHandler: Back could not close the panel. Take
+                // both halves here and hand the press to the back dispatcher. A
+                // canceled KeyUp is Android 16 forwarding a press its back
+                // callback has already handled, so it must not close a second
+                // layer.
+                .onPreviewKeyEvent { event ->
+                    if (event.key != Key.Back && event.key != Key.Escape) return@onPreviewKeyEvent false
+                    when (event.type) {
+                        KeyEventType.KeyDown -> true
+                        KeyEventType.KeyUp -> {
+                            if (!event.nativeKeyEvent.isCanceled) backDispatcher?.onBackPressed()
+                            true
+                        }
+                        else -> false
+                    }
+                }
                 .padding(horizontal = 18.dp, vertical = 22.dp),
         ) {
             Text(text = title, style = MaterialTheme.typography.titleLarge, color = Color.White)
