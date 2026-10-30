@@ -223,7 +223,7 @@ fun TvItemDetailScreen(
     onPlay: (contentId: String, fileId: Int?, versionChosen: Boolean, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
     /** A title picked from the Related Movies / Recommended Series rail. */
-    onSimilarItemDetail: (contentId: String) -> Unit = onItemDetail,
+    onSimilarItemDetail: (contentId: String) -> Unit,
     onItemDetailReplace: (contentId: String) -> Unit = onItemDetail,
     onSeriesDetailReplace: (
         seriesContentId: String,

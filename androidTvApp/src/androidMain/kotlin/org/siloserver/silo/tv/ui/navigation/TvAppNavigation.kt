@@ -380,6 +380,13 @@ private const val OPENED_FROM_RELATED_RAIL_KEY = "openedFromRelatedRail"
  */
 private fun NavHostController.navigateToTvRelatedItemDetail(contentId: String) {
     val current = currentBackStackEntry
+    // A second Select on the same card, or on the title just returned to,
+    // can arrive while the page is still changing; it opens nothing.
+    if (current?.destination?.route == TvRoute.ItemDetail.ROUTE &&
+        current.arguments?.getString(TvRoute.ItemDetail.ARG_CONTENT_ID) == contentId
+    ) {
+        return
+    }
     if (current?.savedStateHandle?.get<Boolean>(OPENED_FROM_RELATED_RAIL_KEY) == true) {
         val start = previousBackStackEntry?.takeIf { it.destination.route == TvRoute.ItemDetail.ROUTE }
         if (start?.arguments?.getString(TvRoute.ItemDetail.ARG_CONTENT_ID) == contentId) {

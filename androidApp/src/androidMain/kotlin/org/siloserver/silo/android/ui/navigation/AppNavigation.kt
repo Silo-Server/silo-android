@@ -155,6 +155,9 @@ import org.koin.compose.viewmodel.koinViewModel
  */
 private const val DisplayedDetailContentIdKey = "displayedDetailContentId"
 
+private fun NavBackStackEntry.displayedDetailContentId(): String? =
+    savedStateHandle.get<String>(DisplayedDetailContentIdKey) ?: arguments?.getString("contentId")
+
 /** Set on a detail entry that a title's "More like this" rail opened. */
 private const val OpenedFromRelatedRailKey = "openedFromRelatedRail"
 
@@ -532,9 +535,7 @@ fun AppNavigation(
                 shouldLaunchExternalRouteSingleTop(
                     currentDestinationRoute = navController.currentBackStackEntry
                         ?.destination?.route,
-                    currentContentId = navController.currentBackStackEntry
-                        ?.savedStateHandle?.get<String>(DisplayedDetailContentIdKey)
-                        ?: navController.currentBackStackEntry?.arguments?.getString("contentId"),
+                    currentContentId = navController.currentBackStackEntry?.displayedDetailContentId(),
                     targetRoute = route,
                 )
             navController.navigate(route) {
@@ -1605,7 +1606,13 @@ fun AppNavigation(
                     }
                 },
                 onSimilarItemClick = { contentId ->
-                    navController.navigateToRelatedItemDetail(contentId)
+                    if (!navController.navigateToRelatedItemDetail(contentId)) {
+                        // The tapped card handed off its artwork, but no page
+                        // opened to take it, so clear it for the next detail.
+                        heroSourceHandoff.pendingKey = null
+                        heroSourceHandoff.pendingArtworkUrl = null
+                        heroSourceHandoff.pendingArtworkThumbhash = null
+                    }
                 },
                 onEpisodeDetailClick = { contentId ->
                     navController.navigate(Route.ItemDetail(contentId, libraryId = libraryId).route)
@@ -2095,16 +2102,21 @@ private fun NavHostController.isDisplayingExactPlayerRoute(
  * someone follows, two Backs leave the chain: one to the title it started
  * from, one to wherever that title was opened. Picking the starting title
  * again goes back to it instead of opening a second copy.
+ *
+ * Returns false when the title is already on screen and nothing changed.
  */
-private fun NavHostController.navigateToRelatedItemDetail(contentId: String) {
+private fun NavHostController.navigateToRelatedItemDetail(contentId: String): Boolean {
     val current = currentBackStackEntry
+    // A second tap on the same card, or on the title just returned to, can
+    // arrive while the page is still changing; it opens nothing.
+    if (current?.destination?.route == Route.ItemDetail.ROUTE && current.displayedDetailContentId() == contentId) {
+        return false
+    }
     if (current?.savedStateHandle?.get<Boolean>(OpenedFromRelatedRailKey) == true) {
         val start = previousBackStackEntry?.takeIf { it.destination.route == Route.ItemDetail.ROUTE }
-        val startContentId = start?.savedStateHandle?.get<String>(DisplayedDetailContentIdKey)
-            ?: start?.arguments?.getString("contentId")
-        if (startContentId == contentId) {
+        if (start?.displayedDetailContentId() == contentId) {
             popBackStack()
-            return
+            return true
         }
         navigate(Route.ItemDetail(contentId).route) {
             popUpTo(Route.ItemDetail.ROUTE) { inclusive = true }
@@ -2113,6 +2125,7 @@ private fun NavHostController.navigateToRelatedItemDetail(contentId: String) {
         navigate(Route.ItemDetail(contentId).route)
     }
     currentBackStackEntry?.takeIf { it !== current }?.savedStateHandle?.set(OpenedFromRelatedRailKey, true)
+    return true
 }
 
 /**
