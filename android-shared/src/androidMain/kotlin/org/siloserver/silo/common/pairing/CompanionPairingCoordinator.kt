@@ -5,6 +5,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
@@ -13,7 +14,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.siloserver.silo.model.auth.DeviceCodeFormat
@@ -299,13 +305,18 @@ class CompanionPairingCoordinator(
             val connected = transportFactory.connect(target).also { transport = it }
             coroutineScope {
                 val inbox = Channel<PairingMessage>(Channel.UNLIMITED)
+                val peer = PeerState()
                 val collector = launch {
                     try {
-                        connected.incoming.collect { inbox.send(it) }
+                        connected.incoming.collect {
+                            peer.observe(it)
+                            inbox.send(it)
+                        }
                     } finally {
                         // The TV hung up (or the read failed): wake any wait
                         // for its next message instead of sitting on it until
                         // the step's timeout.
+                        peer.ended()
                         inbox.close()
                     }
                 }
@@ -326,6 +337,7 @@ class CompanionPairingCoordinator(
                             server = server,
                             transport = connected,
                             inbox = inbox,
+                            peer = peer,
                             requireUserConfirmation = index == 0,
                             confirmFirstMatch = confirmFirstMatch,
                         )
@@ -412,9 +424,18 @@ class CompanionPairingCoordinator(
         server: CompanionPairingServer,
         transport: PairingTransport,
         inbox: ReceiveChannel<PairingMessage>,
+        peer: PeerState,
         requireUserConfirmation: Boolean,
         confirmFirstMatch: suspend (CompanionPairingApproval) -> Boolean,
     ) {
+        // A signed-out TV keeps its sign-in request after it cancels this
+        // attempt, so once it has ended the attempt (cancelled, hung up, or
+        // reported this server failed) the phone must not approve or deny
+        // that request. Checked before every decision.
+        fun ensureAttemptLive() {
+            peer.interruption(server.url)?.let { throw it.failure(target, server.displayName) }
+        }
+
         _status.value = CompanionPairingStatus.PushingServer(target.name, server.displayName)
         transport.send(
             PairingMessage.PushServer(
@@ -446,6 +467,7 @@ class CompanionPairingCoordinator(
         }
         val serverMatchCode = lookup.matchCode?.takeIf { it.isNotBlank() }
             ?: error("Server did not return a match code for TV setup.")
+        ensureAttemptLive()
         if (serverMatchCode != started.matchCode) {
             deviceLoginApprover.deny(server, started.userCode)
             transport.send(PairingMessage.Cancel(reason = "match-code-mismatch"))
@@ -464,19 +486,39 @@ class CompanionPairingCoordinator(
             // nothing is approved for an account it couldn't name. The TV
             // keeps its code, so "Try again" can pick it up.
             val accountName = deviceLoginApprover.accountName(server)
+            ensureAttemptLive()
             if (accountName.isNullOrBlank()) {
                 transport.send(PairingMessage.Cancel(reason = "account-unknown"))
                 error("Couldn't confirm which account would sign in on ${target.name}. Try again.")
             }
             val shown = approval.copy(accountName = accountName)
             _status.value = CompanionPairingStatus.AwaitingMatchConfirmation(shown)
-            if (!confirmFirstMatch(shown)) {
+            // The TV can end the attempt while the person compares codes:
+            // the card's buttons go away at once instead of acting on it.
+            val confirmed = coroutineScope {
+                val answer = async { confirmFirstMatch(shown) }
+                val interrupted = async { peer.awaitInterruption(server.url) }
+                select<Unit> {
+                    answer.onAwait {}
+                    interrupted.onAwait {}
+                }
+                interrupted.cancel()
+                // Also wins when both finished together; leaving this scope
+                // by throwing cancels the pending answer.
+                ensureAttemptLive()
+                answer.await()
+            }
+            if (!confirmed) {
+                // Leaving the scope above waits for the cancelled watcher,
+                // and the TV can end the attempt in that time.
+                ensureAttemptLive()
                 deviceLoginApprover.deny(server, started.userCode)
                 transport.send(PairingMessage.Cancel(reason = "user-cancelled"))
                 error("Cancelled. Nothing was approved.")
             }
         }
 
+        ensureAttemptLive()
         _status.value = CompanionPairingStatus.Approving(target.name, server.displayName)
         when (val approved = deviceLoginApprover.approve(server, started.userCode)) {
             is ApiResult.Success -> Unit
@@ -534,6 +576,51 @@ class CompanionPairingCoordinator(
 
     /** The TV sent `cancel` while the phone waited for its next message. */
     private class PeerCancelledException(val reason: String) : IllegalStateException("peer cancelled: $reason")
+
+    /** What ended the TV's side of a server's attempt. */
+    private sealed class PeerInterruption {
+        data class Cancelled(val reason: String) : PeerInterruption()
+        data object Closed : PeerInterruption()
+        data class Failed(val error: String?) : PeerInterruption()
+    }
+
+    /**
+     * Records, as the TV's messages arrive, anything that ends an attempt: a
+     * `cancel`, the connection closing, or a failed result for a server. The
+     * inbox only shows these when the phone next reads it, which is after
+     * the decision it would have stopped.
+     */
+    private class PeerState {
+        private val ended = MutableStateFlow<PeerInterruption?>(null)
+        private val failed = MutableStateFlow<Map<String, PeerInterruption.Failed>>(emptyMap())
+
+        fun observe(message: PairingMessage) {
+            when (message) {
+                is PairingMessage.Cancel -> ended.compareAndSet(null, PeerInterruption.Cancelled(message.reason))
+                is PairingMessage.ServerResult -> if (message.status != PairingServerStatus.SignedIn) {
+                    failed.update { it + (message.serverURL to PeerInterruption.Failed(message.error)) }
+                }
+                else -> Unit
+            }
+        }
+
+        fun ended() {
+            ended.compareAndSet(null, PeerInterruption.Closed)
+        }
+
+        /** Why [serverURL]'s attempt is over, or null while it is live. */
+        fun interruption(serverURL: String): PeerInterruption? = ended.value ?: failed.value[serverURL]
+
+        suspend fun awaitInterruption(serverURL: String): PeerInterruption =
+            combine(ended, failed) { end, failures -> end ?: failures[serverURL] }.filterNotNull().first()
+    }
+
+    /** The failure the phone reports for [this], phrased as when it's read from the inbox. */
+    private fun PeerInterruption.failure(target: CompanionPairingTarget, serverName: String): Throwable = when (this) {
+        is PeerInterruption.Cancelled -> PeerCancelledException(reason)
+        PeerInterruption.Closed -> ClosedReceiveChannelException("${target.name} closed the connection")
+        is PeerInterruption.Failed -> IllegalStateException(PairingFailureCode.fromWire(error).phoneMessage(target, serverName))
+    }
 
     private companion object {
         const val TAG = "CompanionPairing"
