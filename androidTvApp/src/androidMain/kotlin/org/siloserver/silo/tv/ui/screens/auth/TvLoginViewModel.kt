@@ -1,11 +1,11 @@
 package org.siloserver.silo.tv.ui.screens.auth
 
-import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.pairing.NearbySignInCodeSource
 import org.siloserver.silo.common.pairing.NearbySignInOutcome
 import org.siloserver.silo.common.pairing.PairingAdvertisement
+import org.siloserver.silo.common.pairing.TvDeviceName
 import org.siloserver.silo.pairing.PairingFailureCode
 import org.siloserver.silo.model.auth.DeviceCodeFormat
 import org.siloserver.silo.model.auth.DeviceLoginPollResponse
@@ -270,6 +270,8 @@ class TvLoginViewModel(
      * release once the iOS and Android phone apps that handle `login` ship.
      */
     private val advertisesSignIn: Boolean = false,
+    /** The name this TV starts a sign-in code with; the browser and phone approvals show it. */
+    private val deviceName: () -> String = { TvDeviceName.FALLBACK },
 ) : ViewModel(), NearbySignInCodeSource {
 
     private val _uiState = MutableStateFlow(TvLoginUiState(sessionExpired = sessionExpired))
@@ -916,7 +918,5 @@ class TvLoginViewModel(
             TvSignInStatus.Failed,
             TvSignInStatus.UpdateRequired,
         )
-
-        fun deviceName(): String = Build.MODEL?.trim()?.takeIf { it.isNotEmpty() } ?: "Android TV"
     }
 }
