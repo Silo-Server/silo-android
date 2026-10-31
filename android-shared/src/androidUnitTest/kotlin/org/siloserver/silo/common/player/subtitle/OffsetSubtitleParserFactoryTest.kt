@@ -43,8 +43,9 @@ class OffsetSubtitleParserFactoryTest {
     fun `a bitmap cue without its own start is shifted from its sample`() {
         assertEquals(0L, startFor(0L).startTimeUs)
         assertEquals(250_000L, startFor(250_000L).startTimeUs)
-        // Advancing clamps at the sample instead of overflowing into a time the cue never reaches.
-        assertEquals(0L, startFor(-100_000L).startTimeUs)
+        // Sample-relative, so a negative offset advances the cue instead of
+        // being clamped away or overflowing into a time the cue never reaches.
+        assertEquals(-100_000L, startFor(-100_000L).startTimeUs)
         assertEquals(C.TIME_UNSET, startFor(-100_000L).durationUs)
     }
 }
