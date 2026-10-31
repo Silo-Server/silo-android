@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import kotlin.test.Test
@@ -22,9 +24,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.test.assertIs
+import kotlin.time.Duration.Companion.seconds
 
-/** In-memory transport: inbound via a channel, outbound recorded in a list. */
-private class FakeTransport : PairingTransport {
+/**
+ * In-memory transport: inbound via a channel, outbound recorded in a list.
+ * [closeFails]: [close] ends [incoming] with an error, as closing the real
+ * socket does to its blocked read.
+ */
+private class FakeTransport(private val closeFails: Boolean = false) : PairingTransport {
     private val inbound = Channel<PairingMessage>(Channel.UNLIMITED)
     val sent = mutableListOf<PairingMessage>()
     var closed = false
@@ -38,7 +45,7 @@ private class FakeTransport : PairingTransport {
 
     override fun close() {
         closed = true
-        inbound.close()
+        inbound.close(if (closeFails) java.net.SocketException("Socket closed") else null)
     }
 
     /** Push an inbound message from the "phone". */
@@ -658,6 +665,52 @@ class PairingReceiverTest {
         assertEquals(PairingReceiverStatus.Failed("Srv", PairingFailureCode.AuthFailed), recv.status.value)
         transport.deliver(PairingMessage.Done)
         job.join()
+    }
+
+    @Test
+    fun aSilentPhoneIsDroppedAfterTheIdleLimit() = runTest {
+        val transport = FakeTransport()
+        val login = FakeDeviceLogin()
+        val recv = receiver(FakeAuthPort(), login)
+        val job = launch { recv.run(transport) }
+        yield()
+        transport.deliver(PairingMessage.PushServer("https://srv.test", "Srv"))
+        settle()
+        assertEquals(PairingReceiverStatus.ConsentRequested("https://srv.test", "Srv"), recv.status.value)
+
+        // The phone's network drops: no frame and no close ever arrive.
+        advanceTimeBy(179.seconds)
+        runCurrent()
+        assertFalse(transport.closed)
+        advanceTimeBy(2.seconds)
+        runCurrent()
+        assertTrue(transport.closed, "a silent phone is dropped at the idle limit")
+        job.join()
+        // Back to waiting, so the advertiser takes the next phone.
+        assertEquals(PairingReceiverStatus.Idle, recv.status.value)
+        // An Allow that lands after the drop starts nothing.
+        recv.allowPendingServer()
+        assertEquals(null, login.beganWith)
+    }
+
+    @Test
+    fun aFinishedAttemptRestartsTheIdleLimitAndKeepsItsFailure() = runTest {
+        val transport = FakeTransport(closeFails = true)
+        val login = FakeDeviceLogin()
+        val recv = receiver(FakeAuthPort(), login)
+        val job = launch { recv.run(transport) }
+        yield()
+        transport.deliver(PairingMessage.PushServer("https://srv.test", "Srv"))
+        settle()
+        recv.allowPendingServer()
+        settle()
+        login.fail("denied")
+        settle()
+        advanceTimeBy(181.seconds)
+        runCurrent()
+        assertTrue(transport.closed, "the idle limit restarts after an attempt")
+        job.join()
+        assertEquals(PairingReceiverStatus.Failed("Srv", PairingFailureCode.Denied), recv.status.value)
     }
 
     @Test
