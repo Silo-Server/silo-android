@@ -279,10 +279,7 @@ fun TvLoginScreen(
         TvFocusLog.d { "login: claim result=$result" }
     }
 
-    val changeServer = {
-        viewModel.onChangeServer()
-        onChangeServer()
-    }
+    val changeServer = { viewModel.onChangeServer(onLeft = onChangeServer) }
     val serverName = state.serverName ?: state.serverHost.orEmpty()
     val network = state.networkProvider?.let { provider ->
         NetworkSignInAction(
