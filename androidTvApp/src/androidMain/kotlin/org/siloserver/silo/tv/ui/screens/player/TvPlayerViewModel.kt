@@ -1490,8 +1490,10 @@ class TvPlayerViewModel(
                 lastAdapterMountIdentity = localMountIdentity
                 // In-stream captions can already be present and need no media
                 // rebuild, so settle them against the current snapshot now.
+                // Off needs no track, and a title without text tracks may
+                // publish no later snapshot to act on.
                 _uiState.value.subtitleTracks
-                    .takeIf(List<PlayerTrackEntry>::isNotEmpty)
+                    .takeIf { it.isNotEmpty() || localMountIdentity == SubtitleIdentity.Off }
                     ?.let(::resolveSubtitleRemountReselection)
             } else if (localMountIdentity == null) {
                 lastAdapterMountGeneration?.let { generation ->
@@ -2481,6 +2483,10 @@ class TvPlayerViewModel(
         beginBufferingQualityLoad()
         manualSubtitleSelectionApplied = false
         launchSubtitleSelectionApplied = false
+        // A replacement load (version switch, retry) decides Auto again for its
+        // own file: an earlier automatic Off left text disabled, and only a new
+        // decision mounts the subtitle this plan commits.
+        autoTextSubtitleSelectionAttempted = false
         autoSelectedSubtitleIdentity = null
         autoSubtitleSelectionInFlight = false
         // Cleared here and raised only if the carried choice actually RESOLVES
@@ -5706,6 +5712,10 @@ class TvPlayerViewModel(
         // re-run auto over a longer track list and override a selection the
         // viewer has since made.
         if (autoTextSubtitleSelectionAttempted) return
+        // A replacement load keeps the outgoing media playing until its own
+        // mount applies. Deciding on the outgoing tracks would spend this
+        // load's only attempt on the wrong file.
+        if (transportMountGate.suppressPositionReports) return
         // Wait for the player to report SOMETHING: an empty snapshot carries no
         // selected audio language for the resolver to rank a subtitle against.
         if (audio.isEmpty() && subtitle.isEmpty()) return
@@ -5765,7 +5775,17 @@ class TvPlayerViewModel(
             // sidecar reached this line and returned, and nobody ever told the
             // player. Ask the adapter to mount its committed identity through
             // the same local-restore path the replan/recovery loads use.
-            if (identity != SubtitleIdentity.Off && !playerHasSelectedSubtitle(identity, state)) {
+            //
+            // Off too: until text is disabled, Media3 turns on a track the file
+            // flags Default, now or on a later snapshot, and
+            // reconcileExternallySelectedSubtitle adopted it over "Auto - None".
+            if (identity == SubtitleIdentity.Off) {
+                SubDiag.log("AUTO committed Off -> restoreCommittedOff")
+                nextSubtitleMountPriority = priority
+                if (!subtitleTransactions.restoreCommittedOff()) {
+                    nextSubtitleMountPriority = TvSubtitleMountPriority.UserTransaction
+                }
+            } else if (!playerHasSelectedSubtitle(identity, state)) {
                 SubDiag.log("AUTO committed-but-unmounted -> restoreCommittedLocalMount $identity")
                 nextSubtitleMountPriority = priority
                 subtitleTransactions.restoreCommittedLocalMount()

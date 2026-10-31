@@ -363,6 +363,40 @@ class TvLoginViewModelDeviceSignInTest {
         assertEquals(0, api.starts)
     }
 
+    // --- Change server (#741) ---
+
+    @Test
+    fun changeServerForgetsAServerThisTvHoldsNoSessionFor() = runTest(dispatcher) {
+        val registry = FakeRegistry()
+        val vm = viewModel(FakeTokens(), FakeDeviceApi(), registry = registry)
+        runCurrent()
+        vm.onChangeServer()
+        runCurrent()
+        assertEquals(listOf("entry-1"), registry.removed, "the next launch must open setup, not this server's sign-in")
+    }
+
+    @Test
+    fun changeServerKeepsAServerThisTvIsSignedInTo() = runTest(dispatcher) {
+        val registry = FakeRegistry()
+        val tokens = FakeTokens().apply { accessToken = "live-session" }
+        val vm = viewModel(tokens, FakeDeviceApi(), registry = registry)
+        runCurrent()
+        vm.onChangeServer()
+        runCurrent()
+        assertEquals(emptyList(), registry.removed)
+    }
+
+    @Test
+    fun changeServerStillLeavesWhenForgettingTheServerFails() = runTest(dispatcher) {
+        val registry = FakeRegistry().apply { removeFailure = IllegalStateException("unable to durably remove server") }
+        val vm = viewModel(FakeTokens(), FakeDeviceApi(), registry = registry)
+        runCurrent()
+        var left = false
+        vm.onChangeServer { left = true }
+        runCurrent()
+        assertTrue(left, "a failed write must not strand the person on a withdrawn code")
+    }
+
     // --- Password gating (external sign-in) ---
 
     @Test
@@ -814,7 +848,12 @@ class TvLoginViewModelDeviceSignInTest {
         override suspend fun rename(serverId: String, userOverrideName: String?) = Unit
         override suspend fun setFetchedName(serverId: String, fetchedName: String?) = Unit
         override suspend fun setProfileId(serverId: String, profileId: String?) = Unit
-        override suspend fun remove(serverId: String) = Unit
+        val removed = mutableListOf<String>()
+        var removeFailure: Throwable? = null
+        override suspend fun remove(serverId: String) {
+            removeFailure?.let { throw it }
+            removed += serverId
+        }
         override suspend fun signOut(serverId: String) = Unit
         override suspend fun switchTo(serverId: String) = Unit
         override suspend fun touchActive() = Unit

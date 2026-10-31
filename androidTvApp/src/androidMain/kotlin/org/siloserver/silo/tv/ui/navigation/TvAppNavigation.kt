@@ -3,6 +3,7 @@ package org.siloserver.silo.tv.ui.navigation
 import androidx.compose.foundation.layout.fillMaxWidth
 import android.net.Uri
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -30,7 +31,6 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.network.TokenManager
-import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfilePromptAction
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.ProfileVerificationRecovery
@@ -76,11 +76,14 @@ import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.tv.watchnext.WatchNextSeeder
 import org.siloserver.silo.tv.cast.RemotePlaybackIdentityManager
+import org.siloserver.silo.tv.auth.TvSignOut
+import org.siloserver.silo.tv.auth.TvSignOutResult
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import org.siloserver.silo.tv.profiles.TvActiveProfileReset
 import org.siloserver.silo.common.profiles.ProfileAwayTracker
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.tv.ui.screens.cast.TvSiloCastStandbyView
@@ -507,7 +510,6 @@ fun TvAppNavigation(
     // the entry it produced. Only used to collapse an immediate repeat.
     val lastPlaybackNavigation = remember { mutableStateOf<TvPlaybackNavigation?>(null) }
     val tokenManager: TokenManager = koinInject()
-    val authRepository: AuthRepository = koinInject()
     val profileRepository: ProfileRepository = koinInject()
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
     val cardPresentationStore: CardPresentationStore = koinInject()
@@ -527,6 +529,7 @@ fun TvAppNavigation(
     val profileLaunchPreferences: ProfileLaunchPreferences = koinInject()
     val activeProfileReset: TvActiveProfileReset = koinInject()
     val remotePlaybackIdentityManager: RemotePlaybackIdentityManager = koinInject()
+    val tvSignOut: TvSignOut = koinInject()
     val playbackLifecycle: PlaybackSessionLifecycle = koinInject()
 
     // Android can restore Silo's previous back stack over the start route
@@ -896,6 +899,56 @@ fun TvAppNavigation(
             watchNextSeeder.updateImageProtection(launcherSpoilerState.prefs.hideImages)
         }
     }
+    // Where the TV goes once the active server changed or was signed out of:
+    // one landing for Manage Servers and Sign Out, so both do the same cleanup.
+    fun navigateToServerDestination(destination: TvServerSwitchDestination) {
+        val target = when (destination) {
+            TvServerSwitchDestination.Home -> TvRoute.Main.route
+            TvServerSwitchDestination.ProfileSelection -> TvRoute.ProfileSelection.route
+            TvServerSwitchDestination.Login -> TvRoute.Login().route
+            TvServerSwitchDestination.ServerSetup -> TvRoute.ServerSetup.route
+        }
+        // Landing straight on Home means the target server is already
+        // authenticated, so no Login/ProfileSelection callback fires to
+        // refresh state. Do the hygiene here: drop the previous
+        // server's per-profile caches and re-seed Watch Next so its
+        // launcher tiles and cached prefs don't ghost. The
+        // Login/ProfileSelection destinations re-seed via their own
+        // callbacks — only the already-authed path needs this.
+        if (destination == TvServerSwitchDestination.Home) {
+            libraryPlaybackPrefsStore.clear()
+            overlayPrefsStore.clear()
+            cardPresentationStore.clear()
+            // Not seekIntervalStore.clear() or episodeSpoilerStore.clear():
+            // their identity flow already reset them for the new server
+            // and is hydrating; clearing would drop that.
+            watchNextSeeder.clear()
+            watchNextSeeder.seedNow()
+            watchNextSeeder.enqueuePeriodic()
+        }
+        navController.navigate(target) {
+            popUpTo(0) { inclusive = true }
+            launchSingleTop = true
+        }
+    }
+
+    // A sign-out runs in TvSignOut, past this screen's lifetime; its outcome
+    // is handled here once, including after the Activity is recreated.
+    val signOutContext = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(tvSignOut) {
+        tvSignOut.result.filterNotNull().collect { result ->
+            tvSignOut.consume(result)
+            when (result) {
+                is TvSignOutResult.SignedOut -> {
+                    result.notice?.let { Toast.makeText(signOutContext, it, Toast.LENGTH_LONG).show() }
+                    navigateToServerDestination(result.destination)
+                }
+                is TvSignOutResult.Refused ->
+                    Toast.makeText(signOutContext, result.message, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     ProvideTitleArt(store = titleArtStore, sessionKey = overlaySessionKey) {
     Box(modifier = Modifier.fillMaxSize()) {
     // The first-run screens draw over one shared brand-light backdrop that
@@ -974,39 +1027,7 @@ fun TvAppNavigation(
                 onAddServer = {
                     navController.navigate(TvRoute.ServerSetup.route)
                 },
-                onSwitched = { destination ->
-                    // Land on the deepest route the new server's stored
-                    // credentials support — keeps the user signed in across
-                    // a server switch when tokens already exist for the target.
-                    val target = when (destination) {
-                        TvServerSwitchDestination.Home -> TvRoute.Main.route
-                        TvServerSwitchDestination.ProfileSelection ->
-                            TvRoute.ProfileSelection.route
-                        TvServerSwitchDestination.Login -> TvRoute.Login().route
-                    }
-                    // Landing straight on Home means the target server is already
-                    // authenticated, so no Login/ProfileSelection callback fires to
-                    // refresh state. Do the hygiene here: drop the previous
-                    // server's per-profile caches and re-seed Watch Next so its
-                    // launcher tiles and cached prefs don't ghost. The
-                    // Login/ProfileSelection destinations re-seed via their own
-                    // callbacks — only the already-authed path needs this.
-                    if (destination == TvServerSwitchDestination.Home) {
-                        libraryPlaybackPrefsStore.clear()
-                        overlayPrefsStore.clear()
-                        cardPresentationStore.clear()
-                        // Not seekIntervalStore.clear() or episodeSpoilerStore.clear():
-                        // their identity flow already reset them for the new server
-                        // and is hydrating; clearing would drop that.
-                        watchNextSeeder.clear()
-                        watchNextSeeder.seedNow()
-                        watchNextSeeder.enqueuePeriodic()
-                    }
-                    navController.navigate(target) {
-                        popUpTo(0) { inclusive = true }
-                        launchSingleTop = true
-                    }
-                },
+                onSwitched = ::navigateToServerDestination,
                 onBack = { navController.popBackStack() },
             )
         }
@@ -1089,16 +1110,7 @@ fun TvAppNavigation(
                 onChangeServer = {
                     navController.navigate(TvRoute.ServerList.route) { launchSingleTop = true }
                 },
-                onSignOut = {
-                    scope.launch {
-                        authRepository.logout()
-                        watchNextSeeder.clear()
-                        navController.navigate(TvRoute.ServerSetup.route) {
-                            popUpTo(0) { inclusive = true }
-                            launchSingleTop = true
-                        }
-                    }
-                },
+                onSignOut = { removeServer -> tvSignOut.start(removeServer) },
             )
         }
 
@@ -1173,39 +1185,7 @@ fun TvAppNavigation(
                         launchSingleTop = true
                     }
                 },
-                onSignedOut = {
-                    scope.launch {
-                        // Full sign-out teardown — parity with the Settings and
-                        // ProfileSelection sign-out paths. Clearing Watch Next
-                        // alone left the tokens, profileId, and server session
-                        // alive, so a relaunch resumed the previous user. Drop
-                        // credentials and per-profile caches before navigating.
-                        // The Settings sign-out path may have already logged out
-                        // server-side and cleared tokens — only hit the network
-                        // when a session still exists so we don't 401 a second
-                        // logout. The local clears below are idempotent and run
-                        // unconditionally (the Settings path doesn't clear
-                        // Watch Next, so that teardown must still happen here).
-                        if (!tokenManager.getAccessToken().isNullOrBlank()) {
-                            authRepository.logout()
-                        }
-                        profileRepository.clearProfile()
-                        tokenManager.clearTokens()
-                        libraryPlaybackPrefsStore.clear()
-                        overlayPrefsStore.clear()
-                        cardPresentationStore.clear()
-                        seekIntervalStore.clear()
-                        episodeSpoilerStore.clear()
-                        titleArtStore.clear()
-                        // Drop our Watch Next rows + cancel the periodic refresh so
-                        // the launcher doesn't keep showing the signed-out user's
-                        // progress.
-                        watchNextSeeder.clear()
-                        navController.navigate(TvRoute.ServerSetup.route) {
-                            popUpTo(TvRoute.Main.route) { inclusive = true }
-                        }
-                    }
-                },
+                onSignOut = { removeServer -> tvSignOut.start(removeServer) },
                 onSwitchProfile = {
                     scope.launch {
                         // Leave the main shell before clearing profile-scoped

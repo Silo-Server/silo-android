@@ -27,6 +27,7 @@ import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.signedInEntries
 import org.siloserver.silo.network.api.ServerIdentityApi
+import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.pairing.PairingEndpoint
 import org.siloserver.silo.pairing.PairingFailureCode
 import org.siloserver.silo.pairing.PairingMessage
@@ -289,6 +290,7 @@ class CompanionPairingCoordinator(
         var signedInCount = 0
         val signedInNames = mutableListOf<String>()
         var transport: PairingTransport? = null
+        var reachedTv = false
         try {
             _status.value = CompanionPairingStatus.Connecting(target.name)
             Log.i(
@@ -296,7 +298,10 @@ class CompanionPairingCoordinator(
                 "Connecting to ${target.name} at ${target.host}:${target.port} " +
                     "(session=${target.sessionId ?: "unknown"})",
             )
-            val connected = transportFactory.connect(target).also { transport = it }
+            val connected = transportFactory.connect(target).also {
+                transport = it
+                reachedTv = true
+            }
             coroutineScope {
                 val inbox = Channel<PairingMessage>(Channel.UNLIMITED)
                 val collector = launch {
@@ -373,7 +378,7 @@ class CompanionPairingCoordinator(
                     "${target.name} cancelled."
                 }
                 is ClosedReceiveChannelException -> "${target.name} closed the connection. Try again."
-                else -> t.userFacingPairingMessage(target)
+                else -> t.userFacingPairingMessage(target, reachedTv)
             }
             _status.value = CompanionPairingStatus.Failed(target.name, message)
             return CompanionPairingResult.Failed(message)
@@ -400,11 +405,19 @@ class CompanionPairingCoordinator(
         }
     }
 
-    private fun Throwable.userFacingPairingMessage(target: CompanionPairingTarget): String {
-        val detail = generateSequence(this) { it.cause }
-            .mapNotNull { it.message?.takeIf(String::isNotBlank) }
-            .firstOrNull()
-        return detail ?: "Couldn't connect to the ${target.deviceNoun}. Keep its setup screen open and try again."
+    /**
+     * The card's text for a failure without its own case. This coordinator's
+     * own failures (`error(...)`) are already written for the card; anything
+     * else, such as a TLS or socket error, says what happened rather than
+     * showing its raw text.
+     */
+    private fun Throwable.userFacingPairingMessage(target: CompanionPairingTarget, reachedTv: Boolean): String {
+        val own = message?.takeIf { this is IllegalStateException && this !is SiloAuthUnavailableException && it.isNotBlank() }
+        return when {
+            own != null -> own
+            reachedTv -> "Connection to ${target.name} was lost. Try again."
+            else -> "Couldn't connect to the ${target.deviceNoun}. Keep its setup screen open and try again."
+        }
     }
 
     private suspend fun pushAndApproveServer(
@@ -441,8 +454,8 @@ class CompanionPairingCoordinator(
         }
         val lookup = when (val result = deviceLoginApprover.lookup(server, started.userCode)) {
             is ApiResult.Success -> result.data
-            is ApiResult.Error -> error(approverFailure(result, "Unable to verify TV setup code."))
-            is ApiResult.NetworkError -> error(approverFailure(result, "Unable to verify TV setup code."))
+            is ApiResult.Error -> error(approverFailure(result, target, server, "${server.displayName} couldn't check the code. Try again."))
+            is ApiResult.NetworkError -> error(approverFailure(result, server))
         }
         val serverMatchCode = lookup.matchCode?.takeIf { it.isNotBlank() }
             ?: error("Server did not return a match code for TV setup.")
@@ -480,8 +493,8 @@ class CompanionPairingCoordinator(
         _status.value = CompanionPairingStatus.Approving(target.name, server.displayName)
         when (val approved = deviceLoginApprover.approve(server, started.userCode)) {
             is ApiResult.Success -> Unit
-            is ApiResult.Error -> error(approverFailure(approved, "Unable to approve TV setup."))
-            is ApiResult.NetworkError -> error(approverFailure(approved, "Unable to approve TV setup."))
+            is ApiResult.Error -> error(approverFailure(approved, target, server, "${server.displayName} couldn't approve the sign-in. Try again."))
+            is ApiResult.NetworkError -> error(approverFailure(approved, server))
         }
         val result = inbox.receiveFirst<PairingMessage.ServerResult>(
             timeoutMs = SERVER_RESULT_TIMEOUT_MS,
@@ -547,23 +560,36 @@ class CompanionPairingCoordinator(
 }
 
 /**
- * The phone's text for a lookup or approval that failed. The sign-in
+ * The phone's text for a code lookup or approval that failed, worded like
+ * the iPhone app's. The server's own error text is never shown. The sign-in
  * provider being unreachable (503 `provider_unavailable` on the approver's
- * refresh or answer) keeps this phone's session, so it says so instead of a
- * raw reason.
+ * refresh or answer) keeps this phone's session, so it says so.
  */
-internal fun approverFailure(result: ApiResult.Error, fallback: String): String =
-    if (result.code == 503 && result.error == SiloAuthUnavailableException.PROVIDER_UNAVAILABLE_PROBLEM) {
+internal fun approverFailure(
+    result: ApiResult.Error,
+    target: CompanionPairingTarget,
+    server: CompanionPairingServer,
+    otherwise: String,
+): String = when {
+    // The app's own update notice (no request was sent): retrying can't help.
+    result.code == 0 && result.error == ApiV2Gate.UPDATE_REQUIRED_ERROR -> result.message
+    result.code == 503 && result.error == SiloAuthUnavailableException.PROVIDER_UNAVAILABLE_PROBLEM ->
         APPROVER_PROVIDER_UNAVAILABLE
-    } else {
-        result.message.ifBlank { fallback }
-    }
-
-internal fun approverFailure(result: ApiResult.NetworkError, fallback: String): String = when {
-    SiloAuthUnavailableException.isProviderUnavailable(result.exception) -> APPROVER_PROVIDER_UNAVAILABLE
-    result.exception is SiloAuthUnavailableException -> fallback
-    else -> result.exception.message ?: fallback
+    result.code == 401 -> signInAgain(server)
+    // Approved, denied, or cancelled on the TV already.
+    result.code == 409 -> "This sign-in request was already approved or declined. Start again on ${target.name}."
+    result.code == 404 || result.code == 410 -> "The code expired before it was approved. Start again on ${target.name}."
+    else -> otherwise
 }
+
+internal fun approverFailure(result: ApiResult.NetworkError, server: CompanionPairingServer): String = when {
+    SiloAuthUnavailableException.isProviderUnavailable(result.exception) -> APPROVER_PROVIDER_UNAVAILABLE
+    result.exception is SiloAuthUnavailableException -> signInAgain(server)
+    else -> "Couldn't reach ${server.displayName}. Check your connection and try again."
+}
+
+private fun signInAgain(server: CompanionPairingServer) =
+    "Sign in to ${server.displayName} on this device again, then try again."
 
 internal const val APPROVER_PROVIDER_UNAVAILABLE =
     "The sign-in provider can't be reached right now, so this device couldn't confirm your account. " +
