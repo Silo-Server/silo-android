@@ -1,6 +1,5 @@
 package org.siloserver.silo.tv.ui.screens.settings
 
-import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.settings.CardPresentationSource
@@ -9,8 +8,6 @@ import org.siloserver.silo.common.settings.CardPresentationSupport
 import org.siloserver.silo.common.settings.EpisodeSpoilerSetting
 import org.siloserver.silo.common.settings.EpisodeSpoilerState
 import org.siloserver.silo.common.settings.EpisodeSpoilerStore
-import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
-import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.SeekIntervalSettingsModel
 import org.siloserver.silo.common.settings.SeekIntervalStore
@@ -60,7 +57,7 @@ import kotlinx.coroutines.launch
  * [LegacyTvPrefsMigration] runs the one-time legacy `tv_prefs` → server
  * import on first boot (sentinel-gated no-op after).
  *
- * Sign-out and switch-profile operations emit a one-shot [NavAction]
+ * Switch-profile emits a one-shot [NavAction]
  * signal that the screen collects and forwards to the top-level NavHost.
  */
 class TvSettingsViewModel(
@@ -69,8 +66,6 @@ class TvSettingsViewModel(
     private val tokenManager: TokenManager,
     private val serverRegistry: ServerRegistry,
     private val playerSettingsStore: PlayerSettingsStore,
-    private val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore,
-    private val overlayPrefsStore: OverlayPrefsStore,
     private val cardPresentationStore: CardPresentationStore,
     private val legacyTvPrefsMigration: LegacyTvPrefsMigration,
     private val profileSettings: ProfileSettingsController,
@@ -104,7 +99,7 @@ class TvSettingsViewModel(
         playbackConnection?.let { connection -> ConnectionSpeedSettingsModel(probe, connection, viewModelScope) }
     }
 
-    enum class NavAction { SIGNED_OUT, SWITCH_PROFILE }
+    enum class NavAction { SWITCH_PROFILE }
 
     data class UiState(
         val user: User? = null,
@@ -882,24 +877,6 @@ class TvSettingsViewModel(
     /** Lifecycle hook — call from MainTvActivity.onStop. */
     fun flushPendingSettings() {
         viewModelScope.launch { playerSettingsStore.flushPendingDeviceSettings() }
-    }
-
-    fun onSignOut(context: Context) {
-        viewModelScope.launch {
-            playerSettingsStore.flushPendingDeviceSettings()
-            authRepository.logout()
-            profileRepository.clearProfile()
-            tokenManager.clearTokens()
-            // Drop per-profile cached prefs so the next user doesn't see
-            // them flash before the fresh fetch lands. iOS parity:
-            // `PlaybackPrefsStore.clear()` in the sign-out path.
-            libraryPlaybackPrefsStore.clear()
-            overlayPrefsStore.clear()
-            cardPresentationStore.clear()
-            seekIntervalStore?.clear()
-            episodeSpoilerStore?.clear()
-            _uiState.update { it.copy(navAction = NavAction.SIGNED_OUT) }
-        }
     }
 
     fun onSwitchProfile() {

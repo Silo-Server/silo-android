@@ -479,7 +479,45 @@ val androidTvModule = module {
             profileId = params.get(),
         )
     }
-    viewModel { TvServerListViewModel(get(), get(), get(), get(), get()) }
+    viewModel { TvServerListViewModel(get(), get(), get()) }
+    single {
+        val profileReset = get<TvActiveProfileReset>()
+        org.siloserver.silo.tv.ui.screens.servers.TvServerResolver(
+            get(), get(), get(), get(), get(),
+            clearActiveProfile = profileReset::clearActiveProfile,
+        )
+    }
+    single {
+        val profileReset = get<TvActiveProfileReset>()
+        val activeProfiles = get<org.siloserver.silo.model.profile.ActiveProfileStore>()
+        val requests = get<org.siloserver.silo.model.feature.RequestsFeatureStore>()
+        val metadataAi = get<org.siloserver.silo.model.feature.MetadataAiFeatureStore>()
+        val playerSettings = get<org.siloserver.silo.common.settings.PlayerSettingsStore>()
+        val playbackLifecycle = get<org.siloserver.silo.common.player.PlaybackSessionLifecycle>()
+        val identityManager = get<RemotePlaybackIdentityManager>()
+        org.siloserver.silo.tv.auth.TvSignOut(
+            authRepository = get(),
+            tokenManager = get(),
+            serverRegistry = get(),
+            resolver = get(),
+            // Outlives the screen that asked, so the sign-out always finishes.
+            // Main, where the screens ran it before: the caches it clears are UI state.
+            scope = kotlinx.coroutines.CoroutineScope(
+                kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate,
+            ),
+            flushPendingSettings = playerSettings::flushPendingDeviceSettings,
+            awaitPlaybackStop = playbackLifecycle::awaitPendingStop,
+            borrowedIdentity = { identityManager.activeIdentity?.generationId },
+            endBorrowedIdentity = { identityManager.end(it) },
+            clearProfileCaches = {
+                profileReset.clearProfileCaches()
+                // As the phone's sign-out (SignOutTeardown) drops them too.
+                activeProfiles.reset()
+                requests.reset()
+                metadataAi.reset()
+            },
+        )
+    }
 
     viewModel { params ->
         org.siloserver.silo.viewmodel.RequestDetailViewModel(get(), params.get(), params.get(), featureStore = get())
@@ -677,8 +715,6 @@ val androidTvModule = module {
             tokenManager = get(),
             serverRegistry = get(),
             playerSettingsStore = get(),
-            libraryPlaybackPrefsStore = get(),
-            overlayPrefsStore = get(),
             cardPresentationStore = get(),
             legacyTvPrefsMigration = get(),
             profileSettings = get(),

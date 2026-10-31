@@ -445,6 +445,24 @@ class EncryptedTokenManagerScopeGenerationTest {
         assertEquals("server-b-access", manager.getAccessToken())
 
         registry.switchExternally("server-a")
+        // A phone's borrowed identity installed while the sign-out waited.
+        manager.beginTemporaryScope(
+            TemporaryAuthScope(
+                generationId = "overlay-1",
+                serverId = "server-a",
+                serverUrl = "https://server-a.example",
+                accessToken = "overlay-access",
+                refreshToken = "overlay-refresh",
+                profileId = "overlay-profile",
+                profileToken = "overlay-profile-token",
+                expiresAtEpochMs = Long.MAX_VALUE,
+            ),
+        )
+        assertFalse(manager.signOutServer("server-a", loginA), "a borrowed identity is active")
+        assertEquals("overlay-access", manager.getAccessToken(), "the borrowed identity is not ended here")
+        assertEquals(loginA, manager.loginSessionId("server-a"), "the saved login is not signed out")
+
+        manager.endTemporaryScope()
         assertTrue(manager.signOutServer("server-a", loginA))
         assertNull(manager.getAccessToken())
         assertNull(manager.loginSessionId("server-a"))
