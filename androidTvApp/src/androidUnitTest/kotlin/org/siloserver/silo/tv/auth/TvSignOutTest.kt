@@ -16,6 +16,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.siloserver.silo.cast.SiloCastHandoffOffer
+import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.CleartextOriginConsent
@@ -249,6 +250,24 @@ class TvSignOutTest {
         assertNull(tv.tokens.loginSessionId(home))
     }
 
+    @Test
+    fun aDestinationThatCantBeWorkedOutAfterRemovingStillSignsOut() = runTest {
+        // The next server would reopen Who's Watching, and clearing its profile fails.
+        val tv = Tv(
+            this,
+            servers = listOf("home", "cabin"),
+            clearActiveProfile = { error("profile store unavailable") },
+            launchBehavior = ProfileLaunchBehavior.EveryTime,
+        )
+        val cabin = tv.signIn("cabin")
+        tv.tokens.setProfileId("cabin-profile")
+        val home = tv.signIn("home")
+
+        assertEquals(TvSignOutResult.SignedOut(TvServerSwitchDestination.ServerSetup), tv.signOut(removeServer = true))
+        assertEquals(setOf(cabin), tv.savedServers())
+        assertNull(tv.tokens.loginSessionId(home))
+    }
+
     private fun borrowed(serverId: String) = TemporaryAuthScope(
         generationId = "phone-1",
         serverId = serverId,
@@ -282,6 +301,8 @@ class TvSignOutTest {
         flushPendingSettings: suspend () -> Unit = {},
         endBorrowedIdentity: suspend (generationId: String) -> Boolean = { true },
         clearProfileCaches: () -> Unit = {},
+        clearActiveProfile: suspend () -> Unit = {},
+        launchBehavior: ProfileLaunchBehavior? = null,
         /** The real owner of borrowed identities, instead of [endBorrowedIdentity]. */
         phone: ((EncryptedTokenManagerImpl) -> RemotePlaybackIdentityManager)? = null,
     ) {
@@ -309,11 +330,11 @@ class TvSignOutTest {
             serverRegistry = registry,
             tokenManager = tokens,
             authRepository = auth,
-            profileLaunchPreferences = ProfileLaunchPreferences(InMemoryPrefs()),
+            profileLaunchPreferences = ProfileLaunchPreferences(InMemoryPrefs()).apply { launchBehavior?.let(::setBehavior) },
             cleartextConsent = object : CleartextOriginConsent {
                 override suspend fun isApproved(origin: String) = true
             },
-            clearActiveProfile = {},
+            clearActiveProfile = clearActiveProfile,
         )
         val signOut = TvSignOut(
             authRepository = auth,

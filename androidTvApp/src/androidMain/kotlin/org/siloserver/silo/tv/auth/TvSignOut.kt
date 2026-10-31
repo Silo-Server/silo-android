@@ -145,15 +145,30 @@ class TvSignOut(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            TvServerResolver.Removal.Failed
+            // remove() reports a failed save itself; a throw comes from working
+            // out where to go next, so check whether the server went.
+            if (serverRegistry.entries.value.any { it.id == serverId }) {
+                TvServerResolver.Removal.Failed
+            } else {
+                TvServerResolver.Removal.Removed(TvServerSwitchDestination.ServerSetup)
+            }
         }
         return when (removal) {
             // Signed out, but the server is still saved: its sign-in screen.
             TvServerResolver.Removal.Failed ->
                 TvSignOutResult.SignedOut(TvServerSwitchDestination.Login, notice = TV_REMOVE_SERVER_FAILED)
             is TvServerResolver.Removal.Removed ->
-                TvSignOutResult.SignedOut(removal.destination ?: resolver.activeDestination())
+                TvSignOutResult.SignedOut(removal.destination ?: destinationAfterRemoval())
         }
+    }
+
+    /** Where the now-active server leads; setup when that can't be worked out. */
+    private suspend fun destinationAfterRemoval(): TvServerSwitchDestination = try {
+        resolver.activeDestination()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        TvServerSwitchDestination.ServerSetup
     }
 
     companion object {
