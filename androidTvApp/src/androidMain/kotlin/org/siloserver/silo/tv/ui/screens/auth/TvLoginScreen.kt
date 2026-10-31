@@ -796,17 +796,20 @@ private fun PasswordScreen(
 ) {
     // Each rejected password shakes the fields and puts focus back on the
     // password: the fields were disabled while it was checked, so focus left.
+    // A missing username puts it on the username instead.
     var failures by remember { mutableIntStateOf(0) }
     var passwordFocused by remember { mutableStateOf(false) }
+    var usernameFocused by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
     LaunchedEffect(state.error) {
         if (state.error != null && state.password.isNotEmpty()) {
             failures++
+            val usernameMissing = state.error == TvLoginError.UsernameRequired
             requestFocusUntilObserved(
                 maxAttempts = TvContentInitialFocusMaxAttempts,
                 awaitAttempt = { withFrameNanos { } },
-                requestFocus = passwordFocus::requestFocus,
-                isFocused = { passwordFocused },
+                requestFocus = { (if (usernameMissing) usernameFocus else passwordFocus).requestFocus() },
+                isFocused = { if (usernameMissing) usernameFocused else passwordFocused },
             )
         }
     }
@@ -853,8 +856,10 @@ private fun PasswordScreen(
                             onValueChange = onUsernameChanged,
                             icon = Icons.Outlined.Person,
                             placeholder = stringResource(R.string.tv_signin_form_username_placeholder),
+                            isError = state.error == TvLoginError.UsernameRequired,
                             enabled = !state.signingIn,
                             focusRequester = usernameFocus,
+                            onFocusChange = { usernameFocused = it },
                             modifier = Modifier
                                 .semantics { contentType = ContentType.Username }
                                 .then(usernameFocusTracking)
@@ -870,7 +875,7 @@ private fun PasswordScreen(
                                 placeholder = stringResource(R.string.tv_signin_form_password_placeholder),
                                 isSecure = true,
                                 revealed = passwordVisible,
-                                isError = state.error != null,
+                                isError = state.error != null && state.error != TvLoginError.UsernameRequired,
                                 imeAction = ImeAction.Done,
                                 onImeAction = {
                                     if (canSubmitTvCredentialLogin(state.username, state.password, state.signingIn)) onLoginClick()
