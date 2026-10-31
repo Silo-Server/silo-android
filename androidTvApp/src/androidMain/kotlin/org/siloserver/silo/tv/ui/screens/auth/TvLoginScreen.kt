@@ -48,6 +48,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.stringResource
@@ -549,6 +551,9 @@ private fun CodeActions(
     val upTo = network?.focusRequester
     // An update requirement hides the password button: no password can help.
     val offersPassword = showPasswordAction && status != TvSignInStatus.UpdateRequired
+    // Wrapped onto its own line, Change server leaves Up and Left to the
+    // rows above it: the overrides below are for a one-row layout.
+    var changeServerWrapped by remember { mutableStateOf(false) }
     FlowRow(
         modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(11.dp),
@@ -586,8 +591,10 @@ private fun CodeActions(
             kind = TvMarqueeButtonKind.Plain,
             focusRequester = changeServerFocus,
             modifier = Modifier
+                .onPlaced { changeServerWrapped = it.positionInParent().y > 0f }
                 .then(changeServerTracking)
                 .focusProperties {
+                    if (changeServerWrapped) return@focusProperties
                     if (offersPassword) left = usePasswordFocus
                     upTo?.let { up = it }
                 },
