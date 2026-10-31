@@ -130,26 +130,30 @@
     <!-- Nearby phone setup and sign-in, shown on server setup and on the
          sign-in screen. People compare the TV's sign-in code; the phone may
          be any phone or tablet. -->
-    <string name="tv_pairing_eyebrow_connect">Step 01 — Connect</string>
-    <string name="tv_pairing_eyebrow_signin">Step 02 — Account</string>
-    <string name="tv_pairing_eyebrow_almost">Almost there</string>
-    <string name="tv_pairing_eyebrow_done">All set</string>
-    <string name="tv_pairing_connected_title">Phone or tablet connected</string>
+    <!-- Per-state chips over the headline, as on Apple TV. -->
+    <string name="tv_pairing_chip_connected">Phone or tablet connected</string>
+    <string name="tv_pairing_chip_consent">A nearby phone is setting up this TV</string>
+    <string name="tv_pairing_chip_consent_signin">A nearby phone is signing in this TV</string>
+    <string name="tv_pairing_chip_working">Getting a code</string>
+    <string name="tv_pairing_chip_waiting">Waiting for your phone</string>
+    <string name="tv_pairing_chip_approving">Your phone is approving</string>
+    <string name="tv_pairing_connected_title">Choose servers\non your phone</string>
+    <string name="tv_pairing_connected_title_signin">Continue on\nyour phone</string>
     <string name="tv_pairing_connected_detail">On your phone or tablet, choose which servers this TV should sign in to.</string>
     <string name="tv_pairing_connected_detail_signin">Continue on your phone or tablet.</string>
-    <string name="tv_pairing_consent_title">Allow this setup?</string>
-    <string name="tv_pairing_consent_title_signin">Allow this sign-in?</string>
+    <string name="tv_pairing_consent_title">Allow this\nsetup?</string>
+    <string name="tv_pairing_consent_title_signin">Allow this\nsign-in?</string>
     <string name="tv_pairing_consent_detail">A nearby phone or tablet wants to sign this TV in to %1$s.</string>
     <string name="tv_pairing_consent_unencrypted">Your password and what you watch will be sent unencrypted to %1$s. Only do this on a network you trust.</string>
+    <string name="tv_pairing_consent_note">Only allow it if you started setup on your own phone or tablet.</string>
+    <string name="tv_pairing_consent_note_signin">Only allow it if you started this on your own phone or tablet.</string>
     <string name="tv_pairing_allow">Allow</string>
-    <string name="tv_pairing_dont_allow">Don\'t allow</string>
+    <string name="tv_pairing_dont_allow">Don\'t Allow</string>
     <string name="tv_pairing_cancel">Cancel</string>
-    <string name="tv_pairing_starting_title">Setting up this TV</string>
-    <string name="tv_pairing_starting_title_signin">Signing in this TV</string>
-    <string name="tv_pairing_starting_detail">Starting secure sign-in…</string>
-    <string name="tv_pairing_server_label">SETTING UP</string>
-    <string name="tv_pairing_server_label_signin">SIGNING IN TO</string>
-    <string name="tv_pairing_confirm_title">Confirm on your phone or tablet</string>
+    <!-- One state on this TV covers checking the pushed address and getting the code. -->
+    <string name="tv_pairing_working_title">Signing in to\n%1$s</string>
+    <string name="tv_pairing_working_detail">Getting this TV\'s sign-in code.</string>
+    <string name="tv_pairing_confirm_title">Confirm on\nyour phone</string>
     <string name="tv_pairing_confirm_title_automatic">Signing in</string>
     <string name="tv_pairing_confirm_detail">Check that your phone or tablet shows this code, then approve.</string>
     <string name="tv_pairing_confirm_detail_automatic">Your phone or tablet is checking this code for you.</string>
@@ -157,7 +161,7 @@
          words. Remove together with the phones' "Older TV apps show ..." line. -->
     <string name="tv_pairing_confirm_older_phones">Older phones show %1$s instead.</string>
     <string name="tv_pairing_signed_in">Signed in</string>
-    <string name="tv_pairing_signed_in_count">Signed in to %1$d servers</string>
+    <string name="tv_pairing_signed_in_count">Signed in to\n%1$d servers</string>
     <string name="tv_pairing_finishing">Finishing up on your phone or tablet…</string>
     <string name="tv_pairing_completed_title">You\'re all set</string>
     <string name="tv_pairing_completed_none">Taking you to your profiles…</string>
@@ -165,17 +169,27 @@
     <string name="tv_pairing_continue">Continue</string>
     <string name="tv_pairing_failed_title">Setup didn\'t finish</string>
     <string name="tv_pairing_failed_title_signin">Sign-in didn\'t finish</string>
-    <string name="tv_pairing_failed_generic">Something went wrong signing in to %1$s. Try again from your phone, or sign in on this TV.</string>
-    <string name="tv_pairing_failed_denied">The sign-in to %1$s was declined on the phone.</string>
-    <string name="tv_pairing_failed_expired">The code for %1$s expired before it was approved. Try again from your phone.</string>
-    <string name="tv_pairing_failed_unreachable">This TV can\'t reach %1$s. Check its network connection and try again.</string>
-    <string name="tv_pairing_failed_identity">The address for %1$s answered as a different server, so nothing was signed in.</string>
+    <string name="tv_pairing_failed_generic">Something went wrong signing in to %1$s. Try again from your phone or tablet, or add your server manually.</string>
+    <string name="tv_pairing_failed_denied">The sign-in to %1$s was declined. Try again from your phone or tablet.</string>
+    <string name="tv_pairing_failed_expired">The code for %1$s expired before it was approved. Try again from your phone or tablet.</string>
+    <string name="tv_pairing_failed_unreachable">This TV can\'t reach %1$s. You can also add the server manually with its public address.</string>
+    <string name="tv_pairing_failed_identity">The phone or tablet sent an address for %1$s that answered as a different server. Check the server on your phone or tablet, or add your server manually.</string>
+    <string name="tv_pairing_failed_identity_signin">The phone or tablet offered %1$s, which isn\'t the server this TV uses. Choose this TV\'s server on your phone or tablet, or sign in here with a password.</string>
     <string name="tv_pairing_failed_update">%1$s or this app needs an update before this TV can sign in.</string>
     <string name="tv_pairing_try_again">Try again</string>
-    <string name="tv_pairing_unreachable_title">Can\'t reach %1$s</string>
+    <string name="tv_pairing_unreachable_title">Can\'t reach\n%1$s</string>
     <string name="tv_pairing_unreachable_provider">This TV can\'t reach %1$s through %2$s. Install or open the %2$s app on this TV and make sure it has access to the server\'s network, then try again.</string>
     <string name="tv_pairing_unreachable_public">This TV can\'t reach %1$s at %2$s. Check its network connection and try again.</string>
     <string name="tv_pairing_use_alternate">Use %1$s</string>
+    <!-- The card beside each state. -->
+    <string name="tv_pairing_card_on_phone">On your phone</string>
+    <string name="tv_pairing_card_on_phone_note">Pick the servers to bring over, then tap Continue.</string>
+    <string name="tv_pairing_card_on_phone_note_signin">Approve the sign-in there.</string>
+    <string name="tv_pairing_card_consent_note">After you allow it, a code appears here to compare with your phone.</string>
+    <string name="tv_pairing_card_no_answer">No answer</string>
+    <string name="tv_pairing_card_no_answer_note">This TV couldn\'t reach the address your phone sent.</string>
+    <string name="tv_pairing_card_not_finished">Not finished</string>
+    <string name="tv_pairing_card_not_finished_note">%1$s wasn\'t signed in.</string>
     <string name="tv_setup_subtitle">Use your phone or tablet, or enter the server address with the remote.</string>
     <string name="tv_setup_phone_pill">RECOMMENDED · USE YOUR PHONE</string>
     <string name="tv_setup_phone_looking">Looking for a phone or tablet…</string>

@@ -20,6 +20,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
@@ -106,19 +107,15 @@ internal fun ActivePairingPanel(
             )
         }
     }
-    val eyebrow = when (status) {
-        is PairingReceiverStatus.SignedIn, is PairingReceiverStatus.Completed -> R.string.tv_pairing_eyebrow_done
-        is PairingReceiverStatus.Pairing, is PairingReceiverStatus.Unreachable, is PairingReceiverStatus.AwaitingApproval ->
-            R.string.tv_pairing_eyebrow_almost
-        else -> if (signIn) R.string.tv_pairing_eyebrow_signin else R.string.tv_pairing_eyebrow_connect
-    }
     TvMarqueeScreen(
         modifier = modifier.onFocusChanged { panelHasFocus = it.hasFocus },
         copy = {
-            TvMarqueeStatusChip(stringResource(eyebrow), icon = Icons.Outlined.PhoneAndroid, modifier = Modifier.padding(bottom = 18.dp))
             when (status) {
                 PairingReceiverStatus.Connected -> {
-                    PanelTitle(stringResource(R.string.tv_pairing_connected_title))
+                    PanelChip(stringResource(R.string.tv_pairing_chip_connected), spinner = true)
+                    PanelTitle(
+                        stringResource(if (signIn) R.string.tv_pairing_connected_title_signin else R.string.tv_pairing_connected_title),
+                    )
                     PanelDetail(
                         stringResource(
                             if (signIn) R.string.tv_pairing_connected_detail_signin else R.string.tv_pairing_connected_detail,
@@ -127,6 +124,10 @@ internal fun ActivePairingPanel(
                     PanelActions { CancelButton(onCancel, primaryFocus) }
                 }
                 is PairingReceiverStatus.ConsentRequested -> {
+                    PanelChip(
+                        stringResource(if (signIn) R.string.tv_pairing_chip_consent_signin else R.string.tv_pairing_chip_consent),
+                        icon = Icons.Outlined.PhoneAndroid,
+                    )
                     PanelTitle(
                         stringResource(if (signIn) R.string.tv_pairing_consent_title_signin else R.string.tv_pairing_consent_title),
                     )
@@ -136,14 +137,17 @@ internal fun ActivePairingPanel(
                     }
                     PanelActions {
                         TvMarqueeButton(text = stringResource(R.string.tv_pairing_allow), onClick = onAllow, focusRequester = primaryFocus)
-                        TvMarqueeButton(text = stringResource(R.string.tv_pairing_dont_allow), onClick = onDeny, kind = TvMarqueeButtonKind.Plain)
+                        TvMarqueeButton(text = stringResource(R.string.tv_pairing_dont_allow), onClick = onDeny, kind = TvMarqueeButtonKind.Glass)
                     }
+                    PanelNote(
+                        stringResource(if (signIn) R.string.tv_pairing_consent_note_signin else R.string.tv_pairing_consent_note),
+                        Modifier.padding(top = 15.dp),
+                    )
                 }
                 is PairingReceiverStatus.Pairing -> {
-                    PanelTitle(
-                        stringResource(if (signIn) R.string.tv_pairing_starting_title_signin else R.string.tv_pairing_starting_title),
-                    )
-                    PanelDetail(stringResource(R.string.tv_pairing_starting_detail))
+                    PanelChip(stringResource(R.string.tv_pairing_chip_working), spinner = true)
+                    PanelTitle(stringResource(R.string.tv_pairing_working_title, status.serverName))
+                    PanelDetail(stringResource(R.string.tv_pairing_working_detail))
                     PanelActions { CancelButton(onCancel, primaryFocus) }
                 }
                 is PairingReceiverStatus.Unreachable -> {
@@ -180,10 +184,18 @@ internal fun ActivePairingPanel(
                                 focusRequester = primaryFocus,
                             )
                         }
-                        CancelButton(onCancel)
+                        TvMarqueeButton(
+                            text = stringResource(R.string.tv_pairing_cancel),
+                            onClick = onCancel,
+                            kind = TvMarqueeButtonKind.Plain,
+                        )
                     }
                 }
                 is PairingReceiverStatus.AwaitingApproval -> {
+                    PanelChip(
+                        stringResource(if (status.automatic) R.string.tv_pairing_chip_approving else R.string.tv_pairing_chip_waiting),
+                        spinner = true,
+                    )
                     PanelTitle(
                         stringResource(
                             if (status.automatic) R.string.tv_pairing_confirm_title_automatic else R.string.tv_pairing_confirm_title,
@@ -204,6 +216,7 @@ internal fun ActivePairingPanel(
                             stringResource(R.string.tv_pairing_signed_in_count, status.serverCount)
                         },
                     )
+                    // No Cancel: this server's sign-in is already saved.
                     PanelDetail(stringResource(R.string.tv_pairing_finishing))
                 }
                 is PairingReceiverStatus.Completed -> {
@@ -228,13 +241,7 @@ internal fun ActivePairingPanel(
                     PanelTitle(
                         stringResource(if (signIn) R.string.tv_pairing_failed_title_signin else R.string.tv_pairing_failed_title),
                     )
-                    Text(
-                        text = stringResource(status.code.messageRes(), status.serverName),
-                        color = MarqueeColors.Error,
-                        fontSize = 14.sp,
-                        lineHeight = 19.sp,
-                        modifier = Modifier.padding(top = 13.dp),
-                    )
+                    PanelDetail(stringResource(status.code.messageRes(signIn), status.serverName))
                     PanelActions {
                         TvMarqueeButton(
                             text = stringResource(R.string.tv_pairing_try_again),
@@ -249,6 +256,21 @@ internal fun ActivePairingPanel(
         card = {
             TvMarqueeCard {
                 when (status) {
+                    PairingReceiverStatus.Connected -> {
+                        TvMarqueeCardSymbol(Icons.Outlined.PhoneAndroid, size = 70.dp)
+                        CardTitle(stringResource(R.string.tv_pairing_card_on_phone))
+                        CardNote(
+                            stringResource(
+                                if (signIn) R.string.tv_pairing_card_on_phone_note_signin else R.string.tv_pairing_card_on_phone_note,
+                            ),
+                        )
+                    }
+                    is PairingReceiverStatus.ConsentRequested -> {
+                        TvMarqueeCardSymbol(Icons.Outlined.PhoneAndroid, size = 70.dp)
+                        WaitingDots(Modifier.padding(top = 17.dp))
+                        CardTitle(status.serverName)
+                        CardNote(stringResource(R.string.tv_pairing_card_consent_note))
+                    }
                     is PairingReceiverStatus.AwaitingApproval -> {
                         if (status.userCode.isNotBlank()) {
                             Text(
@@ -258,30 +280,29 @@ internal fun ActivePairingPanel(
                             )
                             TvMarqueeCodeTiles(DeviceCodeFormat.display(status.userCode), Modifier.padding(top = 11.dp))
                         }
-                        olderPhonesMatchWords(status)?.let { words ->
-                            Text(
-                                text = stringResource(R.string.tv_pairing_confirm_older_phones, words),
-                                color = MarqueeColors.InkTertiary,
-                                fontSize = 14.sp,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(top = 11.dp),
-                            )
-                        }
-                        ServerNameLabel(status.serverName, signIn)
-                        WaitingDots(Modifier.padding(top = 15.dp))
+                        olderPhonesMatchWords(status)?.let { words -> CardNote(stringResource(R.string.tv_pairing_confirm_older_phones, words)) }
+                        CardTitle(status.serverName)
                     }
                     is PairingReceiverStatus.Pairing -> {
-                        ServerNameLabel(status.serverName, signIn)
-                        WaitingDots(Modifier.padding(top = 15.dp))
+                        WaitingDots()
+                        CardTitle(status.serverName)
                     }
-                    is PairingReceiverStatus.SignedIn, is PairingReceiverStatus.Completed ->
+                    is PairingReceiverStatus.SignedIn, is PairingReceiverStatus.Completed -> {
                         TvMarqueeCardSymbol(Icons.Filled.Check, tint = MarqueeColors.Live, size = 70.dp)
-                    is PairingReceiverStatus.Failed, is PairingReceiverStatus.Unreachable ->
-                        TvMarqueeCardSymbol(Icons.Outlined.ErrorOutline, tint = MarqueeColors.Warning, size = 70.dp)
-                    else -> {
-                        TvMarqueeCardSymbol(Icons.Outlined.PhoneAndroid, size = 70.dp)
-                        WaitingDots(Modifier.padding(top = 17.dp))
+                        CardTitle(stringResource(R.string.tv_pairing_signed_in))
                     }
+                    is PairingReceiverStatus.Unreachable -> {
+                        TvMarqueeCardSymbol(Icons.Outlined.ErrorOutline, tint = MarqueeColors.Warning, size = 70.dp)
+                        CardTitle(stringResource(R.string.tv_pairing_card_no_answer))
+                        CardNote(stringResource(R.string.tv_pairing_card_no_answer_note))
+                    }
+                    is PairingReceiverStatus.Failed -> {
+                        TvMarqueeCardSymbol(Icons.Outlined.ErrorOutline, tint = MarqueeColors.Warning, size = 70.dp)
+                        CardTitle(stringResource(R.string.tv_pairing_card_not_finished))
+                        // Earlier servers in the same session may have signed in.
+                        CardNote(stringResource(R.string.tv_pairing_card_not_finished_note, status.serverName))
+                    }
+                    else -> Unit
                 }
             }
         },
@@ -317,11 +338,12 @@ private fun CancelButton(onCancel: () -> Unit, focusRequester: FocusRequester? =
 internal fun olderPhonesMatchWords(status: PairingReceiverStatus.AwaitingApproval): String? =
     status.matchCode?.trim()?.takeIf { !status.automatic && it.isNotEmpty() }?.uppercase()
 
-private fun PairingFailureCode.messageRes(): Int = when (this) {
+private fun PairingFailureCode.messageRes(signIn: Boolean): Int = when (this) {
     PairingFailureCode.Denied -> R.string.tv_pairing_failed_denied
     PairingFailureCode.Expired -> R.string.tv_pairing_failed_expired
     PairingFailureCode.Unreachable -> R.string.tv_pairing_failed_unreachable
-    PairingFailureCode.IdentityMismatch -> R.string.tv_pairing_failed_identity
+    PairingFailureCode.IdentityMismatch ->
+        if (signIn) R.string.tv_pairing_failed_identity_signin else R.string.tv_pairing_failed_identity
     PairingFailureCode.UpdateRequired -> R.string.tv_pairing_failed_update
     PairingFailureCode.AuthFailed -> R.string.tv_pairing_failed_generic
 }
@@ -337,22 +359,36 @@ private fun PanelDetail(text: String) {
 }
 
 @Composable
-private fun ServerNameLabel(serverName: String, signIn: Boolean) {
+private fun PanelChip(text: String, spinner: Boolean = false, icon: ImageVector? = null) {
+    TvMarqueeStatusChip(text, showsSpinner = spinner, icon = icon, modifier = Modifier.padding(bottom = 18.dp))
+}
+
+@Composable
+private fun PanelNote(text: String, modifier: Modifier = Modifier) {
+    Text(text, color = MarqueeColors.InkTertiary, fontSize = 14.sp, modifier = modifier)
+}
+
+@Composable
+private fun CardTitle(text: String) {
     Text(
-        text = stringResource(if (signIn) R.string.tv_pairing_server_label_signin else R.string.tv_pairing_server_label),
-        color = MarqueeColors.InkTertiary,
-        fontSize = 14.sp,
-        fontWeight = FontWeight.SemiBold,
-        letterSpacing = 1.5.sp,
-        modifier = Modifier.padding(top = 17.dp),
-    )
-    Text(
-        text = serverName,
+        text = text,
         color = MarqueeColors.Ink,
         fontSize = 18.sp,
         fontWeight = FontWeight.Bold,
         textAlign = TextAlign.Center,
-        modifier = Modifier.padding(top = 4.dp),
+        maxLines = 2,
+        modifier = Modifier.padding(top = 17.dp),
+    )
+}
+
+@Composable
+private fun CardNote(text: String) {
+    Text(
+        text = text,
+        color = MarqueeColors.InkTertiary,
+        fontSize = 14.sp,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.padding(top = 7.dp),
     )
 }
 
