@@ -1,4 +1,4 @@
-package org.siloserver.silo.android.ui.screens.auth
+package org.siloserver.silo.common.network
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

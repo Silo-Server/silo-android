@@ -4,13 +4,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.discovery.DiscoveredServer
 import org.siloserver.silo.common.network.CleartextConsentStore
+import org.siloserver.silo.common.network.ServerSetupScheme
+import org.siloserver.silo.common.network.ServerSetupValidationException
+import org.siloserver.silo.common.network.buildServerSetupCandidateUrls
+import org.siloserver.silo.common.network.serverSetupUsesCleartext
 import org.siloserver.silo.common.network.cleartextOrigin
 import org.siloserver.silo.model.auth.SetupStatusResponse
 import org.siloserver.silo.model.auth.SignupStatusResponse
 import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
 import org.siloserver.silo.repository.CONTRACT_PROVEN_BY_V2_RESPONSE
-import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.AuthRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +24,10 @@ import kotlinx.coroutines.launch
 
 data class TvServerSetupUiState(
     val serverUrl: String = "",
+    /** Advanced options: the protocol and port to try, as on Apple TV. */
+    val selectedScheme: ServerSetupScheme = ServerSetupScheme.Auto,
+    val port: String = "",
+    val showsAdvancedOptions: Boolean = false,
     val isLoading: Boolean = false,
     val error: String? = null,
     /** Destination after a successful server probe; consumed by the screen. */
@@ -33,7 +40,7 @@ data class TvServerSetupUiState(
 ) {
     /** True when the entered address will connect over unencrypted HTTP.
      *  Informational only — does not block LAN/IP connections. */
-    val usesCleartext: Boolean get() = serverSetupUsesCleartext(serverUrl)
+    val usesCleartext: Boolean get() = serverSetupUsesCleartext(serverUrl, selectedScheme, port)
 }
 
 /**
@@ -63,8 +70,6 @@ internal sealed class TvServerSetupProbeResult {
     data class Failure(
         val message: String,
         val serverUrl: String? = null,
-        /** Nothing answered, as opposed to a server that answered with an error. */
-        val unreachable: Boolean = false,
     ) : TvServerSetupProbeResult()
 }
 
@@ -95,6 +100,9 @@ class TvServerSetupViewModel(
     },
     /** Whether the now-active server already has a signed-in session. */
     private val hasSession: suspend () -> Boolean = { false },
+    private val candidateUrls: (TvServerSetupUiState) -> List<String> = {
+        buildServerSetupCandidateUrls(it.serverUrl, it.selectedScheme, it.port)
+    },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvServerSetupUiState())
@@ -122,14 +130,28 @@ class TvServerSetupViewModel(
         _uiState.update { it.copy(serverUrl = url, error = null, discoveryError = null) }
     }
 
+    fun onSchemeSelected(scheme: ServerSetupScheme) {
+        _uiState.update { it.copy(selectedScheme = scheme, error = null) }
+    }
+
+    fun onPortChanged(port: String) {
+        _uiState.update { it.copy(port = port, error = null) }
+    }
+
+    fun onToggleAdvancedOptions() {
+        _uiState.update { it.copy(showsAdvancedOptions = !it.showsAdvancedOptions) }
+    }
+
     fun onConnectClick() {
         if (_uiState.value.isLoading) return
-        val raw = _uiState.value.serverUrl.trim()
-        if (raw.isBlank()) {
-            _uiState.update { it.copy(error = "Enter a server URL") }
+        val current = _uiState.value
+        val candidates = try {
+            candidateUrls(current)
+        } catch (error: ServerSetupValidationException) {
+            _uiState.update { it.copy(error = error.message) }
             return
         }
-        connect(serverSetupUrlProbeCandidates(raw), found = null)
+        connect(candidates, found = null)
     }
 
     /**
@@ -176,12 +198,7 @@ class TvServerSetupViewModel(
                         } else {
                             it.copy(
                                 isLoading = false,
-                                // "Check the URL" means nothing for an address nobody typed.
-                                discoveryError = if (result.unreachable) {
-                                    "Could not reach a Silo server at that address."
-                                } else {
-                                    result.message
-                                },
+                                discoveryError = result.message,
                             )
                         }
                     }
@@ -329,7 +346,6 @@ internal suspend fun probeTvServerSetupCandidates(
                 if (!isLastCandidate) continue
                 return TvServerSetupProbeResult.Failure(
                     message = NETWORK_ERROR_MESSAGE,
-                    unreachable = true,
                 )
             }
         }
@@ -347,33 +363,7 @@ internal suspend fun probeTvServerSetupCandidates(
 
     return TvServerSetupProbeResult.Failure(
         message = NETWORK_ERROR_MESSAGE,
-        unreachable = true,
     )
 }
 
-private const val NETWORK_ERROR_MESSAGE = "Network error. Check the URL and try again."
-
-/**
- * True when the entered address will connect over unencrypted HTTP: the probe
- * resolves to a single `http://` candidate (only when the user explicitly
- * typed `http://`). Informational only — never blocks LAN/IP connections.
- */
-internal fun serverSetupUsesCleartext(raw: String): Boolean {
-    val candidates = serverSetupUrlProbeCandidates(raw)
-    return candidates.size == 1 && candidates.first().startsWith("http://", ignoreCase = true)
-}
-
-internal fun serverSetupUrlProbeCandidates(raw: String): List<String> {
-    val trimmed = raw.trim().trimEnd('/')
-    if (trimmed.isBlank()) return emptyList()
-    return if (trimmed.startsWith("http://", ignoreCase = true) ||
-        trimmed.startsWith("https://", ignoreCase = true)
-    ) {
-        listOf(AndroidServerRegistry.normalizeUrl(trimmed))
-    } else {
-        listOf(
-            AndroidServerRegistry.normalizeUrl("https://$trimmed"),
-            AndroidServerRegistry.normalizeUrl("http://$trimmed"),
-        )
-    }
-}
+private const val NETWORK_ERROR_MESSAGE = "Could not reach a Silo server at that address."

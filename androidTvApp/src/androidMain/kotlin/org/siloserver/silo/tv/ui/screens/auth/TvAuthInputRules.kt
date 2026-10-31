@@ -6,6 +6,3 @@ internal fun canSubmitTvCredentialLogin(
     isLoading: Boolean,
 ): Boolean =
     !isLoading && username.isNotBlank() && password.isNotBlank()
-
-internal fun canSubmitTvServerUrl(value: String, isLoading: Boolean): Boolean =
-    !isLoading && value.isNotBlank()

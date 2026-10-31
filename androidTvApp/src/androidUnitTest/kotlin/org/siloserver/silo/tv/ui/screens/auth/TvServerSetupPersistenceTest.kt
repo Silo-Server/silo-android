@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.auth
 
+import org.siloserver.silo.common.network.buildServerSetupCandidateUrls
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 
 import io.ktor.client.HttpClient
@@ -192,7 +193,9 @@ class TvServerSetupPersistenceTest {
     @Test
     fun successfulUnnormalizableHttpCandidateFailsClosed() = runTest(dispatcher) {
         val tokenManager = RecordingTokenManager()
-        val viewModel = track(viewModelFor(tokenManager))
+        // The address parser already refuses this host; the seam reaches the
+        // guard behind it, which must still refuse to save it.
+        val viewModel = track(viewModelFor(tokenManager, candidateUrls = { listOf("http://silo_lan") }))
 
         viewModel.onServerUrlChanged("http://silo_lan")
         viewModel.onConnectClick()
@@ -226,6 +229,9 @@ class TvServerSetupPersistenceTest {
         tokenManager: RecordingTokenManager,
         approvals: FakeCleartextConsentStore = FakeCleartextConsentStore(),
         httpsSucceeds: Boolean = false,
+        candidateUrls: (TvServerSetupUiState) -> List<String> = {
+            buildServerSetupCandidateUrls(it.serverUrl, it.selectedScheme, it.port)
+        },
     ) = TvServerSetupViewModel(
         authRepository = repositoryFor(tokenManager),
         cleartextConsentStore = approvals,
@@ -239,6 +245,7 @@ class TvServerSetupPersistenceTest {
         getSignupStatus = {
             ApiResult.Success(SignupStatusResponse(enabled = true))
         },
+        candidateUrls = candidateUrls,
     )
 
     private fun repositoryFor(
