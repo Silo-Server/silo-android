@@ -16,6 +16,7 @@ import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 import okhttp3.internal.http2.ConnectionShutdownException
 import okhttp3.internal.http2.StreamResetException
 
@@ -130,6 +131,171 @@ internal class SiloMediaLoadErrorHandlingPolicy(
         const val TAG = "MediaLoadRetry"
     }
 }
+
+/**
+ * Retries for sidecar subtitle loads, kept apart from the media policy above
+ * (#458).
+ *
+ * A sidecar request that times out or is cut off mid-body has made the server
+ * extract the track, which on a cold network mount means reading the whole
+ * source file, and its retry starts that read again. The media policy's
+ * open-ended retries inside [MEDIA_LOAD_RETRY_WINDOW_MS] turned one slow
+ * extraction into five or six concurrent whole-file reads. Here a sidecar
+ * retries at most [SIDECAR_SUBTITLE_MAX_EXTRACTION_RETRIES] such failures, of
+ * which at most [SIDECAR_SUBTITLE_MAX_TIMEOUT_RETRIES] timeouts. A slow first
+ * byte is not a failure at all: sidecar requests wait
+ * [SIDECAR_SUBTITLE_READ_TIMEOUT_SECONDS] for data
+ * ([withSidecarSubtitleTimeouts]) where media waits 30 s.
+ *
+ * Failures that cost no extraction keep the media policy and its window, so a
+ * subtitle rides out a server restart or a network drop as the video does: an
+ * error status, a refused connection, and a timeout before the connection
+ * opened (a connect or TLS handshake timeout, when no request reached the
+ * server).
+ *
+ * One policy serves one sidecar, and the budget is counted here rather than
+ * taken from `errorCount`, which Media3 resets after an attempt that extracted
+ * samples: a sidecar that keeps stalling after its first cues would otherwise
+ * retry without end. Nor is it kept per load task. For a response of unknown
+ * length Media3 declines the retry and restarts the stream from byte zero
+ * once the queued cues run out (a deferred retry), under a new load task, and
+ * that restart costs the server an extraction like any other. Only the
+ * sidecar's period knows when a load starts over on purpose: a seek, a new
+ * selection or a new start calls [startFresh].
+ *
+ * Once the budget is spent the load fails and only the subtitle is lost: the
+ * sidecar's period reports itself prepared from its known track
+ * ([org.siloserver.silo.common.player.subtitle.NonGatingSidecarPeriod]), so the
+ * failure reaches the text renderer, and Media3 disables the text track while
+ * the video keeps playing.
+ */
+@UnstableApi
+internal class SidecarSubtitleLoadErrorHandlingPolicy(
+    private val nowMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
+) : DefaultLoadErrorHandlingPolicy() {
+    private val budget = SidecarSubtitleRetryBudget()
+    private val firstErrorAtByLoadTask = ConcurrentHashMap<Long, Long>()
+
+    override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
+        val loadTaskId = loadErrorInfo.loadEventInfo.loadTaskId
+        val error = loadErrorInfo.exception
+        val invalidResponse = error as? HttpDataSource.InvalidResponseCodeException
+        val firstErrorAt = firstErrorAtByLoadTask.computeIfAbsent(loadTaskId) { nowMs() }
+        val failures = budget.record(error)
+        val delayMs = sidecarSubtitleRetryDelayMs(
+            responseCode = invalidResponse?.responseCode,
+            retryAfterHeaders = invalidResponse?.retryAfterHeaders().orEmpty(),
+            cause = error,
+            failures = failures,
+            observedElapsedMs = (nowMs() - firstErrorAt).coerceAtLeast(0L),
+        )
+        val description = "error=${generateSequence<Throwable>(error) { it.cause }.last().javaClass.simpleName} " +
+            "status=${invalidResponse?.responseCode} failures=${failures.count} " +
+            "timeouts=${failures.timeouts} cut_offs=${failures.cutOffs}"
+        if (delayMs == C.TIME_UNSET) {
+            SiloLog.w(DiagnosticsLogCategory.PLAYBACK, TAG, "sidecar subtitle load gave up $description")
+        } else {
+            SiloLog.i(DiagnosticsLogCategory.PLAYBACK, TAG, "sidecar subtitle load retry $description retry_delay_ms=$delayMs")
+        }
+        return delayMs
+    }
+
+    override fun onLoadTaskConcluded(loadTaskId: Long) {
+        firstErrorAtByLoadTask.remove(loadTaskId)
+        super.onLoadTaskConcluded(loadTaskId)
+    }
+
+    /** The sidecar's load starts over on purpose (a seek, a new selection or a new start): a fresh budget. */
+    fun startFresh() = budget.reset()
+
+    /** Failures that are still being retried never surface; a spent budget does, as a fatal load error. */
+    override fun getMinimumLoadableRetryCount(dataType: Int): Int =
+        Int.MAX_VALUE
+
+    private companion object {
+        const val TAG = "SidecarSubtitleRetry"
+    }
+}
+
+/**
+ * What one sidecar has failed with since it last started fresh, this failure included.
+ * [timeouts] and [cutOffs] are the failures that each cost the server an
+ * extraction.
+ */
+internal data class SidecarSubtitleFailures(
+    val count: Int,
+    val timeouts: Int = 0,
+    val cutOffs: Int = 0,
+) {
+    val extractions: Int get() = timeouts + cutOffs
+}
+
+internal class SidecarSubtitleRetryBudget {
+    private val failures = AtomicReference(SidecarSubtitleFailures(count = 0))
+
+    fun record(error: Throwable?): SidecarSubtitleFailures {
+        val chain = generateSequence(error) { it.cause }.toList()
+        val timedOut = chain.any { it is SocketTimeoutException && !it.isBeforeRequest() }
+        val cutOff = !timedOut && chain.any { it is ProtocolException && it.isUnexpectedEndOfStream() }
+        return failures.updateAndGet { before ->
+            SidecarSubtitleFailures(
+                count = before.count + 1,
+                timeouts = before.timeouts + if (timedOut) 1 else 0,
+                cutOffs = before.cutOffs + if (cutOff) 1 else 0,
+            )
+        }
+    }
+
+    fun reset() = failures.set(SidecarSubtitleFailures(count = 0))
+}
+
+/**
+ * A timeout while the connection was still being set up: no request reached
+ * the server, so no extraction started. Android reports a connect timeout as
+ * "failed to connect to … after 20000ms", the JVM as "connect timed out", and a
+ * stalled TLS handshake as "SSL handshake timed out".
+ */
+private fun SocketTimeoutException.isBeforeRequest(): Boolean {
+    val text = message?.lowercase() ?: return false
+    return "failed to connect" in text || "connect timed out" in text || "handshake" in text
+}
+
+internal fun sidecarSubtitleRetryDelayMs(
+    responseCode: Int? = null,
+    retryAfterHeaders: List<String> = emptyList(),
+    cause: Throwable? = null,
+    failures: SidecarSubtitleFailures,
+    observedElapsedMs: Long = 0L,
+): Long {
+    if (failures.timeouts > SIDECAR_SUBTITLE_MAX_TIMEOUT_RETRIES) return C.TIME_UNSET
+    if (failures.extractions > SIDECAR_SUBTITLE_MAX_EXTRACTION_RETRIES) return C.TIME_UNSET
+    return siloMediaLoadRetryDelayMs(
+        responseCode = responseCode,
+        retryAfterHeaders = retryAfterHeaders,
+        cause = cause,
+        errorCount = failures.count,
+        observedElapsedMs = observedElapsedMs,
+    )
+}
+
+/** Retries a sidecar load task gets after failures that each cost the server an extraction. */
+internal const val SIDECAR_SUBTITLE_MAX_EXTRACTION_RETRIES = 2
+
+/** Of those, retries after a request that timed out waiting for data. */
+internal const val SIDECAR_SUBTITLE_MAX_TIMEOUT_RETRIES = 1
+
+/**
+ * How long a sidecar request waits for its next bytes. A cold extraction sends
+ * the WebVTT header and then nothing until it reaches the first cue, which on a
+ * network mount can take minutes for a sparse track.
+ */
+internal const val SIDECAR_SUBTITLE_READ_TIMEOUT_SECONDS = 180L
+
+/** The player transport, waiting [SIDECAR_SUBTITLE_READ_TIMEOUT_SECONDS] for each read. */
+internal fun okhttp3.OkHttpClient.withSidecarSubtitleTimeouts(): okhttp3.OkHttpClient =
+    newBuilder()
+        .readTimeout(SIDECAR_SUBTITLE_READ_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
 
 internal class MediaLoadAttemptBytesTracker {
     private val cumulativeBytesByLoadTask = ConcurrentHashMap<Long, Long>()
