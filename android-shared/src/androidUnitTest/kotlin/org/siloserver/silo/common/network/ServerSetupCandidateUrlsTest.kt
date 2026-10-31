@@ -47,14 +47,16 @@ class ServerSetupCandidateUrlsTest {
 
     @Test
     fun invalidPortIsRejectedBeforeConnecting() {
-        val error = assertFailsWith<ServerSetupValidationException> {
-            buildServerSetupCandidateUrls(
-                rawInput = "media.example.com",
-                selectedScheme = ServerSetupScheme.Https,
-                port = "99999",
-            )
-        }
+        // The Port field, and a port typed into the address (`:0` is a port, not "none").
+        listOf(
+            Triple("media.example.com", ServerSetupScheme.Https, "99999"),
+            Triple("http://media.example.com:0", ServerSetupScheme.Auto, ""),
+        ).forEach { (rawInput, scheme, port) ->
+            val error = assertFailsWith<ServerSetupValidationException>(rawInput) {
+                buildServerSetupCandidateUrls(rawInput = rawInput, selectedScheme = scheme, port = port)
+            }
 
-        assertEquals("Port must be a number between 1 and 65535.", error.message)
+            assertEquals("Port must be a number between 1 and 65535.", error.message)
+        }
     }
 }

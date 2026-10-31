@@ -67,10 +67,7 @@ internal sealed class TvServerSetupProbeResult {
         val contract: ServerContract? = null,
     ) : TvServerSetupProbeResult()
 
-    data class Failure(
-        val message: String,
-        val serverUrl: String? = null,
-    ) : TvServerSetupProbeResult()
+    data class Failure(val message: String) : TvServerSetupProbeResult()
 }
 
 /**
@@ -190,8 +187,9 @@ class TvServerSetupViewModel(
                 is TvServerSetupProbeResult.Failure -> {
                     _uiState.update {
                         if (found == null) {
+                            // The typed address stays as typed: a tried URL
+                            // carries its port, which would override the Port field.
                             it.copy(
-                                serverUrl = result.serverUrl ?: it.serverUrl,
                                 isLoading = false,
                                 error = result.message,
                             )
@@ -315,7 +313,6 @@ internal suspend fun probeTvServerSetupCandidates(
         val probe = probeContract(candidate)
         if (probe is ApiV2ProbeResult.UpdateServer) {
             return TvServerSetupProbeResult.Failure(
-                serverUrl = candidate,
                 message = ServerContract.UPDATE_REQUIRED_MESSAGE,
             )
         }
@@ -338,7 +335,6 @@ internal suspend fun probeTvServerSetupCandidates(
             is ApiResult.Error -> {
                 if (!isLastCandidate) continue
                 return TvServerSetupProbeResult.Failure(
-                    serverUrl = candidate,
                     message = "Could not reach server: ${result.message}",
                 )
             }

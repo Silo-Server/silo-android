@@ -96,7 +96,8 @@ private fun parseServerSetupInput(input: String): ParsedServerSetupInput {
     }
     val host = uri.host?.takeIf { it.isNotBlank() }
         ?: throw ServerSetupValidationException("Enter a valid server address.")
-    val parsedPort = uri.port.takeIf { it > 0 }?.also { validatePort(it) }
+    // -1 is URI's "no port"; anything else was typed, so `:0` is rejected, not dropped.
+    val parsedPort = uri.port.takeIf { it != -1 }?.also { validatePort(it) }
     val rawPath = uri.rawPath.orEmpty().trimEnd('/')
     val path = rawPath.takeUnless { it.isBlank() || it == "/" }.orEmpty()
     return ParsedServerSetupInput(

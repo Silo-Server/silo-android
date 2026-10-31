@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.auth
 
+import org.siloserver.silo.common.network.ServerSetupScheme
 import org.siloserver.silo.common.network.buildServerSetupCandidateUrls
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 
@@ -95,6 +96,34 @@ class TvServerSetupPersistenceTest {
             tokenManager.serverUrlWrites,
             "Failed probes must not persist candidate URLs.",
         )
+    }
+
+    @Test
+    fun serverErrorKeepsTheTypedAddressSoANewPortIsTried() = runTest(dispatcher) {
+        val tried = mutableListOf<String>()
+        val viewModel = track(
+            TvServerSetupViewModel(
+                authRepository = repositoryFor(RecordingTokenManager()),
+                cleartextConsentStore = FakeCleartextConsentStore(),
+                getSetupStatus = { candidate ->
+                    tried += candidate
+                    ApiResult.Error(code = 404, error = "not_found", message = "Not found")
+                },
+                getSignupStatus = { ApiResult.Success(SignupStatusResponse(enabled = false)) },
+            ),
+        )
+
+        viewModel.onServerUrlChanged("media.example.com")
+        viewModel.onSchemeSelected(ServerSetupScheme.Http)
+        viewModel.onPortChanged("8090")
+        viewModel.onConnectClick()
+        awaitSettled(viewModel)
+        viewModel.onPortChanged("8429")
+        viewModel.onConnectClick()
+        awaitSettled(viewModel)
+
+        assertEquals("media.example.com", viewModel.uiState.value.serverUrl)
+        assertEquals(listOf("http://media.example.com:8090", "http://media.example.com:8429"), tried)
     }
 
     @Test
