@@ -802,9 +802,11 @@ private fun PasswordScreen(
     var usernameFocused by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
     LaunchedEffect(state.error) {
-        if (state.error != null && state.password.isNotEmpty()) {
+        val usernameMissing = state.error == TvLoginError.UsernameRequired
+        // Both fields empty reports the missing username, so it moves focus
+        // even with no password typed.
+        if (state.error != null && (state.password.isNotEmpty() || usernameMissing)) {
             failures++
-            val usernameMissing = state.error == TvLoginError.UsernameRequired
             requestFocusUntilObserved(
                 maxAttempts = TvContentInitialFocusMaxAttempts,
                 awaitAttempt = { withFrameNanos { } },
