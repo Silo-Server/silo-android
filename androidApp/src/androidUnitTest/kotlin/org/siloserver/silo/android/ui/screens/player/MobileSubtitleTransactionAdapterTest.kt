@@ -1531,6 +1531,71 @@ class MobileSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `native mount deadline waits while the replanned stream has published no text tracks`() = runTest {
+        val failures = mutableListOf<Int>()
+        var tracksPublished = false
+        val harness = harness(backgroundScope, onEmbeddedFailure = failures::add, hasMountableTracks = { tracksPublished })
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng", codecFamily = "pgs"), "5")
+        harness.adapter.select(sidecar(4))
+        runCurrent()
+        harness.port.completeStage(candidate("native", 4, hasSidecar = false, selectedSubtitleIdentity = native))
+        runCurrent()
+
+        // A fixed 5 s deadline used to fail here and cost a whole-file sidecar extraction.
+        advanceTimeBy(15_000)
+        runCurrent()
+        assertEquals(emptyList(), failures)
+        assertEquals(native, harness.adapter.snapshot.localMountIdentity)
+
+        tracksPublished = true
+        harness.adapter.reportMountedSelection(native, selected = true, snapshotKey = "native-5")
+        runCurrent()
+        advanceTimeBy(30_000)
+        runCurrent()
+
+        assertEquals(emptyList(), failures)
+        assertEquals(native, harness.adapter.snapshot.committedIdentity)
+        assertNull(harness.adapter.snapshot.localMountIdentity)
+    }
+
+    @Test
+    fun `native mount deadline runs once tracks exist and is capped while they never do`() = runTest {
+        val failures = mutableListOf<Int>()
+        var tracksPublished = false
+        val harness = harness(backgroundScope, onEmbeddedFailure = failures::add, hasMountableTracks = { tracksPublished })
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng", codecFamily = "pgs"), "5")
+        harness.adapter.select(native)
+        advanceTimeBy(9_900)
+        runCurrent()
+        assertEquals(emptyList(), failures)
+
+        // Published just before the 10 s check: the window starts there, so
+        // the selection still has a whole one to confirm, not 100 ms.
+        tracksPublished = true
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(emptyList(), failures)
+        advanceTimeBy(100)
+        runCurrent()
+        assertEquals(listOf(4), failures)
+
+        val already = harness(backgroundScope, onEmbeddedFailure = failures::add, hasMountableTracks = { true })
+        already.adapter.select(native)
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(listOf(4, 4), failures)
+
+        val never = harness(backgroundScope, onEmbeddedFailure = failures::add, hasMountableTracks = { false })
+        never.adapter.select(native)
+        advanceTimeBy(29_999)
+        runCurrent()
+        assertEquals(listOf(4, 4), failures)
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(listOf(4, 4, 4), failures)
+    }
+
+    @Test
     fun `failed native restore clears its selected identity without changing playback preferences`() = runTest {
         val failures = mutableListOf<Int>()
         val harness = harness(backgroundScope, onEmbeddedFailure = failures::add)
@@ -1663,6 +1728,7 @@ class MobileSubtitleTransactionAdapterTest {
         durablePersistenceScope: CoroutineScope = scope,
         onEmbeddedFailure: (Int) -> Unit = {},
         onHlsRenditionFailure: (Int) -> Unit = {},
+        hasMountableTracks: () -> Boolean = { true },
     ): Harness {
         val port = FakeStagedPort()
         val persistence = RecordingPersistence()
@@ -1674,6 +1740,7 @@ class MobileSubtitleTransactionAdapterTest {
             durablePersistenceScope = durablePersistenceScope,
             onEmbeddedSubtitleFailure = onEmbeddedFailure,
             onHlsRenditionSubtitleFailure = onHlsRenditionFailure,
+            hasMountableTracks = hasMountableTracks,
             onCommittedPlayback = { adoptionRequest ->
                 adoption.started += 1
                 adoption.requestedSourcePositions += adoptionRequest.requestedSourcePositionSeconds
