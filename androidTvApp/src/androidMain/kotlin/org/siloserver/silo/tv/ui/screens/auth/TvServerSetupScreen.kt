@@ -17,7 +17,10 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material.icons.outlined.Tv
 import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
@@ -33,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.InputMode
@@ -44,6 +48,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -77,6 +82,7 @@ import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeStatusChip
 import org.siloserver.silo.tv.ui.components.marquee.TvUsePhoneCard
 import org.siloserver.silo.tv.ui.components.rememberTvImeAwareFormScrollState
 import org.siloserver.silo.tv.ui.components.tvImeAwareFieldContext
+import org.siloserver.silo.common.network.ServerSetupScheme
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
@@ -218,6 +224,9 @@ fun TvServerSetupScreen(
                     found = found,
                     onPickFound = viewModel::connectTo,
                     onServerUrlChanged = viewModel::onServerUrlChanged,
+                    onSchemeSelected = viewModel::onSchemeSelected,
+                    onPortChanged = viewModel::onPortChanged,
+                    onToggleAdvancedOptions = viewModel::onToggleAdvancedOptions,
                     onConnect = viewModel::onConnectClick,
                     // Leaving mid-probe would let a late connect pull the app on.
                     onBack = { if (!state.isLoading) enteringAddress = false },
@@ -321,6 +330,9 @@ private fun AddressEntry(
     found: List<DiscoveredServer>,
     onPickFound: (DiscoveredServer) -> Unit,
     onServerUrlChanged: (String) -> Unit,
+    onSchemeSelected: (ServerSetupScheme) -> Unit,
+    onPortChanged: (String) -> Unit,
+    onToggleAdvancedOptions: () -> Unit,
     onConnect: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -329,7 +341,8 @@ private fun AddressEntry(
     val fieldFocus = remember { FocusRequester() }
     var fieldFocused by remember { mutableStateOf(false) }
     ClaimInitialFocus(fieldFocus, { fieldFocused }, "serverSetup.address")
-    val connect = { if (canSubmitTvServerUrl(state.serverUrl, state.isLoading)) onConnect() }
+    // A blank address still answers, with "Please enter a server host."
+    val connect = { if (!state.isLoading) onConnect() }
     TvMarqueeScreen(
         copyScroll = rememberTvImeAwareFormScrollState(),
         accessory = { TvMarqueeStatusChip(rememberTvName(), icon = Icons.Outlined.Tv) },
@@ -354,16 +367,16 @@ private fun AddressEntry(
                 )
             }
             state.error?.let { TvMarqueeErrorText(it, Modifier.width(380.dp).padding(top = 8.dp)) }
-            // Typing aids for the remote's keyboard.
-            Row(Modifier.fillMaxWidth().padding(top = 11.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                ServerUrlShortcuts.forEach { shortcut ->
-                    TvMarqueeButton(
-                        text = shortcut,
-                        onClick = { if (!state.isLoading) onServerUrlChanged(applyServerUrlShortcut(state.serverUrl, shortcut)) },
-                        kind = TvMarqueeButtonKind.Glass,
-                        compact = true,
-                    )
-                }
+            TvMarqueeButton(
+                text = if (state.showsAdvancedOptions) "Hide advanced options" else "Advanced options",
+                onClick = { if (!state.isLoading) onToggleAdvancedOptions() },
+                kind = TvMarqueeButtonKind.Plain,
+                compact = true,
+                icon = Icons.Outlined.Settings,
+                modifier = Modifier.padding(top = 9.dp),
+            )
+            if (state.showsAdvancedOptions) {
+                AdvancedOptions(state, onSchemeSelected, onPortChanged, onSubmit = connect, Modifier.padding(top = 7.dp))
             }
             Text(
                 if (state.usesCleartext) {
@@ -443,12 +456,45 @@ private fun FoundServerRows(
     }
 }
 
-private val ServerUrlShortcuts = listOf("https://", "http://", ".com")
-
-private fun applyServerUrlShortcut(value: String, shortcut: String): String =
-    when {
-        shortcut.endsWith("://") &&
-            (value.startsWith("http://", ignoreCase = true) || value.startsWith("https://", ignoreCase = true)) -> value
-        shortcut.endsWith("://") -> shortcut + value.trimStart()
-        else -> value + shortcut
+/**
+ * The protocol to try (Auto, HTTPS, HTTP) and an optional port, as Apple TV's
+ * Advanced options. Auto tries HTTPS, then HTTP, then Silo's port 8090.
+ */
+@Composable
+private fun AdvancedOptions(
+    state: TvServerSetupUiState,
+    onSchemeSelected: (ServerSetupScheme) -> Unit,
+    onPortChanged: (String) -> Unit,
+    onSubmit: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ServerSetupScheme.entries.forEach { scheme ->
+            val selected = state.selectedScheme == scheme
+            TvMarqueeButton(
+                text = scheme.label,
+                onClick = { if (!state.isLoading) onSchemeSelected(scheme) },
+                kind = TvMarqueeButtonKind.Glass,
+                compact = true,
+                icon = if (selected) Icons.Filled.Check else null,
+                modifier = Modifier.semantics { this.selected = selected },
+            )
+        }
+        Box(Modifier.width(130.dp).tvImeAwareFieldContext()) {
+            TvMarqueeField(
+                value = state.port,
+                onValueChange = onPortChanged,
+                icon = Icons.Outlined.Tag,
+                placeholder = "Port: auto",
+                keyboardType = KeyboardType.Number,
+                imeAction = ImeAction.Go,
+                onImeAction = onSubmit,
+                enabled = !state.isLoading,
+            )
+        }
     }
+}

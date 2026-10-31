@@ -12,32 +12,12 @@ import kotlin.test.assertIs
 
 class TvServerSetupUrlProbeTest {
     @Test
-    fun bareHostProbesHttpsBeforeHttpFallback() {
-        assertEquals(
-            listOf("https://media.local", "http://media.local"),
-            serverSetupUrlProbeCandidates(" media.local/ "),
-        )
-    }
-
-    @Test
-    fun explicitSchemeIsRespectedWithoutFallback() {
-        assertEquals(
-            listOf("http://media.local:8090"),
-            serverSetupUrlProbeCandidates(" HTTP://MEDIA.LOCAL:8090/ "),
-        )
-        assertEquals(
-            listOf("https://lib.strm.cafe"),
-            serverSetupUrlProbeCandidates("https://lib.strm.cafe"),
-        )
-    }
-
-    @Test
     fun probeCandidatesContinueToHttpFallbackAfterHttpsHttpError() = runTest {
         val setupRequests = mutableListOf<String>()
         val signupRequests = mutableListOf<String>()
 
         val result = probeTvServerSetupCandidates(
-            candidates = serverSetupUrlProbeCandidates("media.local"),
+            candidates = listOf("https://media.local", "http://media.local"),
             getSetupStatus = { candidate ->
                 setupRequests += candidate
                 if (candidate.startsWith("https://")) {
