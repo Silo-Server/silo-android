@@ -66,15 +66,22 @@ internal data class MobileSubtitleStageRequest(
     val subtitleTrackIndex: Int,
     /** Picks a quality other than the committed one. */
     val qualityChanged: Boolean = false,
+    /** Picks an audio track other than the committed one. */
+    val audioChanged: Boolean = false,
 )
 
 /**
  * The classification a staged request goes out with. A quality pick is a
  * `quality_change`, which discards the kept step-down estimate; a track change
- * carries it.
+ * carries it. An audio pick is never a `subtitle_track_changed`: the session
+ * manager adopts only a subtitle pick without a remount, and an audio change
+ * needs one.
  */
-internal fun MobileSubtitleStageRequest.replanClassification(): String =
-    if (qualityChanged) "quality_changed" else "subtitle_track_changed"
+internal fun MobileSubtitleStageRequest.replanClassification(): String = when {
+    qualityChanged -> "quality_changed"
+    audioChanged -> "audio_track_changed"
+    else -> "subtitle_track_changed"
+}
 
 internal data class MobileStagedSubtitleCandidate(
     val id: String,
@@ -750,6 +757,7 @@ internal class MobileSubtitleTransactionAdapter(
             qualityPreference = requested.qualityPreference,
             subtitleTrackIndex = requested.identity.serverTrackIndex(),
             qualityChanged = changesQuality(requested),
+            audioChanged = requested.audioTrackIndex != transition.committed.audioTrackIndex,
         )
         val staged = try {
             stagedPort.stage(request)

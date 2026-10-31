@@ -749,6 +749,19 @@ class MobileSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `an audio pick goes out as an audio track change`() = runTest {
+        val harness = harness(backgroundScope)
+
+        // The session manager adopts a subtitle_track_changed answer on the
+        // same transport without a remount, which would leave the old audio
+        // playing.
+        harness.adapter.selectAudio(7)
+        runCurrent()
+        assertEquals(7, harness.port.requests.last().audioTrackIndex)
+        assertEquals("audio_track_changed", harness.port.requests.last().replanClassification())
+    }
+
+    @Test
     fun `only a quality pick asks the port to change the quality`() = runTest {
         val harness = harness(backgroundScope)
 
