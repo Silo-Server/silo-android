@@ -536,6 +536,12 @@ class TvLoginViewModel(
         viewModelScope.launch {
             try {
                 if (tokenManager.getAccessTokenForScope(serverId).isNullOrBlank()) registry.remove(serverId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // A failed write (storage full) keeps the server, as before #741.
+                // Leave anyway: the code is already withdrawn, and setup works
+                // with the server still listed.
             } finally {
                 leavingServer = false
             }

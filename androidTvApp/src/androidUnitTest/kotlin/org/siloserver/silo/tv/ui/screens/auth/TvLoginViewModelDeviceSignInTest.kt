@@ -386,6 +386,17 @@ class TvLoginViewModelDeviceSignInTest {
         assertEquals(emptyList(), registry.removed)
     }
 
+    @Test
+    fun changeServerStillLeavesWhenForgettingTheServerFails() = runTest(dispatcher) {
+        val registry = FakeRegistry().apply { removeFailure = IllegalStateException("unable to durably remove server") }
+        val vm = viewModel(FakeTokens(), FakeDeviceApi(), registry = registry)
+        runCurrent()
+        var left = false
+        vm.onChangeServer { left = true }
+        runCurrent()
+        assertTrue(left, "a failed write must not strand the person on a withdrawn code")
+    }
+
     // --- Password gating (external sign-in) ---
 
     @Test
@@ -838,7 +849,9 @@ class TvLoginViewModelDeviceSignInTest {
         override suspend fun setFetchedName(serverId: String, fetchedName: String?) = Unit
         override suspend fun setProfileId(serverId: String, profileId: String?) = Unit
         val removed = mutableListOf<String>()
+        var removeFailure: Throwable? = null
         override suspend fun remove(serverId: String) {
+            removeFailure?.let { throw it }
             removed += serverId
         }
         override suspend fun signOut(serverId: String) = Unit
