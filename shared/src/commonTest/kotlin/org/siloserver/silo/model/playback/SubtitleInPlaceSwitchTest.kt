@@ -93,6 +93,7 @@ class SubtitleInPlaceSwitchTest {
             subtitle = original.subtitle.copy(inventory = listOf(row(0, codec = codec, streamIndex = null))),
         )
         assertEquals("3", preC1("subrip").let { it.nativeSwitchTrackId(it.subtitle.inventory.single()) })
+        assertEquals("3", preC1("hdmv_pgs_subtitle").let { it.nativeSwitchTrackId(it.subtitle.inventory.single()) })
         // ASS depends on fidelity and libass, which only the server's answer reflects.
         assertNull(preC1("ass").let { it.nativeSwitchTrackId(it.subtitle.inventory.single()) })
         assertNull(preC1("webvtt").let { it.nativeSwitchTrackId(it.subtitle.inventory.single()) })
