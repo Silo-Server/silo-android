@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -46,6 +48,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.stringResource
@@ -429,9 +433,14 @@ fun TvLoginScreen(
                     }
                     val activate = device.code?.activateText ?: state.serverActivateText.orEmpty()
                     TvMarqueeBody(
-                        "Scan the code with your phone's camera, or go to " +
-                            (activate.ifBlank { "your server's /activate page" }) +
-                            " and enter it. Approve on your phone and this TV signs in by itself.",
+                        // A decline withdraws the code, so there is nothing left to scan.
+                        if (device.status == TvSignInStatus.Denied) {
+                            stringResource(R.string.tv_signin_declined_lead)
+                        } else {
+                            "Scan the code with your phone's camera, or go to " +
+                                (activate.ifBlank { "your server's /activate page" }) +
+                                " and enter it. Approve on your phone and this TV signs in by itself."
+                        },
                         modifier = Modifier.padding(top = if (network == null) 13.dp else 6.dp),
                     )
                     Row(
@@ -518,9 +527,11 @@ private class NetworkSignInAction(
 
 /**
  * The state's action ("Try again" / "Show a new code"), "Sign in with a
- * password" and "Change server" on one row, as on Apple TV. Controls stay
- * enabled while work runs so focus doesn't drop; the actions ignore repeats.
+ * password" and "Change server" on one row, as on Apple TV, wrapping when all
+ * three don't fit so no label is cut off. Controls stay enabled while work
+ * runs so focus doesn't drop; the actions ignore repeats.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CodeActions(
     status: TvSignInStatus,
@@ -540,7 +551,14 @@ private fun CodeActions(
     val upTo = network?.focusRequester
     // An update requirement hides the password button: no password can help.
     val offersPassword = showPasswordAction && status != TvSignInStatus.UpdateRequired
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(11.dp)) {
+    // Wrapped onto its own line, Change server leaves Up and Left to the
+    // rows above it: the overrides below are for a one-row layout.
+    var changeServerWrapped by remember { mutableStateOf(false) }
+    FlowRow(
+        modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(11.dp),
+        verticalArrangement = Arrangement.spacedBy(11.dp),
+    ) {
         status.action()?.let { label ->
             TvMarqueeButton(
                 text = stringResource(label),
@@ -573,8 +591,10 @@ private fun CodeActions(
             kind = TvMarqueeButtonKind.Plain,
             focusRequester = changeServerFocus,
             modifier = Modifier
+                .onPlaced { changeServerWrapped = it.positionInParent().y > 0f }
                 .then(changeServerTracking)
                 .focusProperties {
+                    if (changeServerWrapped) return@focusProperties
                     if (offersPassword) left = usePasswordFocus
                     upTo?.let { up = it }
                 },
