@@ -40,6 +40,30 @@ class TvServerSetupUrlProbeTest {
     }
 
     @Test
+    fun bareHttpErrorOnLastCandidateUsesTheGenericUnreachableMessage() = runTest {
+        val result = probeTvServerSetupCandidates(
+            candidates = listOf("https://media.local"),
+            getSetupStatus = { ApiResult.Error(404, "", "") },
+            getSignupStatus = { ApiResult.Success(SignupStatusResponse(enabled = false)) },
+        )
+
+        val failure = assertIs<TvServerSetupProbeResult.Failure>(result)
+        assertEquals("Could not reach a Silo server at that address.", failure.message)
+    }
+
+    @Test
+    fun httpErrorWithServerMessageKeepsThatMessage() = runTest {
+        val result = probeTvServerSetupCandidates(
+            candidates = listOf("https://media.local"),
+            getSetupStatus = { ApiResult.Error(503, "unavailable", "Server is starting") },
+            getSignupStatus = { ApiResult.Success(SignupStatusResponse(enabled = false)) },
+        )
+
+        val failure = assertIs<TvServerSetupProbeResult.Failure>(result)
+        assertEquals("Could not reach server: Server is starting", failure.message)
+    }
+
+    @Test
     fun failedProbeWithSuccessfulSetupYieldsV2NotUnknown() = runTest {
         // A transient probe failure (or timeout) is no verdict; the v2 setup
         // call succeeding is proof of v2, so the connect result carries V2
