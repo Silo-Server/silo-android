@@ -402,7 +402,8 @@ class SubtitleManager(
             "vtt", "webvtt" -> MimeTypes.TEXT_VTT
             "ttml" -> MimeTypes.APPLICATION_TTML
             "pgs", "hdmv_pgs_subtitle" -> MimeTypes.APPLICATION_PGS
-            "dvd_subtitle", "dvdsub" -> MimeTypes.APPLICATION_DVBSUBS
+            "dvd_subtitle", "dvdsub", "vobsub" -> MimeTypes.APPLICATION_VOBSUB
+            "dvb_subtitle", "dvbsub" -> MimeTypes.APPLICATION_DVBSUBS
             else -> MimeTypes.APPLICATION_SUBRIP // default to SRT
         }
     }
