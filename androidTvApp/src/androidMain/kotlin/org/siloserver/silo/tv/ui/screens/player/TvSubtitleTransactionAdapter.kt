@@ -40,6 +40,7 @@ import org.siloserver.silo.model.playback.SubtitleTransitionState
 import org.siloserver.silo.model.playback.UpdateAudioPreference
 import org.siloserver.silo.model.playback.UpdateQualityPreference
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
+import org.siloserver.silo.model.playback.isServerPick
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.reduceSubtitleTransition
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
@@ -206,6 +207,19 @@ internal data class TvSubtitleTransactionSnapshot(
     val desiredOutputRouteGeneration: Long = committedOutputRouteGeneration,
     val subtitleTracks: List<PlayerSubtitleInfo> = emptyList(),
     val subtitleRefreshNonce: Long = 0L,
+    /**
+     * Names the owner of [localMountIdentity]. A new owner can ask for the
+     * same identity as the one before it, as the confirmation of a plan
+     * applied in place does for the track a local switch already selected,
+     * and the player has to report on it again.
+     */
+    val localMountGeneration: Long = 0L,
+    /**
+     * [localMountIdentity] is a switch on the playing stream still waiting
+     * for its replan. When such an owner ends without a successor, the player
+     * must go back to [committedIdentity], which only the view model can do.
+     */
+    val localMountInPlaceSwitch: Boolean = false,
 ) {
     val committedIdentity: SubtitleIdentity
         get() = transition.committed.identity
@@ -299,6 +313,12 @@ internal class TvSubtitleTransactionAdapter(
      */
     private val isLocallyMountable: (SubtitleIdentity) -> Boolean = { true },
     /**
+     * Whether a pick of the second identity, made while the first is
+     * committed, can be shown on the stream the player already plays before
+     * the server answers (see `canSwitchSubtitleInPlace`).
+     */
+    private val canSwitchInPlace: (SubtitleIdentity, SubtitleIdentity) -> Boolean = { _, _ -> false },
+    /**
      * A buffering-quality replan handed to [selectQuality] will not be
      * adopted: its request failed, or a reset or content change dropped it
      * before it went out. Not called for one that committed.
@@ -329,6 +349,11 @@ internal class TvSubtitleTransactionAdapter(
         val mountedBeforeAdoption: Boolean = false,
         val rollbackIncludesLifecycle: Boolean = true,
         val exposesMountBoundary: Boolean = true,
+        /**
+         * Selected on the playing stream ahead of its own replan, whose answer
+         * is applied without a remount when it keeps the transport.
+         */
+        val inPlaceSwitch: Boolean = false,
     )
 
     private enum class PublicationSettlementPhase {
@@ -437,6 +462,10 @@ internal class TvSubtitleTransactionAdapter(
                 desiredOutputRouteGeneration = desiredOutputRouteGeneration,
                 subtitleTracks = context?.subtitleTracks.orEmpty(),
                 subtitleRefreshNonce = subtitleRefreshNonce,
+                localMountGeneration = localMountGeneration,
+                localMountInPlaceSwitch = pendingLocalSelection
+                    ?.takeIf { it.identity == localIdentity && it.committedPlayback == null }
+                    ?.inPlaceSwitch == true,
             )
         }
 
@@ -1170,6 +1199,38 @@ internal class TvSubtitleTransactionAdapter(
      * because the two paths had drifted, and a subtitle press replayed out of
      * `queuedMutations` was replanning where a direct press did not.
      */
+    /**
+     * Shows [identity] on the playing stream at once and sends its replan
+     * with it, when the stream already carries the track (or it is Off) and
+     * the pick changes nothing but the subtitle. The replan's answer is
+     * adopted without a remount when it keeps the transport; a failure
+     * restores the previous subtitle.
+     */
+    private fun beginInPlaceSwitch(
+        identity: SubtitleIdentity,
+        state: SubtitleTransitionState,
+    ): Boolean {
+        val selectionContext = context ?: return false
+        if (selectionContext.sessionId == null) return false
+        val pending = state.pending ?: return false
+        if (pending.identity != identity ||
+            pending.audioPreferenceSpecified ||
+            pending.qualityPreferenceSpecified ||
+            desiredOutputRouteGeneration != committedOutputRouteGeneration ||
+            !canSwitchInPlace(transition.committed.identity, identity) ||
+            (identity != SubtitleIdentity.Off && !isLocallyMountable(identity))
+        ) {
+            return false
+        }
+        beginLocalSelection(
+            identity = identity,
+            proposedState = state,
+            selectionContext = selectionContext,
+            inPlaceSwitch = true,
+        )
+        return true
+    }
+
     private fun commitLocallyMountableSelection(
         identity: SubtitleIdentity,
         state: SubtitleTransitionState,
@@ -1179,6 +1240,8 @@ internal class TvSubtitleTransactionAdapter(
             SubDiag.log("commitLocal SKIP not mountable id=$identity")
             return false
         }
+        // A pick that cannot switch in place takes the replan.
+        if (identity.isServerPick(transition.committed.identity)) return false
         val pending = state.pending
         if (
             pending != null &&
@@ -1232,6 +1295,8 @@ internal class TvSubtitleTransactionAdapter(
             current?.let { persist(committedState.committed, it) }
             return
         }
+
+        if (beginInPlaceSwitch(identity, selected.state)) return
 
         if (
             identity.isClientOwnedSubtitle() &&
@@ -2216,6 +2281,7 @@ internal class TvSubtitleTransactionAdapter(
             reduceSubtitleTransition(state, event).state
         }
         val finalIdentity = finalState.pending?.identity ?: finalState.committed.identity
+        if (beginInPlaceSwitch(finalIdentity, finalState)) return
         if (
             finalIdentity.requiresLocalMountConfirmation() &&
             commitLocallyMountableSelection(finalIdentity, finalState)
@@ -2250,12 +2316,13 @@ internal class TvSubtitleTransactionAdapter(
         transition = failed.state
         failureMessage = message
         val priorIdentity = transition.committed.identity
-        if (
-            failedLocalOwner?.mountedBeforeAdoption == true &&
-            priorIdentity.requiresLocalMountConfirmation() &&
-            isLocallyMountable(priorIdentity) &&
-            context?.sessionId != null
-        ) {
+        val switchedLocally = failedLocalOwner?.mountedBeforeAdoption == true ||
+            failedLocalOwner?.inPlaceSwitch == true
+        val restorable = priorIdentity == SubtitleIdentity.Off && failedLocalOwner?.inPlaceSwitch == true ||
+            priorIdentity.requiresLocalMountConfirmation() && isLocallyMountable(priorIdentity)
+        if (switchedLocally && restorable && context?.sessionId != null) {
+            // The switch already changed what the player shows; put back the
+            // subtitle the server still has, Off included.
             beginLocalRestore(priorIdentity)
         } else {
             publish()
@@ -2266,6 +2333,17 @@ internal class TvSubtitleTransactionAdapter(
         val ownedSelection = pendingLocalSelection?.generation == generation
         val ownedRestore = pendingLocalRestore?.generation == generation
         if (!ownedSelection && !ownedRestore) return
+        val inPlaceOwner = pendingLocalSelection?.takeIf { ownedSelection && it.inPlaceSwitch }
+        if (inPlaceOwner != null && inPlaceOwner.committedPlayback == null &&
+            inPlaceOwner.proposedState.pending != null
+        ) {
+            // The replan for this switch is still out, and its answer decides:
+            // the adoption confirms the mount again, and a miss then takes the
+            // usual path. Failing now would send a second replan beside it.
+            localMountTimeout?.cancel()
+            localMountTimeout = null
+            return
+        }
         val failedIdentity = (if (ownedSelection) pendingLocalSelection?.identity else pendingLocalRestore?.identity)
             as? SubtitleIdentity.Embedded
         if (failedIdentity?.isServerSelected == true) {
@@ -2330,6 +2408,7 @@ internal class TvSubtitleTransactionAdapter(
         rollbackContext: TvSubtitlePlaybackContext = selectionContext,
         rollbackOutputRouteGeneration: Long = committedOutputRouteGeneration,
         replayStateAfterRollback: SubtitleTransitionState? = null,
+        inPlaceSwitch: Boolean = false,
     ) {
         transition = transition.copy(
             pending = proposedState.pending,
@@ -2348,6 +2427,7 @@ internal class TvSubtitleTransactionAdapter(
             rollbackContext = rollbackContext,
             rollbackOutputRouteGeneration = rollbackOutputRouteGeneration,
             replayStateAfterRollback = replayStateAfterRollback,
+            inPlaceSwitch = inPlaceSwitch,
         )
         scheduleLocalMountTimeout(generation)
         publish()

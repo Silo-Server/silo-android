@@ -33,6 +33,26 @@ const val NATIVE_HLS_PLAYBACK_V1_FEATURE = "native_hls_playback_v1"
 const val HLS_SUBTITLE_RENDITIONS_V1_FEATURE = "hls_subtitle_renditions_v1"
 
 /**
+ * Extends [HLS_SUBTITLE_RENDITIONS_V1_FEATURE], which it requires, to
+ * `server_remux_hls`: a copy remux then carries its embedded text track as a
+ * rendition instead of a whole-file sidecar extraction. Sent only to a server
+ * that advertises it ([gatedForHlsSubtitleRenditions]). `/api/v2` only,
+ * and attempt-sticky on the server.
+ */
+const val HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE = "hls_remux_subtitle_renditions_v1"
+
+/**
+ * Extends [HLS_SUBTITLE_RENDITIONS_V1_FEATURE], which it requires, to every
+ * embedded text track the source's index can read: each becomes a rendition of
+ * the HLS plan's stream (a copy remux also needs
+ * [HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE]), its inventory row carries
+ * [PlaybackSubtitleInventoryItemV3.hlsRendition], and a switch among them, or
+ * to Off, keeps the running stream. Sent only to a server that advertises it
+ * ([gatedForHlsSubtitleRenditions]). `/api/v2` only, and attempt-sticky.
+ */
+const val HLS_SUBTITLE_RENDITIONS_ALL_V1_FEATURE = "hls_subtitle_renditions_all_v1"
+
+/**
  * The decision's plan reports [PlaybackPlanV3.activeQuality], so an absent
  * value means the plan delivers no menu entry. Without it, an absent value
  * says nothing and the client infers the entry. `/api/v2` only.
@@ -181,6 +201,39 @@ fun playbackClientFeaturesV3(context: ClientPlaybackContext): List<String> = bui
     if (NATIVE_HLS_PLAYBACK_V1_FEATURE in context.deliveries[DELIVERY_CLASS_HLS]?.features.orEmpty()) {
         add(HLS_SUBTITLE_RENDITIONS_V1_FEATURE)
     }
+}
+
+/**
+ * The start request to send to a server advertising [serverFeatures]: it lists
+ * [HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE] and
+ * [HLS_SUBTITLE_RENDITIONS_ALL_V1_FEATURE] only when the server advertises
+ * them and the request already lists [HLS_SUBTITLE_RENDITIONS_V1_FEATURE],
+ * which both require. Pure and idempotent.
+ */
+fun PlaybackStartRequestV3.gatedForHlsSubtitleRenditions(
+    serverFeatures: Collection<String>,
+): PlaybackStartRequestV3 = copy(clientFeatures = clientFeatures.gatedForHlsSubtitleRenditions(serverFeatures))
+
+/**
+ * The replan request to send to a server advertising [serverFeatures]. The
+ * server pins both features to what the start negotiated, so this only keeps
+ * the replan's list consistent with it.
+ */
+fun PlaybackReplanRequestV3.gatedForHlsSubtitleRenditions(
+    serverFeatures: Collection<String>,
+): PlaybackReplanRequestV3 = copy(clientFeatures = clientFeatures.gatedForHlsSubtitleRenditions(serverFeatures))
+
+private val HLS_SUBTITLE_RENDITION_EXTENSIONS = listOf(
+    HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE,
+    HLS_SUBTITLE_RENDITIONS_ALL_V1_FEATURE,
+)
+
+private fun List<String>.gatedForHlsSubtitleRenditions(serverFeatures: Collection<String>): List<String> {
+    val renditions = HLS_SUBTITLE_RENDITIONS_V1_FEATURE in this
+    val kept = filterNot { it in HLS_SUBTITLE_RENDITION_EXTENSIONS }
+    val wanted = HLS_SUBTITLE_RENDITION_EXTENSIONS.filter { renditions && it in serverFeatures }
+    val gated = kept + wanted
+    return if (gated == this) this else gated
 }
 
 @Serializable
@@ -447,6 +500,24 @@ data class PlaybackSubtitleHlsRenditionV3(
     val name: String,
     val format: String,
     @SerialName("mime_type") val mimeType: String,
+    /**
+     * 1-based place in the group, set when the group lists every embedded
+     * text track ([HLS_SUBTITLE_RENDITIONS_ALL_V1_FEATURE]); equal to the
+     * selected row's [PlaybackSubtitleInventoryHlsRenditionV3.index].
+     */
+    val index: Int? = null,
+)
+
+/**
+ * An inventory row's track among the HLS stream's subtitle renditions, under
+ * [HLS_SUBTITLE_RENDITIONS_ALL_V1_FEATURE]: the `EXT-X-MEDIA` of [groupId]
+ * named [name], at 1-based [index] in the group.
+ */
+@Serializable
+data class PlaybackSubtitleInventoryHlsRenditionV3(
+    @SerialName("group_id") val groupId: String,
+    val name: String,
+    val index: Int,
 )
 
 @Serializable
@@ -487,6 +558,21 @@ data class PlaybackSubtitleInventoryItemV3(
      * external and downloaded tracks whose timing the server can correct.
      */
     @SerialName("sync_key") val syncKey: String? = null,
+    /**
+     * Embedded rows only: the absolute probed stream index. A server that
+     * sends it also sends [nativeSelectable] whenever that is true.
+     */
+    @SerialName("stream_index") val streamIndex: Int? = null,
+    /** Embedded rows only: the Matroska TrackNumber or MP4 track ID, when known. */
+    @SerialName("container_track_id") val containerTrackId: String? = null,
+    /**
+     * Selecting this embedded row under the plan's delivery, capabilities and
+     * audio would give the plan `subtitle.embedded`, so the player may switch
+     * to it on the stream it already plays. Omitted (null) when false.
+     */
+    @SerialName("native_selectable") val nativeSelectable: Boolean? = null,
+    /** The row's track among the HLS stream's own subtitle renditions. */
+    @SerialName("hls_rendition") val hlsRendition: PlaybackSubtitleInventoryHlsRenditionV3? = null,
 )
 
 /** Resolves the optional ordinal from the stable server track identity. */
@@ -686,6 +772,14 @@ private fun isNativeEmbeddedSubtitlePair(container: String?, codec: String?): Bo
     return nativeEmbeddedSubtitleCodec(codec) in codecs
 }
 
+/**
+ * Whether this delivery's HLS stream can carry the selected embedded text
+ * track as a `SUBTITLES` rendition: a transcode, and a copy remux once the
+ * client lists [HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE].
+ */
+fun PlaybackDelivery.carriesHlsSubtitleRendition(): Boolean =
+    this == PlaybackDelivery.SERVER_TRANSCODE_HLS || this == PlaybackDelivery.SERVER_REMUX_HLS
+
 fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
     if (protocolVersion != PLAYBACK_PROTOCOL_V3 ||
         PLAYBACK_PLAN_V3_FEATURE !in serverFeatures ||
@@ -749,17 +843,16 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
         )
     }
     plan.subtitle.embedded?.let { native ->
-        val nativeId = native.containerTrackId?.toLongOrNull()
         if (plan.delivery != PlaybackDelivery.ORIGINAL_HTTP || plan.subtitle.mode != PlaybackSubtitleModeV3.RENDER ||
             plan.subtitle.artifact != null || native.streamIndex < 0 ||
-            nativeId == null || nativeId !in 1..Int.MAX_VALUE.toLong() || native.containerTrackId != nativeId.toString() ||
+            !isCanonicalContainerTrackId(native.containerTrackId) ||
             selectedSubtitle?.source != "embedded" ||
             !isNativeEmbeddedSubtitlePair(plan.source.container, selectedSubtitle.codec) ||
             plan.subtitle.trackId != plan.selectedTracks.subtitle?.id
         ) return PlaybackV3Validation.ReplanRequired(SUBTITLE_EMBEDDED_FAILED_CLASSIFICATION, plan, resolvedSessionId)
     }
     plan.subtitle.hlsRendition?.let { rendition ->
-        if (plan.delivery != PlaybackDelivery.SERVER_TRANSCODE_HLS || plan.stream.protocol != PlaybackStreamProtocol.HLS ||
+        if (!plan.delivery.carriesHlsSubtitleRendition() || plan.stream.protocol != PlaybackStreamProtocol.HLS ||
             (plan.subtitle.mode != PlaybackSubtitleModeV3.RENDER && plan.subtitle.mode != PlaybackSubtitleModeV3.CONVERT) ||
             plan.subtitle.artifact != null || plan.subtitle.embedded != null ||
             rendition.groupId.isBlank() || rendition.name.isBlank() ||
@@ -860,6 +953,155 @@ private fun PlaybackPlanV3.hasValidSubtitleInventory(): Boolean {
         it.trackId == selected.id &&
             (selected.index == null || it.combinedIndex == selected.index)
     }
+}
+
+/** A positive 32-bit track number written the way the server writes it ("4", never "04"). */
+private fun isCanonicalContainerTrackId(id: String?): Boolean {
+    val number = id?.toLongOrNull() ?: return false
+    return number in 1..Int.MAX_VALUE.toLong() && id == number.toString()
+}
+
+/**
+ * The container track the player may switch [row] to on the `original_http`
+ * stream it already plays, before the server answers, or null.
+ *
+ * The server says so with `native_selectable`, which it computes with the
+ * planner's own rules for this plan's capabilities, delivery and audio. A
+ * server that sends `stream_index` omits `native_selectable` exactly when it is
+ * false. Without either field the row comes from a server that predates them,
+ * and the client evaluates the row itself with the rules [validateForMedia3]
+ * applies to a native plan. That needs the row's `container_track_id`, so in
+ * practice only a row a newer server describes is ever switched locally. ASS is
+ * left out of that fallback: whether it plays natively also depends on the
+ * fidelity preference and on libass, which only the server's answer reflects.
+ * Whether Media3 actually lists the track is the caller's check.
+ */
+fun PlaybackPlanV3.nativeSwitchTrackId(row: PlaybackSubtitleInventoryItemV3): String? {
+    if (delivery != PlaybackDelivery.ORIGINAL_HTTP || subtitle.mode == PlaybackSubtitleModeV3.BURN_IN) return null
+    if (row.source != "embedded") return null
+    val trackId = row.containerTrackId?.takeIf(::isCanonicalContainerTrackId) ?: return null
+    if (subtitle.inventory.count { it.containerTrackId == trackId } != 1) return null
+    val selectable = when {
+        row.nativeSelectable != null -> row.nativeSelectable
+        row.streamIndex != null -> false
+        else -> isNativeEmbeddedSubtitlePair(source.container, row.codec) &&
+            nativeEmbeddedSubtitleCodec(row.codec) != "ass"
+    }
+    return trackId.takeIf { selectable }
+}
+
+/**
+ * [row]'s rendition among the HLS stream's subtitle renditions, which the
+ * player may switch to on the stream it already plays, or null. Under
+ * [HLS_SUBTITLE_RENDITIONS_ALL_V1_FEATURE] every listed embedded text track has
+ * one; a malformed or duplicated entry is ignored, so that row keeps its
+ * sidecar.
+ */
+fun PlaybackPlanV3.switchableHlsRendition(row: PlaybackSubtitleInventoryItemV3): PlaybackSubtitleInventoryHlsRenditionV3? {
+    if (!delivery.carriesHlsSubtitleRendition() || stream.protocol != PlaybackStreamProtocol.HLS) return null
+    if (subtitle.mode == PlaybackSubtitleModeV3.BURN_IN) return null
+    val rendition = row.hlsRendition ?: return null
+    if (rendition.groupId.isBlank() || rendition.name.isBlank() || rendition.index < 1) return null
+    val sameName = subtitle.inventory.count {
+        it.hlsRendition?.groupId == rendition.groupId && it.hlsRendition.name == rendition.name
+    }
+    return rendition.takeIf { sameName == 1 }
+}
+
+/**
+ * Whether the player can apply this plan to the media [current] is already
+ * playing, without remounting it: the server kept the transport (session,
+ * stream URL and headers, effective file, recipe, timeline offset, audio) and
+ * changed only the subtitle decision, to one the player selects in that media.
+ *
+ * - On `original_http`: Off, or a native `subtitle.embedded` track. The server
+ *   answers a switch to a `native_selectable` row this way.
+ * - On an HLS transcode or copy remux under
+ *   [HLS_SUBTITLE_RENDITIONS_ALL_V1_FEATURE]: Off, or one of the renditions
+ *   the playing stream already lists, when both plans list the same set. The
+ *   server then keeps the running stream and its generation.
+ *
+ * Anything else, including a sidecar artifact, needs a remount. The plan ids
+ * differ either way: the selected subtitle is part of the server's plan
+ * identity.
+ */
+fun PlaybackPlanV3.appliesInPlaceOver(current: PlaybackPlanV3, sessionId: String?, currentSessionId: String?): Boolean {
+    if (sessionId == null || sessionId != currentSessionId) return false
+    if (delivery != current.delivery) return false
+    if (stream.url != current.stream.url ||
+        stream.protocol != current.stream.protocol ||
+        stream.container != current.stream.container ||
+        stream.mimeType != current.stream.mimeType ||
+        stream.headers != current.stream.headers ||
+        stream.headerRefresh != current.stream.headerRefresh ||
+        stream.headerRefreshUrl != current.stream.headerRefreshUrl
+    ) return false
+    if ((effectiveMediaFileId ?: requestedMediaFileId) != (current.effectiveMediaFileId ?: current.requestedMediaFileId)) {
+        return false
+    }
+    if (source.container != current.source.container || effectiveRecipe != current.effectiveRecipe) return false
+    if (timeline.timelineOffsetSeconds != current.timeline.timelineOffsetSeconds ||
+        timeline.streamOriginSeconds != current.timeline.streamOriginSeconds
+    ) return false
+    if (selectedTracks.audio != current.selectedTracks.audio) return false
+    if (claims.video != current.claims.video || claims.audio != current.claims.audio) return false
+    if (transformations.toSet() != current.transformations.toSet() ||
+        runtimeCorrections.toSet() != current.runtimeCorrections.toSet() ||
+        appliedQuirks.toSet() != current.appliedQuirks.toSet() ||
+        activeOriginalHttpClaims() != current.activeOriginalHttpClaims()
+    ) return false
+    if (subtitle.artifact != null ||
+        subtitle.mode == PlaybackSubtitleModeV3.BURN_IN ||
+        current.subtitle.mode == PlaybackSubtitleModeV3.BURN_IN
+    ) return false
+    return when {
+        delivery == PlaybackDelivery.ORIGINAL_HTTP -> subtitle.hlsRendition == null && when (subtitle.mode) {
+            PlaybackSubtitleModeV3.OFF -> subtitle.embedded == null
+            PlaybackSubtitleModeV3.RENDER -> isCanonicalContainerTrackId(subtitle.embedded?.containerTrackId)
+            else -> false
+        }
+        delivery.carriesHlsSubtitleRendition() -> {
+            val renditions = subtitle.inventory.mapNotNull { row ->
+                switchableHlsRendition(row)?.let { row.combinedIndex to it }
+            }
+            val playing = current.subtitle.inventory.mapNotNull { row ->
+                current.switchableHlsRendition(row)?.let { row.combinedIndex to it }
+            }
+            val selected = subtitle.hlsRendition
+            renditions.isNotEmpty() && renditions == playing && subtitle.embedded == null && when (subtitle.mode) {
+                PlaybackSubtitleModeV3.OFF -> selected == null
+                PlaybackSubtitleModeV3.RENDER,
+                PlaybackSubtitleModeV3.CONVERT,
+                -> selected != null && renditions.any { (_, it) -> it.groupId == selected.groupId && it.name == selected.name }
+                else -> false
+            }
+        }
+        else -> false
+    }
+}
+
+/**
+ * This plan as the player renders it after an audio switch it made on the
+ * mounted file alone, with no replan. On `original_http` every audio track is
+ * in the file, and a subtitle pick's replan carries the audio the viewer has,
+ * the plan's or one switched that way. When [requestedAudio] is not this
+ * plan's audio and [answer] selects it, the player already renders [answer]'s
+ * audio, so its track, claims and recipe stand in for this plan's and
+ * [appliesInPlaceOver] compares what is actually playing.
+ */
+fun PlaybackPlanV3.withPlayerSwitchedAudio(requestedAudio: PlaybackTrackIdentityV3?, answer: PlaybackPlanV3): PlaybackPlanV3 {
+    val requested = requestedAudio?.index ?: return this
+    if (delivery != PlaybackDelivery.ORIGINAL_HTTP || answer.delivery != PlaybackDelivery.ORIGINAL_HTTP) return this
+    if (selectedTracks.audio?.index == requested || answer.selectedTracks.audio?.index != requested) return this
+    return copy(
+        selectedTracks = selectedTracks.copy(audio = answer.selectedTracks.audio),
+        claims = claims.copy(audio = answer.claims.audio),
+        effectiveRecipe = effectiveRecipe.copy(
+            audioCodec = answer.effectiveRecipe.audioCodec,
+            audioChannels = answer.effectiveRecipe.audioChannels,
+            audioLayout = answer.effectiveRecipe.audioLayout,
+        ),
+    )
 }
 
 fun PlaybackPlanV3.executableMedia3ClientTransformations(): List<String> =

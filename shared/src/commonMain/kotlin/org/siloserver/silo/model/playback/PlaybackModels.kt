@@ -92,6 +92,12 @@ data class PlayerSubtitleInfo(
 data class SubtitleHlsRendition(
     @SerialName("group_id") val groupId: String,
     val name: String,
+    /**
+     * 1-based place in the group, present only when the stream lists every
+     * embedded text track as a rendition: the player can then switch to this
+     * track on the stream it already plays.
+     */
+    val index: Int? = null,
 ) {
     /**
      * The `Format.id` Media3's `HlsPlaylistParser` gives the rendition:

@@ -13,6 +13,8 @@ import android.os.SystemClock
 import android.util.Log
 import org.siloserver.silo.common.player.SubDiag
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
+import org.siloserver.silo.common.player.canSwitchSubtitleInPlace
+import org.siloserver.silo.common.player.withInPlaceAdoption
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.tv.data.preferences.PlaybackQuality
@@ -1398,6 +1400,10 @@ class TvPlayerViewModel(
     private var subtitleMountGeneration = 0L
     private var lastAdapterMountIdentity: SubtitleIdentity? = null
     private var lastAdapterMountGeneration: Long? = null
+    /** The adapter's owner of [lastAdapterMountIdentity]; a new owner re-arms the same identity. */
+    private var lastAdapterMountOwner: Long? = null
+    /** [lastAdapterMountIdentity] was shown on the playing stream ahead of its replan. */
+    private var lastAdapterMountInPlaceSwitch = false
 
     /**
      * Authority for the NEXT mount the adapter arms, consumed by the snapshot
@@ -1423,6 +1429,13 @@ class TvPlayerViewModel(
 
     /** The mount nonce of each subtitle publication not yet confirmed, by session. */
     private val unpublishedSubtitleMounts = mutableMapOf<String, Long>()
+
+    /**
+     * Sessions whose unconfirmed subtitle publication was applied in place:
+     * no mount nonce, the same MediaItem. Their rollback restores the plan
+     * and reselects the previous subtitle instead of remounting.
+     */
+    private val unpublishedInPlaceSubtitles = mutableSetOf<String>()
 
     /**
      * Unconfirmed publications that moved to another version, which turned the
@@ -1477,7 +1490,19 @@ class TvPlayerViewModel(
         onSnapshotChanged = { snapshot ->
             if (snapshot.failureMessage != null) refuseMenuPickWhenIdle()
             val localMountIdentity = snapshot.localMountIdentity
-            if (localMountIdentity != null && localMountIdentity != lastAdapterMountIdentity) {
+            // A switch shown ahead of its replan ended with nothing after it
+            // (a newer pick that takes the replan path, or a failure): the
+            // player still shows that track, so put the committed one back.
+            val abandonedInPlaceSwitch = localMountIdentity == null &&
+                lastAdapterMountInPlaceSwitch &&
+                lastAdapterMountIdentity != snapshot.committedIdentity
+            if (localMountIdentity != null) lastAdapterMountInPlaceSwitch = snapshot.localMountInPlaceSwitch
+            if (localMountIdentity != null && (
+                    localMountIdentity != lastAdapterMountIdentity ||
+                        snapshot.localMountGeneration != lastAdapterMountOwner
+                    )
+            ) {
+                lastAdapterMountOwner = snapshot.localMountGeneration
                 subtitleMountGeneration += 1
                 lastAdapterMountGeneration = subtitleMountGeneration
                 subtitleRemountReselection.arm(
@@ -1503,6 +1528,9 @@ class TvPlayerViewModel(
                 }
                 lastAdapterMountGeneration = null
                 lastAdapterMountIdentity = null
+                lastAdapterMountOwner = null
+                lastAdapterMountInPlaceSwitch = false
+                if (abandonedInPlaceSwitch) reselectMountedSubtitle(snapshot.committedIdentity)
             }
             if (autoSubtitleSelectionInFlight &&
                 !snapshot.subtitleApplying &&
@@ -1566,13 +1594,17 @@ class TvPlayerViewModel(
         },
         hasMountableTracks = { _uiState.value.subtitleTracks.isNotEmpty() },
         isLocallyMountable = { identity ->
-            // Server-native and sidecar decisions require exact mounted IDs.
             val state = _uiState.value
-            tvResolveMountedSubtitleTrack(
+            isTvLocallyMountable(
                 identity = identity,
+                plan = state.playbackPlan,
                 subtitleRows = state.subtitleUrls,
                 mounted = state.subtitleTracks.map { it.toMountedTvSubtitleTrack() },
-            ) != null
+            )
+        },
+        canSwitchInPlace = { committed, target ->
+            val state = _uiState.value
+            canSwitchSubtitleInPlace(state.playbackPlan, state.subtitleUrls, committed, target)
         },
         onBufferingQualityReplanFailed = {
             Log.i(TAG, "buffering_quality replan_failed")
@@ -1826,7 +1858,12 @@ class TvPlayerViewModel(
      * playback and the HUD ended up disagreeing.
      */
     private val _subtitleMountRequests =
-        MutableSharedFlow<TvSubtitleMountRequest>(extraBufferCapacity = 1)
+        // Only the newest owner's request can be applied (canApplySubtitleMount),
+        // so an older one still waiting to be collected gives way to it.
+        MutableSharedFlow<TvSubtitleMountRequest>(
+            extraBufferCapacity = 1,
+            onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+        )
     internal val subtitleMountRequests: SharedFlow<TvSubtitleMountRequest> = _subtitleMountRequests
 
     // Remote track-selection latches. A remote command can land before the
@@ -2093,11 +2130,17 @@ class TvPlayerViewModel(
         }
         subtitleServerIndexToRestore?.let { serverIndex ->
             subtitleSnapshotSettlement.reset()
+            // A track the media itself carries (a native track or a rendition)
+            // is restored by its exact identity. After an in-place switch the
+            // reloaded multivariant playlist still marks the original track
+            // DEFAULT, so only the explicit selection puts the viewer's back.
+            val committed = (_uiState.value.committedSubtitleIdentity as? SubtitleIdentity.Embedded)
+                ?.takeIf { it.isServerSelected && it.serverIndex == serverIndex }
             subtitleRemountReselection.arm(
-                identity = if (serverIndex == -1) {
-                    SubtitleIdentity.Off
-                } else {
-                    SubtitleIdentity.ServerSidecar(serverIndex)
+                identity = when {
+                    serverIndex == -1 -> SubtitleIdentity.Off
+                    committed != null -> committed
+                    else -> SubtitleIdentity.ServerSidecar(serverIndex)
                 },
                 generation = transportMountSequence,
             )
@@ -2238,12 +2281,47 @@ class TvPlayerViewModel(
             catalogTracks = version?.subtitleTracks.orEmpty(),
             plannedTracks = ready.session.subtitleUrls.orEmpty(),
         )
+        val mountedPlan = before.playbackPlan
+        val adoptedPlan = ready.session.playbackPlan
+        if (ready.inPlace &&
+            fileId == before.mediaFileId &&
+            ready.session.sessionId == before.sessionId &&
+            mountedPlan != null &&
+            adoptedPlan != null
+        ) {
+            // The server kept the transport and changed only a subtitle the
+            // mounted media already carries, which the adapter has selected
+            // (or turned off) on the player. No mount nonce is issued, so the
+            // screen keeps the MediaItem: its mount effect keys on the plan's
+            // media mount key, which this plan shares. The publication is
+            // confirmed by the adapter's mount owner reporting the selection
+            // on the current tracks, like any local mount.
+            unpublishedInPlaceSubtitles += ready.session.sessionId
+            _uiState.update { state ->
+                state.copy(
+                    error = null,
+                    playbackPlan = (state.playbackPlan ?: mountedPlan).withInPlaceAdoption(adoptedPlan),
+                    delivery = ready.plan.delivery,
+                    videoQualities = authoritativePlaybackQualityOptions(
+                        available = ready.plan.availableQualities,
+                        selectedLabel = adoption.committed.qualityPreference ?: sessionQualityPreference(),
+                        delivered = ready.plan.effectiveRecipe,
+                        source = ready.plan.source,
+                        reported = ready.plan.reportedQuality,
+                    ),
+                    subtitleUrls = subtitleUrls,
+                )
+            }
+            Log.i(TAG, "subtitle_replan_in_place plan_id=${ready.plan.planId}")
+            return TvSubtitleAdoptionResult.Adopted
+        }
         val duration = ready.session.durationSeconds ?: 0.0
         val remountPosition = ready.plan.timeline.replanMountPositionForSource(
             adoption.requestedSourcePositionSeconds,
         )
         val mountNonce = nextTypedSubtitleMountNonce(adoption.committed.identity)
         unpublishedSubtitleMounts[ready.session.sessionId] = mountNonce
+        unpublishedInPlaceSubtitles -= ready.session.sessionId
         bufferingReplanNonce = mountNonce.takeIf { adoption.bufferingQuality }
         _uiState.update { state ->
             state.copy(
@@ -2290,6 +2368,7 @@ class TvPlayerViewModel(
     ): Boolean {
         unpublishedSubtitleUi.remove(playback.sessionId)
         unpublishedSubtitleMounts.remove(playback.sessionId)
+        unpublishedInPlaceSubtitles.remove(playback.sessionId)
         if (unpublishedForcedSubtitleOff.remove(playback.sessionId) == subtitleChoiceGeneration) {
             manualSubtitleSelectionApplied = false
             autoSelectedSubtitleIdentity = SubtitleIdentity.Off
@@ -2303,6 +2382,7 @@ class TvPlayerViewModel(
     ): Boolean {
         val predecessor = unpublishedSubtitleUi.remove(playback.sessionId)
         unpublishedForcedSubtitleOff.remove(playback.sessionId)
+        val inPlace = unpublishedInPlaceSubtitles.remove(playback.sessionId)
         // A replacement the controller adopted sends its summary when the
         // predecessor's remount ends it. One it never adopted sends none, and
         // its identity would go to a later adoption that repeats its plan id.
@@ -2318,13 +2398,39 @@ class TvPlayerViewModel(
         if (lastAdoptedSessionId == playback.sessionId) {
             lastAdoptedSessionId = predecessor?.sessionId
         }
-        if (restoreUi && predecessor != null) {
+        if (restoreUi && predecessor != null && inPlace) {
+            // The MediaItem never changed: put the predecessor's plan back and
+            // select its subtitle again on the same tracks, without a remount.
+            // Only the plan's fields go back; the rest of the snapshot is older
+            // than what is playing now.
+            _uiState.update { state ->
+                state.copy(
+                    playbackPlan = predecessor.playbackPlan,
+                    delivery = predecessor.delivery,
+                    videoQualities = predecessor.videoQualities,
+                    subtitleUrls = predecessor.subtitleUrls,
+                )
+            }
+            reselectMountedSubtitle(predecessor.committedSubtitleIdentity)
+        } else if (restoreUi && predecessor != null) {
             val identity = predecessor.committedSubtitleIdentity
             _uiState.value = predecessor.copy(
                 transportMountNonce = nextTypedSubtitleMountNonce(identity),
             )
         }
         return true
+    }
+
+    /** Selects [identity] again on the mounted tracks, as a remount would, without one. */
+    private fun reselectMountedSubtitle(identity: SubtitleIdentity) {
+        subtitleMountGeneration += 1
+        if (subtitleRemountReselection.requiresRemount(identity)) {
+            subtitleSnapshotSettlement.reset()
+            subtitleRemountReselection.arm(identity, subtitleMountGeneration)
+        }
+        _uiState.value.subtitleTracks
+            .takeIf(List<PlayerTrackEntry>::isNotEmpty)
+            ?.let(::resolveSubtitleRemountReselection)
     }
 
     private suspend fun rollbackUnpublishedTvLoadSession(sessionId: String) {
@@ -7502,9 +7608,9 @@ class TvPlayerViewModel(
 
     /**
      * Reopens the playing plan at the current position, a reload for the
-     * buffering controller. Appending [trace] to the decision trace produces a
-     * new plan object, which re-runs the screen's mount effect: a same-route
-     * remount, without a server round-trip.
+     * buffering controller. The new transport mount nonce re-runs the
+     * screen's mount effect: a same-route remount, without a server
+     * round-trip. [trace] goes on the decision trace to record why.
      */
     private fun reopenSameRoute(state: UiState, trace: String, endLoading: Boolean = true) {
         val plan = state.playbackPlan ?: return
