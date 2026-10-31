@@ -54,11 +54,17 @@ private class OffsetSubtitleParser(
             null
         }
         val shifted = Consumer<CuesWithTiming> { cues ->
+            // Bitmap parsers (PGS, DVB) report no start of their own: the cue
+            // starts at its sample, which in a Matroska track is the same as a
+            // sample-relative start of 0. Adding the offset to the TIME_UNSET
+            // sentinel instead clamped a positive offset away and overflowed a
+            // negative one into a time the cue never reaches.
+            val start = if (cues.startTimeUs == C.TIME_UNSET) 0L else cues.startTimeUs
             // Clamp the shifted start to 0, and shrink the duration by however
             // much we clamped so the cue still ends when it should — otherwise a
             // negative offset (advance subtitles) makes early cues linger past
             // their intended end and overlap the next one.
-            val rawStart = cues.startTimeUs + offsetUs
+            val rawStart = start + offsetUs
             val clampedStart = rawStart.coerceAtLeast(0L)
             val clampLossUs = clampedStart - rawStart
             val adjustedDuration = if (cues.durationUs == C.TIME_UNSET) {
