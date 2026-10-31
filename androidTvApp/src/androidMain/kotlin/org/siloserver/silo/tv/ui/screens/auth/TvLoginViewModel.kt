@@ -304,6 +304,7 @@ class TvLoginViewModel(
     /** Saves an approval's tokens and routes on; [onStop] never cancels it. */
     private var approvalJob: Job? = null
     private var authCompleted = false
+    private var leavingServer = false
     private var visible = true
 
     /** [onStop] ran since the last [onStart]: the next start re-reads the sign-in options. */
@@ -513,9 +514,34 @@ class TvLoginViewModel(
         startDeviceLogin()
     }
 
-    /** "Change server": withdraw the code before this screen goes away. */
-    fun onChangeServer() {
+    /**
+     * "Change server": withdraw the code and leave this server, then [onLeft].
+     * A server this TV holds no session for is forgotten, so the next launch
+     * opens setup instead of its sign-in screen. Nothing stored tells a server
+     * that was never signed in from one whose session expired, and both need
+     * signing in again, so both go. Ignored while a sign-in is being saved:
+     * the server it saves to must not be removed under it.
+     */
+    fun onChangeServer(onLeft: () -> Unit = {}) {
+        if (leavingServer || authCompleted || _uiState.value.signingIn || approvalJob?.isActive == true) return
         abandonDeviceCode()
+        val registry = serverRegistry
+        // Captured now: by the time the removal runs, setup may be choosing another server.
+        val serverId = registry?.activeServerId?.value
+        if (registry == null || serverId == null) {
+            onLeft()
+            return
+        }
+        leavingServer = true
+        viewModelScope.launch {
+            try {
+                if (tokenManager.getAccessTokenForScope(serverId).isNullOrBlank()) registry.remove(serverId)
+            } finally {
+                leavingServer = false
+            }
+            // Only now: setup must not connect again before the removal lands.
+            onLeft()
+        }
     }
 
     private fun startDeviceLogin() {
