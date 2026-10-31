@@ -28,6 +28,16 @@ class TvActiveProfileReset(
         // The profile id and its PIN proof go together, so a protected
         // profile asks for its PIN again.
         profileRepository.clearProfile()
+        clearProfileCaches()
+    }
+
+    /**
+     * Only what this device cached for the profile. Sign-out uses this on its
+     * own: its scoped logout already cleared the signed-out login's profile,
+     * and clearing "the active profile" afterwards could reach whoever became
+     * active meanwhile.
+     */
+    fun clearProfileCaches() {
         // Library/overlay prefs are per-profile — drop the caches
         // so the next profile's prefs don't ghost-render the
         // previous user's rows. Parity with the Settings

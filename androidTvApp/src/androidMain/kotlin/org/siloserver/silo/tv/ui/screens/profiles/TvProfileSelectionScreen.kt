@@ -74,6 +74,7 @@ import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.TvOptionDialog
 import org.siloserver.silo.tv.ui.components.TvPinEntryDialog
+import org.siloserver.silo.tv.ui.components.TvSignOutDialog
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButton
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButtonKind
 import org.siloserver.silo.tv.ui.components.marquee.rememberTvActiveServer
@@ -103,7 +104,7 @@ fun TvProfileSelectionScreen(
     onAddProfile: () -> Unit = {},
     onEditProfile: (String) -> Unit = {},
     onChangeServer: () -> Unit = {},
-    onSignOut: () -> Unit = {},
+    onSignOut: (removeServer: Boolean) -> Unit = {},
     viewModel: TvProfileSelectionViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -126,6 +127,7 @@ fun TvProfileSelectionScreen(
     // Closing a PIN prompt puts focus back on the profile that opened it,
     // not the first one.
     var pinOpenedBy by remember { mutableStateOf<String?>(null) }
+    var showSignOutDialog by remember { mutableStateOf(false) }
     LaunchedEffect(state.pinProfile?.id) {
         val opened = state.pinProfile?.id
         if (opened != null) {
@@ -302,7 +304,7 @@ fun TvProfileSelectionScreen(
                         )
                         TvMarqueeButton(
                             text = "Sign out",
-                            onClick = onSignOut,
+                            onClick = { showSignOutDialog = true },
                             kind = TvMarqueeButtonKind.Glass,
                             compact = true,
                             icon = Icons.AutoMirrored.Outlined.Logout,
@@ -311,6 +313,16 @@ fun TvProfileSelectionScreen(
                 }
             }
         }
+    }
+
+    if (showSignOutDialog) {
+        TvSignOutDialog(
+            onSignOut = { removeServer ->
+                showSignOutDialog = false
+                onSignOut(removeServer)
+            },
+            onDismiss = { showSignOutDialog = false },
+        )
     }
 
     // PIN entry — shown when a PIN-protected profile is selected, or for the

@@ -128,6 +128,7 @@ import org.siloserver.silo.tv.ui.components.TvCascadeSelector
 import org.siloserver.silo.tv.ui.components.CascadeLibraryColumnWidth
 import org.siloserver.silo.tv.ui.components.TvCascadeSelectorMaxPanelWidth
 import org.siloserver.silo.tv.ui.components.TvForYouSelector
+import org.siloserver.silo.tv.ui.components.TvSignOutDialog
 import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
 import org.siloserver.silo.tv.ui.components.tvSkylinePanelChrome
 import org.siloserver.silo.tv.ui.navigation.TvMainRoute
@@ -204,7 +205,8 @@ fun TvMainShell(
     onOpenCollectionDetail: (collectionId: String, title: String) -> Unit,
     /** Opens a row's full page: a Home row when libraryId is null. */
     onOpenSectionBrowse: (sectionId: String, title: String, libraryId: Int?, mediaScope: String?) -> Unit,
-    onSignedOut: () -> Unit,
+    /** Runs the sign-out the user chose in [TvSignOutDialog]. */
+    onSignOut: (removeServer: Boolean) -> Unit,
     onSwitchProfile: () -> Unit,
     onSwitchServer: () -> Unit,
     onPairDevice: () -> Unit,
@@ -972,6 +974,22 @@ fun TvMainShell(
         action()
     }
 
+    // The profile menu's Sign Out asks first, as Settings and Who's Watching do.
+    var showSignOutDialog by remember { mutableStateOf(false) }
+    if (showSignOutDialog) {
+        TvSignOutDialog(
+            onSignOut = { removeServer ->
+                showSignOutDialog = false
+                onSignOut(removeServer)
+            },
+            onDismiss = {
+                showSignOutDialog = false
+                // Back on the avatar the menu opened from.
+                focusState.dismissProfileMenu()
+            },
+        )
+    }
+
     // Scroll-driven visibility for the top menu bar. Mirrors Apple's
     // `TVTopMenuBar` hide-on-scroll behavior (spec A.1): scrolling content
     // down fades/translates the menu out; scrolling up restores it. The
@@ -1513,7 +1531,7 @@ fun TvMainShell(
                         onOpenDiagnosticsReport = onOpenDiagnosticsReport,
                         initialManageServersFocus = returnToManageServers,
                         onManageServersReturnFocusConsumed = onManageServersReturnFocusConsumed,
-                        onSignedOut = onSignedOut,
+                        onSignOut = onSignOut,
                         onSwitchProfile = onSwitchProfile,
                         onNavigateHome = {
                             navigateToRoute(firstTvRoute())
@@ -1784,7 +1802,7 @@ fun TvMainShell(
                     navigateToRoute(TvMainRoute.Settings.route)
                 },
                 onSwitchServer = closeMenuAnd(onSwitchServer),
-                onSignOut = closeMenuAnd(onSignedOut),
+                onSignOut = closeMenuAnd { showSignOutDialog = true },
                 onDismiss = { focusState.dismissProfileMenu() },
                 modifier = Modifier
                     // The profile avatar now leads the *trailing* cluster, so the
