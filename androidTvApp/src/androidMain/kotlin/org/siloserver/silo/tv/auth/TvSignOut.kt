@@ -47,8 +47,13 @@ class TvSignOut(
     private val flushPendingSettings: suspend () -> Unit,
     /** Waits for the player's queued final report and stop, which ride on a borrowed identity. */
     private val awaitPlaybackStop: suspend () -> Unit,
-    /** Ends a phone's borrowed identity through its owner ([org.siloserver.silo.tv.cast.RemotePlaybackIdentityManager.end]). */
-    private val endBorrowedIdentity: suspend () -> Unit,
+    /** The generation of the phone's borrowed identity that is active, if any. */
+    private val borrowedIdentity: () -> String?,
+    /**
+     * Ends that generation through its owner, and only while it is still the
+     * active one ([org.siloserver.silo.tv.cast.RemotePlaybackIdentityManager.end]).
+     */
+    private val endBorrowedIdentity: suspend (generationId: String) -> Boolean,
     /** Drops what this device cached for the signed-out profile. */
     private val clearProfileCaches: () -> Unit,
     private val playbackStopTimeoutMs: Long = PLAYBACK_STOP_TIMEOUT_MS,
@@ -88,11 +93,15 @@ class TvSignOut(
         // it would be the one signed out. It is not this TV's to clear: end it
         // through its owner, which tells the server and the receiver, as tvOS
         // does. Its own job, so a wait for its lock (behind a handoff) is
-        // bounded without cutting its cleanup short.
+        // bounded without cutting its cleanup short. The generation is read
+        // before anything waits: an end that runs after the timeout leaves a
+        // phone's newer identity alone.
         if (tokenManager.hasTemporaryScope()) {
+            val generationId = borrowedIdentity()
             withTimeoutOrNull(playbackStopTimeoutMs) { awaitPlaybackStop() }
-            val ending = scope.async { endBorrowedIdentity() }
-            if (withTimeoutOrNull(endBorrowedIdentityTimeoutMs) { ending.await() } == null ||
+            // None while its owner is already ending it; the check below decides.
+            val ending = generationId?.let { scope.async { endBorrowedIdentity(it) } }
+            if ((ending != null && withTimeoutOrNull(endBorrowedIdentityTimeoutMs) { ending.await() } == null) ||
                 tokenManager.hasTemporaryScope()
             ) {
                 return TvSignOutResult.Refused(REMOTE_PLAYBACK_NOT_ENDED)

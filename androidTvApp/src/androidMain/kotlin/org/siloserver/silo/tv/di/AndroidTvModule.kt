@@ -507,7 +507,8 @@ val androidTvModule = module {
             ),
             flushPendingSettings = playerSettings::flushPendingDeviceSettings,
             awaitPlaybackStop = playbackLifecycle::awaitPendingStop,
-            endBorrowedIdentity = { identityManager.end() },
+            borrowedIdentity = { identityManager.activeIdentity?.generationId },
+            endBorrowedIdentity = { identityManager.end(it) },
             clearProfileCaches = {
                 profileReset.clearProfileCaches()
                 // As the phone's sign-out (SignOutTeardown) drops them too.

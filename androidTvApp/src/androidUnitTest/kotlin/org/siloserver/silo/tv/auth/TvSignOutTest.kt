@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.auth
 
+import android.app.Application
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -7,8 +8,14 @@ import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.siloserver.silo.cast.SiloCastHandoffOffer
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.CleartextOriginConsent
@@ -16,8 +23,11 @@ import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.EncryptedTokenManagerImpl
 import org.siloserver.silo.network.TemporaryAuthScope
 import org.siloserver.silo.network.api.AuthApi
+import org.siloserver.silo.network.api.DeviceLoginApi
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.repository.AuthRepository
+import org.siloserver.silo.tv.cast.FakeRemotePlaybackApi
+import org.siloserver.silo.tv.cast.RemotePlaybackIdentityManager
 import org.siloserver.silo.tv.ui.screens.profiles.InMemoryPrefs
 import org.siloserver.silo.tv.ui.screens.servers.TV_REMOVE_SERVER_FAILED
 import org.siloserver.silo.tv.ui.screens.servers.TvServerResolver
@@ -34,6 +44,9 @@ import kotlin.test.assertTrue
  * The TV's Sign Out against a real saved-server registry and token store: who
  * is signed out, which servers stay saved, and where the TV goes.
  */
+// Robolectric for the real android.util.Base64 a phone's handoff offer is checked with.
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class TvSignOutTest {
     /** Holds the server's logout answer while set. */
     private var logoutGate: CompletableDeferred<Unit>? = null
@@ -128,6 +141,7 @@ class TvSignOutTest {
         tv = Tv(this, endBorrowedIdentity = {
             tv.tokens.endTemporaryScope()
             tv.tokens.beginTemporaryScope(borrowed(tv.registry.activeServerId.value!!))
+            true
         })
         val home = tv.signIn("home")
         tv.tokens.beginTemporaryScope(borrowed(home))
@@ -138,6 +152,35 @@ class TvSignOutTest {
         tv.tokens.endTemporaryScope()
         assertNotNull(tv.tokens.loginSessionId(home), "the TV stays signed in")
         assertEquals(setOf(home), tv.savedServers())
+    }
+
+    @Test
+    fun anEndQueuedBehindAHandoffLeavesThePhonesNewIdentityAlone() = runTest {
+        val approval = CompletableDeferred<Unit>()
+        val phone = HeldApprovalApi()
+        lateinit var identities: RemotePlaybackIdentityManager
+        val tv = Tv(this, phone = { tokens -> RemotePlaybackIdentityManager(phone, tokens, deviceNameProvider = { "TV" }).also { identities = it } })
+        val home = tv.signIn("home")
+        identities.prepare(handoffOffer(), "phone", null, receiverRun = 1, allowReuse = false) {}
+
+        // A second handoff holds the identity's lock while its approval is pending.
+        phone.approval = approval
+        var replacement: String? = null
+        val handoff = launch {
+            identities.prepare(handoffOffer(), "phone", null, receiverRun = 2, allowReuse = false, onPrepared = { replacement = it }) {}
+        }
+        runCurrent()
+
+        assertEquals(TvSignOutResult.Refused(TvSignOut.REMOTE_PLAYBACK_NOT_ENDED), tv.signOut(removeServer = false))
+
+        // Approved after the sign-out gave up: the end it queued must not take the new identity with it.
+        approval.complete(Unit)
+        handoff.join()
+        runCurrent()
+        assertEquals(assertNotNull(replacement), identities.activeIdentity?.generationId)
+        assertTrue(tv.tokens.hasTemporaryScope())
+        assertEquals(1, phone.endCalls, "only the first identity, which the handoff replaced")
+        assertNotNull(tv.tokens.loginSessionId(home), "the TV stays signed in")
     }
 
     @Test
@@ -197,12 +240,30 @@ class TvSignOutTest {
         expiresAtEpochMs = Long.MAX_VALUE,
     )
 
+    private fun handoffOffer() = SiloCastHandoffOffer(
+        requestId = "request",
+        serverId = AndroidServerRegistry.idFor(PHONE_SERVER_URL),
+        serverURL = PHONE_SERVER_URL,
+        profileId = "profile-1",
+    )
+
+    /** Approves each handoff, after [approval] when it is set. */
+    private class HeldApprovalApi(private val inner: FakeRemotePlaybackApi = FakeRemotePlaybackApi()) : DeviceLoginApi by inner {
+        var approval: CompletableDeferred<Unit>? = null
+        val endCalls get() = inner.endCalls
+
+        override suspend fun pollDeviceLoginAt(serverUrl: String, deviceCode: String) =
+            approval?.await().let { inner.pollDeviceLoginAt(serverUrl, deviceCode) }
+    }
+
     private inner class Tv(
         test: TestScope,
         servers: List<String> = listOf("home"),
         flushPendingSettings: suspend () -> Unit = {},
-        endBorrowedIdentity: suspend () -> Unit = {},
+        endBorrowedIdentity: suspend (generationId: String) -> Boolean = { true },
         clearProfileCaches: () -> Unit = {},
+        /** The real owner of borrowed identities, instead of [endBorrowedIdentity]. */
+        phone: ((EncryptedTokenManagerImpl) -> RemotePlaybackIdentityManager)? = null,
     ) {
         var failCommits = false
         var cachesCleared = 0
@@ -222,6 +283,7 @@ class TvSignOutTest {
             commitEditor = { editor -> !failCommits && editor.commit() },
         )
         val tokens = EncryptedTokenManagerImpl(prefs, registry, transitions)
+        private val identities = phone?.invoke(tokens)
         private val auth = AuthRepository(AuthApi(http, ApiV2Gate.Unrestricted), tokens, registry)
         private val resolver = TvServerResolver(
             serverRegistry = registry,
@@ -241,7 +303,8 @@ class TvSignOutTest {
             scope = test.backgroundScope,
             flushPendingSettings = flushPendingSettings,
             awaitPlaybackStop = {},
-            endBorrowedIdentity = endBorrowedIdentity,
+            borrowedIdentity = { identities?.activeIdentity?.generationId ?: "phone-1" },
+            endBorrowedIdentity = { generationId -> identities?.end(generationId) ?: endBorrowedIdentity(generationId) },
             clearProfileCaches = { cachesCleared++; clearProfileCaches() },
         )
 
@@ -266,5 +329,9 @@ class TvSignOutTest {
 
         suspend fun awaitResult(): TvSignOutResult =
             signOut.result.filterNotNull().first().also(signOut::consume)
+    }
+
+    private companion object {
+        const val PHONE_SERVER_URL = "https://phone.example"
     }
 }
