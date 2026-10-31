@@ -81,6 +81,8 @@ class SidecarSubtitleMediaSource(
      * [NonGatingSidecarPeriod].
      */
     private val trackFormat: Format? = null,
+    /** Called when the sidecar's load starts over on purpose; see [NonGatingSidecarPeriod]. */
+    private val onFreshLoad: () -> Unit = {},
 ) : WrappingMediaSource(child) {
 
     override fun createPeriod(
@@ -92,6 +94,7 @@ class SidecarSubtitleMediaSource(
         floor,
         maxLookaheadUs,
         trackFormat,
+        onFreshLoad,
     )
 
     override fun releasePeriod(mediaPeriod: MediaPeriod) {
@@ -111,6 +114,11 @@ class SidecarSubtitleMediaSource(
  * Media3 answers by disabling the text track, never the video.
  *
  * Without one, the period prepares when the delegate does, as before.
+ *
+ * [onFreshLoad] runs when the sidecar's load starts over on purpose: on
+ * prepare, on a seek, and when the text track is enabled again. The retry
+ * budget starts afresh then, and not when Media3 restarts the stream on its
+ * own after an error.
  */
 @UnstableApi
 internal class NonGatingSidecarPeriod(
@@ -118,6 +126,7 @@ internal class NonGatingSidecarPeriod(
     private val floor: SidecarPlaybackFloor,
     private val maxLookaheadUs: Long = C.TIME_UNSET,
     announcedFormat: Format? = null,
+    private val onFreshLoad: () -> Unit = {},
 ) : MediaPeriod, MediaPeriod.Callback {
 
     private var callback: MediaPeriod.Callback? = null
@@ -140,12 +149,16 @@ internal class NonGatingSidecarPeriod(
     private var delegateStreams: Array<SampleStream?> = emptyArray()
     private var delegateStreamOwners: Array<AnnouncedSampleStream?> = emptyArray()
 
+    /** Whether the player has the text track enabled, for [onFreshLoad]. */
+    private var selected = false
+
     private val awaitingDelegate: Boolean
         get() = announcedTrackGroups != null && !prepared
 
     override fun prepare(callback: MediaPeriod.Callback, positionUs: Long) {
         this.callback = callback
         floor.set(positionUs)
+        onFreshLoad()
         delegate.prepare(this, positionUs)
         if (announcedTrackGroups != null) callback.onPrepared(this)
     }
@@ -156,13 +169,24 @@ internal class NonGatingSidecarPeriod(
             callback?.onPrepared(this)
             return
         }
-        // Already reported prepared: hand over the selection made meanwhile,
-        // at the playhead.
+        // Already reported prepared: hand over the selection made meanwhile.
         if (announcedSelections.any { it != null }) {
-            forwardAnnouncedSelection(floor.get())
+            forwardAnnouncedSelection(handoverPositionUs())
             continueUnlessAhead("prepared")
         }
     }
+
+    /**
+     * Where the delegate's first selection goes when it arrives late: the
+     * playhead, as far as the delegate can seek. `ProgressiveMediaPeriod`
+     * treats a first selection anywhere but 0 as a seek, and a response of
+     * unknown length (a cold extraction) cannot seek: it would cancel the
+     * load under way and request the sidecar again from byte zero. Its
+     * adjusted position is 0, so that load carries on and the cues it reads
+     * from before the playhead are dropped as history.
+     */
+    private fun handoverPositionUs(): Long =
+        delegate.getAdjustedSeekPositionUs(floor.get(), SeekParameters.DEFAULT)
 
     override fun onContinueLoadingRequested(source: MediaPeriod) {
         // The delegate parked its loader (interval reached, or a cancelled load
@@ -258,11 +282,15 @@ internal class NonGatingSidecarPeriod(
         streamResetFlags: BooleanArray,
         positionUs: Long,
     ): Long {
+        val selecting = selections.any { it != null }
+        // Enabling the text track again starts its load over on purpose.
+        if (selecting && !selected) onFreshLoad()
+        selected = selecting
         if (announcedTrackGroups == null) {
             val result = delegate.selectTracks(selections, mayRetainStreamFlags, streams, streamResetFlags, positionUs)
             // Enabling the text track (a subtitle pick after start, or the first
             // selection once prepared) is what makes the delegate willing to load.
-            if (selections.any { it != null }) continueUnlessAhead("select")
+            if (selecting) continueUnlessAhead("select")
             return result
         }
         for (i in selections.indices) {
@@ -279,7 +307,7 @@ internal class NonGatingSidecarPeriod(
         announcedStreams = Array(selections.size) { streams[it] as? AnnouncedSampleStream }
         announcedSelections = Array(selections.size) { selections[it] }
         if (prepared) forwardAnnouncedSelection(positionUs)
-        if (selections.any { it != null }) continueUnlessAhead("select")
+        if (selecting) continueUnlessAhead("select")
         return positionUs
     }
 
@@ -320,12 +348,23 @@ internal class NonGatingSidecarPeriod(
         resumeIfCaughtUp()
     }
 
-    override fun readDiscontinuity(): Long =
-        if (awaitingDelegate) C.TIME_UNSET else delegate.readDiscontinuity()
+    /**
+     * A sidecar never moves the playhead. `MergingMediaPeriod` seeks every
+     * child to a discontinuity any one child reports, and
+     * `ProgressiveMediaPeriod` reports one at 0 once it has restarted a
+     * response of unknown length from the start after an error (a deferred
+     * retry): passed on, it would take the video back to the beginning. The
+     * delegate's is read, so it resumes reading, and never reported.
+     */
+    override fun readDiscontinuity(): Long {
+        if (!awaitingDelegate) delegate.readDiscontinuity()
+        return C.TIME_UNSET
+    }
 
     override fun seekToUs(positionUs: Long): Long {
         floor.set(positionUs)
         heldAhead = false
+        onFreshLoad()
         // Not prepared yet: the delegate's selection is made at the floor
         // once it prepares.
         if (awaitingDelegate) return positionUs

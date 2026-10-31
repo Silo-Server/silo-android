@@ -72,11 +72,22 @@ class SidecarSubtitleLoadErrorHandlingPolicyTest {
         // Each attempt extracted cues before stalling, so Media3 reports errorCount 1 every time.
         assertEquals(1_000L, policy.getRetryDelayMsFor(errorInfo(loadTaskId = 7L, timeout, errorCount = 1)))
         assertEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(errorInfo(loadTaskId = 7L, timeout, errorCount = 1)))
+    }
 
-        // Another load task (a seek or a new selection) starts with a fresh budget.
-        assertEquals(1_000L, policy.getRetryDelayMsFor(errorInfo(loadTaskId = 8L, timeout, errorCount = 1)))
-        policy.onLoadTaskConcluded(7L)
+    @Test
+    fun `a deferred retry under a new load task shares the budget until the sidecar starts fresh`() {
+        val policy = SidecarSubtitleLoadErrorHandlingPolicy(nowMs = { 0L })
+        val timeout = IOException(SocketTimeoutException("timeout"))
+
+        // Media3 declines the retry of a response of unknown length, concludes
+        // the task, and restarts the stream from byte zero under a new one.
         assertEquals(1_000L, policy.getRetryDelayMsFor(errorInfo(loadTaskId = 7L, timeout, errorCount = 1)))
+        policy.onLoadTaskConcluded(7L)
+        assertEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(errorInfo(loadTaskId = 8L, timeout, errorCount = 1)))
+
+        // A seek or a new selection starts the load over on purpose.
+        policy.startFresh()
+        assertEquals(1_000L, policy.getRetryDelayMsFor(errorInfo(loadTaskId = 9L, timeout, errorCount = 1)))
     }
 
     @Test
@@ -91,7 +102,8 @@ class SidecarSubtitleLoadErrorHandlingPolicyTest {
         val unavailable = HttpDataSource.InvalidResponseCodeException(
             503, "Service Unavailable", null, emptyMap(), DataSpec(Uri.parse(URL)), ByteArray(0),
         )
-        val restart = (1..5).map { policy.getRetryDelayMsFor(errorInfo(loadTaskId = 4L, unavailable, errorCount = it)) }
+        val fresh = SidecarSubtitleLoadErrorHandlingPolicy(nowMs = { 0L })
+        val restart = (1..5).map { fresh.getRetryDelayMsFor(errorInfo(loadTaskId = 4L, unavailable, errorCount = it)) }
         assertEquals(listOf(1_000L, 2_000L, 4_000L, 8_000L, 8_000L), restart)
     }
 
@@ -113,10 +125,10 @@ class SidecarSubtitleLoadErrorHandlingPolicyTest {
         // The media window, not the two-timeout budget.
         assertEquals(listOf(1_000L, 2_000L, 4_000L, 8_000L), delays)
         listOf("connect timed out", "SSL handshake timed out").forEach { message ->
-            val before = SidecarSubtitleRetryBudget().record(1L, IOException(SocketTimeoutException(message)))
+            val before = SidecarSubtitleRetryBudget().record(IOException(SocketTimeoutException(message)))
             assertEquals(0, before.timeouts, message)
         }
-        val read = SidecarSubtitleRetryBudget().record(1L, IOException(SocketTimeoutException("timeout")))
+        val read = SidecarSubtitleRetryBudget().record(IOException(SocketTimeoutException("timeout")))
         assertEquals(1, read.timeouts)
     }
 

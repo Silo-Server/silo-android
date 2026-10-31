@@ -16,6 +16,7 @@ import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 import okhttp3.internal.http2.ConnectionShutdownException
 import okhttp3.internal.http2.StreamResetException
 
@@ -139,7 +140,7 @@ internal class SiloMediaLoadErrorHandlingPolicy(
  * extract the track, which on a cold network mount means reading the whole
  * source file, and its retry starts that read again. The media policy's
  * open-ended retries inside [MEDIA_LOAD_RETRY_WINDOW_MS] turned one slow
- * extraction into five or six concurrent whole-file reads. Here a load task
+ * extraction into five or six concurrent whole-file reads. Here a sidecar
  * retries at most [SIDECAR_SUBTITLE_MAX_EXTRACTION_RETRIES] such failures, of
  * which at most [SIDECAR_SUBTITLE_MAX_TIMEOUT_RETRIES] timeouts. A slow first
  * byte is not a failure at all: sidecar requests wait
@@ -152,15 +153,21 @@ internal class SiloMediaLoadErrorHandlingPolicy(
  * opened (a connect or TLS handshake timeout, when no request reached the
  * server).
  *
- * The budget is counted here rather than taken from `errorCount`, which
- * Media3 resets after an attempt that extracted samples: a sidecar that keeps
- * stalling after its first cues would otherwise retry without end. Once the
- * budget is spent the load fails and only the subtitle is lost: the sidecar's
- * period reports itself prepared from its known track
+ * One policy serves one sidecar, and the budget is counted here rather than
+ * taken from `errorCount`, which Media3 resets after an attempt that extracted
+ * samples: a sidecar that keeps stalling after its first cues would otherwise
+ * retry without end. Nor is it kept per load task. For a response of unknown
+ * length Media3 declines the retry and restarts the stream from byte zero
+ * once the queued cues run out (a deferred retry), under a new load task, and
+ * that restart costs the server an extraction like any other. Only the
+ * sidecar's period knows when a load starts over on purpose: a seek, a new
+ * selection or a new start calls [startFresh].
+ *
+ * Once the budget is spent the load fails and only the subtitle is lost: the
+ * sidecar's period reports itself prepared from its known track
  * ([org.siloserver.silo.common.player.subtitle.NonGatingSidecarPeriod]), so the
  * failure reaches the text renderer, and Media3 disables the text track while
- * the video keeps playing. A seek, a new selection or a new start begins a new
- * load task with a fresh budget.
+ * the video keeps playing.
  */
 @UnstableApi
 internal class SidecarSubtitleLoadErrorHandlingPolicy(
@@ -174,7 +181,7 @@ internal class SidecarSubtitleLoadErrorHandlingPolicy(
         val error = loadErrorInfo.exception
         val invalidResponse = error as? HttpDataSource.InvalidResponseCodeException
         val firstErrorAt = firstErrorAtByLoadTask.computeIfAbsent(loadTaskId) { nowMs() }
-        val failures = budget.record(loadTaskId, error)
+        val failures = budget.record(error)
         val delayMs = sidecarSubtitleRetryDelayMs(
             responseCode = invalidResponse?.responseCode,
             retryAfterHeaders = invalidResponse?.retryAfterHeaders().orEmpty(),
@@ -194,10 +201,12 @@ internal class SidecarSubtitleLoadErrorHandlingPolicy(
     }
 
     override fun onLoadTaskConcluded(loadTaskId: Long) {
-        budget.onLoadTaskConcluded(loadTaskId)
         firstErrorAtByLoadTask.remove(loadTaskId)
         super.onLoadTaskConcluded(loadTaskId)
     }
+
+    /** The sidecar's load starts over on purpose (a seek, a new selection or a new start): a fresh budget. */
+    fun startFresh() = budget.reset()
 
     /** Failures that are still being retried never surface; a spent budget does, as a fatal load error. */
     override fun getMinimumLoadableRetryCount(dataType: Int): Int =
@@ -209,7 +218,7 @@ internal class SidecarSubtitleLoadErrorHandlingPolicy(
 }
 
 /**
- * What one sidecar load task has failed with so far, this failure included.
+ * What one sidecar has failed with since it last started fresh, this failure included.
  * [timeouts] and [cutOffs] are the failures that each cost the server an
  * extraction.
  */
@@ -222,25 +231,22 @@ internal data class SidecarSubtitleFailures(
 }
 
 internal class SidecarSubtitleRetryBudget {
-    private val failuresByLoadTask = ConcurrentHashMap<Long, SidecarSubtitleFailures>()
+    private val failures = AtomicReference(SidecarSubtitleFailures(count = 0))
 
-    fun record(loadTaskId: Long, error: Throwable?): SidecarSubtitleFailures {
+    fun record(error: Throwable?): SidecarSubtitleFailures {
         val chain = generateSequence(error) { it.cause }.toList()
         val timedOut = chain.any { it is SocketTimeoutException && !it.isBeforeRequest() }
         val cutOff = !timedOut && chain.any { it is ProtocolException && it.isUnexpectedEndOfStream() }
-        return failuresByLoadTask.compute(loadTaskId) { _, previous ->
-            val before = previous ?: SidecarSubtitleFailures(count = 0)
+        return failures.updateAndGet { before ->
             SidecarSubtitleFailures(
                 count = before.count + 1,
                 timeouts = before.timeouts + if (timedOut) 1 else 0,
                 cutOffs = before.cutOffs + if (cutOff) 1 else 0,
             )
-        }!!
+        }
     }
 
-    fun onLoadTaskConcluded(loadTaskId: Long) {
-        failuresByLoadTask.remove(loadTaskId)
-    }
+    fun reset() = failures.set(SidecarSubtitleFailures(count = 0))
 }
 
 /**

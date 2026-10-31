@@ -138,6 +138,59 @@ class SidecarAnnouncedPeriodTest {
         period.maybeThrowPrepareError()
     }
 
+    @Test
+    fun anUnseekableDelegateKeepsTheLoadItIsRunningWhenTheSelectionArrivesLate() {
+        // A cold extraction has no known length: any seek restarts it from byte zero.
+        val delegate = DelegatePeriod().apply { seekable = false }
+        val floor = SidecarPlaybackFloor()
+        val period = NonGatingSidecarPeriod(delegate, floor, announcedFormat = announced)
+        period.prepare(Recording(), 0L)
+        period.selectTracks(
+            arrayOf(FixedTrackSelection(period.trackGroups[0], 0)), BooleanArray(1), arrayOfNulls(1), BooleanArray(1), 0L,
+        )
+        floor.set(15_000_000L)
+
+        delegate.finishPreparing()
+
+        // ProgressiveMediaPeriod seeks on a first selection anywhere but 0.
+        assertEquals(0L, delegate.selections.single().positionUs)
+    }
+
+    @Test
+    fun theDelegatesDiscontinuityIsReadButNeverMovesThePlayhead() {
+        val delegate = DelegatePeriod().apply { finishPreparingOnPrepare = true }
+        val period = NonGatingSidecarPeriod(delegate, SidecarPlaybackFloor(), announcedFormat = announced)
+        period.prepare(Recording(), 0L)
+        // A deferred retry restarted the response from the start.
+        delegate.discontinuityUs = 0L
+
+        assertEquals(C.TIME_UNSET, period.readDiscontinuity())
+        assertEquals(C.TIME_UNSET, delegate.discontinuityUs)
+    }
+
+    @Test
+    fun theLoadStartsFreshOnPrepareSeekAndReenablingButNotOnAKeptSelection() {
+        val delegate = DelegatePeriod().apply { finishPreparingOnPrepare = true }
+        var fresh = 0
+        val period = NonGatingSidecarPeriod(
+            delegate, SidecarPlaybackFloor(), announcedFormat = announced, onFreshLoad = { fresh++ },
+        )
+        period.prepare(Recording(), 0L)
+        assertEquals(1, fresh)
+        val selection = FixedTrackSelection(period.trackGroups[0], 0)
+        val streams = arrayOfNulls<SampleStream>(1)
+        period.selectTracks(arrayOf(selection), BooleanArray(1), streams, BooleanArray(1), 0L)
+        assertEquals(2, fresh)
+        period.selectTracks(arrayOf(selection), booleanArrayOf(true), streams, BooleanArray(1), 0L)
+        assertEquals(2, fresh)
+
+        period.seekToUs(30_000_000L)
+        assertEquals(3, fresh)
+        period.selectTracks(arrayOf(null), BooleanArray(1), streams, BooleanArray(1), 0L)
+        period.selectTracks(arrayOf(selection), BooleanArray(1), streams, BooleanArray(1), 0L)
+        assertEquals(4, fresh)
+    }
+
     private class Recording : MediaPeriod.Callback {
         val prepared = mutableListOf<MediaPeriod>()
         override fun onPrepared(mediaPeriod: MediaPeriod) {
@@ -161,6 +214,8 @@ class SidecarAnnouncedPeriodTest {
         var prepareError: IOException? = null
         var lastSeekUs = C.TIME_UNSET
         var finishPreparingOnPrepare = false
+        var seekable = true
+        var discontinuityUs = C.TIME_UNSET
         private var callback: MediaPeriod.Callback? = null
         private var prepared = false
 
@@ -207,7 +262,7 @@ class SidecarAnnouncedPeriodTest {
         }
 
         override fun discardBuffer(positionUs: Long, toKeyframe: Boolean) = assertPrepared()
-        override fun readDiscontinuity(): Long = C.TIME_UNSET
+        override fun readDiscontinuity(): Long = discontinuityUs.also { discontinuityUs = C.TIME_UNSET }
         override fun seekToUs(positionUs: Long): Long {
             assertPrepared()
             lastSeekUs = positionUs
@@ -216,7 +271,8 @@ class SidecarAnnouncedPeriodTest {
 
         override fun getAdjustedSeekPositionUs(positionUs: Long, seekParameters: SeekParameters): Long {
             assertPrepared()
-            return positionUs
+            // ProgressiveMediaPeriod treats every seek into unseekable media as one to 0.
+            return if (seekable) positionUs else 0L
         }
 
         override fun getBufferedPositionUs(): Long {

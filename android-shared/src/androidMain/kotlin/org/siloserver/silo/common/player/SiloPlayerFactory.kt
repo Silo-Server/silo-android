@@ -386,7 +386,7 @@ class SiloPlayerFactory(
             subtitleParserFactory = sidecarSubtitleParserFactory,
             subtitleOffsetProvider = subtitleOffsetHolder::getOffsetUs,
             loadErrorHandlingPolicy = mediaLoadErrorHandlingPolicy,
-            subtitleLoadErrorHandlingPolicy = SidecarSubtitleLoadErrorHandlingPolicy(),
+            newSubtitleLoadErrorHandlingPolicy = ::SidecarSubtitleLoadErrorHandlingPolicy,
         )
 
         // Start on a small cushion and keep filling in the background. Depth is
@@ -678,8 +678,11 @@ class SiloPlayerFactory(
         private val subtitleParserFactory: SubtitleParser.Factory,
         private val subtitleOffsetProvider: () -> Long,
         private var loadErrorHandlingPolicy: LoadErrorHandlingPolicy,
-        /** Sidecars keep their own bounded retries (#458), whatever the media policy is. */
-        private val subtitleLoadErrorHandlingPolicy: LoadErrorHandlingPolicy,
+        /**
+         * Sidecars keep their own bounded retries (#458), whatever the media
+         * policy is: one policy per sidecar, since it holds that sidecar's budget.
+         */
+        private val newSubtitleLoadErrorHandlingPolicy: () -> SidecarSubtitleLoadErrorHandlingPolicy,
     ) : MediaSource.Factory {
         private var drmSessionManagerProvider: DrmSessionManagerProvider? = null
 
@@ -756,9 +759,10 @@ class SiloPlayerFactory(
                 .setRoleFlags(configuration.roleFlags)
                 .setLabel(configuration.label)
                 .build()
+            val retryPolicy = newSubtitleLoadErrorHandlingPolicy()
             if (!subtitleParserFactory.supportsFormat(baseFormat)) {
                 return SingleSampleMediaSource.Factory(dataSourceFactory)
-                    .setLoadErrorHandlingPolicy(subtitleLoadErrorHandlingPolicy)
+                    .setLoadErrorHandlingPolicy(retryPolicy)
                     .createMediaSource(configuration, C.TIME_UNSET)
             }
             val outputFormat = baseFormat.buildUpon()
@@ -804,7 +808,7 @@ class SiloPlayerFactory(
                 dataSourceFactory
             }
             val progressive = ProgressiveMediaSource.Factory(subtitleDataSourceFactory, extractorsFactory)
-                .setLoadErrorHandlingPolicy(subtitleLoadErrorHandlingPolicy)
+                .setLoadErrorHandlingPolicy(retryPolicy)
                 .createMediaSource(
                     MediaItem.Builder()
                         .setUri(configuration.uri)
@@ -833,6 +837,7 @@ class SiloPlayerFactory(
                     .setSampleMimeType(MimeTypes.APPLICATION_MEDIA3_CUES)
                     .setCodecs(configuration.mimeType)
                     .build(),
+                onFreshLoad = retryPolicy::startFresh,
             )
         }
     }
