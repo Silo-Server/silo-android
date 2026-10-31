@@ -69,7 +69,15 @@ class TvSignOut(
         if (!running.compareAndSet(false, true)) return false
         scope.launch {
             try {
-                _result.value = signOut(removeServer)
+                _result.value = try {
+                    signOut(removeServer)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Anything before the logout committed: nobody was signed
+                    // out. Failures after it are handled where they happen.
+                    TvSignOutResult.Refused(LOCAL_SIGN_OUT_FAILED)
+                }
             } finally {
                 running.set(false)
             }
@@ -123,11 +131,23 @@ class TvSignOut(
         }
         if (!signedOut) return TvSignOutResult.Refused(SESSION_CHANGED)
         // The scoped logout cleared this login's profile; only the device's
-        // caches for it are left.
-        clearProfileCaches()
+        // caches for it are left. From here the account is signed out, so a
+        // failure can't turn into a refusal.
+        try {
+            clearProfileCaches()
+        } catch (e: Exception) {
+            // Stale caches for a signed-out profile; the next sign-in replaces them.
+        }
 
         if (!removeServer) return TvSignOutResult.SignedOut(TvServerSwitchDestination.Login)
-        return when (val removal = resolver.remove(serverId)) {
+        val removal = try {
+            resolver.remove(serverId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            TvServerResolver.Removal.Failed
+        }
+        return when (removal) {
             // Signed out, but the server is still saved: its sign-in screen.
             TvServerResolver.Removal.Failed ->
                 TvSignOutResult.SignedOut(TvServerSwitchDestination.Login, notice = TV_REMOVE_SERVER_FAILED)

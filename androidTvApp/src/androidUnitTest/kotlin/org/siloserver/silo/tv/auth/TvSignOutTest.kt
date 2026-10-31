@@ -229,6 +229,26 @@ class TvSignOutTest {
         assertNull(tv.tokens.loginSessionId(home))
     }
 
+    @Test
+    fun aFailureBeforeTheLogoutRefusesAndAFailureAfterItStillSignsOut() = runTest {
+        var flushFails = true
+        var cachesFail = false
+        val tv = Tv(
+            this,
+            flushPendingSettings = { if (flushFails) error("settings store unavailable") },
+            clearProfileCaches = { if (cachesFail) error("cache store unavailable") },
+        )
+        val home = tv.signIn("home")
+
+        assertEquals(TvSignOutResult.Refused(TvSignOut.LOCAL_SIGN_OUT_FAILED), tv.signOut(removeServer = false))
+        assertNotNull(tv.tokens.loginSessionId(home), "nobody was signed out")
+
+        flushFails = false
+        cachesFail = true
+        assertEquals(TvSignOutResult.SignedOut(TvServerSwitchDestination.Login), tv.signOut(removeServer = false))
+        assertNull(tv.tokens.loginSessionId(home))
+    }
+
     private fun borrowed(serverId: String) = TemporaryAuthScope(
         generationId = "phone-1",
         serverId = serverId,
