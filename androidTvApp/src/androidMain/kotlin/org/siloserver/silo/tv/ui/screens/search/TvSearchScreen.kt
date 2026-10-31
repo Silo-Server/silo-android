@@ -356,10 +356,18 @@ fun TvSearchScreen(
             // the request row and carries on immediately.
             if (returnTarget?.sectionId == TvSearchRequestSectionId) return@LaunchedEffect
         }
+        // The same holds on the relaunch the refresh itself triggers: until the
+        // response lands, the preserved row can still hold a card it drops (a
+        // title that reached the library leaves this row). Leaving the row out
+        // makes the target absent while incomplete, so it waits as Pending
+        // under the usual bounds instead of matching Exact.
+        val awaitingRequestRefresh = returnRefreshed &&
+            requestState.isLoading &&
+            returnTarget?.sectionId == TvSearchRequestSectionId
 
         val sections = tvSearchReturnSections(
             catalogItems = state.items,
-            requestResults = visibleRequestResults,
+            requestResults = if (awaitingRequestRefresh) emptyList() else visibleRequestResults,
             // More pages can still arrive, so a target beyond the loaded
             // results is not yet absent.
             catalogComplete = !state.hasMore,
