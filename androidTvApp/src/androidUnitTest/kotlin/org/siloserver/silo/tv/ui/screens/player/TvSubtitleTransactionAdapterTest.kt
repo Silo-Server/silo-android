@@ -2292,6 +2292,152 @@ class TvSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `in-place switch shows the track at once and confirms the adopted plan on the same tracks`() = runTest {
+        val harness = harness(backgroundScope, canSwitchInPlace = { _, _ -> true })
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng", codecFamily = "pgs"), "5")
+
+        harness.adapter.select(native)
+        runCurrent()
+
+        // Selected on the player and sent to the server together.
+        assertEquals(native, harness.adapter.snapshot.localMountIdentity)
+        assertTrue(harness.adapter.snapshot.localMountInPlaceSwitch)
+        assertEquals(listOf(4), harness.port.requests.map { it.subtitleTrackIndex })
+        val switchOwner = harness.adapter.snapshot.localMountGeneration
+        harness.adapter.reportMountedSelection(native, selected = true, snapshotKey = "switched", settled = true)
+        runCurrent()
+        assertTrue(harness.adapter.snapshot.subtitleApplying)
+        assertTrue(harness.persistence.persisted.isEmpty())
+
+        harness.port.completeStage(
+            candidate("native", 4, hasSidecar = false, selectedSubtitleIdentity = native, sessionId = "s1"),
+        )
+        runCurrent()
+
+        assertEquals(1, harness.committedPlaybacks.size)
+        // The adopted plan gets its own mount owner for the same track, so the
+        // view model reports it again even though the identity is unchanged.
+        assertEquals(native, harness.adapter.snapshot.localMountIdentity)
+        assertTrue(harness.adapter.snapshot.localMountGeneration != switchOwner)
+        // The adopted plan's owner is a publication, not a switch awaiting its replan.
+        assertFalse(harness.adapter.snapshot.localMountInPlaceSwitch)
+        harness.adapter.reportMountedSelection(native, selected = true, snapshotKey = "confirmed", settled = true)
+        runCurrent()
+
+        assertEquals(native, harness.adapter.snapshot.committedIdentity)
+        assertNull(harness.adapter.snapshot.localMountIdentity)
+        assertEquals(listOf(native), harness.persistence.persisted.map { it.identity })
+    }
+
+    @Test
+    fun `failed in-place switch puts back the subtitle the server still has`() = runTest {
+        val harness = harness(backgroundScope, canSwitchInPlace = { _, _ -> true })
+        harness.adapter.resetContent(context(), committedIdentity = SubtitleIdentity.Off)
+        val rendition = SubtitleIdentity.Embedded(
+            4,
+            SubtitleMediaIdentity(language = "eng"),
+            hlsRendition = SubtitleHlsRendition("subs", "English", index = 2),
+        )
+
+        harness.adapter.select(rendition)
+        runCurrent()
+        harness.adapter.reportMountedSelection(rendition, selected = true, snapshotKey = "switched", settled = true)
+        runCurrent()
+        harness.port.failStage(ApiResult.Error(503, "unavailable", "The server is unavailable."))
+        runCurrent()
+
+        assertEquals(SubtitleIdentity.Off, harness.adapter.snapshot.committedIdentity)
+        assertEquals(SubtitleIdentity.Off, harness.adapter.snapshot.localMountIdentity)
+        harness.adapter.reportMountedSelection(SubtitleIdentity.Off, selected = true, snapshotKey = "off", settled = true)
+        runCurrent()
+        assertNull(harness.adapter.snapshot.localMountIdentity)
+        assertTrue(harness.persistence.persisted.isEmpty())
+        assertTrue(harness.committedPlaybacks.isEmpty())
+    }
+
+    @Test
+    fun `off switches in place and commits on the adopted plan`() = runTest {
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng"), "5")
+        val harness = harness(backgroundScope, canSwitchInPlace = { _, target -> target == SubtitleIdentity.Off })
+        harness.adapter.resetContent(context(), committedIdentity = native)
+
+        harness.adapter.select(SubtitleIdentity.Off)
+        runCurrent()
+        assertEquals(SubtitleIdentity.Off, harness.adapter.snapshot.localMountIdentity)
+        assertEquals(listOf(-1), harness.port.requests.map { it.subtitleTrackIndex })
+        harness.adapter.reportMountedSelection(SubtitleIdentity.Off, selected = true, snapshotKey = "off", settled = true)
+        harness.port.completeStage(
+            candidate("off", null, mode = PlaybackSubtitleModeV3.OFF, hasSidecar = false, sessionId = "s1"),
+        )
+        runCurrent()
+        confirmPendingPlayerBoundary(harness, "off-confirmed")
+        runCurrent()
+
+        assertEquals(SubtitleIdentity.Off, harness.adapter.snapshot.committedIdentity)
+        assertEquals(listOf(SubtitleIdentity.Off), harness.persistence.persisted.map { it.identity })
+    }
+
+    @Test
+    fun `a switch the stream cannot carry or that changes audio takes the replan path`() = runTest {
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng"), "5")
+        val notListed = harness(
+            backgroundScope,
+            canSwitchInPlace = { _, _ -> true },
+            isLocallyMountable = { false },
+        )
+        notListed.adapter.select(native)
+        runCurrent()
+        assertNull(notListed.adapter.snapshot.localMountIdentity)
+        assertEquals(listOf(4), notListed.port.requests.map { it.subtitleTrackIndex })
+
+        val refused = harness(backgroundScope, canSwitchInPlace = { _, _ -> false })
+        refused.adapter.select(SubtitleIdentity.Off)
+        runCurrent()
+        assertNull(refused.adapter.snapshot.localMountIdentity)
+        assertEquals(listOf(-1), refused.port.requests.map { it.subtitleTrackIndex })
+    }
+
+    @Test
+    fun `a newer pick on the replan path ends the switch and exposes no local mount`() = runTest {
+        val harness = harness(
+            backgroundScope,
+            canSwitchInPlace = { _, target -> target !is SubtitleIdentity.ServerSidecar },
+        )
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng"), "5")
+        harness.adapter.select(native)
+        runCurrent()
+        assertTrue(harness.adapter.snapshot.localMountInPlaceSwitch)
+
+        harness.adapter.select(sidecar(6))
+        runCurrent()
+
+        // The view model sees the switch end with nothing after it and puts the
+        // committed sidecar back on the player.
+        assertNull(harness.adapter.snapshot.localMountIdentity)
+        assertFalse(harness.adapter.snapshot.localMountInPlaceSwitch)
+        assertEquals(sidecar(3), harness.adapter.snapshot.committedIdentity)
+    }
+
+    @Test
+    fun `an in-place switch whose mount is late waits for its replan instead of failing`() = runTest {
+        val failures = mutableListOf<Int>()
+        val harness = harness(
+            backgroundScope,
+            onEmbeddedFailure = failures::add,
+            canSwitchInPlace = { _, _ -> true },
+        )
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng"), "5")
+
+        harness.adapter.select(native)
+        advanceTimeBy(30_000)
+        runCurrent()
+
+        assertTrue(failures.isEmpty())
+        assertEquals(listOf(4), harness.port.requests.map { it.subtitleTrackIndex })
+        assertEquals(native, harness.adapter.snapshot.localMountIdentity)
+    }
+
+    @Test
     fun `failed native restore clears only the unmounted committed subtitle`() = runTest {
         for (timeout in listOf(false, true)) {
             val failures = mutableListOf<Int>()
@@ -2459,6 +2605,7 @@ class TvSubtitleTransactionAdapterTest {
         persistence: RecordingPersistence = RecordingPersistence(),
         qualityPreference: String? = "auto",
         onBufferingQualityReplanFailed: () -> Unit = {},
+        canSwitchInPlace: (SubtitleIdentity, SubtitleIdentity) -> Boolean = { _, _ -> false },
     ): Harness {
         val port = FakeStagedPort()
         val committedPlaybacks = mutableListOf<TvSubtitleCommittedPlayback>()
@@ -2484,6 +2631,7 @@ class TvSubtitleTransactionAdapterTest {
             },
             isLocallyMountable = isLocallyMountable,
             onBufferingQualityReplanFailed = onBufferingQualityReplanFailed,
+            canSwitchInPlace = canSwitchInPlace,
         )
         adapter.resetContent(
             context(sessionId = sessionId, tracks = tracks, qualityPreference = qualityPreference),

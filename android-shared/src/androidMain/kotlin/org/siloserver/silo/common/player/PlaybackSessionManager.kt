@@ -17,6 +17,8 @@ import org.siloserver.silo.model.playback.LEARNED_LIMIT_IGNORE
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_SUMMARY_V1_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.gatedForBufferingQuality
+import org.siloserver.silo.model.playback.appliesInPlaceOver
+import org.siloserver.silo.model.playback.withPlayerSwitchedAudio
 import org.siloserver.silo.model.playback.carriesHlsSubtitleRendition
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
@@ -234,6 +236,8 @@ open class PlaybackSessionManager(
         val replacement: ActiveVideoAttempt,
         val predecessor: ActiveVideoAttempt?,
         val settled: CompletableDeferred<Unit> = CompletableDeferred(),
+        /** Applied in place: the audio sink never left the predecessor's attempt. */
+        val inPlace: Boolean = false,
     )
 
     private data class PendingPublicationRollback(
@@ -1331,6 +1335,19 @@ open class PlaybackSessionManager(
                         planAttemptKey = nextKey,
                         capabilities = currentCapabilities,
                         clientPlaybackContext = currentContext,
+                        // Only a subtitle pick: a quality or output change the
+                        // server happens to answer on the same transport still
+                        // goes through the adoption its own bookkeeping expects.
+                        // Compared against the plan the player renders: that is
+                        // the media a same-transport answer must match, including
+                        // audio the player switched on its own.
+                        inPlace = classification == "subtitle_track_changed" &&
+                            bufferingQuality == null &&
+                            validated.plan.appliesInPlaceOver(
+                                current = active.plan.withPlayerSwitchedAudio(request.selectedTracks.audio, validated.plan),
+                                sessionId = validated.sessionId,
+                                currentSessionId = active.sessionId,
+                            ),
                     )
                     val staged = StagedVideoReplan(
                         basePlaybackAttemptId = active.playbackAttemptId,
@@ -1469,8 +1486,18 @@ open class PlaybackSessionManager(
             return@withLock stagedVideoReplanUnavailable()
         }
 
-        val next = prepared.nextAttempt
-        passthroughSuppression.beginAttempt(next.planAttemptKey)
+        // A plan applied in place keeps the playing transport: its first
+        // frame has been shown and reported, its audio sink and the local
+        // fixes made to it carry on, so none of that starts over.
+        val next = if (staged.candidate.inPlace) {
+            prepared.nextAttempt.copy(
+                firstFrameReported = active.firstFrameReported,
+                startedAtElapsedRealtimeMs = active.startedAtElapsedRealtimeMs,
+                localMutations = active.localMutations,
+            )
+        } else {
+            prepared.nextAttempt.also { passthroughSuppression.beginAttempt(it.planAttemptKey) }
+        }
         val routeEvent = PlaybackRouteEventV3(
             playbackAttemptId = next.playbackAttemptId,
             sessionId = next.sessionId,
@@ -1495,6 +1522,7 @@ open class PlaybackSessionManager(
             pendingVideoPublication = PendingVideoPublication(
                 replacement = next,
                 predecessor = active,
+                inPlace = staged.candidate.inPlace,
             )
         }
         runCatching { emitRouteEvent(routeEvent) }
@@ -1689,7 +1717,7 @@ open class PlaybackSessionManager(
 
         pendingVideoPublication = null
         revertRenderedPlanKeepingCursor(pending.predecessor)
-        pending.predecessor?.let {
+        pending.predecessor?.takeUnless { pending.inPlace }?.let {
             passthroughSuppression.beginAttempt(it.planAttemptKey)
         }
         val protectedSessionIds = setOfNotNull(

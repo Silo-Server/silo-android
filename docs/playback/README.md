@@ -133,8 +133,118 @@ makes the server return the sidecar plan. Rendition cues carry
 `X-TIMESTAMP-MAP`, so Media3's timestamp adjuster aligns them and they receive
 only the user delay, like embedded cues.
 
+With `hls_subtitle_renditions_all_v1`, sent under the same rule as the remux
+feature, the server lists every embedded text track its index can read as a
+rendition of one `subs` group. Each such inventory row carries
+`hls_rendition: {group_id, name, index}`, and the client projects every one of
+them, not only the selected row, as a rendition with no URL. A rendition with
+an `index` is how the client knows the stream lists every track.
+
 Sidecar cues use absolute source timestamps. Android subtracts the plan's
 `timeline_offset_seconds` once, alongside the user's subtitle delay. Embedded
 cues already follow the extractor timeline and receive only the user delay.
 
 Cast uses the default receiver, which renders VTT in the transport clock. At a nonzero video timeline offset, the VTT URL adds `timestamp_offset=-timeline_offset_seconds`, preserving the file/provider identity and stream authorization query parameters. The server shifts the canonical source-time cues for that response; native Android renderers continue applying their local subtitle offset.
+
+## Switching subtitles on the playing stream
+
+A pick of a track the playing media already carries is shown at once and
+reported to the server, instead of waiting for a replan and a remount. Two kinds
+of rows qualify, and Off qualifies on the same streams
+(`canSwitchSubtitleInPlace`):
+
+- On `original_http`, an embedded row the server marks `native_selectable`
+  (contract C1), switched by its `container_track_id`. A server that sends
+  `stream_index` omits `native_selectable` exactly when it is false. Without
+  either field the client evaluates the row with the rules `validateForMedia3`
+  applies to a native plan, which needs a `container_track_id`, so in practice
+  only rows a newer server describes switch locally. ASS is left out of that
+  fallback because its native route also depends on the fidelity preference
+  and libass.
+- On an HLS transcode or copy remux, a row with an every-track rendition,
+  switched by Media3's `GROUP-ID:NAME` id.
+
+Each row becomes an exact `SubtitleIdentity.Embedded`, and the player must also
+list the track (`isLocallyMountable`). A pick that changes audio or quality as
+well, or a track the media does not carry, takes the ordinary replan.
+
+**Flow.** The adapter (phone and TV) starts a local selection for the pick and
+sends its `track_change` replan in the same step. The player applies a
+`TrackSelectionOverride` (or turns text off), and the mount report marks the
+selection `mountedBeforeAdoption`. A mount deadline that fires while the
+replan is still out does not fail the switch: the server's answer decides.
+When a subtitle pick's replan is staged (`subtitle_track_changed`, never a
+quality, output or buffering change), `PlaybackSessionManager` marks the
+candidate `Ready.inPlace` when it keeps the transport the player renders
+(`appliesInPlaceOver`): the same session, stream URL, protocol, headers,
+effective file, recipe, timeline offset and origin, audio (on
+`original_http`, the audio the player switched to on its own counts as the
+plan's), client transformations, runtime corrections, quirks and decision-reason claims, and
+only a subtitle decision the player selects in that media (Off, a native
+`subtitle.embedded` on `original_http`, or a rendition of an unchanged
+rendition set on HLS). The server's plan id and attempt key still change,
+because the selected subtitle is part of its plan identity.
+
+**Adoption without a remount.** An `inPlace` plan becomes the active plan in
+the manager with the transport's first-frame report, local mutations and
+passthrough-suppression scope carried over, since none of them restart. The
+view models show `withInPlaceAdoption`: the mounted plan with the adopted
+plan's subtitle decision, identity and menus laid over it, so what the client
+changed on the mount itself (a PCM retry's audio claim and decision trace)
+stays. Phone adopts it without `expectNextMediaMount()`, so its mount effect, gated on the
+awaited mount generation, leaves the MediaItem alone. TV adopts it without a
+mount nonce, and its mount effect keys on `PlaybackExecutionPlan.mediaMountKey()`,
+which drops the subtitle decision, plan id and replan-time position; every
+other plan change still comes with a new nonce. The stall detectors key on
+`mountedPlaybackKey`, which leaves out the plan id, so they keep watching the
+same mount. The buffering-quality controller keeps the transport's plan,
+because no new transport starts, so an in-place plan gets no `plan_summary`
+of its own: the transport's summary names the plan that started it and
+covers the time on the adopted subtitle too. The server expects nothing per
+plan. It keeps a summary as the connection's latest, keys throughput samples
+and learned limits by connection, and uses the plan id only to label the
+stall-ratio metric with the plan's delivery, which it resolves for any plan
+the attempt has had and which an in-place switch leaves unchanged.
+
+**Confirmation on TV.** TV publishes a replan in two phases: the manager and
+lifecycle hold the replacement as pending until the player proves the
+selected subtitle mounted, then the adapter's settlement confirms it
+(`confirmVideoSessionPublication`) or rolls it back. A remount used to supply
+that proof through the mount nonce. In place, the adapter installs a new mount
+owner for the adopted identity even when it is the identity the local switch
+already selected; the snapshot carries `localMountGeneration`, the view model
+re-arms its remount reselection whenever the owner changes, the reselection
+resolves against the tracks already published, and the confirmed selection
+settles the publication. Phone needs no second phase: it publishes on commit
+and confirms the selection against the current mount.
+
+**Failure and rollback.**
+
+- The replan fails, or a newer pick that needs a replan replaces the switch
+  before it lands: the player goes back to the subtitle the server still has.
+  On phone the screen reselects the committed identity once the local mount
+  ends. On TV the adapter restores it (Off included), and when the switch
+  ends with no local owner after it, the snapshot's `localMountInPlaceSwitch`
+  tells the view model to reselect the committed identity.
+- The replan returns another transport, or a subtitle the media does not
+  carry, such as a sidecar: `inPlace` is false and the plan is adopted with a
+  remount, as before.
+- An in-place publication on TV is rolled back (its mount is not confirmed, or
+  a newer pick supersedes it): the view model restores the predecessor's plan,
+  quality menu and rows and reselects its subtitle on the same tracks, without
+  a remount. A publication that remounted rolls back with a remount, as
+  before.
+- The adopted track does not mount: the usual failure path replans
+  `subtitle_embedded_failed` or `subtitle_hls_rendition_failed` for the
+  sidecar plan.
+
+A switch on the playing stream leaves the previous sidecar in the MediaItem
+until the next remount. TV counts a server sidecar as locally mountable only
+while the plan selects it (`isTvLocallyMountable`), so picking that stale
+sidecar again goes to the server instead of committing locally.
+
+After an in-place rendition switch the multivariant playlist still marks the
+original track `DEFAULT=YES`, so the player never reloads it for the switch.
+A later remount for another reason reselects the committed identity
+explicitly: phone re-applies it, and TV's same-route remount re-arms the exact
+`Embedded` identity rather than a sidecar ordinal.

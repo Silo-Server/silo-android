@@ -5,6 +5,8 @@
   ],
   "features": [
     "playback_plan_v3",
+    "server_remote_stream_bitrate_policy_v1",
+    "server_local_stream_bitrate_policy_v1",
     "neutral_playback_v3_contract_v1",
     "embedded_subtitles_v1",
     "layout_aware_passthrough",
@@ -47,7 +49,7 @@
     {
       "name": "server_dv7_to_hdr10",
       "executor": "server",
-      "recipe_version": "1",
+      "recipe_version": "2",
       "validated_claims": [
         "dolby_vision_metadata_removed",
         "hdr10_base_layer_preserved",

@@ -1715,6 +1715,17 @@ fun isSubtitleSelected(tracks: Tracks, identity: SubtitleIdentity): Boolean {
 }
 
 /**
+ * Whether the player shows what [identity] asks for: the exact track, or for
+ * Off no text track at all. A local switch confirms itself with this.
+ */
+fun isSubtitleSelectionApplied(tracks: Tracks, identity: SubtitleIdentity): Boolean =
+    if (identity == SubtitleIdentity.Off) {
+        tracks.groups.none { it.type == C.TRACK_TYPE_TEXT && it.isSelected }
+    } else {
+        isSubtitleSelected(tracks, identity)
+    }
+
+/**
  * Every text track in a snapshot that this device can render, in snapshot
  * order, described the way subtitle resolution sees it.
  */
