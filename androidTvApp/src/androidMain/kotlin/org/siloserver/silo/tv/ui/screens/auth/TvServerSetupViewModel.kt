@@ -334,8 +334,12 @@ internal suspend fun probeTvServerSetupCandidates(
             }
             is ApiResult.Error -> {
                 if (!isLastCandidate) continue
+                // A bare HTTP error (a 404 from something that isn't Silo)
+                // carries no message; fall back to Apple TV's wording.
                 return TvServerSetupProbeResult.Failure(
-                    message = "Could not reach server: ${result.message}",
+                    message = result.message.takeIf { it.isNotBlank() }
+                        ?.let { "Could not reach server: $it" }
+                        ?: NETWORK_ERROR_MESSAGE,
                 )
             }
             is ApiResult.NetworkError -> {
