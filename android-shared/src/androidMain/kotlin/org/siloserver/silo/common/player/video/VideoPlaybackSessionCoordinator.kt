@@ -45,6 +45,7 @@ class VideoPlaybackSessionCoordinator(
                     credits = result.credits,
                     recap = result.recap,
                     preview = result.preview,
+                    markerSegments = result.markerSegments,
                     chapters = result.chapters,
                     seriesId = result.seriesId,
                     seriesTitle = result.seriesTitle,

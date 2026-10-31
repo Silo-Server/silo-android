@@ -100,6 +100,9 @@ import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.player.settlingFalseEdges
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
+import org.siloserver.silo.domain.player.MarkerKind
+import org.siloserver.silo.domain.player.MarkerTimeline
+import org.siloserver.silo.model.catalog.MarkerSegment
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -1302,6 +1305,8 @@ class TvPlayerViewModel(
         val credits: TimeRange? = null,
         val recap: TimeRange? = null,
         val preview: TimeRange? = null,
+        /** Every marker occurrence; null from servers that send only the singular fields. */
+        val markerSegments: List<MarkerSegment>? = null,
         // Chapters from the selected FileVersion (server-extracted via FFprobe
         // at ingest, mirrors Apple's `VersionChapter` consumption). Empty list
         // when the file has no embedded chapters. The HUD Chapters pane
@@ -1354,6 +1359,11 @@ class TvPlayerViewModel(
         /** The current item has not shown its first frame yet; see [startedContentId]. */
         val awaitingFirstFrame: Boolean
             get() = startedContentId != contentId
+
+        /** The marker occurrences the skip controls and Up Next read. */
+        val markerTimeline: MarkerTimeline by lazy {
+            MarkerTimeline.resolve(markerSegments, intro = intro, credits = credits, recap = recap, preview = preview)
+        }
     }
 
     private val _uiState = MutableStateFlow(
@@ -1391,7 +1401,7 @@ class TvPlayerViewModel(
         )
     // Marker controls use source time; presentationState deliberately omits the clock.
     val manualMarkerSkipTarget: StateFlow<MarkerSkipTarget?> = uiState
-        .map { markerSkipTarget(it.position, it.recap, it.credits) }
+        .map { markerSkipTarget(it.position, it.markerTimeline) }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
@@ -2824,6 +2834,7 @@ class TvPlayerViewModel(
                                 credits = result.credits,
                                 recap = result.recap,
                                 preview = result.preview,
+                                markerSegments = result.markerSegments,
                                 chapters = result.chapters,
                                 seriesId = result.seriesId,
                                 seasonNumber = result.seasonNumber,
@@ -3008,21 +3019,20 @@ class TvPlayerViewModel(
         } else {
             playerSettingsStore.introSkipModeFlow
         }
+        // An episode may have several intros: the prompt follows the one that
+        // last started, so an `always` undo survives the seek past its end.
+        val introOccurrence = _uiState
+            .map { it.markerTimeline.occurrenceAt(MarkerKind.Intro, it.position) }
+            .distinctUntilChanged()
         introObserveJob?.cancel()
         introObserveJob = introAutoSkipController.observe(
             position = _uiState
                 .map { it.position }
                 .distinctUntilChanged(),
-            introRange = _uiState
-                .map { it.intro }
-                .distinctUntilChanged(),
+            introRange = introOccurrence,
             mode = effectiveMode,
             introKey = _uiState
-                .map { state ->
-                    state.intro?.let { intro ->
-                        "${state.sessionId}:${state.selectedFileId}:${intro.start}:${intro.end}"
-                    }
-                }
+                .map { state -> "${state.sessionId}:${state.selectedFileId}" }
                 .distinctUntilChanged(),
             // Only reachable outside a room, where the mode is pinned to `ask`.
             onSeek = { seekToSec -> seekImmediate(seekToSec) },
@@ -3646,7 +3656,7 @@ class TvPlayerViewModel(
         // whose saved position is already inside the credits doesn't instantly
         // skip to the next one (a seek into credits also won't trigger it).
         if (!seekWasActive) {
-            _uiState.value.credits?.start?.let { creditsStart ->
+            _uiState.value.markerTimeline.upNextCreditsStart()?.let { creditsStart ->
                 if (previousPosition < creditsStart && positionSec >= creditsStart) onApproachingEnd()
             }
         }
@@ -4953,7 +4963,7 @@ class TvPlayerViewModel(
                 current.contentId != state.contentId || current.mediaFileId != fileId) return@launch
             val version = detail.versions.firstOrNull { it.fileId == fileId } ?: return@launch
             applyUpdatedMarkers(version.intro, version.credits,
-                version.recap, version.preview)
+                version.recap, version.preview, version.markerSegments)
         }
     }
 
@@ -4963,14 +4973,14 @@ class TvPlayerViewModel(
      */
     fun applyMarkersUpdate(update: PlaybackMarkersUpdate) {
         if (update.fileId != null && update.fileId != _uiState.value.mediaFileId) return
-        applyUpdatedMarkers(update.intro, update.credits, update.recap, update.preview)
+        applyUpdatedMarkers(update.intro, update.credits, update.recap, update.preview, update.markerSegments)
     }
 
     /** A replan that lands on another file takes that file's markers, then reads them again. */
     private fun adoptFileMarkersAfterReplan(previousFileId: Int?, version: FileVersion?) {
         val state = _uiState.value
         if (state.mediaFileId == previousFileId) return
-        applyUpdatedMarkers(version?.intro, version?.credits, version?.recap, version?.preview)
+        applyUpdatedMarkers(version?.intro, version?.credits, version?.recap, version?.preview, version?.markerSegments)
         state.sessionId?.let(::reconcileMarkers)
     }
 
@@ -4980,9 +4990,17 @@ class TvPlayerViewModel(
      * from UiState, so the update takes effect immediately; `null` clears a
      * marker the server dropped.
      */
-    private fun applyUpdatedMarkers(intro: TimeRange?, credits: TimeRange?, recap: TimeRange?, preview: TimeRange?) {
+    private fun applyUpdatedMarkers(
+        intro: TimeRange?,
+        credits: TimeRange?,
+        recap: TimeRange?,
+        preview: TimeRange?,
+        markerSegments: List<MarkerSegment>?,
+    ) {
         markerReconciliationFence.invalidate()
-        _uiState.update { it.copy(intro = intro, credits = credits, recap = recap, preview = preview) }
+        _uiState.update {
+            it.copy(intro = intro, credits = credits, recap = recap, preview = preview, markerSegments = markerSegments)
+        }
     }
 
     // ---- Next-episode auto-advance (F2) ----

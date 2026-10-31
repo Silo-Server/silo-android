@@ -287,6 +287,34 @@ class IntroAutoSkipControllerTest {
     }
 
     @Test
+    fun `ask - a later intro under the same key gets its own offer`() = runTest {
+        // An episode's second intro arrives as a new range; the caller's key
+        // names the session and file and may lag a frame behind the range.
+        val controller = newController(IntroSkipMode.ASK, countdown = 3)
+        position.value = 35.0
+        runCurrent()
+        controller.dismiss()
+        runCurrent()
+
+        range.value = TimeRange(start = 600.0, end = 660.0)
+        position.value = 605.0
+        runCurrent()
+        assertEquals(IntroAutoSkipState.Asking(3), controller.state.value)
+        assertEquals(660.0, controller.select())
+    }
+
+    @Test
+    fun `always - the undo for a later intro survives its own skip`() = runTest {
+        val controller = newController(IntroSkipMode.ALWAYS, countdown = 3)
+        range.value = TimeRange(start = 600.0, end = 660.0)
+        position.value = 605.0
+        runCurrent()
+        assertEquals(listOf(660.0), seeks)
+        assertEquals(IntroAutoSkipState.Skipped(3), controller.state.value)
+        assertEquals(600.0, controller.select())
+    }
+
+    @Test
     fun `no intro key - nothing is ever offered`() = runTest {
         val controller = newController(IntroSkipMode.ASK, countdown = 3)
         introKey.value = null

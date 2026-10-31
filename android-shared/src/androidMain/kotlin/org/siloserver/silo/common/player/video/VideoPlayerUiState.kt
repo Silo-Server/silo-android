@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.player.video
 
+import org.siloserver.silo.model.catalog.MarkerSegment
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.playback.PlayMethod
@@ -80,6 +81,8 @@ sealed interface VideoPlayerUiState {
         val credits: TimeRange? = null,
         val recap: TimeRange? = null,
         val preview: TimeRange? = null,
+        /** Every marker occurrence; null from servers that send only the singular fields. */
+        val markerSegments: List<MarkerSegment>? = null,
         val chapters: List<VersionChapter> = emptyList(),
         // Episode context for next-episode auto-advance (null for movies).
         val seriesId: String? = null,

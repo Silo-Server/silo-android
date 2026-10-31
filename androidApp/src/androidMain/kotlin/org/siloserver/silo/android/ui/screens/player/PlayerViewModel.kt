@@ -82,6 +82,9 @@ import org.siloserver.silo.domain.player.settlingFalseEdges
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.VersionChapter
+import org.siloserver.silo.domain.player.MarkerKind
+import org.siloserver.silo.domain.player.MarkerTimeline
+import org.siloserver.silo.model.catalog.MarkerSegment
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.isCommittedAt
@@ -541,6 +544,8 @@ class PlayerViewModel(
         val credits: TimeRange? = null,
         val recap: TimeRange? = null,
         val preview: TimeRange? = null,
+        /** Every marker occurrence; null from servers that send only the singular fields. */
+        val markerSegments: List<MarkerSegment>? = null,
         /**
          * Chapters from the selected FileVersion (server-extracted via FFprobe
          * at ingest). Empty list when the file has no embedded chapters. The
@@ -601,6 +606,11 @@ class PlayerViewModel(
         /** The current item has not shown its first frame yet; see [startedContentId]. */
         val awaitingFirstFrame: Boolean
             get() = startedContentId != contentId
+
+        /** The marker occurrences the skip controls and Up Next read. */
+        val markerTimeline: MarkerTimeline by lazy {
+            MarkerTimeline.resolve(markerSegments, intro = intro, credits = credits, recap = recap, preview = preview)
+        }
 
         /**
          * Media file id of the active version — the id the subtitle
@@ -845,7 +855,7 @@ class PlayerViewModel(
                 introAutoSkipController.state.map { it.isVisible },
                 _uiState.map { state ->
                     state.showUpNext ||
-                        (!state.isLoading && markerSkipTarget(state.position, state.recap, state.credits) != null)
+                        (!state.isLoading && markerSkipTarget(state.position, state.markerTimeline) != null)
                 },
             ) { introVisible, otherVisible -> introVisible || otherVisible }
                 .distinctUntilChanged()
@@ -2058,6 +2068,7 @@ class PlayerViewModel(
                 credits = playbackState.credits,
                 recap = playbackState.recap,
                 preview = playbackState.preview,
+                markerSegments = playbackState.markerSegments,
                 chapters = playbackState.chapters.ifEmpty { version?.chapters.orEmpty() },
                 versions = versions,
                 selectedVersionIndex = versionIndex,
@@ -2139,21 +2150,22 @@ class PlayerViewModel(
         // to Ask, so the controller only offers the pill and the screen sends
         // its Skip as a room seek (or hides it from members who cannot seek).
         val introMode = if (inRoom) flowOf(IntroSkipMode.ASK) else playerSettingsStore.introSkipModeFlow
+        // An episode may have several intros: the prompt follows the one that
+        // last started, so an `always` undo survives the seek past its end.
+        val introOccurrence = _uiState
+            .map { it.markerTimeline.occurrenceAt(MarkerKind.Intro, it.position) }
+            .distinctUntilChanged()
         introObserverJob?.cancel()
         introObserverJob = introAutoSkipController.observe(
             position = _uiState
                 .map { it.position }
                 .distinctUntilChanged(),
-            introRange = _uiState
-                .map { it.intro }
-                .distinctUntilChanged(),
+            introRange = introOccurrence,
             mode = introMode,
             introKey = _uiState
                 .map { state ->
-                    state.intro?.let { intro ->
-                        val fileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId
-                        "${state.sessionId}:${fileId}:${intro.start}:${intro.end}"
-                    }
+                    val fileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId
+                    "${state.sessionId}:${fileId}"
                 }
                 .distinctUntilChanged(),
             onSeek = { seekToSec -> onSeek(seekToSec) },
@@ -3145,7 +3157,7 @@ class PlayerViewModel(
         // doesn't instantly trigger it). Without a credits marker, fall back to
         // crossing (duration - nextUpPromptSeconds); 0 = only at end (iOS parity).
         if (!seekWasActive) {
-            val creditsStart = _uiState.value.credits?.start
+            val creditsStart = _uiState.value.markerTimeline.upNextCreditsStart()
             if (creditsStart != null) {
                 if (previousPosition < creditsStart && positionSec >= creditsStart) onApproachingEnd()
             } else {
@@ -4617,7 +4629,7 @@ class PlayerViewModel(
                 current.contentId != state.contentId || current.mediaFileId != fileId) return@launch
             val version = detail.versions.firstOrNull { it.fileId == fileId } ?: return@launch
             applyUpdatedMarkers(version.intro, version.credits,
-                version.recap, version.preview)
+                version.recap, version.preview, version.markerSegments)
         }
     }
 
@@ -4627,14 +4639,14 @@ class PlayerViewModel(
      */
     fun applyMarkersUpdate(update: PlaybackMarkersUpdate) {
         if (update.fileId != null && update.fileId != _uiState.value.mediaFileId) return
-        applyUpdatedMarkers(update.intro, update.credits, update.recap, update.preview)
+        applyUpdatedMarkers(update.intro, update.credits, update.recap, update.preview, update.markerSegments)
     }
 
     /** A replan that lands on another file takes that file's markers, then reads them again. */
     private fun adoptFileMarkersAfterReplan(previousFileId: Int?, version: FileVersion?) {
         val state = _uiState.value
         if (state.mediaFileId == previousFileId) return
-        applyUpdatedMarkers(version?.intro, version?.credits, version?.recap, version?.preview)
+        applyUpdatedMarkers(version?.intro, version?.credits, version?.recap, version?.preview, version?.markerSegments)
         state.sessionId?.let(::reconcileMarkers)
     }
 
@@ -4645,9 +4657,17 @@ class PlayerViewModel(
      * immediately. Passing `null` clears a marker the server says no longer
      * applies.
      */
-    private fun applyUpdatedMarkers(intro: TimeRange?, credits: TimeRange?, recap: TimeRange?, preview: TimeRange?) {
+    private fun applyUpdatedMarkers(
+        intro: TimeRange?,
+        credits: TimeRange?,
+        recap: TimeRange?,
+        preview: TimeRange?,
+        markerSegments: List<MarkerSegment>?,
+    ) {
         markerReconciliationFence.invalidate()
-        _uiState.update { it.copy(intro = intro, credits = credits, recap = recap, preview = preview) }
+        _uiState.update {
+            it.copy(intro = intro, credits = credits, recap = recap, preview = preview, markerSegments = markerSegments)
+        }
     }
 
     private fun mobileSubtitleContext(state: PlayerUiState): MobileSubtitlePlaybackContext =
@@ -6848,6 +6868,7 @@ class PlayerViewModel(
                 credits = localVersion?.credits,
                 recap = localVersion?.recap,
                 preview = localVersion?.preview,
+                markerSegments = localVersion?.markerSegments,
                 chapters = versions[selectedIndex].chapters.orEmpty().ifEmpty { sidecar.chapters.orEmpty() },
                 seriesId = watchDetail?.seriesId,
                 seasonNumber = watchDetail?.seasonNumber,
