@@ -84,6 +84,7 @@ import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestMediaType
+import org.siloserver.silo.model.request.withoutLibraryTitles
 import org.siloserver.silo.tv.ui.components.TvHideStockImeOnDispose
 import org.siloserver.silo.tv.ui.components.TvCatalogGrid
 import org.siloserver.silo.tv.ui.components.TvFilterChip
@@ -232,16 +233,19 @@ fun TvSearchScreen(
         }
     }
     val requestMediaType = state.mediaType.toRequestMediaType()
-    val visibleRequestResults = requestState.results
+    val matchingRequestResults = requestState.results
         .filterTvRequestResults()
         .filter { state.mediaType.allowsRequestResult(it) }
         .filter { state.showAudiobooks || it.mediaType != RequestMediaType.Audiobook }
+    val visibleRequestResults = matchingRequestResults.withoutLibraryTitles()
+    // Every match is already in the library results, so there is nothing to say here.
+    val onlyLibraryRequestMatches = matchingRequestResults.isNotEmpty() && visibleRequestResults.isEmpty()
     val canSearchRequests = requestsEnabled && state.query.trim().length >= 2
     val shouldShowRequestSection = canSearchRequests &&
         (visibleRequestResults.isNotEmpty() ||
             requestState.isLoading ||
             requestState.error != null ||
-            requestState.hasSubmittedQuery)
+            (requestState.hasSubmittedQuery && !onlyLibraryRequestMatches))
     val requestSearchSettled = !canSearchRequests || !requestState.isLoading
     // Same precedence as the post-search handoff below: people (the row
     // nearest the chips), results, then the error's "Try again", then the
