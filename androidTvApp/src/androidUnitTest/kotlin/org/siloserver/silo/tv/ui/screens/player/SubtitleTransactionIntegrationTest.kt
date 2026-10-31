@@ -193,11 +193,14 @@ class SubtitleTransactionIntegrationTest {
             canSwitchInPlace = { committed, target -> target != committed },
         )
         // The rows the session projects for that plan: every track is its rendition.
+        // `forced` is false as projected, so the picked identity equals the one
+        // the adopted plan carries, whichever the snapshot holds when checked.
         val rows = (0..4).map { index ->
             PlayerSubtitleInfo(
                 index = index,
                 language = "en",
                 codec = "subrip",
+                forced = false,
                 label = "Subtitle $index",
                 source = "embedded",
                 url = "",

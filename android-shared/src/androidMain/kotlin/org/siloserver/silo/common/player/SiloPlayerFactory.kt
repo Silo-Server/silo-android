@@ -156,6 +156,7 @@ class SiloPlayerFactory(
     private val embeddedSubtitleParserFactory = OffsetSubtitleParserFactory(
         offsetUsProvider = subtitleOffsetHolder::getUserOffsetUs,
         delegate = libassBridge.parserFactory,
+        signedSampleRelativeStarts = true,
     )
 
     private val sidecarSubtitleParserFactory = OffsetSubtitleParserFactory(

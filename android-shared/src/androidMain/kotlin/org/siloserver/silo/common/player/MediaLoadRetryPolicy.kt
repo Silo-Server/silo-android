@@ -174,6 +174,7 @@ internal class SidecarSubtitleLoadErrorHandlingPolicy(
     private val nowMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
 ) : DefaultLoadErrorHandlingPolicy() {
     private val budget = SidecarSubtitleRetryBudget()
+    private val attemptBytesTracker = MediaLoadAttemptBytesTracker()
     private val firstErrorAtByLoadTask = ConcurrentHashMap<Long, Long>()
 
     override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
@@ -181,12 +182,17 @@ internal class SidecarSubtitleLoadErrorHandlingPolicy(
         val error = loadErrorInfo.exception
         val invalidResponse = error as? HttpDataSource.InvalidResponseCodeException
         val firstErrorAt = firstErrorAtByLoadTask.computeIfAbsent(loadTaskId) { nowMs() }
-        val failures = budget.record(error)
+        val bytesLoaded = attemptBytesTracker.bytesLoadedForAttempt(
+            loadTaskId = loadTaskId,
+            cumulativeBytesLoaded = loadErrorInfo.loadEventInfo.bytesLoaded,
+        )
+        val failures = budget.record(error, bytesLoaded)
         val delayMs = sidecarSubtitleRetryDelayMs(
             responseCode = invalidResponse?.responseCode,
             retryAfterHeaders = invalidResponse?.retryAfterHeaders().orEmpty(),
             cause = error,
             failures = failures,
+            bytesLoaded = bytesLoaded,
             observedElapsedMs = (nowMs() - firstErrorAt).coerceAtLeast(0L),
         )
         val description = "error=${generateSequence<Throwable>(error) { it.cause }.last().javaClass.simpleName} " +
@@ -201,6 +207,7 @@ internal class SidecarSubtitleLoadErrorHandlingPolicy(
     }
 
     override fun onLoadTaskConcluded(loadTaskId: Long) {
+        attemptBytesTracker.onLoadTaskConcluded(loadTaskId)
         firstErrorAtByLoadTask.remove(loadTaskId)
         super.onLoadTaskConcluded(loadTaskId)
     }
@@ -233,10 +240,16 @@ internal data class SidecarSubtitleFailures(
 internal class SidecarSubtitleRetryBudget {
     private val failures = AtomicReference(SidecarSubtitleFailures(count = 0))
 
-    fun record(error: Throwable?): SidecarSubtitleFailures {
+    /** [bytesLoaded] is what this attempt read before it failed. */
+    fun record(error: Throwable?, bytesLoaded: Long = 0L): SidecarSubtitleFailures {
         val chain = generateSequence(error) { it.cause }.toList()
         val timedOut = chain.any { it is SocketTimeoutException && !it.isBeforeRequest() }
-        val cutOff = !timedOut && chain.any { it is ProtocolException && it.isUnexpectedEndOfStream() }
+        // A response that stopped once its body had started: a short body, or
+        // a connection reset or closed under it. The server was extracting.
+        val cutOff = !timedOut && chain.any {
+            (it is ProtocolException && it.isUnexpectedEndOfStream()) ||
+                (bytesLoaded > 0L && (it is SocketException || it.isResumableTransportFailure()))
+        }
         return failures.updateAndGet { before ->
             SidecarSubtitleFailures(
                 count = before.count + 1,
@@ -265,6 +278,7 @@ internal fun sidecarSubtitleRetryDelayMs(
     retryAfterHeaders: List<String> = emptyList(),
     cause: Throwable? = null,
     failures: SidecarSubtitleFailures,
+    bytesLoaded: Long = 0L,
     observedElapsedMs: Long = 0L,
 ): Long {
     if (failures.timeouts > SIDECAR_SUBTITLE_MAX_TIMEOUT_RETRIES) return C.TIME_UNSET
@@ -274,6 +288,10 @@ internal fun sidecarSubtitleRetryDelayMs(
         retryAfterHeaders = retryAfterHeaders,
         cause = cause,
         errorCount = failures.count,
+        // A body cut off by a stream reset or a closed connection is retried
+        // like one cut short, within the extraction budget above.
+        isResumableProgressiveDirectPlay = true,
+        bytesLoaded = bytesLoaded,
         observedElapsedMs = observedElapsedMs,
     )
 }

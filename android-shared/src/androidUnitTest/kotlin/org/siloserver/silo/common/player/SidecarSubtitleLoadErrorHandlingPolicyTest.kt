@@ -10,8 +10,10 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
+import java.io.EOFException
 import java.io.IOException
 import java.net.ProtocolException
+import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
@@ -108,6 +110,29 @@ class SidecarSubtitleLoadErrorHandlingPolicyTest {
     }
 
     @Test
+    fun `a body cut off by a reset or a closed connection counts against the extraction budget`() {
+        // A reset is retryable without end inside the media window, and a
+        // chunked body closed between chunks ends in EOFException, which the
+        // media policy retries only for direct play.
+        listOf(
+            IOException(SocketException("Connection reset")),
+            IOException(EOFException("\n not found: limit=0 content=…")),
+        ).forEach { cutOff ->
+            val policy = SidecarSubtitleLoadErrorHandlingPolicy(nowMs = { 0L })
+            val delays = (1..4).map { attempt ->
+                policy.getRetryDelayMsFor(
+                    errorInfo(loadTaskId = 5L, cutOff, errorCount = attempt, bytesLoaded = attempt * 1_000L),
+                )
+            }
+            assertEquals(listOf(1_000L, 2_000L, C.TIME_UNSET, C.TIME_UNSET), delays, cutOff.cause.toString())
+        }
+
+        // Reset before any byte arrived: no extraction is known to have started.
+        val beforeBody = SidecarSubtitleRetryBudget().record(IOException(SocketException("Connection reset")))
+        assertEquals(0, beforeBody.extractions)
+    }
+
+    @Test
     fun `a timeout before the connection opened costs no extraction`() {
         val policy = SidecarSubtitleLoadErrorHandlingPolicy(nowMs = { 0L })
         // What Android's socket reports when the connect timeout fires, as
@@ -143,9 +168,17 @@ class SidecarSubtitleLoadErrorHandlingPolicyTest {
         assertTrue(sidecar.readTimeoutMillis > media.readTimeoutMillis)
     }
 
-    private fun errorInfo(loadTaskId: Long, error: IOException, errorCount: Int) =
+    private fun errorInfo(loadTaskId: Long, error: IOException, errorCount: Int, bytesLoaded: Long = 0L) =
         LoadErrorHandlingPolicy.LoadErrorInfo(
-            LoadEventInfo(loadTaskId, DataSpec(Uri.parse(URL)), 0L),
+            LoadEventInfo(
+                loadTaskId,
+                DataSpec(Uri.parse(URL)),
+                Uri.parse(URL),
+                emptyMap(),
+                /* elapsedRealtimeMs= */ 0L,
+                /* loadDurationMs= */ 0L,
+                bytesLoaded,
+            ),
             MediaLoadData(C.DATA_TYPE_MEDIA),
             error,
             errorCount,

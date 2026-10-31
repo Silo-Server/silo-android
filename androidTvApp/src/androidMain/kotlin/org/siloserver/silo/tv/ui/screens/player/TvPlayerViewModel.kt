@@ -2399,13 +2399,17 @@ class TvPlayerViewModel(
             lastAdoptedSessionId = predecessor?.sessionId
         }
         if (restoreUi && predecessor != null && inPlace) {
-            // The MediaItem never changed: put the predecessor's plan back and
-            // select its subtitle again on the same tracks, without a remount.
-            // Only the plan's fields go back; the rest of the snapshot is older
-            // than what is playing now.
+            // The MediaItem never changed: lay the predecessor's subtitle
+            // decision back over the mounted plan, as the adoption did, and
+            // select its subtitle again on the same tracks. The rest of the
+            // snapshot is older than what is playing now; its whole plan
+            // would bring back fields changed since (a PCM retry's audio
+            // claims), change the media mount key, and remount.
             _uiState.update { state ->
                 state.copy(
-                    playbackPlan = predecessor.playbackPlan,
+                    playbackPlan = predecessor.playbackPlan?.let { previous ->
+                        state.playbackPlan?.withInPlaceAdoption(previous) ?: previous
+                    },
                     delivery = predecessor.delivery,
                     videoQualities = predecessor.videoQualities,
                     subtitleUrls = predecessor.subtitleUrls,
