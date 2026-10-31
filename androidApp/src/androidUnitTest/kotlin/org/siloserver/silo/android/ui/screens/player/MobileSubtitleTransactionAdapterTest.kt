@@ -1565,23 +1565,34 @@ class MobileSubtitleTransactionAdapterTest {
         val harness = harness(backgroundScope, onEmbeddedFailure = failures::add, hasMountableTracks = { tracksPublished })
         val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng", codecFamily = "pgs"), "5")
         harness.adapter.select(native)
-        advanceTimeBy(10_000)
+        advanceTimeBy(9_900)
         runCurrent()
         assertEquals(emptyList(), failures)
 
+        // Published just before the 10 s check: the window starts there, so
+        // the selection still has a whole one to confirm, not 100 ms.
         tracksPublished = true
         advanceTimeBy(5_000)
         runCurrent()
+        assertEquals(emptyList(), failures)
+        advanceTimeBy(100)
+        runCurrent()
         assertEquals(listOf(4), failures)
+
+        val already = harness(backgroundScope, onEmbeddedFailure = failures::add, hasMountableTracks = { true })
+        already.adapter.select(native)
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(listOf(4, 4), failures)
 
         val never = harness(backgroundScope, onEmbeddedFailure = failures::add, hasMountableTracks = { false })
         never.adapter.select(native)
         advanceTimeBy(29_999)
         runCurrent()
-        assertEquals(listOf(4), failures)
+        assertEquals(listOf(4, 4), failures)
         advanceTimeBy(1)
         runCurrent()
-        assertEquals(listOf(4, 4), failures)
+        assertEquals(listOf(4, 4, 4), failures)
     }
 
     @Test
