@@ -1184,22 +1184,6 @@ internal class TvSubtitleTransactionAdapter(
     }
 
     /**
-     * Commits a locally-mountable identity — an embedded (muxed) track the
-     * stream already carries — without a server round trip.
-     *
-     * Replanning to reach a track that is already in the stream tears it down
-     * and restarts it: black flash, rebuffer, re-seek, for the same picture. A
-     * pending is force-validated against the synthetic `tv-local` candidate so
-     * the state machine reaches committed with no server involved.
-     *
-     * Returns false — meaning "you must replan after all" — when the pending
-     * also carries an audio, quality or output-route preference. Those can only
-     * be applied by the server, and short-circuiting it would drop them
-     * silently. Both callers must respect that: this is shared precisely
-     * because the two paths had drifted, and a subtitle press replayed out of
-     * `queuedMutations` was replanning where a direct press did not.
-     */
-    /**
      * Shows [identity] on the playing stream at once and sends its replan
      * with it, when the stream already carries the track (or it is Off) and
      * the pick changes nothing but the subtitle. The replan's answer is
@@ -1231,6 +1215,23 @@ internal class TvSubtitleTransactionAdapter(
         return true
     }
 
+    /**
+     * Commits a locally-mountable identity — an embedded (muxed) track the
+     * stream already carries — without a server round trip.
+     *
+     * Replanning to reach a track that is already in the stream tears it down
+     * and restarts it: black flash, rebuffer, re-seek, for the same picture. A
+     * pending is force-validated against the synthetic `tv-local` candidate so
+     * the state machine reaches committed with no server involved.
+     *
+     * Returns false — meaning "you must replan after all" — for a
+     * server-selected native track or rendition other than the committed
+     * one, and when the pending also carries an audio, quality or
+     * output-route preference. Those can only be applied by the server, and
+     * short-circuiting it would drop them silently. Both callers must respect that: this is shared precisely
+     * because the two paths had drifted, and a subtitle press replayed out of
+     * `queuedMutations` was replanning where a direct press did not.
+     */
     private fun commitLocallyMountableSelection(
         identity: SubtitleIdentity,
         state: SubtitleTransitionState,
