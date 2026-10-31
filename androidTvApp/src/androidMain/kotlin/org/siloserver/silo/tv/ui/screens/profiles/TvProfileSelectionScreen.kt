@@ -69,6 +69,9 @@ import org.siloserver.silo.common.ui.marquee.MarqueeScrimStyle
 import org.siloserver.silo.common.ui.marquee.ProfileTilePalette
 import org.siloserver.silo.common.ui.marquee.rememberReduceMotion
 import org.siloserver.silo.model.profile.Profile
+import org.siloserver.silo.tv.ui.components.TvDialog
+import org.siloserver.silo.tv.ui.components.TvDialogAction
+import org.siloserver.silo.tv.ui.components.TvDialogActionStyle
 import org.siloserver.silo.tv.ui.components.TvDialogOption
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
@@ -339,27 +342,25 @@ fun TvProfileSelectionScreen(
         )
     }
 
-    // A new TV offers to open the first profile picked automatically.
+    // A new TV offers to open the first profile picked automatically, worded
+    // and laid out like Apple TV's alert: Ask Every Time, then Remember, with
+    // focus on Remember. Back answers Ask Every Time.
     val rememberOffer = state.rememberOffer
     if (rememberOffer != null) {
-        TvOptionDialog(
+        TvDialog(
             title = "Open ${rememberOffer.name} automatically?",
-            options = listOf(
-                TvDialogOption(
-                    key = "remember",
-                    title = "Remember",
-                    subtitle = "Open ${rememberOffer.name} when Silo starts on this TV.",
+            message = "Silo can skip Who's Watching and open this profile when it starts on this TV. " +
+                "You can change this later in Settings > General > Profile Selection.",
+            onDismissRequest = { viewModel.answerRememberOffer(remember = false) },
+            actions = listOf(
+                TvDialogAction(label = "Ask Every Time", onClick = { viewModel.answerRememberOffer(remember = false) }),
+                TvDialogAction(
+                    label = "Remember",
                     onClick = { viewModel.answerRememberOffer(remember = true) },
-                ),
-                TvDialogOption(
-                    key = "ask",
-                    title = "Ask every time",
-                    subtitle = "Show Who's watching when Silo starts. Change this in Settings > General > Profile Selection.",
-                    onClick = { viewModel.answerRememberOffer(remember = false) },
+                    style = TvDialogActionStyle.Primary,
                 ),
             ),
-            onDismiss = { viewModel.answerRememberOffer(remember = false) },
-            initialFocusKey = "remember",
+            initialFocusIndex = 1,
         )
     }
 
