@@ -6,7 +6,7 @@ import android.os.Build
 import androidx.media3.common.util.UnstableApi
 import org.siloserver.silo.model.playback.AudioPassthroughEntry
 
-/** Explicit HDMI sink data, without Media3's defaults or global surround settings. */
+/** Raw explicit HDMI port data, before checking route ownership and surround policy. */
 internal data class HdmiAudioSinkReport(
     val encodings: Set<Int>,
     val maxChannelCount: Int,
@@ -25,16 +25,20 @@ internal fun hdmiAudioSinkReport(intent: Intent?): HdmiAudioSinkReport? {
 
 /**
  * [encodings] has already passed Media3 support, minSdk and HDMI DTS checks.
- * On pre-Q only the sink's own report earns entries. Media3 1.11 merges HDMI
- * encodings with global surround settings and does not expose their origin:
- * https://github.com/androidx/media/blob/1.11.0/libraries/exoplayer/src/main/java/androidx/media3/exoplayer/audio/AudioCapabilities.java
+ * On pre-Q the caller supplies a report only after excluding competing
+ * USB/Bluetooth/wired/line outputs and non-auto or external-surround policy.
+ * Media3 defaults and policy-forced formats cannot earn entries.
  *
- * The HDMI broadcast has a single channel ceiling, not per-encoding profiles;
- * bound it by each codec's limit and use only our established layout mapping.
+ * Android 9 exposes one flattened encoding list and channel ceiling, not
+ * per-codec profiles. Only TrueHD and sink-reported DTS-HD may use an 8-channel
+ * ceiling; all other codecs (including DTS core) are capped at six. Residual
+ * risk: a sink supporting TrueHD/DTS-HD at only six channels can still be
+ * over-claimed when its aggregate ceiling is eight; pre-Q exposes no per-codec
+ * data to rule that out. Use only the established layout mapping below.
  * Q+ continues to query each encoding/layout independently, ignoring this data.
  */
 @UnstableApi
-internal fun probePassthroughEntries(
+internal fun buildPassthroughEntries(
     sdkInt: Int,
     encodings: List<AudioCapabilityManager.EncodingSupport>,
     hdmiSinkReport: () -> HdmiAudioSinkReport?,
@@ -53,8 +57,13 @@ internal fun probePassthroughEntries(
         for (candidate in PASSTHROUGH_LAYOUT_PROBES) {
             val ok = if (sink != null) {
                 sinkEncodings.any { encoding ->
+                    val codecCeiling = if (encoding.codec == "truehd" || encoding.codec == "dts_hd") {
+                        encoding.maxChannels
+                    } else {
+                        minOf(6, encoding.maxChannels)
+                    }
                     encoding.encoding in sink.encodings &&
-                        candidate.channelCount <= minOf(sink.maxChannelCount, encoding.maxChannels)
+                        candidate.channelCount <= minOf(sink.maxChannelCount, codecCeiling)
                 }
             } else {
                 supportsLayout(support, candidate)

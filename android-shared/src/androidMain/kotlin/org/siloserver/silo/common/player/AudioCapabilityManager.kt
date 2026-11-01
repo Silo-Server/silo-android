@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.database.ContentObserver
+import android.media.AudioDeviceCallback
 import android.media.AudioFormat
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
@@ -12,6 +14,7 @@ import android.hardware.display.DisplayManager
 import android.os.Handler
 import android.os.Looper
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -74,8 +77,8 @@ internal fun audioPlanningRouteIdentity(
  *
  * Backed by [AudioCapabilitiesReceiver], which monitors:
  * - `Intent.ACTION_HDMI_AUDIO_PLUG` (TV form factor — AVR power on/off, EDID renegotiation)
- * - `AudioDeviceCallback` adds/removes (Bluetooth pair, USB DAC plug)
- * - `Settings.Global.ENCODED_SURROUND_OUTPUT` (the user "force Atmos" toggle on most TVs)
+ * - `AudioDeviceCallback` adds/removes (Q+ in Media3; pre-Q registered here)
+ * - Global surround settings (pre-Q evidence is invalidated here independently of Media3)
  * - `Spatializer.OnSpatializerStateChangedListener` on Android 12+
  *
  * The manager registers at construction and lives for the application lifetime
@@ -199,10 +202,25 @@ class AudioCapabilityManager(
     private val hdmiEvidenceReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (!isInitialStickyBroadcast) {
-                val caps = AudioCapabilities.getCapabilities(appContext, mediaAttrs, null, emptyList())
-                publishCapabilities(mapCapabilities(caps))
+                refreshPreQCapabilities()
             }
         }
+    }
+
+    // Media3 only registers its device callback on Q+. Before Q a USB,
+    // Bluetooth, wired or line output can own playback while HDMI stays plugged.
+    private val preQDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) = refreshPreQCapabilities()
+        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) = refreshPreQCapabilities()
+    }
+
+    private val preQSurroundSettingsObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) = refreshPreQCapabilities()
+    }
+
+    private fun refreshPreQCapabilities() {
+        val caps = AudioCapabilities.getCapabilities(appContext, mediaAttrs, null, emptyList())
+        publishCapabilities(mapCapabilities(caps))
     }
 
     // Spatializer (Android 12+ / API 31+). The head-tracking + enabled state
@@ -232,6 +250,12 @@ class AudioCapabilityManager(
         // the empty default forever because no route-change callback follows.
         val initialCapabilities = receiver.register()
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            audioManager.registerAudioDeviceCallback(preQDeviceCallback, Handler(Looper.getMainLooper()))
+            for (setting in PRE_Q_SURROUND_SETTINGS) {
+                appContext.contentResolver.registerContentObserver(
+                    Settings.Global.getUriFor(setting), false, preQSurroundSettingsObserver,
+                )
+            }
             appContext.registerReceiver(
                 hdmiEvidenceReceiver,
                 IntentFilter(AudioManager.ACTION_HDMI_AUDIO_PLUG),
@@ -251,9 +275,14 @@ class AudioCapabilityManager(
         // The platform can accept DTS for a sink that does not decode it (an
         // Amlogic box in front of an LG 2025 TV); never claim passthrough there.
         val sinkDecodesDts by lazy { HdmiSinkDtsSupport.hdmiSinkDecodesDts(appContext) }
+        val preQ = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+        val sinkReport = if (preQ) readHdmiAudioSinkReport() else null
         val supportedEncodings = encodingSupport.filter { support ->
             Build.VERSION.SDK_INT >= support.minSdk &&
-                caps.supportsEncoding(support.encoding) &&
+                (caps.supportsEncoding(support.encoding) ||
+                    (preQ && support.codec == "dts" &&
+                        sinkReport?.encodings?.contains(AudioFormat.ENCODING_DTS_HD) == true &&
+                        caps.supportsEncoding(AudioFormat.ENCODING_DTS_HD))) &&
                 (support.codec !in DTS_CODECS || sinkDecodesDts)
         }
         val codecs = supportedEncodings.map(EncodingSupport::codec)
@@ -266,9 +295,15 @@ class AudioCapabilityManager(
         // Q+ probes each encoded format: Media3's aggregate maxChannelCount
         // alone cannot describe per-codec layouts. Pre-Q uses only explicit
         // HDMI sink evidence, never Media3's default/forced surround values.
-        val entries = probePassthroughEntries(supportedEncodings)
-        val maxChannels = entries.flatMap(AudioPassthroughEntry::channelCounts).maxOrNull()
-            ?: caps.maxChannelCount.coerceAtLeast(2)
+        val entries = probePassthroughEntries(supportedEncodings, sinkReport)
+        // This ceiling also bounds decoded/transcoded audio. Pre-Q entries
+        // deliberately cap lossy codecs below the sink's PCM channel ceiling.
+        val maxChannels = if (preQ) {
+            sinkReport?.maxChannelCount ?: caps.maxChannelCount.coerceAtLeast(2)
+        } else {
+            entries.flatMap(AudioPassthroughEntry::channelCounts).maxOrNull()
+                ?: caps.maxChannelCount.coerceAtLeast(2)
+        }
 
         return AudioPassthroughCapabilities(
             passthroughCodecs = codecs,
@@ -377,13 +412,43 @@ class AudioCapabilityManager(
         else -> 6
     }
 
+    private fun readHdmiAudioSinkReport(): HdmiAudioSinkReport? = runCatching {
+        hdmiAudioSinkReport(
+            appContext.registerReceiver(null, IntentFilter(AudioManager.ACTION_HDMI_AUDIO_PLUG)),
+        )
+    }.getOrNull()
+
+    /**
+     * Pre-Q cannot query the selected media route or per-codec HDMI profiles.
+     * Trust a plugged HDMI report only with no competing USB, Bluetooth,
+     * wired or line output and with automatic surround policy. Android 9 can
+     * add policy-forced formats to the HDMI port itself, so an explicit report
+     * alone is insufficient. Media3's external-surround override is likewise
+     * unproven; an explicit Amazon/Xiaomi Stereo choice must also fail closed.
+     * Inspection failures never earn entries. The raw report still supplies
+     * the aggregate ceiling used for decoded audio.
+     */
+    private fun preQHdmiEvidenceIsTrusted(): Boolean = runCatching {
+        val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        if (outputs.any { sinkCategory(it) in setOf("usb", "bluetooth", "wired") }) return@runCatching false
+        val resolver = appContext.contentResolver
+        val surroundPolicy = Settings.Global.getString(resolver, "encoded_surround_output")
+        if (surroundPolicy != null && surroundPolicy.toIntOrNull() != 0) return@runCatching false
+        if (Settings.Global.getInt(resolver, "use_external_surround_sound_flag", 0) == 1) return@runCatching false
+        val externalSurroundDevice = Build.MANUFACTURER == "Amazon" || Build.MANUFACTURER == "Xiaomi"
+        // Absence is distinct from the user's explicit Stereo (0) choice.
+        !externalSurroundDevice || Settings.Global.getString(resolver, "external_surround_sound_enabled") == null
+    }.getOrDefault(false)
+
     /**
      * Probe encoded layouts on Q+, or derive them from the HDMI sink's own
-     * encoding list and channel ceiling on older releases. A default or forced
-     * Media3 capability without sink evidence cannot earn layout entries.
+     * encoding list and channel ceiling on older releases, after checking route
+     * ownership and surround policy. Defaults or forced capabilities cannot
+     * earn entries; [buildPassthroughEntries] bounds the per-codec claims.
      */
     private fun probePassthroughEntries(
         encodings: List<EncodingSupport>,
+        sinkReport: HdmiAudioSinkReport?,
     ): List<AudioPassthroughEntry> {
         // All classes used here exist on minSdk 24. Newer direct-playback
         // methods stay behind the existing version checks below.
@@ -393,19 +458,10 @@ class AudioCapabilityManager(
                 .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
                 .build()
         }
-        return probePassthroughEntries(
+        return buildPassthroughEntries(
             sdkInt = Build.VERSION.SDK_INT,
             encodings = encodings,
-            hdmiSinkReport = {
-                runCatching {
-                    hdmiAudioSinkReport(
-                        appContext.registerReceiver(
-                            null,
-                            IntentFilter(AudioManager.ACTION_HDMI_AUDIO_PLUG),
-                        ),
-                    )
-                }.getOrNull()
-            },
+            hdmiSinkReport = { sinkReport.takeIf { preQHdmiEvidenceIsTrusted() } },
             supportsLayout = { support, candidate ->
                 val format = runCatching {
                     AudioFormat.Builder()
@@ -453,6 +509,9 @@ class AudioCapabilityManager(
         const val TAG = "AudioCapabilityMgr"
         const val ROUTE_HASH_BYTES = 16
         val DTS_CODECS = setOf("dts", "dts_hd")
+        val PRE_Q_SURROUND_SETTINGS = listOf(
+            "encoded_surround_output", "use_external_surround_sound_flag", "external_surround_sound_enabled",
+        )
 
         val encodingSupport = listOf(
             EncodingSupport("ac3", AudioFormat.ENCODING_AC3, maxChannels = 6),

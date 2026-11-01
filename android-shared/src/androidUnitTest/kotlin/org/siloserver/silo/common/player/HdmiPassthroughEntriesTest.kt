@@ -19,7 +19,7 @@ class HdmiPassthroughEntriesTest {
     private val dtsHd = AudioCapabilityManager.EncodingSupport("dts_hd", AudioFormat.ENCODING_DTS_HD)
     private val truehd = AudioCapabilityManager.EncodingSupport("truehd", AudioFormat.ENCODING_DOLBY_TRUEHD)
 
-    private fun preQEntries(sink: HdmiAudioSinkReport?, sdkInt: Int = 28) = probePassthroughEntries(
+    private fun preQEntries(sink: HdmiAudioSinkReport?, sdkInt: Int = 28) = buildPassthroughEntries(
         sdkInt = sdkInt,
         encodings = listOf(dts, dtsHd, truehd),
         hdmiSinkReport = { sink },
@@ -85,7 +85,7 @@ class HdmiPassthroughEntriesTest {
 
     @Test
     fun preQDtsHdSinkCannotBypassTheExistingEncodingFilters() {
-        val entries = probePassthroughEntries(
+        val entries = buildPassthroughEntries(
             sdkInt = 28,
             encodings = listOf(dts),
             hdmiSinkReport = { HdmiAudioSinkReport(setOf(dts.encoding, dtsHd.encoding), 8) },
@@ -132,7 +132,7 @@ class HdmiPassthroughEntriesTest {
     fun qAndLaterUseOnlyPerEncodingDirectPlaybackResults() {
         for (sdkInt in listOf(29, 32, 33, 36)) {
             val probes = mutableListOf<Pair<String, Int>>()
-            val entries = probePassthroughEntries(
+            val entries = buildPassthroughEntries(
                 sdkInt = sdkInt,
                 encodings = listOf(dts, dtsHd, truehd),
                 hdmiSinkReport = { error("Q+ must not consult the pre-Q HDMI fallback") },
@@ -141,7 +141,10 @@ class HdmiPassthroughEntriesTest {
                     support.codec in setOf("dts_hd", "truehd") && candidate.channelCount == 8
                 },
             )
-            assertEquals(listOf("dts", "dts_hd", "truehd").flatMap { codec -> listOf(2, 6, 8).map { codec to it } }, probes)
+            val expectedProbes = listOf("dts", "dts_hd", "truehd")
+                .flatMap { codec -> listOf(2, 6, 8).map { codec to it } }
+            assertEquals(expectedProbes.size, probes.size)
+            assertEquals(expectedProbes.toSet(), probes.toSet())
             assertEquals(
                 listOf("dts_hd", "truehd").map { AudioPassthroughEntry(it, listOf(8), listOf("7.1")) },
                 entries,
