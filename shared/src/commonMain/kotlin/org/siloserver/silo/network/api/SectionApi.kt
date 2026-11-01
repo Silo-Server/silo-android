@@ -24,6 +24,8 @@ class SectionApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
     suspend fun getHomeSections(owner: AuthScopeSnapshot, widths: ArtworkWidths? = null): ApiResult<SectionsResponse> =
         rowItemLimit.read(owner) { limit -> home.list(owner, widths, limit) }
 
+    suspend fun getHomeLayout(owner: AuthScopeSnapshot): ApiResult<List<HomeLayoutRow>> = home.layout(owner)
+
     suspend fun getHomeSectionItems(id: String, owner: AuthScopeSnapshot,
         widths: ArtworkWidths? = null): ApiResult<HomeSectionItemsResponse> = home.section(id, owner, widths)
 

@@ -69,6 +69,9 @@ class SectionRepository(
         return getHomeSections(owner)
     }
 
+    /** Home's rows without their cards; see [org.siloserver.silo.network.apiv2.HomeSectionsV2Api.layout]. */
+    suspend fun getHomeLayout(owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionApi.getHomeLayout(owner)
+
     suspend fun getHomeSectionItems(id: String, owner: org.siloserver.silo.network.AuthScopeSnapshot) =
         sectionApi.getHomeSectionItems(id, owner, artwork.request(ArtworkSurface.HOME))
 
