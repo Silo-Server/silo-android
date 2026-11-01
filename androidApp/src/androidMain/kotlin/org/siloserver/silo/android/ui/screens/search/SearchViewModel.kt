@@ -157,6 +157,9 @@ class SearchViewModel(
      */
     private var boxSetsAvailable = false
 
+    /** The query the newest search ran for, so [setBoxSetsAvailable] re-runs only a search already made. */
+    private var lastSearchedQuery: String? = null
+
     /**
      * A voice query that [onVoiceQuery] already searched for immediately. The
      * debounced collector consumes and skips it once so the same query is not
@@ -261,8 +264,9 @@ class SearchViewModel(
     fun setBoxSetsAvailable(available: Boolean) {
         if (available == boxSetsAvailable) return
         boxSetsAvailable = available
+        // A query still waiting out the debounce gets box sets when it runs.
         val query = _uiState.value.query
-        if (query.isNotBlank()) viewModelScope.launch { performSearch(query, reset = true) }
+        if (query.isNotBlank() && query == lastSearchedQuery) viewModelScope.launch { performSearch(query, reset = true) }
     }
 
     fun setAvailableModes(modes: List<MediaMode>) {
@@ -337,6 +341,7 @@ class SearchViewModel(
         // same query: a re-run after an access change must not be overwritten
         // by the older request's results. Loading more continues the newest.
         val generation = if (reset) ++searchGeneration else searchGeneration
+        if (reset) lastSearchedQuery = query
         val currentState = _uiState.value
         val requestedMediaType = currentState.mediaType
         var offset = if (reset) 0 else currentState.nextOffset
