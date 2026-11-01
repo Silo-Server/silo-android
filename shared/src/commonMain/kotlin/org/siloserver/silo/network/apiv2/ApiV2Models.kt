@@ -40,9 +40,11 @@ data class Problem(
     val detail: String = "",
     val instance: String? = null,
     val errors: List<ProblemError> = emptyList(),
+    @kotlinx.serialization.SerialName("retry_after_ms") val retryAfterMs: Long? = null,
+    @SerialName("code") val explicitCode: String? = null,
 ) {
-    /** The stable code: the last path segment of [type], e.g. `validation_failed`. */
-    val code: String get() = type.trimEnd('/').substringAfterLast('/')
+    /** Realtime errors provide an explicit code; other problems use the last segment of [type]. */
+    val code: String get() = explicitCode ?: type.trimEnd('/').substringAfterLast('/')
 }
 
 @Serializable

@@ -345,6 +345,40 @@ class WatchTogetherRealtimeClientTest {
         assertEquals("PROFILE_A", request.authScope.profileToken)
     }
 
+    @Test
+    fun `ticket capability precedes open and correlated work stays on its physical socket`() = runTest {
+        val socket = FakeConnection().apply { workAdmission = RealtimeWorkAdmission(1, "per_node", "memory", "synthetic-epoch") }
+        val client = client(FakeConnector(socket))
+        val events = mutableListOf<RoomRealtimeEvent>()
+        val job = backgroundScope.launch { client.connect("synthetic-room", "synthetic-proof").collect { events += it } }
+        runCurrent()
+        assertIs<RoomRealtimeEvent.Admission>(events[0])
+        assertIs<RoomRealtimeEvent.Opened>(events[1])
+        val id = client.currentConnectionId()!!
+        val request = RoomWorkRequest(RoomWorkKind.Transport, "synthetic-request", action = "pause")
+        assertFalse(client.sendWorkOnConnection(id + 1, request))
+        assertTrue(socket.sent.isEmpty())
+        var dispatchChecks = 0
+        assertFalse(client.sendWorkOnConnection(id, request) { dispatchChecks++; false })
+        assertEquals(1, dispatchChecks)
+        assertTrue(socket.sent.isEmpty())
+        assertTrue(client.sendWorkOnConnection(id, request) { dispatchChecks++; true })
+        assertEquals(2, dispatchChecks)
+        val wire = SiloJson.parseToJsonElement(socket.sent.single()).jsonObject
+        assertEquals("synthetic-request", wire["request_id"]?.jsonPrimitive?.content)
+        socket.incoming.send("""{"type":"error","code":"realtime_rate_limited","request_id":"synthetic-request","retry_after_ms":250,"work_started":false}""")
+        socket.incoming.send("""{"type":"action_result","request_id":"synthetic-request","action":"transport_request","status":"applied"}""")
+        runCurrent()
+        val refusal = assertIs<RoomRealtimeEvent.Error>(events[2])
+        assertTrue(refusal.refusal.preWork)
+        assertEquals("synthetic-request", refusal.requestId)
+        assertIs<RoomRealtimeEvent.ActionResult>(events[3])
+        job.cancelAndJoin()
+        assertFalse(client.sendWorkOnConnection(id, request))
+        assertEquals(1, socket.sent.size)
+        assertTrue(socket.closed)
+    }
+
     private suspend fun client(
         connector: WatchTogetherSocketConnector,
         accessToken: String = "access",
@@ -395,6 +429,7 @@ class WatchTogetherRealtimeClientTest {
     }
 
     private class FakeConnection : WatchTogetherSocketConnection {
+        override var workAdmission: RealtimeWorkAdmission? = null
         val incoming = Channel<String>(Channel.UNLIMITED)
         val sent = mutableListOf<String>()
         var sendFailure: Throwable? = null

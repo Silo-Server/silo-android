@@ -1,5 +1,6 @@
 package org.siloserver.silo.watchtogether
 
+import org.siloserver.silo.network.RoomWorkKind
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomMember
 import org.siloserver.silo.model.watchtogether.RoomPhase
@@ -23,6 +24,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class RoomPlaybackBindingTest {
 
     private val connection = WatchTogetherConnectionState(generation = 1, epoch = 1, writable = true)
@@ -53,6 +55,19 @@ class RoomPlaybackBindingTest {
     private class Sent(val kind: String, val position: Double, val paused: Boolean, val commandId: String? = null, val ready: Boolean = false)
 
     private inner class FakeRoom : RoomPlaybackRoom {
+        var lastTransportIntent: RoomPlaybackIntent? = null
+        override suspend fun transportRequestForPlayback(
+            authorization: RoomTransportAuthorization, intent: RoomTransportIntent, action: String,
+            positionSeconds: Double?, isPaused: Boolean, playbackIntent: RoomPlaybackIntent,
+        ): Boolean {
+            lastTransportIntent = playbackIntent
+            return transportRequestForAuthorization(authorization, intent, action, positionSeconds, isPaused)
+        }
+        override var workAdmissionEnabled = false
+        override val workUpdate = MutableStateFlow(RoomWorkUpdate())
+        val canceledWork = mutableListOf<RoomWorkKind>()
+        override suspend fun cancelDesiredWork(kind: RoomWorkKind) { canceledWork += kind }
+
         override val roomSnapshot = MutableStateFlow<RoomSnapshot?>(playing())
         override val connectionState = MutableStateFlow(connection)
         override val roomDeliveryEcho = MutableStateFlow<RoomDeliveryEcho?>(null)
@@ -1193,6 +1208,73 @@ class RoomPlaybackBindingTest {
         player.update { copy(suspended = false) }
         advanceTimeBy(600)
         assertEquals(2, room.attaches.size)
+    }
+
+    @Test
+    fun `admission seeks coalesce and a distinct pause flushes the latest target first`() = runTest {
+        val room = FakeRoom().apply {
+            workAdmissionEnabled = true
+            roomSnapshot.value = playing(role = MemberRole.Host)
+        }
+        val player = FakePlayer()
+        val binding = bind(room, player)
+        binding.requestSeek(110.0)
+        assertEquals(110.0, binding.pendingSeekSeconds.value)
+        advanceTimeBy(100)
+        binding.requestSeek(binding.relativeSeekOrigin(100.0) + 10.0)
+        assertEquals(120.0, binding.pendingSeekSeconds.value)
+        binding.requestPlayPause(true); runCurrent()
+        assertEquals(listOf<Pair<String, Double?>>("seek" to 120.0, "pause" to 100.0), room.requests)
+        advanceTimeBy(149); runCurrent(); assertEquals(2, room.requests.size)
+        advanceTimeBy(1); runCurrent()
+        assertEquals(listOf<Pair<String, Double?>>("seek" to 120.0, "pause" to 100.0), room.requests)
+        assertTrue(player.seeks.isEmpty())
+    }
+
+    @Test
+    fun `session replacement cancels a coalesced seek and uncertainty clears the pending target`() = runTest {
+        val room = FakeRoom().apply {
+            workAdmissionEnabled = true
+            roomSnapshot.value = playing(role = MemberRole.Host)
+        }
+        val player = FakePlayer()
+        val binding = bind(room, player)
+        val notices = mutableListOf<RoomPlaybackNotice>()
+        backgroundScope.launch { binding.notices.toList(notices) }; runCurrent()
+        binding.requestSeek(150.0)
+        player.update { copy(sessionId = "replacement-session") }
+        advanceTimeBy(250); runCurrent()
+        assertTrue(room.requests.isEmpty())
+        assertNull(binding.pendingSeekSeconds.value)
+        binding.requestSeek(160.0)
+        advanceTimeBy(250); runCurrent()
+        assertEquals(160.0, binding.pendingSeekSeconds.value)
+        room.workUpdate.value = RoomWorkUpdate(sequence = 1, uncertaintySequence = 1, uncertainKind = RoomWorkKind.Transport, uncertainPlaybackIntent = room.lastTransportIntent)
+        runCurrent()
+        assertNull(binding.pendingSeekSeconds.value)
+        assertTrue(RoomPlaybackNotice.Uncertain in notices)
+    }
+
+    @Test
+    fun `buffering send is not saved and correlated refusal heals until recovery cancels the desire`() = runTest {
+        val room = FakeRoom().apply { workAdmissionEnabled = true }
+        val player = FakePlayer()
+        val binding = bind(room, player)
+        player.update { copy(state = RoomPlayerState.Buffering, isPlaying = false) }
+        advanceTimeBy(2_250); runCurrent()
+        assertEquals(1, room.sent.count { it.kind == "buffering" })
+        assertFalse(binding.debug.value.stallReported, "socket acceptance is not the saved buffering echo")
+        // Another operation's publication can follow a buffering refusal before this collector runs.
+        room.workUpdate.value = RoomWorkUpdate(sequence = 2, kind = RoomWorkKind.Report, bufferingRefusalSequence = 1)
+        advanceTimeBy(500); runCurrent()
+        assertEquals(2, room.sent.count { it.kind == "buffering" })
+        assertFalse(binding.offerLowerQuality.value, "a retry is still the same stall")
+        player.update { copy(state = RoomPlayerState.Ready, isPlaying = true) }
+        runCurrent()
+        assertTrue(RoomWorkKind.Buffering in room.canceledWork)
+        val sent = room.sent.count { it.kind == "buffering" }
+        advanceTimeBy(2_000); runCurrent()
+        assertEquals(sent, room.sent.count { it.kind == "buffering" })
     }
 
     // ---- user intents -----------------------------------------------------------------

@@ -1,5 +1,11 @@
 package org.siloserver.silo.repository
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import org.siloserver.silo.model.watchtogether.RoomPlaybackState
+import org.siloserver.silo.model.watchtogether.RoomMember
+import kotlinx.serialization.json.*
+import kotlinx.coroutines.flow.toList
+import org.siloserver.silo.watchtogether.*
 import org.siloserver.silo.model.watchtogether.AddSuggestionRequest
 import org.siloserver.silo.model.watchtogether.CreateRoomRequest
 import org.siloserver.silo.model.watchtogether.JoinRoomRequest
@@ -23,6 +29,10 @@ import org.siloserver.silo.model.watchtogether.TransportAction
 import org.siloserver.silo.model.watchtogether.TransportCommand
 import org.siloserver.silo.model.watchtogether.UpdatePolicyRequest
 import org.siloserver.silo.model.watchtogether.WatchTogetherCapabilitiesV2
+import org.siloserver.silo.network.RoomWorkRequest
+import org.siloserver.silo.network.RoomWorkKind
+import org.siloserver.silo.network.RealtimeWorkAdmission
+import org.siloserver.silo.network.RealtimeSocketClosed
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
@@ -31,10 +41,23 @@ import org.siloserver.silo.network.RoomRealtimeEvent
 import org.siloserver.silo.network.RoomTicketExpiringException
 import org.siloserver.silo.network.RoomTicketRefusedException
 import org.siloserver.silo.network.WatchTogetherRealtimeClient
+import org.siloserver.silo.network.DefaultWatchTogetherRealtimeClient
+import org.siloserver.silo.network.WatchTogetherSocketConnection
+import org.siloserver.silo.network.WatchTogetherSocketConnector
+import org.siloserver.silo.network.WatchTogetherSocketRequest
+import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.DurableLoginAuthority
+import org.siloserver.silo.network.DurableLoginAuthorityProvider
+import org.siloserver.silo.network.realtimeAdmissionOwner
+import org.siloserver.silo.network.TokenManagerImpl
+import org.siloserver.silo.network.SiloJson
+import org.siloserver.silo.model.watchtogether.WsTransportRequest
 import org.siloserver.silo.network.api.WatchTogetherApi
 import org.siloserver.silo.watchtogether.RoomSession
 import org.siloserver.silo.watchtogether.RoomTransportIntent
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -56,6 +79,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class WatchTogetherRepositoryTest {
 
     // ---- Fakes ---------------------------------------------------------------
@@ -213,6 +237,17 @@ class WatchTogetherRepositoryTest {
         /** When true, the returned flow throws immediately on collection. */
         var failConnect = false
         var terminateImmediately = false
+        val workRequests = mutableListOf<Pair<Long, RoomWorkRequest>>()
+        var workSendResult = true
+        var beforeRetryDispatch: (suspend () -> Unit)? = null
+        override suspend fun sendWorkOnConnection(connectionId: Long, request: RoomWorkRequest, beforeDispatch: suspend () -> Boolean): Boolean {
+            beforeRetryDispatch?.invoke()
+            return beforeDispatch() && sendWorkOnConnection(connectionId, request)
+        }
+        override suspend fun sendWorkOnConnection(connectionId: Long, request: RoomWorkRequest): Boolean {
+            workRequests += connectionId to request
+            return workSendResult
+        }
         var attachCount = 0
         val transportActions = mutableListOf<String>()
         val readyCommands = mutableListOf<String?>()
@@ -315,6 +350,9 @@ class WatchTogetherRepositoryTest {
         now: () -> Long = { testScheduler.currentTime },
         timing: WatchPartyTiming = testTiming,
         realtimeFactory: (() -> WatchTogetherRealtimeClient?)? = null,
+        admissionOwnerProvider: suspend (AuthScopeSnapshot) -> org.siloserver.silo.network.RealtimeAdmissionOwner? = {
+            org.siloserver.silo.network.RealtimeAdmissionOwner(it.serverId, it.serverUrl)
+        },
     ) = WatchTogetherRepository(
         api = api,
         realtimeFactory = realtimeFactory ?: { realtime },
@@ -323,6 +361,7 @@ class WatchTogetherRepositoryTest {
         wallClockMs = { 1_000_000L + testScheduler.currentTime },
         timing = timing,
         random = NoJitter,
+        admissionOwnerProvider = admissionOwnerProvider,
     )
 
     private fun create() = CreateRoomRequest(roomId = "room-1")
@@ -1848,5 +1887,911 @@ class WatchTogetherRepositoryTest {
         assertEquals(1, api.count("mode"))
     }
 
+    @Test
+    fun `actual room client and repository recover a refused wire action but never replay a lost acknowledgement`() = runTest {
+        val initial = snapshot(phase = RoomPhase.Playing, attachedSessionId = "synthetic-session")
+            .copy(selfRole = MemberRole.Host, selfCanControlTransport = true)
+        val api = FakeApi(room(initial))
+        val incoming = Channel<String>(Channel.UNLIMITED)
+        val sent = mutableListOf<String>()
+        var closed = false
+        val socket = object : WatchTogetherSocketConnection {
+            override val workAdmission = RealtimeWorkAdmission(1, "node", "memory", "synthetic-epoch")
+            override suspend fun receiveText(): String? = incoming.receiveCatching().getOrNull()
+            override suspend fun sendText(text: String) { sent += text }
+            override suspend fun close() { closed = true; incoming.cancel() }
+        }
+        val tokens = object : TokenManager by TokenManagerImpl() {
+            override suspend fun snapshotCurrentScope() = scopeA
+            override suspend fun getAccessTokenForScope(scope: AuthScopeSnapshot): String? =
+                "synthetic-access".takeIf { scope == scopeA }
+        }
+        val client = DefaultWatchTogetherRealtimeClient(tokens, object : WatchTogetherSocketConnector {
+            override suspend fun open(request: WatchTogetherSocketRequest) = socket
+        })
+        val repository = repo(api = api, realtimeFactory = { client })
+        repository.createRoom(create())
+        val connection = backgroundScope.launch { repository.connect("room-1") }; runCurrent()
+        assertTrue(repository.workAdmissionEnabled)
+        assertTrue(repository.transportRequestForAuthorization(repository.currentTransportAuthorization()!!,
+            RoomTransportIntent.Seek, "seek", 90.0, false))
+        val request = SiloJson.decodeFromString(WsTransportRequest.serializer(), sent.single())
+        incoming.send("""{"type":"error","code":"realtime_rate_limited","request_id":"${request.requestId}","retry_after_ms":250,"work_started":false}""")
+        runCurrent(); advanceTimeBy(249); runCurrent(); assertEquals(1, sent.size)
+        advanceTimeBy(1); runCurrent(); assertEquals(listOf(sent.first(), sent.first()), sent)
+        val appliedSnapshot = SiloJson.encodeToString(RoomSnapshot.serializer(), initial.copy(generation = 2))
+        incoming.send("""{"type":"snapshot","room":$appliedSnapshot}""")
+        incoming.send("""{"type":"action_result","request_id":"${request.requestId}","action":"transport_request","status":"applied"}""")
+        runCurrent(); advanceTimeBy(5_000); runCurrent()
+        assertEquals(0, api.count("get"))
+        assertEquals(2, sent.size)
+        assertTrue(repository.transportRequestForAuthorization(repository.currentTransportAuthorization()!!,
+            RoomTransportIntent.PlayPause, "pause", 90.0, true))
+        advanceTimeBy(5_000); runCurrent()
+        assertEquals(3, sent.size)
+        assertEquals(1, api.count("get"))
+        assertEquals(1L, repository.workUpdate.value.uncertaintySequence)
+        connection.cancelAndJoin()
+        assertTrue(closed)
+        assertNull(client.currentConnectionId())
+    }
+
+    @Test
+    fun `admission retries a correlated transport once and applies its acknowledgement after snapshot`() = runTest {
+        val initial = snapshot(phase = RoomPhase.Playing, attachedSessionId = "session-1").copy(selfRole = MemberRole.Host, selfCanControlTransport = true)
+        val api = FakeApi(room(initial))
+        val realtime = FakeRealtime()
+        val repository = repo(api, realtime)
+        repository.createRoom(create())
+        val connection = backgroundScope.launch { repository.connect("room-1") }
+        runCurrent()
+        realtime.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+        realtime.events.emit(RoomRealtimeEvent.Opened)
+        realtime.events.emit(RoomRealtimeEvent.SnapshotEvent(initial)); runCurrent()
+        assertTrue(repository.transportRequestForAuthorization(repository.currentTransportAuthorization()!!,
+            RoomTransportIntent.Seek, "seek", 90.0, false))
+        val request = realtime.workRequests.single().second
+        realtime.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", request.requestId, 250, false))
+        runCurrent(); advanceTimeBy(249); runCurrent(); assertEquals(1, realtime.workRequests.size)
+        advanceTimeBy(1); runCurrent()
+        assertEquals(listOf(request, request), realtime.workRequests.map { it.second })
+        realtime.events.emit(RoomRealtimeEvent.SnapshotEvent(initial.copy(generation = 2)))
+        realtime.events.emit(RoomRealtimeEvent.ActionResult(request.requestId, "transport_request", "applied"))
+        runCurrent(); advanceTimeBy(5_001); runCurrent()
+        assertEquals(2, realtime.workRequests.size)
+        assertFalse(repository.workUpdate.value.uncertain)
+        assertEquals(0, api.count("get"))
+        connection.cancel()
+    }
+
+    @Test
+    fun `admission timeout reconciles without replay and downstream error is uncertain`() = runTest {
+        val initial = snapshot(phase = RoomPhase.Playing, attachedSessionId = "session-1").copy(selfRole = MemberRole.Host, selfCanControlTransport = true)
+        val api = FakeApi(room(initial))
+        val realtime = FakeRealtime()
+        val repository = repo(api, realtime)
+        repository.createRoom(create())
+        val connection = backgroundScope.launch { repository.connect("room-1") }
+        runCurrent()
+        realtime.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+        realtime.events.emit(RoomRealtimeEvent.Opened); runCurrent()
+        assertTrue(repository.transportRequestForAuthorization(repository.currentTransportAuthorization()!!,
+            RoomTransportIntent.PlayPause, "pause", 12.0, true))
+        advanceTimeBy(5_000); runCurrent()
+        assertEquals(1, realtime.workRequests.size)
+        assertTrue(repository.workUpdate.value.uncertain)
+        assertEquals(1, api.count("get"))
+        assertTrue(repository.transportRequestForAuthorization(repository.currentTransportAuthorization()!!,
+            RoomTransportIntent.PlayPause, "play", 12.0, false))
+        val request = realtime.workRequests.last().second
+        realtime.events.emit(RoomRealtimeEvent.Error("operation_failed", "failed", request.requestId, null, true))
+        runCurrent(); advanceTimeBy(5_000); runCurrent()
+        assertEquals(2, realtime.workRequests.size)
+        assertTrue(repository.workUpdate.value.uncertain)
+        assertEquals(2, api.count("get"))
+        connection.cancel()
+    }
+
+    @Test
+    fun `a new seek during the action floor cancels the refused old target`() = runTest {
+        val initial = snapshot(phase = RoomPhase.Playing, attachedSessionId = "session-1")
+            .copy(selfRole = MemberRole.Host, selfCanControlTransport = true)
+        val realtime = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), realtime)
+        repository.createRoom(create())
+        val connection = backgroundScope.launch { repository.connect("room-1") }; runCurrent()
+        realtime.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+        realtime.events.emit(RoomRealtimeEvent.Opened); runCurrent()
+        assertTrue(repository.transportRequestForAuthorization(repository.currentTransportAuthorization()!!,
+            RoomTransportIntent.Seek, "seek", 20.0, false))
+        val old = realtime.workRequests.single().second
+        realtime.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", old.requestId, 1_000, false)); runCurrent()
+        assertFalse(repository.transportRequestForAuthorization(repository.currentTransportAuthorization()!!,
+            RoomTransportIntent.Seek, "seek", 40.0, false))
+        advanceTimeBy(1_000); runCurrent()
+        assertEquals(listOf(old), realtime.workRequests.map { it.second })
+        connection.cancel()
+    }
+
+    @Test
+    fun `disconnect reconciles uncertain transport even when a report publication follows it`() = runTest {
+        val initial = snapshot(phase = RoomPhase.Playing, attachedSessionId = "session-1")
+            .copy(selfRole = MemberRole.Host, selfCanControlTransport = true)
+        val api = FakeApi(room(initial))
+        val realtime = FakeRealtime()
+        val repository = repo(api, realtime)
+        repository.createRoom(create())
+        val connection = backgroundScope.launch { repository.connect("room-1") }; runCurrent()
+        realtime.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+        realtime.events.emit(RoomRealtimeEvent.Opened); runCurrent()
+        assertTrue(repository.transportRequestForAuthorization(repository.currentTransportAuthorization()!!,
+            RoomTransportIntent.PlayPause, "pause", 12.0, true))
+        assertTrue(repository.stateReport("session-1", 12.0, true, null, false))
+        realtime.events.emit(RoomRealtimeEvent.TransportTerminated()); runCurrent()
+        assertEquals(1L, repository.workUpdate.value.uncertaintySequence)
+        assertEquals(1, api.count("get"))
+        assertEquals(2, realtime.workRequests.size)
+        connection.cancel()
+    }
+
+    @Test
+    fun `room report refusal shares the recovery floor and buffering recovery cancels stale retry`() = runTest {
+        val initial = snapshot(phase = RoomPhase.Playing, attachedSessionId = "session-1")
+        val realtime = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), realtime)
+        repository.createRoom(create())
+        val connection = backgroundScope.launch { repository.connect("room-1") }; runCurrent()
+        realtime.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+        realtime.events.emit(RoomRealtimeEvent.Opened); runCurrent()
+        assertTrue(repository.buffering("session-1", 12.0, false))
+        val buffer = realtime.workRequests.last().second
+        realtime.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", buffer.requestId, 500, false)); runCurrent()
+        assertFalse(repository.ready("session-1", 12.0, false, "command"))
+        assertFalse(repository.stateReport("session-1", 12.0, false, "command", true))
+        repository.cancelDesiredWork(RoomWorkKind.Buffering)
+        advanceTimeBy(500); runCurrent()
+        assertEquals(1, realtime.workRequests.size)
+        assertTrue(repository.ready("session-1", 13.0, false, "new-command"))
+        assertEquals("new-command", realtime.workRequests.last().second.commandId)
+        connection.cancel()
+    }
+
+    @Test
+    fun `another 1008 reason uses opaque backoff even after thirty seconds`() = runTest {
+        val realtime = FakeRealtime()
+        val repository = repo(realtime = realtime)
+        repository.createRoom(create())
+        val connection = backgroundScope.launch { repository.connect("room-1") }; runCurrent()
+        realtime.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+        realtime.events.emit(RoomRealtimeEvent.Opened)
+        realtime.events.emit(RoomRealtimeEvent.SnapshotEvent(snapshot())); runCurrent()
+        advanceTimeBy(30_000); runCurrent()
+        realtime.events.emit(RoomRealtimeEvent.TransportTerminated(RealtimeSocketClosed(1008, "other policy"))); runCurrent()
+        assertEquals(1, realtime.connectCount)
+        advanceTimeBy(999); runCurrent(); assertEquals(1, realtime.connectCount)
+        advanceTimeBy(1); runCurrent(); assertEquals(2, realtime.connectCount)
+        connection.cancel()
+    }
+
+    @Test
+    fun `503 ticket retry honors metadata and a shield close after thirty seconds cannot renew immediately`() = runTest {
+        val realtime = FakeRealtime().apply {
+            connectBehavior = { count -> if (count == 1) flow {
+                emit(RoomRealtimeEvent.TransportTerminated(RoomTicketRefusedException(503, "realtime_unavailable", 6_000)))
+            } else events.asSharedFlow() }
+        }
+        val repository = repo(realtime = realtime)
+        repository.createRoom(create())
+        val connection = backgroundScope.launch { repository.connect("room-1") }; runCurrent()
+        assertEquals(1, realtime.connectCount)
+        advanceTimeBy(5_999); runCurrent(); assertEquals(1, realtime.connectCount)
+        advanceTimeBy(1); runCurrent(); assertEquals(2, realtime.connectCount)
+        realtime.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+        realtime.events.emit(RoomRealtimeEvent.Opened)
+        realtime.events.emit(RoomRealtimeEvent.SnapshotEvent(snapshot())); runCurrent()
+        advanceTimeBy(30_000); runCurrent()
+        realtime.events.emit(RoomRealtimeEvent.SnapshotEvent(snapshot())); runCurrent() // useful activity clears the prior outage
+        realtime.events.emit(RoomRealtimeEvent.TransportTerminated(RealtimeSocketClosed(1008, "realtime input shield"))); runCurrent()
+        assertEquals(2, realtime.connectCount)
+        advanceTimeBy(4_999); runCurrent(); assertEquals(2, realtime.connectCount)
+        advanceTimeBy(1); runCurrent(); assertEquals(3, realtime.connectCount)
+        assertNull(repository.roomClosedReason.value)
+        connection.cancel()
+    }
+
     private fun parseMs(value: String): Long = org.siloserver.silo.util.parseRfc3339ToEpochMillis(value)!!
+    private class Player : RoomPlayerPort {
+        override val observations = MutableStateFlow(RoomPlayerObservation(
+            sessionId = "session-1", selectionRevision = 1, sourcePositionSeconds = 100.0,
+            durationSeconds = 3000.0, playWhenReady = true, isPlaying = true, state = RoomPlayerState.Ready))
+        val seeks = mutableListOf<Double>()
+        override fun seekTo(sourceSeconds: Double) { seeks += sourceSeconds }
+        override fun setPlaying(playing: Boolean) { }
+        override fun setCorrectionRate(rate: Double?) { }
+        override fun isBuffered(sourceSeconds: Double) = true
+    }
+    private data class Harness(
+        val repository: WatchTogetherRepository, val wire: FakeRealtime, val api: FakeApi,
+        val session: RoomSession, val player: Player, val binding: RoomPlaybackBinding,
+        val initial: RoomSnapshot, val notices: MutableList<RoomPlaybackNotice>,
+    ) {
+        fun transports() = wire.workRequests.map { it.second }.filter { it.kind == RoomWorkKind.Transport }
+    }
+    private suspend fun TestScope.harness(): Harness {
+        val initial = snapshot(phase = RoomPhase.Playing, attachedSessionId = "session-1").copy(
+            selfRole = MemberRole.Host, selfCanControlTransport = true, isPaused = false,
+            playbackState = RoomPlaybackState.Playing,
+            members = listOf(RoomMember(userId = "fixture-user", isSelf = true)))
+        val api = FakeApi(room(initial))
+        val wire = FakeRealtime()
+        val r = repo(api, wire)
+        r.createRoom(create())
+        val session = RoomSession(r, backgroundScope, DefaultIdentityTransitionBarrier())
+        session.enter("room-1"); runCurrent()
+        wire.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+        wire.events.emit(RoomRealtimeEvent.Opened)
+        wire.events.emit(RoomRealtimeEvent.SnapshotEvent(initial)); runCurrent()
+        val stamp = org.siloserver.silo.util.formatEpochMillisRfc3339(1_000_000L + testScheduler.currentTime)
+        wire.events.emit(RoomRealtimeEvent.Pong(stamp, stamp, stamp, 1_000_000L + testScheduler.currentTime)); runCurrent()
+        val player = Player()
+        val binding = RoomPlaybackBinding(r, player, backgroundScope,
+            { testScheduler.currentTime }, { 1_000_000L + testScheduler.currentTime })
+        val notices = mutableListOf<RoomPlaybackNotice>()
+        backgroundScope.launch { binding.notices.toList(notices) }
+        binding.start(); runCurrent()
+        return Harness(r, wire, api, session, player, binding, initial, notices)
+    }
+    private suspend fun TestScope.finish(h: Harness) {
+        h.binding.dispose(); h.session.leave(); runCurrent()
+        assertFalse(h.session.isActive())
+    }
+    private suspend fun TestScope.refuse(h: Harness, request: RoomWorkRequest, delay: Long) {
+        h.wire.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "fixture refusal", request.requestId, delay, false))
+        runCurrent()
+    }
+    private fun TestScope.advance(ms: Long) { advanceTimeBy(ms); runCurrent() }
+
+    @Test fun A2_olderTimeoutMustNotClearOrCancelNewerUnsentSeek() = runTest {
+        val h = harness()
+        try {
+        h.binding.requestSeek(110.0); advance(250)
+        assertEquals(listOf(110.0), h.transports().map { it.positionSeconds })
+        advance(4_900)
+        h.binding.requestSeek(140.0); runCurrent()
+        assertEquals(140.0, h.binding.pendingSeekSeconds.value)
+        advance(100) // A reaches its 5s acknowledgement deadline; B is 100ms into its window.
+        assertEquals(1L, h.repository.workUpdate.value.uncertaintySequence)
+        assertEquals(1, h.api.count("get"))
+        val heldAtTimeout = h.binding.pendingSeekSeconds.value
+        advance(150)
+        assertEquals(140.0, heldAtTimeout, "A's timeout must retain B's immediately displayed target")
+        assertEquals(listOf(110.0, 140.0), h.transports().map { it.positionSeconds })
+        } finally { finish(h) }
+    }
+    @Test fun A2_olderRefusedDeadlineMustNotClearNewerUnsentSeek() = runTest {
+        val h = harness()
+        try {
+        h.binding.requestSeek(110.0); advance(250)
+        refuse(h, h.transports().single(), 5_000)
+        advance(4_900)
+        h.binding.requestSeek(140.0); runCurrent()
+        advance(100) // Refused A expires, without replay; B has not yet reached sendWork.
+        assertEquals(1L, h.repository.workUpdate.value.discardedTransportSequence)
+        val heldAtDiscard = h.binding.pendingSeekSeconds.value
+        advance(150)
+        assertEquals(140.0, heldAtDiscard, "Discarding A must retain B's displayed target")
+        assertEquals(listOf(110.0, 140.0), h.transports().map { it.positionSeconds })
+        } finally { finish(h) }
+    }
+    @Test fun controlOlderSuccessKeepsNewerUnsentSeek() = runTest {
+        val h = harness()
+        try {
+        h.binding.requestSeek(110.0); advance(250); val a = h.transports().single()
+        advance(4_900); h.binding.requestSeek(140.0); runCurrent()
+        h.wire.events.emit(RoomRealtimeEvent.ActionResult(a.requestId, "transport_request", "applied")); runCurrent()
+        advance(250)
+        assertEquals(listOf(110.0, 140.0), h.transports().map { it.positionSeconds })
+        assertEquals(140.0, h.binding.pendingSeekSeconds.value)
+        assertEquals(0L, h.repository.workUpdate.value.uncertaintySequence)
+        } finally { finish(h) }
+    }
+    @Test fun controlOlderPauseTimeoutKeepsNewerUnsentSeek() = runTest {
+        val h = harness()
+        try {
+        h.binding.requestPlayPause(true); runCurrent(); advance(4_900)
+        h.binding.requestSeek(140.0); runCurrent(); advance(250)
+        assertEquals(listOf("pause", "seek"), h.transports().map { it.action })
+        assertEquals(140.0, h.binding.pendingSeekSeconds.value)
+        assertTrue(RoomPlaybackNotice.Uncertain in h.notices)
+        } finally { finish(h) }
+    }
+    @Test fun controlCurrentSeekUncertaintyClearsHeldTargetAndNeverReplays() = runTest {
+        val h = harness()
+        try {
+        h.binding.requestSeek(110.0); advance(250); advance(5_000)
+        assertNull(h.binding.pendingSeekSeconds.value)
+        assertEquals(1, h.transports().size)
+        assertEquals(1, h.api.count("get"))
+        assertTrue(RoomPlaybackNotice.Uncertain in h.notices)
+        } finally { finish(h) }
+    }
+    @Test fun controlRefusalRetriesSameRequestOnceAfterFloor() = runTest {
+        val h = harness()
+        try {
+        h.binding.requestSeek(110.0); advance(250); val a = h.transports().single()
+        refuse(h, a, 1000); advance(999)
+        assertEquals(1, h.transports().size)
+        advance(1)
+        assertEquals(listOf(a, a), h.transports())
+        h.wire.events.emit(RoomRealtimeEvent.ActionResult(a.requestId, "transport_request", "applied")); runCurrent()
+        advance(5_001)
+        assertEquals(2, h.transports().size)
+        assertEquals(0L, h.repository.workUpdate.value.uncertaintySequence)
+        } finally { finish(h) }
+    }
+    private suspend fun TestScope.pauseSuccess(h: Harness) {
+        val pause = h.transports().single { it.action == "pause" }
+        // Same ordered shapes as pinned server: snapshot, command, then action_result.
+        h.wire.events.emit(RoomRealtimeEvent.SnapshotEvent(h.initial.copy(generation = 2,
+            isPaused = true, playbackState = RoomPlaybackState.Paused)))
+        h.wire.events.emit(RoomRealtimeEvent.TransportCommandEvent(TransportCommand(
+            commandId = "fixture-pause", sessionId = "session-1", selectionRevision = 1,
+            action = TransportAction.Pause, positionSeconds = 100.0,
+            executeAt = org.siloserver.silo.util.formatEpochMillisRfc3339(1_000_000L + testScheduler.currentTime + 350),
+            playbackState = RoomPlaybackState.Paused)))
+        h.wire.events.emit(RoomRealtimeEvent.ActionResult(pause.requestId, "transport_request", "applied"))
+        runCurrent()
+    }
+    @Test fun A4_ownDistinctPauseSuccessMustNotLosePreviouslyQueuedSeek() = runTest {
+        val h = harness()
+        try {
+        h.binding.requestSeek(140.0); runCurrent()
+        advance(100)
+        h.binding.requestPlayPause(true); runCurrent()
+        pauseSuccess(h)
+        advance(150)
+        assertEquals(listOf("seek", "pause"), h.transports().map { it.action }, "Both distinct user inputs must survive the seek window")
+        } finally { finish(h) }
+    }
+    @Test fun distinctPauseInputsFlushQueuedSeekOnlyOnce() = runTest {
+        val h = harness()
+        try {
+            h.binding.requestSeek(140.0); runCurrent(); advance(100)
+            h.binding.requestPlayPause(true)
+            h.binding.requestPlayPause(false)
+            runCurrent(); advance(150)
+            assertEquals(listOf("seek", "pause", "play"), h.transports().map { it.action })
+        } finally { finish(h) }
+    }
+    @Test fun controlPauseWithoutResponseDoesNotMergeSeek() = runTest {
+        val h = harness()
+        try {
+        h.binding.requestSeek(140.0); runCurrent(); advance(100)
+        h.binding.requestPlayPause(true); runCurrent(); advance(150)
+        assertEquals(listOf("seek", "pause"), h.transports().map { it.action })
+        assertEquals(140.0, h.binding.pendingSeekSeconds.value)
+        } finally { finish(h) }
+    }
+    @Test fun controlSeparateGenerationChangeFencesQueuedSeekVisibly() = runTest {
+        val h = harness()
+        try {
+        h.binding.requestSeek(140.0); runCurrent(); advance(100)
+        h.wire.events.emit(RoomRealtimeEvent.SnapshotEvent(h.initial.copy(generation = 2))); runCurrent()
+        advance(150)
+        assertTrue(h.transports().isEmpty())
+        assertNull(h.binding.pendingSeekSeconds.value)
+        assertTrue(RoomPlaybackNotice.Undelivered in h.notices)
+        } finally { finish(h) }
+    }
+    @Test fun controlNewSessionFencesQueuedSeekVisibly() = runTest {
+        val h = harness()
+        try {
+        h.binding.requestSeek(140.0); runCurrent(); advance(100)
+        h.player.observations.value = h.player.observations.value.copy(sessionId = "fixture-session-2"); runCurrent()
+        advance(150)
+        assertTrue(h.transports().isEmpty())
+        assertNull(h.binding.pendingSeekSeconds.value)
+        assertTrue(RoomPlaybackNotice.Undelivered in h.notices)
+        } finally { finish(h) }
+    }
+    @Test fun A7_disposalMustCancelRefusedPlaybackRetryWhileMembershipContinues() = runTest {
+        val h = harness()
+        try {
+        h.binding.requestSeek(110.0); advance(250); val a = h.transports().single()
+        refuse(h, a, 1_000); advance(100)
+        h.binding.dispose(); runCurrent()
+        assertTrue(h.session.isActive(), "Leaving the player intentionally preserves room membership")
+        // A platform session ending after its observer was disposed cannot update the repository.
+        h.player.observations.value = h.player.observations.value.copy(sessionId = null); runCurrent()
+        advance(900)
+        assertEquals(listOf(a), h.transports(), "Disposed binding must revoke permission to automatically replay its transport")
+        } finally { finish(h) }
+    }
+    @Test fun controlDisposalCancelsUnsentSeekWindow() = runTest {
+        val h = harness()
+        try {
+        h.binding.requestSeek(110.0); runCurrent(); advance(100)
+        h.binding.dispose(); advance(1_000)
+        assertTrue(h.transports().isEmpty())
+        assertTrue(h.session.isActive())
+        } finally { finish(h) }
+    }
+    @Test fun controlObservedSessionEndBeforeDisposalCancelsRefusedRetry() = runTest {
+        val h = harness()
+        try {
+        h.binding.requestSeek(110.0); advance(250); val a = h.transports().single()
+        refuse(h, a, 1_000); advance(100)
+        h.player.observations.value = h.player.observations.value.copy(sessionId = null); runCurrent()
+        h.binding.dispose(); advance(900)
+        assertEquals(listOf(a), h.transports())
+        assertTrue(h.session.isActive())
+        } finally { finish(h) }
+    }
+    @Test fun controlMembershipLeaveCancelsRefusedRetry() = runTest {
+        val h = harness()
+        try {
+        h.binding.requestSeek(110.0); advance(250); val a = h.transports().single()
+        refuse(h, a, 1_000); advance(100)
+        h.session.leave(); advance(900)
+        assertEquals(listOf(a), h.transports())
+        assertFalse(h.session.isActive())
+        } finally { finish(h) }
+    }
+    private fun initialPlaying() = snapshot(phase = RoomPhase.Playing, attachedSessionId = "session-1")
+        .copy(selfRole = MemberRole.Host, selfCanControlTransport = true, playbackState = RoomPlaybackState.Playing,
+            members = listOf(RoomMember(userId = "synthetic-user", isSelf = true)))
+
+    private suspend fun TestScope.open(repository: WatchTogetherRepository, realtime: FakeRealtime, initial: RoomSnapshot): kotlinx.coroutines.Job {
+        repository.createRoom(create())
+        val connection = backgroundScope.launch { repository.connect("room-1") }
+        runCurrent()
+        realtime.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+        realtime.events.emit(RoomRealtimeEvent.Opened)
+        realtime.events.emit(RoomRealtimeEvent.SnapshotEvent(initial))
+        runCurrent()
+        assertTrue(repository.workAdmissionEnabled)
+        return connection
+    }
+
+    @Test fun canceledDesireRetainsCorrelationAndClassMinimum() = runTest {
+        val initial = initialPlaying()
+        val realtime = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), realtime)
+        val connection = open(repository, realtime, initial)
+        assertTrue(repository.buffering("session-1", 12.0, false))
+        val refused = realtime.workRequests.single().second
+        repository.cancelDesiredWork(RoomWorkKind.Buffering)
+        realtime.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", refused.requestId, 60_000, false))
+        runCurrent()
+        assertFalse(repository.ready("session-1", 13.0, false, "synthetic-new-command"))
+        assertEquals(1, realtime.workRequests.size)
+        assertEquals(0L, testScheduler.currentTime)
+        assertTrue(repository.workUpdate.value.refused)
+        connection.cancelAndJoin()
+    }
+
+    @Test fun selectedRetryExpiresWhileReconciliationSuspends() = runTest {
+        val initial = initialPlaying()
+        val api = FakeApi(room(initial))
+        val realtime = FakeRealtime()
+        val repository = repo(api, realtime)
+        val connection = open(repository, realtime, initial)
+        assertTrue(repository.transportRequestForAuthorization(repository.currentTransportAuthorization()!!,
+            RoomTransportIntent.PlayPause, "pause", 12.0, true)) // t=0, no acknowledgement
+        advanceTimeBy(1000); runCurrent()
+        assertTrue(repository.transportRequestForAuthorization(repository.currentTransportAuthorization()!!,
+            RoomTransportIntent.PlayPause, "play", 12.0, false)) // original deadline t=6000
+        val retried = realtime.workRequests.last().second
+        realtime.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", retried.requestId, 4000, false))
+        runCurrent()
+        api.roomReadResult = CompletableDeferred()
+        advanceTimeBy(4000); runCurrent() // t=5000: pause times out, play selected, reconcile waits
+        assertEquals(1, api.count("get"))
+        assertEquals(2, realtime.workRequests.size)
+        advanceTimeBy(1500); runCurrent() // t=6500, play is 5500ms old
+        api.roomReadResult!!.complete(room(initial))
+        runCurrent()
+        assertEquals(2, realtime.workRequests.size)
+        assertTrue(repository.workUpdate.value.discarded)
+        assertEquals(6500L, testScheduler.currentTime)
+        assertEquals(1, api.count("get"))
+        connection.cancelAndJoin()
+    }
+
+    @Test fun selectedRetryExpiresWhileClientDispatchSuspends() = runTest {
+        val initial = initialPlaying()
+        val realtime = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), realtime)
+        val connection = open(repository, realtime, initial)
+        try {
+            assertTrue(repository.transportRequest("pause", 12.0, true))
+            val request = realtime.workRequests.single().second
+            val gate = CompletableDeferred<Unit>()
+            realtime.beforeRetryDispatch = { gate.await() }
+            realtime.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", request.requestId, 1000, false))
+            runCurrent(); advanceTimeBy(1000); runCurrent()
+            assertEquals(1, realtime.workRequests.size)
+            advanceTimeBy(4500); runCurrent()
+            gate.complete(Unit); runCurrent()
+            assertEquals(1, realtime.workRequests.size)
+            assertEquals(0L, repository.workUpdate.value.uncertaintySequence)
+            assertTrue(repository.workUpdate.value.discarded)
+        } finally { connection.cancelAndJoin() }
+    }
+
+    private class VerifierPlayer : RoomPlayerPort {
+        override val observations = MutableStateFlow(RoomPlayerObservation(
+            sessionId = "session-1", selectionRevision = 1, sourcePositionSeconds = 12.0,
+            durationSeconds = 3000.0, playWhenReady = true, isPlaying = true, state = RoomPlayerState.Ready))
+        override fun seekTo(sourceSeconds: Double) { }
+        override fun setPlaying(playing: Boolean) { }
+        override fun setCorrectionRate(rate: Double?) { }
+        override fun isBuffered(sourceSeconds: Double) = true
+    }
+
+    @Test fun bindingDisposalAndEndedPlayerSessionRevokeRepositoryRetry() = runTest {
+        val initial = initialPlaying()
+        val realtime = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), realtime)
+        val connection = open(repository, realtime, initial)
+        val player = VerifierPlayer()
+        val binding = RoomPlaybackBinding(repository, player, backgroundScope,
+            { testScheduler.currentTime }, { 1_000_000L + testScheduler.currentTime })
+        binding.start(); runCurrent()
+        assertEquals(RoomTransportResult.Sent, binding.requestPlayPause(true))
+        runCurrent()
+        val request = realtime.workRequests.map { it.second }.single { it.kind == RoomWorkKind.Transport }
+        realtime.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", request.requestId, 1000, false))
+        runCurrent()
+        binding.dispose(); runCurrent()
+        player.observations.value = player.observations.value.copy(sessionId = null, state = RoomPlayerState.Idle)
+        runCurrent()
+        advanceTimeBy(1000); runCurrent()
+        val transports = realtime.workRequests.map { it.second }.filter { it.kind == RoomWorkKind.Transport }
+        assertEquals(listOf(request), transports)
+        assertTrue(repository.connectionState.value.writable)
+        assertTrue(repository.currentTransportAuthorization() != null)
+        connection.cancelAndJoin()
+    }
+
+    @Test fun optionalTransportPositionRemainsAbsentThroughRepositoryAndEncoder() = runTest {
+        val initial = initialPlaying().copy(anchorPositionSeconds = 120.0)
+        val realtime = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), realtime)
+        val connection = open(repository, realtime, initial)
+        assertTrue(repository.transportRequestForAuthorization(repository.currentTransportAuthorization()!!,
+            RoomTransportIntent.PlayPause, "pause", null, true))
+        val request = realtime.workRequests.single().second
+        val encoded = SiloJson.parseToJsonElement(request.encode(SiloJson)).jsonObject
+        assertNull(request.positionSeconds)
+        assertTrue(encoded["position_seconds"] == null || encoded["position_seconds"] is JsonNull)
+        val legacy = SiloJson.parseToJsonElement(SiloJson.encodeToString(WsTransportRequest.serializer(),
+            WsTransportRequest(action = "pause", positionSeconds = null, isPaused = true))).jsonObject
+        assertTrue(legacy["position_seconds"] == null || legacy["position_seconds"] is JsonNull)
+        connection.cancelAndJoin()
+    }
+    @Test fun recoveryClassRefusalFencesRoomReconnectButActionClassDoesNot() = runTest {
+        for (kind in listOf(RoomWorkKind.Report, RoomWorkKind.Transport)) {
+            val initial = initialPlaying()
+            val realtime = FakeRealtime()
+            val repository = repo(FakeApi(room(initial)), realtime)
+            val connection = open(repository, realtime, initial)
+            try {
+                if (kind == RoomWorkKind.Report) assertTrue(repository.stateReport("session-1", 12.0, false, null, false))
+                else assertTrue(repository.transportRequest("pause", 12.0, true))
+                val request = realtime.workRequests.single().second
+                realtime.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", request.requestId, 60_000, false))
+                runCurrent()
+                realtime.events.emit(RoomRealtimeEvent.TransportTerminated()); runCurrent()
+                val minimum = if (kind == RoomWorkKind.Report) 60_000L else 1_000L
+                advanceTimeBy(minimum - 1); runCurrent()
+                assertEquals(1, realtime.connectCount, "fresh connector admission must respect the applicable recovery class")
+                advanceTimeBy(1); runCurrent()
+                assertEquals(2, realtime.connectCount)
+                assertEquals(1, realtime.workRequests.size, "reconnect must never replay transport")
+            } finally { connection.cancelAndJoin() }
+        }
+    }
+
+    @Test fun sweepSeekEligibilitySurvivesEarlyFlushAndDistinctActions() = runTest {
+        val h = harness()
+        try {
+            h.binding.requestSeek(210.0); advance(90)
+            h.binding.requestPlayPause(true); runCurrent()
+            assertEquals(listOf("seek", "pause"), h.transports().map { it.action })
+            advance(50); h.binding.requestSeek(240.0)
+            assertEquals(240.0, h.binding.pendingSeekSeconds.value)
+            advance(50); h.binding.requestPlayPause(false); runCurrent()
+            assertEquals(listOf("seek", "pause"), h.transports().map { it.action }, "Only one seek in the original 0..250ms window; play stays behind the second seek")
+            advance(59)
+            assertEquals(2, h.transports().size)
+            advance(1)
+            assertEquals(listOf("seek", "pause", "seek", "play"), h.transports().map { it.action })
+            assertEquals(listOf(210.0, 240.0), h.transports().filter { it.action == "seek" }.map { it.positionSeconds })
+        } finally { finish(h) }
+    }
+
+    private suspend fun TestScope.sweepOwnerTransition(change: String) {
+        val initial = initialPlaying()
+        val wire = FakeRealtime()
+        val api = FakeApi(room(initial))
+        var authority = scopeA.copy(credentialEpoch = 1, isIdentityGenerationStamped = true)
+        val tokens = object : TokenManager by TokenManagerImpl(), DurableLoginAuthorityProvider {
+            override suspend fun snapshotCurrentScope() = authority
+            override suspend fun snapshotDurableLoginAuthority() = DurableLoginAuthority("stable-login", authority)
+        }
+        val repository = repo(api, wire, authScopeProvider = { authority }, admissionOwnerProvider = { tokens.realtimeAdmissionOwner(it) })
+        val barrier = DefaultIdentityTransitionBarrier()
+        val session = RoomSession(repository, backgroundScope, barrier)
+        repository.createRoom(create()); session.enter(initial.roomId); runCurrent()
+        wire.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+        wire.events.emit(RoomRealtimeEvent.Opened); wire.events.emit(RoomRealtimeEvent.SnapshotEvent(initial)); runCurrent()
+        assertTrue(repository.stateReport("session-1", 50.0, false, null, false))
+        val report = wire.workRequests.single().second
+        wire.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", report.requestId, 60_000, false)); runCurrent()
+        barrier.changing(if (change == "server") IdentityTransitionKind.SERVER_SWITCH else IdentityTransitionKind.PROFILE_SWITCH) {
+            authority = when (change) {
+                "server" -> authority.copy(serverId = "server-b", serverUrl = "https://b.invalid", identityGeneration = 2, credentialEpoch = 2)
+                "profile" -> authority.copy(profileId = "profile-b", profileToken = "new-proof", identityGeneration = 2)
+                else -> authority.copy(credentialEpoch = 2) // live credentials may refresh without changing the login
+            }
+        }
+        assertFalse(session.isActive()); assertNull(repository.roomSnapshot.value)
+        val next = initial.copy(roomId = "room-next"); api.createResponse = room(next)
+        repository.createRoom(CreateRoomRequest(roomId = next.roomId)); session.enter(next.roomId); runCurrent()
+        try {
+            if (change == "server") assertEquals(2, wire.connectCount, "An unrelated server owns no prior floor")
+            else {
+                assertEquals(1, wire.connectCount); advance(59_999); assertEquals(1, wire.connectCount)
+                advance(1); assertEquals(2, wire.connectCount)
+            }
+        } finally { session.leave(); runCurrent() }
+    }
+    @Test fun sweepUnrelatedServerDoesNotInheritRoomFloor() = runTest { sweepOwnerTransition("server") }
+    @Test fun sweepSameLoginProfileAndCredentialChangesRetainRoomFloor() = runTest {
+        sweepOwnerTransition("profile"); sweepOwnerTransition("refresh")
+    }
+
+    @Test fun sweepFinalIdentityRejectionDiscardsKnownRefusedRetry() = runTest {
+        val initial = initialPlaying(); val wire = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), wire); val connection = open(repository, wire, initial)
+        try {
+            assertTrue(repository.transportRequest("pause", 12.0, true))
+            val request = wire.workRequests.single().second
+            val gate = CompletableDeferred<Unit>(); val entered = CompletableDeferred<Unit>()
+            wire.beforeRetryDispatch = { entered.complete(Unit); gate.await() }
+            wire.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", request.requestId, 750, false))
+            runCurrent(); advance(750); assertTrue(entered.isCompleted)
+            wire.events.emit(RoomRealtimeEvent.SnapshotEvent(initial.copy(generation = 3))); runCurrent()
+            gate.complete(Unit); runCurrent()
+            assertEquals(1, wire.workRequests.size)
+            assertEquals(0L, repository.workUpdate.value.uncertaintySequence)
+            assertEquals(1L, repository.workUpdate.value.discardedTransportSequence)
+        } finally { connection.cancelAndJoin(); repository.reset() }
+    }
+
+    private suspend fun TestScope.sweepShieldTermination(cause: Throwable?, notice: Boolean, wait: Long) {
+        val initial = initialPlaying(); val wire = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), wire); val connection = open(repository, wire, initial)
+        try {
+            if (notice) wire.events.emit(RoomRealtimeEvent.Error("realtime_input_limited", "shield"))
+            wire.events.emit(RoomRealtimeEvent.TransportTerminated(cause)); runCurrent()
+            advance(wait - 1); assertEquals(1, wire.connectCount)
+            advance(1); assertEquals(2, wire.connectCount)
+        } finally { connection.cancelAndJoin(); repository.reset() }
+    }
+    @Test fun sweepShieldNoticeSurvivesEof() = runTest { sweepShieldTermination(null, true, 5_000) }
+    @Test fun sweepShieldNoticeSurvivesTransportException() = runTest {
+        sweepShieldTermination(IllegalStateException("synthetic EOF"), true, 5_000)
+    }
+    @Test fun sweepShieldAndUnrelated1008RemainDistinct() = runTest {
+        sweepShieldTermination(RealtimeSocketClosed(1008, "realtime input shield"), false, 5_000)
+        sweepShieldTermination(RealtimeSocketClosed(1008, "other policy"), false, 1_000)
+    }
+
+    @Test fun sweepNewLoginOnSameServerStartsWithoutOldFloor() = runTest {
+        val initial = initialPlaying(); val api = FakeApi(room(initial)); val wire = FakeRealtime()
+        var authority = scopeA
+        var login = "login-a"
+        val tokens = object : TokenManager by TokenManagerImpl(), DurableLoginAuthorityProvider {
+            override suspend fun snapshotCurrentScope() = authority
+            override suspend fun snapshotDurableLoginAuthority() = DurableLoginAuthority(login, authority)
+        }
+        val repository = WatchTogetherRepository(api, { wire }, { testScheduler.currentTime },
+            { authority }, { 1_000_000L + testScheduler.currentTime }, testTiming, NoJitter,
+            admissionOwnerProvider = { tokens.realtimeAdmissionOwner(it) })
+        val barrier = DefaultIdentityTransitionBarrier(); val session = RoomSession(repository, backgroundScope, barrier)
+        repository.createRoom(create()); session.enter(initial.roomId); runCurrent()
+        wire.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+        wire.events.emit(RoomRealtimeEvent.Opened); wire.events.emit(RoomRealtimeEvent.SnapshotEvent(initial)); runCurrent()
+        repository.stateReport("session-1", 50.0, false, null, false)
+        val request = wire.workRequests.single().second
+        wire.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", request.requestId, 60_000, false)); runCurrent()
+        barrier.changing(IdentityTransitionKind.ACCOUNT_REPLACE) { login = "login-b"; authority = authority.copy(identityGeneration = 2) }
+        assertFalse(session.isActive())
+        repository.createRoom(create()); session.enter(initial.roomId); runCurrent()
+        try { assertEquals(2, wire.connectCount) } finally { session.leave(); runCurrent() }
+    }
+
+    @Test fun sweepSeekWindowAndDistinctOrderSurviveOwnPauseResponseFrames() = runTest {
+        val h = harness()
+        try {
+            h.binding.requestSeek(210.0); advance(90)
+            h.binding.requestPlayPause(true); runCurrent(); pauseSuccess(h)
+            advance(50); h.binding.requestSeek(240.0)
+            advance(50); h.binding.requestPlayPause(false); runCurrent()
+            assertEquals(listOf("seek", "pause"), h.transports().map { it.action })
+            assertEquals(240.0, h.binding.pendingSeekSeconds.value)
+            advance(60)
+            assertEquals(listOf("seek", "pause", "seek", "play"), h.transports().map { it.action })
+            assertEquals(0L, h.repository.workUpdate.value.discardedTransportSequence)
+        } finally { finish(h) }
+    }
+
+    @Test fun sweepShieldNoticeOnOldSocketCannotTakeImmediateRenewalPath() = runTest {
+        val initial = initialPlaying(); val wire = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), wire); val connection = open(repository, wire, initial)
+        try {
+            advance(30_000)
+            wire.events.emit(RoomRealtimeEvent.Error("realtime_input_limited", "shield"))
+            wire.events.emit(RoomRealtimeEvent.TransportTerminated()); runCurrent()
+            advance(4_999); assertEquals(1, wire.connectCount)
+            advance(1); assertEquals(2, wire.connectCount)
+        } finally { connection.cancelAndJoin(); repository.reset() }
+    }
+
+    @Test fun finalReviewFreshSeekUnderActionFloorIsUndeliveredAndNeverReplayed() = runTest {
+        val h = harness()
+        try {
+            h.binding.requestSeek(110.0); advance(250)
+            val refused = h.transports().single()
+            refuse(h, refused, 1_000)
+            h.notices.clear()
+            h.binding.requestSeek(140.0); runCurrent()
+            assertEquals(140.0, h.binding.pendingSeekSeconds.value)
+            advance(250)
+            assertEquals(listOf(refused), h.transports(), "The fresh seek is blocked before the wire attempt")
+            assertNull(h.binding.pendingSeekSeconds.value)
+            assertEquals(0L, h.repository.workUpdate.value.uncertaintySequence)
+            assertEquals(listOf<RoomPlaybackNotice>(RoomPlaybackNotice.Undelivered), h.notices)
+            advance(6_000)
+            assertEquals(listOf(refused), h.transports(), "Neither the superseded refusal nor the fresh unsent seek may replay")
+            h.binding.requestSeek(160.0); advance(250)
+            assertEquals(listOf(110.0, 160.0), h.transports().map { it.positionSeconds }, "A new explicit intent can send after the unchanged floor")
+        } finally { finish(h) }
+    }
+
+    @Test fun finalReviewAttemptedSeekSendFailureIsUncertainExactlyOnceAndNeverReplayed() = runTest {
+        val h = harness()
+        try {
+            h.wire.workSendResult = false
+            h.binding.requestSeek(140.0); advance(250)
+            val attempted = h.transports().single()
+            assertEquals(140.0, attempted.positionSeconds)
+            assertEquals(1L, h.repository.workUpdate.value.uncertaintySequence)
+            assertTrue(h.repository.workUpdate.value.uncertainPlaybackIntent === attempted.playbackIntent)
+            assertNull(h.binding.pendingSeekSeconds.value)
+            assertEquals(listOf<RoomPlaybackNotice>(RoomPlaybackNotice.Uncertain), h.notices)
+            assertEquals(1, h.api.count("get"), "Attempted send failure still reconciles")
+            advance(6_000)
+            assertEquals(listOf(attempted), h.transports())
+        } finally { finish(h) }
+    }
+
+    @Test fun finalReviewAppliedSeekKeepsItsNormalOrderedResponse() = runTest {
+        val h = harness()
+        try {
+            h.binding.requestSeek(140.0); advance(250)
+            val applied = h.transports().single()
+            h.wire.events.emit(RoomRealtimeEvent.SnapshotEvent(h.initial.copy(generation = 2, anchorPositionSeconds = 140.0)))
+            h.wire.events.emit(RoomRealtimeEvent.TransportCommandEvent(TransportCommand(
+                commandId = "fixture-applied-seek", sessionId = "session-1", selectionRevision = 1,
+                action = TransportAction.Seek, positionSeconds = 140.0,
+                executeAt = org.siloserver.silo.util.formatEpochMillisRfc3339(1_000_000L + testScheduler.currentTime + 350),
+                playbackState = RoomPlaybackState.Playing)))
+            h.wire.events.emit(RoomRealtimeEvent.ActionResult(applied.requestId, "transport_request", "applied"))
+            runCurrent(); advance(350)
+            assertNull(h.binding.pendingSeekSeconds.value)
+            assertTrue(h.notices.isEmpty())
+            assertEquals(0L, h.repository.workUpdate.value.uncertaintySequence)
+            advance(6_000)
+            assertEquals(listOf(applied), h.transports())
+        } finally { finish(h) }
+    }
+
+    @Test fun backgroundQuietRoomSnapshotRestoresRenewalWithoutAnotherFrame() = runTest {
+        val initial = initialPlaying(); val wire = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), wire); val connection = open(repository, wire, initial)
+        try {
+            wire.events.emit(RoomRealtimeEvent.TransportTerminated(RealtimeSocketClosed(1008, "realtime input shield")))
+            runCurrent(); advance(5_000); assertEquals(2, wire.connectCount)
+            wire.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+            wire.events.emit(RoomRealtimeEvent.Opened)
+            wire.events.emit(RoomRealtimeEvent.SnapshotEvent(initial)); runCurrent()
+            advance(30_000)
+            wire.events.emit(RoomRealtimeEvent.TransportTerminated()); runCurrent()
+            assertEquals(3, wire.connectCount, "A single accepted snapshot followed by quiet uptime qualifies")
+            wire.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+            wire.events.emit(RoomRealtimeEvent.Opened); runCurrent()
+            advance(30_000) // no accepted frame on this attempt
+            wire.events.emit(RoomRealtimeEvent.TransportTerminated(RealtimeSocketClosed(1008, "realtime input shield")))
+            runCurrent(); advance(4_999); assertEquals(3, wire.connectCount)
+            advance(1); assertEquals(4, wire.connectCount, "Prior accepted health resets shield to five seconds")
+        } finally { connection.cancelAndJoin(); repository.reset() }
+    }
+
+    @Test fun backgroundRaisedFloorAtFinalDispatchVisiblyDiscardsOnlySelectedTransport() = runTest {
+        val initial = initialPlaying(); val wire = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), wire); val connection = open(repository, wire, initial)
+        try {
+            assertTrue(repository.transportRequest("pause", 12.0, true))
+            assertTrue(repository.transportRequest("play", 12.0, false))
+            val first = wire.workRequests[0].second; val second = wire.workRequests[1].second
+            val gate = CompletableDeferred<Unit>(); val entered = CompletableDeferred<Unit>()
+            wire.beforeRetryDispatch = { entered.complete(Unit); gate.await() }
+            wire.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", first.requestId, 750, false))
+            runCurrent(); advance(750); assertTrue(entered.isCompleted)
+            wire.events.emit(RoomRealtimeEvent.Error("realtime_rate_limited", "wait", second.requestId, 2_000, false))
+            runCurrent(); gate.complete(Unit); runCurrent()
+            assertEquals(2, wire.workRequests.size)
+            assertEquals(0L, repository.workUpdate.value.uncertaintySequence)
+            assertEquals(1L, repository.workUpdate.value.discardedTransportSequence)
+            advance(1_999); assertEquals(2, wire.workRequests.size)
+            advance(1); assertEquals(listOf(first, second, second), wire.workRequests.map { it.second })
+            wire.events.emit(RoomRealtimeEvent.ActionResult(second.requestId, "transport_request", "applied")); runCurrent()
+            advance(5_000)
+            assertEquals(0L, repository.workUpdate.value.uncertaintySequence)
+        } finally { connection.cancelAndJoin(); repository.reset() }
+    }
+
+    @Test fun backgroundTimeAfterShieldNoticeDoesNotQualifyAsRoomHealth() = runTest {
+        val initial = initialPlaying(); val wire = FakeRealtime()
+        val repository = repo(FakeApi(room(initial)), wire); val connection = open(repository, wire, initial)
+        try {
+            wire.events.emit(RoomRealtimeEvent.TransportTerminated(RealtimeSocketClosed(1008, "realtime input shield")))
+            runCurrent(); advance(5_000); assertEquals(2, wire.connectCount)
+            wire.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+            wire.events.emit(RoomRealtimeEvent.Opened)
+            wire.events.emit(RoomRealtimeEvent.SnapshotEvent(initial)); runCurrent()
+            advance(1_000)
+            wire.events.emit(RoomRealtimeEvent.Error("realtime_input_limited", "shield")); runCurrent()
+            advance(30_000)
+            wire.events.emit(RoomRealtimeEvent.TransportTerminated()); runCurrent()
+            advance(9_999); assertEquals(2, wire.connectCount)
+            advance(1); assertEquals(3, wire.connectCount)
+        } finally { connection.cancelAndJoin(); repository.reset() }
+    }
+
+    @Test fun backgroundQuietAcceptedRoomResetsOutageBeforeTransportRefusal() = runTest {
+        val initial = initialPlaying(); val wire = FakeRealtime().apply {
+            connectBehavior = { count -> if (count <= 5) flow {
+                emit(RoomRealtimeEvent.TransportTerminated(RoomTicketRefusedException(503, "realtime_unavailable", 250)))
+            } else events.asSharedFlow() }
+        }
+        val repository = repo(FakeApi(room(initial)), wire)
+        repository.createRoom(create())
+        val connection = backgroundScope.launch { repository.connect("room-1") }; runCurrent()
+        try {
+            for ((index, delay) in listOf(2_000L, 4_000L, 8_000L, 16_000L, 30_000L).withIndex()) {
+                assertEquals(index + 1, wire.connectCount)
+                advance(delay)
+            }
+            assertEquals(6, wire.connectCount)
+            wire.events.emit(RoomRealtimeEvent.Admission(RealtimeWorkAdmission(version = 1)))
+            wire.events.emit(RoomRealtimeEvent.Opened)
+            wire.events.emit(RoomRealtimeEvent.SnapshotEvent(initial)); runCurrent()
+            advance(30_000) // quiet accepted room; pongs/open alone never supply health
+            assertTrue(repository.transportRequest("pause", 12.0, true))
+            val request = wire.workRequests.single().second
+            wire.events.emit(RoomRealtimeEvent.Error("realtime_unavailable", "wait", request.requestId, 250, false)); runCurrent()
+            assertEquals(0L, repository.workUpdate.value.discardedTransportSequence)
+            advance(1_999); assertEquals(1, wire.workRequests.size)
+            advance(1); assertEquals(listOf(request, request), wire.workRequests.map { it.second })
+            wire.events.emit(RoomRealtimeEvent.ActionResult(request.requestId, "transport_request", "applied")); runCurrent()
+            advance(5_000)
+            assertEquals(0L, repository.workUpdate.value.uncertaintySequence)
+            assertEquals(0L, repository.workUpdate.value.discardedTransportSequence)
+        } finally { connection.cancelAndJoin(); repository.reset() }
+    }
+
 }

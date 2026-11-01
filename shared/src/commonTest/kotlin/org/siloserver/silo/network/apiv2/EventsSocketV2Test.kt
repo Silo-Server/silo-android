@@ -39,6 +39,38 @@ class EventsSocketV2Test {
         } finally { c.close() }
     }
 
+    @Test fun ticketRefusalsPreserveRetryMetadataAndAdmissionCapability() = runTest {
+        var status = HttpStatusCode.TooManyRequests
+        val c = HttpClient(MockEngine {
+            val body = if (status == HttpStatusCode.OK) wire.dropLast(1) +
+                ",\"work_admission\":{\"version\":1,\"backend\":\"memory\",\"scope\":\"node\",\"epoch\":\"synthetic\"}}"
+            else """{"type":"https://example.invalid/problems/dependency_unavailable","code":"realtime_unavailable","title":"Wait","status":${status.value},"retry_after_ms":4500,"work_started":false}"""
+            respond(body, status, headersOf(HttpHeaders.ContentType to listOf("application/json"), HttpHeaders.RetryAfter to listOf("6")))
+        })
+        try {
+            val api = EventsSocketV2Api(c, tokens, ApiV2Gate.Unrestricted)
+            for (refusalStatus in listOf(HttpStatusCode.TooManyRequests, HttpStatusCode.ServiceUnavailable)) {
+                status = refusalStatus
+                val error = assertIs<ApiResult.Error>(api.ticket())
+                assertEquals(refusalStatus.value, error.code)
+                assertEquals("realtime_unavailable", error.error)
+                assertEquals(6_000L, error.retryAfterMs)
+            }
+            status = HttpStatusCode.OK
+            val proof = assertIs<ApiResult.Success<WsTicketResponse>>(api.ticket()).data
+            assertTrue(proof.workAdmission?.supported == true)
+            assertEquals("synthetic", proof.workAdmission?.epoch)
+        } finally { c.close() }
+    }
+
+    @Test fun frameConsumerUpgradeHasNoDeclarationButObserverUrlStillCanDeclare() {
+        val proof = WsTicketResponse("opaque-proof", 30, 300, EVENTS_PROTOCOL)
+        val frameConsumer = HttpRequestBuilder().apply { eventsUpgrade(scope, proof, null) }.build()
+        assertFalse(frameConsumer.url.parameters.contains("channels"))
+        val observer = HttpRequestBuilder().apply { eventsUpgrade(scope, proof, listOf("catalog")) }.build()
+        assertEquals("catalog", observer.url.parameters["channels"])
+    }
+
     @Test fun upgradeUsesExactOrderedProtocolsAndNoUrlOrBearerCredentials() {
         val request = HttpRequestBuilder().apply {
             eventsUpgrade(scope,WsTicketResponse("opaque-proof",30,300,EVENTS_PROTOCOL),listOf("user_state","catalog"))
