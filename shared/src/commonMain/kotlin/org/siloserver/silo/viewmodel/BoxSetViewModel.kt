@@ -78,8 +78,9 @@ class BoxSetViewModel(
      * stays as it is while it loads and when the read fails.
      */
     fun refresh() {
-        // A read in flight already answers with the latest state.
-        if (loadJob?.isActive == true) return
+        // A read in flight may predate what changed meanwhile, such as a movie
+        // marked watched on its own page, so a newer read replaces it.
+        loadJob?.cancel()
         reread(afterAccessChange = false)
     }
 
