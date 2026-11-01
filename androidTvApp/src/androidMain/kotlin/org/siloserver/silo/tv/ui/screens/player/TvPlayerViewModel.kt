@@ -7619,7 +7619,19 @@ class TvPlayerViewModel(
     private fun reopenSameRoute(state: UiState, trace: String, endLoading: Boolean = true) {
         val plan = state.playbackPlan ?: return
         val start = plan.timeline.playerPositionForSource(state.position) ?: plan.timeline.playerStartSeconds
-        val transportMountNonce = nextTransportMountNonce(selectedSubtitleTrackIndex(state))
+        val transportMountNonce = when (
+            val restore = tvReopenSubtitleRestore(
+                adapterMountIdentity = lastAdapterMountIdentity,
+                adapterMountGeneration = lastAdapterMountGeneration,
+                playerSelectedServerIndex = selectedSubtitleTrackIndex(state),
+            )
+        ) {
+            is TvReopenSubtitleRestore.AdapterMount -> nextTransportMountNonce(subtitleServerIndexToRestore = null).also {
+                subtitleSnapshotSettlement.reset()
+                subtitleRemountReselection.arm(restore.identity, restore.generation)
+            }
+            is TvReopenSubtitleRestore.PlayerSelection -> nextTransportMountNonce(restore.serverIndex)
+        }
         pendingBufferingReloadNonce = transportMountNonce
         _uiState.update {
             it.copy(

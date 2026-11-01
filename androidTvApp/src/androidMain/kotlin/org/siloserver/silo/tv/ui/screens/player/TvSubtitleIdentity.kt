@@ -92,3 +92,29 @@ internal fun tvSubtitleIdentity(track: PlayerTrackEntry): SubtitleIdentity =
             hearingImpaired = track.isHearingImpaired,
         ),
     )
+
+/** What a same-route reopen of the transport arms the subtitle reselection with. */
+internal sealed interface TvReopenSubtitleRestore {
+    /** The adapter is still mounting [identity] under its owner [generation]: keep that owner. */
+    data class AdapterMount(val identity: SubtitleIdentity, val generation: Long) : TvReopenSubtitleRestore
+
+    /** Nothing in flight: restore what the player shows, as a server index (-1 for Off). */
+    data class PlayerSelection(val serverIndex: Int?) : TvReopenSubtitleRestore
+}
+
+/**
+ * A reopen replaces the MediaItem, and a stalled transport may show no
+ * subtitle at all while a pick the adapter is mounting has not been
+ * confirmed. Restoring what the player shows would then arm Off over that
+ * pick, at the same authority, and the pick would fail its mount deadline.
+ */
+internal fun tvReopenSubtitleRestore(
+    adapterMountIdentity: SubtitleIdentity?,
+    adapterMountGeneration: Long?,
+    playerSelectedServerIndex: Int?,
+): TvReopenSubtitleRestore =
+    if (adapterMountIdentity != null && adapterMountGeneration != null) {
+        TvReopenSubtitleRestore.AdapterMount(adapterMountIdentity, adapterMountGeneration)
+    } else {
+        TvReopenSubtitleRestore.PlayerSelection(playerSelectedServerIndex)
+    }

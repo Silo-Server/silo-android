@@ -9,6 +9,7 @@ import org.siloserver.silo.model.playback.SelectedPlaybackTracks
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -38,5 +39,22 @@ class TvLocalMountabilityTest {
         assertTrue(isTvLocallyMountable(native, plan(subtitleIndex = 3), emptyList(), mounted))
         val missing = SubtitleIdentity.Embedded(5, SubtitleMediaIdentity(language = "en"), "6")
         assertFalse(isTvLocallyMountable(missing, plan(subtitleIndex = 3), emptyList(), mounted))
+    }
+}
+
+class TvReopenSubtitleRestoreTest {
+    private val native = SubtitleIdentity.Embedded(9, SubtitleMediaIdentity(language = "en"), "5")
+
+    @Test fun aReopenKeepsThePickTheAdapterIsStillMounting() {
+        // The stalled transport shows nothing (-1), but the pick is still being mounted.
+        assertEquals(
+            TvReopenSubtitleRestore.AdapterMount(native, 7L),
+            tvReopenSubtitleRestore(native, 7L, playerSelectedServerIndex = -1),
+        )
+    }
+
+    @Test fun withNothingInFlightAReopenRestoresWhatThePlayerShows() {
+        assertEquals(TvReopenSubtitleRestore.PlayerSelection(-1), tvReopenSubtitleRestore(null, null, -1))
+        assertEquals(TvReopenSubtitleRestore.PlayerSelection(9), tvReopenSubtitleRestore(null, null, 9))
     }
 }
