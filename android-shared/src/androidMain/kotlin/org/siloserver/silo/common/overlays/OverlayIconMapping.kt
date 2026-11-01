@@ -129,6 +129,11 @@ internal fun OverlayIconGlyph(
                 )
             }
 
+            OverlayIconId.Check -> {
+                drawLine(tint, Offset(w * 0.22f, h * 0.52f), Offset(w * 0.42f, h * 0.72f), stroke.width)
+                drawLine(tint, Offset(w * 0.42f, h * 0.72f), Offset(w * 0.78f, h * 0.30f), stroke.width)
+            }
+
             OverlayIconId.Subtitles -> {
                 val inset = w * 0.12f
                 drawRoundRect(
