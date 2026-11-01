@@ -436,8 +436,12 @@ class AudioCapabilityManager(
         if (surroundPolicy != null && surroundPolicy.toIntOrNull() != 0) return@runCatching false
         if (Settings.Global.getInt(resolver, "use_external_surround_sound_flag", 0) == 1) return@runCatching false
         val externalSurroundDevice = Build.MANUFACTURER == "Amazon" || Build.MANUFACTURER == "Xiaomi"
-        // Absence is distinct from the user's explicit Stereo (0) choice.
-        !externalSurroundDevice || Settings.Global.getString(resolver, "external_surround_sound_enabled") == null
+        // Fire OS sets external_surround_sound_enabled=1 whenever surround
+        // output is on, and Media3 still merges the HDMI report in that case.
+        // The AC3/E-AC3 it adds from the setting cannot earn entries, because
+        // entries only cover encodings in the raw HDMI report. Only the user's
+        // explicit Stereo choice (0) withdraws the HDMI evidence.
+        !externalSurroundDevice || Settings.Global.getString(resolver, "external_surround_sound_enabled") != "0"
     }.getOrDefault(false)
 
     /**

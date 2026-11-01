@@ -222,8 +222,19 @@ class HdmiAudioSinkReportTest {
     }
 
     @Test
-    fun amazonAndXiaomiForcedSurroundCannotEarnEntriesEvenWithHdmi() {
-        assertExternalSurroundPolicy(1, expected = false)
+    fun amazonAndXiaomiSurroundOnKeepsExplicitHdmiEvidence() {
+        // Fire OS reports external_surround_sound_enabled=1 whenever surround is on.
+        assertExternalSurroundPolicy(1, expected = true)
+    }
+
+    @Test
+    fun amazonSurroundSettingCannotAddEntriesForFormatsMissingFromTheHdmiReport() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        Settings.Global.putString(context.contentResolver, "external_surround_sound_enabled", "1")
+        context.sendStickyBroadcast(pluggedIntent(6, AudioFormat.ENCODING_DTS))
+        ShadowBuild.setManufacturer("Amazon")
+        val caps = AudioCapabilityManager(context).capabilities.value
+        assertEquals(setOf("dts"), caps.entries.map { it.codec }.toSet())
     }
 
     @Test
