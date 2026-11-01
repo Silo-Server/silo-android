@@ -87,7 +87,7 @@ fun SeriesDetailContent(
     onWatchlistClick: () -> Unit,
     onToggleWatched: () -> Unit,
     onPersonClick: (String) -> Unit,
-    onItemDetailClick: (String) -> Unit,
+    onSimilarItemClick: (String) -> Unit,
     onPlayExtra: (ItemExtra) -> Unit = {},
     onSeriesDownloadClick: (() -> Unit)? = null,
     onEpisodeDownloadClick: (() -> Unit)? = null,
@@ -488,7 +488,7 @@ fun SeriesDetailContent(
         item(contentType = "detail-similar") {
             SimilarRail(
                 items = similarItems,
-                onSelect = onItemDetailClick,
+                onSelect = onSimilarItemClick,
             )
         }
 

@@ -1,5 +1,6 @@
 package org.siloserver.silo.playback
 
+import org.siloserver.silo.model.catalog.MarkerSegment
 import org.siloserver.silo.model.catalog.TimeRange
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -57,5 +58,22 @@ class PlaybackMarkersUpdateTest {
         assertEquals(7, decodeMarkersUpdate(payload("""{"file_id":7}""")).fileId)
         assertNull(decodeMarkersUpdate(payload("""{"intro":null}""")).fileId)
         assertNull(decodeMarkersUpdate(payload("""{"file_id":"7"}""")).fileId)
+    }
+
+    @Test fun keepsEveryOccurrenceAndDropsMalformedOnes() {
+        val m = decodeMarkersUpdate(payload("""{"file_id":7,"credits":{"start":2975.5,"end":3167.4},"marker_segments":[
+            {"kind":"credits","start_seconds":2975.5,"end_seconds":3167.4},
+            {"kind":"credits","start_seconds":"3189","end_seconds":3300},
+            {"kind":"credits","start_seconds":3189,"end_seconds":3300},
+            {"kind":"credits","start_seconds":3300}]}"""))
+        assertEquals(
+            listOf(MarkerSegment("credits", 2975.5, 3167.4), MarkerSegment("credits", 3189.0, 3300.0)),
+            m.markerSegments,
+        )
+    }
+
+    @Test fun anOlderServerSendsNoSegments() {
+        assertNull(decodeMarkersUpdate(payload("""{"file_id":7,"credits":{"start":10.0,"end":20.0}}""")).markerSegments)
+        assertEquals(emptyList(), decodeMarkersUpdate(payload("""{"file_id":7,"marker_segments":[]}""")).markerSegments)
     }
 }

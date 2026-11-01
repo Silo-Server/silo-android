@@ -6,10 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.ServerRegistry
-import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
-import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
-import org.siloserver.silo.tv.profiles.TvActiveProfileReset
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,34 +14,26 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-enum class TvServerSwitchDestination { Home, ProfileSelection, Login }
-
 data class TvServerListUiState(
     val servers: List<ServerEntry> = emptyList(),
     val activeId: String? = null,
     val pendingSwitchToId: String? = null,
     val switchedTo: TvServerSwitchDestination? = null,
-    /**
-     * Set once when the *active* server was removed and no server remains to
-     * fall back to — there is nothing to sign into, so the navigator must send
-     * the user back to server setup. One-shot; cleared by [onServerSetupConsumed].
-     */
-    val needsServerSetup: Boolean = false,
+    /** Set once when removing a server failed to save; cleared by [onRemoveFailedConsumed]. */
+    val removeFailed: Boolean = false,
     /** The server whose requests use its local route right now, if any. */
     val onLocalNetworkId: String? = null,
 )
 
 /**
  * TV-side counterpart of [org.siloserver.silo.android.ui.screens.servers.ServerListViewModel].
- * Shares the same wire-up against [ServerRegistry] / [TokenManager]; only the
+ * Shares the same wire-up against [ServerRegistry]; only the
  * presentation differs.
  */
 class TvServerListViewModel(
     private val serverRegistry: ServerRegistry,
-    private val tokenManager: TokenManager,
     private val authRepository: AuthRepository,
-    private val profileLaunchPreferences: ProfileLaunchPreferences,
-    private val activeProfileReset: TvActiveProfileReset,
+    private val resolver: TvServerResolver,
     private val localRoute: StateFlow<LocalRoute?> = LocalRoutes.state.active,
 ) : ViewModel() {
 
@@ -79,7 +68,7 @@ class TvServerListViewModel(
 
             // Land on the deepest screen the new server's stored credentials
             // can reach — preserves the signed-in user when tokens are present.
-            val destination = switchDestination()
+            val destination = resolver.activeDestination()
 
             _uiState.update {
                 it.copy(pendingSwitchToId = null, switchedTo = destination)
@@ -91,69 +80,21 @@ class TvServerListViewModel(
         _uiState.update { it.copy(switchedTo = null) }
     }
 
-    fun onServerSetupConsumed() {
-        _uiState.update { it.copy(needsServerSetup = false) }
+    fun onRemoveFailedConsumed() {
+        _uiState.update { it.copy(removeFailed = false) }
     }
 
     fun onRemove(serverId: String) {
         viewModelScope.launch {
-            val wasActive = serverRegistry.activeServerId.value == serverId
-            serverRegistry.remove(serverId)
-
-            // Removing a *non-active* server is a passive list edit — the shell
-            // behind us is unaffected, so leave navigation exactly as before.
-            if (!wasActive) return@launch
-
-            // Removing the ACTIVE server is a session change. The registry has
-            // just promoted the next-MRU server (or none) and wiped the removed
-            // server's tokens; the Main shell behind this list is still rendering
-            // the removed server. Re-resolve like onSelect so the navigator tears
-            // that shell down instead of leaking API calls onto whatever server
-            // got promoted (or a now-empty baseUrl).
-            val promotedId = serverRegistry.activeServerId.value
-            if (promotedId == null) {
-                // No server left to sign into — route back to server setup.
-                _uiState.update { it.copy(needsServerSetup = true) }
-                return@launch
+            when (val removal = resolver.remove(serverId)) {
+                TvServerResolver.Removal.Failed -> _uiState.update { it.copy(removeFailed = true) }
+                // Removing a *non-active* server is a passive list edit — the
+                // shell behind us is unaffected, so leave navigation as is.
+                // Removing the active one is a session change: the navigator
+                // must tear down the shell still showing the removed server.
+                is TvServerResolver.Removal.Removed ->
+                    removal.destination?.let { destination -> _uiState.update { it.copy(switchedTo = destination) } }
             }
-
-            // The registry already points at the promoted server, but only the
-            // full switch path also moves the token scope and probes the
-            // promoted server's identity and v2 contract verdict (it is
-            // idempotent when the registry is already there).
-            authRepository.switchToServer(promotedId)
-
-            // Land on the deepest screen the promoted server's stored
-            // credentials can reach — preserves that server's session if tokens
-            // are present, otherwise falls back to Login.
-            val destination = switchDestination()
-
-            _uiState.update { it.copy(switchedTo = destination) }
-        }
-    }
-
-    /**
-     * The deepest screen the now-active server's stored credentials reach.
-     *
-     * Profile Selection covers a server switch too (silo-apple design §7.5):
-     * when it would ask at launch (Every Time, or a timed choice that has run
-     * out), the server's saved profile is cleared and Who's Watching shows
-     * instead. Otherwise switching servers would reopen a protected profile
-     * there without its PIN. Clearing before navigating keeps the picker from
-     * loading under an identity that is about to change.
-     */
-    private suspend fun switchDestination(): TvServerSwitchDestination {
-        val accessToken = tokenManager.getAccessToken()
-        val activeEntry = serverRegistry.activeEntry.value
-        val profileId = activeEntry?.profileId ?: tokenManager.getProfileId()
-        return when {
-            accessToken.isNullOrBlank() -> TvServerSwitchDestination.Login
-            profileId.isNullOrBlank() -> TvServerSwitchDestination.ProfileSelection
-            profileLaunchPreferences.requiresSelectionAtLaunch() -> {
-                activeProfileReset.clearActiveProfile()
-                TvServerSwitchDestination.ProfileSelection
-            }
-            else -> TvServerSwitchDestination.Home
         }
     }
 }

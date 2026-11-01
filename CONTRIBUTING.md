@@ -176,6 +176,18 @@ any server or Apple coordination. Read
 the [AI-assisted contribution policy](https://github.com/Silo-Server/silo-server/blob/main/docs/ai-contributions.md)
 and include its disclosure block.
 
+## Licensing of contributions
+
+Silo Android is licensed under `AGPL-3.0-or-later` with the platform library
+additional permission in [PLATFORM-EXCEPTION.md](PLATFORM-EXCEPTION.md).
+
+By submitting a contribution, you agree that it is licensed under those
+same terms, the AGPL *including* the additional permission. If you cannot
+agree to the additional permission, say so in your pull request before it
+is merged.
+
+You retain copyright in your contribution; no assignment is requested.
+
 ## Instructions for coding agents
 
 Coding agents must read [AGENTS.md](AGENTS.md) before changing the repository

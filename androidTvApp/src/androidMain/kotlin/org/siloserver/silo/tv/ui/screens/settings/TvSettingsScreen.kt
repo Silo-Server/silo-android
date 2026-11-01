@@ -68,6 +68,7 @@ import org.siloserver.silo.model.settings.SeekMedia
 import org.siloserver.silo.tv.ui.components.TvDialog
 import org.siloserver.silo.tv.ui.components.TvDialogAction
 import org.siloserver.silo.tv.ui.components.TvDialogActionStyle
+import org.siloserver.silo.tv.ui.components.TvSignOutDialog
 import org.siloserver.silo.tv.ui.components.tvDialogSurface
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
@@ -160,7 +161,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun TvSettingsScreen(
     onManageServers: () -> Unit = {},
-    onSignedOut: () -> Unit = {},
+    onSignOut: (removeServer: Boolean) -> Unit = {},
     onSwitchProfile: () -> Unit = {},
     onNavigateHome: () -> Unit = {},
     onOpenDiagnosticsReport: (reportId: String) -> Unit = {},
@@ -270,10 +271,6 @@ fun TvSettingsScreen(
 
     LaunchedEffect(state.navAction) {
         when (state.navAction) {
-            TvSettingsViewModel.NavAction.SIGNED_OUT -> {
-                viewModel.onNavActionConsumed()
-                onSignedOut()
-            }
             TvSettingsViewModel.NavAction.SWITCH_PROFILE -> {
                 viewModel.onNavActionConsumed()
                 onSwitchProfile()
@@ -349,13 +346,10 @@ fun TvSettingsScreen(
     )
 
     if (showSignOutConfirm) {
-        TvSettingsConfirmDialog(
-            title = "Sign out?",
-            message = "This TV goes back to the sign-in screen. Your profiles and watch history stay on the server.",
-            confirmLabel = "Sign out",
-            onConfirm = {
+        TvSignOutDialog(
+            onSignOut = { removeServer ->
                 showSignOutConfirm = false
-                viewModel.onSignOut(context)
+                onSignOut(removeServer)
             },
             onDismiss = { showSignOutConfirm = false },
         )

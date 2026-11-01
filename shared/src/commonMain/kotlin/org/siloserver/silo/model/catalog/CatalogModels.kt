@@ -396,6 +396,8 @@ data class FileVersion(
     val credits: TimeRange? = null,
     val recap: TimeRange? = null,
     val preview: TimeRange? = null,
+    /** Every marker occurrence in source-time order (v2 watch detail); null from older servers. */
+    @SerialName("marker_segments") val markerSegments: List<MarkerSegment>? = null,
     /** The server publishes seek-bar previews for this file (`TrickplayV2Api`). */
     @SerialName("trickplay_available") val trickplayAvailable: Boolean = false,
 )
@@ -510,6 +512,18 @@ data class SubtitleInfo(
 data class TimeRange(
     val start: Double,
     val end: Double
+)
+
+/**
+ * One marker occurrence from the server's `marker_segments`. A kind may occur
+ * more than once; the singular `intro`/`credits`/`recap`/`preview` fields
+ * project only the first occurrence. See [org.siloserver.silo.domain.player.MarkerTimeline].
+ */
+@Serializable
+data class MarkerSegment(
+    val kind: String,
+    @SerialName("start_seconds") val startSeconds: Double,
+    @SerialName("end_seconds") val endSeconds: Double,
 )
 
 // --- Seasons / Episodes ---

@@ -69,6 +69,7 @@ import org.siloserver.silo.android.ui.components.marquee.MarqueeStage
 import org.siloserver.silo.android.ui.components.marquee.MarqueeTextField
 import org.siloserver.silo.android.ui.components.marquee.MarqueeWordmark
 import org.siloserver.silo.android.ui.components.marquee.marqueePressHaptic
+import org.siloserver.silo.common.network.ServerSetupScheme
 import org.siloserver.silo.common.discovery.DiscoveredServer
 import org.siloserver.silo.common.discovery.LanServerDiscovery
 import org.siloserver.silo.common.ui.marquee.MarqueeColors

@@ -100,6 +100,9 @@ import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.player.settlingFalseEdges
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
+import org.siloserver.silo.domain.player.MarkerKind
+import org.siloserver.silo.domain.player.MarkerTimeline
+import org.siloserver.silo.model.catalog.MarkerSegment
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -1302,6 +1305,8 @@ class TvPlayerViewModel(
         val credits: TimeRange? = null,
         val recap: TimeRange? = null,
         val preview: TimeRange? = null,
+        /** Every marker occurrence; null from servers that send only the singular fields. */
+        val markerSegments: List<MarkerSegment>? = null,
         // Chapters from the selected FileVersion (server-extracted via FFprobe
         // at ingest, mirrors Apple's `VersionChapter` consumption). Empty list
         // when the file has no embedded chapters. The HUD Chapters pane
@@ -1354,6 +1359,11 @@ class TvPlayerViewModel(
         /** The current item has not shown its first frame yet; see [startedContentId]. */
         val awaitingFirstFrame: Boolean
             get() = startedContentId != contentId
+
+        /** The marker occurrences the skip controls and Up Next read. */
+        val markerTimeline: MarkerTimeline by lazy {
+            MarkerTimeline.resolve(markerSegments, intro = intro, credits = credits, recap = recap, preview = preview)
+        }
     }
 
     private val _uiState = MutableStateFlow(
@@ -1391,7 +1401,7 @@ class TvPlayerViewModel(
         )
     // Marker controls use source time; presentationState deliberately omits the clock.
     val manualMarkerSkipTarget: StateFlow<MarkerSkipTarget?> = uiState
-        .map { markerSkipTarget(it.position, it.recap, it.credits) }
+        .map { markerSkipTarget(it.position, it.markerTimeline) }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
@@ -1490,8 +1500,10 @@ class TvPlayerViewModel(
                 lastAdapterMountIdentity = localMountIdentity
                 // In-stream captions can already be present and need no media
                 // rebuild, so settle them against the current snapshot now.
+                // Off needs no track, and a title without text tracks may
+                // publish no later snapshot to act on.
                 _uiState.value.subtitleTracks
-                    .takeIf(List<PlayerTrackEntry>::isNotEmpty)
+                    .takeIf { it.isNotEmpty() || localMountIdentity == SubtitleIdentity.Off }
                     ?.let(::resolveSubtitleRemountReselection)
             } else if (localMountIdentity == null) {
                 lastAdapterMountGeneration?.let { generation ->
@@ -2481,6 +2493,10 @@ class TvPlayerViewModel(
         beginBufferingQualityLoad()
         manualSubtitleSelectionApplied = false
         launchSubtitleSelectionApplied = false
+        // A replacement load (version switch, retry) decides Auto again for its
+        // own file: an earlier automatic Off left text disabled, and only a new
+        // decision mounts the subtitle this plan commits.
+        autoTextSubtitleSelectionAttempted = false
         autoSelectedSubtitleIdentity = null
         autoSubtitleSelectionInFlight = false
         // Cleared here and raised only if the carried choice actually RESOLVES
@@ -2818,6 +2834,7 @@ class TvPlayerViewModel(
                                 credits = result.credits,
                                 recap = result.recap,
                                 preview = result.preview,
+                                markerSegments = result.markerSegments,
                                 chapters = result.chapters,
                                 seriesId = result.seriesId,
                                 seasonNumber = result.seasonNumber,
@@ -3002,21 +3019,20 @@ class TvPlayerViewModel(
         } else {
             playerSettingsStore.introSkipModeFlow
         }
+        // An episode may have several intros: the prompt follows the one that
+        // last started, so an `always` undo survives the seek past its end.
+        val introOccurrence = _uiState
+            .map { it.markerTimeline.occurrenceAt(MarkerKind.Intro, it.position) }
+            .distinctUntilChanged()
         introObserveJob?.cancel()
         introObserveJob = introAutoSkipController.observe(
             position = _uiState
                 .map { it.position }
                 .distinctUntilChanged(),
-            introRange = _uiState
-                .map { it.intro }
-                .distinctUntilChanged(),
+            introRange = introOccurrence,
             mode = effectiveMode,
             introKey = _uiState
-                .map { state ->
-                    state.intro?.let { intro ->
-                        "${state.sessionId}:${state.selectedFileId}:${intro.start}:${intro.end}"
-                    }
-                }
+                .map { state -> "${state.sessionId}:${state.selectedFileId}" }
                 .distinctUntilChanged(),
             // Only reachable outside a room, where the mode is pinned to `ask`.
             onSeek = { seekToSec -> seekImmediate(seekToSec) },
@@ -3640,7 +3656,7 @@ class TvPlayerViewModel(
         // whose saved position is already inside the credits doesn't instantly
         // skip to the next one (a seek into credits also won't trigger it).
         if (!seekWasActive) {
-            _uiState.value.credits?.start?.let { creditsStart ->
+            _uiState.value.markerTimeline.upNextCreditsStart()?.let { creditsStart ->
                 if (previousPosition < creditsStart && positionSec >= creditsStart) onApproachingEnd()
             }
         }
@@ -4947,7 +4963,7 @@ class TvPlayerViewModel(
                 current.contentId != state.contentId || current.mediaFileId != fileId) return@launch
             val version = detail.versions.firstOrNull { it.fileId == fileId } ?: return@launch
             applyUpdatedMarkers(version.intro, version.credits,
-                version.recap, version.preview)
+                version.recap, version.preview, version.markerSegments)
         }
     }
 
@@ -4957,14 +4973,14 @@ class TvPlayerViewModel(
      */
     fun applyMarkersUpdate(update: PlaybackMarkersUpdate) {
         if (update.fileId != null && update.fileId != _uiState.value.mediaFileId) return
-        applyUpdatedMarkers(update.intro, update.credits, update.recap, update.preview)
+        applyUpdatedMarkers(update.intro, update.credits, update.recap, update.preview, update.markerSegments)
     }
 
     /** A replan that lands on another file takes that file's markers, then reads them again. */
     private fun adoptFileMarkersAfterReplan(previousFileId: Int?, version: FileVersion?) {
         val state = _uiState.value
         if (state.mediaFileId == previousFileId) return
-        applyUpdatedMarkers(version?.intro, version?.credits, version?.recap, version?.preview)
+        applyUpdatedMarkers(version?.intro, version?.credits, version?.recap, version?.preview, version?.markerSegments)
         state.sessionId?.let(::reconcileMarkers)
     }
 
@@ -4974,9 +4990,17 @@ class TvPlayerViewModel(
      * from UiState, so the update takes effect immediately; `null` clears a
      * marker the server dropped.
      */
-    private fun applyUpdatedMarkers(intro: TimeRange?, credits: TimeRange?, recap: TimeRange?, preview: TimeRange?) {
+    private fun applyUpdatedMarkers(
+        intro: TimeRange?,
+        credits: TimeRange?,
+        recap: TimeRange?,
+        preview: TimeRange?,
+        markerSegments: List<MarkerSegment>?,
+    ) {
         markerReconciliationFence.invalidate()
-        _uiState.update { it.copy(intro = intro, credits = credits, recap = recap, preview = preview) }
+        _uiState.update {
+            it.copy(intro = intro, credits = credits, recap = recap, preview = preview, markerSegments = markerSegments)
+        }
     }
 
     // ---- Next-episode auto-advance (F2) ----
@@ -5706,6 +5730,10 @@ class TvPlayerViewModel(
         // re-run auto over a longer track list and override a selection the
         // viewer has since made.
         if (autoTextSubtitleSelectionAttempted) return
+        // A replacement load keeps the outgoing media playing until its own
+        // mount applies. Deciding on the outgoing tracks would spend this
+        // load's only attempt on the wrong file.
+        if (transportMountGate.suppressPositionReports) return
         // Wait for the player to report SOMETHING: an empty snapshot carries no
         // selected audio language for the resolver to rank a subtitle against.
         if (audio.isEmpty() && subtitle.isEmpty()) return
@@ -5765,7 +5793,17 @@ class TvPlayerViewModel(
             // sidecar reached this line and returned, and nobody ever told the
             // player. Ask the adapter to mount its committed identity through
             // the same local-restore path the replan/recovery loads use.
-            if (identity != SubtitleIdentity.Off && !playerHasSelectedSubtitle(identity, state)) {
+            //
+            // Off too: until text is disabled, Media3 turns on a track the file
+            // flags Default, now or on a later snapshot, and
+            // reconcileExternallySelectedSubtitle adopted it over "Auto - None".
+            if (identity == SubtitleIdentity.Off) {
+                SubDiag.log("AUTO committed Off -> restoreCommittedOff")
+                nextSubtitleMountPriority = priority
+                if (!subtitleTransactions.restoreCommittedOff()) {
+                    nextSubtitleMountPriority = TvSubtitleMountPriority.UserTransaction
+                }
+            } else if (!playerHasSelectedSubtitle(identity, state)) {
                 SubDiag.log("AUTO committed-but-unmounted -> restoreCommittedLocalMount $identity")
                 nextSubtitleMountPriority = priority
                 subtitleTransactions.restoreCommittedLocalMount()

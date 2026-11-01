@@ -69,11 +69,15 @@ import org.siloserver.silo.common.ui.marquee.MarqueeScrimStyle
 import org.siloserver.silo.common.ui.marquee.ProfileTilePalette
 import org.siloserver.silo.common.ui.marquee.rememberReduceMotion
 import org.siloserver.silo.model.profile.Profile
+import org.siloserver.silo.tv.ui.components.TvDialog
+import org.siloserver.silo.tv.ui.components.TvDialogAction
+import org.siloserver.silo.tv.ui.components.TvDialogActionStyle
 import org.siloserver.silo.tv.ui.components.TvDialogOption
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.TvOptionDialog
 import org.siloserver.silo.tv.ui.components.TvPinEntryDialog
+import org.siloserver.silo.tv.ui.components.TvSignOutDialog
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButton
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButtonKind
 import org.siloserver.silo.tv.ui.components.marquee.rememberTvActiveServer
@@ -103,7 +107,7 @@ fun TvProfileSelectionScreen(
     onAddProfile: () -> Unit = {},
     onEditProfile: (String) -> Unit = {},
     onChangeServer: () -> Unit = {},
-    onSignOut: () -> Unit = {},
+    onSignOut: (removeServer: Boolean) -> Unit = {},
     viewModel: TvProfileSelectionViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -126,6 +130,7 @@ fun TvProfileSelectionScreen(
     // Closing a PIN prompt puts focus back on the profile that opened it,
     // not the first one.
     var pinOpenedBy by remember { mutableStateOf<String?>(null) }
+    var showSignOutDialog by remember { mutableStateOf(false) }
     LaunchedEffect(state.pinProfile?.id) {
         val opened = state.pinProfile?.id
         if (opened != null) {
@@ -302,7 +307,7 @@ fun TvProfileSelectionScreen(
                         )
                         TvMarqueeButton(
                             text = "Sign out",
-                            onClick = onSignOut,
+                            onClick = { showSignOutDialog = true },
                             kind = TvMarqueeButtonKind.Glass,
                             compact = true,
                             icon = Icons.AutoMirrored.Outlined.Logout,
@@ -311,6 +316,16 @@ fun TvProfileSelectionScreen(
                 }
             }
         }
+    }
+
+    if (showSignOutDialog) {
+        TvSignOutDialog(
+            onSignOut = { removeServer ->
+                showSignOutDialog = false
+                onSignOut(removeServer)
+            },
+            onDismiss = { showSignOutDialog = false },
+        )
     }
 
     // PIN entry — shown when a PIN-protected profile is selected, or for the
@@ -327,27 +342,25 @@ fun TvProfileSelectionScreen(
         )
     }
 
-    // A new TV offers to open the first profile picked automatically.
+    // A new TV offers to open the first profile picked automatically, worded
+    // and laid out like Apple TV's alert: Ask Every Time, then Remember, with
+    // focus on Remember. Back answers Ask Every Time.
     val rememberOffer = state.rememberOffer
     if (rememberOffer != null) {
-        TvOptionDialog(
+        TvDialog(
             title = "Open ${rememberOffer.name} automatically?",
-            options = listOf(
-                TvDialogOption(
-                    key = "remember",
-                    title = "Remember",
-                    subtitle = "Open ${rememberOffer.name} when Silo starts on this TV.",
+            message = "Silo can skip Who's Watching and open this profile when it starts on this TV. " +
+                "You can change this later in Settings > General > Profile Selection.",
+            onDismissRequest = { viewModel.answerRememberOffer(remember = false) },
+            actions = listOf(
+                TvDialogAction(label = "Ask Every Time", onClick = { viewModel.answerRememberOffer(remember = false) }),
+                TvDialogAction(
+                    label = "Remember",
                     onClick = { viewModel.answerRememberOffer(remember = true) },
-                ),
-                TvDialogOption(
-                    key = "ask",
-                    title = "Ask every time",
-                    subtitle = "Show Who's watching when Silo starts. Change this in Settings > General > Profile Selection.",
-                    onClick = { viewModel.answerRememberOffer(remember = false) },
+                    style = TvDialogActionStyle.Primary,
                 ),
             ),
-            onDismiss = { viewModel.answerRememberOffer(remember = false) },
-            initialFocusKey = "remember",
+            initialFocusIndex = 1,
         )
     }
 

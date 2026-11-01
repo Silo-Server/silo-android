@@ -12,32 +12,12 @@ import kotlin.test.assertIs
 
 class TvServerSetupUrlProbeTest {
     @Test
-    fun bareHostProbesHttpsBeforeHttpFallback() {
-        assertEquals(
-            listOf("https://media.local", "http://media.local"),
-            serverSetupUrlProbeCandidates(" media.local/ "),
-        )
-    }
-
-    @Test
-    fun explicitSchemeIsRespectedWithoutFallback() {
-        assertEquals(
-            listOf("http://media.local:8090"),
-            serverSetupUrlProbeCandidates(" HTTP://MEDIA.LOCAL:8090/ "),
-        )
-        assertEquals(
-            listOf("https://lib.strm.cafe"),
-            serverSetupUrlProbeCandidates("https://lib.strm.cafe"),
-        )
-    }
-
-    @Test
     fun probeCandidatesContinueToHttpFallbackAfterHttpsHttpError() = runTest {
         val setupRequests = mutableListOf<String>()
         val signupRequests = mutableListOf<String>()
 
         val result = probeTvServerSetupCandidates(
-            candidates = serverSetupUrlProbeCandidates("media.local"),
+            candidates = listOf("https://media.local", "http://media.local"),
             getSetupStatus = { candidate ->
                 setupRequests += candidate
                 if (candidate.startsWith("https://")) {
@@ -57,6 +37,30 @@ class TvServerSetupUrlProbeTest {
         assertEquals(TvServerSetupDestination.Login(signupEnabled = true), success.destination)
         assertEquals(listOf("https://media.local", "http://media.local"), setupRequests)
         assertEquals(listOf("http://media.local"), signupRequests)
+    }
+
+    @Test
+    fun bareHttpErrorOnLastCandidateUsesTheGenericUnreachableMessage() = runTest {
+        val result = probeTvServerSetupCandidates(
+            candidates = listOf("https://media.local"),
+            getSetupStatus = { ApiResult.Error(404, "", "") },
+            getSignupStatus = { ApiResult.Success(SignupStatusResponse(enabled = false)) },
+        )
+
+        val failure = assertIs<TvServerSetupProbeResult.Failure>(result)
+        assertEquals("Could not reach a Silo server at that address.", failure.message)
+    }
+
+    @Test
+    fun httpErrorWithServerMessageKeepsThatMessage() = runTest {
+        val result = probeTvServerSetupCandidates(
+            candidates = listOf("https://media.local"),
+            getSetupStatus = { ApiResult.Error(503, "unavailable", "Server is starting") },
+            getSignupStatus = { ApiResult.Success(SignupStatusResponse(enabled = false)) },
+        )
+
+        val failure = assertIs<TvServerSetupProbeResult.Failure>(result)
+        assertEquals("Could not reach server: Server is starting", failure.message)
     }
 
     @Test

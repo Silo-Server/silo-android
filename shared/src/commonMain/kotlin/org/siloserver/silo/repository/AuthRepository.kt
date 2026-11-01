@@ -626,5 +626,12 @@ class SignOutTarget internal constructor(
     internal val scope: AuthScopeSnapshot?,
     internal val loginId: String?,
 ) {
+    /**
+     * Whether this leaves [serverId]'s saved login [loginId]: not a borrowed
+     * identity installed meanwhile, nor a login made since it was read.
+     */
+    fun isSavedLogin(serverId: String, loginId: String?): Boolean =
+        scope?.serverId == serverId && scope.credentialGenerationId == null && this.loginId == loginId
+
     override fun toString(): String = "SignOutTarget(<redacted>)"
 }

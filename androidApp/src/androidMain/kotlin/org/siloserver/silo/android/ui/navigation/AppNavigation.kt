@@ -157,6 +157,12 @@ import org.koin.core.parameter.parametersOf
  */
 private const val DisplayedDetailContentIdKey = "displayedDetailContentId"
 
+private fun NavBackStackEntry.displayedDetailContentId(): String? =
+    savedStateHandle.get<String>(DisplayedDetailContentIdKey) ?: arguments?.getString("contentId")
+
+/** Set on a detail entry that a title's "More like this" rail opened. */
+private const val OpenedFromRelatedRailKey = "openedFromRelatedRail"
+
 /** The profile picker and its screens, where a prompt has nothing to add. */
 private val ProfilePromptPickerRoutes: Set<String> = setOf(
     Route.ProfileSelection.route,
@@ -531,9 +537,7 @@ fun AppNavigation(
                 shouldLaunchExternalRouteSingleTop(
                     currentDestinationRoute = navController.currentBackStackEntry
                         ?.destination?.route,
-                    currentContentId = navController.currentBackStackEntry
-                        ?.savedStateHandle?.get<String>(DisplayedDetailContentIdKey)
-                        ?: navController.currentBackStackEntry?.arguments?.getString("contentId"),
+                    currentContentId = navController.currentBackStackEntry?.displayedDetailContentId(),
                     targetRoute = route,
                 )
             navController.navigate(route) {
@@ -1648,8 +1652,14 @@ fun AppNavigation(
                         )
                     }
                 },
-                onItemDetailClick = { contentId ->
-                    navController.navigate(Route.ItemDetail(contentId).route)
+                onSimilarItemClick = { contentId ->
+                    if (!navController.navigateToRelatedItemDetail(contentId)) {
+                        // The tapped card handed off its artwork, but no new page
+                        // opened to take it, so clear it for the next detail.
+                        heroSourceHandoff.pendingKey = null
+                        heroSourceHandoff.pendingArtworkUrl = null
+                        heroSourceHandoff.pendingArtworkThumbhash = null
+                    }
                 },
                 onEpisodeDetailClick = { contentId ->
                     navController.navigate(Route.ItemDetail(contentId, libraryId = libraryId).route)
@@ -2136,6 +2146,40 @@ private fun NavHostController.isDisplayingExactPlayerRoute(
     if (arguments.getString("libraryId") != null) return false
     val requestedTarget = playerRouteIntentOrNull(route) ?: return false
     return currentPlayerTarget?.let(requestedTarget::matches) == true
+}
+
+/**
+ * Opens a title picked from another title's "More like this" rail. The first
+ * hop from a title pushes, so Back returns to that title. A hop from a page
+ * such a rail opened replaces that page, so however many recommendations
+ * someone follows, two Backs leave the chain: one to the title it started
+ * from, one to wherever that title was opened. Picking the starting title
+ * again goes back to it instead of opening a second copy.
+ *
+ * Returns whether a new page opened, so the caller can drop what the tapped
+ * card handed to it otherwise.
+ */
+private fun NavHostController.navigateToRelatedItemDetail(contentId: String): Boolean {
+    val current = currentBackStackEntry
+    // A second tap on the same card, or on the title just returned to, can
+    // arrive while the page is still changing; it opens nothing.
+    if (current?.destination?.route == Route.ItemDetail.ROUTE && current.displayedDetailContentId() == contentId) {
+        return false
+    }
+    if (current?.savedStateHandle?.get<Boolean>(OpenedFromRelatedRailKey) == true) {
+        val start = previousBackStackEntry?.takeIf { it.destination.route == Route.ItemDetail.ROUTE }
+        if (start?.displayedDetailContentId() == contentId) {
+            popBackStack()
+            return false
+        }
+        navigate(Route.ItemDetail(contentId).route) {
+            popUpTo(Route.ItemDetail.ROUTE) { inclusive = true }
+        }
+    } else {
+        navigate(Route.ItemDetail(contentId).route)
+    }
+    currentBackStackEntry?.takeIf { it !== current }?.savedStateHandle?.set(OpenedFromRelatedRailKey, true)
+    return true
 }
 
 /**

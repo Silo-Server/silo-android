@@ -258,7 +258,9 @@ Known gaps the docs track: TV has no reader/ebooks and no downloads management b
 
 ## License & Trademarks
 
-Silo Android is licensed under `AGPL-3.0-or-later`. See [LICENSE](LICENSE).
+Silo Android is licensed under `AGPL-3.0-or-later`, with an additional
+permission to combine it with platform SDKs. See [LICENSE](LICENSE) and
+[PLATFORM-EXCEPTION.md](PLATFORM-EXCEPTION.md).
 
 The **Silo name, logo, and wordmark are trademarks of Silo Media L.L.C.** and
 are **not** covered by the AGPL. You're free to fork and redistribute the code,

@@ -494,7 +494,11 @@ class EncryptedTokenManagerImpl(
 
     override suspend fun signOutServer(serverId: String?, loginId: String?): Boolean =
         tokenWriteMutex.withLock {
-            fun stillActiveLocked() = activeServerId == serverId && serverId?.let { durableLoginIdLocked(it) } == loginId
+            // A temporary scope (a phone's borrowed identity) that appeared
+            // while the sign-out waited is not this saved login: clearing the
+            // current scope would end it and leave the saved login signed in.
+            fun stillActiveLocked() = temporaryScope == null &&
+                activeServerId == serverId && serverId?.let { durableLoginIdLocked(it) } == loginId
             if (!mutex.withLock { ensureCacheMatchesRegistryLocked(); stillActiveLocked() }) return@withLock false
             identityTransitions.changing(
                 kind = IdentityTransitionKind.SIGN_OUT,

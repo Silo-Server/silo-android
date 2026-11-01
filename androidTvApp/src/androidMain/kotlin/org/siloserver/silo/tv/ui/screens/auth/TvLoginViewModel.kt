@@ -1,11 +1,11 @@
 package org.siloserver.silo.tv.ui.screens.auth
 
-import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.pairing.NearbySignInCodeSource
 import org.siloserver.silo.common.pairing.NearbySignInOutcome
 import org.siloserver.silo.common.pairing.PairingAdvertisement
+import org.siloserver.silo.common.pairing.TvDeviceName
 import org.siloserver.silo.pairing.PairingFailureCode
 import org.siloserver.silo.model.auth.DeviceCodeFormat
 import org.siloserver.silo.model.auth.DeviceLoginPollResponse
@@ -266,10 +266,12 @@ class TvLoginViewModel(
      * `st=login`. Both phone apps must accept `login` TVs before either TV
      * advertises one; a phone that predates them offers a sign-in TV the
      * setup chooser and pushes servers without an identity, which this TV
-     * refuses. The app turns it on for debug builds only; turn it on for
-     * release once the iOS and Android phone apps that handle `login` ship.
+     * refuses. The app turns it on in every build: the iOS and Android phone
+     * apps that handle `login` have shipped.
      */
     private val advertisesSignIn: Boolean = false,
+    /** The name this TV starts a sign-in code with; the browser and phone approvals show it. */
+    private val deviceName: () -> String = { TvDeviceName.FALLBACK },
 ) : ViewModel(), NearbySignInCodeSource {
 
     private val _uiState = MutableStateFlow(TvLoginUiState(sessionExpired = sessionExpired))
@@ -298,16 +300,13 @@ class TvLoginViewModel(
     private var machineObserver: Job? = null
     private var deviceLoginJob: Job? = null
     private var credentialLoginJob: Job? = null
-    private var newCodeJob: Job? = null
     private var signInOptionsJob: Job? = null
 
     /** Saves an approval's tokens and routes on; [onStop] never cancels it. */
     private var approvalJob: Job? = null
     private var authCompleted = false
+    private var leavingServer = false
     private var visible = true
-
-    /** [onStop] ran since the last [onStart]: the next start re-reads the sign-in options. */
-    private var lastDeviceCode: String? = null
 
     /** A device approval that arrived while a password (or network) save held the sign-in. */
     private var heldApproval: Pair<DeviceLoginPollResponse, AccountSessionExpectation>? = null
@@ -513,9 +512,40 @@ class TvLoginViewModel(
         startDeviceLogin()
     }
 
-    /** "Change server": withdraw the code before this screen goes away. */
-    fun onChangeServer() {
+    /**
+     * "Change server": withdraw the code and leave this server, then [onLeft].
+     * A server this TV holds no session for is forgotten, so the next launch
+     * opens setup instead of its sign-in screen. Nothing stored tells a server
+     * that was never signed in from one whose session expired, and both need
+     * signing in again, so both go. Ignored while a sign-in is being saved:
+     * the server it saves to must not be removed under it.
+     */
+    fun onChangeServer(onLeft: () -> Unit = {}) {
+        if (leavingServer || authCompleted || _uiState.value.signingIn || approvalJob?.isActive == true) return
         abandonDeviceCode()
+        val registry = serverRegistry
+        // Captured now: by the time the removal runs, setup may be choosing another server.
+        val serverId = registry?.activeServerId?.value
+        if (registry == null || serverId == null) {
+            onLeft()
+            return
+        }
+        leavingServer = true
+        viewModelScope.launch {
+            try {
+                if (tokenManager.getAccessTokenForScope(serverId).isNullOrBlank()) registry.remove(serverId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // A failed write (storage full) keeps the server, as before #741.
+                // Leave anyway: the code is already withdrawn, and setup works
+                // with the server still listed.
+            } finally {
+                leavingServer = false
+            }
+            // Only now: setup must not connect again before the removal lands.
+            onLeft()
+        }
     }
 
     private fun startDeviceLogin() {
@@ -612,13 +642,11 @@ class TvLoginViewModel(
         _deviceSignIn.value = when (state) {
             DeviceSignInState.GettingCode -> TvDeviceSignInUi(status = TvSignInStatus.GettingCode)
             is DeviceSignInState.ShowingCode -> {
-                val renewedNow = state.renewed && lastDeviceCode != null && lastDeviceCode != state.session.deviceCode
-                lastDeviceCode = state.session.deviceCode
-                if (renewedNow) announceNewCode()
+                // A code that replaced an expired one says so for as long as
+                // it shows, as on Apple TV; asking for a new code starts over.
                 val status = when {
                     state.opened -> TvSignInStatus.Opened
-                    renewedNow || (previous.status == TvSignInStatus.NewCode && newCodeJob?.isActive == true) ->
-                        TvSignInStatus.NewCode
+                    state.renewed -> TvSignInStatus.NewCode
                     else -> TvSignInStatus.Waiting
                 }
                 TvDeviceSignInUi(code = state.session.display(), status = status)
@@ -633,17 +661,6 @@ class TvLoginViewModel(
             DeviceSignInState.UpdateRequired -> TvDeviceSignInUi(status = TvSignInStatus.UpdateRequired)
             DeviceSignInState.Failed -> TvDeviceSignInUi(status = TvSignInStatus.Failed)
             is DeviceSignInState.Approved -> previous
-        }
-    }
-
-    /** "New code" is a brief, polite announcement, then the status reads "Waiting" again. */
-    private fun announceNewCode() {
-        newCodeJob?.cancel()
-        newCodeJob = viewModelScope.launch {
-            delay(NEW_CODE_ANNOUNCEMENT_MS)
-            _deviceSignIn.update { ui ->
-                if (ui.status == TvSignInStatus.NewCode) ui.copy(status = TvSignInStatus.Waiting) else ui
-            }
         }
     }
 
@@ -901,7 +918,6 @@ class TvLoginViewModel(
     private companion object {
         const val EXPECTATION_ATTEMPTS = 3
         const val EXPECTATION_RETRY_MS = 250L
-        const val NEW_CODE_ANNOUNCEMENT_MS = 5_000L
         const val SIGNED_IN_DWELL_MS = 1_000L
 
         /** How long a nearby phone waits for a code that is still being fetched. */
@@ -916,7 +932,5 @@ class TvLoginViewModel(
             TvSignInStatus.Failed,
             TvSignInStatus.UpdateRequired,
         )
-
-        fun deviceName(): String = Build.MODEL?.trim()?.takeIf { it.isNotEmpty() } ?: "Android TV"
     }
 }
