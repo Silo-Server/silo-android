@@ -211,7 +211,7 @@ internal fun TvCastCard(
     onClick: () -> Unit = {},
 ) {
     val shape = CircleShape
-    val cardFocus = siloCardDefaults(shape = shape, focusedScale = 1.05f)
+    val cardFocus = siloCardDefaults(shape = shape)
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
 

@@ -84,6 +84,8 @@ import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 import org.siloserver.silo.tv.ui.theme.ProgressFill
 import org.siloserver.silo.tv.ui.theme.InterFamily
+import org.siloserver.silo.tv.ui.theme.CardOutline
+import org.siloserver.silo.tv.ui.theme.cardFocusedScale
 import org.siloserver.silo.tv.ui.theme.cardScaled
 
 /** Includes the still, the two-line caption, and vertical rail padding from the first frame. */
@@ -382,11 +384,12 @@ private fun TvDetailEpisodeCard(
         )
     }
 
-    // Scale + shadow only — no TV Material focus halo. The white ring on the
-    // still (driven by isFocused below) is the focus cue. Matches tvOS
-    // `EpisodeCardStyle`.
+    // Scale + shadow only — no TV Material focus halo. The white outline on
+    // the still (driven by isFocused below) is the focus cue, shared with the
+    // current episode and every other card, as on tvOS.
+    val focusedScale = cardFocusedScale()
     val scale by animateFloatAsState(
-        targetValue = if (isFocused) 1.04f else 1f,
+        targetValue = if (isFocused) focusedScale else 1f,
         animationSpec = tween(durationMillis = 180),
         label = "episodeCardScale",
     )
@@ -421,7 +424,7 @@ private fun TvDetailEpisodeCard(
                 .height(stillHeight)
                 .then(if (usesSeriesGeometry) Modifier.scale(scale) else Modifier)
                 .shadow(
-                    elevation = if (isFocused && usesSeriesGeometry) 12.dp else if (isFocused) 18.dp else 8.dp,
+                    elevation = if (isFocused) CardOutline.shadowElevation else 8.dp,
                     shape = shape,
                     ambientColor = Color.Black,
                     spotColor = Color.Black,
@@ -429,10 +432,10 @@ private fun TvDetailEpisodeCard(
                 .clip(shape)
                 .background(DarkSurfaceElevated)
                 .then(
-                    when {
-                        isFocused -> Modifier.border(3.dp, Color.White.copy(alpha = 0.9f), shape)
-                        isCurrent -> Modifier.border(2.dp, Color.White.copy(alpha = 0.7f), shape)
-                        else -> Modifier
+                    if (isFocused || isCurrent) {
+                        Modifier.border(CardOutline.width, CardOutline.color, shape)
+                    } else {
+                        Modifier
                     },
                 ),
         ) {

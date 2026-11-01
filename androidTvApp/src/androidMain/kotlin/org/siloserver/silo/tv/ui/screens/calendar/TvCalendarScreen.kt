@@ -117,6 +117,7 @@ import org.siloserver.silo.tv.ui.theme.FocusedContent
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 import org.siloserver.silo.tv.ui.theme.cardScaled
+import org.siloserver.silo.tv.ui.theme.siloCardDefaults
 import org.siloserver.silo.viewmodel.CalendarViewModel
 
 /**
@@ -1426,6 +1427,7 @@ private fun CalendarEventCard(
 
     // tvOS FocusableCalendarCard: the poster alone is the focus-lifted
     // button; the caption sits OUTSIDE it and brightens on focus.
+    val posterFocus = siloCardDefaults(shape = posterShape)
     Column(
         modifier = Modifier
             .width(posterWidth)
@@ -1436,10 +1438,9 @@ private fun CalendarEventCard(
             onClick = onClick,
             interactionSource = interactionSource,
             shape = CardDefaults.shape(shape = posterShape),
-            scale = CardDefaults.scale(focusedScale = 1.06f),
-            border = CardDefaults.border(
-                focusedBorder = Border(BorderStroke(2.5.dp, Color.White), shape = posterShape),
-            ),
+            scale = posterFocus.scale,
+            border = posterFocus.border,
+            glow = posterFocus.glow,
             colors = CardDefaults.colors(containerColor = Color.White.copy(alpha = 0.06f)),
             modifier = Modifier
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
