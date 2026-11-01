@@ -66,6 +66,38 @@ class TvSubtitleMountDeadlineTest {
     }
 
     @Test
+    fun `tracks published just before a check still get a whole window to confirm`() = runTest {
+        var tracksPublished = false
+        val port = DeadlineStagedPort()
+        val adapter = TvSubtitleTransactionAdapter(
+            scope = backgroundScope,
+            stagedPort = port,
+            persistencePort = DeadlinePersistence(),
+            durablePersistenceScope = backgroundScope,
+            onCommittedPlayback = { TvSubtitleAdoptionResult.Adopted },
+            hasMountableTracks = { tracksPublished },
+        )
+        adapter.resetContent(deadlineContext(), committedIdentity = SubtitleIdentity.Off)
+        val target = SubtitleIdentity.ServerSidecar(serverIndex = 3)
+        adapter.select(target)
+        runCurrent()
+        port.completeStage(deadlineCandidate(index = 3))
+        runCurrent()
+
+        // Published 100 ms before the 10 s check: the window starts there, so
+        // the selection has five seconds to confirm, not 100 ms.
+        advanceTimeBy(9_900)
+        runCurrent()
+        tracksPublished = true
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(target, adapter.snapshot.localMountIdentity)
+        advanceTimeBy(100)
+        runCurrent()
+        assertNull(adapter.snapshot.localMountIdentity)
+    }
+
+    @Test
     fun `deadline still fails a stream that never publishes text tracks`() = runTest {
         val port = DeadlineStagedPort()
         val adapter = TvSubtitleTransactionAdapter(

@@ -2454,13 +2454,18 @@ internal class TvSubtitleTransactionAdapter(
         localMountTimeout?.cancel()
         localMountTimeout = scope.launch {
             var waited = 0L
+            // Only count against the mount once there is something to mount;
+            // the onTracksChanged callback may not arrive inside the window at
+            // all, so ask rather than wait to be told. The window starts at the
+            // first check that finds tracks (or now, if they are already
+            // there), so tracks published just before a check still get a
+            // whole window for their selection to confirm.
+            var tracksSeen = hasMountableTracks()
             while (true) {
                 delay(LOCAL_MOUNT_TIMEOUT_MS)
                 waited += LOCAL_MOUNT_TIMEOUT_MS
-                // Only count against the mount once there is something to
-                // mount; the onTracksChanged callback may not arrive inside the
-                // window at all, so ask rather than wait to be told.
-                if (hasMountableTracks() || waited >= MAX_LOCAL_MOUNT_WAIT_MS) break
+                if (tracksSeen || waited >= MAX_LOCAL_MOUNT_WAIT_MS) break
+                tracksSeen = hasMountableTracks()
             }
             SubDiag.log("mountDeadline FAIL gen=$generation")
             failLocalMount(generation)
