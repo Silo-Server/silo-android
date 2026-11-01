@@ -2,7 +2,7 @@ package org.siloserver.silo.repository.port
 
 import org.siloserver.silo.network.DurableLoginAuthority
 
-/** UI retains the command witness through completion and explicit read recovery. */
+/** UI retains the command witness through completion and automatic recovery. */
 interface MembershipPort {
     enum class Kind { FAVORITE, WATCHLIST }
     enum class Disposition { ACKNOWLEDGED, RECONCILED, NEEDS_RECONCILIATION, PAUSED, NOT_CLAIMED }
@@ -21,5 +21,7 @@ interface MembershipPort {
     suspend fun record(authority: DurableLoginAuthority, itemId: String, kind: Kind, present: Boolean): Command
     suspend fun send(command: Command): Completion
     suspend fun reconcile(command: Command): Completion
+    /** Reads first and resends only if the server still differs and [command] is the item's latest. */
+    suspend fun retry(command: Command): Completion
     suspend fun projection(authority: DurableLoginAuthority, itemId: String, kind: Kind): Projection?
 }

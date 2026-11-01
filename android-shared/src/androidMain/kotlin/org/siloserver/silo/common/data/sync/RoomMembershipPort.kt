@@ -96,6 +96,9 @@ class RoomMembershipPort(
     override suspend fun reconcile(command: MembershipPort.Command): MembershipPort.Completion =
         completion(command, runtime.reconcile(command.id, command.authority))
 
+    override suspend fun retry(command: MembershipPort.Command): MembershipPort.Completion =
+        completion(command, runtime.retry(command.id, command.authority))
+
     private suspend fun completion(command: MembershipPort.Command, result: MembershipOutbox.Result): MembershipPort.Completion {
         val current = projection(command.authority, command.itemId, command.kind)
         return MembershipPort.Completion(MembershipPort.Disposition.valueOf(result.resolution.name),
@@ -112,6 +115,8 @@ class RoomMembershipPort(
         val disposition = when (command?.state) {
             MembershipOutbox.RECONCILE -> MembershipPort.Disposition.NEEDS_RECONCILIATION
             MembershipOutbox.PAUSED -> MembershipPort.Disposition.PAUSED
+            // A resend in flight; its earlier paused disposition no longer applies.
+            MembershipOutbox.SENDING -> null
             else -> projection.disposition?.let(MembershipPort.Disposition::valueOf)
         }
         if (authority != runtime.captureAuthority()) return null
