@@ -153,6 +153,11 @@ class WatchNextHomeSyncTest {
         failRow = "next"
         assertFalse(sync(repo)); assertEquals(0, applies); assertEquals(2, reads)
     } }
+    @Test fun aRowWhoseTypeChangedAfterTheLayoutKeepsEveryTile() = runTest { scenario { repo ->
+        // An admin changed the section's recipe between the layout and the row read.
+        rowBodies["row"] = movieRow("row", "recently_added", listOf("new"))
+        assertFalse(sync(repo)); assertEquals(0, applies); assertEquals(1, reads)
+    } }
     @Test fun aProfileChangeDuringARowReadNeverWrites() = runTest { scenario { repo ->
         rowHook = { owner = owner.copy(profileToken = "replacement") }
         assertTrue(sync(repo)); assertEquals(0, applies)

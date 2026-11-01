@@ -54,6 +54,9 @@ internal suspend fun syncWatchNextHome(
         val read = sections.getHomeSectionItems(row.id, owner)
         if (!current()) return true
         if (read !is ApiResult.Success) return false
+        // An admin can change a section's type and keep its id; a row that is
+        // no longer the type the layout named waits for the next layout.
+        if (read.data.section?.sectionType != row.sectionType) return false
         // A row read answers with the row's configured limit (up to 100 by
         // default), not the capped Home list's; keep the cards a Home row draws.
         // An empty row is the server's answer, even when hide-watched filtering
