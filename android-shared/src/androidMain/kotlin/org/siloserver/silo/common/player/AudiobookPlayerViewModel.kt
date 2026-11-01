@@ -91,10 +91,17 @@ data class AudiobookPlayerUiState(
     val sessionId: String? = null,
     val selectedFileId: Int? = null,
     val error: String? = null,
+    /** The server ended the session (an administrator stopped it), so the
+     *  player must not start a fresh one on its own. */
+    val sessionEndedByServer: Boolean = false,
 ) {
     /** Playback stopped on an error with no stream left: Play starts it again. */
     val canRetryPlayback: Boolean
-        get() = error != null && streamUrl == null && sessionId == null && !isLoading
+        get() = error != null &&
+            !sessionEndedByServer &&
+            streamUrl == null &&
+            sessionId == null &&
+            !isLoading
 }
 
 /**
@@ -892,6 +899,7 @@ class AudiobookPlayerViewModel(
                     selectedFileId = fileId,
                     positionSeconds = globalPosition,
                     error = null,
+                    sessionEndedByServer = false,
                 )
             }
             published = true
@@ -930,6 +938,7 @@ class AudiobookPlayerViewModel(
     private fun applyFailedSessionStart(
         failureMessage: String,
         expectedSessionId: String? = _uiState.value.sessionId,
+        sessionEndedByServer: Boolean = false,
     ) {
         val state = _uiState.value
         if (expectedSessionId != null && state.sessionId != expectedSessionId) return
@@ -954,6 +963,7 @@ class AudiobookPlayerViewModel(
                 isPlaying = false,
                 isPaused = true,
                 error = failureMessage,
+                sessionEndedByServer = sessionEndedByServer,
             )
         }
     }
@@ -1203,16 +1213,18 @@ class AudiobookPlayerViewModel(
                     !isClosing &&
                     _uiState.value.sessionId == sessionId
                 ) {
-                    when (audiobookReplanRecovery(result)) {
+                    when (val recovery = audiobookReplanRecovery(result)) {
                         AudiobookReplanRecovery.StartFreshSession -> renewExpiredSession(
                             staleSessionId = sessionId,
                             fileId = fileId,
                             localPosition = sourcePosition,
                             globalPosition = globalPosition,
                         )
+                        AudiobookReplanRecovery.Ended,
                         AudiobookReplanRecovery.Fail -> applyFailedSessionStart(
                             result.message.ifBlank { "Audiobook playback failed" },
                             expectedSessionId = sessionId,
+                            sessionEndedByServer = recovery == AudiobookReplanRecovery.Ended,
                         )
                     }
                 }
@@ -1397,6 +1409,7 @@ class AudiobookPlayerViewModel(
                                     localPosition = decision.targetSourcePositionSeconds,
                                     globalPosition = globalSeconds,
                                 )
+                                AudiobookReplanRecovery.Ended,
                                 AudiobookReplanRecovery.Fail ->
                                     _uiState.update { it.copy(error = result.message.ifBlank { "Seek failed" }) }
                             }
@@ -1876,17 +1889,18 @@ private fun androidx.media3.common.PlaybackException.audiobookFailureClassificat
     }
 
 /** What the audiobook player does after a replan or reanchor request failed. */
-internal enum class AudiobookReplanRecovery { StartFreshSession, Fail }
+internal enum class AudiobookReplanRecovery { StartFreshSession, Ended, Fail }
 
 /**
  * A replan or reanchor names the session it replaces. Once the server has
  * expired that session (the player was cut off past the server's grace), it
  * answers 404 "Playback session not found" and no replan can succeed; the
- * only way back is a fresh session at the same position.
+ * only way back is a fresh session at the same position. A session an
+ * administrator ended answers 410 `playback_session_ended` instead, and the
+ * player must not start a fresh one, not even from Retry.
  */
-internal fun audiobookReplanRecovery(result: ApiResult<*>): AudiobookReplanRecovery =
-    if (result.isPlaybackSessionMissingError()) {
-        AudiobookReplanRecovery.StartFreshSession
-    } else {
-        AudiobookReplanRecovery.Fail
-    }
+internal fun audiobookReplanRecovery(result: ApiResult<*>): AudiobookReplanRecovery = when {
+    result.isPlaybackSessionMissingError() -> AudiobookReplanRecovery.StartFreshSession
+    result.isPlaybackSessionEnded() -> AudiobookReplanRecovery.Ended
+    else -> AudiobookReplanRecovery.Fail
+}

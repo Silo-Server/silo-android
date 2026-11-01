@@ -16,9 +16,10 @@ class AudiobookReplanRecoveryTest {
             // The v1 code for the same condition.
             ApiResult.Error(404, "playback_session_not_found", "Playback session not found")
                 to AudiobookReplanRecovery.StartFreshSession,
-            // An administrator ended the session: renewing would undo that.
+            // An administrator ended the session: renewing, or offering Retry,
+            // would undo that.
             ApiResult.Error(410, "playback_session_ended", "An administrator ended this playback session")
-                to AudiobookReplanRecovery.Fail,
+                to AudiobookReplanRecovery.Ended,
             // Other 404s say nothing about the session.
             ApiResult.Error(404, "not_found", "Source media file is missing")
                 to AudiobookReplanRecovery.Fail,
