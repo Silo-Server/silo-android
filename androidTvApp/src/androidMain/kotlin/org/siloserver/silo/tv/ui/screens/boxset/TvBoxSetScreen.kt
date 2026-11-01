@@ -89,6 +89,9 @@ fun TvBoxSetScreen(
         watchPartyPlayGuard.requestPlay { onPlayMovie(contentId, resumePositionSeconds) }
     }
     TvWatchPartyPlayGuardDialog(watchPartyPlayGuard)
+    // A box set the viewer may no longer see shows as unavailable, and one
+    // that comes back loads again, so this listens whatever the page shows.
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.refreshAfterAccessChange() }
     val state by viewModel.uiState.collectAsState()
     val detail = state.detail
     when {
@@ -148,8 +151,6 @@ private fun BoxSetContent(
     var playFocused by remember { mutableStateOf(false) }
     var focusedMovieIndex by remember { mutableIntStateOf(-1) }
 
-    // A box set the viewer may no longer see shows as unavailable.
-    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.refreshAfterAccessChange() }
     LifecycleResumeEffect(viewModel) {
         // Coming back from a movie re-reads watched state and the play target.
         viewModel.onScreenResumed()
