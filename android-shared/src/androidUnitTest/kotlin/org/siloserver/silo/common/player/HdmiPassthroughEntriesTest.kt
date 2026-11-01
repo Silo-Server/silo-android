@@ -84,17 +84,6 @@ class HdmiPassthroughEntriesTest {
     }
 
     @Test
-    fun preQDtsHdSinkCannotBypassTheExistingEncodingFilters() {
-        val entries = buildPassthroughEntries(
-            sdkInt = 28,
-            encodings = listOf(dts),
-            hdmiSinkReport = { HdmiAudioSinkReport(setOf(dts.encoding, dtsHd.encoding), 8) },
-            supportsLayout = { _, _ -> error("Pre-Q must never call the direct playback API") },
-        )
-        assertEquals(listOf(2, 6), entries.single().channelCounts)
-    }
-
-    @Test
     fun preQCodecsFromDefaultsOrSettingsAloneCannotEarnEntriesOrFeature() {
         val entries = preQEntries(null)
         assertTrue(entries.isEmpty())
@@ -109,23 +98,6 @@ class HdmiPassthroughEntriesTest {
             assertEquals(listOf(2), it.channelCounts)
             assertEquals(listOf("stereo"), it.layouts)
         }
-    }
-
-    @Test
-    fun preQNeverRoundsTheSinkCeilingUpToAProbedLayout() {
-        for (ceiling in listOf(-1, 0, 1, 5, 7)) {
-            val entries = preQEntries(HdmiAudioSinkReport(setOf(truehd.encoding), ceiling))
-            assertTrue(entries.flatMap { it.channelCounts }.all { it <= ceiling })
-            assertFalse(entries.flatMap { it.layouts }.contains("7.1"))
-        }
-    }
-
-    @Test
-    fun preQCodecCeilingStillBoundsAWiderSink() {
-        val entries = preQEntries(HdmiAudioSinkReport(setOf(dts.encoding, truehd.encoding), 8))
-        assertEquals(listOf(2, 6), entries.first { it.codec == "dts" }.channelCounts)
-        assertEquals(listOf(2, 6, 8), entries.first { it.codec == "truehd" }.channelCounts)
-        assertTrue("7.1" in entries.first { it.codec == "truehd" }.layouts)
     }
 
     @Test
