@@ -33,6 +33,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
+import org.siloserver.silo.common.ui.OnViewerAccessChanged
 import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogBoxSetDetail
@@ -41,6 +42,7 @@ import org.siloserver.silo.model.catalog.boxSetResumePosition
 import org.siloserver.silo.model.catalog.heroFacts
 import org.siloserver.silo.model.catalog.playLabel
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.network.AccessChangeSignals
 import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvHeroFactToken
@@ -131,6 +133,7 @@ private fun BoxSetContent(
                 scope = scope,
                 onWatchedChanged = { watched -> viewModel.onMovieWatchedChanged(movie.contentId, watched) },
                 onWatchedWriteFailed = { viewModel.onMovieWatchedWriteFailed(movie.contentId) },
+                onWatchedWriteSucceeded = { viewModel.onMovieWatchedWriteSucceeded(movie.contentId) },
             )
         }
     }
@@ -145,6 +148,8 @@ private fun BoxSetContent(
     var playFocused by remember { mutableStateOf(false) }
     var focusedMovieIndex by remember { mutableIntStateOf(-1) }
 
+    // A box set the viewer may no longer see shows as unavailable.
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.refreshAfterAccessChange() }
     LifecycleResumeEffect(viewModel) {
         // Coming back from a movie re-reads watched state and the play target.
         viewModel.onScreenResumed()

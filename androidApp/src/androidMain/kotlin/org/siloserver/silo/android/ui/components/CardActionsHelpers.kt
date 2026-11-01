@@ -33,10 +33,13 @@ fun rememberBrowseItemCardActions(
      * the change elsewhere, such as a box set's hero.
      */
     onWatchedWriteFailed: () -> Unit = {},
+    /** The latest watched write for the item succeeded. */
+    onWatchedWriteSucceeded: () -> Unit = {},
 ): Triple<MediaCardActions, MediaItemUserState, Double?> {
     val coordinator: MediaActionsCoordinator = koinInject()
     val scope = rememberCoroutineScope()
     val currentOnWatchedWriteFailed by rememberUpdatedState(onWatchedWriteFailed)
+    val currentOnWatchedWriteSucceeded by rememberUpdatedState(onWatchedWriteSucceeded)
 
     // Re-key on userState too: when the list re-emits with an overlaid userState
     // (local watched/favorite applied), the card must pick it up — keying on
@@ -53,11 +56,13 @@ fun rememberBrowseItemCardActions(
                 val previous = state
                 state = state.withWatched(watched)
                 scope.launch {
-                    if (coordinator.performPersonalWrite(writeIntent).isFailure()) {
-                        if (coordinator.isCurrent(writeIntent)) {
-                            state = previous
-                            currentOnWatchedWriteFailed()
-                        }
+                    val failed = coordinator.performPersonalWrite(writeIntent).isFailure()
+                    if (!coordinator.isCurrent(writeIntent)) return@launch
+                    if (failed) {
+                        state = previous
+                        currentOnWatchedWriteFailed()
+                    } else {
+                        currentOnWatchedWriteSucceeded()
                     }
                 }
             },

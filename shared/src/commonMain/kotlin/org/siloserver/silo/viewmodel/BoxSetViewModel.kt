@@ -11,8 +11,10 @@ import kotlinx.coroutines.launch
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogBoxSetDetail
 import org.siloserver.silo.model.catalog.withWatched
+import org.siloserver.silo.network.AccessChangeCursor
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
+import org.siloserver.silo.network.isAccessRefusal
 import org.siloserver.silo.repository.CatalogRepository
 
 data class BoxSetUiState(
@@ -40,6 +42,9 @@ class BoxSetViewModel(
 
     private var loadJob: Job? = null
 
+    /** The access changes the screen already applied ([refreshAfterAccessChange]). */
+    val accessChanges = AccessChangeCursor()
+
     /** The screen's first resume is the opening itself, which [load] covers. */
     private var openedResumeSeen = false
 
@@ -51,15 +56,16 @@ class BoxSetViewModel(
 
     /**
      * Each movie's latest watched change from a card, numbered in order. A
-     * read that started before a change answers with the state from before
-     * it, so the changes newer than the read are put back on its answer
-     * ([withChangesSince]). A change whose write failed is dropped here when
-     * the movie is put back.
+     * read answers with the state from before any change it started before,
+     * or whose write had not landed yet when it ran, so those changes are put
+     * back on its answer ([withChangesSince]). A change whose write failed is
+     * dropped here when the movie is put back.
      */
     private val watchedChanges = mutableMapOf<String, WatchedChange>()
     private var lastWatchedChange = 0L
 
-    private data class WatchedChange(val number: Long, val watched: Boolean)
+    /** [pending] until its write succeeds, or a read already shows it. */
+    private data class WatchedChange(val number: Long, val watched: Boolean, val pending: Boolean = true)
 
     init { load() }
 
@@ -74,6 +80,21 @@ class BoxSetViewModel(
     fun refresh() {
         // A read in flight already answers with the latest state.
         if (loadJob?.isActive == true) return
+        reread(afterAccessChange = false)
+    }
+
+    /**
+     * The server changed what the viewer may see. A read in flight may have
+     * been answered under the old policy, so it is replaced, and a refusal
+     * (404, 410, or a 403 other than a stale profile proof) shows the box set
+     * as unavailable rather than keeping movies the viewer may no longer see.
+     */
+    fun refreshAfterAccessChange() {
+        loadJob?.cancel()
+        reread(afterAccessChange = true)
+    }
+
+    private fun reread(afterAccessChange: Boolean) {
         if (_uiState.value.detail == null) return load()
         val readStart = lastWatchedChange
         loadJob = viewModelScope.launch {
@@ -82,7 +103,7 @@ class BoxSetViewModel(
                     it.copy(detail = result.data.withChangesSince(readStart), unavailable = false, error = null)
                 }
                 // The box set went away (box sets turned off, access narrowed).
-                is ApiResult.Error -> if (result.code == 404) {
+                is ApiResult.Error -> if (result.code == 404 || (afterAccessChange && result.isAccessRefusal())) {
                     _uiState.update { BoxSetUiState(isLoading = false, unavailable = true) }
                 }
                 is ApiResult.NetworkError -> Unit
@@ -116,6 +137,14 @@ class BoxSetViewModel(
     }
 
     /**
+     * The latest watched write for [contentId] succeeded, so a read from now
+     * on answers with it and needs it put back only if it started earlier.
+     */
+    fun onMovieWatchedWriteSucceeded(contentId: String) {
+        watchedChanges[contentId]?.let { watchedChanges[contentId] = it.copy(pending = false) }
+    }
+
+    /**
      * The latest watched write for [contentId] failed. The movie goes back to
      * how it was before that change, watched state and resume position both,
      * which also puts its card back: the card follows the movie's state. This
@@ -128,11 +157,23 @@ class BoxSetViewModel(
         refresh()
     }
 
-    /** This answer with the watched changes made after its read started put back on it. */
+    /**
+     * This answer with the watched changes it can't show put back on it: those
+     * made after its read started, and those whose write was still pending.
+     * A pending change the answer already shows has landed and settles here,
+     * which also covers a write whose success never reached [onMovieWatchedWriteSucceeded].
+     */
     private fun CatalogBoxSetDetail.withChangesSince(readStart: Long): CatalogBoxSetDetail {
-        val newer = watchedChanges.filterValues { it.number > readStart }
-        if (newer.isEmpty()) return this
-        val movies = items.map { movie -> newer[movie.contentId]?.let { movie.withWatched(it.watched) } ?: movie }
+        items.forEach { movie ->
+            val change = watchedChanges[movie.contentId] ?: return@forEach
+            val shown = (movie.userState?.played == true) == change.watched
+            if (change.pending && change.number <= readStart && shown) {
+                watchedChanges[movie.contentId] = change.copy(pending = false)
+            }
+        }
+        val unseen = watchedChanges.filterValues { it.number > readStart || it.pending }
+        if (unseen.isEmpty()) return this
+        val movies = items.map { movie -> unseen[movie.contentId]?.let { movie.withWatched(it.watched) } ?: movie }
         return copy(items = movies, boxSet = boxSet.copy(playedCount = movies.count { it.userState?.played == true }))
     }
 

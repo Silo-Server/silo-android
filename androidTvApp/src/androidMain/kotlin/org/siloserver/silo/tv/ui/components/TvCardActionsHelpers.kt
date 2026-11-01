@@ -91,13 +91,18 @@ fun MediaActionsCoordinator.tvCardActions(
     scope: CoroutineScope,
     onWatchedChanged: (watched: Boolean) -> Unit,
     onWatchedWriteFailed: () -> Unit,
+    /** The latest watched write succeeded. */
+    onWatchedWriteSucceeded: () -> Unit = {},
 ): TvMediaCardActions = TvMediaCardActions(
     onSetWatched = { watched ->
         val writeIntent = beginWatched(contentId, watched)
         onWatchedChanged(watched)
         scope.launch {
             val result = performPersonalWrite(writeIntent)
-            if (result !is ApiResult.Success && isCurrent(writeIntent)) {
+            if (!isCurrent(writeIntent)) return@launch
+            if (result is ApiResult.Success) {
+                onWatchedWriteSucceeded()
+            } else {
                 onWatchedWriteFailed()
                 showWatchedWriteFailed(context, watched, result)
             }

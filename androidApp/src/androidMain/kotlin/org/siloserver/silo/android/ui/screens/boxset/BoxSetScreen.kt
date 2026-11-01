@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,6 +29,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import org.koin.compose.koinInject
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.MediaCard
@@ -49,6 +49,7 @@ import org.siloserver.silo.android.ui.screens.watchparty.WatchPartySoloGuardDial
 import org.siloserver.silo.android.ui.screens.watchparty.rememberWatchPartySoloGuard
 import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.util.rememberDominantColor
+import org.siloserver.silo.common.ui.OnViewerAccessChanged
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.catalog.BOX_SET_TYPE
 import org.siloserver.silo.model.catalog.BrowseItem
@@ -58,6 +59,7 @@ import org.siloserver.silo.model.catalog.boxSetNextMovie
 import org.siloserver.silo.model.catalog.boxSetResumePosition
 import org.siloserver.silo.model.catalog.heroFacts
 import org.siloserver.silo.model.catalog.playLabel
+import org.siloserver.silo.network.AccessChangeSignals
 import org.siloserver.silo.overlays.OverlayDataExtractor
 import org.siloserver.silo.viewmodel.BoxSetViewModel
 
@@ -80,6 +82,8 @@ fun BoxSetScreen(
     val guardedPlayMovie: (String, Double?) -> Unit = { contentId, resumePositionSeconds ->
         soloGuard.run { onPlayMovie(contentId, resumePositionSeconds) }
     }
+    // A box set the viewer may no longer see shows as unavailable.
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.refreshAfterAccessChange() }
     // Coming back from a movie re-reads watched state and the play target.
     LifecycleResumeEffect(viewModel) {
         viewModel.onScreenResumed()
@@ -100,6 +104,7 @@ fun BoxSetScreen(
                 onMovieClick = onMovieClick,
                 onMovieWatchedChanged = viewModel::onMovieWatchedChanged,
                 onMovieWatchedWriteFailed = viewModel::onMovieWatchedWriteFailed,
+                onMovieWatchedWriteSucceeded = viewModel::onMovieWatchedWriteSucceeded,
             )
             state.unavailable -> EmptyStateView(
                 title = "This box set isn't available",
@@ -134,6 +139,7 @@ private fun BoxSetContent(
     onMovieClick: (contentId: String) -> Unit,
     onMovieWatchedChanged: (contentId: String, watched: Boolean) -> Unit,
     onMovieWatchedWriteFailed: (contentId: String) -> Unit,
+    onMovieWatchedWriteSucceeded: (contentId: String) -> Unit,
 ) {
     val boxSet = detail.boxSet
     // The movie hero reads an item detail; a box set fills the fields it draws.
@@ -208,7 +214,7 @@ private fun BoxSetContent(
                         )
                     }
                     items(rows, contentType = { "box-set-movies-row" }) { row ->
-                        MemberRow(row, columns, cellWidth, onMovieClick, onMovieWatchedChanged, onMovieWatchedWriteFailed)
+                        MemberRow(row, columns, cellWidth, onMovieClick, onMovieWatchedChanged, onMovieWatchedWriteFailed, onMovieWatchedWriteSucceeded)
                     }
                     item(contentType = "detail-spacer") {
                         Spacer(modifier = Modifier.height(40.dp))
@@ -227,6 +233,7 @@ private fun MemberRow(
     onMovieClick: (contentId: String) -> Unit,
     onMovieWatchedChanged: (contentId: String, watched: Boolean) -> Unit,
     onMovieWatchedWriteFailed: (contentId: String) -> Unit,
+    onMovieWatchedWriteSucceeded: (contentId: String) -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -241,6 +248,7 @@ private fun MemberRow(
             val (cardActions, userState, _) = rememberBrowseItemCardActions(
                 item,
                 onWatchedWriteFailed = { onMovieWatchedWriteFailed(item.contentId) },
+                onWatchedWriteSucceeded = { onMovieWatchedWriteSucceeded(item.contentId) },
             )
             // Marking a movie watched here moves the hero's count and play target too.
             val actions = cardActions.copy(

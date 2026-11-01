@@ -168,4 +168,35 @@ class BoxSetViewModelTest {
         assertEquals("hp1", next.contentId)
         assertEquals(600.0, next.positionSeconds)
     }
+
+    @Test fun aReadKeepsAChangeWhoseWriteIsStillOutUntilItLands() = runWith(mutableListOf(
+        json(HttpStatusCode.OK, body),
+        // Read after hp2's write failed, before hp1's write landed.
+        json(HttpStatusCode.OK, body),
+        // Read after hp1's write landed and hp1 was unmarked on another device.
+        json(HttpStatusCode.OK, body),
+    )) { vm ->
+        advanceUntilIdle()
+        vm.onMovieWatchedChanged("hp1", watched = true)
+        vm.onMovieWatchedChanged("hp2", watched = true)
+        vm.onMovieWatchedWriteFailed("hp2"); advanceUntilIdle()
+        var detail = assertNotNull(vm.uiState.value.detail)
+        assertEquals(true, detail.items.single { it.contentId == "hp1" }.userState?.played)
+        assertEquals(1, detail.boxSet.playedCount)
+        vm.onMovieWatchedWriteSucceeded("hp1")
+        vm.refresh(); advanceUntilIdle()
+        detail = assertNotNull(vm.uiState.value.detail)
+        assertNotEquals(true, detail.items.single { it.contentId == "hp1" }.userState?.played)
+        assertEquals(0, detail.boxSet.playedCount)
+    }
+
+    @Test fun anAccessChangeThatRefusesTheBoxSetMakesItUnavailable() = runWith(mutableListOf(
+        json(HttpStatusCode.OK, body),
+        json(HttpStatusCode.Forbidden, """{"type":"about:blank","title":"Forbidden","status":403}"""),
+    )) { vm ->
+        advanceUntilIdle()
+        vm.refreshAfterAccessChange(); advanceUntilIdle()
+        assertTrue(vm.uiState.value.unavailable)
+        assertNull(vm.uiState.value.detail)
+    }
 }
