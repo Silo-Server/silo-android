@@ -17,6 +17,7 @@ import org.siloserver.silo.model.playback.SubtitleHlsRendition
 import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_BURN_IN_ONLY
 import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 import org.siloserver.silo.model.playback.carriesHlsSubtitleRendition
+import org.siloserver.silo.model.playback.isUnplayableSubtitle
 import org.siloserver.silo.model.playback.nativeSwitchTrackId
 import org.siloserver.silo.model.playback.switchableHlsRendition
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
@@ -151,6 +152,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
                         it == SUBTITLE_DELIVERY_BURN_IN_ONLY
                 },
                 syncKey = item.syncKey,
+                unplayable = item.isUnplayableSubtitle(),
             )
         }
         .distinctBy(PlayerSubtitleInfo::index)

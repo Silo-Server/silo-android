@@ -42,9 +42,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.theme.DarkOutline
 import org.siloserver.silo.android.ui.theme.DarkSurface
 import org.siloserver.silo.android.ui.theme.DarkSurfaceVariant
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.editionLabel
@@ -61,6 +64,7 @@ import org.siloserver.silo.model.catalog.playbackEditions
 import org.siloserver.silo.model.catalog.hasEditionChoices
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.model.playback.isUnplayableSubtitle
 import org.siloserver.silo.player.DolbyVisionDetection
 import org.siloserver.silo.playback.selectPlaybackVersion
 
@@ -381,11 +385,18 @@ fun SubtitlePickerSheet(
         }
 
         itemsIndexed(tracks) { index, track ->
+            // A track the server has no way to show stays listed, disabled.
+            val unplayable = track.isUnplayableSubtitle()
             PickerItem(
                 title = formatSubtitleTitle(track, index),
-                subtitle = formatSubtitleSubtitle(track),
+                subtitle = if (unplayable) {
+                    stringResource(CommonR.string.subtitle_track_unsupported_format)
+                } else {
+                    formatSubtitleSubtitle(track)
+                },
                 badges = buildSubtitleBadges(track),
                 isSelected = index == selectedIndex,
+                enabled = !unplayable,
                 onClick = { onSelect(index) },
             )
             if (index < tracks.lastIndex) {
@@ -453,11 +464,13 @@ private fun PickerItem(
     badges: List<String>,
     isSelected: Boolean,
     onClick: () -> Unit,
+    enabled: Boolean = true,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
+            .alpha(if (enabled) 1f else 0.4f)
             .background(if (isSelected) Color.White.copy(alpha = 0.06f) else Color.Transparent)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,

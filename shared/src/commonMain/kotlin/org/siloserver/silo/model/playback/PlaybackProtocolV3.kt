@@ -551,6 +551,13 @@ data class PlaybackSubtitleInventoryItemV3(
     @SerialName("hearing_impaired") val hearingImpaired: Boolean = false,
     /** `sidecar` or `burn_in_only`; the last carries no [url]. */
     val delivery: String = "",
+    /**
+     * No route can show this track: the server has no rendering, conversion
+     * or burn-in for its format, or did not recognize the format. It keeps its
+     * ordinal, but selecting it ends in `subtitle_codec_unsupported`. Omitted
+     * (false) by servers that predate it; see [isUnplayableSubtitle].
+     */
+    val unplayable: Boolean = false,
     val url: String? = null,
     @SerialName("font_bundle_url") val fontBundleUrl: String? = null,
     /**
@@ -574,6 +581,24 @@ data class PlaybackSubtitleInventoryItemV3(
     /** The row's track among the HLS stream's own subtitle renditions. */
     @SerialName("hls_rendition") val hlsRendition: PlaybackSubtitleInventoryHlsRenditionV3? = null,
 )
+
+/**
+ * Whether this row names a track no route can show: the server's
+ * [PlaybackSubtitleInventoryItemV3.unplayable], or, from a server that does
+ * not send it, an embedded track the server stored without a codec
+ * ([isUnrecognizedEmbeddedSubtitle]).
+ */
+fun PlaybackSubtitleInventoryItemV3.isUnplayableSubtitle(): Boolean =
+    unplayable || isUnrecognizedEmbeddedSubtitle(source, codec)
+
+/**
+ * An embedded track with no codec: the server's probe did not recognize its
+ * format (a Matroska `S_TEXT/WEBVTT` track, for one), so it can neither send
+ * it nor burn it in. Only embedded tracks count; a downloaded or generated
+ * track can arrive without a codec and still play.
+ */
+fun isUnrecognizedEmbeddedSubtitle(source: String?, codec: String?): Boolean =
+    source?.trim().equals("embedded", ignoreCase = true) && codec.isNullOrBlank()
 
 /** Resolves the optional ordinal from the stable server track identity. */
 fun PlaybackPlanV3.resolvedSelectedSubtitleIndex(): Int? =

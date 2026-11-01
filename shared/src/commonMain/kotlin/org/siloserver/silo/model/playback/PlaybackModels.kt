@@ -82,6 +82,12 @@ data class PlayerSubtitleInfo(
     @SerialName("hls_rendition") val hlsRendition: SubtitleHlsRendition? = null,
     /** The inventory's `sync_key`: present when the server can sync this track to the audio. */
     @SerialName("sync_key") val syncKey: String? = null,
+    /**
+     * No route can show this server track ([isUnplayableSubtitle]). Pickers
+     * list it disabled and Auto never picks it; the row stays so the
+     * combined ordinals keep their places.
+     */
+    val unplayable: Boolean = false,
 )
 
 /**

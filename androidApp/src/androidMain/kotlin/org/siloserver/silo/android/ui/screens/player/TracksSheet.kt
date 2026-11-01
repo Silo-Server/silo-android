@@ -22,8 +22,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.playback.SubtitleTimingActions
@@ -113,13 +115,18 @@ fun TracksSheet(
                         selected = selectedSubtitleIndex == -1,
                         onClick = { choose { onSelectSubtitle(-1) } },
                     )
+                    val unsupportedFormat = stringResource(CommonR.string.subtitle_track_unsupported_format)
                     subtitles.forEachIndexed { index, subtitle ->
-                        val presentation = subtitleTrackPresentation(subtitle, index, subtitleStatus(subtitle))
+                        // A track no route can show stays listed, disabled, so
+                        // the rows keep their places and the viewer sees why.
+                        val status = if (subtitle.unplayable) unsupportedFormat else subtitleStatus(subtitle)
+                        val presentation = subtitleTrackPresentation(subtitle, index, status)
                         PlayerTrackRow(
                             title = presentation.title,
                             chips = presentation.chips,
                             detail = presentation.detail,
                             selected = index == selectedSubtitleIndex,
+                            enabled = !subtitle.unplayable,
                             onClick = { choose { onSelectSubtitle(index) } },
                         )
                     }

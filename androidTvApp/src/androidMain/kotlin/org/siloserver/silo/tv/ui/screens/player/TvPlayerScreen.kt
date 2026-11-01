@@ -111,6 +111,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.settings.SeekIntervalStore
 import org.siloserver.silo.model.settings.SeekIntervalPair
 import org.koin.compose.viewmodel.koinViewModel
@@ -3316,10 +3317,13 @@ private fun TvQuickSubtitlePicker(
 ) {
     val checkedRow = presentation.rows.firstOrNull { row -> row.checked }
     val focusedRow = presentation.rows.firstOrNull { row -> row.focused }
+    val unsupportedFormat = stringResource(CommonR.string.subtitle_track_unsupported_format)
     val options = presentation.rows.map { row ->
         HudPickerOption(
             id = row.stableId,
             label = if (row.applying) "${row.label} · Applying…" else row.label,
+            detail = unsupportedFormat.takeIf { row.unplayable },
+            enabled = !row.unplayable,
         )
     }
 

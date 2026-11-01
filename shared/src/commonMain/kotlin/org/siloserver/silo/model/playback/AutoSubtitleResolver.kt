@@ -59,6 +59,11 @@ data class AutoSubtitleCandidate(
      * [title].
      */
     val label: String? = null,
+    /**
+     * No route can show this track ([isUnplayableSubtitle]). Auto never
+     * picks it, not even as the only track or the series choice.
+     */
+    val unplayable: Boolean = false,
 ) {
     val signatureLabel: String? get() = label ?: title
 }
@@ -112,7 +117,8 @@ fun AutoSubtitleResolution.selectedCandidate(): AutoSubtitleCandidate? =
  *
  * Within a pool, [autoSubtitlePreferenceOrder] ranks the tracks; a track that
  * needs a burn-in is DEPRIORITISED, never excluded, so it still wins when it is
- * the only candidate.
+ * the only candidate. A track no route can show
+ * ([AutoSubtitleCandidate.unplayable]) is excluded: the server refuses it.
  *
  * "Show forced subtitles" is a SEPARATE setting and never outranks the
  * viewer's full-subtitle preference: when subtitles are wanted (mode `always`,
@@ -132,6 +138,10 @@ fun resolveAutoSubtitle(
     context: AutoSubtitleContext,
 ): AutoSubtitleResolution {
     if (candidates.isEmpty()) return AutoSubtitleResolution.NoChange
+    // Every branch below ranks only tracks the server can show. With none of
+    // those left, each branch finds nothing and says so in its own terms
+    // (Disable or NoChange), as it would for a file without the language.
+    val playable = candidates.filterNot(AutoSubtitleCandidate::unplayable)
 
     val mode = context.mode?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: "auto"
     if (mode == "off") {
@@ -141,13 +151,13 @@ fun resolveAutoSubtitle(
         if (!context.showForced) return AutoSubtitleResolution.Disable
         val audioLanguage = autoSubtitleLanguageKey(context.audioLanguage)
             ?: return AutoSubtitleResolution.Disable
-        return bestForcedAutoSubtitleCandidate(candidates, audioLanguage)
+        return bestForcedAutoSubtitleCandidate(playable, audioLanguage)
             ?.let(AutoSubtitleResolution::Select)
             ?: AutoSubtitleResolution.Disable
     }
 
     val signature = context.trackSignature
-    signature?.let { sig -> candidates.firstOrNull { it.matchesSignature(sig) } }
+    signature?.let { sig -> playable.firstOrNull { it.matchesSignature(sig) } }
         ?.let { return AutoSubtitleResolution.Select(it) }
 
     val preferred = context.preferredLanguage
@@ -156,7 +166,7 @@ fun resolveAutoSubtitle(
     val targetLanguage = autoSubtitleLanguageKey(preferred)
     if (targetLanguage == null) {
         if (mode != "always") return AutoSubtitleResolution.NoChange
-        return bestAutoSubtitleCandidate(candidates, null, signature)
+        return bestAutoSubtitleCandidate(playable, null, signature)
             ?.let(AutoSubtitleResolution::Select)
             ?: AutoSubtitleResolution.NoChange
     }
@@ -164,7 +174,7 @@ fun resolveAutoSubtitle(
     val audioLanguage = autoSubtitleLanguageKey(context.audioLanguage)
     if (mode == "auto" && audioLanguage != null && audioLanguage == targetLanguage) {
         if (context.showForced) {
-            bestForcedAutoSubtitleCandidate(candidates, targetLanguage)
+            bestForcedAutoSubtitleCandidate(playable, targetLanguage)
                 // Idempotent re-select even when this track is already on:
                 // NoChange is reserved for "no track should be on", so a
                 // launch-time consumer can map it to an explicit disable
@@ -174,9 +184,9 @@ fun resolveAutoSubtitle(
         return AutoSubtitleResolution.Disable
     }
 
-    val target = bestAutoSubtitleCandidate(candidates, targetLanguage, signature)
+    val target = bestAutoSubtitleCandidate(playable, targetLanguage, signature)
         ?: if (context.showForced) {
-            candidates.filter { it.forced }.minWithOrNull(autoSubtitlePreferenceOrder)
+            playable.filter { it.forced }.minWithOrNull(autoSubtitlePreferenceOrder)
         } else {
             null
         }
@@ -277,6 +287,7 @@ fun catalogAutoSubtitleCandidates(
             source = if (track.external) AutoSubtitleSource.EXTERNAL else AutoSubtitleSource.EMBEDDED,
             needsBurnIn = isBitmapSubtitleCodecFamily(track.codec) &&
                 (track.external || !isClientMountableBitmapCodecFamily(track.codec)),
+            unplayable = track.isUnplayableSubtitle(),
         )
     }
 }
@@ -307,6 +318,7 @@ fun PlayerSubtitleInfo.toAutoSubtitleCandidate(): AutoSubtitleCandidate =
         source = autoSubtitleSource(),
         needsBurnIn = playbackSubtitleIdentity(this) is SubtitleIdentity.ServerBurnIn,
         label = label ?: catalogLabel,
+        unplayable = unplayable,
     )
 
 private fun PlayerSubtitleInfo.autoSubtitleSource(): AutoSubtitleSource? {

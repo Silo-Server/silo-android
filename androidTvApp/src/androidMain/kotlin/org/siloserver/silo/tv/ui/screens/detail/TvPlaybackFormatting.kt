@@ -12,6 +12,7 @@ import org.siloserver.silo.model.playback.AutoSubtitleContext
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates
 import org.siloserver.silo.model.playback.combinedSubtitleSelectionIndexes
+import org.siloserver.silo.model.playback.isUnplayableSubtitle
 import org.siloserver.silo.model.playback.resolveAutoSubtitle
 import org.siloserver.silo.model.playback.selectedCandidate
 import org.siloserver.silo.player.DolbyVisionDetection
@@ -68,6 +69,8 @@ object TvPlaybackFormatting {
         val detail: String,
         val isSelected: Boolean,
         val stableId: String,
+        /** No route can show this track: listed, never selectable. */
+        val unplayable: Boolean = false,
     )
 
     data class TvEdition(
@@ -433,6 +436,7 @@ object TvPlaybackFormatting {
                 detail = subtitleDetail(track),
                 isSelected = selectedSubtitleTrackIndex == combined[ordinal],
                 stableId = "sub-$ordinal",
+                unplayable = track.isUnplayableSubtitle(),
             )
         }
     }
