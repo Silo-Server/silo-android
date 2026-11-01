@@ -75,6 +75,12 @@ data class SectionsResponse(
     val sections: List<ResolvedSection> = emptyList()
 )
 
+/** One Home row from `GET /api/v2/home/layout`: which row it is, without its cards. */
+data class HomeLayoutRow(
+    val id: String,
+    val sectionType: String,
+)
+
 @Serializable
 data class HomeSectionItemsResponse(
     val section: ResolvedSection? = null,

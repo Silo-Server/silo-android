@@ -5,6 +5,7 @@ import kotlinx.coroutines.ensureActive
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.section.SECTION_ROW_MAX_ITEMS
 import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 
@@ -39,23 +40,26 @@ internal suspend fun syncWatchNextHome(
     val resolvedPrefs = spoilerPreferences() ?: return false
     prefs = resolvedPrefs
     if (!current()) return true
-    val response = sections.getHomeSections(owner)
+    // The layout names the rows without their cards, so only the rows the
+    // launcher mirrors are downloaded. The full Home list can be over 1 MB, and
+    // this sync also runs during playback, where a read that size can exhaust
+    // the heap on a low-memory TV.
+    val layout = sections.getHomeLayout(owner)
     if (!current()) return true
-    if (response !is ApiResult.Success) return false
+    if (layout !is ApiResult.Success) return false
 
     val fields = mutableListOf<WatchNextProgramFields>()
     val artworkBySeries = mutableMapOf<String, ItemDetail>()
-    for (section in response.data.sections.filter { it.sectionType in setOf("continue_watching", "next_up") }) {
-        var items = section.items
-        if (items.isEmpty() && section.totalCount > 0) {
-            val fallback = sections.getHomeSectionItems(section.id, owner)
-            if (!current()) return true
-            if (fallback !is ApiResult.Success) return false
-            items = fallback.data.items
-            if (items.isEmpty() && (fallback.data.section?.totalCount ?: 0) > 0) return false
-        }
-        for (item in items) {
-            var mapped = WatchNextProgramMapper.map(item, section.sectionType, resolvedPrefs)
+    for (row in layout.data.filter { it.sectionType in WATCH_NEXT_SECTION_TYPES }) {
+        val read = sections.getHomeSectionItems(row.id, owner)
+        if (!current()) return true
+        if (read !is ApiResult.Success) return false
+        // A row read answers with the row's configured limit (up to 100 by
+        // default), not the capped Home list's; keep the cards a Home row draws.
+        // An empty row is the server's answer, even when hide-watched filtering
+        // left total_count above zero.
+        for (item in read.data.items.take(SECTION_ROW_MAX_ITEMS)) {
+            var mapped = WatchNextProgramMapper.map(item, row.sectionType, resolvedPrefs)
             if (mapped == null && item.type.equals("episode", ignoreCase = true) &&
                 resolvedPrefs.hidesImage(EpisodeSpoilers.isUnwatched(item))) {
                 val seriesId = item.seriesId?.takeIf { it.isNotBlank() }
@@ -67,7 +71,7 @@ internal suspend fun syncWatchNextHome(
                         // without the tile would remove it from the launcher.
                         artworkBySeries[seriesId] = series ?: return false
                     }
-                    mapped = WatchNextProgramMapper.map(item, section.sectionType, resolvedPrefs, artworkBySeries[seriesId])
+                    mapped = WatchNextProgramMapper.map(item, row.sectionType, resolvedPrefs, artworkBySeries[seriesId])
                 }
             }
             mapped?.let(fields::add)
@@ -77,3 +81,6 @@ internal suspend fun syncWatchNextHome(
     apply(fields, run, ::authority)
     return true
 }
+
+/** The Home rows the launcher's Watch Next row mirrors. */
+private val WATCH_NEXT_SECTION_TYPES = setOf("continue_watching", "next_up")

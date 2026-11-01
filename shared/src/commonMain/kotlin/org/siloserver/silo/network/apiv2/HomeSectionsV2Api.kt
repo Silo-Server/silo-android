@@ -14,6 +14,7 @@ import kotlinx.serialization.json.*
 import org.siloserver.silo.model.section.SectionsResponse
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.HomeSectionItemsResponse
+import org.siloserver.silo.model.section.HomeLayoutRow
 import org.siloserver.silo.network.*
 
 /** One v2 section row: `items` is required on the wire even though the domain model defaults it. */
@@ -27,6 +28,18 @@ internal fun decodeSectionV2(row: JsonObject): ResolvedSection {
 internal fun decodeSectionsV2(body: JsonObject): SectionsResponse {
     val rows = body["sections"] as? JsonArray ?: throw IllegalArgumentException("Missing sections.")
     return SectionsResponse(rows.map { decodeSectionV2(it.jsonObject) })
+}
+
+/** `GET /api/v2/home/layout` without `include_items`: each row's id and type, no cards. */
+internal fun decodeHomeLayoutV2(body: JsonObject): List<HomeLayoutRow> {
+    val rows = body["sections"] as? JsonArray ?: throw IllegalArgumentException("Missing sections.")
+    return rows.map { element ->
+        val row = element.jsonObject
+        val id = (row["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        val type = (row["section_type"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        require(!id.isNullOrBlank() && !type.isNullOrBlank()) { "Blank section identity." }
+        HomeLayoutRow(id, type)
+    }
 }
 
 /**
@@ -99,6 +112,17 @@ class HomeSectionsV2Api(
                 itemLimit?.let { parameter("item_limit", it) }
             }.also { rejected = itemLimit != null && it.rejectsQueryParameter("item_limit") }
         }) { decodeSectionsV2(it) }.tagItemLimitRejection(rejected)
+    }
+
+    /**
+     * Home's rows without their cards. A few hundred bytes where [list] can
+     * answer over 1 MB, so background work that needs only some rows reads
+     * this and then [section] for each row it wants.
+     */
+    suspend fun layout(owner: AuthScopeSnapshot): ApiResult<List<HomeLayoutRow>> = withContext(decodeDispatcher) {
+        ownedV2Call<JsonObject, List<HomeLayoutRow>>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { scope ->
+            client.get("/api/v2/home/layout") { authScope(scope!!); requireSiloAuth() }
+        }) { decodeHomeLayoutV2(it) }
     }
 
     suspend fun section(id: String, owner: AuthScopeSnapshot, widths: ArtworkWidths? = null): ApiResult<HomeSectionItemsResponse> {
