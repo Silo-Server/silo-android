@@ -84,6 +84,7 @@ import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestMediaType
+import org.siloserver.silo.model.request.withoutLibraryTitles
 import org.siloserver.silo.tv.ui.components.TvHideStockImeOnDispose
 import org.siloserver.silo.tv.ui.components.TvCatalogGrid
 import org.siloserver.silo.tv.ui.components.TvFilterChip
@@ -232,16 +233,19 @@ fun TvSearchScreen(
         }
     }
     val requestMediaType = state.mediaType.toRequestMediaType()
-    val visibleRequestResults = requestState.results
+    val matchingRequestResults = requestState.results
         .filterTvRequestResults()
         .filter { state.mediaType.allowsRequestResult(it) }
         .filter { state.showAudiobooks || it.mediaType != RequestMediaType.Audiobook }
+    val visibleRequestResults = matchingRequestResults.withoutLibraryTitles()
+    // Every match is already in the library results, so there is nothing to say here.
+    val onlyLibraryRequestMatches = matchingRequestResults.isNotEmpty() && visibleRequestResults.isEmpty()
     val canSearchRequests = requestsEnabled && state.query.trim().length >= 2
     val shouldShowRequestSection = canSearchRequests &&
         (visibleRequestResults.isNotEmpty() ||
             requestState.isLoading ||
             requestState.error != null ||
-            requestState.hasSubmittedQuery)
+            (requestState.hasSubmittedQuery && !onlyLibraryRequestMatches))
     val requestSearchSettled = !canSearchRequests || !requestState.isLoading
     // Same precedence as the post-search handoff below: people (the row
     // nearest the chips), results, then the error's "Try again", then the
@@ -352,10 +356,18 @@ fun TvSearchScreen(
             // the request row and carries on immediately.
             if (returnTarget?.sectionId == TvSearchRequestSectionId) return@LaunchedEffect
         }
+        // The same holds on the relaunch the refresh itself triggers: until the
+        // response lands, the preserved row can still hold a card it drops (a
+        // title that reached the library leaves this row). Leaving the row out
+        // makes the target absent while incomplete, so it waits as Pending
+        // under the usual bounds instead of matching Exact.
+        val awaitingRequestRefresh = returnRefreshed &&
+            requestState.isLoading &&
+            returnTarget?.sectionId == TvSearchRequestSectionId
 
         val sections = tvSearchReturnSections(
             catalogItems = state.items,
-            requestResults = visibleRequestResults,
+            requestResults = if (awaitingRequestRefresh) emptyList() else visibleRequestResults,
             // More pages can still arrive, so a target beyond the loaded
             // results is not yet absent.
             catalogComplete = !state.hasMore,
