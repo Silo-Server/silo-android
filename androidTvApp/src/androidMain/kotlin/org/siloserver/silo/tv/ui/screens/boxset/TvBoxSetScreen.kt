@@ -19,7 +19,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -30,6 +29,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.viewModelScope
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
@@ -115,7 +115,6 @@ private fun BoxSetContent(
     // Each movie's card menu marks it watched or adds it to a list, as on the
     // library grid; the view model moves the hero's count and play target.
     val coordinator: MediaActionsCoordinator = koinInject()
-    val scope = rememberCoroutineScope()
     val context = LocalContext.current.applicationContext
     val membershipActions by coordinator.memberships.actions.collectAsState()
     val movies = remember(detail.items, membershipActions) {
@@ -125,12 +124,13 @@ private fun BoxSetContent(
             )
         }
     }
-    val cardActions = remember(coordinator, context, scope, viewModel) {
+    val cardActions = remember(coordinator, context, viewModel) {
         { movie: SectionItem ->
             coordinator.tvCardActions(
                 contentId = movie.contentId,
                 context = context,
-                scope = scope,
+                // The view model follows the write, so it runs as long as the view model does.
+                scope = viewModel.viewModelScope,
                 onWatchedChanged = { watched -> viewModel.onMovieWatchedChanged(movie.contentId, watched) },
                 onWatchedWriteFailed = { viewModel.onMovieWatchedWriteFailed(movie.contentId) },
                 onWatchedWriteSucceeded = { viewModel.onMovieWatchedWriteSucceeded(movie.contentId) },

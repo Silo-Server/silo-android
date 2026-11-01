@@ -29,6 +29,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CoroutineScope
 import org.koin.compose.koinInject
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
@@ -105,6 +107,7 @@ fun BoxSetScreen(
                 onMovieWatchedChanged = viewModel::onMovieWatchedChanged,
                 onMovieWatchedWriteFailed = viewModel::onMovieWatchedWriteFailed,
                 onMovieWatchedWriteSucceeded = viewModel::onMovieWatchedWriteSucceeded,
+                watchedWriteScope = viewModel.viewModelScope,
             )
             state.unavailable -> EmptyStateView(
                 title = "This box set isn't available",
@@ -140,6 +143,7 @@ private fun BoxSetContent(
     onMovieWatchedChanged: (contentId: String, watched: Boolean) -> Unit,
     onMovieWatchedWriteFailed: (contentId: String) -> Unit,
     onMovieWatchedWriteSucceeded: (contentId: String) -> Unit,
+    watchedWriteScope: CoroutineScope,
 ) {
     val boxSet = detail.boxSet
     // The movie hero reads an item detail; a box set fills the fields it draws.
@@ -214,7 +218,7 @@ private fun BoxSetContent(
                         )
                     }
                     items(rows, contentType = { "box-set-movies-row" }) { row ->
-                        MemberRow(row, columns, cellWidth, onMovieClick, onMovieWatchedChanged, onMovieWatchedWriteFailed, onMovieWatchedWriteSucceeded)
+                        MemberRow(row, columns, cellWidth, onMovieClick, onMovieWatchedChanged, onMovieWatchedWriteFailed, onMovieWatchedWriteSucceeded, watchedWriteScope)
                     }
                     item(contentType = "detail-spacer") {
                         Spacer(modifier = Modifier.height(40.dp))
@@ -234,6 +238,7 @@ private fun MemberRow(
     onMovieWatchedChanged: (contentId: String, watched: Boolean) -> Unit,
     onMovieWatchedWriteFailed: (contentId: String) -> Unit,
     onMovieWatchedWriteSucceeded: (contentId: String) -> Unit,
+    watchedWriteScope: CoroutineScope,
 ) {
     Row(
         modifier = Modifier
@@ -249,6 +254,8 @@ private fun MemberRow(
                 item,
                 onWatchedWriteFailed = { onMovieWatchedWriteFailed(item.contentId) },
                 onWatchedWriteSucceeded = { onMovieWatchedWriteSucceeded(item.contentId) },
+                // The view model follows the write, so it runs as long as the view model does.
+                scope = watchedWriteScope,
             )
             // Marking a movie watched here moves the hero's count and play target too.
             val actions = cardActions.copy(

@@ -12,6 +12,7 @@ import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.withWatched
 import org.siloserver.silo.model.catalog.MediaItemUserState
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
@@ -35,9 +36,14 @@ fun rememberBrowseItemCardActions(
     onWatchedWriteFailed: () -> Unit = {},
     /** The latest watched write for the item succeeded. */
     onWatchedWriteSucceeded: () -> Unit = {},
+    /**
+     * Where the writes run. A screen that follows them in its own state passes
+     * one that outlives the card, so a write still reports back after its card
+     * scrolls away or the grid reflows.
+     */
+    scope: CoroutineScope = rememberCoroutineScope(),
 ): Triple<MediaCardActions, MediaItemUserState, Double?> {
     val coordinator: MediaActionsCoordinator = koinInject()
-    val scope = rememberCoroutineScope()
     val currentOnWatchedWriteFailed by rememberUpdatedState(onWatchedWriteFailed)
     val currentOnWatchedWriteSucceeded by rememberUpdatedState(onWatchedWriteSucceeded)
 
@@ -54,15 +60,19 @@ fun rememberBrowseItemCardActions(
             onSetWatched = { watched ->
                 val writeIntent = coordinator.beginWatched(item.contentId, watched)
                 val previous = state
+                // The callbacks for this item: by the time the write ends, the
+                // card may show another one.
+                val onFailed = currentOnWatchedWriteFailed
+                val onSucceeded = currentOnWatchedWriteSucceeded
                 state = state.withWatched(watched)
                 scope.launch {
                     val failed = coordinator.performPersonalWrite(writeIntent).isFailure()
                     if (!coordinator.isCurrent(writeIntent)) return@launch
                     if (failed) {
                         state = previous
-                        currentOnWatchedWriteFailed()
+                        onFailed()
                     } else {
-                        currentOnWatchedWriteSucceeded()
+                        onSucceeded()
                     }
                 }
             },
