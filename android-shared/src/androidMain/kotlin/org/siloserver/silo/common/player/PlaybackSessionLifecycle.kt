@@ -711,6 +711,9 @@ class PlaybackSessionLifecycle(
                 if (!ownsProgressReply(sess.sessionId)) continue
                 if (result.isPlaybackSessionEnded()) {
                     Log.i(TAG, "reportProgress: the server ended this session; leaving playback")
+                    // Worded to survive the hosted scanner, which withholds a
+                    // message where "server" precedes a host-like token.
+                    DiagnosticsPlaybackLogger.sessionEvent("session ended remotely (http 410)")
                     _sessionEndedEvents.tryEmit(sess.sessionId)
                     continue
                 }

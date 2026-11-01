@@ -1158,6 +1158,47 @@ class DiagnosticsBundleBuilderTest {
         )
     }
 
+    /**
+     * The hosted collector keeps no playback error attributes, so the codes in
+     * these messages are all a hosted report has. Messages are the ones
+     * PlaybackErrorDiagnosticsTest pins; the old retry line, whose byte counts
+     * read as integer-encoded IPv4 addresses, shipped as a lone marker.
+     */
+    @Test
+    fun hostedBundleKeepsPlaybackErrorCodesInTheMessage() {
+        val messages = listOf(
+            "player error (ERROR_CODE_IO_BAD_HTTP_STATUS, http 410, InvalidResponseCodeException, IOException)",
+            "player error (ERROR_CODE_DECODER_INIT_FAILED, MediaCodecVideoRenderer, " +
+                "DecoderInitializationException, IllegalStateException)",
+            "media load error (media video, http 410, InvalidResponseCodeException, IOException)",
+            "media load error (manifest unknown, HttpDataSourceException, SocketTimeoutException, canceled)",
+            "progressive direct-play retry (StreamResetException CANCEL, try 1, retry_delay_ms=1000)",
+            "progressive direct-play retry exhausted (ProtocolException, try 12)",
+            "session ended remotely (http 410)",
+        )
+        val logs = messages.joinToString(separator = "\n", postfix = "\n") { message ->
+            """{"ts":"2026-08-11T00:00:00Z","run":"run-1","lvl":"E","cat":"playback","tag":"Media3Analytics",""" +
+                """"msg":"$message","attrs":{"error_code":2004,"http_status":410,"bytes_loaded":1048576,""" +
+                """"fmt":"video/hevc"}}"""
+        }
+
+        val hosted = builder.build(
+            report(
+                mapOf("device.json" to "{}".encodeToByteArray(), "logs.jsonl" to logs.encodeToByteArray()),
+                DiagnosticsDestinationKind.HOSTED,
+            ),
+            redactionTokens = emptyList(),
+        )
+        val shipped = untar(gunzip(hosted.bytes)).associateBy(TarEntry::name).getValue("logs.jsonl").bytes
+            .decodeToString().lineSequence().filter(String::isNotBlank)
+            .map { Json.parseToJsonElement(it).jsonObject }.toList()
+
+        assertEquals(messages, shipped.map { it.getValue("msg").jsonPrimitive.content })
+        shipped.forEach { line ->
+            assertEquals(setOf("fmt"), line.getValue("attrs").jsonObject.keys)
+        }
+    }
+
     private fun report(
         artifacts: Map<String, ByteArray>,
         destinationKind: DiagnosticsDestinationKind = DiagnosticsDestinationKind.SELF_HOSTED,

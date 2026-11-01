@@ -189,7 +189,7 @@ class PlaybackAnalyticsListener : AnalyticsListener {
         error: PlaybackException,
     ) {
         Log.e(TAG, "Player error ${error.errorCodeName}: ${error.message}", error)
-        DiagnosticsPlaybackLogger.playerError()
+        DiagnosticsPlaybackLogger.playerError(error.toDiagnosticsDetail())
         emit(Event.PlayerError(error))
     }
 
@@ -200,7 +200,7 @@ class PlaybackAnalyticsListener : AnalyticsListener {
         error: java.io.IOException,
         wasCanceled: Boolean,
     ) {
-        DiagnosticsPlaybackLogger.loadError()
+        DiagnosticsPlaybackLogger.loadError(mediaLoadErrorDiagnosticsDetail(mediaLoadData, error, wasCanceled))
         emit(Event.LoadError(error))
     }
 
