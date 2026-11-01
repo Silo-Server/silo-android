@@ -71,8 +71,12 @@ open class PersonalDataRepository(
      * recent enough and a request per page is not worth it.
      */
     suspend fun knownUserLibraries(): ApiResult<List<UserLibrary>> {
+        val requestIdentityGeneration = identityTransitions.generation.value
         hiddenLibraries?.ensureLoaded()
-        return catalogCache.getCachedLibraries()?.let { ApiResult.Success(withoutHidden(it)) } ?: listUserLibraries()
+        val cached = catalogCache.getCachedLibraries() ?: return listUserLibraries()
+        // A switch while the cache was read answers for the old profile.
+        if (requestIdentityGeneration != identityTransitions.generation.value) return identityChanged()
+        return ApiResult.Success(withoutHidden(cached))
     }
 
     /**
