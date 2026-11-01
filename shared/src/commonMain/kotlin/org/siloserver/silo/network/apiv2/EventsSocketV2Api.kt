@@ -2,7 +2,7 @@ package org.siloserver.silo.network.apiv2
 
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
-import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.client.call.body
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.websocket.*
@@ -22,15 +22,22 @@ class EventsSocketV2Api(
     private val gate: ApiV2Gate,
     /** Told when the server reports that this viewer's access changed. */
     private val accessChanges: AccessChangeSignals? = null,
+    private val nowMs: () -> Long = { clockOrigin.elapsedNow().inWholeMilliseconds },
 ) {
     internal suspend fun current(scope: AuthScopeSnapshot): Boolean = scope.stillOwns(tokens, OwnerPolicy.FULL)
 
-    suspend fun ticket(scope: AuthScopeSnapshot? = null): ApiResult<WsTicketResponse> {
+    internal fun newAttempt() = GenericEventsAttempt(nowMs)
+
+    suspend fun ticket(scope: AuthScopeSnapshot? = null): ApiResult<WsTicketResponse> = mintTicket(scope, null)
+
+    private suspend fun mintTicket(scope: AuthScopeSnapshot?, attempt: GenericEventsAttempt?): ApiResult<WsTicketResponse> {
         val owner = scope ?: tokens.snapshotCurrentScope() ?: return identityChanged()
         return ownedV2Call<WsTicketResponse, WsTicketResponse>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { pinned ->
             client.post("/api/v2/events/ws-ticket") {
                 authScope(pinned!!); requireSiloAuth()
                 // Natural-idempotent mint may use ordinary scoped auth refresh.
+            }.also { response ->
+                if (!response.status.isSuccess()) attempt?.retryAfterMs = genericEventsRetryAfter(response.headers[HttpHeaders.RetryAfter])
             }
         }) { ticket ->
             require(validTicket(ticket)) { "The server returned an unsupported realtime ticket." }
@@ -39,60 +46,86 @@ class EventsSocketV2Api(
     }
 
     fun frames(channels: List<String>): Flow<String> = flow {
-        val scope = tokens.snapshotCurrentScope() ?: return@flow
-        val mintedAt = TimeSource.Monotonic.markNow()
-        val proof = when (val result = ticket(scope)) {
-            is ApiResult.Success -> result.data
-            is ApiResult.Error -> throw EventsTicketFailure(result.code)
-            is ApiResult.NetworkError -> throw EventsTicketFailure(0)
-        }
-        if (!current(scope) || mintedAt.elapsedNow().inWholeMilliseconds >= proof.expiresIn * 1000L) return@flow
-        // Taken after the mint, so the ticket's policy is no newer than this.
-        val connectedAt = accessChanges?.connectionTime()
-        // Do not retry this upgrade, even on a lost handshake response: its
-        // single-use proof may already be consumed. Reconnect collects afresh.
-        withTimeoutOrNull(proof.maxConnectionSeconds * 1000L) {
-            client.webSocket(request = { eventsUpgrade(scope, proof, channels) }) {
-                check(call.response.headers[HttpHeaders.SecWebSocketProtocol] == EVENTS_PROTOCOL)
-                if (!current(scope)) return@webSocket
-                val session = this
-                val authorityWatcher = launch {
-                    while (isActive) {
-                        delay(1000)
-                        if (!current(scope)) {
-                            session.close(CloseReason(CloseReason.Codes.NORMAL,"Identity changed"))
-                            break
-                        }
+        frames(channels, newAttempt()).collect { emit(it) }
+    }
+
+    internal fun frames(channels: List<String>, attempt: GenericEventsAttempt): Flow<String> = flow {
+        try {
+            val scope = tokens.snapshotCurrentScope() ?: return@flow
+            val mintedAt = nowMs()
+            val proof = when (val result = mintTicket(scope, attempt)) {
+                is ApiResult.Success -> result.data
+                is ApiResult.Error -> throw EventsTicketFailure(result.code)
+                is ApiResult.NetworkError -> throw EventsTicketFailure(0)
+            }
+            if (!current(scope) || nowMs() - mintedAt >= proof.expiresIn * 1000L) return@flow
+            // Taken after the mint, so the ticket's policy is no newer than this.
+            val connectedAt = accessChanges?.connectionTime()
+            // Even a lost handshake response may have consumed the proof. Never replay it.
+            withTimeoutOrNull(proof.maxConnectionSeconds * 1000L) {
+                client.prepareRequest { eventsUpgrade(scope, proof, channels) }.execute { response ->
+                    // Read refusal headers before Ktor converts the response to a session.
+                    if (response.status != HttpStatusCode.SwitchingProtocols) {
+                        attempt.retryAfterMs = genericEventsRetryAfter(response.headers[HttpHeaders.RetryAfter])
+                        throw EventsUpgradeFailure(response.status.value, attempt.retryAfterMs)
+                    }
+                    val session = response.body<DefaultClientWebSocketSession>()
+                    try {
+                        check(response.headers[HttpHeaders.SecWebSocketProtocol] == EVENTS_PROTOCOL)
+                        if (current(scope)) session.collectFrames(scope, channels, connectedAt, attempt) { emit(it) }
+                    } finally {
+                        try { session.close() } finally { session.cancel() }
                     }
                 }
-                // The server announces an access change with a frame and then a
-                // 4001 close; one connection reports it once. The caller's
-                // reconnect then mints a fresh ticket under the new policy.
-                var accessChangeReported = false
-                suspend fun reportAccessChange() {
-                    if (accessChangeReported || !current(scope)) return
-                    accessChangeReported = true
-                    accessChanges?.reportAccessChanged(connectedAt)
+            }
+        } finally { attempt.ended() }
+    }
+
+    private suspend fun DefaultClientWebSocketSession.collectFrames(
+        scope: AuthScopeSnapshot,
+        channels: List<String>,
+        connectedAt: Long?,
+        attempt: GenericEventsAttempt,
+        deliver: suspend (String) -> Unit,
+    ) = coroutineScope {
+        val session = this@collectFrames
+        val authorityWatcher = launch {
+            while (isActive) {
+                delay(1000)
+                if (!current(scope)) {
+                    session.close(CloseReason(CloseReason.Codes.NORMAL, "Identity changed"))
+                    break
                 }
-                try {
-                    send(Frame.Text(SiloJson.encodeToString(WsSubscribe.serializer(),WsSubscribe(channels = channels))))
-                    var identityLost = false
-                    for (frame in incoming) {
-                        if (!current(scope)) {
-                            identityLost = true
-                            break
-                        }
-                        if (frame is Frame.Text) {
-                            val text = frame.readText()
-                            if (isAccessChangedFrame(text)) reportAccessChange()
-                            this@flow.emit(text)
-                        }
-                    }
-                    if (!identityLost && isAccessChangedClose(closeReasonIfClosed())) reportAccessChange()
-                } finally { authorityWatcher.cancel() }
             }
         }
+        // Frame plus 4001 close is one authority refresh, with a fresh ticket next time.
+        suspend fun reportAccessChange() {
+            if (attempt.accessChanged || !current(scope)) return
+            attempt.accessChanged = true
+            accessChanges?.reportAccessChanged(connectedAt)
+        }
+        try {
+            send(Frame.Text(SiloJson.encodeToString(WsSubscribe.serializer(), WsSubscribe(channels = channels))))
+            var identityLost = false
+            for (frame in incoming) {
+                if (!current(scope)) {
+                    identityLost = true
+                    break
+                }
+                if (frame is Frame.Text) {
+                    val text = frame.readText()
+                    attempt.frame(text)
+                    if (isAccessChangedFrame(text)) reportAccessChange()
+                    deliver(text)
+                }
+            }
+            // Close-reason/cleanup waits are not accepted subscription uptime.
+            attempt.ended()
+            if (!identityLost && isAccessChangedClose(closeReasonIfClosed())) reportAccessChange()
+        } finally { attempt.ended(); authorityWatcher.cancel() }
     }
+
+    private companion object { val clockOrigin = TimeSource.Monotonic.markNow() }
 }
 
 internal class EventsTicketFailure(val code: Int) : Exception("Realtime ticket unavailable")
