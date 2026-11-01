@@ -5,6 +5,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.CatalogBoxSet
+import org.siloserver.silo.model.catalog.CatalogBoxSetDetail
 import org.siloserver.silo.model.catalog.CatalogEffectiveSort
 import org.siloserver.silo.network.ArtworkWidths
 import org.siloserver.silo.network.AuthScopeSnapshot
@@ -69,6 +71,37 @@ internal data class CatalogPageWireV2(
     @SerialName("effective_sort") val effectiveSort: CatalogEffectiveSort? = null,
     @SerialName("search_diagnostics") val searchDiagnostics: CatalogSearchDiagnosticsV2? = null,
 )
+
+@Serializable
+internal data class CatalogBoxSetListWireV2(val items: List<CatalogBoxSet>)
+
+/** getCatalogBoxSet: the box set's own fields beside its movies. */
+@Serializable
+internal data class CatalogBoxSetDetailWireV2(
+    val id: String,
+    @SerialName("library_id") val libraryId: String,
+    val title: String,
+    val overview: String? = null,
+    @SerialName("poster_url") val posterUrl: String? = null,
+    @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
+    @SerialName("backdrop_url") val backdropUrl: String? = null,
+    @SerialName("backdrop_thumbhash") val backdropThumbhash: String? = null,
+    @SerialName("movie_count") val movieCount: Int,
+    @SerialName("played_count") val playedCount: Int,
+    @SerialName("first_year") val firstYear: Int? = null,
+    @SerialName("last_year") val lastYear: Int? = null,
+    val items: List<BrowseItem>,
+) {
+    fun toDomain() = CatalogBoxSetDetail(
+        CatalogBoxSet(id, libraryId, title, overview, posterUrl, posterThumbhash, backdropUrl, backdropThumbhash,
+            movieCount, playedCount, firstYear, lastYear),
+        items,
+    )
+}
+
+/** getCatalogItemBoxSet: `{"box_set": ...}`, or `{}` for a movie in no box set. */
+@Serializable
+internal data class CatalogItemBoxSetWireV2(@SerialName("box_set") val boxSet: CatalogBoxSetDetailWireV2? = null)
 
 /**
  * Not persisted: a cursor belongs to the query, operation, viewer and artwork

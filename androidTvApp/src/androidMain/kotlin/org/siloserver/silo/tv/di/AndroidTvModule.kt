@@ -570,6 +570,8 @@ val androidTvModule = module {
             reachability = get<org.siloserver.silo.common.network.ServerReachabilityMonitor>().state,
         )
     }
+    // Box set id, then its library id.
+    viewModel { params -> org.siloserver.silo.viewmodel.BoxSetViewModel(get(), params[0], params[1]) }
     viewModel { params ->
         TvLibraryDetailViewModel(
             sectionRepository = get(),
@@ -580,6 +582,7 @@ val androidTvModule = module {
             mediaScope = params.values.getOrNull(3) as? String,
             browsePrefs = get(),
             catalogLanguage = get(),
+            boxSetsEnabled = params.values.getOrNull(4) as? Boolean ?: false,
         )
     }
     viewModel { params ->

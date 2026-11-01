@@ -157,6 +157,10 @@ fun AdaptiveDetailHero(
     /** Expanded-window replacement for [belowOverview]. Compact phones always
      *  keep [belowOverview], so tablet/fold sections can be reordered safely. */
     expandedBelowOverview: (@Composable () -> Unit)? = belowOverview,
+    /** Shows [eyebrow] on the compact hero too; only the expanded hero draws it otherwise. */
+    compactEyebrow: Boolean = false,
+    /** Scales the compact hero's artwork height; see [DetailHeroArtwork]. */
+    compactArtworkHeightFactor: Float = 1f,
     actions: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
@@ -198,6 +202,8 @@ fun AdaptiveDetailHero(
                 reserveOverviewSpace = reserveOverviewSpace,
                 translation = translation,
                 belowOverview = belowOverview,
+                showEyebrow = compactEyebrow,
+                artworkHeightFactor = compactArtworkHeightFactor,
                 actions = actions,
             )
         }
@@ -598,12 +604,17 @@ fun DetailHero(
     // directly under the overview (Apple parity: DescriptionTranslationView).
     translation: (@Composable () -> Unit)? = null,
     belowOverview: (@Composable () -> Unit)? = null,
+    /** Draws [eyebrow] above the metadata; off by default, as on episode pages. */
+    showEyebrow: Boolean = false,
+    /** Scales the artwork's height; see [DetailHeroArtwork]. */
+    artworkHeightFactor: Float = 1f,
     actions: @Composable () -> Unit,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         // An episode's series backdrop is never a still, so protection keeps it.
         val seriesBackdrop = detail.seriesHeroBackdrop()
         DetailHeroArtwork(
+            heightFactor = artworkHeightFactor,
             artworkUrl = seriesBackdrop?.url ?: detail.backdropUrl ?: detail.posterUrl,
             artworkThumbhash = if (seriesBackdrop != null) {
                 seriesBackdrop.thumbhash
@@ -626,6 +637,9 @@ fun DetailHero(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            if (showEyebrow && !eyebrow.isNullOrBlank()) {
+                EyebrowChip(text = eyebrow)
+            }
             val metadataTokens = (factsLine + sourceTokens).distinct()
             val ratings = detail.titleRatings()
             if (metadataTokens.isNotEmpty() || detail.contentRating != null || ratings.isNotEmpty()) {
@@ -665,10 +679,16 @@ internal fun DetailHeroArtwork(
     artworkThumbhash: String?,
     contentDescription: String? = null,
     hidden: Boolean = false,
+    /**
+     * Scales the artwork's height. A page whose content matters more than its
+     * art, such as a box set's movies, passes less than 1 so that content
+     * starts on the first screen.
+     */
+    heightFactor: Float = 1f,
     title: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val artworkHeight = (maxWidth * 1.18f).coerceIn(430.dp, 540.dp)
+        val artworkHeight = (maxWidth * 1.18f).coerceIn(430.dp, 540.dp) * heightFactor
         Box(
             modifier = Modifier
                 .fillMaxWidth()

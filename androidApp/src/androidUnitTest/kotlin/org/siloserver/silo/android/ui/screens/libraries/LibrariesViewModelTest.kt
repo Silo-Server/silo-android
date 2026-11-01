@@ -24,6 +24,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -79,6 +80,71 @@ class LibrariesViewModelTest {
             viewModel.selectTab(LibrariesSubtab.Browse)
             viewModel.uiState.first { it.catalogItems.isNotEmpty() }
             assertEquals(listOf<String?>("movie"), fixture.catalogTypes)
+        } finally { store.clear(); Dispatchers.resetMain(); fixture.close() }
+    }
+
+    @Test
+    fun onlyALibraryWithBoxSetsOnBrowsesThemGrouped() = runTest {
+        val fixture = DeferredLibrariesFixture(emptySet())
+        fixture.librariesBody = """
+            {"items":[
+              {"id":"1","name":"Movies","type":"movies","sort_order":0,"box_sets_enabled":true},
+              {"id":"2","name":"Films","type":"movies","sort_order":1}
+            ],"page":{"has_more":false}}
+        """.trimIndent()
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val viewModel = fixture.viewModel()
+        val store = ViewModelStore().also { it.put("libraries", viewModel) }
+        try {
+            fixture.awaitRequest("sections:1")
+            viewModel.uiState.first { !it.isLoadingSections }
+            viewModel.selectTab(LibrariesSubtab.Browse)
+            viewModel.uiState.first { it.catalogItems.isNotEmpty() }
+            viewModel.selectLibrary(2)
+            fixture.awaitRequest("catalog:2:added_at:desc")
+            viewModel.uiState.first { it.selectedLibraryId == 2 && !it.isLoadingCatalog && it.catalogItems.isNotEmpty() }
+            assertEquals(listOf<Pair<String?, String?>>("1" to "box_set", "2" to null), fixture.catalogGroups)
+        } finally { store.clear(); Dispatchers.resetMain(); fixture.close() }
+    }
+
+    @Test
+    fun turningBoxSetsOffRebuildsTheBrowseInsteadOfMixingGroupings() = runTest {
+        val fixture = DeferredLibrariesFixture(
+            deferredKeys = setOf("catalog:1:added_at:desc:0", "catalog:1:added_at:desc:1"),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        fun libraries(boxSets: Boolean) = """
+            {"items":[{"id":"1","name":"Movies","type":"movies","sort_order":0,"box_sets_enabled":$boxSets}],
+             "page":{"has_more":false}}
+        """.trimIndent()
+        fixture.librariesBody = libraries(boxSets = true)
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val viewModel = fixture.viewModel()
+        val store = ViewModelStore().also { it.put("libraries", viewModel) }
+        try {
+            fixture.awaitRequest("sections:1")
+            viewModel.uiState.first { !it.isLoadingSections }
+            viewModel.selectTab(LibrariesSubtab.Browse)
+            fixture.awaitRequest("catalog:1:added_at:desc:0")
+            fixture.complete("catalog:1:added_at:desc:0", catalogPageBody("grouped", hasMore = true))
+            viewModel.uiState.first { it.catalogItems.isNotEmpty() && !it.isLoadingCatalog }
+
+            // A grouped second page is in flight when box sets turn off.
+            viewModel.loadMoreCatalog()
+            fixture.awaitRequest("catalog:1:added_at:desc:1")
+            fixture.librariesBody = libraries(boxSets = false)
+            viewModel.refreshLibraryList()
+            fixture.awaitRequest("libraries")
+            fixture.awaitRequest("catalog:1:added_at:desc:0")
+            fixture.complete("catalog:1:added_at:desc:1", catalogPageBody("stale-grouped", hasMore = false))
+            advanceUntilIdle()
+
+            val state = viewModel.uiState.first { !it.isLoadingCatalog && !it.isLoadingMoreCatalog }
+            assertEquals(listOf("grouped"), state.catalogItems.map { it.contentId })
+            assertEquals(
+                listOf<Pair<String?, String?>>("1" to "box_set", "1" to "box_set", "1" to null),
+                fixture.catalogGroups,
+            )
         } finally { store.clear(); Dispatchers.resetMain(); fixture.close() }
     }
 
@@ -758,6 +824,8 @@ class LibrariesViewModelTest {
         private val tokens = object : TokenManager by TokenManagerImpl() { override suspend fun snapshotCurrentScope() = owner }
         val catalogTypes = mutableListOf<String?>()
         val catalogQueries = mutableListOf<Map<String, String?>>()
+        /** Each browse's library and `group`. */
+        val catalogGroups = mutableListOf<Pair<String?, String?>>()
         private val requests = Channel<String>(Channel.UNLIMITED)
         private val pendingRequests = mutableListOf<String>()
         private val responses = deferredKeys.associateWith { CompletableDeferred<String>() }
@@ -777,6 +845,7 @@ class LibrariesViewModelTest {
                                 ?: request.url.parameters[name]
                             catalogTypes += field("type")
                             catalogQueries += listOf("type", "library_id", "match", "cursor").associateWith { field(it) }
+                            catalogGroups += field("library_id") to field("group")
                             val rawSort = field("sort")
                             val sort = rawSort?.removePrefix("-")
                             val order = field("order") ?: if (rawSort?.startsWith("-") == true) "desc" else "asc"

@@ -236,6 +236,10 @@ fun TvItemDetailScreen(
     onWatchParty: (WatchPartyDestination?) -> Unit,
     onOpenPerson: (personId: Long) -> Unit,
     onBack: () -> Unit,
+    /** Opens a box set's page from a movie's box set row. */
+    onOpenBoxSet: (boxSetId: String, libraryId: String) -> Unit = { _, _ -> },
+    /** Opens a movie from a box set row, scoped to the box set's library. */
+    onBoxSetMovie: (contentId: String, libraryId: String) -> Unit = { contentId, _ -> onItemDetail(contentId) },
     // Plays the first pick of a shuffle started from the More menu.
     onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: TvItemDetailViewModel = koinViewModel(
@@ -384,6 +388,8 @@ fun TvItemDetailScreen(
             onSeasonClick = onSeasonClick,
             onWatchParty = onWatchParty,
             onOpenPerson = onOpenPerson,
+            onOpenBoxSet = onOpenBoxSet,
+            onBoxSetMovie = onBoxSetMovie,
             shuffleLauncher = shuffleLauncher,
         )
     }
@@ -406,6 +412,8 @@ private fun TvDetailContent(
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
     onWatchParty: (WatchPartyDestination?) -> Unit,
     onOpenPerson: (personId: Long) -> Unit,
+    onOpenBoxSet: (boxSetId: String, libraryId: String) -> Unit,
+    onBoxSetMovie: (contentId: String, libraryId: String) -> Unit,
     shuffleLauncher: org.siloserver.silo.common.ui.ShuffleLauncher,
 ) {
     val playFocus = remember { FocusRequester() }
@@ -440,6 +448,10 @@ private fun TvDetailContent(
     // for the SAME content passes every ownership check the old coroutine
     // makes, letting it clear or override the new one.
     var pendingSimilarGeneration by rememberSaveable(detail.contentId) { mutableStateOf(0) }
+    // The same return, from a movie or the box set page opened in the box set
+    // row: the pending id then names a card in that row instead, or
+    // [BoxSetExploreAllReturnId] for its Explore all card.
+    var pendingReturnFromBoxSet by rememberSaveable(detail.contentId) { mutableStateOf(false) }
     val similarReturnFocus = remember { FocusRequester() }
     val similarRestoreFocused = remember { mutableStateOf(false) }
     // Bumped once the target resolves, so the row scrolls its own LazyRow to
@@ -449,8 +461,19 @@ private fun TvDetailContent(
     // Resolved against the CURRENT list, so it simply stays -1 until the rail
     // has loaded and becomes correct if the order changed.
     val pendingSimilarIndex = pendingSimilarContentId?.let { pendingId ->
-        state.moreLikeThis.indexOfFirst { it.contentId == pendingId }
+        when {
+            // Explore all follows the box set's movies.
+            pendingReturnFromBoxSet && pendingId == BoxSetExploreAllReturnId ->
+                state.boxSetItems.size.takeIf { state.boxSetItems.isNotEmpty() } ?: -1
+            pendingReturnFromBoxSet -> state.boxSetItems.indexOfFirst { it.contentId == pendingId }
+            else -> state.moreLikeThis.indexOfFirst { it.contentId == pendingId }
+        }
     } ?: -1
+    val similarRestoreIndex = if (pendingReturnFromBoxSet) -1 else pendingSimilarIndex
+    val boxSetRestoreIndex = if (pendingReturnFromBoxSet) pendingSimilarIndex else -1
+    // Entering the box set row lands on the movie on screen until the row
+    // remembers a card of its own.
+    val boxSetCurrentFocus = remember { FocusRequester() }
     val pendingSimilarIndexNow = rememberUpdatedState(pendingSimilarIndex)
     val firstSimilarFocus = remember { FocusRequester() }
     val listState = rememberLazyListState()
@@ -646,6 +669,7 @@ private fun TvDetailContent(
     // chips) sits above the cast / similar rails — drives their
     // Up-return-to-hero fallback.
     val hasEpisodeNavAbove = showsEpisodeRail || showsSeasonChips
+    val showsBoxSetRow = !isAudiobook && detail.type == "movie" && state.boxSet != null && state.boxSetItems.isNotEmpty()
     val showsCastSection = !isAudiobook && detail.cast.isNotEmpty()
     val showsTrailersSection = !isAudiobook && trailerEntries.isNotEmpty()
     val showsSimilarRail = !isAudiobook && detail.type != "episode" && state.moreLikeThis.isNotEmpty()
@@ -1300,6 +1324,66 @@ private fun TvDetailContent(
                             )
                         }
 
+                        if (showsBoxSetRow) {
+                            val boxSet = state.boxSet!!
+                            val boxSetCurrentIndex = state.boxSetItems.indexOfFirst { it.contentId == detail.contentId }
+                            TvBoxSetRowSection(
+                                boxSet = boxSet,
+                                items = state.boxSetItems,
+                                currentContentId = detail.contentId,
+                                onExploreAll = {
+                                    pendingCastFocusIndex = -1
+                                    pendingSimilarGeneration += 1
+                                    pendingReturnFromBoxSet = true
+                                    pendingSimilarContentId = BoxSetExploreAllReturnId
+                                    similarRestoreFocused.value = false
+                                    onOpenBoxSet(boxSet.id, boxSet.libraryId)
+                                },
+                                // Up from the row returns to the hero only when
+                                // no episode nav, cast or trailers rail sits above.
+                                onReturnToHero = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection) {
+                                    returnToHero
+                                } else {
+                                    null
+                                },
+                                onMovieClick = { clickedContentId ->
+                                    // The movie on screen opens nothing new.
+                                    if (clickedContentId != detail.contentId) {
+                                        pendingCastFocusIndex = -1
+                                        pendingSimilarGeneration += 1
+                                        pendingReturnFromBoxSet = true
+                                        pendingSimilarContentId = clickedContentId
+                                        similarRestoreFocused.value = false
+                                        onBoxSetMovie(clickedContentId, boxSet.libraryId)
+                                    }
+                                },
+                                // A pending return targets the card that opened a
+                                // movie; otherwise entering lands on this movie.
+                                restoreFocusIndex = if (boxSetRestoreIndex >= 0) boxSetRestoreIndex else boxSetCurrentIndex,
+                                restoreFocusRequester = when {
+                                    boxSetRestoreIndex >= 0 -> similarReturnFocus
+                                    boxSetCurrentIndex >= 0 -> boxSetCurrentFocus
+                                    else -> null
+                                },
+                                restoreFocusRequest = similarRestoreRequest.takeIf { boxSetRestoreIndex >= 0 } ?: 0,
+                                onItemFocused = if (boxSetRestoreIndex >= 0) {
+                                    { focusedItem ->
+                                        if (focusedItem.contentId == pendingSimilarContentId) {
+                                            similarRestoreFocused.value = true
+                                        }
+                                    }
+                                } else {
+                                    null
+                                },
+                                onExploreAllFocused = {
+                                    if (pendingSimilarContentId == BoxSetExploreAllReturnId) {
+                                        similarRestoreFocused.value = true
+                                    }
+                                },
+                                modifier = Modifier.detailBodySectionAnchor(listState, coroutineScope),
+                            )
+                        }
+
                         if (showsSimilarRail) {
                             // tvOS `TVSimilarRail`: an editorial detail section
                             // header (Recommended / More Like This) over a bare
@@ -1327,20 +1411,21 @@ private fun TvDetailContent(
                                     onItemClick = { clickedContentId ->
                                         pendingCastFocusIndex = -1
                                         pendingSimilarGeneration += 1
+                                        pendingReturnFromBoxSet = false
                                         pendingSimilarContentId = clickedContentId
                                         similarRestoreFocused.value = false
                                         onSimilarItemDetail(clickedContentId)
                                     },
-                                    restoreFocusIndex = pendingSimilarIndex,
+                                    restoreFocusIndex = similarRestoreIndex,
                                     // Only while a return is pending, so ordinary
                                     // re-entry stops being forced at the return
                                     // target and goes back to the row restorer's
                                     // own remembered card.
                                     restoreFocusRequester = similarReturnFocus
-                                        .takeIf { pendingSimilarIndex >= 0 },
+                                        .takeIf { similarRestoreIndex >= 0 },
                                     restoreFocusRequest = similarRestoreRequest
-                                        .takeIf { pendingSimilarIndex >= 0 } ?: 0,
-                                    onItemFocusedAtIndex = if (pendingSimilarIndex >= 0) {
+                                        .takeIf { similarRestoreIndex >= 0 } ?: 0,
+                                    onItemFocusedAtIndex = if (similarRestoreIndex >= 0) {
                                         { focusedItem, _ ->
                                             // ONLY the target counts. Revoking
                                             // when some other card gains focus
@@ -1366,15 +1451,15 @@ private fun TvDetailContent(
                                     horizontalPadding = TvDetailHorizontalInset,
                                     rowTopPadding = 0.dp,
                                     firstItemFocusRequester = firstSimilarFocus,
-                                    onDirectionUp = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection) {
+                                    onDirectionUp = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow) {
                                         returnToHero
                                     } else {
                                         null
                                     },
                                     // When Similar is the first body rail (movie with no
-                                    // episode rail and no cast), Up returns to the hero
+                                    // episode rail, cast, trailers or box set), Up returns to the hero
                                     // Play button instead of relying on geometry.
-                                    upFocusRequester = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection) {
+                                    upFocusRequester = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow) {
                                         playFocus
                                     } else {
                                         null
@@ -2707,6 +2792,9 @@ private fun Double.formatHms(): String {
 internal val TvDetailSectionGap = 32.dp
 internal val TvDetailPageBottomPadding = 70.dp
 internal val TvDetailHorizontalInset = 50.dp
+
+/** Pending-return id of the box set row's Explore all card; content ids never contain NUL. */
+private const val BoxSetExploreAllReturnId = "\u0000box-set-explore-all"
 
 private val TvDetailDefaultTint = Color(red = 0.04f, green = 0.12f, blue = 0.14f)
 private const val TvDetailTintOpacity = 0.42f

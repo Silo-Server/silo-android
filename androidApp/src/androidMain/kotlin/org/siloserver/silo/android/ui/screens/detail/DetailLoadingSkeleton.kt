@@ -37,6 +37,8 @@ internal fun DetailLoadingSkeleton(
     modifier: Modifier = Modifier,
     artworkUrl: String? = null,
     artworkThumbhash: String? = null,
+    /** Matches the loaded page's compact artwork height; see [DetailHeroArtwork]. */
+    compactArtworkHeightFactor: Float = 1f,
 ) {
     val shimmer = rememberShimmerProgress()
     val tint by rememberDominantColor(artworkUrl, SiloBackground, artworkThumbhash)
@@ -79,7 +81,7 @@ internal fun DetailLoadingSkeleton(
                 }
             } else {
                 Column(Modifier.fillMaxWidth()) {
-                    DetailHeroArtwork(artworkUrl, artworkThumbhash) {
+                    DetailHeroArtwork(artworkUrl, artworkThumbhash, heightFactor = compactArtworkHeightFactor) {
                         TitlePlaceholder(shimmer)
                     }
                     Column(

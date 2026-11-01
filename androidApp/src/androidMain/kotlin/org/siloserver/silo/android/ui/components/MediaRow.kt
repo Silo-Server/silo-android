@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.imageLoader
@@ -390,17 +391,19 @@ private const val EXPLORE_ALL_KEY = "\u0000explore-all"
 /**
  * The row's last card: opens the row's full page. Same size and shape as the
  * row's cards (a poster or a 16:9 thumbnail), with an icon and the label.
+ * [width] overrides the card size for rows that resize their cards, such as
+ * a movie page's box set row.
  */
 @Composable
-private fun ExploreAllCard(cardStyle: CardStyle, onClick: () -> Unit) {
+internal fun ExploreAllCard(cardStyle: CardStyle, onClick: () -> Unit, width: Dp? = null) {
     val scale = LocalCardPresentation.current.posterSize.posterScale
-    val (width, aspectRatio, shape) = when (cardStyle) {
+    val (defaultWidth, aspectRatio, shape) = when (cardStyle) {
         CardStyle.Poster -> Triple(120.dp * scale, 2f / 3.3f, MaterialTheme.shapes.small)
         CardStyle.Backdrop -> Triple(280.dp * scale, 16f / 9f, RoundedCornerShape(10.dp))
     }
     Box(
         modifier = Modifier
-            .width(width)
+            .width(width ?: defaultWidth)
             .aspectRatio(aspectRatio)
             .clip(shape)
             .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))

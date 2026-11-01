@@ -1,9 +1,17 @@
 package org.siloserver.silo.tv.ui.components
 
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
+import org.siloserver.silo.common.ui.components.BoxSetSleeveColors
+import org.siloserver.silo.common.ui.components.boxSetSleeves
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.aspectRatio
@@ -31,6 +39,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -87,6 +96,16 @@ fun TvMediaCard(
     overlay: OverlayData? = null,
     actions: TvMediaCardActions = TvMediaCardActions(),
     onLongClick: (() -> Unit)? = null,
+    /** A pill in the artwork's top-start corner, such as a box set's "Box set". */
+    badge: String? = null,
+    /** A tag in the artwork's bottom-end corner, such as a box set's film count. */
+    cornerLabel: String? = null,
+    /** Replaces the year line under the title. */
+    caption: String? = null,
+    /** Draws a box set's sleeves above the artwork; see [boxSetSleeves]. */
+    sleeves: BoxSetSleeveColors? = null,
+    /** Outlines the artwork at rest, such as the movie being viewed in its box set row. */
+    highlighted: Boolean = false,
 ) {
     val overlayState = LocalCardOverlayUiState.current
     val effectiveAspectRatio = artworkAspectRatio
@@ -103,6 +122,22 @@ fun TvMediaCard(
 
     val cardShape = TvMediaCardShape
     val cardFocus = siloCardDefaults(shape = cardShape)
+    // Focus keeps the standard lavender border; at rest a highlighted card
+    // keeps a white outline.
+    val cardBorder = if (highlighted) {
+        CardDefaults.border(
+            border = androidx.tv.material3.Border(
+                border = androidx.compose.foundation.BorderStroke(2.dp, Color.White.copy(alpha = 0.70f)),
+                shape = cardShape,
+            ),
+            focusedBorder = androidx.tv.material3.Border(
+                border = androidx.compose.foundation.BorderStroke(2.dp, org.siloserver.silo.tv.ui.theme.AccentLavender),
+                shape = cardShape,
+            ),
+        )
+    } else {
+        cardFocus.border
+    }
 
     var menuExpanded by remember { mutableStateOf(false) }
 
@@ -122,80 +157,143 @@ fun TvMediaCard(
             isInWatchlist = userState?.inWatchlist == true,
         )
 
-        Card(
-            onClick = onClick,
-            onLongClick = onLongClick ?: if (actions.isEmpty) null else { { menuExpanded = true } },
-            interactionSource = interactionSource,
-            shape = CardDefaults.shape(shape = cardShape),
-            scale = cardFocus.scale,
-            border = cardFocus.border,
-            glow = cardFocus.glow,
-            modifier = if (fillWidth) {
-                cardModifier
-                    .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-                    .fillMaxWidth()
-                    .aspectRatio(effectiveAspectRatio)
-            } else {
-                cardModifier
-                    .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-                    .size(width, height)
-            },
-        ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                SpoilerImage(
-                    hidden = hideArtwork,
-                    url = posterUrl,
-                    thumbhash = posterThumbhash,
-                    contentDescription = title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                    defaultArtwork = DefaultArtworkKind.forItemType(mediaType),
+        Box {
+            if (sleeves != null) {
+                // The card scales inside its own layer, out of reach of anything
+                // passed in, so the sleeves sit on a layer behind it that scales
+                // the same way (tv-material SurfaceScaleTokens) and grows with it.
+                val isPressed by interactionSource.collectIsPressedAsState()
+                val targetScale = if (isFocused && !isPressed) cardFocus.focusedScale else 1f
+                val sleeveScale by animateFloatAsState(
+                    targetValue = targetScale,
+                    animationSpec = tween(
+                        durationMillis = when {
+                            isPressed -> 120
+                            isFocused -> 300
+                            else -> 500
+                        },
+                        easing = SleeveScaleEasing,
+                    ),
+                    label = "box-set-sleeves",
                 )
-
-                // Card-overlay badge layer. Over the poster, under the
-                // watched badge + progress bar. Never intercepts focus.
-                if (overlayState.enabled && overlay != null) {
-                    CardOverlays(
-                        data = overlay,
-                        prefs = overlayState.prefs,
-                        variant = CardOverlayVariant.Poster,
-                        forceOpaqueBackground = false,
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .graphicsLayer {
+                            scaleX = sleeveScale
+                            scaleY = sleeveScale
+                        }
+                        .boxSetSleeves(sleeves),
+                )
+            }
+            Card(
+                onClick = onClick,
+                onLongClick = onLongClick ?: if (actions.isEmpty) null else { { menuExpanded = true } },
+                interactionSource = interactionSource,
+                shape = CardDefaults.shape(shape = cardShape),
+                scale = cardFocus.scale,
+                border = cardBorder,
+                glow = cardFocus.glow,
+                modifier = if (fillWidth) {
+                    cardModifier
+                        .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                        .fillMaxWidth()
+                        .aspectRatio(effectiveAspectRatio)
+                } else {
+                    cardModifier
+                        .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                        .size(width, height)
+                },
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    SpoilerImage(
+                        hidden = hideArtwork,
+                        url = posterUrl,
+                        thumbhash = posterThumbhash,
+                        contentDescription = title,
+                        contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
+                        defaultArtwork = DefaultArtworkKind.forItemType(mediaType),
                     )
-                }
 
-                if (userState?.played == true) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(watchedBadgePadding)
-                            .size(watchedBadgeSize)
-                            .background(Color.White, CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "Watched",
-                            tint = Color.Black,
-                            modifier = Modifier.size(watchedBadgeIconSize),
+                    // Card-overlay badge layer. Over the poster, under the
+                    // watched badge + progress bar. Never intercepts focus.
+                    if (overlayState.enabled && overlay != null) {
+                        CardOverlays(
+                            data = overlay,
+                            prefs = overlayState.prefs,
+                            variant = CardOverlayVariant.Poster,
+                            forceOpaqueBackground = false,
+                            modifier = Modifier.fillMaxSize(),
                         )
                     }
-                }
 
-                if (progress != null && progress > 0f) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(3.dp)
-                            .align(Alignment.BottomStart)
-                            .background(ProgressTrack),
-                    ) {
+                    if (userState?.played == true) {
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth(progress.coerceIn(0f, 1f))
-                                .height(3.dp)
-                                .background(ProgressFill),
+                                .align(Alignment.TopEnd)
+                                .padding(watchedBadgePadding)
+                                .size(watchedBadgeSize)
+                                .background(Color.White, CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Watched",
+                                tint = Color.Black,
+                                modifier = Modifier.size(watchedBadgeIconSize),
+                            )
+                        }
+                    }
+
+                    if (badge != null) {
+                        Text(
+                            text = badge.uppercase(),
+                            fontSize = 14.sp,
+                            lineHeight = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 0.8.sp,
+                            color = Color.White,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(6.dp)
+                                .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                                .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
+                                .padding(horizontal = 7.dp, vertical = 2.dp),
                         )
+                    }
+                    if (cornerLabel != null) {
+                        Text(
+                            text = cornerLabel,
+                            fontSize = 14.sp,
+                            lineHeight = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(start = 6.dp, end = 6.dp, bottom = 8.dp)
+                                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 5.dp, vertical = 1.dp),
+                        )
+                    }
+
+                    if (progress != null && progress > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(3.dp)
+                                .align(Alignment.BottomStart)
+                                .background(ProgressTrack),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(progress.coerceIn(0f, 1f))
+                                    .height(3.dp)
+                                    .background(ProgressFill),
+                            )
+                        }
                     }
                 }
             }
@@ -220,9 +318,10 @@ fun TvMediaCard(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        if (year != null && year > 0) {
+        val metadata = caption ?: year?.takeIf { it > 0 }?.toString()
+        if (metadata != null) {
             Text(
-                text = year.toString(),
+                text = metadata,
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontSize = 14.sp,
                     lineHeight = 18.sp,
@@ -248,6 +347,9 @@ fun tvCardWidth(): Dp = TvCardWidth.cardScaled()
 
 /** Optical scale for wide TV thumbnails; poster cards scale from their actual width. */
 const val TvCardOverlayScale: Float = 0.7f
+
+/** tv-material's focus scale easing (SurfaceScaleTokens.enterEasing). */
+private val SleeveScaleEasing = CubicBezierEasing(0f, 0f, 0.2f, 1f)
 
 /** Hoisted so every card shares one instance instead of allocating a shape per composition. */
 private val TvMediaCardShape = RoundedCornerShape(8.dp)

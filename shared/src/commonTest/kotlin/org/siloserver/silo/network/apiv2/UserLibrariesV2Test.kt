@@ -61,4 +61,14 @@ class UserLibrariesV2Test {
         try { assertIs<ApiResult.Error>(PersonalDataApi(c, tokenManager = tokens).listUserLibraries()) }
         finally { c.close() }
     }
+
+    @Test fun boxSetsEnabledIsReadAndAbsentMeansOff() = runTest {
+        val c = client {
+            reply("""{"items":[{"id":"3","name":"Movies","type":"movies","sort_order":0,"box_sets_enabled":true},$row]}""")
+        }
+        try {
+            val rows = assertIs<ApiResult.Success<List<UserLibrary>>>(PersonalDataApi(c, tokenManager = tokens).listUserLibraries()).data
+            assertEquals(listOf(true, false), rows.map { it.boxSetsEnabled })
+        } finally { c.close() }
+    }
 }

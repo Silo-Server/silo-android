@@ -12,6 +12,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.CatalogBoxSet
+import org.siloserver.silo.model.catalog.CatalogBoxSetDetail
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.SeasonsResponse
@@ -184,6 +186,43 @@ class CatalogV2Api(
                 libraryId?.let { parameter("library_id", it) }
             }
         }) { it.requireComplete(); EpisodesResponse(it.items.map { row -> row.toDomain() }) }
+
+    /** A box set's movies in [libraryId] that the viewer can see, in collection order. */
+    suspend fun boxSet(id: String, libraryId: String, widths: ArtworkWidths? = null): ApiResult<CatalogBoxSetDetail> =
+        read<CatalogBoxSetDetailWireV2, CatalogBoxSetDetail>({ scope ->
+            client.get("/api/v2/catalog/box-sets/${id.encodeURLPathPart()}") {
+                scope?.let { authScope(it) }
+                parameter("library_id", libraryId)
+                artworkWidths(widths, scope)
+            }
+        }) { it.toDomain() }
+
+    /**
+     * The box set a movie belongs to, as [boxSet] reads it, or null when the
+     * movie is in no box set the viewer sees (the server answers `{}`).
+     */
+    suspend fun itemBoxSet(id: String, libraryId: Int? = null, widths: ArtworkWidths? = null): ApiResult<CatalogBoxSetDetail?> =
+        read<CatalogItemBoxSetWireV2, CatalogBoxSetDetail?>({ scope ->
+            client.get("/api/v2/catalog/items/${id.encodeURLPathPart()}/box-set") {
+                scope?.let { authScope(it) }
+                libraryId?.let { parameter("library_id", it) }
+                artworkWidths(widths, scope)
+            }
+        }) { it.boxSet?.toDomain() }
+
+    /** Box sets whose name, or two or more of whose movies' titles, match [query]; best match first. */
+    suspend fun searchBoxSets(query: String, limit: Int = 5): ApiResult<List<CatalogBoxSet>> {
+        val q = query.trim()
+        if (q.isEmpty() || q.length > 200) return ApiResult.Error(0, "validation_failed", "Box set search needs 1 to 200 characters.")
+        if (limit !in 1..20) return ApiResult.Error(0, "validation_failed", "Box set search limit must be between 1 and 20.")
+        return read<CatalogBoxSetListWireV2, List<CatalogBoxSet>>({ scope ->
+            client.get("/api/v2/catalog/box-sets") {
+                scope?.let { authScope(it) }
+                parameter("q", q)
+                parameter("limit", limit)
+            }
+        }) { it.items }
+    }
 
     suspend fun person(id: Long): ApiResult<Person> =
         read<PersonReadV2, Person>({ scope ->

@@ -167,6 +167,8 @@ class TvLibraryDetailViewModel(
     private val mediaScope: String? = null,
     private val browsePrefs: BrowsePrefsStore? = null,
     catalogLanguage: org.siloserver.silo.domain.settings.CatalogLanguageRevision? = null,
+    /** The library browses a TMDB collection's movies as one box set card. */
+    private val boxSetsEnabled: Boolean = false,
 ) : ViewModel() {
     /** Access changes this ViewModel has applied, kept while its screen is away. */
     val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
@@ -709,6 +711,8 @@ class TvLibraryDetailViewModel(
                 } else {
                     null
                 },
+                // The server groups before paging, so the grid never regroups.
+                group = org.siloserver.silo.model.catalog.BOX_SET_GROUP.takeIf { boxSetsEnabled },
             )
 
             if (generation != browseGeneration) return@launch

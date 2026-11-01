@@ -98,6 +98,8 @@ data class SiloCardFocus(
     val scale: CardScale,
     val border: androidx.tv.material3.CardBorder,
     val glow: androidx.tv.material3.CardGlow,
+    /** [scale]'s focused value, which CardScale keeps internal; at rest and pressed it is 1. */
+    val focusedScale: Float = 1f,
 )
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -107,6 +109,7 @@ fun siloCardDefaults(
     focusedScale: Float = 1.10f,
 ): SiloCardFocus = SiloCardFocus(
     scale = CardDefaults.scale(focusedScale = focusedScale),
+    focusedScale = focusedScale,
     border = CardDefaults.border(
         focusedBorder = Border(
             border = BorderStroke(2.dp, AccentLavender),

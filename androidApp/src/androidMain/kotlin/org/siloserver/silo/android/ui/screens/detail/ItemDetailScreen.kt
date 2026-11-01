@@ -177,6 +177,10 @@ fun ItemDetailScreen(
     onOpenCastRemote: () -> Unit = {},
     // Plays the first pick of a shuffle started from the series overflow menu.
     onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
+    /** Opens a box set's page from a movie's box set row. */
+    onBoxSetClick: (boxSetId: String, libraryId: String) -> Unit = { _, _ -> },
+    /** Opens a movie from a box set row, scoped to the box set's library. */
+    onBoxSetMovieClick: (contentId: String, libraryId: String) -> Unit,
     viewModel: ItemDetailViewModel,
     modifier: Modifier = Modifier,
 ) {
@@ -988,6 +992,9 @@ fun ItemDetailScreen(
                             translation = translationSlot,
                             detail = state.withPickedSeriesChoices(detail),
                             similarItems = state.similarItems,
+                            boxSet = state.boxSet,
+                            onOpenBoxSet = { boxSet -> onBoxSetClick(boxSet.id, boxSet.libraryId) },
+                            onBoxSetMovieClick = onBoxSetMovieClick,
                             portraitArtwork = portraitArtwork,
                             isFavorite = state.isFavorite,
                             isInWatchlist = state.isInWatchlist,

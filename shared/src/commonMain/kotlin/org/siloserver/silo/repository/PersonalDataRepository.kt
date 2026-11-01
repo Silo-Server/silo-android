@@ -64,6 +64,22 @@ open class PersonalDataRepository(
     }
 
     /**
+     * The library list the screens last loaded, minus the ones the profile
+     * hid, or [listUserLibraries] when nothing is cached yet. For a check that
+     * runs on every page, such as whether a movie page asks for its box set,
+     * where the list from the last library load or foreground re-check is
+     * recent enough and a request per page is not worth it.
+     */
+    suspend fun knownUserLibraries(): ApiResult<List<UserLibrary>> {
+        val requestIdentityGeneration = identityTransitions.generation.value
+        hiddenLibraries?.ensureLoaded()
+        val cached = catalogCache.getCachedLibraries() ?: return listUserLibraries()
+        // A switch while the cache was read answers for the old profile.
+        if (requestIdentityGeneration != identityTransitions.generation.value) return identityChanged()
+        return ApiResult.Success(withoutHidden(cached))
+    }
+
+    /**
      * Re-checks the library list after the app returns to the foreground and
      * says whether the set of visible libraries differs from the cached list,
      * which is the one the screens last loaded. Goes through

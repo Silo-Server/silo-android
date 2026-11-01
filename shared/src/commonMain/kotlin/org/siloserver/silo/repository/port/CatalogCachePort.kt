@@ -51,16 +51,21 @@ interface CatalogCachePort {
     }
     suspend fun getCachedLibraries(): List<UserLibrary>? = null
 
-    /** Cache the default (unfiltered, first-page) browse for a library. */
+    /**
+     * Cache the default (unfiltered, first-page) browse for a library. A
+     * grouped browse ([group], such as box sets) is kept apart from the plain
+     * one, so turning grouping off never serves the grouped page.
+     */
     suspend fun cacheDefaultLibraryPage(libraryId: Int, response: CatalogResponse) {}
     suspend fun cacheDefaultLibraryPage(
         libraryId: Int,
         response: CatalogResponse,
         lease: CatalogCacheWriteLease,
+        group: String? = null,
     ) {
-        cacheDefaultLibraryPage(libraryId, response)
+        if (group == null) cacheDefaultLibraryPage(libraryId, response)
     }
-    suspend fun getCachedDefaultLibraryPage(libraryId: Int): CatalogResponse? = null
+    suspend fun getCachedDefaultLibraryPage(libraryId: Int, group: String? = null): CatalogResponse? = null
 
     /** Cache a library's resolved "Recommended" sections (for the offline landing tab). */
     suspend fun cacheLibrarySections(libraryId: Int, sections: List<ResolvedSection>) {}
