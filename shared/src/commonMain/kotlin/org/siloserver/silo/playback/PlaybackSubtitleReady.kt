@@ -9,6 +9,7 @@ import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_BURN_IN_ONLY
 import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 import org.siloserver.silo.model.playback.SUBTITLE_SOURCE_DOWNLOADED
+import org.siloserver.silo.model.playback.isUnplayableSubtitle
 import org.siloserver.silo.network.PlaybackRealtimeEvent
 import org.siloserver.silo.network.SiloJson
 
@@ -73,6 +74,7 @@ fun applyAuthoritativeSubtitleReadyTrack(
         serverTrackId = item.trackId,
         serverDelivery = item.delivery,
         syncKey = item.syncKey,
+        unplayable = item.isUnplayableSubtitle(),
     )
     val rows = (existing.filterNot {
         it.serverTrackId == item.trackId || it.index == item.combinedIndex

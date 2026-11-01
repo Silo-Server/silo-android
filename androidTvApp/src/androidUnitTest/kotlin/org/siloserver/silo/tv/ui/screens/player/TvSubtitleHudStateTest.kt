@@ -1,5 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_BURN_IN_ONLY
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import kotlin.test.Test
@@ -164,6 +167,44 @@ class TvSubtitleHudStateTest {
 
         assertEquals(id(sidecar(4)), refreshed.focusedStableId)
         assertTrue(refreshed.rows.single { it.identity == sidecar(4) }.focused)
+    }
+
+    @Test
+    fun `a track no route can show is listed in place but never takes focus`() {
+        val english = PlayerSubtitleInfo(
+            index = 0,
+            language = "eng",
+            codec = "srt",
+            source = "external",
+            url = "/s/0.vtt",
+            serverTrackId = "file:1:subtitle:0",
+            serverDelivery = SUBTITLE_DELIVERY_SIDECAR,
+        )
+        val unrecognized = PlayerSubtitleInfo(
+            index = 1,
+            language = "eng",
+            source = "embedded",
+            url = "",
+            serverTrackId = "file:1:subtitle:1",
+            serverDelivery = SUBTITLE_DELIVERY_BURN_IN_ONLY,
+            unplayable = true,
+        )
+        val options = buildTvSubtitleHudOptions(
+            subtitleUrls = listOf(english, unrecognized),
+            subtitleTracks = emptyList(),
+        )
+        assertEquals(listOf(false, false, true), options.map(TvSubtitleHudOption::unplayable))
+
+        // A stale focus on it, or Off committed, lands on a row that can take focus.
+        val presentation = buildTvSubtitleHudPresentation(
+            options = options,
+            committedIdentity = SubtitleIdentity.Off,
+            pendingIdentity = null,
+            hudOpen = true,
+            focusedStableId = options[2].stableId,
+        )
+        assertEquals(options[0].stableId, presentation.focusedStableId)
+        assertTrue(presentation.rows[2].unplayable)
     }
 
     @Test

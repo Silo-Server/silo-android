@@ -27,7 +27,8 @@ internal fun tvQuickSubtitlePickerChromeState(
 
 /**
  * Resolves a quick-picker row before changing player chrome, so invalid IDs
- * leave the picker visible and a valid selection is applied first.
+ * and tracks no route can show leave the picker visible and a valid selection
+ * is applied first.
  */
 internal fun dispatchTvQuickSubtitlePickerSelection(
     presentation: TvSubtitleHudPresentation,
@@ -36,6 +37,7 @@ internal fun dispatchTvQuickSubtitlePickerSelection(
     onSelectionComplete: () -> Unit,
 ): Boolean {
     val row = presentation.rows.firstOrNull { it.stableId == stableId } ?: return false
+    if (row.unplayable) return false
     onSelect(row.identity)
     onSelectionComplete()
     return true

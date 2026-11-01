@@ -127,6 +127,29 @@ class AutoSubtitleResolverTest {
     }
 
     @Test
+    fun autoNeverPicksAnEmbeddedTrackTheServerCannotShow() {
+        // An MKV's S_TEXT/WEBVTT track that FFmpeg did not recognize is
+        // stored with no codec. It used to rank as embedded text, above the
+        // external SRT, and the server refused the start that carried it.
+        val catalog = listOf(
+            SubtitleTrack(index = 2, codec = "", language = "eng", title = "English"),
+            SubtitleTrack(index = 0, codec = "srt", language = "eng", external = true),
+        )
+        val inventory = listOf(
+            PlayerSubtitleInfo(index = 0, language = "eng", codec = "srt", url = "/s/0.vtt", source = "external", serverDelivery = SUBTITLE_DELIVERY_SIDECAR),
+            PlayerSubtitleInfo(index = 1, language = "eng", url = "", source = "embedded", serverDelivery = SUBTITLE_DELIVERY_BURN_IN_ONLY, unplayable = true),
+        )
+        val context = AutoSubtitleContext(preferredLanguage = "en", mode = "always")
+
+        assertEquals(0, resolveAutoSubtitle(catalogAutoSubtitleCandidates(catalog), context).selectedCandidate()?.selectionIndex)
+        assertEquals(0, resolveAutoSubtitle(inventoryAutoSubtitleCandidates(inventory), context).selectedCandidate()?.selectionIndex)
+
+        // Not even as the only track in the language.
+        assertNull(resolveAutoSubtitle(catalogAutoSubtitleCandidates(catalog.take(1)), context).selectedCandidate())
+        assertNull(resolveAutoSubtitle(inventoryAutoSubtitleCandidates(inventory.drop(1)), context).selectedCandidate())
+    }
+
+    @Test
     fun theDetailPreviewAndThePlayerInventoryPickTheSameEmbeddedTrack() {
         // The detail page ranks the catalog (embedded first); the player
         // fallback ranks the session inventory (externals first). Source now
@@ -429,7 +452,8 @@ class AutoSubtitleResolverTest {
 
     private fun track(
         lang: String? = null,
-        codec: String? = null,
+        // A text codec: an embedded track without one is unplayable.
+        codec: String? = "subrip",
         title: String? = null,
         forced: Boolean = false,
         external: Boolean = false,

@@ -11,6 +11,8 @@ internal data class TvSubtitleHudOption(
     val stableId: String,
     val identity: SubtitleIdentity,
     val label: String,
+    /** No route can show this server track: listed, never selectable. */
+    val unplayable: Boolean = false,
 )
 
 internal data class TvSubtitleHudRow(
@@ -20,6 +22,8 @@ internal data class TvSubtitleHudRow(
     val checked: Boolean,
     val applying: Boolean,
     val focused: Boolean,
+    /** Shown disabled with an "Unsupported format" line; Select ignores it. */
+    val unplayable: Boolean = false,
 ) {
     val status: String?
         get() = if (applying) "Applying…" else null
@@ -107,11 +111,13 @@ internal fun buildTvSubtitleHudPresentation(
     onSelect: (SubtitleIdentity) -> Unit = {},
     onFocused: (String) -> Unit = {},
 ): TvSubtitleHudPresentation {
-    val optionIds = options.mapTo(mutableSetOf(), TvSubtitleHudOption::stableId)
+    // A disabled row cannot take focus, so it never anchors the pane.
+    val optionIds = options.filterNot(TvSubtitleHudOption::unplayable)
+        .mapTo(mutableSetOf(), TvSubtitleHudOption::stableId)
     val resolvedFocus = focusedStableId
         ?.takeIf(optionIds::contains)
-        ?: options.firstOrNull { it.identity == committedIdentity }?.stableId
-        ?: options.firstOrNull()?.stableId
+        ?: options.firstOrNull { it.identity == committedIdentity && !it.unplayable }?.stableId
+        ?: options.firstOrNull { !it.unplayable }?.stableId
     return TvSubtitleHudPresentation(
         rows = options.map { option ->
             TvSubtitleHudRow(
@@ -122,6 +128,7 @@ internal fun buildTvSubtitleHudPresentation(
                 applying = option.identity == pendingIdentity &&
                     pendingIdentity != committedIdentity,
                 focused = option.stableId == resolvedFocus,
+                unplayable = option.unplayable,
             )
         },
         hudOpen = hudOpen,
@@ -145,7 +152,13 @@ internal fun buildTvSubtitleHudOptions(
     return buildList {
         add(tvSubtitleHudOption(SubtitleIdentity.Off, "Off"))
         subtitleUrls.forEachIndexed { position, row ->
-            add(tvSubtitleHudOption(tvSubtitleIdentity(row), subtitleChoiceLabel(row, position)))
+            add(
+                tvSubtitleHudOption(
+                    tvSubtitleIdentity(row),
+                    subtitleChoiceLabel(row, position),
+                    unplayable = row.unplayable,
+                ),
+            )
         }
         playerOnlyTracks.forEachIndexed { position, track ->
             add(
@@ -161,8 +174,10 @@ internal fun buildTvSubtitleHudOptions(
 private fun tvSubtitleHudOption(
     identity: SubtitleIdentity,
     label: String,
+    unplayable: Boolean = false,
 ): TvSubtitleHudOption = TvSubtitleHudOption(
     stableId = tvSubtitleOptionStableId(identity),
     identity = identity,
     label = label,
+    unplayable = unplayable,
 )

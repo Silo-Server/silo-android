@@ -62,4 +62,8 @@
     <string name="settings_connection_not_saved">Couldn\'t save the speed test. Try again.</string>
     <string name="settings_connection_skipped_metered">Speed tests are skipped on metered networks.</string>
     <string name="settings_connection_skipped_cellular">Speed tests are skipped on cellular, and the Cellular Quality settings apply.</string>
+
+    <!-- Subtitle pickers (player and detail page): the secondary line on a
+         track the server has no way to show, listed but not selectable. -->
+    <string name="subtitle_track_unsupported_format">Unsupported format</string>
 </resources>

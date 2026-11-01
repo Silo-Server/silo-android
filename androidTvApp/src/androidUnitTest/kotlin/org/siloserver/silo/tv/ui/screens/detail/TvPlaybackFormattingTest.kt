@@ -432,8 +432,8 @@ class TvPlaybackFormattingTest {
         // preferred=fr, audio=en → readable French subs auto-selected.
         val v = fileVersion(
             subtitles = listOf(
-                subtitleTrack(lang = "eng"),
-                subtitleTrack(lang = "fre"),
+                subtitleTrack(codec = "srt", lang = "eng"),
+                subtitleTrack(codec = "srt", lang = "fre"),
             ),
         )
         val ctx = TvPlaybackFormatting.SubtitleAutoContext(
@@ -441,7 +441,28 @@ class TvPlaybackFormattingTest {
             mode = "auto",
             audioLanguage = "eng",
         )
-        assertEquals("Auto - French", TvPlaybackFormatting.subtitleValueLabel(v, null, ctx))
+        assertEquals("Auto - French · SRT", TvPlaybackFormatting.subtitleValueLabel(v, null, ctx))
+    }
+
+    @Test fun subtitleLaunchSelection_autoNeverStartsOnATrackTheServerCannotShow() {
+        // An MKV's S_TEXT/WEBVTT track that FFmpeg did not recognize arrives
+        // with no codec. Auto used to rank it as embedded text above the
+        // external SRT and send it as the start's subtitle, which the server
+        // refuses, ending playback. Auto now starts on the SRT, and the
+        // detail list shows the unrecognized track disabled in its place.
+        val v = fileVersion(
+            subtitles = listOf(
+                subtitleTrack(index = 2, lang = "eng"),
+                subtitleTrack(index = 0, codec = "srt", lang = "eng", external = true),
+            ),
+        )
+        val ctx = TvPlaybackFormatting.SubtitleAutoContext(preferredLanguage = "en", mode = "always")
+
+        val launch = TvPlaybackFormatting.subtitleLaunchSelection(v, null, ctx)
+        assertEquals(0, launch?.selectionIndex)
+        assertTrue(launch?.autoResolved == true)
+        val options = TvPlaybackFormatting.subtitleOptions(v, selectedSubtitleTrackIndex = null)
+        assertEquals(mapOf(0 to false, 1 to true), options.associate { it.selectionIndex to it.unplayable })
     }
 
     @Test fun subtitleValueLabel_autoNoneWhenAudioMatchesPreferred() {
@@ -460,8 +481,8 @@ class TvPlaybackFormattingTest {
         // (signs-only) track is exactly what plays.
         val v = fileVersion(
             subtitles = listOf(
-                subtitleTrack(lang = "eng"),
-                subtitleTrack(lang = "eng", forced = true),
+                subtitleTrack(codec = "srt", lang = "eng"),
+                subtitleTrack(codec = "srt", lang = "eng", forced = true),
             ),
         )
         val ctx = TvPlaybackFormatting.SubtitleAutoContext(
@@ -470,7 +491,7 @@ class TvPlaybackFormattingTest {
             showForced = true,
             audioLanguage = "eng",
         )
-        assertEquals("Auto - English (Forced)", TvPlaybackFormatting.subtitleValueLabel(v, null, ctx))
+        assertEquals("Auto - English (Forced) · SRT", TvPlaybackFormatting.subtitleValueLabel(v, null, ctx))
     }
 
     @Test fun subtitleValueLabel_autoNoneWhenModeOff() {
@@ -498,20 +519,20 @@ class TvPlaybackFormattingTest {
         // preferring full-dialogue (non-forced, non-SDH) over the forced one.
         val v = fileVersion(
             subtitles = listOf(
-                subtitleTrack(lang = "fre", forced = true),
-                subtitleTrack(lang = "fre"),
+                subtitleTrack(codec = "srt", lang = "fre", forced = true),
+                subtitleTrack(codec = "srt", lang = "fre"),
             ),
         )
         val ctx = TvPlaybackFormatting.SubtitleAutoContext(preferredLanguage = null, mode = "always")
-        assertEquals("Auto - French", TvPlaybackFormatting.subtitleValueLabel(v, null, ctx))
+        assertEquals("Auto - French · SRT", TvPlaybackFormatting.subtitleValueLabel(v, null, ctx))
     }
 
     @Test fun subtitleValueLabel_autoPrefersFullDialogueOverSdh() {
         // With a language match, SDH is skipped in favour of the readable track.
         val v = fileVersion(
             subtitles = listOf(
-                subtitleTrack(lang = "eng", title = "English SDH"),
-                subtitleTrack(lang = "eng"),
+                subtitleTrack(codec = "srt", lang = "eng", title = "English SDH"),
+                subtitleTrack(codec = "srt", lang = "eng"),
             ),
         )
         val ctx = TvPlaybackFormatting.SubtitleAutoContext(
@@ -519,7 +540,7 @@ class TvPlaybackFormattingTest {
             mode = "auto",
             audioLanguage = "jpn",
         )
-        assertEquals("Auto - English", TvPlaybackFormatting.subtitleValueLabel(v, null, ctx))
+        assertEquals("Auto - English · SRT", TvPlaybackFormatting.subtitleValueLabel(v, null, ctx))
     }
 
     @Test fun subtitleValueLabel_autoSkipsDvbBitmapForTextTrack() {

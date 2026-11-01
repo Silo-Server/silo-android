@@ -8,6 +8,8 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.catalog.PlaybackVariant
 import org.siloserver.silo.model.catalog.playbackEditions
 import org.siloserver.silo.model.catalog.hasEditionChoices
@@ -141,6 +143,7 @@ internal fun TvPlaybackActionSelectors(
             )
         }
     }
+    val unsupportedFormat = stringResource(CommonR.string.subtitle_track_unsupported_format)
     val subtitleOptions = buildList {
         add(
             TvSelectorOption(
@@ -165,9 +168,10 @@ internal fun TvPlaybackActionSelectors(
                 TvSelectorOption(
                     key = "subtitle:${option.stableId}",
                     title = option.title,
-                    detail = option.detail,
+                    detail = if (option.unplayable) unsupportedFormat else option.detail,
                     selected = option.isSelected,
                     onSelect = { onSelectSubtitleTrack(option.selectionIndex) },
+                    enabled = !option.unplayable,
                 ),
             )
         }
