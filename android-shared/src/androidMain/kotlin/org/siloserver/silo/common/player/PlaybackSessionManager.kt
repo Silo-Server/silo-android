@@ -17,7 +17,7 @@ import org.siloserver.silo.model.playback.LEARNED_LIMIT_IGNORE
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_SUMMARY_V1_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.gatedForBufferingQuality
-import org.siloserver.silo.model.playback.appliesInPlaceOver
+import org.siloserver.silo.model.playback.inPlaceMismatch
 import org.siloserver.silo.model.playback.withPlayerSwitchedAudio
 import org.siloserver.silo.model.playback.carriesHlsSubtitleRendition
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
@@ -1323,6 +1323,16 @@ open class PlaybackSessionManager(
                         startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
                         firstFrameReported = false,
                     )
+                    val subtitlePickOnly = classification == "subtitle_track_changed" && bufferingQuality == null
+                    val inPlaceMismatch = validated.plan.inPlaceMismatch(
+                        current = active.plan.withPlayerSwitchedAudio(request.selectedTracks.audio, validated.plan),
+                        sessionId = validated.sessionId,
+                        currentSessionId = active.sessionId,
+                    )
+                    // Why a subtitle pick's answer is adopted with a remount.
+                    if (subtitlePickOnly && inPlaceMismatch != null) {
+                        Log.i(TAG, "subtitle_replan_not_in_place reason=$inPlaceMismatch delivery=${validated.plan.delivery}")
+                    }
                     val ready = VideoSessionStartV3.Ready(
                         session = validated.plan.toSessionResponse(
                             validated.sessionId,
@@ -1341,13 +1351,7 @@ open class PlaybackSessionManager(
                         // Compared against the plan the player renders: that is
                         // the media a same-transport answer must match, including
                         // audio the player switched on its own.
-                        inPlace = classification == "subtitle_track_changed" &&
-                            bufferingQuality == null &&
-                            validated.plan.appliesInPlaceOver(
-                                current = active.plan.withPlayerSwitchedAudio(request.selectedTracks.audio, validated.plan),
-                                sessionId = validated.sessionId,
-                                currentSessionId = active.sessionId,
-                            ),
+                        inPlace = subtitlePickOnly && inPlaceMismatch == null,
                     )
                     val staged = StagedVideoReplan(
                         basePlaybackAttemptId = active.playbackAttemptId,

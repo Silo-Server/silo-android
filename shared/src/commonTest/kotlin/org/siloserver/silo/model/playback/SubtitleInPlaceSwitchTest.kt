@@ -157,6 +157,18 @@ class SubtitleInPlaceSwitchTest {
         assertFalse(switch.appliesInPlaceOver(original, null, null))
     }
 
+    @Test fun theMismatchNamesWhatChanged() {
+        assertNull(nativeSwitch(1).inPlaceMismatch(original, "s1", "s1"))
+        // The server mints a new stream URL (a token or proxy grant) for each original_http answer.
+        assertEquals("stream_url", nativeSwitch(1).copy(stream = original.stream.copy(url = "/api/v2/stream/s1?token=b")).inPlaceMismatch(original, "s1", "s1"))
+        assertEquals("audio", nativeSwitch(1).copy(selectedTracks = nativeSwitch(1).selectedTracks.copy(audio = PlaybackTrackIdentityV3("file:42:audio:1", 1))).inPlaceMismatch(original, "s1", "s1"))
+        assertEquals("session", nativeSwitch(1).inPlaceMismatch(original, "s2", "s1"))
+        assertEquals("subtitle_artifact", nativeSwitch(1).copy(subtitle = nativeSwitch(1).subtitle.copy(
+            embedded = null,
+            artifact = PlaybackSubtitleArtifactV3("/stream/s1/subtitles/1.vtt", "text/vtt", "vtt"),
+        )).inPlaceMismatch(original, "s1", "s1"))
+    }
+
     @Test fun audioThePlayerSwitchedOnItsOwnCountsAsPlaying() {
         val commentary = PlaybackTrackIdentityV3("file:42:audio:1", 1)
         val switch = nativeSwitch(1).copy(

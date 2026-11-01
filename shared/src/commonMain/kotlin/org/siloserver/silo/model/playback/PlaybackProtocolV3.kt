@@ -1033,36 +1033,46 @@ fun PlaybackPlanV3.switchableHlsRendition(row: PlaybackSubtitleInventoryItemV3):
  * differ either way: the selected subtitle is part of the server's plan
  * identity.
  */
-fun PlaybackPlanV3.appliesInPlaceOver(current: PlaybackPlanV3, sessionId: String?, currentSessionId: String?): Boolean {
-    if (sessionId == null || sessionId != currentSessionId) return false
-    if (delivery != current.delivery) return false
-    if (stream.url != current.stream.url ||
-        stream.protocol != current.stream.protocol ||
+fun PlaybackPlanV3.appliesInPlaceOver(current: PlaybackPlanV3, sessionId: String?, currentSessionId: String?): Boolean =
+    inPlaceMismatch(current, sessionId, currentSessionId) == null
+
+/**
+ * The first reason this plan cannot be applied in place over [current], or
+ * null when it can; see [appliesInPlaceOver]. Logged when a subtitle pick's
+ * answer is adopted with a remount, so a device run shows which part of the
+ * plan changed.
+ */
+fun PlaybackPlanV3.inPlaceMismatch(current: PlaybackPlanV3, sessionId: String?, currentSessionId: String?): String? {
+    if (sessionId == null || sessionId != currentSessionId) return "session"
+    if (delivery != current.delivery) return "delivery"
+    if (stream.url != current.stream.url) return "stream_url"
+    if (stream.protocol != current.stream.protocol ||
         stream.container != current.stream.container ||
-        stream.mimeType != current.stream.mimeType ||
-        stream.headers != current.stream.headers ||
+        stream.mimeType != current.stream.mimeType
+    ) return "stream_format"
+    if (stream.headers != current.stream.headers ||
         stream.headerRefresh != current.stream.headerRefresh ||
         stream.headerRefreshUrl != current.stream.headerRefreshUrl
-    ) return false
+    ) return "stream_headers"
     if ((effectiveMediaFileId ?: requestedMediaFileId) != (current.effectiveMediaFileId ?: current.requestedMediaFileId)) {
-        return false
+        return "file"
     }
-    if (source.container != current.source.container || effectiveRecipe != current.effectiveRecipe) return false
+    if (source.container != current.source.container || effectiveRecipe != current.effectiveRecipe) return "recipe"
     if (timeline.timelineOffsetSeconds != current.timeline.timelineOffsetSeconds ||
         timeline.streamOriginSeconds != current.timeline.streamOriginSeconds
-    ) return false
-    if (selectedTracks.audio != current.selectedTracks.audio) return false
-    if (claims.video != current.claims.video || claims.audio != current.claims.audio) return false
+    ) return "timeline"
+    if (selectedTracks.audio != current.selectedTracks.audio) return "audio"
+    if (claims.video != current.claims.video || claims.audio != current.claims.audio) return "claims"
     if (transformations.toSet() != current.transformations.toSet() ||
         runtimeCorrections.toSet() != current.runtimeCorrections.toSet() ||
         appliedQuirks.toSet() != current.appliedQuirks.toSet() ||
         activeOriginalHttpClaims() != current.activeOriginalHttpClaims()
-    ) return false
-    if (subtitle.artifact != null ||
-        subtitle.mode == PlaybackSubtitleModeV3.BURN_IN ||
-        current.subtitle.mode == PlaybackSubtitleModeV3.BURN_IN
-    ) return false
-    return when {
+    ) return "transformations"
+    if (subtitle.artifact != null) return "subtitle_artifact"
+    if (subtitle.mode == PlaybackSubtitleModeV3.BURN_IN || current.subtitle.mode == PlaybackSubtitleModeV3.BURN_IN) {
+        return "burn_in"
+    }
+    val selectable = when {
         delivery == PlaybackDelivery.ORIGINAL_HTTP -> subtitle.hlsRendition == null && when (subtitle.mode) {
             PlaybackSubtitleModeV3.OFF -> subtitle.embedded == null
             PlaybackSubtitleModeV3.RENDER -> isCanonicalContainerTrackId(subtitle.embedded?.containerTrackId)
@@ -1086,6 +1096,7 @@ fun PlaybackPlanV3.appliesInPlaceOver(current: PlaybackPlanV3, sessionId: String
         }
         else -> false
     }
+    return if (selectable) null else "subtitle_not_in_media"
 }
 
 /**
