@@ -421,7 +421,10 @@ class AudioCapabilityManager(
     /**
      * Pre-Q cannot query the selected media route or per-codec HDMI profiles.
      * Trust a plugged HDMI report only with no competing USB, Bluetooth,
-     * wired or line output and with automatic surround policy. Android 9 can
+     * wired, line, dock or hearing-aid output and with automatic surround
+     * policy. Pre-Q media routing picks a digital dock or a hearing aid ahead
+     * of HDMI; [AudioDeviceInfo.TYPE_DOCK] also covers analog docks, which
+     * rank below HDMI, so those fail closed. Android 9 can
      * add policy-forced formats to the HDMI port itself, so an explicit report
      * alone is insufficient. Media3's external-surround override is likewise
      * unproven; an explicit Amazon/Xiaomi Stereo choice must also fail closed.
@@ -430,7 +433,11 @@ class AudioCapabilityManager(
      */
     private fun preQHdmiEvidenceIsTrusted(): Boolean = runCatching {
         val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-        if (outputs.any { sinkCategory(it) in setOf("usb", "bluetooth", "wired") }) return@runCatching false
+        if (outputs.any {
+                sinkCategory(it) in setOf("usb", "bluetooth", "wired") ||
+                    it.type == AudioDeviceInfo.TYPE_DOCK || it.type == AudioDeviceInfo.TYPE_HEARING_AID
+            }
+        ) return@runCatching false
         val resolver = appContext.contentResolver
         val surroundPolicy = Settings.Global.getString(resolver, "encoded_surround_output")
         if (surroundPolicy != null && surroundPolicy.toIntOrNull() != 0) return@runCatching false

@@ -88,9 +88,11 @@ class HdmiAudioSinkReportTest {
             AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
             AudioDeviceInfo.TYPE_LINE_DIGITAL,
             AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+            AudioDeviceInfo.TYPE_DOCK,
         )
         // Android 7 has no USB_HEADSET mapping in AudioDeviceInfo.getType().
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) types += AudioDeviceInfo.TYPE_USB_HEADSET
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) types += AudioDeviceInfo.TYPE_HEARING_AID
         for (type in types) {
             context.sendStickyBroadcast(pluggedIntent())
             val shadowAudio = shadowOf(context.getSystemService(Context.AUDIO_SERVICE) as AudioManager)
