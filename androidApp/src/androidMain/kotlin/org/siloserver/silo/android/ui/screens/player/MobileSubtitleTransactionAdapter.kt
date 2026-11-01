@@ -34,6 +34,7 @@ import org.siloserver.silo.model.playback.SubtitleTransitionState
 import org.siloserver.silo.model.playback.UpdateAudioPreference
 import org.siloserver.silo.model.playback.UpdateQualityPreference
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
+import org.siloserver.silo.model.playback.isServerPick
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.reduceSubtitleTransition
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
@@ -65,15 +66,22 @@ internal data class MobileSubtitleStageRequest(
     val subtitleTrackIndex: Int,
     /** Picks a quality other than the committed one. */
     val qualityChanged: Boolean = false,
+    /** Picks an audio track other than the committed one. */
+    val audioChanged: Boolean = false,
 )
 
 /**
  * The classification a staged request goes out with. A quality pick is a
  * `quality_change`, which discards the kept step-down estimate; a track change
- * carries it.
+ * carries it. An audio pick is never a `subtitle_track_changed`: the session
+ * manager adopts only a subtitle pick without a remount, and an audio change
+ * needs one.
  */
-internal fun MobileSubtitleStageRequest.replanClassification(): String =
-    if (qualityChanged) "quality_changed" else "subtitle_track_changed"
+internal fun MobileSubtitleStageRequest.replanClassification(): String = when {
+    qualityChanged -> "quality_changed"
+    audioChanged -> "audio_track_changed"
+    else -> "subtitle_track_changed"
+}
 
 internal data class MobileStagedSubtitleCandidate(
     val id: String,
@@ -187,6 +195,22 @@ internal class MobileSubtitleTransactionAdapter(
     private val onCommittedPlaybackFailure: suspend (String) -> Unit = {},
     private val onEmbeddedSubtitleFailure: (Int) -> Unit = {},
     private val onHlsRenditionSubtitleFailure: (Int) -> Unit = {},
+    /**
+     * Whether the player currently exposes any text track to mount against.
+     * The mount deadline must not run while the answer is "none": a freshly
+     * replanned stream reports READY seconds before publishing its tracks, and
+     * a native track that misses a fixed deadline falls back to a whole-file
+     * sidecar extraction on the server.
+     */
+    private val hasMountableTracks: () -> Boolean = { true },
+    /**
+     * Whether a pick of the second identity, made while the first is
+     * committed, can be shown on the stream the player already plays before
+     * the server answers (see `canSwitchSubtitleInPlace`).
+     */
+    private val canSwitchInPlace: (SubtitleIdentity, SubtitleIdentity) -> Boolean = { _, _ -> false },
+    /** Whether Media3 currently lists a track that satisfies this identity. */
+    private val isLocallyMountable: (SubtitleIdentity) -> Boolean = { true },
 ) {
     private data class PendingLocalSelection(
         val generation: Long,
@@ -194,6 +218,11 @@ internal class MobileSubtitleTransactionAdapter(
         val proposedState: SubtitleTransitionState,
         val context: MobileSubtitlePlaybackContext,
         val mountedBeforeAdoption: Boolean = false,
+        /**
+         * Selected on the playing stream ahead of its own replan, whose answer
+         * is applied without a remount when it keeps the transport.
+         */
+        val inPlaceSwitch: Boolean = false,
     )
 
     private data class PendingLocalRestore(
@@ -671,6 +700,8 @@ internal class MobileSubtitleTransactionAdapter(
             return
         }
 
+        if (beginInPlaceSwitch(identity, selected.state)) return
+
         if (
             identity.isClientOwnedSubtitle() &&
             selected.state.pending != null
@@ -682,7 +713,7 @@ internal class MobileSubtitleTransactionAdapter(
             return
         }
 
-        if (identity.requiresLocalMountConfirmation()) {
+        if (identity.requiresLocalMountConfirmation() && !identity.isServerPick(transition.committed.identity)) {
             val proposedState = if (selected.state.pending == null) {
                 selected.state
             } else {
@@ -726,6 +757,7 @@ internal class MobileSubtitleTransactionAdapter(
             qualityPreference = requested.qualityPreference,
             subtitleTrackIndex = requested.identity.serverTrackIndex(),
             qualityChanged = changesQuality(requested),
+            audioChanged = requested.audioTrackIndex != transition.committed.audioTrackIndex,
         )
         val staged = try {
             stagedPort.stage(request)
@@ -924,6 +956,8 @@ internal class MobileSubtitleTransactionAdapter(
                     ),
                 )
             } else {
+                // An in-place switch to Off already applied it on the player.
+                invalidateLocalMount()
                 publish()
                 persist(transition.committed, requireNotNull(context))
             }
@@ -1001,6 +1035,7 @@ internal class MobileSubtitleTransactionAdapter(
             reduceSubtitleTransition(state, event).state
         }
         val finalIdentity = finalState.pending?.identity ?: finalState.committed.identity
+        if (beginInPlaceSwitch(finalIdentity, finalState)) return
         if (finalState.pending == null && finalIdentity.requiresLocalMountConfirmation()) {
             beginLocalSelection(
                 identity = finalIdentity,
@@ -1042,7 +1077,7 @@ internal class MobileSubtitleTransactionAdapter(
         qualityChangeFailed = failedQualityChange
         val priorIdentity = transition.committed.identity
         if (
-            failedLocalOwner?.mountedBeforeAdoption == true &&
+            (failedLocalOwner?.mountedBeforeAdoption == true || failedLocalOwner?.inPlaceSwitch == true) &&
             priorIdentity.requiresLocalMountConfirmation() &&
             context?.sessionId != null
         ) {
@@ -1056,6 +1091,16 @@ internal class MobileSubtitleTransactionAdapter(
         val ownedSelection = pendingLocalSelection?.generation == generation
         val ownedRestore = pendingLocalRestore?.generation == generation
         if (!ownedSelection && !ownedRestore) return
+        if (ownedSelection && pendingLocalSelection?.inPlaceSwitch == true &&
+            pendingLocalSelection?.proposedState?.pending != null
+        ) {
+            // The replan for this switch is still out, and its answer decides:
+            // the adoption confirms the mount again, and a miss then takes the
+            // usual path. Failing now would send a second replan beside it.
+            localMountTimeout?.cancel()
+            localMountTimeout = null
+            return
+        }
         val failedIdentity = (if (ownedSelection) pendingLocalSelection?.identity else pendingLocalRestore?.identity)
             as? SubtitleIdentity.Embedded
         if (failedIdentity?.isServerSelected == true) {
@@ -1084,10 +1129,42 @@ internal class MobileSubtitleTransactionAdapter(
         publish()
     }
 
+    /**
+     * Switches to [identity] on the playing stream when [state]'s pending
+     * replan picks only that subtitle and the stream already carries the
+     * track (or Off needs none): it shows now, and the replan that goes out
+     * with it decides. Its answer is adopted without a remount when it keeps
+     * the transport; a failure restores the previous subtitle.
+     */
+    private fun beginInPlaceSwitch(
+        identity: SubtitleIdentity,
+        state: SubtitleTransitionState,
+    ): Boolean {
+        val selectionContext = context ?: return false
+        if (selectionContext.sessionId == null) return false
+        val pending = state.pending ?: return false
+        if (pending.identity != identity ||
+            pending.audioPreferenceSpecified ||
+            pending.qualityPreferenceSpecified ||
+            !canSwitchInPlace(transition.committed.identity, identity) ||
+            (identity != SubtitleIdentity.Off && !isLocallyMountable(identity))
+        ) {
+            return false
+        }
+        beginLocalSelection(
+            identity = identity,
+            proposedState = state,
+            selectionContext = selectionContext,
+            inPlaceSwitch = true,
+        )
+        return true
+    }
+
     private fun beginLocalSelection(
         identity: SubtitleIdentity,
         proposedState: SubtitleTransitionState,
         selectionContext: MobileSubtitlePlaybackContext,
+        inPlaceSwitch: Boolean = false,
     ) {
         transition = transition.copy(
             pending = proposedState.pending,
@@ -1100,6 +1177,7 @@ internal class MobileSubtitleTransactionAdapter(
             identity = identity,
             proposedState = proposedState,
             context = selectionContext,
+            inPlaceSwitch = inPlaceSwitch,
         )
         scheduleLocalMountTimeout(generation)
         publish()
@@ -1122,8 +1200,22 @@ internal class MobileSubtitleTransactionAdapter(
     }
 
     private fun scheduleLocalMountTimeout(generation: Long) {
+        localMountTimeout?.cancel()
         localMountTimeout = scope.launch {
-            delay(LOCAL_MOUNT_TIMEOUT_MS)
+            var waited = 0L
+            // Only count against the mount once there is something to mount;
+            // the onTracksChanged callback may not arrive inside the window at
+            // all, so ask rather than wait to be told. The window starts at the
+            // first check that finds tracks (or now, if they are already
+            // there), so tracks published just before a check still get a
+            // whole window for their selection to confirm.
+            var tracksSeen = hasMountableTracks()
+            while (true) {
+                delay(LOCAL_MOUNT_TIMEOUT_MS)
+                waited += LOCAL_MOUNT_TIMEOUT_MS
+                if (tracksSeen || waited >= MAX_LOCAL_MOUNT_WAIT_MS) break
+                tracksSeen = hasMountableTracks()
+            }
             failLocalMount(generation)
         }
     }
@@ -1222,6 +1314,7 @@ internal class MobileSubtitleTransactionAdapter(
 
     private companion object {
         const val LOCAL_MOUNT_TIMEOUT_MS = 5_000L
+        const val MAX_LOCAL_MOUNT_WAIT_MS = 30_000L
         const val PERSISTENCE_ATTEMPTS = 2
         const val PRIMARY_PERSISTENCE_TIMEOUT_MS = 5_000L
         const val DURABLE_PERSISTENCE_TIMEOUT_MS = 5_000L

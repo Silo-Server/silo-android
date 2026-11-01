@@ -89,6 +89,12 @@ class SiloPlayerFactory(
     private val playbackAnalytics: PlaybackAnalyticsListener,
     /** Times the video's requests for each plan's `throughput_kbps`. */
     throughputMeter: PlaybackThroughputMeter,
+    /**
+     * Transport for sidecar subtitles, which waits longer for data than the
+     * video's ([withSidecarSubtitleTimeouts]): a cold server extraction is
+     * slow to send its first cue.
+     */
+    sidecarSubtitleHttpDataSourceFactory: HttpDataSource.Factory = httpDataSourceFactory,
 ) {
     val isTv: Boolean = TvModeDetector.isTv(context)
 
@@ -129,7 +135,7 @@ class SiloPlayerFactory(
     /** Sidecar subtitles: always the address their URL names. */
     private val dataSourceFactory = AuthenticatedDataSourceFactory(
         context = context,
-        httpDataSourceFactory = httpDataSourceFactory,
+        httpDataSourceFactory = sidecarSubtitleHttpDataSourceFactory,
         authSession = mediaAuthSession,
         serverUrlProvider = { serverUrl },
         requestHeadersProvider = ::requestHeadersFor,
@@ -150,6 +156,7 @@ class SiloPlayerFactory(
     private val embeddedSubtitleParserFactory = OffsetSubtitleParserFactory(
         offsetUsProvider = subtitleOffsetHolder::getUserOffsetUs,
         delegate = libassBridge.parserFactory,
+        signedSampleRelativeStarts = true,
     )
 
     private val sidecarSubtitleParserFactory = OffsetSubtitleParserFactory(
@@ -380,6 +387,7 @@ class SiloPlayerFactory(
             subtitleParserFactory = sidecarSubtitleParserFactory,
             subtitleOffsetProvider = subtitleOffsetHolder::getOffsetUs,
             loadErrorHandlingPolicy = mediaLoadErrorHandlingPolicy,
+            newSubtitleLoadErrorHandlingPolicy = ::SidecarSubtitleLoadErrorHandlingPolicy,
         )
 
         // Start on a small cushion and keep filling in the background. Depth is
@@ -671,6 +679,11 @@ class SiloPlayerFactory(
         private val subtitleParserFactory: SubtitleParser.Factory,
         private val subtitleOffsetProvider: () -> Long,
         private var loadErrorHandlingPolicy: LoadErrorHandlingPolicy,
+        /**
+         * Sidecars keep their own bounded retries (#458), whatever the media
+         * policy is: one policy per sidecar, since it holds that sidecar's budget.
+         */
+        private val newSubtitleLoadErrorHandlingPolicy: () -> SidecarSubtitleLoadErrorHandlingPolicy,
     ) : MediaSource.Factory {
         private var drmSessionManagerProvider: DrmSessionManagerProvider? = null
 
@@ -722,7 +735,7 @@ class SiloPlayerFactory(
             // Split every sidecar explicitly so only it receives that delta.
             val sources = mutableListOf(contentSource)
             subtitleConfigurations.mapTo(sources, ::createSubtitleMediaSource)
-            return MergingMediaSource(*sources.toTypedArray())
+            return FullMediaItemSource(MergingMediaSource(*sources.toTypedArray()), mediaItem)
         }
 
         private fun mediaSourceFactory(tag: SiloMediaTransformTag?): MediaSource.Factory =
@@ -747,9 +760,10 @@ class SiloPlayerFactory(
                 .setRoleFlags(configuration.roleFlags)
                 .setLabel(configuration.label)
                 .build()
+            val retryPolicy = newSubtitleLoadErrorHandlingPolicy()
             if (!subtitleParserFactory.supportsFormat(baseFormat)) {
                 return SingleSampleMediaSource.Factory(dataSourceFactory)
-                    .setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
+                    .setLoadErrorHandlingPolicy(retryPolicy)
                     .createMediaSource(configuration, C.TIME_UNSET)
             }
             val outputFormat = baseFormat.buildUpon()
@@ -795,7 +809,7 @@ class SiloPlayerFactory(
                 dataSourceFactory
             }
             val progressive = ProgressiveMediaSource.Factory(subtitleDataSourceFactory, extractorsFactory)
-                .setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
+                .setLoadErrorHandlingPolicy(retryPolicy)
                 .createMediaSource(
                     MediaItem.Builder()
                         .setUri(configuration.uri)
@@ -816,6 +830,15 @@ class SiloPlayerFactory(
                 } else {
                     C.TIME_UNSET
                 },
+                // The track every one of the extractors above declares, known
+                // now: the period publishes it at once, so a sidecar whose
+                // response is slow (a cold `.sup` extract sends no headers
+                // before its first packet) never holds back the video.
+                trackFormat = outputFormat.buildUpon()
+                    .setSampleMimeType(MimeTypes.APPLICATION_MEDIA3_CUES)
+                    .setCodecs(configuration.mimeType)
+                    .build(),
+                onFreshLoad = retryPolicy::startFresh,
             )
         }
     }

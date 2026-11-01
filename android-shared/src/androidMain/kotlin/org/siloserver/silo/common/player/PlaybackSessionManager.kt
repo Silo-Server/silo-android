@@ -17,6 +17,9 @@ import org.siloserver.silo.model.playback.LEARNED_LIMIT_IGNORE
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_SUMMARY_V1_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.gatedForBufferingQuality
+import org.siloserver.silo.model.playback.inPlaceMismatch
+import org.siloserver.silo.model.playback.withPlayerSwitchedAudio
+import org.siloserver.silo.model.playback.carriesHlsSubtitleRendition
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PlaybackStartRequestV3
@@ -233,6 +236,8 @@ open class PlaybackSessionManager(
         val replacement: ActiveVideoAttempt,
         val predecessor: ActiveVideoAttempt?,
         val settled: CompletableDeferred<Unit> = CompletableDeferred(),
+        /** Applied in place: the audio sink never left the predecessor's attempt. */
+        val inPlace: Boolean = false,
     )
 
     private data class PendingPublicationRollback(
@@ -1318,6 +1323,16 @@ open class PlaybackSessionManager(
                         startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
                         firstFrameReported = false,
                     )
+                    val subtitlePickOnly = classification == "subtitle_track_changed" && bufferingQuality == null
+                    val inPlaceMismatch = validated.plan.inPlaceMismatch(
+                        current = active.plan.withPlayerSwitchedAudio(request.selectedTracks.audio, validated.plan),
+                        sessionId = validated.sessionId,
+                        currentSessionId = active.sessionId,
+                    )
+                    // Why a subtitle pick's answer is adopted with a remount.
+                    if (subtitlePickOnly && inPlaceMismatch != null) {
+                        Log.i(TAG, "subtitle_replan_not_in_place reason=$inPlaceMismatch delivery=${validated.plan.delivery}")
+                    }
                     val ready = VideoSessionStartV3.Ready(
                         session = validated.plan.toSessionResponse(
                             validated.sessionId,
@@ -1330,6 +1345,13 @@ open class PlaybackSessionManager(
                         planAttemptKey = nextKey,
                         capabilities = currentCapabilities,
                         clientPlaybackContext = currentContext,
+                        // Only a subtitle pick: a quality or output change the
+                        // server happens to answer on the same transport still
+                        // goes through the adoption its own bookkeeping expects.
+                        // Compared against the plan the player renders: that is
+                        // the media a same-transport answer must match, including
+                        // audio the player switched on its own.
+                        inPlace = subtitlePickOnly && inPlaceMismatch == null,
                     )
                     val staged = StagedVideoReplan(
                         basePlaybackAttemptId = active.playbackAttemptId,
@@ -1468,8 +1490,18 @@ open class PlaybackSessionManager(
             return@withLock stagedVideoReplanUnavailable()
         }
 
-        val next = prepared.nextAttempt
-        passthroughSuppression.beginAttempt(next.planAttemptKey)
+        // A plan applied in place keeps the playing transport: its first
+        // frame has been shown and reported, its audio sink and the local
+        // fixes made to it carry on, so none of that starts over.
+        val next = if (staged.candidate.inPlace) {
+            prepared.nextAttempt.copy(
+                firstFrameReported = active.firstFrameReported,
+                startedAtElapsedRealtimeMs = active.startedAtElapsedRealtimeMs,
+                localMutations = active.localMutations,
+            )
+        } else {
+            prepared.nextAttempt.also { passthroughSuppression.beginAttempt(it.planAttemptKey) }
+        }
         val routeEvent = PlaybackRouteEventV3(
             playbackAttemptId = next.playbackAttemptId,
             sessionId = next.sessionId,
@@ -1494,6 +1526,7 @@ open class PlaybackSessionManager(
             pendingVideoPublication = PendingVideoPublication(
                 replacement = next,
                 predecessor = active,
+                inPlace = staged.candidate.inPlace,
             )
         }
         runCatching { emitRouteEvent(routeEvent) }
@@ -1688,7 +1721,7 @@ open class PlaybackSessionManager(
 
         pendingVideoPublication = null
         revertRenderedPlanKeepingCursor(pending.predecessor)
-        pending.predecessor?.let {
+        pending.predecessor?.takeUnless { pending.inPlace }?.let {
             passthroughSuppression.beginAttempt(it.planAttemptKey)
         }
         val protectedSessionIds = setOfNotNull(
@@ -2077,9 +2110,10 @@ open class PlaybackSessionManager(
                 if (subtitle.embedded != null && candidate.delivery == org.siloserver.silo.model.playback.PlaybackDelivery.ORIGINAL_HTTP &&
                     subtitle.embedded?.containerTrackId != null && subtitle.artifact == null
                 ) return null
-                // The transcode carries the track in its own playlist; there is
-                // no artifact to check, and validateForMedia3 vetted the shape.
-                if (subtitle.hlsRendition != null && candidate.delivery == org.siloserver.silo.model.playback.PlaybackDelivery.SERVER_TRANSCODE_HLS &&
+                // The transcode or copy remux carries the track in its own
+                // playlist; there is no artifact to check, and
+                // validateForMedia3 vetted the shape.
+                if (subtitle.hlsRendition != null && candidate.delivery.carriesHlsSubtitleRendition() &&
                     subtitle.artifact == null
                 ) return null
                 val artifact = subtitle.artifact

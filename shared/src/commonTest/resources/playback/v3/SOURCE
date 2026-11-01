@@ -1,11 +1,16 @@
 repository=https://github.com/Silo-Server/silo-server
 path=internal/playback/testdata/protocol_v3
-commit=8b9c08624767396e3c3c70390fbdfa71e21631b7
+branch=feat/subtitle-renditions-all (unmerged; includes feat/subtitles-native-limitations)
+commit=915e47c7da3d954acfc72a1e8dedf4d494714964
 protocol_version=3
 
-hls-subtitle-rendition-decision_response.json is newer than the commit above:
-branch=feat/buffering-quality
-commit=857655f4f5786235dba6cc9f24c844e65ea33cb1
+RE-SYNC REQUIRED: these files were copied from the unmerged server branches that
+add inventory stream_index / container_track_id / native_selectable and
+hls_subtitle_renditions_all_v1. Copy the directory again from silo-server main
+once those branches land, update the commit above, and run
+:shared:testDebugUnitTest. Only the files below are vendored; the server
+directory also holds request and route-event fixtures this client does not
+assert against yet.
 
 Byte-identical copies of the server's golden playback-v3 wire fixtures; do not
 hand-edit any of them. They are generated from the live Go contract types by

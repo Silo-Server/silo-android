@@ -338,14 +338,13 @@ private fun SubtitleTrack.matchesTypedCatalogIdentity(
         is SubtitleIdentity.ServerSidecar ->
             external && !codec.isCatalogBitmapSubtitle()
         // Burn-in covers external bitmaps plus the embedded families with no
-        // sidecar route; embedded PGS stays on the Embedded side, so the two
-        // remain disjoint.
+        // sidecar route. Embedded covers every embedded track: a direct-play
+        // plan draws VobSub and DVB from the stream too, and the player then
+        // remembers that track as Embedded.
         is SubtitleIdentity.ServerBurnIn ->
             codec.isCatalogBitmapSubtitle() &&
                 (external || !isClientMountableBitmapCodecFamily(codec))
-        is SubtitleIdentity.Embedded ->
-            !external &&
-                (!codec.isCatalogBitmapSubtitle() || isClientMountableBitmapCodecFamily(codec))
+        is SubtitleIdentity.Embedded -> !external
         SubtitleIdentity.Off,
         is SubtitleIdentity.Downloaded,
         is SubtitleIdentity.LocalMedia3,

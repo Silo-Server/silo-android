@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.common.player.MountedSubtitleTrack
 import org.siloserver.silo.common.player.resolveMountedSubtitle
+import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
@@ -44,6 +45,28 @@ internal fun tvResolveMountedSubtitleTrack(
     return resolveMountedSubtitle(subtitle = row, tracks = mounted)?.track
 }
 
+/**
+ * Whether the player can select [identity] without the server: the mounted
+ * media lists its exact track. Server-native and sidecar decisions require
+ * exact mounted IDs. A switch on the playing stream leaves the previous sidecar
+ * in the MediaItem, so a server sidecar counts only while [plan] selects it;
+ * another one takes the replan, or the server would keep playing a different
+ * track than the one shown.
+ */
+internal fun isTvLocallyMountable(
+    identity: SubtitleIdentity,
+    plan: PlaybackExecutionPlan?,
+    subtitleRows: List<PlayerSubtitleInfo>,
+    mounted: List<MountedSubtitleTrack>,
+): Boolean {
+    if (identity is SubtitleIdentity.ServerSidecar && plan != null &&
+        plan.selectedTracks.subtitleIndex != identity.serverIndex
+    ) {
+        return false
+    }
+    return tvResolveMountedSubtitleTrack(identity, subtitleRows, mounted) != null
+}
+
 /** The inventory row this identity was minted from, if it is exactly that row's. */
 private fun SubtitleIdentity.tvInventoryRow(
     rows: List<PlayerSubtitleInfo>,
@@ -69,3 +92,29 @@ internal fun tvSubtitleIdentity(track: PlayerTrackEntry): SubtitleIdentity =
             hearingImpaired = track.isHearingImpaired,
         ),
     )
+
+/** What a same-route reopen of the transport arms the subtitle reselection with. */
+internal sealed interface TvReopenSubtitleRestore {
+    /** The adapter is still mounting [identity] under its owner [generation]: keep that owner. */
+    data class AdapterMount(val identity: SubtitleIdentity, val generation: Long) : TvReopenSubtitleRestore
+
+    /** Nothing in flight: restore what the player shows, as a server index (-1 for Off). */
+    data class PlayerSelection(val serverIndex: Int?) : TvReopenSubtitleRestore
+}
+
+/**
+ * A reopen replaces the MediaItem, and a stalled transport may show no
+ * subtitle at all while a pick the adapter is mounting has not been
+ * confirmed. Restoring what the player shows would then arm Off over that
+ * pick, at the same authority, and the pick would fail its mount deadline.
+ */
+internal fun tvReopenSubtitleRestore(
+    adapterMountIdentity: SubtitleIdentity?,
+    adapterMountGeneration: Long?,
+    playerSelectedServerIndex: Int?,
+): TvReopenSubtitleRestore =
+    if (adapterMountIdentity != null && adapterMountGeneration != null) {
+        TvReopenSubtitleRestore.AdapterMount(adapterMountIdentity, adapterMountGeneration)
+    } else {
+        TvReopenSubtitleRestore.PlayerSelection(playerSelectedServerIndex)
+    }

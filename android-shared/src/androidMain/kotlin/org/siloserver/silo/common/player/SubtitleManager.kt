@@ -402,7 +402,8 @@ class SubtitleManager(
             "vtt", "webvtt" -> MimeTypes.TEXT_VTT
             "ttml" -> MimeTypes.APPLICATION_TTML
             "pgs", "hdmv_pgs_subtitle" -> MimeTypes.APPLICATION_PGS
-            "dvd_subtitle", "dvdsub" -> MimeTypes.APPLICATION_DVBSUBS
+            "dvd_subtitle", "dvdsub", "vobsub" -> MimeTypes.APPLICATION_VOBSUB
+            "dvb_subtitle", "dvbsub" -> MimeTypes.APPLICATION_DVBSUBS
             else -> MimeTypes.APPLICATION_SUBRIP // default to SRT
         }
     }
@@ -1712,6 +1713,17 @@ fun isSubtitleSelected(tracks: Tracks, identity: SubtitleIdentity): Boolean {
     return tracks.groups.firstOrNull { it.mediaTrackGroup == selection.mediaTrackGroup }
         ?.isTrackSelected(selection.trackIndex) == true
 }
+
+/**
+ * Whether the player shows what [identity] asks for: the exact track, or for
+ * Off no text track at all. A local switch confirms itself with this.
+ */
+fun isSubtitleSelectionApplied(tracks: Tracks, identity: SubtitleIdentity): Boolean =
+    if (identity == SubtitleIdentity.Off) {
+        tracks.groups.none { it.type == C.TRACK_TYPE_TEXT && it.isSelected }
+    } else {
+        isSubtitleSelected(tracks, identity)
+    }
 
 /**
  * Every text track in a snapshot that this device can render, in snapshot
