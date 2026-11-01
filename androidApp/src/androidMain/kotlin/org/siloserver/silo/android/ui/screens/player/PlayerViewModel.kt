@@ -126,6 +126,7 @@ import org.siloserver.silo.playback.applyAuthoritativeSubtitleReadyTrack
 import org.siloserver.silo.model.subtitles.SubtitleAiJob
 import org.siloserver.silo.model.subtitles.SubtitleAiQuota
 import org.siloserver.silo.model.subtitles.SubtitleAiStatus
+import org.siloserver.silo.model.subtitles.subtitleSearchAvailabilityAfter
 import org.siloserver.silo.model.subtitles.SubtitleDownloadRequest
 import org.siloserver.silo.model.subtitles.SubtitleResult
 import org.siloserver.silo.model.subtitles.SubtitleSearchRequest
@@ -1115,6 +1116,11 @@ class PlayerViewModel(
     data class SubtitleToolsUiState(
         /** null until probed (lazily, on first TracksSheet open); fetch failure → SubtitleAiStatus(false, false). */
         val aiStatus: SubtitleAiStatus? = null,
+        /**
+         * Whether the server offers provider search ("Find more"); null until
+         * the first provider-status answer. A failed probe offers search.
+         */
+        val providerSearchAvailable: Boolean? = null,
         val searchLoading: Boolean = false,
         val searchAttempted: Boolean = false,
         val searchResults: List<SubtitleResult> = emptyList(),
@@ -5468,6 +5474,7 @@ class PlayerViewModel(
     fun onTracksSheetOpened() {
         // Opening re-reads sync state so a job that finished meanwhile shows.
         subtitleSync.reload()
+        refreshSubtitleProviderStatus()
         if (aiStatusFetched) return
         aiStatusFetched = true
         viewModelScope.launch {
@@ -5476,6 +5483,26 @@ class PlayerViewModel(
                 else -> SubtitleAiStatus(enabled = false, transcribeEnabled = false)
             }
             _subtitleTools.update { it.copy(aiStatus = status) }
+        }
+    }
+
+    private var subtitleProviderStatusGeneration = 0L
+
+    /**
+     * Re-reads whether the server has a subtitle provider on every panel open,
+     * so a provider an administrator added or removed shows or hides
+     * "Find more" without restarting playback.
+     */
+    private fun refreshSubtitleProviderStatus() {
+        // Reopening the panel can start a probe while an older one is still
+        // pending; only the newest answer is applied.
+        val generation = ++subtitleProviderStatusGeneration
+        viewModelScope.launch {
+            val result = subtitlesRepository.providerStatus()
+            if (generation != subtitleProviderStatusGeneration) return@launch
+            _subtitleTools.update {
+                it.copy(providerSearchAvailable = subtitleSearchAvailabilityAfter(result, it.providerSearchAvailable))
+            }
         }
     }
 
@@ -5502,8 +5529,8 @@ class PlayerViewModel(
                         searchWarnings = r.data.warnings,
                     )
                 }
-                // No capability probe exists: "no providers configured" arrives
-                // as a plain server error — surface its text verbatim.
+                // A provider removed after the panel opened arrives as a plain
+                // server error — surface its text verbatim.
                 is ApiResult.Error, is ApiResult.NetworkError -> _subtitleTools.update {
                     it.copy(searchLoading = false, searchError = r.errorMessage("Subtitle search failed"))
                 }
