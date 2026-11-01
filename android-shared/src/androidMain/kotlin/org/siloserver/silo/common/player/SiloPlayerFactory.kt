@@ -735,7 +735,7 @@ class SiloPlayerFactory(
             // Split every sidecar explicitly so only it receives that delta.
             val sources = mutableListOf(contentSource)
             subtitleConfigurations.mapTo(sources, ::createSubtitleMediaSource)
-            return MergingMediaSource(*sources.toTypedArray())
+            return FullMediaItemSource(MergingMediaSource(*sources.toTypedArray()), mediaItem)
         }
 
         private fun mediaSourceFactory(tag: SiloMediaTransformTag?): MediaSource.Factory =
