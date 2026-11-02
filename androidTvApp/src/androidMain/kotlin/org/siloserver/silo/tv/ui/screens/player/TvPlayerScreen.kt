@@ -122,6 +122,7 @@ import org.siloserver.silo.cast.SiloCastTrack
 import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.pip.SiloPictureInPicturePlaybackState
 import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
+import org.siloserver.silo.common.player.allowsAudioDelay
 import org.siloserver.silo.common.player.videoPlayerViewport
 import org.siloserver.silo.common.player.videoViewportBounds
 import org.siloserver.silo.common.player.ActivePlayerHolder
@@ -398,6 +399,7 @@ fun TvPlayerScreen(
     val introSkipMode by viewModel.introSkipMode.collectAsState()
     val autoPlayNextEnabled by viewModel.autoPlayNextEnabled.collectAsState()
     val audioDelayMs by viewModel.audioDelayMs.collectAsState()
+    val audioOutputPath by viewModel.audioOutputPath.collectAsState()
     val subtitleDelayMs by viewModel.subtitleDelayMs.collectAsState()
     val hdrEnabled by viewModel.hdrEnabled.collectAsState()
     val dolbyVisionEnabled by viewModel.dolbyVisionEnabled.collectAsState()
@@ -2518,7 +2520,10 @@ fun TvPlayerScreen(
                             autoPlayNext = autoPlayNextEnabled,
                             onAutoPlayNextChanged = viewModel::onSetAutoPlayNext,
                             audioDelayMs = audioDelayMs,
-                            audioDelayEnabled = state.playbackPlan?.claims?.audio?.passthrough != true,
+                            audioDelayEnabled = audioOutputPath.allowsAudioDelay(
+                                planClaimsPassthrough = state.playbackPlan?.claims?.audio?.passthrough,
+                            ),
+                            audioOutputPath = audioOutputPath,
                             onAudioDelayChanged = viewModel::onAudioDelayChanged,
                             subtitleDelayMs = subtitleDelayMs,
                             subtitleDelayEnabled =
