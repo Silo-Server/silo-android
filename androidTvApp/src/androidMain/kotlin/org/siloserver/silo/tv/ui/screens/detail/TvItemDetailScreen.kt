@@ -51,6 +51,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -417,10 +418,10 @@ private fun TvDetailContent(
     shuffleLauncher: org.siloserver.silo.common.ui.ShuffleLauncher,
 ) {
     val playFocus = remember { FocusRequester() }
-    // The circular Version control in the hero action cluster. Hoisted here so
-    // an Up press from the body can return to the bottom-most playback control
-    // without skipping straight to Play.
+    // The circular Version control in the hero action cluster. Up from the body
+    // returns here when the viewer last left the playback selectors.
     val selectorFocus = remember { FocusRequester() }
+    val heroActionFocus = remember(detail.contentId) { TvHeroActionFocus(playFocus, selectorFocus) }
     val firstCastFocus = remember { FocusRequester() }
     // Focus restore for the cast rail: remembers which cast card pushed the
     // person page so the return trip lands back on it instead of Play.
@@ -781,9 +782,8 @@ private fun TvDetailContent(
     // actions section.
     val returnToHero: () -> Boolean = {
         coroutineScope.launch {
-            // Land on the selector row (the bottom-most primary control) when
-            // it is composed; otherwise fall back to Play
-            // (audiobooks, or the next-up placeholder pill). Focus moves
+            // Land on the hero action the viewer left; otherwise fall back to
+            // Play (audiobooks, or the next-up placeholder pill). Focus moves
             // BEFORE the scroll so the highlight travels with the window
             // instead of appearing only after it settles; when the hero has
             // been disposed off-screen the requests fail and we re-focus
@@ -792,14 +792,7 @@ private fun TvDetailContent(
             // so a requestFocus that returned false still counted as focused —
             // the scroll then ran as though the highlight had already moved.
             // These report the request's own answer.
-            val focusedImmediately =
-                selectorFocus.claimFocusOrReport(
-                    target = "detail_selector",
-                    action = "return_to_top",
-                ) || playFocus.claimFocusOrReport(
-                    target = "detail_play",
-                    action = "return_to_top",
-                )
+            val focusedImmediately = heroActionFocus.claim(action = "return_to_top")
             if (focusedImmediately) {
                 // Let the focus system enqueue its automatic bring-into-view
                 // first, then cancel/replace that scroll with the paced
@@ -808,16 +801,7 @@ private fun TvDetailContent(
             }
             listState.animateScrollToItemPaced(0)
             if (!focusedImmediately) {
-                if (!selectorFocus.claimFocusOrReport(
-                        target = "detail_selector",
-                        action = "return_to_top_retry",
-                    )
-                ) {
-                    playFocus.claimFocusOrReport(
-                        target = "detail_play",
-                        action = "return_to_top_retry",
-                    )
-                }
+                heroActionFocus.claim(action = "return_to_top_retry")
             }
         }
         true
@@ -984,8 +968,7 @@ private fun TvDetailContent(
                                     detail = detail,
                                     state = state,
                                     viewModel = viewModel,
-                                    playFocus = playFocus,
-                                    selectorFocus = selectorFocus,
+                                    focus = heroActionFocus,
                                     onPlay = onPlay,
                                     onSeriesClick = onSeriesClick,
                                     onSeasonClick = onSeasonClick,
@@ -1173,12 +1156,9 @@ private fun TvDetailContent(
                                     viewModel.onSeriesEpisodeActivated(null)
                                 },
                                 onReturnToHero = returnToHero,
-                                onReturnToSeriesSelector = if (isSeriesDetail) {
+                                onReturnToHeroAction = if (isSeriesDetail) {
                                     {
-                                        selectorFocus.claimFocusOrReport(
-                                            target = "detail_series_selector",
-                                            action = "season_up",
-                                        ) || returnToHero()
+                                        heroActionFocus.claim(action = "season_up") || returnToHero()
                                     }
                                 } else {
                                     null
@@ -1458,9 +1438,9 @@ private fun TvDetailContent(
                                     },
                                     // When Similar is the first body rail (movie with no
                                     // episode rail, cast, trailers or box set), Up returns to the hero
-                                    // Play button instead of relying on geometry.
+                                    // action the viewer left instead of relying on geometry.
                                     upFocusRequester = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow) {
-                                        playFocus
+                                        heroActionFocus.last
                                     } else {
                                         null
                                     },
@@ -1719,14 +1699,35 @@ internal fun seriesStarringCredit(detail: ItemDetail): String? {
     return names.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "Starring ")
 }
 
+/**
+ * The hero action row's focus targets, hoisted above the lazy hero item so the
+ * action the viewer left survives the hero scrolling out of composition. Up
+ * from the body and entry into the row return to [last], else Play, matching
+ * tvOS `TVDetailActionRow`.
+ */
+@Stable
+private class TvHeroActionFocus(val play: FocusRequester, val selector: FocusRequester) {
+    val startOver = FocusRequester()
+    val watchlist = FocusRequester()
+    val more = FocusRequester()
+    var last by mutableStateOf(play)
+
+    /** Focuses [last], else Play; false when neither is attached. */
+    fun claim(action: String): Boolean =
+        (last !== play && last.claimFocusOrReport(target = "detail_hero_action", action = action)) ||
+            play.claimFocusOrReport(target = "detail_play", action = action)
+}
+
+private fun Modifier.rememberHeroAction(focus: TvHeroActionFocus, target: FocusRequester): Modifier =
+    onFocusChanged { state -> if (state.hasFocus) focus.last = target }
+
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun HeroActionRow(
     detail: ItemDetail,
     state: TvItemDetailUiState,
     viewModel: TvItemDetailViewModel,
-    playFocus: FocusRequester,
-    selectorFocus: FocusRequester,
+    focus: TvHeroActionFocus,
     onPlay: (contentId: String, fileId: Int?, versionChosen: Boolean, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onSeriesClick: (seriesId: String) -> Unit,
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
@@ -1886,6 +1887,11 @@ private fun HeroActionRow(
     // when next-up resolves would only risk yanking focus back if the viewer had
     // already moved into the seasons/episodes rails.
 
+    // Start Over leaves the row once the item is no longer in progress.
+    LaunchedEffect(hasResume) {
+        if (!hasResume && focus.last === focus.startOver) focus.last = focus.play
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // Action row — approved tvOS `HStack(spacing: 18)` mapped through the
         // half-scale dp port as the button internals. Version and Subtitles use
@@ -1895,10 +1901,10 @@ private fun HeroActionRow(
                 .fillMaxWidth()
                 .focusProperties {
                     // Entering the cluster from outside (Down from the
-                    // synopsis/facts, Up from the body) always
-                    // lands on Play — geometric nearest-child search would
-                    // otherwise pick whichever toggle sits closest.
-                    enter = { playFocus }
+                    // synopsis/facts, Up from the body) lands on the action
+                    // the viewer left, else Play — geometric nearest-child
+                    // search would otherwise pick whichever toggle sits closest.
+                    enter = { focus.last }
                 }
                 .focusGroup(),
         ) {
@@ -1936,8 +1942,9 @@ private fun HeroActionRow(
                     // Android's half-scale canvas maps that to 170dp, keeping
                     // every circular action on a fixed x-position as episode
                     // titles and progress state change.
-                    modifier = if (detail.type == "series") Modifier.width(170.dp) else Modifier,
-                    focusRequester = playFocus,
+                    modifier = (if (detail.type == "series") Modifier.width(170.dp) else Modifier)
+                        .rememberHeroAction(focus, focus.play),
+                    focusRequester = focus.play,
                 )
 
 
@@ -1951,6 +1958,8 @@ private fun HeroActionRow(
                         contentDescription = "Start Over",
                         titleOnFocus = "Start Over",
                         isActive = false,
+                        modifier = Modifier.rememberHeroAction(focus, focus.startOver),
+                        focusRequester = focus.startOver,
                         onClick = {
                             if (playReady && !playLaunchPending) {
                                 playLaunchPending = true
@@ -1966,41 +1975,49 @@ private fun HeroActionRow(
                     )
                 }
 
-                TvPlaybackActionSelectors(
-                    versions = selectorVersions,
-                    playbackVariants = if (isSeriesOrSeason) nextUpDetail?.playbackVariants.orEmpty() else detail.playbackVariants,
-                    currentVersion = selectedVersion,
-                    selectedVersionFileId = selectorSelectedFileId,
-                    selectedAudioTrackIndex = selectorAudioIndex,
-                    selectedSubtitleTrackIndex = selectorSubtitleIndex,
-                    automaticAudioTrackOrdinal = automaticAudioTrackOrdinal,
-                    automaticAudioResolutionKnown = automaticAudioResolutionKnown,
-                    preferredSubtitleLanguage = state.preferredSubtitleLanguage,
-                    subtitleMode = state.subtitleMode,
-                    showForcedSubtitles = state.showForcedSubtitles,
-                    subtitleAutoContextFor = { audioLanguage ->
-                        state.subtitleAutoContext(
-                            playbackDetail = if (isSeriesOrSeason) nextUpDetail else detail,
-                            audioLanguage = audioLanguage,
-                        )
-                    },
-                    onSelectVersion = if (isSeriesOrSeason) {
-                        viewModel::onNextUpVersionSelected
-                    } else {
-                        viewModel::onVersionSelected
-                    },
-                    onSelectAudioTrack = if (isSeriesOrSeason) {
-                        viewModel::onNextUpAudioTrackSelected
-                    } else {
-                        viewModel::onAudioTrackSelected
-                    },
-                    onSelectSubtitleTrack = if (isSeriesOrSeason) {
-                        viewModel::onNextUpSubtitleTrackSelected
-                    } else {
-                        viewModel::onSubtitleTrackSelected
-                    },
-                    versionFocusRequester = selectorFocus,
-                )
+                // One group for all selectors: Up returns to Version, the
+                // only selector with a hoisted focus target.
+                Row(
+                    modifier = Modifier.rememberHeroAction(focus, focus.selector),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                ) {
+                    TvPlaybackActionSelectors(
+                        versions = selectorVersions,
+                        playbackVariants = if (isSeriesOrSeason) nextUpDetail?.playbackVariants.orEmpty() else detail.playbackVariants,
+                        currentVersion = selectedVersion,
+                        selectedVersionFileId = selectorSelectedFileId,
+                        selectedAudioTrackIndex = selectorAudioIndex,
+                        selectedSubtitleTrackIndex = selectorSubtitleIndex,
+                        automaticAudioTrackOrdinal = automaticAudioTrackOrdinal,
+                        automaticAudioResolutionKnown = automaticAudioResolutionKnown,
+                        preferredSubtitleLanguage = state.preferredSubtitleLanguage,
+                        subtitleMode = state.subtitleMode,
+                        showForcedSubtitles = state.showForcedSubtitles,
+                        subtitleAutoContextFor = { audioLanguage ->
+                            state.subtitleAutoContext(
+                                playbackDetail = if (isSeriesOrSeason) nextUpDetail else detail,
+                                audioLanguage = audioLanguage,
+                            )
+                        },
+                        onSelectVersion = if (isSeriesOrSeason) {
+                            viewModel::onNextUpVersionSelected
+                        } else {
+                            viewModel::onVersionSelected
+                        },
+                        onSelectAudioTrack = if (isSeriesOrSeason) {
+                            viewModel::onNextUpAudioTrackSelected
+                        } else {
+                            viewModel::onAudioTrackSelected
+                        },
+                        onSelectSubtitleTrack = if (isSeriesOrSeason) {
+                            viewModel::onNextUpSubtitleTrackSelected
+                        } else {
+                            viewModel::onSubtitleTrackSelected
+                        },
+                        versionFocusRequester = focus.selector,
+                    )
+                }
 
                 TvSquareToggleButton(
                     icon = Icons.Filled.BookmarkBorder,
@@ -2012,6 +2029,8 @@ private fun HeroActionRow(
                         "Add to watchlist"
                     },
                     onClick = viewModel::onToggleWatchlist,
+                    modifier = Modifier.rememberHeroAction(focus, focus.watchlist),
+                    focusRequester = focus.watchlist,
                     titleOnFocus = "Watchlist",
                 )
 
@@ -2022,6 +2041,8 @@ private fun HeroActionRow(
                     contentDescription = "More options",
                     titleOnFocus = "More",
                     onClick = { moreOpen = true },
+                    modifier = Modifier.rememberHeroAction(focus, focus.more),
+                    focusRequester = focus.more,
                 )
             }
         }
@@ -2247,7 +2268,7 @@ private fun EpisodesSection(
     isShowingSeriesOverview: Boolean,
     onShowSelected: () -> Unit,
     onReturnToHero: () -> Boolean,
-    onReturnToSeriesSelector: (() -> Boolean)? = null,
+    onReturnToHeroAction: (() -> Boolean)? = null,
     onSeasonSelected: (org.siloserver.silo.model.catalog.Season) -> Unit,
     onEpisodeSelected: (EpisodeListItem) -> Unit,
     onEpisodeFocused: (EpisodeListItem) -> Unit = {},
@@ -2293,9 +2314,8 @@ private fun EpisodesSection(
                     selectedSeason = state.selectedSeason,
                     onShowSelected = onShowSelected,
                     onSeasonSelected = onSeasonSelected,
-                    // Return to the circular Version control in the hero; if
-                    // it is not attached yet, fall back to Play.
-                    onDirectionUp = onReturnToSeriesSelector ?: onReturnToHero,
+                    // Return to the hero action the viewer left, else Play.
+                    onDirectionUp = onReturnToHeroAction ?: onReturnToHero,
                     horizontalContentPadding = TvDetailHorizontalInset,
                 )
             } else {
