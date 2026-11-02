@@ -133,10 +133,10 @@ class HdmiAudioSinkReportTest {
     }
 
     @Test
-    fun amazonAndXiaomiStereoChoiceWithdrawsHdmiEvidence() {
+    fun amazonAndXiaomiExternalSurroundSettingDoesNotWithdrawHdmiEvidence() {
         context.sendStickyBroadcast(pluggedIntent())
-        // Fire OS sets external_surround_sound_enabled=1 whenever surround is on.
-        val cases = mapOf(null to true, "1" to true, "0" to false)
+        // A Fire TV Cube on Surround Sound "Best Available" reports 0.
+        val cases = mapOf(null to true, "1" to true, "0" to true)
         for ((value, expected) in cases) {
             Settings.Global.putString(context.contentResolver, "external_surround_sound_enabled", value)
             for (manufacturer in listOf("Amazon", "Xiaomi")) {

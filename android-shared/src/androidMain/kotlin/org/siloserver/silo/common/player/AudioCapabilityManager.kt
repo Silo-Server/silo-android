@@ -426,8 +426,8 @@ class AudioCapabilityManager(
      * of HDMI; [AudioDeviceInfo.TYPE_DOCK] also covers analog docks, which
      * rank below HDMI, so those fail closed. Android 9 can
      * add policy-forced formats to the HDMI port itself, so an explicit report
-     * alone is insufficient. Media3's external-surround override is likewise
-     * unproven; an explicit Amazon/Xiaomi Stereo choice must also fail closed.
+     * alone is insufficient. Media3's forced external-surround override is
+     * likewise unproven, so it fails closed.
      * Inspection failures never earn entries. The raw report still supplies
      * the aggregate ceiling used for decoded audio.
      */
@@ -441,14 +441,12 @@ class AudioCapabilityManager(
         val resolver = appContext.contentResolver
         val surroundPolicy = Settings.Global.getString(resolver, "encoded_surround_output")
         if (surroundPolicy != null && surroundPolicy.toIntOrNull() != 0) return@runCatching false
-        if (Settings.Global.getInt(resolver, "use_external_surround_sound_flag", 0) == 1) return@runCatching false
-        val externalSurroundDevice = Build.MANUFACTURER == "Amazon" || Build.MANUFACTURER == "Xiaomi"
-        // Fire OS sets external_surround_sound_enabled=1 whenever surround
-        // output is on, and Media3 still merges the HDMI report in that case.
-        // The AC3/E-AC3 it adds from the setting cannot earn entries, because
-        // entries only cover encodings in the raw HDMI report. Only the user's
-        // explicit Stereo choice (0) withdraws the HDMI evidence.
-        !externalSurroundDevice || Settings.Global.getString(resolver, "external_surround_sound_enabled") != "0"
+        // external_surround_sound_enabled is deliberately not consulted: a Fire
+        // TV Cube (Fire OS 7) set to Surround Sound "Best Available" reports 0,
+        // and Media3 merges the HDMI report whatever its value. The AC3/E-AC3
+        // Media3 adds when it is 1 cannot earn entries, because entries only
+        // cover encodings in the raw HDMI report.
+        Settings.Global.getInt(resolver, "use_external_surround_sound_flag", 0) != 1
     }.getOrDefault(false)
 
     /**
