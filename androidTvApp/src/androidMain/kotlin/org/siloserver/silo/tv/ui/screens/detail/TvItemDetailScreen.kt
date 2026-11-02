@@ -418,10 +418,7 @@ private fun TvDetailContent(
     shuffleLauncher: org.siloserver.silo.common.ui.ShuffleLauncher,
 ) {
     val playFocus = remember { FocusRequester() }
-    // The circular Version control in the hero action cluster. Up from the body
-    // returns here when the viewer last left the playback selectors.
-    val selectorFocus = remember { FocusRequester() }
-    val heroActionFocus = remember(detail.contentId) { TvHeroActionFocus(playFocus, selectorFocus) }
+    val heroActionFocus = remember(detail.contentId) { TvHeroActionFocus(playFocus) }
     val firstCastFocus = remember { FocusRequester() }
     // Focus restore for the cast rail: remembers which cast card pushed the
     // person page so the return trip lands back on it instead of Play.
@@ -1706,8 +1703,10 @@ internal fun seriesStarringCredit(detail: ItemDetail): String? {
  * tvOS `TVDetailActionRow`.
  */
 @Stable
-private class TvHeroActionFocus(val play: FocusRequester, val selector: FocusRequester) {
+private class TvHeroActionFocus(val play: FocusRequester) {
     val startOver = FocusRequester()
+    val edition = FocusRequester()
+    val version = FocusRequester()
     val audio = FocusRequester()
     val subtitles = FocusRequester()
     val watchlist = FocusRequester()
@@ -2010,10 +2009,14 @@ private fun HeroActionRow(
                     } else {
                         viewModel::onSubtitleTrackSelected
                     },
-                    versionFocusRequester = focus.selector,
+                    editionFocusRequester = focus.edition,
+                    versionFocusRequester = focus.version,
                     audioFocusRequester = focus.audio,
                     subtitleFocusRequester = focus.subtitles,
                     onTriggerFocused = { focus.last = it },
+                    onEditionHidden = {
+                        if (focus.last === focus.edition) focus.last = focus.version
+                    },
                 )
 
                 TvSquareToggleButton(
