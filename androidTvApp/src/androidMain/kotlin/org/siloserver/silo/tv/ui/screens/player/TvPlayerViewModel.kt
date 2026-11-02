@@ -4,6 +4,7 @@ package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsSeekEvent
+import org.siloserver.silo.common.player.AudioOutputPath
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
 import org.siloserver.silo.common.player.failedRendererTrackType
 import org.siloserver.silo.common.player.failureDiagnostics
@@ -1917,6 +1918,9 @@ class TvPlayerViewModel(
     /** False when the server is known to discard subtitle text opacity. */
     val subtitleTextOpacitySupported: StateFlow<Boolean> = playerSettingsStore.subtitleTextOpacitySupportedFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    /** The AudioTrack's real output path, for the HUD's Mode row and delay gating. */
+    val audioOutputPath: StateFlow<AudioOutputPath?> get() = playbackAnalytics.audioOutputPath
+
     /**
      * Per-profile audio delay in ms, ±500 clamp. Sourced from
      * [PlayerSettingsStore.audioSyncMsFlow]; mirrored into the active
