@@ -187,8 +187,15 @@ class SubtitleTransactionIntegrationTest {
 
     @Test
     fun `an every-track rendition switch is shown at once and adopted on the same stream`() = runTest {
+        // Holds the server's answer until the player has mounted the switch.
+        // MockEngine answers on its own thread, so without the hold the replan
+        // could be adopted before the first mount report.
+        val replanAnswer = CompletableDeferred<Unit>()
         val harness = harness(
-            replanResponse = { _, _ -> response(everyTrackRenditionPlan("s1", FILE_ID, B_INDEX).asReplan("b")) },
+            replanResponse = { _, _ ->
+                replanAnswer.await()
+                response(everyTrackRenditionPlan("s1", FILE_ID, B_INDEX).asReplan("b"))
+            },
             startPlan = everyTrackRenditionPlan("s1", FILE_ID, A_INDEX),
             canSwitchInPlace = { committed, target -> target != committed },
         )
@@ -222,8 +229,9 @@ class SubtitleTransactionIntegrationTest {
         runCurrent()
         // Selected on the player before the server answers, with the replan out.
         assertEquals(renditionB, harness.adapter.snapshot.localMountIdentity)
-        harness.mountPending(expectedSessionId = "s1", tracks = tracks)
         harness.awaitReplans(1)
+        harness.mountPending(expectedSessionId = "s1", tracks = tracks)
+        replanAnswer.complete(Unit)
         harness.awaitAdoptions(1)
         runCurrent()
 
