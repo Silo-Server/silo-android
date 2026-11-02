@@ -47,9 +47,10 @@ data class TvProfileSelectionUiState(
     /** The profile just picked on a new TV, while the TV asks whether to open it automatically. */
     val rememberOffer: Profile? = null,
     /**
-     * The account holds a temporary password, so the server refuses profiles
-     * until it is replaced. The TV has no form for it: it says where to
-     * change it and offers sign-out.
+     * The latest load found a temporary password, so the server refuses
+     * profiles until it is replaced. The TV has no form for it: it says where
+     * to change it and offers sign-out. Each load's answer replaces it, and it
+     * stays up while a reload is out so the focused Sign out isn't unmounted.
      */
     val requiresPasswordChange: Boolean = false,
 )
@@ -233,13 +234,14 @@ class TvProfileSelectionViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
+                            requiresPasswordChange = false,
                             error = result.message.ifBlank { "Failed to load profiles" },
                         )
                     }
                 }
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(isLoading = false, error = "Network error. Please try again.")
+                        it.copy(isLoading = false, requiresPasswordChange = false, error = "Network error. Please try again.")
                     }
                 }
             }

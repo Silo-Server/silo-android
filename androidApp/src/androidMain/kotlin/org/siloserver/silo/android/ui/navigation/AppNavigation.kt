@@ -1125,8 +1125,11 @@ fun AppNavigation(
                     }
                 },
                 onPasswordChangeRequired = {
+                    // The restricted session can't use any screen beneath
+                    // (another server's, or Home), so this becomes the root
+                    // and Back leaves the app, as the picker's Back does then.
                     navController.navigate(Route.PasswordChange.route) {
-                        popUpTo(Route.ProfileSelection.route) { inclusive = true }
+                        popUpTo(0) { inclusive = true }
                         launchSingleTop = true
                     }
                 },

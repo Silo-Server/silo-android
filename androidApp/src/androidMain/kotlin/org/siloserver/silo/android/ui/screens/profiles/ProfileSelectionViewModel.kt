@@ -48,9 +48,11 @@ data class ProfileSelectionUiState(
     /** Manage mode just started for "Add profile"; the screen opens the add form and consumes this. */
     val openAddProfile: Boolean = false,
     /**
-     * The account holds a temporary password, so the server refuses profiles
-     * until it is replaced: the screen hands over to "Choose a new password"
-     * and consumes this. The picker keeps its loading state meanwhile.
+     * The latest load found a temporary password, so the server refuses
+     * profiles until it is replaced: the visible picker hands over to "Choose
+     * a new password" and consumes this, keeping its loading state meanwhile.
+     * Every load derives it afresh, so a picker shown again (which reloads)
+     * hands off again or shows the grid; it never waits on an earlier answer.
      */
     val requiresPasswordChange: Boolean = false,
 )
@@ -150,7 +152,9 @@ class ProfileSelectionViewModel(
     fun loadProfiles(clearError: Boolean = true) {
         val load = ++loadAttempt
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = if (clearError) null else it.error) }
+            _uiState.update {
+                it.copy(isLoading = true, error = if (clearError) null else it.error, requiresPasswordChange = false)
+            }
 
             val scope = profileRepository.captureIdentityScope()
             val activeId = profileRepository.getActiveProfileId()

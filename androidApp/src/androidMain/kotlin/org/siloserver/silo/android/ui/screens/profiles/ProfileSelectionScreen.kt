@@ -75,6 +75,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.marquee.MarqueeButton
@@ -165,8 +166,13 @@ fun ProfileSelectionScreen(
         }
     }
 
-    LaunchedEffect(state.requiresPasswordChange) {
-        if (state.requiresPasswordChange) {
+    // Only the picker on screen hands off. One covered by the server list, or
+    // leaving, must not pull the person away; it reloads when it's shown
+    // again and hands off from that answer.
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateAsState()
+    val onScreen = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
+    LaunchedEffect(state.requiresPasswordChange, onScreen) {
+        if (state.requiresPasswordChange && onScreen) {
             viewModel.onPasswordChangeConsumed()
             onPasswordChangeRequired()
         }
