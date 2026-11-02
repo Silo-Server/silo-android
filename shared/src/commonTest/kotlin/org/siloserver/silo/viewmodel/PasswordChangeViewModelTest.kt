@@ -32,6 +32,10 @@ class PasswordChangeViewModelTest {
         var reads: MutableList<Boolean?> = mutableListOf(true),
         var change: ApiResult<Unit> = ApiResult.Success(Unit),
         var refreshes: MutableList<Boolean> = mutableListOf(true),
+        /** Thrown by the change instead of answering. */
+        var changeThrows: Exception? = null,
+        /** Thrown by the refresh instead of answering. */
+        var refreshThrows: Exception? = null,
     ) : TemporaryPasswordAccount {
         val calls = mutableListOf<String>()
 
@@ -49,11 +53,13 @@ class PasswordChangeViewModelTest {
 
         override suspend fun changePassword(current: String, new: String): ApiResult<Unit> {
             calls += "change"
+            changeThrows?.let { throw it }
             return change
         }
 
         override suspend fun refreshSessionAfterPasswordChange(): Boolean {
             calls += "refresh"
+            refreshThrows?.let { throw it }
             return if (refreshes.size > 1) refreshes.removeAt(0) else refreshes.single()
         }
     }
@@ -141,7 +147,7 @@ class PasswordChangeViewModelTest {
             val state = model.uiState.value
             assertEquals(PasswordChangePhase.Editing, state.phase)
             assertEquals("That temporary password is incorrect.", state.error)
-            assertEquals(listOf("read", "change", "read"), account.calls)
+            assertEquals(listOf("read", "change"), account.calls, "a refusal needs no account check")
         }
     }
 
@@ -221,6 +227,45 @@ class PasswordChangeViewModelTest {
         } finally {
             model.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
             Dispatchers.resetMain()
+        }
+    }
+
+    /** The server answered and refused, so nothing changed: the form keeps the refusal even when the account can't be read. */
+    @Test
+    fun aDefiniteRefusalStaysOnTheFormWithoutCheckingTheAccount() = runTest {
+        for (refusal in listOf(
+            ApiResult.Error(422, WRONG_CURRENT_PASSWORD, "incorrect"),
+            ApiResult.Error(429, "rate_limited", "slow down"),
+        )) {
+            val account = FakeAccount(reads = mutableListOf(true, null), change = refusal)
+            withModel(account) { model ->
+                model.fill()
+                model.submit()
+                assertEquals(PasswordChangePhase.Editing, model.uiState.value.phase, refusal.error)
+                assertEquals(listOf("read", "change"), account.calls, refusal.error)
+            }
+        }
+    }
+
+    /** A change that throws is an unknown outcome: the account says what happened. */
+    @Test
+    fun aChangeThatThrowsIsCheckedLikeALostAnswer() = runTest {
+        val account = FakeAccount(reads = mutableListOf(true, false), changeThrows = IllegalStateException("keystore"))
+        withModel(account) { model ->
+            model.fill()
+            model.submit()
+            assertEquals(listOf("read", "change", "read", "refresh"), account.calls)
+            assertTrue(model.uiState.value.finished)
+        }
+    }
+
+    @Test
+    fun aRefreshThatThrowsOffersTryAgain() = runTest {
+        val account = FakeAccount(refreshThrows = IllegalStateException("keystore"))
+        withModel(account) { model ->
+            model.fill()
+            model.submit()
+            assertEquals(PasswordChangePhase.RefreshFailed(retrying = false), model.uiState.value.phase)
         }
     }
 

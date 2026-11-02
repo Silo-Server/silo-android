@@ -27,6 +27,11 @@ import org.siloserver.silo.network.apiv2.safeApiV2Call
 class AuthApi(
     private val client: HttpClient,
     private val apiV2Gate: ApiV2Gate,
+    /**
+     * For mutations the engine must never resend after a dropped connection
+     * (OkHttp otherwise does on a reused one), such as the password change.
+     */
+    private val nonReplayingClient: HttpClient = client,
 ) {
 
     suspend fun login(request: LoginRequest, serverUrl: String? = null): ApiResult<LoginResponse> = safeApiV2Call<TokenPairV2>(apiV2Gate) {
@@ -168,16 +173,16 @@ class AuthApi(
 
     /**
      * `changePassword` (204). Account-scoped, with no profile declared, and sent
-     * once: a replay would spend another attempt from the server's
-     * password-change budget. A 422 naming `body.current_password` comes back
-     * as [WRONG_CURRENT_PASSWORD]; any other 422 carries the first error's
+     * once, on [nonReplayingClient]: a replay would spend another attempt from
+     * the server's password-change budget. A 422 naming `body.current_password`
+     * comes back as [WRONG_CURRENT_PASSWORD]; any other 422 carries the first error's
      * detail, which names the rule the new password broke. Neither password
      * is logged: both travel only in the body.
      */
     suspend fun changePassword(scope: AuthScopeSnapshot, current: String, new: String): ApiResult<Unit> {
         apiV2Gate.forServer(scope.serverId).blocked()?.let { return it }
         return try {
-            val response = client.post("/api/v2/account/password") {
+            val response = nonReplayingClient.post("/api/v2/account/password") {
                 authScope(scope.withoutProfile()); singleAttempt()
                 contentType(ContentType.Application.Json)
                 setBody(ChangePasswordRequestV2(currentPassword = current, newPassword = new))

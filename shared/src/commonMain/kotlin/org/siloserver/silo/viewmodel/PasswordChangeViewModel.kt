@@ -2,6 +2,7 @@ package org.siloserver.silo.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -120,8 +121,8 @@ class PasswordChangeViewModel(
      */
     internal suspend fun load() {
         val (user, requirements) = coroutineScope {
-            val limits = async { account.passwordRequirements() }
-            account.readAccount().getOrNull() to limits.await()
+            val limits = async { orNullIfThrown { account.passwordRequirements() } ?: PasswordRequirements.ServerDefault }
+            orNullIfThrown { account.readAccount() }?.getOrNull() to limits.await()
         }
         _uiState.update { it.copy(accountName = user?.username, requirements = requirements) }
         if (user?.passwordChangeRequired != false || _uiState.value.phase != PasswordChangePhase.Editing) return
@@ -142,12 +143,23 @@ class PasswordChangeViewModel(
             return
         }
         _uiState.update { it.copy(phase = PasswordChangePhase.Saving, error = null) }
-        val result = account.changePassword(state.currentPassword, state.newPassword)
+        // A call that throws is an unknown outcome, like a lost answer.
+        val result = try {
+            account.changePassword(state.currentPassword, state.newPassword)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ApiResult.NetworkError(e)
+        }
         if (result !is ApiResult.Success) {
             // A lost response can hide a change the server saved, and sending
             // the temporary password again would then fail as incorrect. The
-            // account says whether it still holds the temporary password.
-            when (temporaryPasswordRemains()) {
+            // account says whether it still holds the temporary password. A
+            // 4xx is the server's own refusal: nothing changed, so there is
+            // nothing to check.
+            val refused = result is ApiResult.Error && result.code in 400..499
+            val remains = if (refused) true else temporaryPasswordRemains()
+            when (remains) {
                 true -> {
                     _uiState.update { it.copy(phase = PasswordChangePhase.Editing) }
                     fail(passwordChangeErrorMessage(result))
@@ -189,7 +201,7 @@ class PasswordChangeViewModel(
 
     /** Whether the account still holds its temporary password; null when it can't be read. */
     private suspend fun temporaryPasswordRemains(): Boolean? {
-        val user = account.readAccount().getOrNull() ?: return null
+        val user = orNullIfThrown { account.readAccount() }?.getOrNull() ?: return null
         // A server that doesn't report it counts as still holding it.
         return user.passwordChangeRequired ?: true
     }
@@ -201,11 +213,24 @@ class PasswordChangeViewModel(
     }
 
     private suspend fun continueSignIn() {
-        if (account.refreshSessionAfterPasswordChange()) {
+        if (orNullIfThrown { account.refreshSessionAfterPasswordChange() } == true) {
             _uiState.update { it.copy(finished = true) }
         } else {
             _uiState.update { it.copy(phase = PasswordChangePhase.RefreshFailed(retrying = false)) }
         }
+    }
+
+    /**
+     * [block]'s answer, or null when it threw. This screen runs in
+     * [viewModelScope], where an escaping exception would crash the app; each
+     * caller treats null as its unknown outcome. Cancellation still propagates.
+     */
+    private suspend fun <T> orNullIfThrown(block: suspend () -> T): T? = try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
     }
 
     private fun fail(message: String) {

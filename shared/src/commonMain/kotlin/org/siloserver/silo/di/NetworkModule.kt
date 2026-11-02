@@ -31,7 +31,21 @@ val networkModule = module {
     single { org.siloserver.silo.repository.ImageCapabilitiesSession(get(), get(), get()) }
     // The apps bind an ArtworkLayout; without one, reads carry no artwork widths.
     single { org.siloserver.silo.repository.ArtworkSizing(getOrNull(), get()) }
-    single { AuthApi(get(), get()) }
+    single {
+        AuthApi(
+            client = get(),
+            apiV2Gate = get(),
+            // The password change must never be resent by the engine.
+            nonReplayingClient = createSiloClient(
+                tokenManager = get(),
+                deviceMetadataProvider = getOrNull(),
+                diagnosticsObserver = getOrNull(),
+                cleartextOriginConsent = getOrNull(),
+                retryOnConnectionFailure = false,
+                accessChangeSignals = get(),
+            ),
+        )
+    }
     single { OnboardingApi(get(), get(), get()) }
     single<DeviceLoginApi> { DefaultDeviceLoginApi(get(), get()) }
     single<ServerIdentityApi> { DefaultServerIdentityApi(get()) }

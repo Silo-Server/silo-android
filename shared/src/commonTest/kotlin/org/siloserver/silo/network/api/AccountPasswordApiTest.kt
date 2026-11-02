@@ -83,6 +83,26 @@ class AccountPasswordApiTest {
         } finally { client.close() }
     }
 
+    /** The engine must never resend the change after a dropped connection; it goes on the non-replaying client. */
+    @Test
+    fun theChangeGoesOutOnTheNonReplayingClient() = runTest {
+        val replaying = mutableListOf<String>()
+        val nonReplaying = mutableListOf<String>()
+        val client = HttpClient(MockEngine { request -> replaying += request.url.encodedPath; respond("", HttpStatusCode.NoContent) }) {
+            install(ContentNegotiation) { json(SiloJson) }
+        }
+        val single = HttpClient(MockEngine { request -> nonReplaying += request.url.encodedPath; respond("", HttpStatusCode.NoContent) }) {
+            install(ContentNegotiation) { json(SiloJson) }
+        }
+        try {
+            AuthApi(client, ApiV2Gate.Unrestricted, nonReplayingClient = single).changePassword(scope, "temporary", "a-new-password")
+            assertEquals(listOf("/api/v2/account/password"), nonReplaying)
+            assertEquals(emptyList(), replaying)
+        } finally {
+            client.close(); single.close()
+        }
+    }
+
     @Test
     fun aWrongTemporaryPasswordIsToldApartFromARejectedNewOne() = runTest {
         val cases = listOf(
