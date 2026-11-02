@@ -79,6 +79,7 @@ import org.siloserver.silo.android.ui.screens.profiles.ProfileSelectionViewModel
 import org.siloserver.silo.android.ui.screens.servers.ServerListViewModel
 import org.siloserver.silo.android.ui.screens.downloads.DownloadsViewModel
 import org.siloserver.silo.viewmodel.HomeViewModel
+import org.siloserver.silo.viewmodel.PasswordChangeViewModel
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesViewModel
 import org.siloserver.silo.viewmodel.FavoritesViewModel
 import org.siloserver.silo.viewmodel.HistoryViewModel
@@ -639,6 +640,7 @@ val androidModule = module {
     viewModel { InviteClaimViewModel(get(), get()) }
     viewModel { OnboardingTourViewModel(get(), get(), get(), get(), get()) }
     viewModel { ProfileSelectionViewModel(get(), get(), profileVerificationRecovery = getOrNull()) }
+    viewModel { PasswordChangeViewModel(get<org.siloserver.silo.repository.AuthRepository>()) }
     viewModel { CreateProfileViewModel(get()) }
     viewModel { EditProfileViewModel(get()) }
     viewModel {

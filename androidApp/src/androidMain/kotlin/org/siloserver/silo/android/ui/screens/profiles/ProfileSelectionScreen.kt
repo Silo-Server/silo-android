@@ -115,6 +115,7 @@ private val BottomGap = 20.dp
  * @param onNavigateToEditProfile Called when a profile is tapped in manage mode.
  * @param onChangeServer "Change server" from the footer or the server chip.
  * @param onSignOut "Sign out" from the footer.
+ * @param onPasswordChangeRequired The account holds a temporary password; it must choose its own first.
  */
 @Composable
 fun ProfileSelectionScreen(
@@ -123,6 +124,7 @@ fun ProfileSelectionScreen(
     onNavigateToEditProfile: (profileId: String) -> Unit,
     onChangeServer: () -> Unit,
     onSignOut: () -> Unit,
+    onPasswordChangeRequired: () -> Unit,
     viewModel: ProfileSelectionViewModel = koinViewModel(),
     brandingLoader: ServerBrandingLoader = koinInject(),
     serverRegistry: ServerRegistry = koinInject(),
@@ -160,6 +162,13 @@ fun ProfileSelectionScreen(
         if (state.openAddProfile) {
             viewModel.onAddProfileConsumed()
             onNavigateToCreateProfile()
+        }
+    }
+
+    LaunchedEffect(state.requiresPasswordChange) {
+        if (state.requiresPasswordChange) {
+            viewModel.onPasswordChangeConsumed()
+            onPasswordChangeRequired()
         }
     }
 

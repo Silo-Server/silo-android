@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.siloserver.silo.common.ui.marquee.SignInHandoff
+import org.siloserver.silo.model.auth.isPasswordChangeRequired
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.authorizedProfileToken
 import org.siloserver.silo.model.profile.householdPrimary
@@ -45,6 +46,12 @@ data class TvProfileSelectionUiState(
     val openingOnlyProfile: Boolean = false,
     /** The profile just picked on a new TV, while the TV asks whether to open it automatically. */
     val rememberOffer: Profile? = null,
+    /**
+     * The account holds a temporary password, so the server refuses profiles
+     * until it is replaced. The TV has no form for it: it says where to
+     * change it and offers sign-out.
+     */
+    val requiresPasswordChange: Boolean = false,
 )
 
 /**
@@ -203,6 +210,7 @@ class TvProfileSelectionViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
+                            requiresPasswordChange = false,
                             openingOnlyProfile = only != null,
                             accountName = user?.username ?: it.accountName,
                             profiles = result.data,
@@ -213,7 +221,15 @@ class TvProfileSelectionViewModel(
                     }
                     if (only != null) onProfileSelected(only)
                 }
-                is ApiResult.Error -> {
+                is ApiResult.Error -> if (result.isPasswordChangeRequired()) {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            requiresPasswordChange = true,
+                            accountName = user?.username ?: it.accountName,
+                        )
+                    }
+                } else {
                     _uiState.update {
                         it.copy(
                             isLoading = false,

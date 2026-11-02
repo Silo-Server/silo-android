@@ -173,6 +173,11 @@ fun TvProfileSelectionScreen(
         // then would unmount the existing grid and warp/lose focus, so
         // stale-while-revalidate — keep the grid up during a refresh, like
         // the error branch already does.
+        // Ahead of the spinner: a resume reload must not unmount it and drop focus.
+        state.requiresPasswordChange -> TvPasswordChangeRequiredScreen(
+            accountName = state.accountName,
+            onSignOut = { onSignOut(false) },
+        )
         state.isLoading && state.profiles.isEmpty() -> TvLoadingScreen()
         // A one-profile household opening straight after sign-in: nothing to
         // pick, and nothing hidden left for the remote to press.

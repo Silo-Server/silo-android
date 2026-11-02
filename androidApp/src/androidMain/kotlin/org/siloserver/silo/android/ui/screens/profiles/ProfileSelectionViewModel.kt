@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.profiles
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.model.auth.isPasswordChangeRequired
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.authorizedProfileToken
 import org.siloserver.silo.model.profile.householdPrimary
@@ -46,6 +47,12 @@ data class ProfileSelectionUiState(
     val activeProfileId: String? = null,
     /** Manage mode just started for "Add profile"; the screen opens the add form and consumes this. */
     val openAddProfile: Boolean = false,
+    /**
+     * The account holds a temporary password, so the server refuses profiles
+     * until it is replaced: the screen hands over to "Choose a new password"
+     * and consumes this. The picker keeps its loading state meanwhile.
+     */
+    val requiresPasswordChange: Boolean = false,
 )
 
 class ProfileSelectionViewModel(
@@ -53,6 +60,7 @@ class ProfileSelectionViewModel(
     private val authRepository: AuthRepository? = null,
     private val consumeSkipsSingleProfile: () -> Boolean = SignInHandoff::consumeSkipsSingleProfilePicker,
     private val profileVerificationRecovery: ProfileVerificationRecovery? = null,
+    private val rearmSkipsSingleProfile: () -> Unit = { SignInHandoff.skipsSingleProfilePicker = true },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ProfileSelectionUiState())
@@ -205,7 +213,13 @@ class ProfileSelectionViewModel(
                     if (only != null) onProfileTapped(only)
                 }
 
-                is ApiResult.Error -> {
+                is ApiResult.Error -> if (result.isPasswordChangeRequired()) {
+                    // The picker after the new password still skips a
+                    // one-person household when this sign-in asked to.
+                    if (skipSingle) rearmSkipsSingleProfile()
+                    skipsSingleProfile = false
+                    _uiState.update { it.copy(requiresPasswordChange = true) }
+                } else {
                     _uiState.update {
                         it.copy(
                             isLoading = false,
@@ -442,6 +456,10 @@ class ProfileSelectionViewModel(
                 }
             }
         }
+    }
+
+    fun onPasswordChangeConsumed() {
+        _uiState.update { it.copy(requiresPasswordChange = false) }
     }
 
     /** Resets after the UI has navigated away. */

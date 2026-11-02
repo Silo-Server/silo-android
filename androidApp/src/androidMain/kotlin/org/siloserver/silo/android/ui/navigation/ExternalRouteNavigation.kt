@@ -263,6 +263,7 @@ private val preAuthenticationDestinationRoutes = setOf(
     Route.Setup.route,
     Route.Signup.route,
     Route.ProfileSelection.route,
+    Route.PasswordChange.route,
     Route.CreateProfile.route,
     Route.EditProfile.ROUTE,
     Route.PairDevice.ROUTE,

@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -67,6 +68,46 @@ class SiloAuthPluginFreshPinnedRefreshTest {
         }
         assertEquals(listOf("/api/v2/auth/device/approve"), calls.map { it.path })
         assertEquals("Bearer stale", calls[0].authorization)
+    }
+
+    /**
+     * After a temporary password changes, the token that changed it keeps the
+     * server's restriction, so the scope is renewed however long it has left.
+     */
+    @Test
+    fun aForcedRefreshRenewsAScopeThatIsNotExpiring() = runTest {
+        val tokens = ScopeTokens(expiring = false)
+        val calls = mutableListOf<Recorded>()
+        client(tokens, calls).get("/api/v2/account/me") {
+            authScope(scope)
+            forceSiloRefresh()
+        }
+        assertEquals(listOf("/api/v2/auth/refresh", "/api/v2/account/me"), calls.map { it.path })
+        assertEquals("Bearer fresh", calls[1].authorization)
+        assertEquals("refresh-2", tokens.refresh)
+    }
+
+    @Test
+    fun aForcedRefreshThatFailsSendsNothingOnTheOldToken() = runTest {
+        val tokens = ScopeTokens(expiring = false)
+        val calls = mutableListOf<Recorded>()
+        val client = HttpClient(
+            MockEngine { request ->
+                calls += Recorded(request.url.encodedPath, request.headers[HttpHeaders.Authorization])
+                respond("{}", HttpStatusCode.InternalServerError, headersOf(HttpHeaders.ContentType, "application/json"))
+            },
+        ) {
+            install(ContentNegotiation) { json(SiloJson) }
+            install(SiloAuthPlugin) { tokenManager = tokens }
+        }
+        assertFailsWith<SiloAuthUnavailableException> {
+            client.get("/api/v2/account/me") {
+                authScope(scope)
+                forceSiloRefresh()
+            }
+        }
+        assertEquals(listOf("/api/v2/auth/refresh"), calls.map { it.path })
+        assertEquals("stale", tokens.access, "the session is kept")
     }
 
     @Test

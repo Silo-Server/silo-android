@@ -9,6 +9,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.decodeFromJsonElement
+import org.siloserver.silo.model.auth.PASSWORD_CHANGE_REQUIRED
+import org.siloserver.silo.model.auth.PASSWORD_CHANGE_REQUIRED_MESSAGE
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.resolveArtworkUrls
@@ -61,7 +63,9 @@ internal suspend fun HttpResponse.toApiV2Error(): ApiResult.Error {
     return ApiResult.Error(
         code = status.value,
         error = code,
-        message = problem?.detail ?: "",
+        // The temporary-password refusal's detail is a protocol instruction;
+        // screens that show `message` get copy a person can act on.
+        message = if (code == PASSWORD_CHANGE_REQUIRED) PASSWORD_CHANGE_REQUIRED_MESSAGE else problem?.detail ?: "",
     )
 }
 
