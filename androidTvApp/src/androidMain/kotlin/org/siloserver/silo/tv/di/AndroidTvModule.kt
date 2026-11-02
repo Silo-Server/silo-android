@@ -543,7 +543,7 @@ val androidTvModule = module {
         RequestsViewModel(get(), loadOnInit = params.getOrNull<Boolean>() ?: true)
     }
     viewModel { RequestSearchViewModel(get()) }
-    viewModel { params -> MyRequestsViewModel(get(), loadOnInit = params.getOrNull<Boolean>() ?: true) }
+    viewModel { params -> MyRequestsViewModel(get(), loadOnInit = params.getOrNull<Boolean>() ?: true, featureStore = get()) }
     // Platform supplies "today" and the IANA timezone; the shared ViewModel's
     // week math stays deterministic in commonTest (no Clock.System default).
     viewModel {

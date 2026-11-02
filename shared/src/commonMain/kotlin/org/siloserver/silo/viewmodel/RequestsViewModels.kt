@@ -13,10 +13,12 @@ import org.siloserver.silo.model.request.RequestMediaType
 import org.siloserver.silo.model.request.RequestMutationFailure
 import org.siloserver.silo.model.request.RequestOutcome
 import org.siloserver.silo.model.request.applyingFollowUpdate
-import org.siloserver.silo.model.request.applyingRequestUpdate
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
+import org.siloserver.silo.model.feature.RequestsFeatureStore
+import org.siloserver.silo.repository.RequestEvent
 import org.siloserver.silo.repository.RequestsRepository
+import org.siloserver.silo.repository.applyingRequestEvent
 import kotlin.time.Duration
 import kotlin.time.TimeSource
 import kotlinx.coroutines.Job
@@ -93,7 +95,7 @@ class RequestsViewModel(
             }
         }
         viewModelScope.launch {
-            repository.lastUpdate.drop(1).filterNotNull().collect { applyRequestUpdate(it.record) }
+            repository.lastUpdate.drop(1).filterNotNull().collect { applyRequestUpdate(it) }
         }
     }
 
@@ -194,18 +196,19 @@ class RequestsViewModel(
     }
 
     /** Patches every visible surface in place after a mutation anywhere in the app. */
-    private fun applyRequestUpdate(record: MediaRequest) {
+    private fun applyRequestUpdate(event: RequestEvent) {
+        val record = event.record
         _uiState.update { state ->
             val index = state.myRequests.indexOfFirst { it.id == record.id }
             val mine = when {
-                index >= 0 && record.outcome == RequestOutcome.Cancelled -> state.myRequests.filterNot { it.id == record.id }
+                event.removed || record.outcome == RequestOutcome.Cancelled -> state.myRequests.filterNot { it.id == record.id }
                 index >= 0 -> state.myRequests.toMutableList().also { it[index] = record }
                 record.outcome == RequestOutcome.Active -> listOf(record) + state.myRequests
                 else -> state.myRequests
             }
             state.copy(
-                searchResults = state.searchResults.applyingRequestUpdate(record),
-                sections = state.sections.map { it.copy(results = it.results.applyingRequestUpdate(record)) },
+                searchResults = state.searchResults.applyingRequestEvent(event),
+                sections = state.sections.map { it.copy(results = it.results.applyingRequestEvent(event)) },
                 myRequests = mine,
             )
         }
@@ -247,7 +250,7 @@ class RequestSearchViewModel(
     init {
         viewModelScope.launch {
             repository.lastUpdate.drop(1).filterNotNull().collect { event ->
-                _uiState.update { it.copy(results = it.results.applyingRequestUpdate(event.record)) }
+                _uiState.update { it.copy(results = it.results.applyingRequestEvent(event)) }
             }
         }
         viewModelScope.launch {
@@ -368,8 +371,14 @@ data class MyRequestsUiState(
     val cancellingId: String? = null,
     /** Requests whose cancel was sent without a usable answer; held until the request changes, or the hold lapses. */
     val unconfirmedCancelIds: Set<String> = emptySet(),
-    /** Inline message for a failed cancel; cleared on the next action. */
+    /** Inline message for a failed cancel or removal; cleared on the next action. */
     val actionErrorMessage: String? = null,
+    /** The server takes removals of failed requests (`remove_failed_supported`). */
+    val removeFailedSupported: Boolean = false,
+    /** The request being removed; its row dims and takes no taps. */
+    val removingId: String? = null,
+    /** A confirmation to show once, such as "Request removed". */
+    val notice: RequestNotice? = null,
     val error: String? = null,
 ) {
     val requests: List<MediaRequest> get() = buckets.flatMap { it.second }
@@ -378,7 +387,14 @@ data class MyRequestsUiState(
     /** Whether [record] may offer Cancel: pending, and no cancel of it held. */
     fun canCancel(record: MediaRequest): Boolean =
         RequestDisplayState.of(record).isCancelable && record.id !in unconfirmedCancelIds && cancellingId == null
+
+    /** Whether [record] may offer Remove: a failed request that delivered nothing, on a server that takes it. */
+    fun canRemove(record: MediaRequest): Boolean =
+        removeFailedSupported && record.isRemovableFailure && removingId == null
 }
+
+/** A one-time confirmation; [sequence] makes a repeat of the same text a new notice. */
+data class RequestNotice(val message: String, val sequence: Long)
 
 class MyRequestsViewModel(
     private val repository: RequestsRepository,
@@ -386,9 +402,12 @@ class MyRequestsViewModel(
     loadOnInit: Boolean = true,
     private val holdLifetime: Duration = RequestActionHold.Lifetime,
     private val timeSource: TimeSource = TimeSource.Monotonic,
+    /** Gates Remove on `remove_failed_supported`; without it Remove is never offered. */
+    private val featureStore: RequestsFeatureStore? = null,
 ) : ViewModel() {
 
     private var loadGeneration = 0
+    private var noticeSequence = 0L
     private val cancelHolds = mutableMapOf<String, RequestActionHold>()
     private val _uiState = MutableStateFlow(MyRequestsUiState())
     val uiState: StateFlow<MyRequestsUiState> = _uiState.asStateFlow()
@@ -396,11 +415,18 @@ class MyRequestsViewModel(
 
     init {
         if (loadOnInit) load()
+        featureStore?.let { store ->
+            viewModelScope.launch {
+                store.removeFailedSupported.collect { supported -> _uiState.update { it.copy(removeFailedSupported = supported) } }
+            }
+        }
         viewModelScope.launch {
             // A mutation elsewhere (detail submit) while this list is mounted:
             // the list is short, so a full refetch is the simplest correct answer.
             repository.lastUpdate.drop(1).filterNotNull().collect {
-                if (!_uiState.value.hasLoaded || _uiState.value.cancellingId != null) return@collect
+                val state = _uiState.value
+                // This model's own cancel or removal re-reads when it finishes.
+                if (!state.hasLoaded || state.cancellingId != null || state.removingId != null) return@collect
                 reloadJob?.cancel()
                 reloadJob = viewModelScope.launch { fetch() }
             }
@@ -485,6 +511,48 @@ class MyRequestsViewModel(
                     it.copy(cancellingId = null, actionErrorMessage = RequestActionCopy.failure(result, "Couldn't cancel the request"))
                 }
             }
+        }
+    }
+
+    /**
+     * Removes one of the user's failed requests, after the screen's
+     * confirmation. This model's list is read again whatever the answer, so
+     * the row shows what happened: gone, or retried or completed since it
+     * loaded (409). [refresh] re-reads the list that shows the row when it
+     * isn't this model's (the TV hub), and runs only when the removal isn't
+     * confirmed: a confirmed one has already left every list the repository
+     * feeds. Nothing is held after an uncertain answer: a resend of a removal
+     * that landed answers 404 and changes nothing.
+     */
+    fun removeFailed(record: MediaRequest, refresh: (suspend () -> Boolean)? = null) {
+        if (!_uiState.value.canRemove(record)) return
+        _uiState.update { it.copy(removingId = record.id, actionErrorMessage = null) }
+        viewModelScope.launch {
+            val result = repository.removeFailed(record)
+            // A confirmed removal has already left every list the repository
+            // feeds (the TV hub included); anything else re-reads to show what happened.
+            if (refresh == null) fetch() else if (result !is ApiResult.Success) refresh()
+            val gone = repository.mine.value.none { it.id == record.id }
+            _uiState.update { current ->
+                val settled = current.copy(removingId = null)
+                when {
+                    // The repository has dropped it already; a failed re-read must not bring the row back.
+                    result is ApiResult.Success -> settled.copy(
+                        buckets = MyRequestsBucket.bucket(repository.mine.value),
+                        notice = RequestNotice(RequestActionCopy.Removed, ++noticeSequence),
+                    )
+                    // Removed elsewhere since the list loaded: the re-read has dropped it.
+                    result is ApiResult.Error && result.code == 404 -> settled
+                    // Requests turned off also answers 409, as capability_disabled.
+                    result is ApiResult.Error && result.code == 409 && result.error == "conflict" ->
+                        settled.copy(actionErrorMessage = RequestActionCopy.RemoveConflict)
+                    RequestMutationFailure.isUncertain(result) && gone ->
+                        settled.copy(notice = RequestNotice(RequestActionCopy.Removed, ++noticeSequence))
+                    RequestMutationFailure.isUncertain(result) -> settled.copy(actionErrorMessage = RequestActionCopy.UnconfirmedRemove)
+                    else -> settled.copy(actionErrorMessage = RequestActionCopy.failure(result, "Couldn't remove the request"))
+                }
+            }
+            if (RequestActionCopy.isCapabilityOff(result)) featureStore?.refresh()
         }
     }
 

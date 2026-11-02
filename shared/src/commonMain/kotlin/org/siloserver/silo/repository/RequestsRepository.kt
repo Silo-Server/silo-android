@@ -5,11 +5,14 @@ import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestFollowEvent
 import org.siloserver.silo.model.request.RequestMediaDetail
 import org.siloserver.silo.model.request.RequestMediaPage
+import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestState
 import org.siloserver.silo.model.request.RequestsDiscoverResponse
 import org.siloserver.silo.model.request.RequestsFeatureStatus
 import org.siloserver.silo.model.request.applyingFollow
 import org.siloserver.silo.model.request.applyingFollowUpdate
+import org.siloserver.silo.model.request.applyingRemoval
+import org.siloserver.silo.model.request.applyingRequestUpdate
 import org.siloserver.silo.model.request.RequestDiscoverySection
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.RequestsApi
@@ -26,8 +29,13 @@ import kotlinx.coroutines.flow.update
 /**
  * One request mutation, broadcast so every mounted request surface can patch
  * its own items in place. [sequence] makes a repeat of the same record a new event.
+ * [removed] means the server deleted [record]: it leaves every list.
  */
-data class RequestEvent(val record: MediaRequest, val sequence: Long)
+data class RequestEvent(val record: MediaRequest, val sequence: Long, val removed: Boolean = false)
+
+/** These results after [event]: a removed request leaves its title requestable again. */
+fun List<RequestMediaResult>.applyingRequestEvent(event: RequestEvent): List<RequestMediaResult> =
+    if (event.removed) applyingRemoval(event.record) else applyingRequestUpdate(event.record)
 
 /**
  * Profile-scoped request state: the user's own list, the mutation broadcasts,
@@ -48,7 +56,7 @@ class RequestsRepository(
 
     private var eventSequence = 0L
 
-    /** Bumped by each of this client's own creates and cancels as they land. */
+    /** Bumped by each of this client's own creates, cancels and removals as they land. */
     private var ownMutations = 0L
 
     /** Bumped by [reset]: anything still running from the previous session drops its result. */
@@ -59,7 +67,7 @@ class RequestsRepository(
     private var mineReadAt: TimeMark? = null
 
     private val _lastUpdate = MutableStateFlow<RequestEvent?>(null)
-    /** The most recent create or cancel of the signed-in user's own request. */
+    /** The most recent create, cancel or removal of the signed-in user's own request. */
     val lastUpdate: StateFlow<RequestEvent?> = _lastUpdate.asStateFlow()
 
     private val _lastFollow = MutableStateFlow<RequestFollowEvent?>(null)
@@ -134,6 +142,10 @@ class RequestsRepository(
     suspend fun cancel(id: String): ApiResult<MediaRequest> =
         mutate({ api.cancel(id) }, ::publish)
 
+    /** Deletes one of the user's failed requests that delivered nothing ([MediaRequest.isRemovableFailure]). */
+    suspend fun removeFailed(record: MediaRequest): ApiResult<Unit> =
+        mutate({ api.removeFailed(record.id) }) { publishRemoval(record) }
+
     /** Get notified when a title someone else requested becomes available. */
     suspend fun follow(mediaType: String, tmdbId: Int): ApiResult<RequestState> =
         mutate({ api.follow(mediaType, tmdbId) }) { publishFollow(mediaType, tmdbId, following = true, state = it) }
@@ -186,6 +198,13 @@ class RequestsRepository(
         upsertMine(request)
         cache.storeOwnRecord(request)
         _lastUpdate.value = RequestEvent(request, ++eventSequence)
+    }
+
+    private fun publishRemoval(record: MediaRequest) {
+        ownMutations++
+        _mine.update { list -> list.filterNot { it.id == record.id } }
+        cache.removeOwnRecord(record)
+        _lastUpdate.value = RequestEvent(record, ++eventSequence, removed = true)
     }
 
     private fun publishFollow(mediaType: String, tmdbId: Int, following: Boolean, state: RequestState?) {

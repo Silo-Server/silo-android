@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.applyingFollowUpdate
-import org.siloserver.silo.model.request.applyingRequestUpdate
+import org.siloserver.silo.repository.applyingRequestEvent
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.RequestsRepository
 
@@ -51,7 +51,7 @@ class RequestDiscoverRowViewModel(
         // A request or follow made from a title's detail page shows here too.
         viewModelScope.launch {
             repository.lastUpdate.drop(1).filterNotNull().collect { event ->
-                _uiState.update { it.copy(results = it.results.applyingRequestUpdate(event.record)) }
+                _uiState.update { it.copy(results = it.results.applyingRequestEvent(event)) }
             }
         }
         viewModelScope.launch {

@@ -46,6 +46,11 @@ import org.siloserver.silo.android.ui.theme.SiloNavPillBorder
 import org.siloserver.silo.android.ui.theme.SiloOverlayPillSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.model.request.MyRequestsBucket
+import org.siloserver.silo.model.request.RequestActionCopy
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
+import android.widget.Toast
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalContext
 import org.siloserver.silo.viewmodel.MyRequestsViewModel
 
 /**
@@ -63,6 +68,16 @@ fun MyRequestsScreen(
     val state by viewModel.uiState.collectAsState()
     val router = rememberRequestRouter(koinInject(), onLibraryItemClick, onRequestDetailClick)
     var filter by remember { mutableStateOf<MyRequestsBucket?>(null) }
+    var removeTarget by remember { mutableStateOf<MediaRequest?>(null) }
+    val context = LocalContext.current
+    // The view model outlives a detail push and Back, so a notice shows once.
+    var seenNotice by rememberSaveable { mutableStateOf(state.notice?.sequence) }
+    LaunchedEffect(state.notice) {
+        val notice = state.notice ?: return@LaunchedEffect
+        if (notice.sequence == seenNotice) return@LaunchedEffect
+        seenNotice = notice.sequence
+        Toast.makeText(context, notice.message, Toast.LENGTH_SHORT).show()
+    }
 
     // A filter whose last request moved on would leave a blank list.
     LaunchedEffect(state.buckets) {
@@ -112,16 +127,31 @@ fun MyRequestsScreen(
                     requestGroupedSection(key = "bucket:${bucket.name}", title = bucket.title, items = requests, itemKey = { it.id }) { record, showDivider ->
                         MyRequestRow(
                             record = record,
-                            isBusy = state.cancellingId == record.id,
+                            isBusy = state.cancellingId == record.id || state.removingId == record.id,
                             showDivider = showDivider,
                             onOpen = { router.openRecord(record) },
                             onOpenInLibrary = record.libraryContentId?.takeIf { it.isNotBlank() }?.let { id -> { onLibraryItemClick(id) } },
                             onCancel = if (state.canCancel(record)) ({ viewModel.cancel(record) }) else null,
+                            onRemove = if (state.canRemove(record)) ({ removeTarget = record }) else null,
                         )
                     }
                 }
             }
         }
+    }
+
+    removeTarget?.let { record ->
+        SiloConfirmDialog(
+            title = RequestActionCopy.RemoveConfirmTitle,
+            body = RequestActionCopy.removeConfirmMessage(record.title),
+            confirmLabel = RequestActionCopy.RemoveConfirm,
+            dismissLabel = RequestActionCopy.RemoveKeep,
+            onConfirm = {
+                removeTarget = null
+                viewModel.removeFailed(record)
+            },
+            onDismiss = { removeTarget = null },
+        )
     }
 }
 
