@@ -52,8 +52,8 @@ import org.siloserver.silo.tv.ui.theme.siloCardDefaults
 /**
  * 16:9 thumbnail card for "Continue Watching", "Next Up", and episode list rows.
  *
- * Uses the same focus treatment as [TvMediaCard]: native `.card` button style
- * from Compose for TV handles scale/shadow lift; the caption bolds on focus.
+ * Uses the same focus treatment as [TvMediaCard]: [siloCardDefaults] lifts and
+ * outlines the still; the caption brightens on focus.
  * The play-button circle is an affordance rather than a hit target — the whole
  * card is clickable and the D-pad OK button triggers [onClick].
  */
@@ -87,7 +87,7 @@ fun TvEpisodeCard(
     val isFocused by interactionSource.collectIsFocusedAsState()
 
     val cardShape = TvEpisodeCardShape
-    val cardFocus = siloCardDefaults(shape = cardShape, focusedScale = 1.04f)
+    val cardFocus = siloCardDefaults(shape = cardShape)
 
     var menuExpanded by remember { mutableStateOf(false) }
 

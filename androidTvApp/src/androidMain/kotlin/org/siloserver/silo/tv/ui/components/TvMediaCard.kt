@@ -68,8 +68,8 @@ import org.siloserver.silo.tv.ui.util.tvArtworkAspectRatioForMediaType
  *
  * Displays a 2:3 poster with progress bar overlay, watched badge, favorite
  * indicator, and a title/year caption below. Uses Compose for TV's [Card]
- * so the native `.card` focus behavior (scale + shadow lift) activates
- * when the user moves a D-pad onto it.
+ * with [siloCardDefaults], so a focused card lifts slightly and gains a
+ * white outline, as on tvOS.
  *
  * This is the TV counterpart to the phone app's `MediaCard`. Deliberately
  * doesn't call into the phone class — keeping the two apps' UI layers
@@ -121,23 +121,7 @@ fun TvMediaCard(
     val isFocused by interactionSource.collectIsFocusedAsState()
 
     val cardShape = TvMediaCardShape
-    val cardFocus = siloCardDefaults(shape = cardShape)
-    // Focus keeps the standard lavender border; at rest a highlighted card
-    // keeps a white outline.
-    val cardBorder = if (highlighted) {
-        CardDefaults.border(
-            border = androidx.tv.material3.Border(
-                border = androidx.compose.foundation.BorderStroke(2.dp, Color.White.copy(alpha = 0.70f)),
-                shape = cardShape,
-            ),
-            focusedBorder = androidx.tv.material3.Border(
-                border = androidx.compose.foundation.BorderStroke(2.dp, org.siloserver.silo.tv.ui.theme.AccentLavender),
-                shape = cardShape,
-            ),
-        )
-    } else {
-        cardFocus.border
-    }
+    val cardFocus = siloCardDefaults(shape = cardShape, outlined = highlighted)
 
     var menuExpanded by remember { mutableStateOf(false) }
 
@@ -192,7 +176,7 @@ fun TvMediaCard(
                 interactionSource = interactionSource,
                 shape = CardDefaults.shape(shape = cardShape),
                 scale = cardFocus.scale,
-                border = cardBorder,
+                border = cardFocus.border,
                 glow = cardFocus.glow,
                 modifier = if (fillWidth) {
                     cardModifier

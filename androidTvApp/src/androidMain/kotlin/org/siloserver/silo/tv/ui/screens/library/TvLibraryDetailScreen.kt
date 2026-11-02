@@ -900,10 +900,15 @@ private fun TvAudiobookGroupCard(
     focusRequester: FocusRequester? = null,
 ) {
 
+    val shape = RoundedCornerShape(8.dp)
+    val cardFocus = siloCardDefaults(shape = shape)
     Column(modifier = Modifier.fillMaxWidth()) {
         Card(
             onClick = onClick,
-            shape = CardDefaults.shape(shape = RoundedCornerShape(8.dp)),
+            shape = CardDefaults.shape(shape = shape),
+            scale = cardFocus.scale,
+            border = cardFocus.border,
+            glow = cardFocus.glow,
             modifier = Modifier
                 .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
                 .fillMaxWidth()
@@ -1189,7 +1194,7 @@ private fun TvCollectionCard(
     focusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
-    // Same focus treatment (scale + accent border + glow) and caption metrics
+    // Same focus treatment (lift + white outline + shadow) and caption metrics
     // as `TvMediaCard`, so collection posters sit alongside Browse posters
     // without reading as a different card family.
     val interactionSource = remember { MutableInteractionSource() }

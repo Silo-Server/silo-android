@@ -50,6 +50,7 @@ import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.theme.Spacing
+import org.siloserver.silo.tv.ui.theme.siloCardDefaults
 import org.siloserver.silo.tv.ui.theme.sectionEyebrow
 import org.siloserver.silo.tv.ui.theme.tvPageStartPadding
 import org.siloserver.silo.viewmodel.CollectionSection
@@ -248,9 +249,14 @@ private fun CollectionCard(
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
 ) {
+    val shape = RoundedCornerShape(8.dp)
+    val cardFocus = siloCardDefaults(shape = shape)
     Card(
         onClick = onClick,
-        shape = CardDefaults.shape(shape = RoundedCornerShape(8.dp)),
+        shape = CardDefaults.shape(shape = shape),
+        scale = cardFocus.scale,
+        border = cardFocus.border,
+        glow = cardFocus.glow,
         modifier = Modifier
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .fillMaxWidth()

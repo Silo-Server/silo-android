@@ -51,7 +51,7 @@ internal fun TvExploreAllCard(
     val width = if (wide) tvEpisodeCardWidth() else posterWidth
     val aspectRatio = if (wide) 16f / 9f else artworkAspectRatio ?: (2f / 3f)
     val shape = TvExploreAllShape
-    val focus = siloCardDefaults(shape = shape, focusedScale = if (wide) 1.04f else 1.10f)
+    val focus = siloCardDefaults(shape = shape)
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     Card(
