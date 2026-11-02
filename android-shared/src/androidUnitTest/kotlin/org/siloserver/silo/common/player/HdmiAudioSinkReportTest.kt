@@ -189,6 +189,20 @@ class HdmiAudioSinkReportTest {
         }
     }
 
+    @Test
+    fun untrustedDtsHdOnlyReportDoesNotEarnTheDtsFamilyCodec() {
+        val shadowAudio = shadowOf(context.getSystemService(Context.AUDIO_SERVICE) as AudioManager)
+        shadowAudio.setOutputDevices(
+            listOf(
+                AudioDeviceInfoBuilder.newBuilder().setType(AudioDeviceInfo.TYPE_HDMI).build(),
+                AudioDeviceInfoBuilder.newBuilder().setType(AudioDeviceInfo.TYPE_USB_DEVICE).build(),
+            ),
+        )
+        val caps = capabilitiesForSink(8, AudioFormat.ENCODING_DTS_HD)
+        assertFalse("dts" in caps.passthroughCodecs)
+        assertTrue(caps.entries.isEmpty())
+    }
+
     private fun capabilitiesForSink(channels: Int, vararg encodings: Int) =
         context.let {
             it.sendStickyBroadcast(pluggedIntent(channels, *encodings))

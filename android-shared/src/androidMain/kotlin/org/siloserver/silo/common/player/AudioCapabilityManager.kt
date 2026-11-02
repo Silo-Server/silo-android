@@ -276,7 +276,10 @@ class AudioCapabilityManager(
         // Amlogic box in front of an LG 2025 TV); never claim passthrough there.
         val sinkDecodesDts by lazy { HdmiSinkDtsSupport.hdmiSinkDecodesDts(appContext) }
         val preQ = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
-        val sinkReport = if (preQ) readHdmiAudioSinkReport() else null
+        val rawSinkReport = if (preQ) readHdmiAudioSinkReport() else null
+        // Codec claims and entries use only a trusted report. An untrusted one
+        // may still lower the channel ceiling below Media3's, never raise it.
+        val sinkReport = rawSinkReport?.takeIf { preQHdmiEvidenceIsTrusted() }
         val supportedEncodings = encodingSupport.filter { support ->
             Build.VERSION.SDK_INT >= support.minSdk &&
                 (caps.supportsEncoding(support.encoding) ||
@@ -299,7 +302,10 @@ class AudioCapabilityManager(
         // This ceiling also bounds decoded/transcoded audio. Pre-Q entries
         // deliberately cap lossy codecs below the sink's PCM channel ceiling.
         val maxChannels = if (preQ) {
-            sinkReport?.maxChannelCount ?: caps.maxChannelCount.coerceAtLeast(2)
+            val media3Ceiling = caps.maxChannelCount.coerceAtLeast(2)
+            sinkReport?.maxChannelCount
+                ?: rawSinkReport?.let { minOf(it.maxChannelCount, media3Ceiling).coerceAtLeast(2) }
+                ?: media3Ceiling
         } else {
             entries.flatMap(AudioPassthroughEntry::channelCounts).maxOrNull()
                 ?: caps.maxChannelCount.coerceAtLeast(2)
@@ -470,7 +476,7 @@ class AudioCapabilityManager(
         return buildPassthroughEntries(
             sdkInt = Build.VERSION.SDK_INT,
             encodings = encodings,
-            hdmiSinkReport = { sinkReport.takeIf { preQHdmiEvidenceIsTrusted() } },
+            hdmiSinkReport = { sinkReport },
             supportsLayout = { support, candidate ->
                 val format = runCatching {
                     AudioFormat.Builder()
