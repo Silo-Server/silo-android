@@ -1708,6 +1708,8 @@ internal fun seriesStarringCredit(detail: ItemDetail): String? {
 @Stable
 private class TvHeroActionFocus(val play: FocusRequester, val selector: FocusRequester) {
     val startOver = FocusRequester()
+    val audio = FocusRequester()
+    val subtitles = FocusRequester()
     val watchlist = FocusRequester()
     val more = FocusRequester()
     var last by mutableStateOf(play)
@@ -1975,49 +1977,44 @@ private fun HeroActionRow(
                     )
                 }
 
-                // One group for all selectors: Up returns to Version, the
-                // only selector with a hoisted focus target.
-                Row(
-                    modifier = Modifier.rememberHeroAction(focus, focus.selector),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(9.dp),
-                ) {
-                    TvPlaybackActionSelectors(
-                        versions = selectorVersions,
-                        playbackVariants = if (isSeriesOrSeason) nextUpDetail?.playbackVariants.orEmpty() else detail.playbackVariants,
-                        currentVersion = selectedVersion,
-                        selectedVersionFileId = selectorSelectedFileId,
-                        selectedAudioTrackIndex = selectorAudioIndex,
-                        selectedSubtitleTrackIndex = selectorSubtitleIndex,
-                        automaticAudioTrackOrdinal = automaticAudioTrackOrdinal,
-                        automaticAudioResolutionKnown = automaticAudioResolutionKnown,
-                        preferredSubtitleLanguage = state.preferredSubtitleLanguage,
-                        subtitleMode = state.subtitleMode,
-                        showForcedSubtitles = state.showForcedSubtitles,
-                        subtitleAutoContextFor = { audioLanguage ->
-                            state.subtitleAutoContext(
-                                playbackDetail = if (isSeriesOrSeason) nextUpDetail else detail,
-                                audioLanguage = audioLanguage,
-                            )
-                        },
-                        onSelectVersion = if (isSeriesOrSeason) {
-                            viewModel::onNextUpVersionSelected
-                        } else {
-                            viewModel::onVersionSelected
-                        },
-                        onSelectAudioTrack = if (isSeriesOrSeason) {
-                            viewModel::onNextUpAudioTrackSelected
-                        } else {
-                            viewModel::onAudioTrackSelected
-                        },
-                        onSelectSubtitleTrack = if (isSeriesOrSeason) {
-                            viewModel::onNextUpSubtitleTrackSelected
-                        } else {
-                            viewModel::onSubtitleTrackSelected
-                        },
-                        versionFocusRequester = focus.selector,
-                    )
-                }
+                TvPlaybackActionSelectors(
+                    versions = selectorVersions,
+                    playbackVariants = if (isSeriesOrSeason) nextUpDetail?.playbackVariants.orEmpty() else detail.playbackVariants,
+                    currentVersion = selectedVersion,
+                    selectedVersionFileId = selectorSelectedFileId,
+                    selectedAudioTrackIndex = selectorAudioIndex,
+                    selectedSubtitleTrackIndex = selectorSubtitleIndex,
+                    automaticAudioTrackOrdinal = automaticAudioTrackOrdinal,
+                    automaticAudioResolutionKnown = automaticAudioResolutionKnown,
+                    preferredSubtitleLanguage = state.preferredSubtitleLanguage,
+                    subtitleMode = state.subtitleMode,
+                    showForcedSubtitles = state.showForcedSubtitles,
+                    subtitleAutoContextFor = { audioLanguage ->
+                        state.subtitleAutoContext(
+                            playbackDetail = if (isSeriesOrSeason) nextUpDetail else detail,
+                            audioLanguage = audioLanguage,
+                        )
+                    },
+                    onSelectVersion = if (isSeriesOrSeason) {
+                        viewModel::onNextUpVersionSelected
+                    } else {
+                        viewModel::onVersionSelected
+                    },
+                    onSelectAudioTrack = if (isSeriesOrSeason) {
+                        viewModel::onNextUpAudioTrackSelected
+                    } else {
+                        viewModel::onAudioTrackSelected
+                    },
+                    onSelectSubtitleTrack = if (isSeriesOrSeason) {
+                        viewModel::onNextUpSubtitleTrackSelected
+                    } else {
+                        viewModel::onSubtitleTrackSelected
+                    },
+                    versionFocusRequester = focus.selector,
+                    audioFocusRequester = focus.audio,
+                    subtitleFocusRequester = focus.subtitles,
+                    onTriggerFocused = { focus.last = it },
+                )
 
                 TvSquareToggleButton(
                     icon = Icons.Filled.BookmarkBorder,
