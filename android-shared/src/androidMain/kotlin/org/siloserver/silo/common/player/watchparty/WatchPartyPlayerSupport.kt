@@ -59,5 +59,7 @@ fun watchPartyNoticeText(notice: RoomPlaybackNotice): String = when (notice) {
     }
     RoomPlaybackNotice.Reconnecting -> "Reconnecting to the party…"
     RoomPlaybackNotice.ClockUnavailable -> "Waiting for party timing. If this continues, leave and rejoin."
+    RoomPlaybackNotice.Refused -> "The party action wasn't applied. Try again."
+    RoomPlaybackNotice.Uncertain -> "Couldn't confirm the party action. Check the current state before trying again."
     RoomPlaybackNotice.Undelivered -> "Couldn't reach the party. Try again."
 }

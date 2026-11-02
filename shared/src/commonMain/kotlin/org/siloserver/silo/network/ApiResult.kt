@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
 
 sealed class ApiResult<out T> {
     data class Success<T>(val data: T) : ApiResult<T>()
-    data class Error(val code: Int, val error: String, val message: String) : ApiResult<Nothing>()
+    data class Error(val code: Int, val error: String, val message: String, val retryAfterMs: Long? = null) : ApiResult<Nothing>()
     data class NetworkError(val exception: Throwable) : ApiResult<Nothing>()
 }
 

@@ -37,7 +37,7 @@ class EventsSocketLoopbackTest {
                         socket.soTimeout = 5000
                         val input = socket.getInputStream().bufferedReader()
                         val first = input.readLine()
-                        assertTrue(first.startsWith("GET /api/v2/events/ws?channels=catalog "))
+                        assertEquals("GET /api/v2/events/ws HTTP/1.1", first)
                         val headers = mutableMapOf<String,String>()
                         while (true) {
                             val line = input.readLine() ?: break

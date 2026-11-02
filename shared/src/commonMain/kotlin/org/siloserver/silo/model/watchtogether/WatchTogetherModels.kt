@@ -349,6 +349,7 @@ data class SuggestionReceipt(
 data class WsAttachSession(
     val type: String = "attach_session",
     @SerialName("session_id") val sessionId: String,
+    @SerialName("request_id") val requestId: String? = null,
 )
 
 @Serializable
@@ -357,6 +358,7 @@ data class WsTransportRequest(
     val action: String,
     @SerialName("position_seconds") val positionSeconds: Double? = null,
     @SerialName("is_paused") val isPaused: Boolean,
+    @SerialName("request_id") val requestId: String? = null,
 )
 
 /**
@@ -373,6 +375,7 @@ data class WsStateReport(
     @SerialName("is_paused") val isPaused: Boolean,
     @SerialName("command_id") val commandId: String? = null,
     @SerialName("is_ready") val isReady: Boolean? = null,
+    @SerialName("request_id") val requestId: String? = null,
 )
 
 /** Readiness acknowledgement for the command named by [commandId]. */
@@ -383,6 +386,7 @@ data class WsReady(
     @SerialName("position_seconds") val positionSeconds: Double,
     @SerialName("is_paused") val isPaused: Boolean,
     @SerialName("command_id") val commandId: String? = null,
+    @SerialName("request_id") val requestId: String? = null,
 )
 
 /** Advisory lobby "I'm ready"; distinct from playback readiness. */
@@ -390,6 +394,7 @@ data class WsReady(
 data class WsLobbyReady(
     val type: String = "lobby_ready",
     val ready: Boolean,
+    @SerialName("request_id") val requestId: String? = null,
 )
 
 @Serializable
@@ -398,6 +403,7 @@ data class WsBuffering(
     @SerialName("session_id") val sessionId: String,
     @SerialName("position_seconds") val positionSeconds: Double,
     @SerialName("is_paused") val isPaused: Boolean,
+    @SerialName("request_id") val requestId: String? = null,
 )
 
 @Serializable

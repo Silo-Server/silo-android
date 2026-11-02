@@ -62,6 +62,9 @@ internal suspend fun HttpResponse.toApiV2Error(): ApiResult.Error {
         code = status.value,
         error = code,
         message = problem?.detail ?: "",
+        retryAfterMs = listOfNotNull(problem?.retryAfterMs,
+            headers[io.ktor.http.HttpHeaders.RetryAfter]?.toLongOrNull()?.takeIf { it >= 0 }?.let { it.coerceAtMost(86_400) * 1000 }
+        ).maxOrNull(),
     )
 }
 

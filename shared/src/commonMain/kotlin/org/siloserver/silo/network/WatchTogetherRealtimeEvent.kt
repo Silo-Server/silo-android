@@ -24,6 +24,8 @@ sealed class RoomRealtimeEvent {
     /** A physical connection completed its handshake and is writable. */
     data object Opened : RoomRealtimeEvent()
 
+    data class Admission(val capability: RealtimeWorkAdmission?) : RoomRealtimeEvent()
+
     data class SnapshotEvent(val room: RoomSnapshot) : RoomRealtimeEvent()
     data class TransportCommandEvent(val command: TransportCommand) : RoomRealtimeEvent()
     data class SuggestionsEvent(val suggestions: List<Suggestion>) : RoomRealtimeEvent()
@@ -57,7 +59,14 @@ sealed class RoomRealtimeEvent {
     data class TransportTerminated(val cause: Throwable? = null) : RoomRealtimeEvent()
 
     /** Server `error{code,message}`: an action-level rejection, not the end of the room. */
-    data class Error(val code: String, val message: String) : RoomRealtimeEvent()
+    data class Error(
+        val code: String, val message: String,
+        val requestId: String? = null, val retryAfterMs: Long? = null, val workStarted: Boolean? = null,
+    ) : RoomRealtimeEvent() {
+        val refusal: RealtimeRefusal get() = RealtimeRefusal(code, message, requestId, retryAfterMs, workStarted)
+    }
+
+    data class ActionResult(val requestId: String?, val action: String, val status: String) : RoomRealtimeEvent()
 
     /**
      * A frame of a known [type] that did not decode. The repository reconciles
@@ -76,6 +85,7 @@ sealed class RoomRealtimeEvent {
 class RoomTicketRefusedException(
     val status: Int,
     val code: String,
+    val retryAfterMs: Long? = null,
 ) : IllegalStateException("room_ticket_refused:$status:$code") {
     val terminal: Boolean get() = status in TERMINAL_STATUSES
 
