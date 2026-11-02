@@ -541,8 +541,8 @@ class MyRequestsViewModel(
                         buckets = MyRequestsBucket.bucket(repository.mine.value),
                         notice = RequestNotice(RequestActionCopy.Removed, ++noticeSequence),
                     )
-                    // Removed elsewhere since the list loaded: the re-read has dropped it.
-                    result is ApiResult.Error && result.code == 404 -> settled
+                    // Removed elsewhere since the list loaded: the repository has dropped it too.
+                    result is ApiResult.Error && result.code == 404 -> settled.copy(buckets = MyRequestsBucket.bucket(repository.mine.value))
                     // Requests turned off also answers 409, as capability_disabled.
                     result is ApiResult.Error && result.code == 409 && result.error == "conflict" ->
                         settled.copy(actionErrorMessage = RequestActionCopy.RemoveConflict)

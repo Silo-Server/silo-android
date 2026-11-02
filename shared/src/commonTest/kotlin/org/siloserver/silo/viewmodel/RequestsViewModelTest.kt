@@ -467,6 +467,28 @@ class RequestsViewModelTest {
     }
 
     @Test
+    fun `a request already removed elsewhere leaves the list even when the re-read fails`() = runTest(dispatcher) {
+        val failed = stubRequest(id = "r-failed", tmdbId = 80, title = "Gone", status = RequestStatus.Failed, outcome = RequestOutcome.Failed)
+        val pending = stubRequest(id = "r-pending", tmdbId = 82, title = "Waiting")
+        val api = FakeRequestsApi(
+            statusResult = removableStatus(),
+            mineResult = ApiResult.Success(RequestsListResponse(listOf(failed, pending))),
+            removeResult = ApiResult.Error(404, "not_found", "The request was not found."),
+        )
+        val repository = RequestsRepository(api)
+        val store = RequestsFeatureStore(repository).also { it.refresh() }
+        val hub = RequestsViewModel(repository)
+        val mine = MyRequestsViewModel(repository, featureStore = store)
+
+        api.mineResult = ApiResult.NetworkError(IllegalStateException("offline"))
+        mine.removeFailed(failed)
+
+        assertEquals(listOf("r-pending"), mine.uiState.value.requests.map { it.id })
+        assertEquals(listOf("r-pending"), hub.uiState.value.myRequests.map { it.id })
+        assertNull(mine.uiState.value.actionErrorMessage)
+    }
+
+    @Test
     fun `a removal refused because requests are turned off says so, not that the request changed`() = runTest(dispatcher) {
         val failed = stubRequest(id = "r-failed", tmdbId = 80, title = "Gone", status = RequestStatus.Failed, outcome = RequestOutcome.Failed)
         val api = FakeRequestsApi(

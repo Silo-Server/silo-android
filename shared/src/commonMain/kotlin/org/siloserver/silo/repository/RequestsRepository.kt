@@ -142,9 +142,18 @@ class RequestsRepository(
     suspend fun cancel(id: String): ApiResult<MediaRequest> =
         mutate({ api.cancel(id) }, ::publish)
 
-    /** Deletes one of the user's failed requests that delivered nothing ([MediaRequest.isRemovableFailure]). */
-    suspend fun removeFailed(record: MediaRequest): ApiResult<Unit> =
-        mutate({ api.removeFailed(record.id) }) { publishRemoval(record) }
+    /**
+     * Deletes one of the user's failed requests that delivered nothing
+     * ([MediaRequest.isRemovableFailure]). A 404 means it is already gone
+     * (removed on another device since the list loaded), so it leaves the lists too.
+     */
+    suspend fun removeFailed(record: MediaRequest): ApiResult<Unit> {
+        val session = generation
+        val result = api.removeFailed(record.id)
+        val gone = result is ApiResult.Success || (result is ApiResult.Error && result.code == 404)
+        if (session == generation && gone) publishRemoval(record)
+        return result
+    }
 
     /** Get notified when a title someone else requested becomes available. */
     suspend fun follow(mediaType: String, tmdbId: Int): ApiResult<RequestState> =
