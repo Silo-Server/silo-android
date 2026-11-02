@@ -68,4 +68,16 @@ class TvMediaDestinationsTest {
     fun firstRouteIsAlwaysHome() {
         assertEquals(TvMainRoute.Home.route, firstTvRoute())
     }
+
+    @Test
+    fun upFromSecondaryContentReachesTheBarElementThatOpenedIt() {
+        // Requests opens from the profile menu, so Up from its first row goes
+        // to the avatar; the saved lists go to For You.
+        assertEquals(TvTopMenuPanel.Profile, menuFocusTargetForRoute(TvMainRoute.Requests.route))
+        assertEquals(
+            TvTopMenuPanel.Root(TvRootDestination.ForYou),
+            menuFocusTargetForRoute(TvMainRoute.Watchlist.route),
+        )
+        assertEquals(null, menuFocusTargetForRoute(TvMainRoute.Settings.route))
+    }
 }

@@ -696,8 +696,8 @@ fun TvMainShell(
     // For You tab they were opened from — they are not tab roots (no highlight,
     // Back still pops), but Up from them must land on their tab, not on
     // whatever the geometric search picks (the Search icon, from the left edge).
-    val selectedMenuFocusTarget = (selectedRoot ?: menuFocusRootForRoute(currentRoute))
-        ?.let(TvTopMenuPanel::Root)
+    val selectedMenuFocusTarget =
+        selectedRoot?.let(TvTopMenuPanel::Root) ?: menuFocusTargetForRoute(currentRoute)
 
     // Which libraries actually HAVE collections — gates the cascade's
     // Collections pill so an empty library doesn't offer a dead-end section
@@ -1968,10 +1968,15 @@ private fun mapRouteToRoot(route: String): TvRootDestination? = when (route) {
     else -> null
 }
 
-/** Bar tab that owns a non-root route for content→bar Up (see selectedMenuFocusTarget). */
-private fun menuFocusRootForRoute(route: String): TvRootDestination? = when (route) {
+/**
+ * Bar element that owns a non-root route for content→bar Up (see
+ * selectedMenuFocusTarget): For You for its saved lists, and the profile
+ * avatar for Requests, which opens from the profile menu.
+ */
+internal fun menuFocusTargetForRoute(route: String): TvTopMenuPanel? = when (route) {
     TvMainRoute.Watchlist.route,
-    TvMainRoute.Favorites.route -> TvRootDestination.ForYou
+    TvMainRoute.Favorites.route -> TvTopMenuPanel.Root(TvRootDestination.ForYou)
+    TvMainRoute.Requests.route -> TvTopMenuPanel.Profile
     else -> null
 }
 
