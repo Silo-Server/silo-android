@@ -103,8 +103,8 @@ import org.siloserver.silo.viewmodel.MyRequestsViewModel
 import org.siloserver.silo.viewmodel.RequestsViewModel
 
 /**
- * The top-bar Requests tab in the Skyline layout Home and the library tabs
- * use: an ambient backdrop and a passive preview panel that follow the focused
+ * The Requests page, opened from the profile menu, in the Skyline layout
+ * Home and the library tabs use: an ambient backdrop and a passive preview panel that follow the focused
  * card, including its request status and stage track, over horizontally
  * scrolling rows in the bottom band (the tvOS `TVRequestsPage`). Rows: the
  * user's own requests, then the discover carousels. Request administration

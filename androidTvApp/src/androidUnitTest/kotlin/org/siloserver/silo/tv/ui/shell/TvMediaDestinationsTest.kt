@@ -65,23 +65,19 @@ class TvMediaDestinationsTest {
     }
 
     @Test
-    fun requestsTrailsTheContentTabsOnlyWhileTheServerEnablesIt() {
-        val libraries = listOf(library(1, "movies"))
-        assertEquals(
-            listOf(
-                TvRootDestination.Home,
-                TvRootDestination.LibraryType(TvLibraryTabType.Movies),
-                TvRootDestination.ForYou,
-                TvRootDestination.Calendar,
-                TvRootDestination.Requests,
-            ),
-            visibleTvRoots(libraries, requestsEnabled = true),
-        )
-        assertEquals(false, TvRootDestination.Requests in visibleTvRoots(libraries, requestsEnabled = false))
+    fun firstRouteIsAlwaysHome() {
+        assertEquals(TvMainRoute.Home.route, firstTvRoute())
     }
 
     @Test
-    fun firstRouteIsAlwaysHome() {
-        assertEquals(TvMainRoute.Home.route, firstTvRoute())
+    fun upFromSecondaryContentReachesTheBarElementThatOpenedIt() {
+        // Requests opens from the profile menu, so Up from its first row goes
+        // to the avatar; the saved lists go to For You.
+        assertEquals(TvTopMenuPanel.Profile, menuFocusTargetForRoute(TvMainRoute.Requests.route))
+        assertEquals(
+            TvTopMenuPanel.Root(TvRootDestination.ForYou),
+            menuFocusTargetForRoute(TvMainRoute.Watchlist.route),
+        )
+        assertEquals(null, menuFocusTargetForRoute(TvMainRoute.Settings.route))
     }
 }

@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
@@ -319,8 +320,8 @@ fun TvMainShell(
         showAudiobooksTab = runCatching { tvLibraryScopeStore.getShowAudiobooksTab() }.getOrDefault(false)
         showAudiobooksTabResolved = true
     }
-    val visibleRoots = remember(libraries, showAudiobooksTab, requestsEnabled) {
-        visibleTvRoots(libraries, showAudiobooks = showAudiobooksTab, requestsEnabled = requestsEnabled)
+    val visibleRoots = remember(libraries, showAudiobooksTab) {
+        visibleTvRoots(libraries, showAudiobooks = showAudiobooksTab)
     }
 
     // In-session scope/pill selections per library type. Scope selections are
@@ -618,7 +619,7 @@ fun TvMainShell(
     // top), while ordinary content re-entry keeps the focusRestorer()'s
     // last-focused card.
     var contentFocusRequest by remember { mutableIntStateOf(0) }
-    // Bumped only when the Requests tab is selected from the bar. Saveable, so
+    // Bumped only when Requests is opened from the profile menu. Saveable, so
     // a return to the shell from an outer route (a library title opened from
     // Requests) restores the last card instead of reading as a fresh entry.
     var requestsEntryRequest by rememberSaveable { mutableIntStateOf(0) }
@@ -695,8 +696,8 @@ fun TvMainShell(
     // For You tab they were opened from — they are not tab roots (no highlight,
     // Back still pops), but Up from them must land on their tab, not on
     // whatever the geometric search picks (the Search icon, from the left edge).
-    val selectedMenuFocusTarget = (selectedRoot ?: menuFocusRootForRoute(currentRoute))
-        ?.let(TvTopMenuPanel::Root)
+    val selectedMenuFocusTarget =
+        selectedRoot?.let(TvTopMenuPanel::Root) ?: menuFocusTargetForRoute(currentRoute)
 
     // Which libraries actually HAVE collections — gates the cascade's
     // Collections pill so an empty library doesn't offer a dead-end section
@@ -870,6 +871,15 @@ fun TvMainShell(
         moveFocusToContent(TvMainRoute.ForYou.route)
     }
 
+    // Requests opens from the profile menu. The page claims its first card
+    // from the shell token, so the menu closes without moving focus itself.
+    val openRequests: () -> Unit = {
+        requestsFocusHandoffPending = true
+        requestsEntryRequest++
+        navigateToSecondary(TvMainRoute.Requests.route)
+        focusState.closeProfileMenuForContent()
+    }
+
     val onSelectRoot: (TvRootDestination) -> Unit = { dest ->
         val route = dest.toRoute()
         if (dest == TvRootDestination.ForYou) {
@@ -889,10 +899,6 @@ fun TvMainShell(
         }
         if (dest == TvRootDestination.Calendar) {
             calendarFocusHandoffPending = true
-        }
-        if (dest == TvRootDestination.Requests) {
-            requestsFocusHandoffPending = true
-            requestsEntryRequest++
         }
         // A dwell preview can still be open when Center commits For You (or a
         // library root). Close it without returning focus to the bar before the
@@ -924,9 +930,6 @@ fun TvMainShell(
             // handoff and restores Home's last descendant during the route
             // transition. Leave focus on the Calendar tab until its screen is
             // composed, then let TvCalendarScreen target the filter directly.
-            focusState.closeProfileMenuForContent()
-        } else if (dest == TvRootDestination.Requests) {
-            // The Requests page claims its first card from the shell token.
             focusState.closeProfileMenuForContent()
         } else if (dest == TvRootDestination.Home) {
             // Home's contentFocusRequest targets row 0 / card 0 directly.
@@ -1034,7 +1037,7 @@ fun TvMainShell(
         }
     }
 
-    LaunchedEffect(currentRoute, visibleRoots, librariesLoaded, showAudiobooksTabResolved, requestsResolved) {
+    LaunchedEffect(currentRoute, visibleRoots, librariesLoaded, showAudiobooksTabResolved, requestsResolved, requestsEnabled) {
         // Wait until libraries have actually loaded — before that `visibleRoots`
         // is just Home + Calendar, and a restored/deep-linked `main/movies` route
         // would be wrongly ejected even though that type exists. Likewise wait for
@@ -1042,10 +1045,13 @@ fun TvMainShell(
         // omits Audiobooks, so a restored `main/audiobooks` route would be ejected
         // to Home before the DataStore read completes.
         if (!librariesLoaded || !showAudiobooksTabResolved) return@LaunchedEffect
-        // Likewise the Requests tab appears only once the server's requests
-        // status has been read; a restored Requests route (or a return from
-        // a title opened there) must not be ejected while that read runs.
-        if (currentRoute == TvMainRoute.Requests.route && !requestsResolved) return@LaunchedEffect
+        // Requests closes once the server's requests status reads as off. A
+        // restored Requests route (or a return from a title opened there) must
+        // not be ejected while that read runs.
+        if (currentRoute == TvMainRoute.Requests.route) {
+            if (requestsResolved && !requestsEnabled) navigateToRoute(firstTvRoute())
+            return@LaunchedEffect
+        }
         // Only media-root tabs are eligible for the "tab no longer visible"
         // redirect. Non-tab routes (Settings, Favorites, Search, …) map
         // to null and must be left alone — otherwise navigating to Settings
@@ -1490,7 +1496,7 @@ fun TvMainShell(
                         onFocusHandoffFailed = {
                             requestsFocusHandoffPending = false
                             focusState.requestMenuFocus(
-                                target = TvTopMenuPanel.Root(TvRootDestination.Requests),
+                                target = selectedMenuFocusTarget,
                                 suppressDwellPreview = true,
                             )
                         },
@@ -1577,8 +1583,8 @@ fun TvMainShell(
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
-                // My Requests became the Requests tab's "Your requests" row; a
-                // saved back stack naming it lands on the tab.
+                // My Requests became the Requests page's "Your requests" row; a
+                // saved back stack naming it lands on the page.
                 composable(route = "main/requests/mine") {
                     LaunchedEffect(Unit) {
                         nestedNav.navigate(TvMainRoute.Requests.route) {
@@ -1808,6 +1814,8 @@ fun TvMainShell(
                     navigateToSecondary(TvMainRoute.History.route)
                     moveFocusToContent(TvMainRoute.History.route)
                 },
+                showRequests = requestsEnabled,
+                onRequests = openRequests,
                 showWatchParty = watchPartyEnabled,
                 onWatchParty = closeMenuAnd(onOpenWatchParty),
                 onSettings = {
@@ -1955,16 +1963,20 @@ private fun mapRouteToRoot(route: String): TvRootDestination? = when (route) {
     TvMainRoute.Audiobooks.route -> TvRootDestination.LibraryType(TvLibraryTabType.Audiobooks)
     TvMainRoute.Calendar.route -> TvRootDestination.Calendar
     TvMainRoute.ForYou.route -> TvRootDestination.ForYou
-    TvMainRoute.Requests.route -> TvRootDestination.Requests
     // Search maps to null so no top tab is highlighted (trailing icon).
     // Request detail/Settings/Audio/Libraries are likewise non-tab.
     else -> null
 }
 
-/** Bar tab that owns a non-root route for content→bar Up (see selectedMenuFocusTarget). */
-private fun menuFocusRootForRoute(route: String): TvRootDestination? = when (route) {
+/**
+ * Bar element that owns a non-root route for content→bar Up (see
+ * selectedMenuFocusTarget): For You for its saved lists, and the profile
+ * avatar for Requests, which opens from the profile menu.
+ */
+internal fun menuFocusTargetForRoute(route: String): TvTopMenuPanel? = when (route) {
     TvMainRoute.Watchlist.route,
-    TvMainRoute.Favorites.route -> TvRootDestination.ForYou
+    TvMainRoute.Favorites.route -> TvTopMenuPanel.Root(TvRootDestination.ForYou)
+    TvMainRoute.Requests.route -> TvTopMenuPanel.Profile
     else -> null
 }
 
@@ -1972,7 +1984,6 @@ private fun TvRootDestination.toRoute(): String = when (this) {
     TvRootDestination.Home -> TvMainRoute.Home.route
     TvRootDestination.ForYou -> TvMainRoute.ForYou.route
     TvRootDestination.Calendar -> TvMainRoute.Calendar.route
-    TvRootDestination.Requests -> TvMainRoute.Requests.route
     is TvRootDestination.LibraryType -> when (type) {
         TvLibraryTabType.Movies -> TvMainRoute.Movies.route
         TvLibraryTabType.Series -> TvMainRoute.Series.route
@@ -2031,9 +2042,9 @@ private fun cascadePanelOffset(
  * consumes input and focuses its first row on open; Back/Menu closes it and
  * returns focus to the avatar via [onDismiss].
  *
- * Row set + order mirrors tvOS: Switch Profile · Watchlist · Favorites ·
- * History · Watch Party (Settings → Experimental) · Settings · Switch Server ·
- * Sign Out. Calendar and Requests are top-level tabs.
+ * Row set + order mirrors tvOS and Roku: Switch Profile · Watchlist ·
+ * Favorites · History · Requests (while the server has it enabled) · Watch
+ * Party (Settings → Experimental) · Settings · Switch Server · Sign Out.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -2045,6 +2056,8 @@ private fun TvProfileDropdown(
     onWatchlist: () -> Unit,
     onFavorites: () -> Unit,
     onHistory: () -> Unit,
+    showRequests: Boolean,
+    onRequests: () -> Unit,
     showWatchParty: Boolean,
     onWatchParty: () -> Unit,
     onSettings: () -> Unit,
@@ -2092,6 +2105,9 @@ private fun TvProfileDropdown(
         ProfileDropdownRow(label = "Watchlist", icon = Icons.Filled.Bookmark, onClick = onWatchlist)
         ProfileDropdownRow(label = "Favorites", icon = Icons.Filled.Favorite, onClick = onFavorites)
         ProfileDropdownRow(label = "History", icon = Icons.Filled.History, onClick = onHistory)
+        if (showRequests) {
+            ProfileDropdownRow(label = "Requests", icon = Icons.Filled.Inbox, onClick = onRequests)
+        }
         if (showWatchParty) {
             ProfileDropdownRow(
                 label = "Watch Party",
