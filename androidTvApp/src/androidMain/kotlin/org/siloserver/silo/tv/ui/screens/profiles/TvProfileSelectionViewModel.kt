@@ -46,14 +46,15 @@ data class TvProfileSelectionUiState(
     val openingOnlyProfile: Boolean = false,
     /** The profile just picked on a new TV, while the TV asks whether to open it automatically. */
     val rememberOffer: Profile? = null,
-    /**
-     * The latest load found a temporary password, so the server refuses
-     * profiles until it is replaced. The TV has no form for it: it says where
-     * to change it and offers sign-out. Each load's answer replaces it, and it
-     * stays up while a reload is out so the focused Sign out isn't unmounted.
-     */
-    val requiresPasswordChange: Boolean = false,
 )
+
+/**
+ * The picker's refusal for an account holding a temporary password. The TV
+ * has no form for it: the password is changed on a phone or the web, which
+ * ends this TV's session, so Retry then leads to sign-in.
+ */
+internal const val TV_PASSWORD_CHANGE_REQUIRED_MESSAGE =
+    "Your password needs to be reset. Use the Silo mobile app or website to set a new one, then come back."
 
 /**
  * TV profile picker. PIN-protected profiles now work: selecting one opens a
@@ -211,7 +212,6 @@ class TvProfileSelectionViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            requiresPasswordChange = false,
                             openingOnlyProfile = only != null,
                             accountName = user?.username ?: it.accountName,
                             profiles = result.data,
@@ -222,26 +222,17 @@ class TvProfileSelectionViewModel(
                     }
                     if (only != null) onProfileSelected(only)
                 }
-                is ApiResult.Error -> if (result.isPasswordChangeRequired()) {
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            requiresPasswordChange = true,
-                            accountName = user?.username ?: it.accountName,
-                        )
+                is ApiResult.Error -> {
+                    val message = if (result.isPasswordChangeRequired()) {
+                        TV_PASSWORD_CHANGE_REQUIRED_MESSAGE
+                    } else {
+                        result.message.ifBlank { "Failed to load profiles" }
                     }
-                } else {
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            requiresPasswordChange = false,
-                            error = result.message.ifBlank { "Failed to load profiles" },
-                        )
-                    }
+                    _uiState.update { it.copy(isLoading = false, error = message) }
                 }
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(isLoading = false, requiresPasswordChange = false, error = "Network error. Please try again.")
+                        it.copy(isLoading = false, error = "Network error. Please try again.")
                     }
                 }
             }
