@@ -7,7 +7,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -93,14 +93,12 @@ internal fun TvPlaybackActionSelectors(
     subtitleFocusRequester: FocusRequester,
     /** Reports the focus target of the trigger that gains focus. */
     onTriggerFocused: (FocusRequester) -> Unit = {},
-    /** Called while the Edition trigger is absent, so remembered focus can move off it. */
-    onEditionHidden: () -> Unit = {},
+    /** Reports whether the Edition trigger is shown. */
+    onEditionsShown: (Boolean) -> Unit = {},
 ) {
     val editions = playbackEditions(versions, playbackVariants)
     val showEditions = editions.hasEditionChoices()
-    LaunchedEffect(showEditions) {
-        if (!showEditions) onEditionHidden()
-    }
+    SideEffect { onEditionsShown(showEditions) }
     val currentEdition = editions.firstOrNull { currentVersion?.fileId in it.fileIds }
         ?: editions.firstOrNull()
     val scopedVersions = if (showEditions) currentEdition?.versions.orEmpty() else versions

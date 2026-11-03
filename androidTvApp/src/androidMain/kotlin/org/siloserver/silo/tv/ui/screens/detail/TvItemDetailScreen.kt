@@ -1437,7 +1437,7 @@ private fun TvDetailContent(
                                     // episode rail, cast, trailers or box set), Up returns to the hero
                                     // action the viewer left instead of relying on geometry.
                                     upFocusRequester = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow) {
-                                        heroActionFocus.last
+                                        heroActionFocus.target
                                     } else {
                                         null
                                     },
@@ -1712,11 +1712,27 @@ private class TvHeroActionFocus(val play: FocusRequester) {
     val watchlist = FocusRequester()
     val more = FocusRequester()
     var last by mutableStateOf(play)
+    var startOverShown by mutableStateOf(false)
+    var editionShown by mutableStateOf(false)
 
-    /** Focuses [last], else Play; false when neither is attached. */
-    fun claim(action: String): Boolean =
-        (last !== play && last.claimFocusOrReport(target = "detail_hero_action", action = action)) ||
+    /**
+     * Where focus returns: [last], unless that control is hidden right now.
+     * Resolved on each read, not stored, because Start Over and Edition
+     * hide only while the next episode's details load and come back after.
+     */
+    val target: FocusRequester
+        get() = when {
+            last === startOver && !startOverShown -> play
+            last === edition && !editionShown -> version
+            else -> last
+        }
+
+    /** Focuses [target], else Play; false when neither is attached. */
+    fun claim(action: String): Boolean {
+        val requester = target
+        return (requester !== play && requester.claimFocusOrReport(target = "detail_hero_action", action = action)) ||
             play.claimFocusOrReport(target = "detail_play", action = action)
+    }
 }
 
 private fun Modifier.rememberHeroAction(focus: TvHeroActionFocus, target: FocusRequester): Modifier =
@@ -1888,10 +1904,8 @@ private fun HeroActionRow(
     // when next-up resolves would only risk yanking focus back if the viewer had
     // already moved into the seasons/episodes rails.
 
-    // Start Over leaves the row once the item is no longer in progress.
-    LaunchedEffect(hasResume) {
-        if (!hasResume && focus.last === focus.startOver) focus.last = focus.play
-    }
+    // Start Over shows only while the item is in progress.
+    SideEffect { focus.startOverShown = hasResume }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // Action row — approved tvOS `HStack(spacing: 18)` mapped through the
@@ -1905,7 +1919,7 @@ private fun HeroActionRow(
                     // synopsis/facts, Up from the body) lands on the action
                     // the viewer left, else Play — geometric nearest-child
                     // search would otherwise pick whichever toggle sits closest.
-                    enter = { focus.last }
+                    enter = { focus.target }
                 }
                 .focusGroup(),
         ) {
@@ -2014,9 +2028,7 @@ private fun HeroActionRow(
                     audioFocusRequester = focus.audio,
                     subtitleFocusRequester = focus.subtitles,
                     onTriggerFocused = { focus.last = it },
-                    onEditionHidden = {
-                        if (focus.last === focus.edition) focus.last = focus.version
-                    },
+                    onEditionsShown = { focus.editionShown = it },
                 )
 
                 TvSquareToggleButton(
