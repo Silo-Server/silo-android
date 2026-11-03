@@ -38,9 +38,14 @@ class AccountProfilesRefresher(
         registry.setCachedProfiles(accountId, result.data.profiles.map { it.toCached() })
     }
 
-    /** Record a list the active account just fetched itself (the profile screen's own load). */
-    suspend fun recordActive(profiles: List<Profile>) {
-        val accountId = registry.activeAccountId.value ?: return
+    /**
+     * Record a list the active account just fetched itself (the profile
+     * screen's own load). [accountId] is the account active when that load
+     * started; when another account is active by now the list is not
+     * recorded, so it never lands in the wrong account's cache.
+     */
+    suspend fun recordActive(accountId: String?, profiles: List<Profile>) {
+        if (accountId == null || registry.activeAccountId.value != accountId) return
         registry.setCachedProfiles(accountId, profiles.map { it.toCached() })
     }
 }

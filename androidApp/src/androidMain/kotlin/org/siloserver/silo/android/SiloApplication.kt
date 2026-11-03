@@ -180,6 +180,7 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
                 registry = koinApp.koin.get(),
                 database = koinApp.koin.get(),
                 storage = koinApp.koin.get(),
+                legacyImporter = koinApp.koin.getOrNull(),
             )
         }.onFailure {
             android.util.Log.w("SiloApplication", "Orphaned server purge init failed", it)

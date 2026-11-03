@@ -190,6 +190,8 @@
     <string name="accounts_remove_title">Remove %1$s?</string>
     <string name="accounts_remove_body">This signs out of every account on %1$s on this device, then removes the server.</string>
     <string name="accounts_remove_downloads">It deletes %1$s (%2$s) from this device.</string>
+    <string name="accounts_remove_failed_title">Couldn\'t remove %1$s</string>
+    <string name="accounts_remove_failed_body">Signing out of one of its accounts didn\'t finish, so the server is still saved. Try again.</string>
     <string name="account_username">Username</string>
     <string name="account_server">Server</string>
     <string name="account_profiles">Profiles</string>
@@ -203,6 +205,7 @@
     <string name="login_replace_body">You signed in as %1$s. Replacing signs out of %2$s on this device.</string>
     <string name="login_replace_confirm">Replace</string>
     <string name="login_replace_keep">Keep both</string>
+    <string name="login_replace_failed">Couldn\'t sign out of %1$s. Try again, or keep both.</string>
     <string name="sign_in_tv_choose_account_title">Choose an account</string>
     <string name="sign_in_tv_choose_account_body">Approve this TV with another account on %1$s.</string>
     <string name="sign_in_tv_add_account">Add an account on %1$s</string>

@@ -20,6 +20,7 @@ import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ExternalSignInRepository
 import org.siloserver.silo.repository.ServerIdentityRepository
 import java.net.URI
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -82,6 +83,8 @@ data class ReplaceExpiredPrompt(
     val expiredUsername: String,
     val newUsername: String,
     val downloads: DownloadSummary?,
+    /** "Replace" didn't sign out of the expired account; it is still saved. */
+    val replaceFailed: Boolean = false,
 )
 
 class LoginViewModel(
@@ -359,7 +362,8 @@ class LoginViewModel(
     /**
      * A sign-in saved its session. When it was meant to sign an expired
      * account in again but landed on a different account (the core files a
-     * different server user as a new account), the expired one is still saved
+     * different server user, or any sign-in into an expired account whose
+     * server user was never known, as a new account), the expired one is still saved
      * with its downloads: ask whether to replace it before going on.
      */
     private suspend fun finishSignIn(settle: (LoginUiState) -> LoginUiState) {
@@ -392,8 +396,19 @@ class LoginViewModel(
         if (_uiState.value.replacePrompt == null) return
         _uiState.update { it.copy(isLoading = true) }
         viewModelScope.launch {
-            runCatching { signOutAccount(serverId, expired.localAccountId) }
-            _uiState.update { it.copy(isLoading = false, replacePrompt = null, loginSuccess = true) }
+            val signedOut = try {
+                signOutAccount(serverId, expired.localAccountId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                false
+            }
+            if (signedOut) {
+                _uiState.update { it.copy(isLoading = false, replacePrompt = null, loginSuccess = true) }
+            } else {
+                // Still saved: keep asking, so "Keep both" stays the honest way on.
+                _uiState.update { it.copy(isLoading = false, replacePrompt = it.replacePrompt?.copy(replaceFailed = true)) }
+            }
         }
     }
 

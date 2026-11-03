@@ -51,12 +51,16 @@ interface ServerPurgeDao {
      * Every `(serverId, accountId)` with rows in any scoped table, excluding
      * rows written before accounts existed (`accountId = ''`). Like
      * [knownServerIds], account orphans are this minus the registry.
+     * Quarantined outbox rows are skipped for the reason
+     * [deleteAccountDirtyOperations] keeps them: a purge never removes them,
+     * so counting them would re-purge a signed-out account on every launch.
      */
     @Query(
         "SELECT DISTINCT serverId, accountId FROM downloads WHERE accountId != '' " +
             "UNION SELECT DISTINCT serverId, accountId FROM download_subscriptions WHERE accountId != '' " +
             "UNION SELECT DISTINCT serverId, accountId FROM download_deletions WHERE accountId != '' " +
             "UNION SELECT DISTINCT serverId, accountId FROM dirty_operations WHERE accountId != '' " +
+            "AND state != 'legacy_membership_quarantined' " +
             "UNION SELECT DISTINCT serverId, accountId FROM content_item_state WHERE accountId != '' " +
             "UNION SELECT DISTINCT serverId, accountId FROM user_item_state WHERE accountId != '' " +
             "UNION SELECT DISTINCT serverId, accountId FROM home_cache WHERE accountId != '' " +
@@ -170,7 +174,27 @@ interface ServerPurgeDao {
     @Query("UPDATE OR IGNORE download_deletions SET accountId = :accountId WHERE serverId = :serverId AND accountId = ''")
     suspend fun adoptDownloadDeletions(serverId: String, accountId: String)
 
-    @Query("UPDATE OR IGNORE dirty_operations SET accountId = :accountId WHERE serverId = :serverId AND accountId = ''")
+    /**
+     * Also rewrites coalesce keys into the account format
+     * (`[personal-v2|]server|account|profile|…`, any `|login` suffix kept), so
+     * a newer op of the account coalesces with the adopted older one. Keys
+     * written as `server||profile|…` (no account known) get the account filled
+     * in; keys without the account segment get it inserted. Other key shapes
+     * (membership) are left alone.
+     */
+    @Query(
+        "UPDATE OR IGNORE dirty_operations SET accountId = :accountId, coalesceKey = CASE " +
+            "WHEN substr(coalesceKey, 1, length(:serverId) + 14) = 'personal-v2|' || :serverId || '||' " +
+            "THEN 'personal-v2|' || :serverId || '|' || :accountId || substr(coalesceKey, length(:serverId) + 14) " +
+            "WHEN substr(coalesceKey, 1, length(:serverId) + 13) = 'personal-v2|' || :serverId || '|' " +
+            "THEN 'personal-v2|' || :serverId || '|' || :accountId || substr(coalesceKey, length(:serverId) + 13) " +
+            "WHEN substr(coalesceKey, 1, length(:serverId) + 2) = :serverId || '||' " +
+            "THEN :serverId || '|' || :accountId || substr(coalesceKey, length(:serverId) + 2) " +
+            "WHEN substr(coalesceKey, 1, length(:serverId) + 1) = :serverId || '|' " +
+            "THEN :serverId || '|' || :accountId || substr(coalesceKey, length(:serverId) + 1) " +
+            "ELSE coalesceKey END " +
+            "WHERE serverId = :serverId AND accountId = ''",
+    )
     suspend fun adoptDirtyOperations(serverId: String, accountId: String)
 
     @Query("UPDATE OR IGNORE content_item_state SET accountId = :accountId WHERE serverId = :serverId AND accountId = ''")

@@ -61,9 +61,9 @@ class DownloadMetadataStoreTest {
     @Test
     fun `writeSidecar then readSidecar round-trips`() = runTest {
         val sidecar = stubSidecar(7)
-        store.writeSidecar("srv1", "profA", sidecar)
+        store.writeSidecar("srv1", "acct", "profA", sidecar)
 
-        val read = store.readSidecar("srv1", "profA", 7)
+        val read = store.readSidecar("srv1", "acct", "profA", 7)
         assertNotNull(read)
         assertEquals(sidecar, read)
     }
@@ -75,30 +75,30 @@ class DownloadMetadataStoreTest {
                 posterIsEpisodeStill = isStill,
                 episodeUserData = LeafItemUserData(played = false, isInProgress = true, positionSeconds = 42.0),
             )
-            store.writeSidecar("srv1", "profA", sidecar)
-            assertEquals(sidecar, store.readSidecar("srv1", "profA", 7))
+            store.writeSidecar("srv1", "acct", "profA", sidecar)
+            assertEquals(sidecar, store.readSidecar("srv1", "acct", "profA", 7))
         }
     }
 
     @Test
     fun `writeSidecar upserts on re-write`() = runTest {
-        store.writeSidecar("srv1", "profA", stubSidecar(7, contentId = "old"))
-        store.writeSidecar("srv1", "profA", stubSidecar(7, contentId = "new"))
+        store.writeSidecar("srv1", "acct", "profA", stubSidecar(7, contentId = "old"))
+        store.writeSidecar("srv1", "acct", "profA", stubSidecar(7, contentId = "new"))
 
-        assertEquals("new", store.readSidecar("srv1", "profA", 7)?.record?.contentId)
-        assertEquals(1, store.listSidecars("srv1", "profA").size)
+        assertEquals("new", store.readSidecar("srv1", "acct", "profA", 7)?.record?.contentId)
+        assertEquals(1, store.listSidecars("srv1", "acct", "profA").size)
     }
 
     @Test
     fun `readSidecar returns null when missing`() = runTest {
-        assertNull(store.readSidecar("srv1", "profA", 99))
+        assertNull(store.readSidecar("srv1", "acct", "profA", 99))
     }
 
     @Test
     fun `listAllSidecars walks every server-profile combination`() = runTest {
-        store.writeSidecar("srv1", "profA", stubSidecar(1))
-        store.writeSidecar("srv1", "profB", stubSidecar(2))
-        store.writeSidecar("srv2", "profA", stubSidecar(3))
+        store.writeSidecar("srv1", "acct", "profA", stubSidecar(1))
+        store.writeSidecar("srv1", "acct", "profB", stubSidecar(2))
+        store.writeSidecar("srv2", "acct", "profA", stubSidecar(3))
 
         val all = store.listAllSidecars().sortedBy { it.record.mediaFileId }
         assertEquals(listOf(1, 2, 3), all.map { it.record.mediaFileId })
@@ -106,157 +106,146 @@ class DownloadMetadataStoreTest {
 
     @Test
     fun `listAllSidecarsWithScope reports the serverId and profileId each sidecar lives under`() = runTest {
-        store.writeSidecar("srv1", "profA", stubSidecar(1))
-        store.writeSidecar("srv2", "profB", stubSidecar(2))
+        store.writeSidecar("srv1", "acct", "profA", stubSidecar(1))
+        store.writeSidecar("srv2", "acct", "profB", stubSidecar(2))
 
         val scoped = store.listAllSidecarsWithScope()
-            .associateBy { (_, _, sidecar) -> sidecar.record.mediaFileId }
+            .associateBy { (_, _, _, sidecar) -> sidecar.record.mediaFileId }
 
         assertEquals(2, scoped.size)
-        assertEquals("srv1" to "profA", scoped[1]?.let { it.first to it.second })
-        assertEquals("srv2" to "profB", scoped[2]?.let { it.first to it.second })
+        assertEquals("srv1" to "profA", scoped[1]?.let { it.serverId to it.profileId })
+        assertEquals("srv2" to "profB", scoped[2]?.let { it.serverId to it.profileId })
     }
 
     @Test
     fun `listAllSidecars matches the scoped walk`() = runTest {
-        store.writeSidecar("srv1", "profA", stubSidecar(1))
-        store.writeSidecar("srv1", "profB", stubSidecar(2))
+        store.writeSidecar("srv1", "acct", "profA", stubSidecar(1))
+        store.writeSidecar("srv1", "acct", "profB", stubSidecar(2))
 
         assertEquals(
-            store.listAllSidecarsWithScope().map { it.third }.toSet(),
+            store.listAllSidecarsWithScope().map { it.sidecar }.toSet(),
             store.listAllSidecars().toSet(),
         )
     }
 
     @Test
     fun `listSidecars returns only the requested server profile scope`() = runTest {
-        store.writeSidecar("srv1", "profA", stubSidecar(1))
-        store.writeSidecar("srv1", "profB", stubSidecar(2))
-        store.writeSidecar("srv2", "profA", stubSidecar(3))
+        store.writeSidecar("srv1", "acct", "profA", stubSidecar(1))
+        store.writeSidecar("srv1", "acct", "profB", stubSidecar(2))
+        store.writeSidecar("srv2", "acct", "profA", stubSidecar(3))
 
         assertEquals(
             listOf(1),
-            store.listSidecars("srv1", "profA").map { it.record.mediaFileId },
+            store.listSidecars("srv1", "acct", "profA").map { it.record.mediaFileId },
         )
     }
 
     @Test
     fun `scoped lookup does not return same file id from another profile`() = runTest {
-        store.writeSidecar("srv1", "profA", stubSidecar(7, contentId = "wrong"))
-        store.writeSidecar("srv1", "profB", stubSidecar(7, contentId = "right"))
+        store.writeSidecar("srv1", "acct", "profA", stubSidecar(7, contentId = "wrong"))
+        store.writeSidecar("srv1", "acct", "profB", stubSidecar(7, contentId = "right"))
 
         assertEquals(
             "right",
-            store.locateSidecarByFileId("srv1", "profB", 7)?.third?.record?.contentId,
+            store.locateSidecarByFileId("srv1", "acct", "profB", 7)?.sidecar?.record?.contentId,
         )
-        assertNull(store.locateSidecarByFileId("srv2", "profB", 7))
+        assertNull(store.locateSidecarByFileId("srv2", "acct", "profB", 7))
     }
 
     @Test
     fun `locateSidecarByFileId finds across scopes`() = runTest {
-        store.writeSidecar("srv2", "profB", stubSidecar(7, contentId = "found"))
+        store.writeSidecar("srv2", "acct", "profB", stubSidecar(7, contentId = "found"))
 
         val located = store.locateSidecarByFileId(7)
         assertNotNull(located)
-        assertEquals("srv2", located.first)
-        assertEquals("profB", located.second)
-        assertEquals("found", located.third.record.contentId)
+        assertEquals("srv2", located.serverId)
+        assertEquals("profB", located.profileId)
+        assertEquals("found", located.sidecar.record.contentId)
         assertNull(store.locateSidecarByFileId(99))
     }
 
     @Test
-    fun `findSidecarByContentId locates across server-profile combinations`() = runTest {
-        store.writeSidecar("srv1", "profA", stubSidecar(1, contentId = "tt-A"))
-        store.writeSidecar("srv2", "profB", stubSidecar(2, contentId = "tt-B"))
-
-        val found = store.findSidecarByContentId("tt-B")
-        assertNotNull(found)
-        assertEquals(2, found.record.mediaFileId)
-        assertNull(store.findSidecarByContentId("tt-missing"))
-    }
-
-    @Test
     fun `deleteSidecar removes only the targeted sidecar`() = runTest {
-        store.writeSidecar("srv1", "profA", stubSidecar(1))
-        store.writeSidecar("srv1", "profA", stubSidecar(2))
+        store.writeSidecar("srv1", "acct", "profA", stubSidecar(1))
+        store.writeSidecar("srv1", "acct", "profA", stubSidecar(2))
 
-        store.deleteSidecar("srv1", "profA", 1)
-        assertNull(store.readSidecar("srv1", "profA", 1))
-        assertNotNull(store.readSidecar("srv1", "profA", 2))
+        store.deleteSidecar("srv1", "acct", "profA", 1)
+        assertNull(store.readSidecar("srv1", "acct", "profA", 1))
+        assertNotNull(store.readSidecar("srv1", "acct", "profA", 2))
     }
 
     @Test
     fun `deleteAllForProfile isolates other profiles on the same server`() = runTest {
-        store.writeSidecar("srv1", "profA", stubSidecar(1))
-        store.writeSidecar("srv1", "profA", stubSidecar(2))
-        store.writeSidecar("srv1", "profB", stubSidecar(3))
+        store.writeSidecar("srv1", "acct", "profA", stubSidecar(1))
+        store.writeSidecar("srv1", "acct", "profA", stubSidecar(2))
+        store.writeSidecar("srv1", "acct", "profB", stubSidecar(3))
 
-        store.deleteAllForProfile("srv1", "profA")
-        assertEquals(emptyList(), store.listSidecars("srv1", "profA"))
-        assertEquals(listOf(3), store.listSidecars("srv1", "profB").map { it.record.mediaFileId })
+        store.deleteAllForProfile("srv1", "acct", "profA")
+        assertEquals(emptyList(), store.listSidecars("srv1", "acct", "profA"))
+        assertEquals(listOf(3), store.listSidecars("srv1", "acct", "profB").map { it.record.mediaFileId })
     }
 
     @Test
     fun `deleteAllForServer wipes everything under a server`() = runTest {
-        store.writeSidecar("srv1", "profA", stubSidecar(1))
-        store.writeSidecar("srv1", "profB", stubSidecar(2))
-        store.writeSidecar("srv2", "profA", stubSidecar(3))
+        store.writeSidecar("srv1", "acct", "profA", stubSidecar(1))
+        store.writeSidecar("srv1", "acct", "profB", stubSidecar(2))
+        store.writeSidecar("srv2", "acct", "profA", stubSidecar(3))
 
         store.deleteAllForServer("srv1")
-        assertEquals(emptyList(), store.listSidecars("srv1", "profA"))
-        assertEquals(emptyList(), store.listSidecars("srv1", "profB"))
-        assertEquals(listOf(3), store.listSidecars("srv2", "profA").map { it.record.mediaFileId })
+        assertEquals(emptyList(), store.listSidecars("srv1", "acct", "profA"))
+        assertEquals(emptyList(), store.listSidecars("srv1", "acct", "profB"))
+        assertEquals(listOf(3), store.listSidecars("srv2", "acct", "profA").map { it.record.mediaFileId })
     }
     @Test fun `old deletion cannot erase a replacement in the same file slot`() = runTest {
         val old = stubSidecar(7)
         val replacement = old.copy(record = old.record.copy(id = "replacement"))
-        store.writeSidecar("server", "profile", replacement)
+        store.writeSidecar("server", "acct", "profile", replacement)
         var deletedBytes = false
-        assertFalse(store.completePendingDeletion("server", "profile", 7, old.record.id) {
+        assertFalse(store.completePendingDeletion("server", "acct", "profile", 7, old.record.id) {
             deletedBytes = true; true
         })
         assertFalse(deletedBytes)
-        assertEquals(replacement, store.readSidecar("server", "profile", 7))
+        assertEquals(replacement, store.readSidecar("server", "acct", "profile", 7))
     }
 
     @Test fun `a conditional update leaves a replaced or deleted row as it is`() = runTest {
         val old = stubSidecar(7)
         val replacement = old.copy(record = old.record.copy(id = "replacement"))
-        store.writeSidecar("server", "profile", replacement)
-        assertFalse(store.updateSidecarIf("server", "profile", 7, matches = { it.record.id == old.record.id }) {
+        store.writeSidecar("server", "acct", "profile", replacement)
+        assertFalse(store.updateSidecarIf("server", "acct", "profile", 7, matches = { it.record.id == old.record.id }) {
             error("A replaced row must not be updated")
         })
-        assertEquals(replacement, store.readSidecar("server", "profile", 7))
+        assertEquals(replacement, store.readSidecar("server", "acct", "profile", 7))
 
-        assertTrue(store.updateSidecarIf("server", "profile", 7, matches = { it.record.id == "replacement" }) {
+        assertTrue(store.updateSidecarIf("server", "acct", "profile", 7, matches = { it.record.id == "replacement" }) {
             it.copy(updatedAtMs = 42)
         })
-        assertEquals(42, store.readSidecar("server", "profile", 7)?.updatedAtMs)
+        assertEquals(42, store.readSidecar("server", "acct", "profile", 7)?.updatedAtMs)
 
-        store.deleteSidecar("server", "profile", 7)
-        assertFalse(store.updateSidecarIf("server", "profile", 7, matches = { true }) { it })
-        assertNull(store.readSidecar("server", "profile", 7))
+        store.deleteSidecar("server", "acct", "profile", 7)
+        assertFalse(store.updateSidecarIf("server", "acct", "profile", 7, matches = { true }) { it })
+        assertNull(store.readSidecar("server", "acct", "profile", 7))
     }
 
     @Test fun `matching cleanup removes metadata only after byte deletion succeeds`() = runTest {
         val row = stubSidecar(7)
-        store.writeSidecar("server", "profile", row)
-        assertFalse(store.completePendingDeletion("server", "profile", 7, row.record.id) { false })
-        assertNotNull(store.readSidecar("server", "profile", 7))
-        assertTrue(store.completePendingDeletion("server", "profile", 7, row.record.id) { true })
-        assertNull(store.readSidecar("server", "profile", 7))
+        store.writeSidecar("server", "acct", "profile", row)
+        assertFalse(store.completePendingDeletion("server", "acct", "profile", 7, row.record.id) { false })
+        assertNotNull(store.readSidecar("server", "acct", "profile", 7))
+        assertTrue(store.completePendingDeletion("server", "acct", "profile", 7, row.record.id) { true })
+        assertNull(store.readSidecar("server", "acct", "profile", 7))
     }
 
     @Test fun `missing or other profile metadata cannot authorize byte cleanup`() = runTest {
         val row = stubSidecar(7)
-        store.writeSidecar("server", "profile", row)
-        assertFalse(store.completePendingDeletion("server", "other-profile", 7, row.record.id) {
+        store.writeSidecar("server", "acct", "profile", row)
+        assertFalse(store.completePendingDeletion("server", "acct", "other-profile", 7, row.record.id) {
             error("Another profile's bytes must not be touched")
         })
-        assertFalse(store.completePendingDeletion("server", "profile", 8, row.record.id) {
+        assertFalse(store.completePendingDeletion("server", "acct", "profile", 8, row.record.id) {
             error("Missing metadata cannot prove byte ownership")
         })
-        assertNotNull(store.readSidecar("server", "profile", 7))
+        assertNotNull(store.readSidecar("server", "acct", "profile", 7))
     }
 
 
@@ -272,15 +261,15 @@ class DownloadMetadataStoreTest {
                 it.copy(record = it.record.copy(status = "downloading", bytesSent = 10))
             }
             // A new row and progress ticks carry no artwork.
-            store.writeSidecar("srv1", "profA", downloading)
-            store.writeSidecar("srv1", "profA", downloading.copy(record = downloading.record.copy(bytesSent = 20)))
+            store.writeSidecar("srv1", "acct", "profA", downloading)
+            store.writeSidecar("srv1", "acct", "profA", downloading.copy(record = downloading.record.copy(bytesSent = 20)))
             val completed = stubSidecar(7).copy(offlinePosterPath = "/art/poster")
-            store.writeSidecar("srv1", "profA", completed)
+            store.writeSidecar("srv1", "acct", "profA", completed)
             assertEquals(listOf(DownloadArtworkRow("dl-7", null, "/art/poster", null, null)), next())
 
             // Status and title rewrites keep the artwork as it was.
-            store.writeSidecar("srv1", "profA", completed.copy(title = "Renamed", updatedAtMs = 2L))
-            store.writeSidecar("srv1", "profA", completed.copy(offlineSeriesPosterPath = "/art/series_poster"))
+            store.writeSidecar("srv1", "acct", "profA", completed.copy(title = "Renamed", updatedAtMs = 2L))
+            store.writeSidecar("srv1", "acct", "profA", completed.copy(offlineSeriesPosterPath = "/art/series_poster"))
             // Ordered invalidation: had the rename emitted, it would be received here.
             assertEquals(
                 listOf(DownloadArtworkRow("dl-7", null, "/art/poster", "/art/series_poster", null)),
@@ -302,8 +291,8 @@ class DownloadMetadataStoreTest {
             // A completed movie queued without a hash, whose poster fetch failed:
             // the capture saves only the manifest's ThumbHash.
             val completed = stubSidecar(7)
-            store.writeSidecar("srv1", "profA", completed)
-            store.writeSidecar("srv1", "profA", completed.copy(posterThumbhash = "hash"))
+            store.writeSidecar("srv1", "acct", "profA", completed)
+            store.writeSidecar("srv1", "acct", "profA", completed.copy(posterThumbhash = "hash"))
             assertEquals(listOf(DownloadArtworkRow("dl-7", "hash", null, null, null)), next())
         } finally {
             collector.cancel()

@@ -486,12 +486,12 @@ class DefaultCardPresentationStore(
         )
     }
 
-    private suspend fun currentIdentity(): Identity? {
-        val profileId = getActiveProfileId() ?: return null
+    private suspend fun currentIdentity(): Identity? = AccountScopedKeys.readStable(getActiveAccountId) { accountId ->
+        val profileId = getActiveProfileId() ?: return@readStable null
         val device = getDeviceMetadata()
-        return Identity(
+        Identity(
             serverUrl = getServerUrl().orEmpty(),
-            accountId = getActiveAccountId(),
+            accountId = accountId,
             profileId = profileId,
             clientFamily = device?.clientFamily.orEmpty(),
             deviceId = device?.id.orEmpty(),

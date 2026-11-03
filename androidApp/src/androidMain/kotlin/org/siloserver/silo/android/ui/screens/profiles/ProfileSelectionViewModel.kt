@@ -60,6 +60,12 @@ data class ProfileSelectionUiState(
      * can't be reached.
      */
     val cachedProfiles: List<Profile> = emptyList(),
+    /**
+     * The open account's sign-in expired: its cached profiles are not
+     * offered (they would open an account with no session); the screen sends
+     * the person to sign in again.
+     */
+    val signInRequired: Boolean = false,
 ) {
     /** The live grid, or the cached one when the live load failed. */
     val shownProfiles: List<Profile>
@@ -111,15 +117,27 @@ class ProfileSelectionViewModel(
         val registry = registry ?: return
         viewModelScope.launch {
             registry.activeAccount
-                .map { account -> account?.cachedProfiles.orEmpty().map { it.toProfile() } }
+                .map { account ->
+                    val expired = account?.needsSignIn == true
+                    expired to if (account == null || expired) emptyList() else account.cachedProfiles.map { it.toProfile() }
+                }
                 .distinctUntilChanged()
-                .collect { cached -> _uiState.update { it.copy(cachedProfiles = cached) } }
+                .collect { (expired, cached) ->
+                    _uiState.update { it.copy(cachedProfiles = cached, signInRequired = expired) }
+                }
         }
         viewModelScope.launch {
             combine(registry.activeServerId, registry.activeAccountId) { server, account -> server to account }
                 .distinctUntilChanged()
                 .drop(1)
-                .collect { loadProfiles() }
+                .collect {
+                    // The previous account's grid is not this one's: clear it
+                    // before the reload, so it is never drawn or tapped meanwhile.
+                    _uiState.update {
+                        it.copy(profiles = emptyList(), pinDialogProfile = null, deleteDialogProfile = null, isManageMode = false)
+                    }
+                    loadProfiles()
+                }
         }
     }
 
@@ -205,6 +223,7 @@ class ProfileSelectionViewModel(
             }
             _uiState.update { it.copy(isLoading = true, error = if (clearError) null else it.error) }
 
+            val loadAccountId = registry?.activeAccountId?.value
             val scope = profileRepository.captureIdentityScope()
             val activeId = profileRepository.getActiveProfileId()
             val skipSingle = skipsSingleProfile ?: consumeSkipsSingleProfile().also { skipsSingleProfile = it }
@@ -247,7 +266,7 @@ class ProfileSelectionViewModel(
                     val only = result.data.singleOrNull()?.takeIf { skipSingle && !it.hasPin }
                     skipsSingleProfile = false
                     // The picker's offline copy of this account's profiles.
-                    profilesRefresher?.let { runCatching { it.recordActive(result.data) } }
+                    profilesRefresher?.let { runCatching { it.recordActive(loadAccountId, result.data) } }
                     // The server lets the household's verified primary profile
                     // manage it, whatever the account role, so any household
                     // with a primary can.

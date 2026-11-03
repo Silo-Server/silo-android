@@ -146,6 +146,8 @@ fun ProfileSelectionScreen(
     onAddAccount: () -> Unit,
     onAddServer: () -> Unit,
     onSignOut: (removeServer: Boolean) -> Unit,
+    /** The open account's sign-in expired: sign in to it again instead of choosing a profile. */
+    onSignInAgain: () -> Unit = {},
     viewModel: ProfileSelectionViewModel = koinViewModel(),
     brandingLoader: ServerBrandingLoader = koinInject(),
     serverRegistry: ServerRegistry = koinInject(),
@@ -173,6 +175,7 @@ fun ProfileSelectionScreen(
     }
 
     LaunchedEffect(Unit) { MarqueeScene.focus = MarqueeScene.Focus.Profiles }
+    LaunchedEffect(state.signInRequired) { if (state.signInRequired) onSignInAgain() }
     // The profile under a finger, then the one asking for a PIN, tints the light.
     val tintedProfileId = state.pinDialogProfile?.id ?: pressedProfileId
     LaunchedEffect(tintedProfileId) {

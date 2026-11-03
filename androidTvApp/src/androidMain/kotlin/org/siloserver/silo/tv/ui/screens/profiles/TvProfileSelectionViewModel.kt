@@ -231,6 +231,7 @@ class TvProfileSelectionViewModel(
                 }
             }
             _uiState.update { it.copy(isLoading = true, error = null) }
+            val loadAccountId = serverRegistry?.activeAccountId?.value
             val scope = profileRepository.captureIdentityScope()
             val skipSingle = skipsSingleProfile ?: consumeSkipsSingleProfile().also { skipsSingleProfile = it }
             val user = (authRepository?.getCurrentUser() as? ApiResult.Success)?.data
@@ -258,19 +259,26 @@ class TvProfileSelectionViewModel(
             }
             when (val result = listed) {
                 is ApiResult.Success -> {
-                    // The scope moves with the grid, and ONLY with it. See the
-                    // phone ViewModel: assigning it before the result meant a
-                    // failed reload under a NEW identity left the OLD grid
-                    // qualified by the NEW scope.
-                    gridScope = scope
                     // The account's offline copy (and Change Account's profile count).
                     try {
-                        profilesRefresher?.recordActive(result.data)
+                        profilesRefresher?.recordActive(loadAccountId, result.data)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (_: Exception) {
                         // The cached tiles stay as they were.
                     }
+                    // Recording suspended: a newer load or another account
+                    // may have taken over meanwhile, so this grid is stale.
+                    if (load != loadAttempt || !profileRepository.identityScopeUnchanged(scope) ||
+                        serverRegistry?.activeAccountId?.value != loadAccountId
+                    ) {
+                        return@launch
+                    }
+                    // The scope moves with the grid, and ONLY with it. See the
+                    // phone ViewModel: assigning it before the result meant a
+                    // failed reload under a NEW identity left the OLD grid
+                    // qualified by the NEW scope.
+                    gridScope = scope
                     // A household with one profile and no PIN doesn't need a
                     // picker after signing in: open it, once.
                     val only = result.data.singleOrNull()?.takeIf { skipSingle && !it.hasPin }

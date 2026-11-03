@@ -23,6 +23,22 @@ object AccountScopedKeys {
     fun identity(serverUrl: String, accountId: String?, profileId: String): String =
         if (accountId.isNullOrBlank()) "$serverUrl|$profileId" else "$serverUrl|${token(accountId)}|$profileId"
 
+    /**
+     * Runs [read] with the active account and returns its result only if the
+     * account is still the same afterwards (retrying a few times), so an
+     * account switch during the other identity reads (profile, server) never
+     * pairs one account with another account's profile.
+     */
+    suspend fun <T> readStable(getAccountId: suspend () -> String?, read: suspend (accountId: String?) -> T): T {
+        var result: T
+        var attempts = 0
+        do {
+            val accountId = getAccountId()
+            result = read(accountId)
+        } while (getAccountId() != accountId && ++attempts < STABLE_READ_ATTEMPTS)
+        return result
+    }
+
     /** The account ids [name] carries. */
     fun accountIdsIn(name: String): Set<String> =
         TOKEN.findAll(name).mapTo(mutableSetOf()) { it.groupValues[1] }
@@ -39,6 +55,7 @@ object AccountScopedKeys {
     fun profileFileName(base: String, accountId: String?, profileHash: String): String =
         if (accountId.isNullOrBlank()) "${base}_$profileHash" else "${base}_${token(accountId)}_$profileHash"
 
+    private const val STABLE_READ_ATTEMPTS = 3
     private const val UUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
     private val TOKEN = Regex("@($UUID)")
     private val ACCOUNT_ID = Regex(UUID)

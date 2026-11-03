@@ -356,9 +356,9 @@ class DefaultEpisodeSpoilerStore private constructor(
         _lastError.value = null
     }
 
-    private suspend fun currentIdentity(): String? {
-        val profileId = getActiveProfileId()?.takeIf { it.isNotBlank() } ?: return null
-        return AccountScopedKeys.identity(getServerUrl().orEmpty(), getActiveAccountId(), profileId)
+    private suspend fun currentIdentity(): String? = AccountScopedKeys.readStable(getActiveAccountId) { accountId ->
+        val profileId = getActiveProfileId()?.takeIf { it.isNotBlank() } ?: return@readStable null
+        AccountScopedKeys.identity(getServerUrl().orEmpty(), accountId, profileId)
     }
 
     internal companion object {

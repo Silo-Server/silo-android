@@ -25,7 +25,7 @@ class DownloadSidecarMappingTest {
     fun `an episode is stored under the episode it plays, not its series`() {
         // The server keys the entry by series + episode; offline playback and
         // the Downloads list look it up by the episode.
-        val entity = sidecar(contentId = "series-1", episodeId = "episode-2").toEntity("server", "profile")
+        val entity = sidecar(contentId = "series-1", episodeId = "episode-2").toEntity("server", "acct", "profile")
 
         assertEquals("episode-2", entity.contentId)
         assertEquals("series-1", entity.seriesContentId)
@@ -33,7 +33,7 @@ class DownloadSidecarMappingTest {
 
     @Test
     fun `a movie keeps its own content id`() {
-        val entity = sidecar(contentId = "movie-1", episodeId = null).toEntity("server", "profile")
+        val entity = sidecar(contentId = "movie-1", episodeId = null).toEntity("server", "acct", "profile")
 
         assertEquals("movie-1", entity.contentId)
     }

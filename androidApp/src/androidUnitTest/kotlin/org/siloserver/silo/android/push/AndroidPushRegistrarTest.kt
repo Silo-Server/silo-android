@@ -115,12 +115,21 @@ class AndroidPushRegistrarTest {
         assertEquals(listOf(1L,1L),generations); assertEquals(pending.intent,store.entries.single().intent)
         assertTrue(store.entries.single().acknowledged)
     }
-    @Test fun changedIntentOrReplacementLoginCannotRebaseAnUncertainRegistration()=runTest {
+    @Test fun changedIntentCannotRebaseAnUncertainRegistrationButAnotherLoginTakesItOver()=runTest {
         uncertain=true; val r=registrar(); r.registerToken(token)
+        // The login that sent it cannot rebase it onto a changed intent: it stays pending as sent.
         assertFalse(r.registerToken("n".repeat(80)) is ApiResult.Success)
-        owner=owner.copy(loginId="replacement",scope=owner.scope.copy(identityGeneration=2))
-        assertIs<ApiResult.Error>(registrar().registerToken(token)); assertEquals(listOf(1L,1L),generations)
+        val sentByLogin=generations.toList()
         assertEquals("login",store.entries.single().intent.loginId)
+        assertEquals(token,store.entries.single().intent.registration!!.token)
+        // Another login on that server takes the installation over (spec §7): same key,
+        // the next generation, the new owner, whether or not the uncertain one landed.
+        uncertain=false
+        owner=owner.copy(loginId="replacement",scope=owner.scope.copy(identityGeneration=2))
+        assertIs<ApiResult.Success<*>>(registrar().registerToken(token))
+        assertEquals(sentByLogin+(sentByLogin.max()+1),generations); assertEquals(setOf(proof),keys.toSet())
+        val record=store.entries.single()
+        assertEquals("replacement",record.intent.loginId); assertTrue(record.acknowledged)
     }
     @Test fun theNextLoginSupersedesARemovalThatSignOutLeftUncertain()=runTest {
         val r=registrar(); r.registerToken(token)

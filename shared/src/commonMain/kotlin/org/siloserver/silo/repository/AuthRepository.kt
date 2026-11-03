@@ -107,6 +107,15 @@ class AuthRepository(
     }
 
     /**
+     * [backfillAccountIdentities] on [backgroundScope], for a caller that must
+     * not wait on servers (a pairing commit the companion times out on).
+     * Without a scope it is skipped; the next launch's backfill fills it in.
+     */
+    fun backfillAccountIdentitiesInBackground() {
+        backgroundScope?.launch { runCatching { backfillAccountIdentities() } }
+    }
+
+    /**
      * Fills in the server user id and username of saved accounts that lack
      * them (accounts migrated from the one-account-per-server layout) from a
      * verified `/me` under each account's own credentials. Best effort: an

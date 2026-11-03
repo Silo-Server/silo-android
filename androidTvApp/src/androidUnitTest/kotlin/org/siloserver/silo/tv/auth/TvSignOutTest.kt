@@ -70,7 +70,7 @@ class TvSignOutTest {
         val cabin = tv.signIn("cabin")
         tv.switchTo(home)
 
-        assertEquals(TvSignOutResult.SignedOut(TvServerSwitchDestination.Login), tv.signOut(removeServer = false))
+        assertEquals(TvSignOutResult.SignedOut(TvServerSwitchDestination.ChangeAccount), tv.signOut(removeServer = false))
 
         assertNull(tv.tokens.loginSessionId(home), "home is signed out")
         assertNotNull(tv.tokens.loginSessionId(cabin), "cabin keeps its login")
@@ -352,7 +352,7 @@ class TvSignOutTest {
         /** Signs in to saved server [id] and leaves it active. */
         suspend fun signIn(id: String): String {
             switchTo(id)
-            tokens.saveTokens("$id-access", "$id-refresh", 3600)
+            tokens.replaceAccountSession(serverId = id, accessToken = "$id-access", refreshToken = "$id-refresh", expiresIn = 3600)
             return id
         }
 

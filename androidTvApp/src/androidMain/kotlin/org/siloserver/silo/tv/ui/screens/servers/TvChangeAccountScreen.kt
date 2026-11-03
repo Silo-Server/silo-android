@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
+import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.context.GlobalContext
@@ -149,10 +150,12 @@ fun TvChangeAccountScreen(
             ?: group.accounts.firstOrNull()?.key()
             ?: addAccountKey(group.server.id)
 
-    // Focus starts on the open account, or on "Add an account" when asked.
+    // Focus starts on the open account, or on "Add an account" when asked,
+    // once the groups reflect the registry (the initial empty state would
+    // anchor on Add server and keep it there).
     var anchored by remember { mutableStateOf(false) }
-    LaunchedEffect(groups.isNotEmpty()) {
-        if (anchored) return@LaunchedEffect
+    LaunchedEffect(state.loaded) {
+        if (!state.loaded || anchored) return@LaunchedEffect
         val group = shown
         val target = when {
             group == null -> AddServerKey
@@ -442,7 +445,7 @@ private fun AccountCardRow(
             if (count != null) {
                 Text(
                     text = count,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     color = ink.copy(alpha = 0.62f),
                     maxLines = 1,
                     modifier = Modifier.padding(top = 2.dp),
@@ -471,7 +474,7 @@ private fun AddAccountCardRow(serverName: String, onClick: () -> Unit, modifier:
             Text(text = "Add an account", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = ink, maxLines = 1)
             Text(
                 text = "Sign in on $serverName",
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodySmall,
                 color = ink.copy(alpha = 0.62f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -515,7 +518,7 @@ private fun Badge(text: String, warning: Boolean, focused: Boolean) {
     }
     Text(
         text = text,
-        fontSize = 12.sp,
+        style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.SemiBold,
         color = color,
         maxLines = 1,

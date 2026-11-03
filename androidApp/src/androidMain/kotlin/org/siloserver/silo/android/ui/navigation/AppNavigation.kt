@@ -1295,6 +1295,14 @@ fun AppNavigation(
                     navController.navigate(Route.ChangeAccount(addAccountOn = serverId).route) { launchSingleTop = true }
                 },
                 onAddServer = { navController.navigate(Route.ServerSetup.route) },
+                onSignInAgain = {
+                    // As Change Account's Sign in again: Back from sign-in
+                    // returns to Change Account, not to a picker with no session.
+                    navController.navigate(Route.ChangeAccount().route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                    navController.navigate(Route.Login.route)
+                },
                 onSignOut = { removeServer ->
                     navScope.launch {
                         val signedOut = if (removeServer) signOutTeardown.signOutAndRemoveServer() else signOutTeardown.signOut()

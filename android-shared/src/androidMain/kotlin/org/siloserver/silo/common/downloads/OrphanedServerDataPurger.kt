@@ -70,6 +70,12 @@ class OrphanedServerDataPurger(
         Unit
     },
     private val jsonStatePurger: ServerScopedJsonStatePurger? = null,
+    /**
+     * Finishes the legacy `.record.json` import before adoption. The import
+     * writes pre-account (`''`) rows, so a pass that adopted before it ran
+     * would leave those downloads unadopted (and unlisted) until next launch.
+     */
+    private val awaitLegacyImport: suspend () -> Unit = {},
 ) {
 
     private val runLock = Mutex()
@@ -133,6 +139,8 @@ class OrphanedServerDataPurger(
                 return@withContext emptySet()
             }
             val registered = registry.entries.value.map { it.id }.toSet()
+            runCatching { awaitLegacyImport() }
+                .onFailure { Log.w(TAG, "legacy download import failed before adoption", it) }
             adoptLegacyData(registered)
             AccountDataAdoption.markFirstPassDone()
             val orphans = purgeDao.knownServerIds().toSet() - registered
@@ -286,6 +294,7 @@ fun installOrphanedServerDataPurge(
     registry: ServerRegistry,
     database: SiloDatabase,
     storage: DownloadStorage,
+    legacyImporter: LegacyDownloadImporter? = null,
     scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ): OrphanedServerDataPurger = OrphanedServerDataPurger(
     registry = registry,
@@ -294,4 +303,5 @@ fun installOrphanedServerDataPurge(
     cancelDownload = { recordId -> DownloadWorker.cancelAndAwait(context, recordId) },
     scope = scope,
     jsonStatePurger = ServerScopedJsonStatePurger(context.filesDir),
+    awaitLegacyImport = { legacyImporter?.awaitImport(System.currentTimeMillis()) },
 ).also { it.start() }

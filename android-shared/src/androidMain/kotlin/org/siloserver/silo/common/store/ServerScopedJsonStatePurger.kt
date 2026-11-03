@@ -88,13 +88,16 @@ class ServerScopedJsonStatePurger(baseDir: File) {
      * Moves [serverId]'s pre-account profile directories under [accountId]
      * (`<server>/<profile>/` → `<server>/@<account>/<profile>/`), the account
      * that adopts the server's old data. A file the account already has wins;
-     * the old copy is then dropped. Idempotent and offline.
+     * the old copy is then dropped. Idempotent and offline. Returns false when
+     * anything could not be moved; that old directory is kept for a retry.
      */
-    fun adoptLegacy(serverId: String, accountId: String) {
-        if (!AccountScopedKeys.isAccountId(accountId)) return
+    fun adoptLegacy(serverId: String, accountId: String): Boolean {
+        if (!AccountScopedKeys.isAccountId(accountId)) return true
+        var complete = true
         roots.mapNotNull(::validatedRoot).forEach { root ->
             val safeKey = safePathSegment(serverId)
-            ServerScopedJsonAccess.withWriter(root, safeKey) {
+            val moved = ServerScopedJsonAccess.withWriter(root, safeKey) {
+                var allMoved = true
                 val accountDir = File(File(root, safeKey), AccountScopedKeys.token(accountId))
                 val sources = listOfNotNull(File(root, safeKey), legacyDirectChild(root, serverId))
                     .distinctBy { it.name }
@@ -106,11 +109,14 @@ class ServerScopedJsonStatePurger(baseDir: File) {
                             // Encoded names are already in storage form; a raw
                             // pre-encoding name is encoded as fileFor would.
                             val name = if (profileDir.name.startsWith("~")) profileDir.name else safePathSegment(profileDir.name)
-                            moveIfAbsent(profileDir, File(accountDir, name))
+                            if (!moveIfAbsent(profileDir, File(accountDir, name))) allMoved = false
                         }
                 }
+                allMoved
             }
+            if (moved != true) complete = false
         }
+        return complete
     }
 
     /** Deletes the directories of every account not in [liveAccountIds]. */
@@ -133,19 +139,22 @@ class ServerScopedJsonStatePurger(baseDir: File) {
     private fun isRealDirectory(file: File): Boolean =
         runCatching { OsConstants.S_ISDIR(Os.lstat(file.path).st_mode) }.getOrDefault(false)
 
-    private fun moveIfAbsent(source: File, target: File) {
+    /** False when a file could not be moved; [source] then stays for the next pass. */
+    private fun moveIfAbsent(source: File, target: File): Boolean {
         target.parentFile?.mkdirs()
         if (!target.exists()) {
-            if (source.renameTo(target)) return
+            if (source.renameTo(target)) return true
         }
         // The account already has some of this profile's files: keep its own,
         // take the rest, then drop what is left of the old directory.
         target.mkdirs()
+        var allMoved = true
         source.listFiles().orEmpty().forEach { file ->
             val destination = File(target, file.name)
-            if (!destination.exists()) file.renameTo(destination)
+            if (!destination.exists() && !file.renameTo(destination)) allMoved = false
         }
-        deleteTree(source)
+        if (allMoved) deleteTree(source)
+        return allMoved
     }
 
     private fun validatedRoot(root: File): File? = runCatching {

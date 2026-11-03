@@ -179,7 +179,15 @@ fun LoginScreen(
             ),
         ) {
             val body = boldFormat(stringResource(R.string.login_replace_body), prompt.newUsername, prompt.expiredUsername)
-            Text(if (downloads == null) body else body + AnnotatedString(" $downloads"))
+            Column {
+                Text(if (downloads == null) body else body + AnnotatedString(" $downloads"))
+                if (prompt.replaceFailed) {
+                    MarqueeErrorText(
+                        stringResource(R.string.login_replace_failed, prompt.expiredUsername),
+                        Modifier.padding(top = 8.dp).then(announced),
+                    )
+                }
+            }
         }
     }
 

@@ -101,13 +101,19 @@ class AccountLocalData(
             .filter { it.adoptsLegacyData && !isAdopted(it.localAccountId) }
             .forEach { account ->
                 val server = entries.firstOrNull { it.id == account.serverId } ?: return@forEach
-                adopt(server, account.localAccountId)
-                ledger.edit().putBoolean(adoptedKey(account.localAccountId), true).commit()
-                Log.i(TAG, "adopted pre-account local data")
+                // Marked only when complete: the startup cleanup deletes the
+                // pre-account copies once every adopting account is marked.
+                if (adopt(server, account.localAccountId)) {
+                    ledger.edit().putBoolean(adoptedKey(account.localAccountId), true).commit()
+                    Log.i(TAG, "adopted pre-account local data")
+                } else {
+                    Log.w(TAG, "pre-account local data adoption incomplete; retrying on the next pass")
+                }
             }
     }
 
-    private fun adopt(server: ServerEntry, accountId: String) {
+    /** Whether everything was adopted; moves and copies are idempotent, so a retry is safe. */
+    private fun adopt(server: ServerEntry, accountId: String): Boolean {
         val token = AccountScopedKeys.token(accountId)
         val serverId = server.id
         moveKeys(prefs(BROWSE_PREFS), "android.browsePrefs.$serverId.", "$token.")
@@ -115,8 +121,9 @@ class AccountLocalData(
         moveKeys(prefs(HOME_SECTIONS_PREFS), "android.homeSections.v1.$serverId.", "$token.")
         moveKeys(prefs(ONBOARDING_PREFS), "done:$serverId:", "$token:")
         moveKeys(prefs(SERIES_AUTO_RESET_PREFS), "$serverId\u001f", "$token\u001f")
-        copyLegacyDataStoreFiles(accountId)
-        jsonState.adoptLegacy(serverId, accountId)
+        val filesCopied = copyLegacyDataStoreFiles(accountId)
+        val jsonMoved = jsonState.adoptLegacy(serverId, accountId)
+        return filesCopied && jsonMoved
     }
 
     /**
@@ -141,13 +148,20 @@ class AccountLocalData(
      * Each per-profile DataStore file used to be shared by every server, so
      * it is copied (not moved): another server's adopting account needs it too.
      */
-    private fun copyLegacyDataStoreFiles(accountId: String) {
+    private fun copyLegacyDataStoreFiles(accountId: String): Boolean {
+        var allCopied = true
         legacyDataStoreFiles().forEach { (base, profileHash, file) ->
             val target = File(dataStoreDir, AccountScopedKeys.profileFileName(base, accountId, profileHash) + DATASTORE_SUFFIX)
             if (target.exists()) return@forEach
             runCatching { file.copyTo(target) }
-                .onFailure { Log.w(TAG, "could not adopt a settings file", it) }
+                .onFailure {
+                    allCopied = false
+                    // A partial copy would read as the account's own file next time.
+                    target.delete()
+                    Log.w(TAG, "could not adopt a settings file", it)
+                }
         }
+        return allCopied
     }
 
     private fun isAdopted(accountId: String): Boolean =

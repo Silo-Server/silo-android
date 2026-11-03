@@ -131,9 +131,9 @@ class SignOutTeardownTest {
         episodeSpoilerStore = idle(),
         requestsFeatureStore = RequestsFeatureStore(RequestsRepository(idle())),
         metadataAiFeatureStore = MetadataAiFeatureStore(MetadataAiRepository(idle())),
-        serverRegistry = idle(mapOf("getActiveServerId" to activeServerId)),
+        serverRegistry = idle(mapOf("getActiveServerId" to activeServerId, "getActiveAccountId" to MutableStateFlow<String?>(null))),
         nativeSignIn = coordinator,
-        unregisterPush = unregisterPush,
+        unregisterPush = { serverId, _ -> unregisterPush(serverId) },
         restorePush = restorePush,
     )
 

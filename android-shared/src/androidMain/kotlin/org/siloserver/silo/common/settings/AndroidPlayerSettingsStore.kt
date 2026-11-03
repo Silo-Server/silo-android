@@ -116,15 +116,15 @@ class AndroidPlayerSettingsStore(
         scopeChangeSignal.collect { emit(currentScope()) }
     }.distinctUntilChanged()
 
-    private suspend fun currentScope(): Scope? {
+    private suspend fun currentScope(): Scope? = AccountScopedKeys.readStable(getActiveAccountId) { accountId ->
         val authority = getAuthScope()
-        val profileId = getActiveProfileId() ?: return null
-        return Scope(
+        val profileId = getActiveProfileId() ?: return@readStable null
+        Scope(
             profileId = profileId,
             serverUrl = getServerUrl().orEmpty(),
             deviceId = getDeviceId().orEmpty(),
             authority = authority,
-            accountId = getActiveAccountId(),
+            accountId = accountId,
         )
     }
 

@@ -66,14 +66,14 @@ class OnboardingRecoveryTest {
             vm.load(); vm.uiState.first { !it.isLoading }
             vm.onAdvance(); intermediateSent.await()
             assertEquals(listOf("read","write1"),events)
-            assertFalse(cache.isDone("server","profile"))
+            assertFalse(cache.isDone("server",null,"profile"))
             // Connectivity has recovered; the next explicit decision is completion.
             vm.onFinish()
             withContext(Dispatchers.Default) {
-                withTimeout(5000) { while (!cache.isDone("server","profile")) delay(10) }
+                withTimeout(5000) { while (!cache.isDone("server",null,"profile")) delay(10) }
             }
             assertEquals(listOf("read","write1","read","write2"),events)
-            assertTrue(cache.isDone("server","profile"))
+            assertTrue(cache.isDone("server",null,"profile"))
             assertTrue(vm.uiState.value.finished)
         } finally { c.close(); Dispatchers.resetMain() }
     }

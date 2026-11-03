@@ -280,10 +280,13 @@ class AndroidServerRegistry(
      * transaction available to both owners. In-memory registry state is
      * published only after the synchronous disk commit. Returns the account id.
      *
-     * The account is, in order: the saved account with the same
-     * [serverUserId] (signing in as a saved account refreshes it rather than
-     * adding a duplicate); [reauthAccountId] when its server user is unknown
-     * or the same; otherwise a new account.
+     * The account is the saved account with the same known [serverUserId]
+     * (signing in as a saved account refreshes it rather than adding a
+     * duplicate), [reauthAccountId] first when it is one of those; otherwise a
+     * new account. An account whose server user is unknown (migrated, never
+     * backfilled) is never adopted, as the spec's §2 rules say: the sign-in
+     * may be someone else, so it becomes a new account and the phone asks
+     * whether it replaces the expired one ("Replace?" / "Keep both").
      */
     internal suspend fun commitAccountReplacement(
         serverId: String,
@@ -299,12 +302,10 @@ class AndroidServerRegistry(
     ): String = mutex.withLock {
         check(state.entries.any { it.id == serverId }) { "account replacement target is not registered" }
         val onServer = state.accounts.filter { it.serverId == serverId }
-        val existing = serverUserId?.let { uid -> onServer.firstOrNull { it.serverUserId == uid } }
-            ?: reauthAccountId?.let { id ->
-                onServer.firstOrNull {
-                    it.localAccountId == id && (it.serverUserId == null || serverUserId == null || it.serverUserId == serverUserId)
-                }
-            }
+        val existing = serverUserId?.takeIf(String::isNotBlank)?.let { uid ->
+            onServer.firstOrNull { it.localAccountId == reauthAccountId && it.serverUserId == uid }
+                ?: onServer.firstOrNull { it.serverUserId == uid }
+        }
         val now = System.currentTimeMillis()
         val serverEntry = state.entries.first { it.id == serverId }
         val account = (existing ?: AccountEntry(

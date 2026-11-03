@@ -46,6 +46,8 @@ data class ServerListUiState(
     val downloads: Map<String, DownloadSummary> = emptyMap(),
     /** A sign-out or removal is running. */
     val isWorking: Boolean = false,
+    /** The server a removal stopped on because one of its accounts didn't sign out. */
+    val removeFailedServerId: String? = null,
 ) {
     /** [serverId]'s accounts in the order they were added. */
     fun accountsOn(serverId: String): List<AccountEntry> =
@@ -217,27 +219,43 @@ class ServerListViewModel(
 
     fun onRemove(serverId: String) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isWorking = true) }
+            _uiState.update { it.copy(isWorking = true, removeFailedServerId = null) }
             try {
-                removeServer(serverId)
+                if (!removeServer(serverId)) _uiState.update { it.copy(removeFailedServerId = serverId) }
             } finally {
                 _uiState.update { it.copy(isWorking = false) }
             }
         }
     }
 
+    fun onRemoveFailureConsumed() {
+        _uiState.update { it.copy(removeFailedServerId = null) }
+    }
+
     /**
      * Remove a server (spec §4.4): sign out of every account on it (each
-     * session ends and its downloads go), then forget the server.
+     * session ends and its downloads go), then forget the server. False, with
+     * the server still saved, when an account didn't sign out: removing the
+     * server anyway would drop that account's credentials with its session
+     * still live and its push registration still in place.
      */
-    private suspend fun removeServer(serverId: String) {
+    private suspend fun removeServer(serverId: String): Boolean {
         val wasActive = serverRegistry.activeServerId.value == serverId
         // Inactive accounts first, so the active one's sign-out is the last
         // identity change on this server.
-        serverRegistry.accounts.value
+        val accounts = serverRegistry.accounts.value
             .filter { it.serverId == serverId }
             .sortedBy { serverRegistry.activeAccountId.value == it.localAccountId }
-            .forEach { account -> tolerateFailure { signOutAccount(serverId, account.localAccountId) } }
+        for (account in accounts) {
+            val signedOut = try {
+                signOutAccount(serverId, account.localAccountId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                false
+            }
+            if (!signedOut) return false
+        }
         // Before removal wipes the server's credentials, which a server
         // without the retirement route needs; a retirement it has not
         // answered is sent again later without them. Failing to remove the
@@ -283,5 +301,6 @@ class ServerListViewModel(
             // The last server is gone.
             _uiState.update { it.copy(switchedTo = ServerSwitchDestination.ServerSetup) }
         }
+        return true
     }
 }

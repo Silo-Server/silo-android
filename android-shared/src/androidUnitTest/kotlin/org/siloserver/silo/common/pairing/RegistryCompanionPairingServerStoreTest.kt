@@ -23,7 +23,7 @@ class RegistryCompanionPairingServerStoreTest {
         val signedOutId = registry.addOrUpdate("https://signed-out.example", "Signed Out")
         registry.switchTo(signedInId)
         tokens.switchActiveServer(signedInId)
-        tokens.saveTokens("access", "refresh", 3600)
+        tokens.replaceAccountSession(serverId = signedInId, accessToken = "access", refreshToken = "refresh", expiresIn = 3600)
 
         val snapshot = RegistryCompanionPairingServerStore(registry, tokens).snapshot()
 

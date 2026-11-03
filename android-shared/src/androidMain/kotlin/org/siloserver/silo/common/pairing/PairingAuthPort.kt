@@ -141,8 +141,9 @@ class RegistryPairingAuthPort(
             if (verifiedServerId != null) serverRegistry.setVerifiedServerId(serverId, verifiedServerId)
             if (expectedIdentity != null && tokenManager.captureAccountSessionExpectation()?.generation != expectedIdentity.generation + 1) throw AccountSessionChangedException()
             // An approval that named no user (an older server) leaves the
-            // account without its server identity; fill it in from /me.
-            if (user == null) runCatching { authRepository?.backfillAccountIdentities() }
+            // account without its server identity; fill it in from /me, in
+            // the background: the companion waits only ~30 s for the result.
+            if (user == null) authRepository?.backfillAccountIdentitiesInBackground()
         }
     }
 }

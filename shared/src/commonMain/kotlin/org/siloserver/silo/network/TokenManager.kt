@@ -63,8 +63,9 @@ class AccountSessionChangedException : IllegalStateException("The initiating acc
  * Who a sign-in is for, so the token manager can file its credentials under
  * the right saved account. [serverUserId] and [username] come from the login
  * response; [reauthAccountId] is the saved account the sign-in was started
- * for (an expired account's Sign in again), used when the server user matches
- * or is not known yet. Without a match the sign-in becomes a new account.
+ * for (an expired account's Sign in again), preferred when its known server
+ * user matches. Without a match (including an account whose server user is
+ * not known yet) the sign-in becomes a new account.
  */
 data class AccountSignIn(
     val serverUserId: String?,

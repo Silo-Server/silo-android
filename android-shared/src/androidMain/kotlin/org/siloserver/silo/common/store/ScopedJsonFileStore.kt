@@ -61,11 +61,16 @@ internal class ScopedJsonFileStore(
         val target = requireNotNull(containedFile(directory, safePathSegment(contentId) + suffix)) {
             "Scoped JSON filename is outside its directory"
         }
-        if (accountId == null) {
+        // A pre-encoding file keeps its raw content-id name, also after
+        // adoption moved its profile directory under the account.
+        val legacy = if (accountId == null) {
             containedLegacyChild(canonicalRoot, serverId, profileId, contentId + suffix)
-                ?.takeIf { it.canonicalPath != target.canonicalPath }
-                ?.let { legacy -> legacyByTarget[target.canonicalPath] = legacy }
+        } else {
+            containedLegacyChild(directory, contentId + suffix)?.takeIf { isContained(it) }
         }
+        legacy
+            ?.takeIf { it.canonicalPath != target.canonicalPath }
+            ?.let { legacyByTarget[target.canonicalPath] = it }
         return target
     }
 

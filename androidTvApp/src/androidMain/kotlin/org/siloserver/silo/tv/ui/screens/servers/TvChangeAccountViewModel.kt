@@ -39,6 +39,8 @@ sealed interface TvChangeAccountNavigation {
 
 data class TvChangeAccountUiState(
     val groups: List<AccountServerGroup> = emptyList(),
+    /** [groups] reflects the registry (until then it is only the empty default). */
+    val loaded: Boolean = false,
     val error: String? = null,
     val navigation: TvChangeAccountNavigation? = null,
 )
@@ -75,7 +77,7 @@ class TvChangeAccountViewModel(
             ) { entries, accounts, activeServerId, activeAccountId ->
                 buildAccountGroups(entries, accounts, activeServerId, activeAccountId)
             }.collect { groups ->
-                _uiState.update { it.copy(groups = groups) }
+                _uiState.update { it.copy(groups = groups, loaded = true) }
             }
         }
         // The cards' profile counts come from each account's cached list;

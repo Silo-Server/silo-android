@@ -160,6 +160,17 @@ fun AccountsScreen(
             Text(if (downloads == null) body else body + AnnotatedString(" $downloads"))
         }
     }
+
+    state.removeFailedServerId?.let { failedId ->
+        val name = state.servers.firstOrNull { it.id == failedId }?.displayName.orEmpty()
+        SiloDialog(
+            title = stringResource(R.string.accounts_remove_failed_title, name),
+            onDismissRequest = viewModel::onRemoveFailureConsumed,
+            actions = listOf(SiloDialogAction(stringResource(R.string.action_done), viewModel::onRemoveFailureConsumed)),
+        ) {
+            Text(stringResource(R.string.accounts_remove_failed_body))
+        }
+    }
 }
 
 /**

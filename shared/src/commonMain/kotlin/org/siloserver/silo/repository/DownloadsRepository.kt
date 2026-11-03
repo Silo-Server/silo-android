@@ -144,7 +144,11 @@ class DownloadsRepository(
             is ApiResult.Success -> {
                 if (!current(authority)) return changed()
                 val serverIds = result.data.downloads.map { it.id }.toSet()
-                val revokedScope = if (serverId != null && profileId != null) Triple(serverId, accountId.orEmpty(), profileId)
+                // A caller that names the server and profile but not the
+                // account means the authority's account, never the empty
+                // pre-account scope.
+                val scopeAccountId = (accountId ?: authority?.scope?.accountId).orEmpty()
+                val revokedScope = if (serverId != null && profileId != null) Triple(serverId, scopeAccountId, profileId)
                     else authority?.scope?.let { owner -> owner.profileId?.let { Triple(owner.serverId, owner.accountId.orEmpty(), it) } }
                 val revoked = removeRevokedEntries(result.data.downloads, revokedScope, authority) ?: return changed()
                 val durable = deletions.allPendingRecordIds()
@@ -159,7 +163,7 @@ class DownloadsRepository(
                 }) return changed()
                 if (serverId != null && profileId != null) {
                     val deviceId = devices?.current()?.id
-                    for (pending in deletions.pendingForScope(serverId, accountId.orEmpty(), profileId)) {
+                    for (pending in deletions.pendingForScope(serverId, scopeAccountId, profileId)) {
                         if (!current(authority)) return changed()
                         // Revoked entries were settled above, and only once their local copy is gone.
                         if (pending.recordId in revoked) continue

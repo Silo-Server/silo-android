@@ -16,6 +16,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.siloserver.silo.network.AndroidServerRegistry
+import org.siloserver.silo.network.EncryptedTokenManagerImpl
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -48,7 +49,9 @@ class OutboxSyncStarterScopeTriggerTest {
         val serverId = runBlocking {
             val id = registry.addOrUpdate("https://silo.example", fetchedName = "Living Room")
             registry.switchTo(id)
-            registry.setProfileId(id, "p1")
+            // A profile belongs to a signed-in account, so sign one in as p1.
+            EncryptedTokenManagerImpl(prefs, registry)
+                .replaceAccountSession(serverId = id, accessToken = "access", refreshToken = "refresh", expiresIn = 3600, profileId = "p1")
             id
         }
         return registry to serverId

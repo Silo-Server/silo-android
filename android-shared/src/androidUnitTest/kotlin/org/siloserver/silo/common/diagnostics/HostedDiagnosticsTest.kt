@@ -54,7 +54,7 @@ class HostedDiagnosticsTest {
         registry.addOrUpdate("https://saved-private-silo.example:9443")
         registry.switchTo(serverId)
         val tokens = EncryptedTokenManagerImpl(prefs, registry, transitions)
-        tokens.saveTokens("source-access", "source-refresh", 3_600)
+        tokens.replaceAccountSession(serverId = serverId, accessToken = "source-access", refreshToken = "source-refresh", expiresIn = 3_600)
         tokens.setProfileId("adult-profile")
         val offlineApi = RecordingOfflineHostedApi()
         val capabilities = HostedDiagnosticsCapabilitiesRepository(

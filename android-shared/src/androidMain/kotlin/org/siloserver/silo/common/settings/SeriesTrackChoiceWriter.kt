@@ -296,7 +296,10 @@ class DefaultSeriesTrackChoiceWriter(
             return
         }
         synchronized(lock) {
-            val key = Key(profileId, writer.serverId, seriesKey, kind, writer.accountId)
+            // Keyed by the active account, which lookups use: an owner with
+            // no account (a temporary remote-playback scope) is the active
+            // account here, as [sameProfileAs] just checked.
+            val key = Key(profileId, writer.serverId, seriesKey, kind, writer.accountId ?: active.accountId)
             if ((newestSequence[key] ?: 0L) > order) return
             newestSequence[key] = order
             val op = Op(writer, choice, now(), order, loginGeneration(writer.serverId))
