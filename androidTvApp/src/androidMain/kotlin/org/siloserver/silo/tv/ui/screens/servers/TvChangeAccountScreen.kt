@@ -1,6 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.servers
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -22,7 +24,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -47,7 +48,10 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,7 +60,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
-import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.context.GlobalContext
@@ -70,23 +73,41 @@ import org.siloserver.silo.common.ui.marquee.rememberSignInServer
 import org.siloserver.silo.model.server.AccountCard
 import org.siloserver.silo.model.server.AccountServerGroup
 import org.siloserver.silo.model.server.ServerEntry
+import org.siloserver.silo.tv.R
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeBody
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeHeadline
 import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.tv.ui.theme.InterFamily
 
-// The rail (Roku AccountsScreen, scaled to 960x540dp): rows 280 wide and 52
-// tall, a 32dp mark; Add server under the rows. The accounts 28dp to its
-// right: cards 440 wide and 64 tall. Each column scrolls; an arrow under it
-// says when more rows are above or below.
-private val RailWidth = 280.dp
-private val RailRowHeight = 52.dp
-private val RailMark = 32.dp
-private val PaneGap = 28.dp
-private val PaneWidth = 440.dp
+// Roku AccountsScreen and ServerCard at half scale (1920x1080 px to
+// 960x540dp). The rail: rows 260 wide and 44 tall, 4 apart, a 28dp mark 8 in
+// and the name 9 after it; Add server 8 under the last row. Text below the
+// TV app's 14sp floor rises to it, except the compact badge. The accounts 20
+// to its right: cards 380 wide and 64 tall, 8 apart, each a 40dp warm tile
+// with the username's initial, the username over its profile count, and a
+// badge. Each column scrolls; an arrow under it says when more rows are
+// above or below.
+private val RailWidth = 260.dp
+private val RailRowHeight = 44.dp
+private val RailRowGap = 4.dp
+private val RailMark = 28.dp
+private val RailInset = 8.dp
+private val RailTextGap = 9.dp
+private val AddServerGap = 8.dp
+private val PaneGap = 20.dp
+private val PaneWidth = 380.dp
 private val CardHeight = 64.dp
-private val CardAvatar = 40.dp
-private val RowShape = RoundedCornerShape(12.dp)
+private val CardGap = 8.dp
+private val CardPadding = 12.dp
+private val CardMark = 40.dp
+private val CardTextGap = 11.dp
+private val CardFocusScale = 1.03f
+private val RailShape = RoundedCornerShape(8.dp)
+private val CardShape = RoundedCornerShape(15.dp)
 private val FocusFill = MarqueeColors.Ink
-private val OnFocus = Color(0xFF111114)
+private val OnFocus = Color.Black
+private val OnFocusFaint = Color.Black.copy(alpha = 0.40f)
 
 private const val AddServerKey = "add-server"
 private const val RailKeyPrefix = "server/"
@@ -97,11 +118,12 @@ private fun addAccountKey(serverId: String) = "add/$serverId"
 
 /**
  * Change Account on Android TV (owner decision 2026-11-02; Roku spec §7.5,
- * `AccountsScreen`): a rail of the saved servers, each with its mark and
+ * `AccountsScreen`, drawn as Roku draws it): under the Silo wordmark and the
+ * headline, a rail of the saved servers, each with its mark and
  * name, the active server first and then by last use, with Add server under
  * them; beside it, the server focused on the rail's accounts, each with its
- * username's initial, the username, how many profiles it has, and a badge,
- * Current for the open account and Sign in again for one whose session
+ * username's initial on a warm tile, the username, how many profiles it has,
+ * and a badge, CURRENT for the open account and SIGN IN AGAIN for one whose session
  * expired; then "Add an account" on that server.
  *
  * Left and Right move between the rail and the accounts, Up and Down within
@@ -182,34 +204,36 @@ fun TvChangeAccountScreen(
 
     Box(Modifier.fillMaxSize()) {
         MarqueeScrim(MarqueeScrimStyle.Ambient)
+        // Roku's first-run column without its card: the wordmark, the
+        // headline and its line, then the rail and the accounts under them.
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 56.dp, end = 56.dp, top = 36.dp, bottom = 24.dp),
+                .padding(horizontal = 45.dp, vertical = 30.dp),
         ) {
-            Text(
+            Image(
+                painter = painterResource(R.drawable.silo_wordmark),
+                contentDescription = "Silo",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.height(32.dp).width(63.dp),
+            )
+            TvMarqueeHeadline(
                 text = "Change account",
-                fontSize = 30.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = (-0.6).sp,
-                color = MarqueeColors.Ink,
                 maxLines = 1,
+                modifier = Modifier.padding(top = 26.dp),
             )
-            Text(
+            TvMarqueeBody(
                 text = "Choose a server, then the account to use on it.",
-                fontSize = 14.sp,
-                color = MarqueeColors.InkSecondary,
-                maxLines = 1,
-                modifier = Modifier.padding(top = 6.dp),
+                modifier = Modifier.padding(top = 10.dp),
             )
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(20.dp))
             Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 // The rail.
                 ScrollingColumn(
                     width = RailWidth,
-                    spacing = 6.dp,
+                    spacing = RailRowGap,
                     footer = {
-                        Spacer(Modifier.height(10.dp))
+                        Spacer(Modifier.height(AddServerGap))
                         RailRow(
                             name = "Add server",
                             server = null,
@@ -250,7 +274,7 @@ fun TvChangeAccountScreen(
                     val serverRailKey = railKey(group.server.id)
                     ScrollingColumn(
                         width = PaneWidth,
-                        spacing = 10.dp,
+                        spacing = CardGap,
                         scrollKey = group.server.id,
                     ) {
                         group.accounts.forEach { card ->
@@ -313,7 +337,9 @@ private fun ScrollingColumn(
         Column(
             modifier = Modifier
                 .weight(1f, fill = false)
-                .verticalScroll(scroll),
+                .verticalScroll(scroll)
+                // Room for a focused card's 3% growth inside the scroll clip.
+                .padding(vertical = 2.dp),
             verticalArrangement = Arrangement.spacedBy(spacing),
             content = content,
         )
@@ -341,7 +367,10 @@ private fun ScrollArrow(icon: ImageVector, visible: Boolean, label: String) {
     )
 }
 
-/** A server on the rail (or Add server): the focused row fills, the shown server keeps a dim fill. */
+/**
+ * A server on the rail (or Add server): the focused row fills #EDEDED with
+ * black text, the shown server keeps a dim fill (Roku CHROME_SELECTED_FILL).
+ */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun RailRow(
@@ -358,16 +387,16 @@ private fun RailRow(
         modifier = modifier
             .fillMaxWidth()
             .height(RailRowHeight)
-            .clip(RowShape)
+            .clip(RailShape)
             .background(
                 when {
                     focused -> FocusFill
-                    selected -> Color.White.copy(alpha = 0.10f)
+                    selected -> Color.White.copy(alpha = 0.14f)
                     else -> Color.Transparent
                 },
             )
             .clickable(interactionSource = interactionSource, indication = null, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = RailInset),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (server != null) {
@@ -379,14 +408,15 @@ private fun RailRow(
             )
         } else {
             Box(Modifier.size(RailMark), contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.Add, contentDescription = null, tint = ink, modifier = Modifier.size(22.dp))
+                Icon(Icons.Filled.Add, contentDescription = null, tint = ink, modifier = Modifier.size(16.dp))
             }
         }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(RailTextGap))
         Text(
             text = name,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
+            fontFamily = InterFamily,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
             color = ink,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -394,7 +424,7 @@ private fun RailRow(
     }
 }
 
-/** One account: its initial, username, profile count, and Current or Sign in again. */
+/** One account: its initial, username, profile count, and CURRENT or SIGN IN AGAIN. */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun AccountCardRow(
@@ -413,119 +443,139 @@ private fun AccountCardRow(
         1 -> "1 profile"
         else -> "${card.profileCount} profiles"
     }
-    CardSurface(
+    ServerCardSurface(
+        title = name,
+        subtitle = count,
+        initial = name.trim().first().uppercase(),
         onClick = onClick,
         modifier = modifier,
     ) { focused ->
-        val ink = if (focused) OnFocus else MarqueeColors.Ink
-        Box(
-            modifier = Modifier
-                .size(CardAvatar)
-                .clip(CircleShape)
-                .background(Brush.linearGradient(listOf(Color(0xFF5B6270), Color(0xFF2C3038)))),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = name.trim().first().uppercase(),
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-            )
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = name,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = ink,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (count != null) {
-                Text(
-                    text = count,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ink.copy(alpha = 0.62f),
-                    maxLines = 1,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-            }
-        }
         if (badge != null) Badge(badge, warning = card.account.needsSignIn, focused = focused)
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun AddAccountCardRow(serverName: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    CardSurface(onClick = onClick, modifier = modifier) { focused ->
-        val ink = if (focused) OnFocus else MarqueeColors.Ink
-        Box(
-            modifier = Modifier
-                .size(CardAvatar)
-                .border(2.dp, ink.copy(alpha = if (focused) 0.6f else 0.3f), CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(Icons.Filled.Add, contentDescription = null, tint = ink, modifier = Modifier.size(20.dp))
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(text = "Add an account", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = ink, maxLines = 1)
-            Text(
-                text = "Sign in on $serverName",
-                style = MaterialTheme.typography.bodySmall,
-                color = ink.copy(alpha = 0.62f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
-    }
+    ServerCardSurface(
+        title = "Add an account",
+        subtitle = "Sign in on $serverName",
+        initial = "+",
+        onClick = onClick,
+        modifier = modifier,
+    )
 }
 
-/** A pane card: white 7% at rest, filled when focused. */
+/**
+ * Roku's ServerCard: a warm tile with an initial, a bold title over a faint
+ * line, and an optional trailing badge, on white 7% under a white 14%
+ * outline. Focused, it fills #EDEDED with black text and grows 3%.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun CardSurface(
+private fun ServerCardSurface(
+    title: String,
+    subtitle: String?,
+    initial: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    content: @Composable RowScope.(focused: Boolean) -> Unit,
+    trailing: @Composable RowScope.(focused: Boolean) -> Unit = {},
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val focused by interactionSource.collectIsFocusedAsState()
+    val scale by animateFloatAsState(if (focused) CardFocusScale else 1f, label = "cardScale")
     Row(
         modifier = modifier
             .fillMaxWidth()
             .height(CardHeight)
-            .clip(RoundedCornerShape(14.dp))
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(CardShape)
             .background(if (focused) FocusFill else Color.White.copy(alpha = 0.07f))
+            .then(if (focused) Modifier else Modifier.border(1.dp, MarqueeColors.Hairline, CardShape))
             .clickable(interactionSource = interactionSource, indication = null, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 12.dp),
+            .padding(horizontal = CardPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        content(focused)
+        InitialTile(initial)
+        Spacer(Modifier.width(CardTextGap))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontFamily = InterFamily,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (focused) OnFocus else MarqueeColors.Ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    fontFamily = InterFamily,
+                    fontSize = 14.sp,
+                    color = if (focused) OnFocusFaint else MarqueeColors.InkTertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 1.dp),
+                )
+            }
+        }
+        trailing(focused)
     }
 }
 
+/** Roku's server_mark.png: the warm square, its initial in cream. */
+@Composable
+private fun InitialTile(initial: String) {
+    Box(
+        modifier = Modifier
+            .size(CardMark)
+            .clip(RoundedCornerShape(CardMark * 0.22f))
+            .background(Brush.linearGradient(listOf(Color(0xFFEAA65C), Color(0xFFA8521D), Color(0xFF5E290D)))),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = initial,
+            fontFamily = InterFamily,
+            fontSize = 21.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFFFFF6EA),
+        )
+    }
+}
+
+/**
+ * The card's badge, uppercased and tracked: neutral on black 45% under the
+ * hairline, or the warning colour on itself at 8% under it at 35%. On the
+ * focused card its fill turns near-opaque black so the text keeps contrast.
+ */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun Badge(text: String, warning: Boolean, focused: Boolean) {
-    val color = when {
-        warning && focused -> Color(0xFF8A5A00)
-        warning -> MarqueeColors.Warning
-        focused -> OnFocus
-        else -> MarqueeColors.Ink
+    val shape = RoundedCornerShape(50)
+    val ink = if (warning) MarqueeColors.Warning else MarqueeColors.Ink
+    val fill = when {
+        focused -> Color.Black.copy(alpha = 0.85f)
+        warning -> MarqueeColors.Warning.copy(alpha = 0.08f)
+        else -> Color.Black.copy(alpha = 0.45f)
     }
+    val line = if (warning) MarqueeColors.Warning.copy(alpha = 0.35f) else MarqueeColors.Hairline
     Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall,
+        text = text.uppercase(),
+        fontFamily = InterFamily,
+        fontSize = 9.sp,
         fontWeight = FontWeight.SemiBold,
-        color = color,
+        letterSpacing = 0.8.sp,
+        color = ink,
         maxLines = 1,
         modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(color.copy(alpha = 0.16f))
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(start = CardTextGap)
+            .clip(shape)
+            .background(fill)
+            .border(1.dp, line, shape)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
     )
 }
 

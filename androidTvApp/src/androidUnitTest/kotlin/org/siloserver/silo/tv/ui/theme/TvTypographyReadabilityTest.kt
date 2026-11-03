@@ -25,6 +25,8 @@ class TvTypographyReadabilityTest {
         // First-run chrome at tvOS half scale: the SECURE/HTTP badge on the
         // server card, and the label inside the "Tap Set up" step picture.
         "org/siloserver/silo/tv/ui/components/marquee/TvMarquee.kt|fontSize = 9.sp,",
+        // The same badge on Change Account's account cards (Roku ServerCard).
+        "org/siloserver/silo/tv/ui/screens/servers/TvChangeAccountScreen.kt|fontSize = 9.sp,",
         "org/siloserver/silo/tv/ui/components/marquee/TvMarqueeSetupSteps.kt|Text(\"Set up\", color = Color.Black, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)",
         // Player chrome at tvOS half scale: the uppercase tracked eyebrow over
         // the title and panel sections, and the SDH/FORCED track chips.

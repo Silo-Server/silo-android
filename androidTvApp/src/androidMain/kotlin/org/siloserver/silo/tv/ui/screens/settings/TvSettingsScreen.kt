@@ -971,6 +971,12 @@ private fun SettingsDetailPane(
  */
 @Composable
 private fun SettingsPaneHeader(category: TvSettingsCategory) {
+    SettingsPaneHeader(icon = category.icon, title = category.title, blurb = category.blurb)
+}
+
+/** The pane header for a settings page outside the rail (Settings › Accounts). */
+@Composable
+internal fun SettingsPaneHeader(icon: ImageVector, title: String, blurb: String) {
     Row(
         modifier = Modifier.padding(bottom = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -984,7 +990,7 @@ private fun SettingsPaneHeader(category: TvSettingsCategory) {
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = category.icon,
+                imageVector = icon,
                 contentDescription = null,
                 tint = Color.White,
                 modifier = Modifier.size(18.dp),
@@ -992,13 +998,13 @@ private fun SettingsPaneHeader(category: TvSettingsCategory) {
         }
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                text = category.title,
+                text = title,
                 style = MaterialTheme.typography.displaySmall.copy(fontSize = 21.sp, lineHeight = 25.sp),
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
-                text = category.blurb,
+                text = blurb,
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -2629,7 +2635,7 @@ private fun SettingsNestedGroup(
 }
 
 @Composable
-private fun SettingsGroupHeaderStyle() =
+internal fun SettingsGroupHeaderStyle() =
     MaterialTheme.typography.labelMedium.copy(
         fontSize = 14.sp,
         lineHeight = 18.sp,

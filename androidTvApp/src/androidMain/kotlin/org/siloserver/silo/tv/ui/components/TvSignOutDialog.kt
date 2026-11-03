@@ -13,7 +13,8 @@ import org.siloserver.silo.network.ServerRegistry
  * app's own dialog, naming the account and the server, "Sign out of alex on
  * Home?". Signing out leaves the other accounts and the server itself. Sign
  * Out & Remove Server is offered only while the server has no other account.
- * Android TV keeps no downloads, so there is no download count to state.
+ * Android TV keeps no downloads, so there is no download count to state;
+ * the message says what leaves and what stays, as Roku's does.
  *
  * Cancel comes first and takes focus: a dialog that opened on Sign Out
  * signed someone out by accident on a real TV.
@@ -39,6 +40,7 @@ fun TvSignOutDialog(
     val offerRemoveServer = targetServerId != null && accounts.count { it.serverId == targetServerId } <= 1
     TvDialog(
         title = tvSignOutTitle(account, server),
+        message = TV_SIGN_OUT_MESSAGE,
         onDismissRequest = onDismiss,
         // Wide enough for the third label to sit on the same row.
         width = if (offerRemoveServer) 640.dp else TvDialogDefaults.Width,
@@ -58,6 +60,9 @@ fun TvSignOutDialog(
         initialFocusIndex = 0,
     )
 }
+
+private const val TV_SIGN_OUT_MESSAGE =
+    "This account's profiles and settings leave this TV. The server stays saved, so you can sign in again."
 
 /** "Sign out of alex on Home?", dropping whichever part is unknown. */
 internal fun tvSignOutTitle(account: String?, server: String?): String = when {
