@@ -40,16 +40,17 @@ import java.util.UUID
  *
  * Scope is captured as ONE atomic [AuthScopeSnapshot] per call (not separate
  * server/profile reads, which could straddle a switch). The snapshot's
- * `(serverId, profileId)` scopes the projection + outbox rows, and the handle
+ * `(serverId, accountId, profileId)` scopes the projection + outbox rows, and the handle
  * carries the snapshot so the repository can PIN the inline network call to the
  * exact scope the op was recorded for — a switch between record and send then
  * can't route the write to the wrong account. No active scope (or no profile) →
  * records nothing and returns [OutboxHandle.NONE]; the inline call still runs
  * (unpinned, current scope) so foreground behaviour is unchanged.
  *
- * Coalesce keys are server-scoped (`serverId|profileId|contentId|kind`) so a
- * newer pending op of the same kind+target replaces an older un-synced one
- * without crossing server/profile boundaries.
+ * Coalesce keys are scoped (`serverId|accountId|profileId|contentId|kind`) so
+ * a newer pending op of the same kind+target replaces an older un-synced one
+ * without crossing server/account/profile boundaries. Rows are keyed by the
+ * snapshot's account ('' when it has none, e.g. a temporary overlay).
  */
 class RoomUserItemStateRepository(
     private val db: SiloDatabase,
@@ -70,17 +71,18 @@ class RoomUserItemStateRepository(
         val authority = ebookAuthorities?.snapshotDurableLoginAuthority() ?: return null
         val snapshot = authority.scope
         val profile = snapshot.profileId ?: return null
+        val account = snapshot.accountId.orEmpty()
         if (snapshot.credentialGenerationId != null || !snapshot.isSameIdentityAs(snapshotProvider())) return null
         return db.withTransaction {
             if (authority != ebookAuthorities.snapshotDurableLoginAuthority()) return@withTransaction null
             // A v2 row left by a crashed or failed attempt is superseded by this newer desired state.
-            outboxDao.deletePersonalV2ForItem(snapshot.serverId, profile, command.itemId)
+            outboxDao.deletePersonalV2ForItem(snapshot.serverId, account, profile, command.itemId)
             // Legacy bytes have no safe v2 replay authority; never coalesce, convert or supersede them.
-            if (outboxDao.unresolvedPersonalCount(snapshot.serverId, profile, command.itemId) != 0)
+            if (outboxDao.unresolvedPersonalCount(snapshot.serverId, account, profile, command.itemId) != 0)
                 return@withTransaction null
             val nowMs = now()
-            val existing = contentDao.get(snapshot.serverId, profile, command.itemId)
-                ?: ContentItemStateEntity(snapshot.serverId, profile, command.itemId, null, null, null, nowMs, null)
+            val existing = contentDao.get(snapshot.serverId, account, profile, command.itemId)
+                ?: ContentItemStateEntity(snapshot.serverId, account, profile, command.itemId, null, null, null, nowMs, null)
             val payload = buildJsonObject {
                 put("login_id", authority.loginId)
                 put("origin", snapshot.serverUrl)
@@ -89,14 +91,14 @@ class RoomUserItemStateRepository(
                 command.body?.let { put("body", it) }
                 put("command", SiloJson.encodeToJsonElement(PersonalWrite.serializer(), command))
                 put("projection_updated_at_ms", existing.clientUpdatedAtMs)
-                put("projection_existed", contentDao.get(snapshot.serverId, profile, command.itemId) != null)
+                put("projection_existed", contentDao.get(snapshot.serverId, account, profile, command.itemId) != null)
                 put("previous_watched", existing.watched?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull)
                 put("previous_rating", existing.ratingValue?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull)
             }.toString()
             val id = outboxDao.insert(DirtyOperationEntity(
-                opKind = "PERSONAL_V2", serverId = snapshot.serverId, profileId = profile,
+                opKind = "PERSONAL_V2", serverId = snapshot.serverId, accountId = account, profileId = profile,
                 targetContentId = command.itemId, targetFileId = null,
-                coalesceKey = "personal-v2|${snapshot.serverId}|$profile|${command.itemId}",
+                coalesceKey = "personal-v2|${snapshot.serverId}|$account|$profile|${command.itemId}",
                 idempotencyKey = idGenerator(), opVersion = 2, payloadJson = payload,
                 state = "personal_uncertain", createdAtMs = nowMs,
             ))
@@ -108,13 +110,14 @@ class RoomUserItemStateRepository(
         db.withTransaction {
             val row = outboxDao.getById(handle.opId) ?: return@withTransaction
             if (row.opKind != "PERSONAL_V2" || row.state != "personal_uncertain" ||
-                row.serverId != handle.scope.serverId || row.profileId != handle.scope.profileId ||
+                row.serverId != handle.scope.serverId || row.accountId != handle.scope.accountId.orEmpty() ||
+                row.profileId != handle.scope.profileId ||
                 row.targetContentId != handle.command.itemId) return@withTransaction
             val saved = SiloJson.parseToJsonElement(row.payloadJson) as kotlinx.serialization.json.JsonObject
             if (saved["command"] != SiloJson.encodeToJsonElement(PersonalWrite.serializer(), handle.command)) return@withTransaction
             // Publish only an acknowledged write, and only over the local state observed at admission.
             // Unknown/rejected writes never persist an optimistic success after the UI rolls back.
-            val current = contentDao.get(row.serverId, row.profileId, row.targetContentId)
+            val current = contentDao.get(row.serverId, row.accountId, row.profileId, row.targetContentId)
             val existed = saved["projection_existed"]?.jsonPrimitive?.booleanOrNull == true
             val unchanged = if (!existed) current == null else current != null &&
                 current.clientUpdatedAtMs == saved.getValue("projection_updated_at_ms").jsonPrimitive.long &&
@@ -122,14 +125,14 @@ class RoomUserItemStateRepository(
                 current.ratingValue == saved["previous_rating"]?.jsonPrimitive?.intOrNull
             if (unchanged) {
                 val nowMs = now()
-                val previous = current ?: ContentItemStateEntity(row.serverId, row.profileId, row.targetContentId, null, null, null, nowMs, null)
+                val previous = current ?: ContentItemStateEntity(row.serverId, row.accountId, row.profileId, row.targetContentId, null, null, null, nowMs, null)
                 val projected = when (val command = handle.command) {
                     is PersonalWrite.Watched -> previous.copy(watched = command.watched, watchedUpdatedAtMs = nowMs)
                     is PersonalWrite.Rating -> previous.copy(ratingValue = command.rating)
                 }
                 contentDao.upsert(projected.copy(clientUpdatedAtMs = nowMs))
                 if (handle.command is PersonalWrite.Watched)
-                    userStateDao.clearPlaybackProgressBefore(row.serverId, row.profileId, row.targetContentId, row.createdAtMs, now())
+                    userStateDao.clearPlaybackProgressBefore(row.serverId, row.accountId, row.profileId, row.targetContentId, row.createdAtMs, now())
             }
             outboxDao.deleteById(row.id)
         }
@@ -173,6 +176,7 @@ class RoomUserItemStateRepository(
         val profileId = snapshot.profileId ?: return
         recordPositionOwned(
             serverId = serverId,
+            accountId = snapshot.accountId.orEmpty(),
             profileId = profileId,
             contentId = contentId,
             fileId = fileId,
@@ -197,6 +201,8 @@ class RoomUserItemStateRepository(
 
         return recordPositionOwned(
             serverId = scope.serverId,
+            // The identity generation matched, so the active account is the scope's.
+            accountId = current.accountId.orEmpty(),
             profileId = scope.profileId,
             contentId = contentId,
             fileId = fileId,
@@ -207,6 +213,7 @@ class RoomUserItemStateRepository(
 
     private suspend fun recordPositionOwned(
         serverId: String,
+        accountId: String,
         profileId: String,
         contentId: String,
         fileId: Int,
@@ -228,13 +235,14 @@ class RoomUserItemStateRepository(
 
         db.withTransaction {
             // File-level local projection for resume (preserve track/cfi fields).
-            val existing = userStateDao.get(serverId, profileId, contentId, fileId)
+            val existing = userStateDao.get(serverId, accountId, profileId, contentId, fileId)
             val row = existing?.copy(
                 positionSeconds = positionSeconds,
                 durationSeconds = safeDuration,
                 clientUpdatedAtMs = nowMs,
             ) ?: UserItemStateEntity(
                 serverId = serverId,
+                accountId = accountId,
                 profileId = profileId,
                 contentId = contentId,
                 fileId = fileId,
@@ -260,10 +268,11 @@ class RoomUserItemStateRepository(
                 DirtyOperationEntity(
                     opKind = OutboxOperation.SET_POSITION,
                     serverId = serverId,
+                    accountId = accountId,
                     profileId = profileId,
                     targetContentId = contentId,
                     targetFileId = fileId,
-                    coalesceKey = "$serverId|$profileId|$contentId|${OutboxOperation.SET_POSITION}",
+                    coalesceKey = "$serverId|$accountId|$profileId|$contentId|${OutboxOperation.SET_POSITION}",
                     idempotencyKey = idGenerator(),
                     payloadJson = OutboxOperation.encodePositionPayload(positionSeconds, safeDuration),
                     createdAtMs = nowMs,
@@ -278,7 +287,7 @@ class RoomUserItemStateRepository(
     override suspend fun localPosition(contentId: String, fileId: Int): Double? {
         val snapshot = snapshotProvider() ?: return null
         val profileId = snapshot.profileId ?: return null
-        return userStateDao.get(snapshot.serverId, profileId, contentId, fileId)
+        return userStateDao.get(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, contentId, fileId)
             ?.positionSeconds
             ?.takeIf { it > 0.0 }
     }
@@ -290,7 +299,7 @@ class RoomUserItemStateRepository(
     override suspend fun localPlaybackProgress(contentId: String): LocalPlaybackProgress? {
         val snapshot = snapshotProvider() ?: return null
         val profileId = snapshot.profileId ?: return null
-        return userStateDao.getByContent(snapshot.serverId, profileId, contentId)
+        return userStateDao.getByContent(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, contentId)
             .latestProgress()
     }
 
@@ -306,7 +315,7 @@ class RoomUserItemStateRepository(
         db.withTransaction {
             val clearedAtMs = now()
             contentIds.distinct().forEach { contentId ->
-                userStateDao.clearPlaybackProgressBefore(snapshot.serverId, profileId, contentId, admittedAtMs, clearedAtMs)
+                userStateDao.clearPlaybackProgressBefore(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, contentId, admittedAtMs, clearedAtMs)
             }
         }
     }
@@ -316,7 +325,7 @@ class RoomUserItemStateRepository(
         val snapshot = snapshotProvider() ?: return emptyMap()
         val profileId = snapshot.profileId ?: return emptyMap()
         return contentIds.distinct().chunked(MAX_IN_LIST_IDS)
-            .flatMap { userStateDao.progressForContentIds(snapshot.serverId, profileId, it) }
+            .flatMap { userStateDao.progressForContentIds(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, it) }
             .groupBy { it.contentId }
             .mapValues { (_, rows) -> rows.latestProgress() }
             .filterValues { it != null }
@@ -359,6 +368,7 @@ class RoomUserItemStateRepository(
         val profileId = snapshot.profileId ?: return
         recordTrackSelectionOwned(
             serverId = serverId,
+            accountId = snapshot.accountId.orEmpty(),
             profileId = profileId,
             contentId = contentId,
             fileId = fileId,
@@ -383,6 +393,7 @@ class RoomUserItemStateRepository(
 
         return recordTrackSelectionOwned(
             serverId = scope.serverId,
+            accountId = current.accountId.orEmpty(),
             profileId = scope.profileId,
             contentId = contentId,
             fileId = fileId,
@@ -393,6 +404,7 @@ class RoomUserItemStateRepository(
 
     private suspend fun recordTrackSelectionOwned(
         serverId: String,
+        accountId: String,
         profileId: String,
         contentId: String,
         fileId: Int,
@@ -403,9 +415,10 @@ class RoomUserItemStateRepository(
         val nowMs = now()
 
         db.withTransaction {
-            val existing = userStateDao.get(serverId, profileId, contentId, fileId)
+            val existing = userStateDao.get(serverId, accountId, profileId, contentId, fileId)
             val row = existing ?: UserItemStateEntity(
                 serverId = serverId,
+                accountId = accountId,
                 profileId = profileId,
                 contentId = contentId,
                 fileId = fileId,
@@ -432,7 +445,7 @@ class RoomUserItemStateRepository(
     override suspend fun localTrackSelection(contentId: String, fileId: Int): LocalTrackSelection? {
         val snapshot = snapshotProvider() ?: return null
         val profileId = snapshot.profileId ?: return null
-        val row = userStateDao.get(snapshot.serverId, profileId, contentId, fileId) ?: return null
+        val row = userStateDao.get(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, contentId, fileId) ?: return null
         if (row.audioFingerprint == null && row.subtitleFingerprint == null) return null
         return LocalTrackSelection(
             audioFingerprint = row.audioFingerprint,
@@ -458,17 +471,19 @@ class RoomUserItemStateRepository(
         if (contentId.isBlank() || location.isBlank() || !progress.isFinite()) return
         val clamped = progress.coerceIn(0.0, 1.0)
         val serverId = snapshot.serverId
+        val accountId = snapshot.accountId.orEmpty()
         val profileId = snapshot.profileId ?: return
-        val key = "$serverId|$profileId|$contentId|${OutboxOperation.SET_EBOOK_PROGRESS}" +
+        val key = "$serverId|$accountId|$profileId|$contentId|${OutboxOperation.SET_EBOOK_PROGRESS}" +
             (loginId?.let { "|$it" } ?: "")
         db.withTransaction {
             val pending = outboxDao.getLatestByCoalesceKey(key)
             if (loginId != null && pending != null && pending.createdAtMs >= nowMs) return@withTransaction
-            val existing = userStateDao.get(serverId, profileId, contentId, fileId)
+            val existing = userStateDao.get(serverId, accountId, profileId, contentId, fileId)
             if (loginId != null && existing != null && existing.clientUpdatedAtMs >= nowMs) return@withTransaction
             val row = existing?.copy(cfi = location, readProgress = clamped, clientUpdatedAtMs = nowMs)
                 ?: UserItemStateEntity(
                     serverId = serverId,
+                    accountId = accountId,
                     profileId = profileId,
                     contentId = contentId,
                     fileId = fileId,
@@ -487,6 +502,7 @@ class RoomUserItemStateRepository(
                 DirtyOperationEntity(
                     opKind = OutboxOperation.SET_EBOOK_PROGRESS,
                     serverId = serverId,
+                    accountId = accountId,
                     profileId = profileId,
                     targetContentId = contentId,
                     targetFileId = fileId,
@@ -505,7 +521,7 @@ class RoomUserItemStateRepository(
     override suspend fun localEbookProgress(contentId: String, fileId: Int): EbookLocalProgress? {
         val snapshot = snapshotProvider() ?: return null
         val profileId = snapshot.profileId ?: return null
-        val row = userStateDao.get(snapshot.serverId, profileId, contentId, fileId) ?: return null
+        val row = userStateDao.get(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, contentId, fileId) ?: return null
         val location = row.cfi ?: return null
         return EbookLocalProgress(location = location, progress = row.readProgress ?: 0.0)
     }
@@ -548,7 +564,7 @@ class RoomUserItemStateRepository(
         val snapshot = snapshotProvider() ?: return emptyMap()
         val profileId = snapshot.profileId ?: return emptyMap()
         return contentIds.distinct().chunked(MAX_IN_LIST_IDS)
-            .flatMap { contentDao.getForContentIds(snapshot.serverId, profileId, it) }
+            .flatMap { contentDao.getForContentIds(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, it) }
             .associate { it.contentId to LocalContentState(watched = it.watched, favorite = null) }
     }
 
@@ -557,7 +573,7 @@ class RoomUserItemStateRepository(
         val profileId = snapshot.profileId ?: return emptySet()
         // The UNION binds the ID list three times; stay below SQLite's older 999-variable limit.
         return contentIds.distinct().chunked(MAX_IN_LIST_IDS / 3).flatMap {
-            outboxDao.contentIdsWithPendingOrNewerUserState(snapshot.serverId, profileId, it, sinceMs)
+            outboxDao.contentIdsWithPendingOrNewerUserState(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, it, sinceMs)
         }.toSet()
     }
 
@@ -570,6 +586,7 @@ class RoomUserItemStateRepository(
     ): OutboxHandle {
         val snapshot = snapshotProvider() ?: return OutboxHandle.NONE
         val serverId = snapshot.serverId
+        val accountId = snapshot.accountId.orEmpty()
         val profileId = snapshot.profileId ?: return OutboxHandle.NONE
         val nowMs = now()
 
@@ -577,9 +594,10 @@ class RoomUserItemStateRepository(
         db.withTransaction {
             // Read-modify-write so a single-field mutation (e.g. favorite) does
             // not clobber another field (e.g. an existing rating) on the row.
-            val existing = contentDao.get(serverId, profileId, contentId)
+            val existing = contentDao.get(serverId, accountId, profileId, contentId)
                 ?: ContentItemStateEntity(
                     serverId = serverId,
+                    accountId = accountId,
                     profileId = profileId,
                     contentId = contentId,
                     watched = null,
@@ -593,7 +611,7 @@ class RoomUserItemStateRepository(
 
             var operationPayload = payloadJson
             if (clearPlaybackProgress) {
-                val watchedCoalesceKey = "$serverId|$profileId|$contentId|${OutboxOperation.SET_WATCHED}"
+                val watchedCoalesceKey = "$serverId|$accountId|$profileId|$contentId|${OutboxOperation.SET_WATCHED}"
                 // An older watched mutation may already be in flight. Preserve
                 // its rollback data too: if it fails after this newer intent is
                 // queued, the older op deliberately defers rollback to us.
@@ -602,7 +620,7 @@ class RoomUserItemStateRepository(
                 val clearedByFile = inheritedPayload?.clearedProgress
                     .orEmpty()
                     .associateByTo(linkedMapOf()) { it.fileId }
-                userStateDao.getByContent(serverId, profileId, contentId)
+                userStateDao.getByContent(serverId, accountId, profileId, contentId)
                     .filter { it.positionSeconds > 0.0 }
                     .forEach { row ->
                         clearedByFile[row.fileId] = OutboxOperation.ClearedPlaybackProgress(
@@ -615,17 +633,19 @@ class RoomUserItemStateRepository(
                     }
                 val hasInFlightPosition = outboxDao.countInFlightForTargetKind(
                     serverId = serverId,
+                    accountId = accountId,
                     profileId = profileId,
                     contentId = contentId,
                     opKind = OutboxOperation.SET_POSITION,
                 ) > 0
                 outboxDao.deletePendingForTargetKind(
                     serverId = serverId,
+                    accountId = accountId,
                     profileId = profileId,
                     contentId = contentId,
                     opKind = OutboxOperation.SET_POSITION,
                 )
-                userStateDao.clearPlaybackProgress(serverId, profileId, contentId, nowMs)
+                userStateDao.clearPlaybackProgress(serverId, accountId, profileId, contentId, nowMs)
                 operationPayload = OutboxOperation.encodeWatchedPayload(
                     OutboxOperation.WatchedPayload(
                         watched = OutboxOperation.decodeBooleanPayload(payloadJson),
@@ -639,10 +659,11 @@ class RoomUserItemStateRepository(
                 DirtyOperationEntity(
                     opKind = opKind,
                     serverId = serverId,
+                    accountId = accountId,
                     profileId = profileId,
                     targetContentId = contentId,
                     targetFileId = null,
-                    coalesceKey = "$serverId|$profileId|$contentId|$opKind",
+                    coalesceKey = "$serverId|$accountId|$profileId|$contentId|$opKind",
                     idempotencyKey = idGenerator(),
                     payloadJson = operationPayload,
                     createdAtMs = nowMs,
@@ -661,13 +682,15 @@ class RoomUserItemStateRepository(
         if (contentId.isBlank()) return
         val snapshot = snapshotProvider() ?: return
         val serverId = snapshot.serverId
+        val accountId = snapshot.accountId.orEmpty()
         val profileId = snapshot.profileId ?: return
         val nowMs = now()
 
         db.withTransaction {
-            val existing = userStateDao.get(serverId, profileId, contentId, fileId)
+            val existing = userStateDao.get(serverId, accountId, profileId, contentId, fileId)
             val row = existing ?: UserItemStateEntity(
                 serverId = serverId,
+                accountId = accountId,
                 profileId = profileId,
                 contentId = contentId,
                 fileId = fileId,

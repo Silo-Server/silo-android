@@ -10,17 +10,17 @@ import org.siloserver.silo.common.data.db.entity.CatalogCacheEntity
 interface CatalogCacheDao {
 
     @Query("""
-        DELETE FROM catalog_cache WHERE serverId = :serverId AND profileId = :profileId
+        DELETE FROM catalog_cache WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId
         AND (cacheKey LIKE 'item-detail:%' OR cacheKey LIKE 'seasons:%' OR cacheKey LIKE 'episodes:%')
     """)
-    suspend fun deleteDetailMetadata(serverId: String, profileId: String)
+    suspend fun deleteDetailMetadata(serverId: String, accountId: String, profileId: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(row: CatalogCacheEntity)
 
-    @Query("SELECT * FROM catalog_cache WHERE serverId = :serverId AND profileId = :profileId AND cacheKey = :cacheKey")
-    suspend fun get(serverId: String, profileId: String, cacheKey: String): CatalogCacheEntity?
+    @Query("SELECT * FROM catalog_cache WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND cacheKey = :cacheKey")
+    suspend fun get(serverId: String, accountId: String, profileId: String, cacheKey: String): CatalogCacheEntity?
 
-    @Query("DELETE FROM catalog_cache WHERE serverId = :serverId AND profileId = :profileId AND cacheKey = :cacheKey")
-    suspend fun delete(serverId: String, profileId: String, cacheKey: String)
+    @Query("DELETE FROM catalog_cache WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND cacheKey = :cacheKey")
+    suspend fun delete(serverId: String, accountId: String, profileId: String, cacheKey: String)
 }

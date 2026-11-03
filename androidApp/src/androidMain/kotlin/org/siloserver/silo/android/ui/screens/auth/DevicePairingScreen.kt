@@ -64,8 +64,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.produceState
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
-import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.network.currentAccountOn
+import org.siloserver.silo.model.server.AccountEntry
+import org.siloserver.silo.android.ui.components.SiloDialog
+import org.siloserver.silo.android.ui.components.SiloDialogAction
 import org.siloserver.silo.repository.ExternalSignInRepository
 import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.android.R
@@ -101,12 +104,13 @@ fun DevicePairingScreen(
      */
     lockServer: Boolean = false,
     /**
-     * "Not you?": sign out of [serverId]'s account and return to sign-in,
-     * keeping [code] for afterwards. `startSignIn` is true when the provider
-     * is asked to offer another account, so the login screen starts that
-     * sign-in by itself.
+     * "Not you?": approve with another saved account on [serverId]'s server
+     * (`accountId`), or add one (`accountId` null), keeping [code] for
+     * afterwards; the phone's current account stays signed in. `startSignIn`
+     * is true when adding one asks the provider to offer another account, so
+     * the login screen starts that sign-in by itself.
      */
-    onSwitchAccount: (serverId: String?, code: String?, startSignIn: Boolean) -> Unit,
+    onSwitchAccount: (serverId: String?, code: String?, accountId: String?, startSignIn: Boolean) -> Unit,
     viewModel: DevicePairingViewModel = koinViewModel(
         parameters = { parametersOf(token to code, serverId, lockServer) },
     ),
@@ -118,6 +122,18 @@ fun DevicePairingScreen(
     val serverRegistry: ServerRegistry = koinInject()
     val activeEntry by serverRegistry.activeEntry.collectAsState()
     val switchServerUrl = state.selectedServer?.url ?: activeEntry?.url
+    // The other saved accounts on the server the code is looked up on.
+    val accounts by serverRegistry.accounts.collectAsState()
+    val activeAccountId by serverRegistry.activeAccountId.collectAsState()
+    val switchServerId = state.selectedServer?.id ?: activeEntry?.id
+    val approvingAccountId = if (switchServerId == activeEntry?.id) {
+        activeAccountId
+    } else {
+        switchServerId?.let { serverRegistry.currentAccountOn(it)?.localAccountId }
+    }
+    val otherAccounts = accounts
+        .filter { it.serverId == switchServerId && it.localAccountId != approvingAccountId }
+        .sortedBy { it.addedAtEpochMs }
     val accountSwitch by produceState(initialValue = ApprovalAccountSwitch.SignOut, switchServerUrl) {
         value = ApprovalAccountSwitch.SignOut
         value = ApprovalAccountSwitch.of(switchServerUrl?.let { externalSignIn.signInOptions(it) })
@@ -144,10 +160,15 @@ fun DevicePairingScreen(
                     onApprove = viewModel::approve,
                     onDeny = viewModel::deny,
                     onRetryAccount = viewModel::retryAccount,
-                    accountSwitch = accountSwitch,
-                    onSwitchAccount = {
+                    otherAccounts = otherAccounts,
+                    onSwitchAccount = { accountId ->
                         val (server, typed) = state.signInRequest()
-                        onSwitchAccount(server, typed, accountSwitch == ApprovalAccountSwitch.ChooseAccount)
+                        onSwitchAccount(
+                            server,
+                            typed,
+                            accountId,
+                            accountId == null && accountSwitch == ApprovalAccountSwitch.ChooseAccount,
+                        )
                     },
                 )
                 else -> CodeEntry(
@@ -330,8 +351,8 @@ private fun ApprovalCard(
     onApprove: () -> Unit,
     onDeny: () -> Unit,
     onRetryAccount: () -> Unit,
-    accountSwitch: ApprovalAccountSwitch,
-    onSwitchAccount: () -> Unit,
+    otherAccounts: List<AccountEntry>,
+    onSwitchAccount: (accountId: String?) -> Unit,
 ) {
     val deviceName = lookup.deviceName?.takeIf { it.isNotBlank() }
     var confirmsSwitchAccount by remember { mutableStateOf(false) }
@@ -422,35 +443,42 @@ private fun ApprovalCard(
                 }
             }
             TextButton(onClick = { confirmsSwitchAccount = true }, enabled = !state.isSubmitting) {
-                Text(
-                    stringResource(
-                        if (accountSwitch == ApprovalAccountSwitch.SignOut) {
-                            R.string.sign_in_tv_sign_out_account
-                        } else {
-                            R.string.sign_in_tv_switch_account
-                        },
-                    ),
-                )
+                Text(stringResource(R.string.sign_in_tv_switch_account))
             }
             if (confirmsSwitchAccount) {
-                // Only an account choice the provider is asked for is promised.
-                val choosing = accountSwitch == ApprovalAccountSwitch.ChooseAccount
+                // Another saved account on this server, or a new one; the
+                // phone's current account stays signed in (spec §4.6).
                 val switchServerName = serverName ?: state.selectedServer?.displayName
                     ?: stringResource(R.string.sign_in_tv_switch_this_server)
-                SiloConfirmDialog(
-                    title = stringResource(if (choosing) R.string.sign_in_tv_switch_title else R.string.sign_in_tv_sign_out_title),
-                    body = stringResource(
-                        if (choosing) R.string.sign_in_tv_switch_body else R.string.sign_in_tv_sign_out_body,
-                        switchServerName,
-                    ),
-                    confirmLabel = stringResource(
-                        if (choosing) R.string.sign_in_tv_switch_confirm else R.string.sign_in_tv_sign_out_confirm,
-                    ),
-                    onConfirm = {
-                        confirmsSwitchAccount = false
-                        onSwitchAccount()
+                val signInAgain = stringResource(R.string.picker_sign_in_again)
+                SiloDialog(
+                    title = stringResource(R.string.sign_in_tv_choose_account_title),
+                    message = stringResource(R.string.sign_in_tv_choose_account_body, switchServerName),
+                    onDismissRequest = { confirmsSwitchAccount = false },
+                    actions = buildList {
+                        otherAccounts.forEach { account ->
+                            val name = account.username?.takeIf { it.isNotBlank() } ?: "Account"
+                            add(
+                                SiloDialogAction(
+                                    label = if (account.needsSignIn) "$name · $signInAgain" else name,
+                                    onClick = {
+                                        confirmsSwitchAccount = false
+                                        onSwitchAccount(account.localAccountId)
+                                    },
+                                ),
+                            )
+                        }
+                        add(
+                            SiloDialogAction(
+                                label = stringResource(R.string.sign_in_tv_add_account, switchServerName),
+                                onClick = {
+                                    confirmsSwitchAccount = false
+                                    onSwitchAccount(null)
+                                },
+                            ),
+                        )
+                        add(SiloDialogAction(stringResource(R.string.action_cancel), { confirmsSwitchAccount = false }))
                     },
-                    onDismiss = { confirmsSwitchAccount = false },
                 )
             }
             Text(

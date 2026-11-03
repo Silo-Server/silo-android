@@ -2,6 +2,7 @@ package org.siloserver.silo.common.downloads
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -9,12 +10,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.common.data.db.dao.ServerPurgeDao
 import org.siloserver.silo.common.player.ActivePlaybackFile
@@ -23,7 +26,9 @@ import org.siloserver.silo.network.ServerRegistry
 
 /**
  * Deletes the on-disk files and Room rows of servers that are no longer in the
- * registry.
+ * registry, and of accounts that are no longer saved (signing out of an
+ * account deletes its downloads, state and caches), and hands data written
+ * before accounts existed to the account that adopts it.
  *
  * Removing a server wiped four token keys and the registry entry, and nothing
  * else. So "remove this server to reclaim space" reclaimed nothing in-app (the
@@ -41,6 +46,15 @@ import org.siloserver.silo.network.ServerRegistry
  *  - Orphans are *derived* — rows present with no matching registry entry —
  *    so this is idempotent, safe to re-run at startup, and cleans installs that
  *    removed servers before any of this existed.
+ *
+ * Accounts: rows and files carry the saved account
+ * ([org.siloserver.silo.model.server.AccountEntry.localAccountId]); `''` marks
+ * data written before accounts existed. An account id that is no longer in
+ * `registry.accounts` is a sign-out, so its data goes ([purgeAccount]); `''`
+ * data of a still-saved server stays (old sign-outs kept data) until the
+ * server is removed or an account adopts it. Adoption ([adoptLegacyData]) runs
+ * before each purge pass, offline and idempotently, for every account with
+ * `adoptsLegacyData`.
  */
 class OrphanedServerDataPurger(
     private val registry: ServerRegistry,
@@ -60,21 +74,30 @@ class OrphanedServerDataPurger(
 
     private val runLock = Mutex()
 
+    private data class RegistryShape(val servers: Set<String>, val accounts: Set<String>, val adopters: Set<Pair<String, String>>)
+
+    private fun shape() = RegistryShape(
+        servers = registry.entries.value.map { it.id }.toSet(),
+        accounts = registry.accounts.value.map { it.localAccountId }.toSet(),
+        adopters = registry.accounts.value.filter { it.adoptsLegacyData }.map { it.serverId to it.localAccountId }.toSet(),
+    )
+
     fun start(): Job = scope.launch {
-        var previous = registry.entries.value.map { it.id }.toSet()
-        jsonStatePurger?.allowRegistered(previous)
+        var previous = shape()
+        jsonStatePurger?.allowRegistered(previous.servers)
         val observer = launch(start = CoroutineStart.UNDISPATCHED) {
             // Subscribe before the startup filesystem scan. A removal during
             // that scan is then buffered instead of falling between a snapshot
             // and a later collector subscription.
-            registry.entries
-                .map { entries -> entries.map { it.id }.toSet() }
+            combine(registry.entries, registry.accounts) { _, _ -> shape() }
                 .distinctUntilChanged()
-                .collect { ids ->
-                    val lost = previous - ids
-                    previous = ids
-                    jsonStatePurger?.allowRegistered(ids)
-                    if (lost.isNotEmpty()) {
+                .collect { next ->
+                    val lostServers = previous.servers - next.servers
+                    val lostAccounts = previous.accounts - next.accounts
+                    val newAdopters = next.adopters - previous.adopters
+                    previous = next
+                    jsonStatePurger?.allowRegistered(next.servers)
+                    if (lostServers.isNotEmpty() || lostAccounts.isNotEmpty() || newAdopters.isNotEmpty()) {
                         runCatching { purgeOnce() }
                             .onFailure { Log.w(TAG, "registry-change purge failed", it) }
                     }
@@ -83,8 +106,10 @@ class OrphanedServerDataPurger(
         try {
             runCatching { purgeOnce() }
                 .onFailure { Log.w(TAG, "startup purge failed", it) }
+            AccountDataAdoption.markFirstPassDone()
             observer.join()
         } finally {
+            AccountDataAdoption.markFirstPassDone()
             observer.cancel()
         }
     }
@@ -104,9 +129,12 @@ class OrphanedServerDataPurger(
             // the registry actually knows what it holds.
             if (registry.stateLoadFailed) {
                 Log.w(TAG, "registry state unreadable; skipping purge")
+                AccountDataAdoption.markFirstPassDone()
                 return@withContext emptySet()
             }
             val registered = registry.entries.value.map { it.id }.toSet()
+            adoptLegacyData(registered)
+            AccountDataAdoption.markFirstPassDone()
             val orphans = purgeDao.knownServerIds().toSet() - registered
             val purged = mutableSetOf<String>()
             orphans.forEach { serverId ->
@@ -118,6 +146,17 @@ class OrphanedServerDataPurger(
                     purged += serverId
                 }
             }
+            // Signed-out accounts of servers that are still saved (a removed
+            // server's accounts went with it above). The registry is read after
+            // the rows: an account is saved before it writes anything, so one
+            // signed in meanwhile is never mistaken for a signed-out one.
+            val known = purgeDao.knownAccounts()
+            val savedAccounts = registry.accounts.value.map { it.localAccountId }.toSet()
+            known
+                .filter { it.serverId in registered && it.accountId !in savedAccounts }
+                .forEach { orphan ->
+                    withContext(NonCancellable) { purgeAccount(orphan.serverId, orphan.accountId) }
+                }
             runCatching {
                 jsonStatePurger?.deleteJsonOnlyOrphans(
                     registeredServerIds = registered,
@@ -126,6 +165,51 @@ class OrphanedServerDataPurger(
             }.onFailure { Log.w(TAG, "JSON-only orphan purge failed; retaining directory evidence", it) }
             purged
         }
+    }
+
+    /**
+     * Gives each saved server's pre-account rows and files to its account with
+     * `adoptsLegacyData`. Idempotent and offline: rows are re-labelled in
+     * place and files stay where they are ([DownloadStorage.adoptLegacyFiles]).
+     */
+    private suspend fun adoptLegacyData(registered: Set<String>) {
+        registry.accounts.value
+            .filter { it.adoptsLegacyData && it.serverId in registered }
+            .forEach { account ->
+                runCatching {
+                    // Files first: once the rows say they belong to the account,
+                    // its lookups must already find the files they point at.
+                    storage.adoptLegacyFiles(account.serverId, account.localAccountId)
+                    purgeDao.adoptLegacyRows(account.serverId, account.localAccountId)
+                }.onFailure { Log.w(TAG, "legacy data adoption failed for an account", it) }
+            }
+    }
+
+    /** Sign-out: every row, file and transfer of one account that is no longer saved. */
+    private suspend fun purgeAccount(serverId: String, accountId: String): Boolean {
+        val activeFileId = activePlaybackFileId()
+        if (activeFileId != null && activeFileId in purgeDao.downloadFileIdsForAccount(serverId, accountId)) {
+            Log.i(TAG, "deferring purge of a signed-out account: file $activeFileId is playing")
+            return false
+        }
+        // Cancel first, as for a server: a running worker would write its row back.
+        try {
+            purgeDao.downloadRecordIdsForAccount(serverId, accountId).forEach { recordId ->
+                cancelDownload(recordId)
+            }
+        } catch (failure: Exception) {
+            Log.w(TAG, "download cancellation failed for a signed-out account; retaining rows", failure)
+            return false
+        }
+        try {
+            storage.deleteAllForAccount(serverId, accountId)
+        } catch (failure: Exception) {
+            Log.w(TAG, "file purge failed for a signed-out account; retaining rows", failure)
+            return false
+        }
+        purgeDao.deleteAllRowsForAccount(serverId, accountId)
+        Log.i(TAG, "purged the data of a signed-out account on $serverId")
+        return true
     }
 
     private suspend fun purgeServer(serverId: String): Boolean {
@@ -166,6 +250,27 @@ class OrphanedServerDataPurger(
 
     private companion object {
         const val TAG = "OrphanedServerPurge"
+    }
+}
+
+/**
+ * Lets readers that must see adopted data (the Downloads list, offline
+ * playback) wait for the first adoption pass after launch, so a download made
+ * before accounts existed never reads as missing while its rows are being
+ * handed to the account. Bounded: a purger that never starts delays a read by
+ * [FIRST_PASS_TIMEOUT_MS] once, not forever.
+ */
+object AccountDataAdoption {
+    private val firstPass = CompletableDeferred<Unit>()
+    private const val FIRST_PASS_TIMEOUT_MS = 3_000L
+
+    internal fun markFirstPassDone() {
+        firstPass.complete(Unit)
+    }
+
+    suspend fun awaitFirstPass() {
+        if (firstPass.isCompleted) return
+        if (withTimeoutOrNull(FIRST_PASS_TIMEOUT_MS) { firstPass.await() } == null) firstPass.complete(Unit)
     }
 }
 

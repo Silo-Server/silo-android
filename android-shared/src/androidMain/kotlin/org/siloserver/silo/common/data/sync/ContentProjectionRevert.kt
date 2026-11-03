@@ -16,9 +16,9 @@ import org.siloserver.silo.common.data.db.entity.DirtyOperationEntity
 internal suspend fun ContentItemStateDao.revertForTerminalOp(op: DirtyOperationEntity) {
     if (op.state == "legacy_membership_quarantined") return
     when (op.opKind) {
-        OutboxOperation.SET_WATCHED -> clearWatched(op.serverId, op.profileId, op.targetContentId)
-        OutboxOperation.SET_FAVORITE -> clearFavorite(op.serverId, op.profileId, op.targetContentId)
-        OutboxOperation.SET_RATING -> clearRating(op.serverId, op.profileId, op.targetContentId)
+        OutboxOperation.SET_WATCHED -> clearWatched(op.serverId, op.accountId, op.profileId, op.targetContentId)
+        OutboxOperation.SET_FAVORITE -> clearFavorite(op.serverId, op.accountId, op.profileId, op.targetContentId)
+        OutboxOperation.SET_RATING -> clearRating(op.serverId, op.accountId, op.profileId, op.targetContentId)
         else -> Unit
     }
 }
@@ -30,6 +30,7 @@ internal suspend fun UserItemStateDao.restorePlaybackProgressForTerminalOp(op: D
     payload.clearedProgress.forEach { progress ->
         restorePlaybackProgressIfUnchanged(
             serverId = op.serverId,
+            accountId = op.accountId,
             profileId = op.profileId,
             contentId = op.targetContentId,
             fileId = progress.fileId,

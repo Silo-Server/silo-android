@@ -65,6 +65,7 @@ class AppWorkerFactory : WorkerFactory() {
                         koin.get<org.siloserver.silo.network.ServerRegistry>().activeServerId.value to
                             koin.get<org.siloserver.silo.repository.ProfileRepository>().getActiveProfileId()
                     },
+                    activeAccount = { koin.get<org.siloserver.silo.network.ServerRegistry>().activeAccountId.value },
                 )
             }
             DownloadStatusWorker::class.java.name -> {

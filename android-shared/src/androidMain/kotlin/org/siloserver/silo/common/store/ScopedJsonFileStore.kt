@@ -19,9 +19,10 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Shared plumbing for the per-(serverId, profileId, contentId) JSON
- * file stores (ebook reading state, audiobook positions/bookmarks):
- * scoped path resolution under a root directory, one lenient [Json]
+ * Shared plumbing for the per-(serverId, accountId, profileId, contentId)
+ * JSON file stores (ebook reading state, audiobook positions/bookmarks):
+ * scoped path resolution under a root directory
+ * (`<server>/@<account>/<profile>/<content>`), one lenient [Json]
  * instance, safe reads (missing/corrupt files log and return null),
  * and atomic writes (tmp + fsync + rename) so a crash mid-write can't
  * leave a half-written file that fails to decode next launch.
@@ -42,22 +43,41 @@ internal class ScopedJsonFileStore(
         return synchronized(lock, block)
     }
 
+    /**
+     * [accountId] null is the pre-account layout (`<server>/<profile>/…`),
+     * which only the account that adopts the server's old data ever had;
+     * [AccountLocalData] moves it under that account's directory.
+     */
     internal fun fileFor(
         serverId: String,
+        accountId: String?,
         profileId: String,
         contentId: String,
         suffix: String = ".json",
     ): File {
-        val directory = requireNotNull(containedSafeChild(canonicalRoot, serverId, profileId)) {
+        val directory = requireNotNull(profileDirectory(serverId, accountId, profileId)) {
             "Scoped JSON directory is outside its root"
         }
         val target = requireNotNull(containedFile(directory, safePathSegment(contentId) + suffix)) {
             "Scoped JSON filename is outside its directory"
         }
-        containedLegacyChild(canonicalRoot, serverId, profileId, contentId + suffix)
-            ?.takeIf { it.canonicalPath != target.canonicalPath }
-            ?.let { legacy -> legacyByTarget[target.canonicalPath] = legacy }
+        if (accountId == null) {
+            containedLegacyChild(canonicalRoot, serverId, profileId, contentId + suffix)
+                ?.takeIf { it.canonicalPath != target.canonicalPath }
+                ?.let { legacy -> legacyByTarget[target.canonicalPath] = legacy }
+        }
         return target
+    }
+
+    private fun profileDirectory(serverId: String, accountId: String?, profileId: String): File? {
+        if (accountId == null) return containedSafeChild(canonicalRoot, serverId, profileId)
+        val serverDirectory = containedSafeChild(canonicalRoot, serverId) ?: return null
+        // A local account id is a UUID, so its token is already a safe segment.
+        // Anything else (never written by the registry) is encoded instead.
+        val token = AccountScopedKeys.token(accountId)
+        val accountSegment = if (AccountScopedKeys.isAccountId(accountId)) token else safePathSegment(token)
+        return containedSafeChild(File(serverDirectory, accountSegment), profileId)
+            ?.takeIf { isContained(it) }
     }
 
     internal inline fun <reified T> read(file: File): T? {

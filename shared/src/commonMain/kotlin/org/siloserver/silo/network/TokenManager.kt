@@ -59,6 +59,19 @@ data class AccountSessionExpectation(
 }
 class AccountSessionChangedException : IllegalStateException("The initiating account or server changed")
 
+/**
+ * Who a sign-in is for, so the token manager can file its credentials under
+ * the right saved account. [serverUserId] and [username] come from the login
+ * response; [reauthAccountId] is the saved account the sign-in was started
+ * for (an expired account's Sign in again), used when the server user matches
+ * or is not known yet. Without a match the sign-in becomes a new account.
+ */
+data class AccountSignIn(
+    val serverUserId: String?,
+    val username: String?,
+    val reauthAccountId: String? = null,
+)
+
 interface TokenManager {
     suspend fun captureAccountSessionExpectation(): AccountSessionExpectation? = null
 
@@ -91,6 +104,27 @@ interface TokenManager {
         setProfileIdentity(profileId, profileToken)
         saveTokens(accessToken, refreshToken, expiresIn)
     }
+
+    /**
+     * [replaceAccountSession] that also says which saved account the
+     * credentials belong to ([account]). Returns the local id of the account
+     * that now holds them, or null when the implementation keeps no accounts.
+     */
+    suspend fun replaceAccountSession(
+        serverId: String? = null,
+        serverUrl: String? = null,
+        accessToken: String,
+        refreshToken: String,
+        expiresIn: Long,
+        profileId: String? = null,
+        profileToken: String? = null,
+        expectedIdentity: AccountSessionExpectation? = null,
+        account: AccountSignIn?,
+    ): String? {
+        replaceAccountSession(serverId, serverUrl, accessToken, refreshToken, expiresIn, profileId, profileToken, expectedIdentity)
+        return null
+    }
+
     suspend fun clearTokens()
 
     /**
@@ -207,6 +241,13 @@ interface TokenManager {
     suspend fun getCurrentServerId(): String?
 
     /**
+     * The saved account ([org.siloserver.silo.model.server.AccountEntry.localAccountId])
+     * whose slot this manager reads and writes, or null without one (or in an
+     * implementation that keeps no accounts). A temporary overlay has none.
+     */
+    suspend fun getCurrentAccountId(): String? = null
+
+    /**
      * Retarget this manager at [serverId]. Subsequent reads/writes load from
      * and persist to that server's slot. Pass `null` to detach (no active
      * server — used during full sign-out / fresh setup).
@@ -234,6 +275,15 @@ interface TokenManager {
         signOutCurrentServer()
         return true
     }
+
+    /**
+     * Signs out of a saved account that is NOT the active one (Settings ›
+     * Accounts, or replacing an expired account): deletes it and its
+     * credential slot; its local data then leaves with it. False when
+     * [accountId] is the active account (use [signOutServer]), is not saved
+     * on [serverId], or the implementation keeps no accounts.
+     */
+    suspend fun signOutAccount(serverId: String, accountId: String): Boolean = false
 
     // ----- Scoped auth (Track B outbox replay; see [AuthScopeSnapshot]) -----
 

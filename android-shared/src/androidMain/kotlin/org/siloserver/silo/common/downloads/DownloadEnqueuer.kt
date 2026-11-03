@@ -27,7 +27,7 @@ import kotlinx.coroutines.withContext
 /**
  * Thin Android-side helper that combines the cross-platform
  * [DownloadsRepository.create] call with the platform-specific
- * [DownloadWorker.enqueue] handoff. Centralises the (serverId, profileId)
+ * [DownloadWorker.enqueue] handoff. Centralises the (serverId, accountId, profileId)
  * resolution so ViewModels stay free of Android `Context` references.
  *
  * Also responsible for stashing the catalog metadata on disk at download
@@ -306,9 +306,10 @@ class DownloadEnqueuer(
         val owner = authority ?: return false
         if (owner != authorities?.snapshotDurableLoginAuthority()) return false
         val profile = owner.scope.profileId ?: return false
-        val local = metadataStore.readSidecar(owner.scope.serverId, profile, record.mediaFileId) ?: return false
+        val account = owner.scope.accountId.orEmpty()
+        val local = metadataStore.readSidecar(owner.scope.serverId, account, profile, record.mediaFileId) ?: return false
         return local.record.id == record.id && local.record.statusEnum() == DownloadStatus.Completed &&
-            storage.exists(owner.scope.serverId, profile, record.mediaFileId)
+            storage.exists(owner.scope.serverId, account, profile, record.mediaFileId)
     }
 
     /** Builds a fileId → EpisodeListItem map across every season of [seriesContentId].
@@ -348,8 +349,9 @@ class DownloadEnqueuer(
      */
     private suspend fun activeDownloadExists(fileId: Int): Boolean {
         val serverId = serverRegistry.activeServerId.value ?: DEFAULT_SERVER_ID
+        val accountId = serverRegistry.activeAccountId.value.orEmpty()
         val profileId = profileRepository.getActiveProfileId() ?: DEFAULT_PROFILE_ID
-        val existing = runCatching { metadataStore.readSidecar(serverId, profileId, fileId) }.getOrNull()
+        val existing = runCatching { metadataStore.readSidecar(serverId, accountId, profileId, fileId) }.getOrNull()
             ?: return false
         val claimsActive = when (existing.record.statusEnum()) {
             DownloadStatus.Queued, DownloadStatus.Downloading -> true
@@ -362,7 +364,7 @@ class DownloadEnqueuer(
         if (System.currentTimeMillis() - existing.updatedAtMs < WORK_VISIBILITY_GRACE_MS) return true
         if (hasLiveWork(existing.record.id)) return true
         Log.i(TAG, "activeDownloadExists: fileId=$fileId sidecar is stale (no live work) — dropping")
-        runCatching { metadataStore.deleteSidecar(serverId, profileId, fileId) }
+        runCatching { metadataStore.deleteSidecar(serverId, accountId, profileId, fileId) }
             .onFailure { Log.w(TAG, "activeDownloadExists: stale deleteSidecar failed for fileId=$fileId", it) }
         return false
     }
@@ -414,7 +416,7 @@ class DownloadEnqueuer(
 
     /**
      * Common tail: persists the sidecar and kicks off the
-     * [DownloadWorker]. Pulls (serverId, profileId, wifiOnly) here once so
+     * [DownloadWorker]. Pulls (serverId, accountId, profileId, wifiOnly) here once so
      * each entry point doesn't repeat the lookup.
      */
     private suspend fun finalizeAndEnqueue(
@@ -425,6 +427,9 @@ class DownloadEnqueuer(
     ) {
         check(authorities == null || authority == authorities.snapshotDurableLoginAuthority()) { "The download owner changed" }
         val serverId = serverRegistry.activeServerId.value ?: DEFAULT_SERVER_ID
+        // The owner's account when there is one: the download is filed under
+        // the account whose credentials created it.
+        val accountId = authority?.scope?.accountId ?: serverRegistry.activeAccountId.value.orEmpty()
         val profileId = profileRepository.getActiveProfileId() ?: DEFAULT_PROFILE_ID
         val wifiOnly = playerSettingsStore.downloadsWifiOnlyFlow.first()
         val deviceId = devices?.current()?.id
@@ -435,12 +440,13 @@ class DownloadEnqueuer(
         // re-asserts the row on status transitions; full create-if-missing is a
         // tracked follow-up.)
         suspend fun persistAndEnqueue() {
-        metadataStore.writeSidecar(serverId, profileId, sidecar)
+        metadataStore.writeSidecar(serverId, accountId, profileId, sidecar)
         DownloadWorker.enqueue(
             context = context,
             downloadId = record.id,
             fileId = record.mediaFileId,
             serverId = serverId,
+            accountId = accountId,
             profileId = profileId,
             fileName = sidecar.fileName,
             container = sidecar.container,
@@ -526,6 +532,7 @@ class DownloadEnqueuer(
     data class CancelScope(
         val serverId: String,
         val profileId: String,
+        val accountId: String = "",
     )
 
     /** Capture identity synchronously with the UI record being acted on. */
@@ -534,6 +541,7 @@ class DownloadEnqueuer(
         return CancelScope(
             serverId = active?.id ?: DEFAULT_SERVER_ID,
             profileId = active?.profileId ?: DEFAULT_PROFILE_ID,
+            accountId = active?.accountId.orEmpty(),
         )
     }
 
@@ -551,9 +559,9 @@ class DownloadEnqueuer(
         // A worker stopped by the system keeps its partial for the retry; a
         // cancel while that retry waits runs no worker cleanup, and the row
         // removed below is the only pointer to those bytes.
-        runCatching { storage.delete(scope.serverId, scope.profileId, fileId) }
+        runCatching { storage.delete(scope.serverId, scope.accountId, scope.profileId, fileId) }
             .onFailure { Log.w(TAG, "cancel: partial delete failed for fileId=$fileId", it) }
-        runCatching { metadataStore.deleteSidecar(scope.serverId, scope.profileId, fileId) }
+        runCatching { metadataStore.deleteSidecar(scope.serverId, scope.accountId, scope.profileId, fileId) }
             .onFailure { Log.w(TAG, "cancel: deleteSidecar failed for fileId=$fileId", it) }
     }
 

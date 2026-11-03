@@ -59,6 +59,12 @@ import org.siloserver.silo.tv.cast.TvSiloCastReceiver
 import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import org.siloserver.silo.tv.profiles.TvActiveProfileReset
+import org.siloserver.silo.tv.profiles.noAccountOpenButAnotherSignedIn
+import org.siloserver.silo.tv.profiles.onlyOpenTile
+import org.siloserver.silo.tv.profiles.onlyOpenTileIsActive
+import org.siloserver.silo.tv.profiles.restoreLastTile
+import org.siloserver.silo.tv.watchnext.WatchNextSeeder
+import org.siloserver.silo.common.ui.marquee.SignInHandoff
 import org.siloserver.silo.common.profiles.ProfileAwayTracker
 import org.siloserver.silo.tv.ui.navigation.TvAppNavigation
 import org.siloserver.silo.tv.ui.navigation.TvRoute
@@ -391,6 +397,12 @@ class MainTvActivity : ComponentActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             authRepository.refreshActiveServerName(knownContract = knownContract)
         }
+        // Accounts saved before multiple accounts existed lack their server
+        // user, which tells a new sign-in apart from a saved account. Best
+        // effort, never awaited.
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { authRepository.backfillAccountIdentities() }
+        }
 
         val cleartextConsent = get<org.siloserver.silo.network.CleartextOriginConsent>(
             org.siloserver.silo.network.CleartextOriginConsent::class.java,
@@ -399,11 +411,50 @@ class MainTvActivity : ComponentActivity() {
             return TvRoute.ServerSetup.route
         }
 
+        val launchPreferences = get<ProfileLaunchPreferences>(ProfileLaunchPreferences::class.java)
+        val requiresSelection = if (processStart) {
+            launchPreferences.requiresSelectionAtLaunch()
+        } else {
+            get<ProfileAwayTracker>(ProfileAwayTracker::class.java).selectionRequired.value
+        }
+
+        // Automatic reopens the last tile, on whichever server and account
+        // (multi-account spec §4.2), when no profile is open here.
+        if (!requiresSelection && !tokenManager.hasTemporaryScope()) {
+            runCatching {
+                restoreLastTile(
+                    registry = registry,
+                    tokenManager = tokenManager,
+                    launchPreferences = launchPreferences,
+                    authRepository = authRepository,
+                    profileRepository = get(ProfileRepository::class.java),
+                    watchNextSeeder = get(WatchNextSeeder::class.java),
+                )
+            }
+        }
+
         val accessToken = tokenManager.getAccessToken()
-        if (accessToken.isNullOrBlank()) return TvRoute.Login().route
+        if (accessToken.isNullOrBlank()) {
+            // No session on the active server. With another account's session
+            // to go to, Change Account is the root (owner decision
+            // 2026-11-02); otherwise this server's sign-in, with an expired
+            // account's username filled in.
+            val active = registry.activeAccount.value
+            return when {
+                registry.noAccountOpenButAnotherSignedIn() -> TvRoute.ChangeAccount().route
+                active?.needsSignIn == true ->
+                    TvRoute.Login(sessionExpired = true, username = active.username).route
+                else -> TvRoute.Login().route
+            }
+        }
 
         val profileId = tokenManager.getProfileId()
-        if (profileId.isNullOrBlank()) return TvRoute.ProfileSelection.route
+        if (profileId.isNullOrBlank()) {
+            // The open account's only profile, with no PIN, opens without
+            // the picker (spec §4.2).
+            if (registry.onlyOpenTile() != null) SignInHandoff.skipsSingleProfilePicker = true
+            return TvRoute.ProfileSelection.route
+        }
 
         // A remote-playback overlay (only possible when the Activity is
         // recreated in a live process) owns identity until it ends; the
@@ -417,11 +468,11 @@ class MainTvActivity : ComponentActivity() {
         // return rule the away tracker evaluated in onStart. Either way the
         // profile is cleared here, before the picker loads, and losing its PIN
         // proof makes a protected profile ask for its PIN again.
-        val launchPreferences = get<ProfileLaunchPreferences>(ProfileLaunchPreferences::class.java)
-        val requiresSelection = if (processStart) {
-            launchPreferences.requiresSelectionAtLaunch()
-        } else {
-            get<ProfileAwayTracker>(ProfileAwayTracker::class.java).selectionRequired.value
+        // The open account's only profile, with no PIN, is never asked for (spec §4.2).
+        if (requiresSelection && registry.onlyOpenTileIsActive(tokenManager)) {
+            launchPreferences.clearBackgroundedAt()
+            get<ProfileAwayTracker>(ProfileAwayTracker::class.java).onSelectionHandled()
+            return TvRoute.Main.route
         }
         if (requiresSelection) {
             get<TvActiveProfileReset>(TvActiveProfileReset::class.java).clearActiveProfile()

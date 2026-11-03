@@ -42,6 +42,7 @@ import org.siloserver.silo.android.ui.navigation.SiloBottomNavBar
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import org.siloserver.silo.android.ui.navigation.Route
+import org.siloserver.silo.android.ui.navigation.routeAfterSignOut
 import org.siloserver.silo.android.ui.navigation.Tab
 import org.siloserver.silo.android.ui.navigation.tabForRoute
 import org.siloserver.silo.android.ui.navigation.tabSwitchNavOptions
@@ -170,10 +171,10 @@ fun MainScreen(
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
     val reachabilityScope = rememberCoroutineScope()
     val activeEntry by serverRegistry.activeEntry.collectAsState()
-    // Drives the initial load and every re-load. Keyed on the active server
-    // and its profile, so switching either re-fetches the avatar rather than
-    // leaving the previous profile's (or none) in the header.
-    LaunchedEffect(activeEntry?.id, activeEntry?.profileId) {
+    // Drives the initial load and every re-load. Keyed on the active server,
+    // account and profile, so switching any of them re-fetches the avatar
+    // rather than leaving the previous profile's (or none) in the header.
+    LaunchedEffect(activeEntry?.id, activeEntry?.accountId, activeEntry?.profileId) {
         headerViewModel.refresh()
     }
     // An access change can add or remove whole libraries: re-derive the tabs
@@ -206,12 +207,14 @@ fun MainScreen(
         initialValue = 0L,
         downloadRecords,
         activeEntry?.id,
+        activeEntry?.accountId,
         activeEntry?.profileId,
         headerState.activeProfile?.id,
     ) {
         value = scopedLocalDownloadBytes(
             storage = downloadStorage,
             serverId = activeEntry?.id,
+            accountId = activeEntry?.accountId,
             profileId = activeEntry?.profileId ?: headerState.activeProfile?.id,
         )
     }
@@ -286,7 +289,7 @@ fun MainScreen(
         navController.clearBackStack(vanished.route)
     }
 
-    LaunchedEffect(activeEntry?.id, activeEntry?.profileId, headerState.activeProfile?.id) {
+    LaunchedEffect(activeEntry?.id, activeEntry?.accountId, activeEntry?.profileId, headerState.activeProfile?.id) {
         requestsFeatureStore.reset()
         requestsFeatureStore.refresh()
         metadataAiFeatureStore.reset()
@@ -295,13 +298,15 @@ fun MainScreen(
         shuffleFeatureStore.refresh()
     }
 
-    fun signOutFromProfileMenu() {
+    fun signOutFromProfileMenu(removeServer: Boolean) {
         reachabilityScope.launch {
             // Same teardown as the Settings sign-out: otherwise the next
             // user's shell renders (and can write back) the previous
             // profile's overlays and card presentation.
-            if (!signOutTeardown.signOut()) return@launch
-            navController.navigate(Route.Login.route) {
+            val signedOut = if (removeServer) signOutTeardown.signOutAndRemoveServer() else signOutTeardown.signOut()
+            if (!signedOut) return@launch
+            // Change Account while another account has a session, else sign-in.
+            navController.navigate(serverRegistry.routeAfterSignOut()) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
             }
@@ -315,6 +320,11 @@ fun MainScreen(
      * Runs in the navigation host's scope ([org.siloserver.silo.android.ui.navigation.LocalProfileSwitch]).
      */
     fun switchProfileFromMenu() = switchProfile()
+
+    /** Profile-menu "Change account": every saved server's accounts, over the shell so Back returns. */
+    fun changeAccountFromMenu() {
+        navController.navigate(Route.ChangeAccount().route) { launchSingleTop = true }
+    }
     val requestsMenuAction: (() -> Unit)? = if (requestsEnabled) {
         { navController.navigate(Route.Requests.route) }
     } else {
@@ -437,9 +447,7 @@ fun MainScreen(
                             onWatchPartyClick = watchPartyMenuAction,
                             onSettingsClick = { navController.navigate(Route.Settings.route) },
                             onSwitchProfileClick = ::switchProfileFromMenu,
-                            onSwitchServerClick = {
-                                navController.navigate(Route.ServerList.route)
-                            },
+                            onChangeAccountClick = ::changeAccountFromMenu,
                             onSignOutClick = ::signOutFromProfileMenu,
                         )
                     }
@@ -478,9 +486,7 @@ fun MainScreen(
                             onWatchPartyClick = watchPartyMenuAction,
                             onSettingsClick = { navController.navigate(Route.Settings.route) },
                             onSwitchProfileClick = ::switchProfileFromMenu,
-                            onSwitchServerClick = {
-                                navController.navigate(Route.ServerList.route)
-                            },
+                            onChangeAccountClick = ::changeAccountFromMenu,
                             onSignOutClick = ::signOutFromProfileMenu,
                         )
                     }
@@ -511,9 +517,7 @@ fun MainScreen(
                                     onWatchPartyClick = watchPartyMenuAction,
                                     onSettingsClick = { navController.navigate(Route.Settings.route) },
                                     onSwitchProfileClick = ::switchProfileFromMenu,
-                                    onSwitchServerClick = {
-                                        navController.navigate(Route.ServerList.route)
-                                    },
+                                    onChangeAccountClick = ::changeAccountFromMenu,
                                     onSignOutClick = ::signOutFromProfileMenu,
                                 )
                             },
@@ -572,9 +576,7 @@ fun MainScreen(
                     onWatchPartyClick = watchPartyMenuAction,
                     onSettingsClick = { navController.navigate(Route.Settings.route) },
                     onSwitchProfileClick = ::switchProfileFromMenu,
-                    onSwitchServerClick = {
-                        navController.navigate(Route.ServerList.route)
-                    },
+                    onChangeAccountClick = ::changeAccountFromMenu,
                     onSignOutClick = ::signOutFromProfileMenu,
                     leadingContent = {
                         if (title != null) {

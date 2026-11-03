@@ -15,6 +15,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.common.diagnostics.SiloLog
+import org.siloserver.silo.common.store.AccountScopedKeys
 import org.siloserver.silo.model.catalog.WatchDetail
 import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
 import org.siloserver.silo.model.playback.PendingSeriesAudioChoice
@@ -217,7 +218,19 @@ class DefaultSeriesTrackChoiceWriter(
 
     private enum class Kind(val label: String) { AUDIO("audio"), SUBTITLE("subtitle") }
 
-    private data class Key(val profileId: String, val serverId: String, val seriesKey: String, val kind: Kind)
+    private data class Key(
+        val profileId: String,
+        val serverId: String,
+        val seriesKey: String,
+        val kind: Kind,
+        /** The saved account; profile ids repeat across a server's accounts. */
+        val accountId: String? = null,
+    )
+
+    /** Same server, account and profile: [other]'s credentials may send [this]'s pick. */
+    private fun AuthScopeSnapshot.sameProfileAs(other: AuthScopeSnapshot?): Boolean =
+        other != null && serverId == other.serverId && profileId == other.profileId &&
+            (accountId == null || other.accountId == null || accountId == other.accountId)
 
     /**
      * Compared by reference: [settle] must tell a repeated save of the same
@@ -278,12 +291,12 @@ class DefaultSeriesTrackChoiceWriter(
         val active = captureOwner() ?: return
         val writer = owner ?: active
         val profileId = writer.profileId?.takeIf { it.isNotBlank() } ?: return
-        if (writer.serverId != active.serverId || profileId != active.profileId) {
+        if (!writer.sameProfileAs(active)) {
             SiloLog.i(CATEGORY, TAG, "${kind.label} choice not saved: its playback belongs to another profile or server")
             return
         }
         synchronized(lock) {
-            val key = Key(profileId, writer.serverId, seriesKey, kind)
+            val key = Key(profileId, writer.serverId, seriesKey, kind, writer.accountId)
             if ((newestSequence[key] ?: 0L) > order) return
             newestSequence[key] = order
             val op = Op(writer, choice, now(), order, loginGeneration(writer.serverId))
@@ -336,10 +349,12 @@ class DefaultSeriesTrackChoiceWriter(
     override suspend fun subtitleResetToAuto(seriesKey: String): Boolean {
         val owner = captureOwner() ?: return false
         val profileId = owner.profileId?.takeIf { it.isNotBlank() } ?: return false
-        return autoResets.isReset(Key(profileId, owner.serverId, seriesKey, Kind.SUBTITLE).resetId())
+        return autoResets.isReset(Key(profileId, owner.serverId, seriesKey, Kind.SUBTITLE, owner.accountId).resetId())
     }
 
-    private fun Key.resetId(): String = listOf(serverId, profileId, kind.label, seriesKey).joinToString("\u001f")
+    private fun Key.resetId(): String =
+        listOfNotNull(serverId, accountId?.let(AccountScopedKeys::token), profileId, kind.label, seriesKey)
+            .joinToString("\u001f")
 
     override suspend fun pendingSubtitle(seriesKey: String): PendingSeriesSubtitleChoice? =
         pendingOp(seriesKey, Kind.SUBTITLE)?.let { PendingSeriesSubtitleChoice(it.choice as SeriesSubtitleChoice?) }
@@ -350,7 +365,7 @@ class DefaultSeriesTrackChoiceWriter(
     private suspend fun pendingOp(seriesKey: String, kind: Kind): Op? {
         val owner = captureOwner() ?: return null
         val profileId = owner.profileId?.takeIf { it.isNotBlank() } ?: return null
-        return unsent.value[Key(profileId, owner.serverId, seriesKey, kind)]?.takeUnless(::expired)
+        return unsent.value[Key(profileId, owner.serverId, seriesKey, kind, owner.accountId)]?.takeUnless(::expired)
     }
 
     private fun <T> pendingFlow(kind: Kind, wrap: (Any?) -> T): Flow<Map<String, T>> =
@@ -360,7 +375,7 @@ class DefaultSeriesTrackChoiceWriter(
             if (transition?.phase == IdentityTransitionPhase.WILL_CHANGE) return@combine emptyMap()
             val owner = captureOwner()
             ops.filter { (key, op) ->
-                key.kind == kind && key.profileId == owner?.profileId && key.serverId == owner.serverId && !expired(op)
+                key.kind == kind && op.owner.sameProfileAs(owner) && !expired(op)
             }.entries.associate { (key, op) -> key.seriesKey to wrap(op.choice) }
         }
 
@@ -495,7 +510,7 @@ class DefaultSeriesTrackChoiceWriter(
         }
         val owner = when {
             active == null -> return true
-            active.serverId == op.owner.serverId && active.profileId == op.owner.profileId -> active
+            op.owner.sameProfileAs(active) -> active
             else -> {
                 SiloLog.i(CATEGORY, TAG, "$verb ${key.kind.label} choice waits: another profile is active")
                 return true
@@ -559,7 +574,7 @@ class DefaultSeriesTrackChoiceWriter(
 
 /**
  * The series whose subtitles were set back to Auto on this device, by
- * (server, profile, kind, series). Kept across launches: the per-file memory
+ * (server, account, profile, kind, series). Kept across launches: the per-file memory
  * it silences is too.
  */
 interface SeriesAutoResetStore {

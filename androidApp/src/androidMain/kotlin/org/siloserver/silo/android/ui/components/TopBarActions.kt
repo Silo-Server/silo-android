@@ -98,8 +98,8 @@ fun TopBarProfileMenu(
     onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
+    onChangeAccountClick: () -> Unit,
+    onSignOutClick: (removeServer: Boolean) -> Unit,
 ) {
     var menuExpanded by rememberSaveable { mutableStateOf(false) }
     Box {
@@ -133,7 +133,7 @@ fun TopBarProfileMenu(
             onWatchPartyClick = onWatchPartyClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
-            onSwitchServerClick = onSwitchServerClick,
+            onChangeAccountClick = onChangeAccountClick,
             onSignOutClick = onSignOutClick,
             activeProfile = activeProfile,
         )
@@ -152,8 +152,8 @@ fun TabTopBarActions(
     onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
+    onChangeAccountClick: () -> Unit,
+    onSignOutClick: (removeServer: Boolean) -> Unit,
     modifier: Modifier = Modifier,
     leadingActions: @Composable () -> Unit = {},
 ) {
@@ -175,7 +175,7 @@ fun TabTopBarActions(
             onWatchPartyClick = onWatchPartyClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
-            onSwitchServerClick = onSwitchServerClick,
+            onChangeAccountClick = onChangeAccountClick,
             onSignOutClick = onSignOutClick,
         )
     }

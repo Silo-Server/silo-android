@@ -30,7 +30,15 @@ sealed class Route(val route: String) {
             const val ROUTE = "server_setup_prefilled?url={url}"
         }
     }
+    /** Settings › Accounts: every saved server and its accounts (the route kept its old name). */
     data object ServerList : Route("server_list")
+
+    /** One saved account's page under Settings › Accounts. */
+    data class AccountDetail(val accountId: String) : Route("server_list/account/${Uri.encode(accountId)}") {
+        companion object {
+            const val ROUTE = "server_list/account/{accountId}"
+        }
+    }
     data object Login : Route("login")
     data object Setup : Route("setup")
     data object Signup : Route("signup")
@@ -88,6 +96,19 @@ sealed class Route(val route: String) {
 
     // --- Profile selection (no bottom nav) ---
     data object ProfileSelection : Route("profiles")
+
+    /**
+     * Change Account: every saved server's accounts, to open another one.
+     * [addAccountOn] scrolls to that server's "Add an account" row (Add ›
+     * Add an account on the picker).
+     */
+    data class ChangeAccount(val addAccountOn: String? = null) : Route(
+        if (addAccountOn == null) "change_account" else "change_account?addOn=${Uri.encode(addAccountOn)}",
+    ) {
+        companion object {
+            const val ROUTE = "change_account?addOn={addOn}"
+        }
+    }
     data object CreateProfile : Route("profiles/create")
     data class EditProfile(val profileId: String) : Route("profiles/${Uri.encode(profileId)}/edit") {
         companion object {

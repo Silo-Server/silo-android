@@ -19,7 +19,7 @@ import kotlinx.serialization.json.Json
 
 /**
  * Room-backed [HomeCachePort] (Track B). Stores the resolved home layout as a
- * single JSON blob per `(serverId, profileId)` so the home renders offline.
+ * single JSON blob per `(serverId, accountId, profileId)` so the home renders offline.
  *
  * Scope comes from the active [AuthScopeSnapshot]; with no active server/profile
  * there's nothing to cache or serve (returns null). Corrupt/forward-incompatible
@@ -63,6 +63,7 @@ class RoomHomeCacheRepository(
     override suspend fun cacheHomeV2(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, artworkFingerprint: String?,
         stillCurrent: () -> Boolean) {
         val profile = owner.profileId ?: return
+        val account = owner.accountId.orEmpty()
         // Encoding suspends, so it runs before the ownership check, not between it and the write.
         val body = encode(sections)
         if (owner != snapshotProvider()) return
@@ -70,32 +71,34 @@ class RoomHomeCacheRepository(
         val legacy = legacyKey(owner)
         db.withTransaction {
             if (!stillCurrent()) return@withTransaction
-            if (body.encodeToByteArray().size > MAX_CACHE_BYTES) scopedDao.delete(owner.serverId, profile, key)
-            else scopedDao.upsert(org.siloserver.silo.common.data.db.entity.CatalogCacheEntity(owner.serverId, profile, key, body, now()))
-            if (key != legacy) scopedDao.delete(owner.serverId, profile, legacy)
+            if (body.encodeToByteArray().size > MAX_CACHE_BYTES) scopedDao.delete(owner.serverId, account, profile, key)
+            else scopedDao.upsert(org.siloserver.silo.common.data.db.entity.CatalogCacheEntity(owner.serverId, account, profile, key, body, now()))
+            if (key != legacy) scopedDao.delete(owner.serverId, account, profile, legacy)
         }
     }
 
     override suspend fun cacheHomeV2IfAbsent(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, artworkFingerprint: String?,
         stillCurrent: () -> Boolean) {
         val profile = owner.profileId ?: return
+        val account = owner.accountId.orEmpty()
         val body = encode(sections)
         if (body.encodeToByteArray().size > MAX_CACHE_BYTES) return
         if (owner != snapshotProvider()) return
         val key = scopedKey(owner, artworkFingerprint)
         db.withTransaction {
-            if (!stillCurrent() || scopedDao.get(owner.serverId, profile, key) != null) return@withTransaction
-            scopedDao.upsert(org.siloserver.silo.common.data.db.entity.CatalogCacheEntity(owner.serverId, profile, key, body, now()))
+            if (!stillCurrent() || scopedDao.get(owner.serverId, account, profile, key) != null) return@withTransaction
+            scopedDao.upsert(org.siloserver.silo.common.data.db.entity.CatalogCacheEntity(owner.serverId, account, profile, key, body, now()))
         }
     }
 
     override suspend fun getCachedHomeV2(owner: AuthScopeSnapshot): HomeCacheSnapshot? {
         val profile = owner.profileId ?: return null
+        val account = owner.accountId.orEmpty()
         if (owner != snapshotProvider()) return null
         val key = scopedKey(owner)
         val legacy = legacyKey(owner)
         val row = runCatching {
-            scopedDao.get(owner.serverId, profile, key) ?: if (key != legacy) scopedDao.get(owner.serverId, profile, legacy) else null
+            scopedDao.get(owner.serverId, account, profile, key) ?: if (key != legacy) scopedDao.get(owner.serverId, account, profile, legacy) else null
         }.getOrNull() ?: return null
         val sections = decode(row.json)
         if (owner != snapshotProvider()) return null
@@ -131,12 +134,13 @@ class RoomHomeCacheRepository(
         // that, so don't cache an unreadable row — drop any prior row (which may
         // itself be an oversized poison) and just serve the home online.
         if (sectionsJson.encodeToByteArray().size > MAX_CACHE_BYTES) {
-            runCatching { dao.delete(snapshot.serverId, profileId) }
+            runCatching { dao.delete(snapshot.serverId, snapshot.accountId.orEmpty(), profileId) }
             return
         }
         dao.upsert(
             HomeCacheEntity(
                 serverId = snapshot.serverId,
+                accountId = snapshot.accountId.orEmpty(),
                 profileId = profileId,
                 sectionsJson = sectionsJson,
                 cachedAtMs = now(),
@@ -151,9 +155,9 @@ class RoomHomeCacheRepository(
         // An oversized legacy row (written before the cap) throws
         // SQLiteBlobTooBigException on read; purge it so it can't crash the home
         // screen again, and fall through to an online load.
-        val row = runCatching { dao.get(snapshot.serverId, profileId) }
+        val row = runCatching { dao.get(snapshot.serverId, snapshot.accountId.orEmpty(), profileId) }
             .getOrElse {
-                runCatching { dao.delete(snapshot.serverId, profileId) }
+                runCatching { dao.delete(snapshot.serverId, snapshot.accountId.orEmpty(), profileId) }
                 null
             } ?: return null
         val sections = decode(row.sectionsJson) ?: return null

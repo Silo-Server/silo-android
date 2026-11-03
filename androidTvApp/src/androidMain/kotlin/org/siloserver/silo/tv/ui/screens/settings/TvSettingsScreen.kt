@@ -2246,8 +2246,10 @@ private fun TvServerSettingsPane(
                 if (state.serverUrl.isNotBlank() && state.serverName != state.serverUrl) {
                     SettingsInfoRow(label = "Address", value = state.serverUrl, singleLine = false)
                 }
+                // Settings › Accounts: every saved server and its accounts
+                // (multi-account spec §4.5), where the server list was.
                 SettingsActionRow(
-                    label = "Manage Servers",
+                    label = "Accounts",
                     onClick = onManageServers,
                     focusRequester = firstFocusRequester,
                 )

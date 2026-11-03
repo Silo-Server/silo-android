@@ -82,6 +82,69 @@ class ServerScopedJsonStatePurger(baseDir: File) {
         }
     }
 
+    /**
+     * Moves [serverId]'s pre-account profile directories under [accountId]
+     * (`<server>/<profile>/` → `<server>/@<account>/<profile>/`), the account
+     * that adopts the server's old data. A file the account already has wins;
+     * the old copy is then dropped. Idempotent and offline.
+     */
+    fun adoptLegacy(serverId: String, accountId: String) {
+        if (!AccountScopedKeys.isAccountId(accountId)) return
+        roots.mapNotNull(::validatedRoot).forEach { root ->
+            val safeKey = safePathSegment(serverId)
+            ServerScopedJsonAccess.withWriter(root, safeKey) {
+                val accountDir = File(File(root, safeKey), AccountScopedKeys.token(accountId))
+                val sources = listOfNotNull(File(root, safeKey), legacyDirectChild(root, serverId))
+                    .distinctBy { it.name }
+                    .filter(::isRealDirectory)
+                sources.forEach { serverDir ->
+                    serverDir.listFiles().orEmpty()
+                        .filter { !it.name.startsWith("@") && isRealDirectory(it) }
+                        .forEach { profileDir ->
+                            // Encoded names are already in storage form; a raw
+                            // pre-encoding name is encoded as fileFor would.
+                            val name = if (profileDir.name.startsWith("~")) profileDir.name else safePathSegment(profileDir.name)
+                            moveIfAbsent(profileDir, File(accountDir, name))
+                        }
+                }
+            }
+        }
+    }
+
+    /** Deletes the directories of every account not in [liveAccountIds]. */
+    fun deleteAccountsExcept(liveAccountIds: Set<String>) {
+        roots.mapNotNull(::validatedRoot).forEach { root ->
+            root.listFiles().orEmpty().filter(::isRealDirectory).forEach { serverDir ->
+                serverDir.listFiles().orEmpty()
+                    .filter { child ->
+                        val id = AccountScopedKeys.accountIdsIn(child.name).singleOrNull()
+                        id != null && child.name == AccountScopedKeys.token(id) && id !in liveAccountIds
+                    }
+                    .forEach { gone ->
+                        ServerScopedJsonAccess.withWriter(root, serverDir.name) { deleteTree(gone) }
+                    }
+            }
+        }
+    }
+
+    private fun isRealDirectory(file: File): Boolean =
+        Files.isDirectory(file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)
+
+    private fun moveIfAbsent(source: File, target: File) {
+        target.parentFile?.mkdirs()
+        if (!target.exists()) {
+            runCatching { Files.move(source.toPath(), target.toPath()) }.onSuccess { return }
+        }
+        // The account already has some of this profile's files: keep its own,
+        // take the rest, then drop what is left of the old directory.
+        target.mkdirs()
+        source.listFiles().orEmpty().forEach { file ->
+            val destination = File(target, file.name)
+            if (!destination.exists()) runCatching { Files.move(file.toPath(), destination.toPath()) }
+        }
+        deleteTree(source)
+    }
+
     private fun validatedRoot(root: File): File? = runCatching {
         val path = root.toPath()
         if (Files.isSymbolicLink(path)) return@runCatching null

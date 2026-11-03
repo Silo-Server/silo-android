@@ -125,7 +125,9 @@ class LegacyDownloadImporter(
 
         // Room wins atomically: INSERT OR IGNORE never overwrites an existing row
         // (PK or unique recordId). rowId == -1 means a row already existed.
-        val inserted = downloadDao.insertIfAbsent(sidecar.toEntity(serverId, profileId))
+        // Sidecars predate accounts: imported as '' and adopted with the rest of
+        // the server's pre-account data (OrphanedServerDataPurger).
+        val inserted = downloadDao.insertIfAbsent(sidecar.toEntity(serverId, "", profileId))
         val roomWon = inserted == -1L
         recordImport(
             relPath = relPath,

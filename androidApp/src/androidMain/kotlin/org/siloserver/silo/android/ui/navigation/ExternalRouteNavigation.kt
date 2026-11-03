@@ -46,6 +46,16 @@ sealed interface ExternalRouteScope {
          * pinning — see [notificationExternalRouteOrNull].
          */
         val identityGeneration: Long? = null,
+        /**
+         * The saved account on [serverId]: two accounts there can both have a
+         * profile with the same id. Null constrains nothing, as above.
+         */
+        val accountId: String? = null,
+        /**
+         * Delivery first makes this identity active (a notification opening
+         * its tile) instead of only checking it.
+         */
+        val switchesToTile: Boolean = false,
     ) : ExternalRouteScope {
         /**
          * Each component constrains only if it was known. A link that arrived
@@ -62,8 +72,10 @@ sealed interface ExternalRouteScope {
             serverId: String?,
             profileId: String?,
             identityGeneration: Long?,
+            accountId: String? = null,
         ): Boolean =
             (this.serverId == null || this.serverId == serverId) &&
+                (this.accountId == null || this.accountId == accountId) &&
                 (this.profileId == null || this.profileId == profileId) &&
                 (this.identityGeneration == null || this.identityGeneration == identityGeneration)
     }
@@ -260,6 +272,7 @@ private val preAuthenticationDestinationRoutes = setOf(
     Route.ServerSetup.route,
     Route.ServerSetupPrefilled.ROUTE,
     Route.ServerList.route,
+    Route.AccountDetail.ROUTE,
     Route.Setup.route,
     Route.Signup.route,
     Route.ProfileSelection.route,

@@ -124,6 +124,8 @@ fun TvLoginScreen(
     onChangeServer: () -> Unit = {},
     signupEnabled: Boolean = false,
     sessionExpired: Boolean = false,
+    /** The saved account being signed in again: the password form opens with it filled in. */
+    prefillUsername: String? = null,
     viewModel: TvLoginViewModel = koinViewModel(parameters = { parametersOf(sessionExpired) }),
     pairingReceiver: PairingReceiver = koinInject(),
     pairingAdvertiser: TvPairingAdvertiser = koinInject(),
@@ -156,6 +158,12 @@ fun TvLoginScreen(
     // the form doesn't come back by itself if passwords are turned on again.
     LaunchedEffect(state.passwordAvailable) {
         if (!state.passwordAvailable) showPasswordForm = false
+    }
+    // Sign in again for a saved account: its username is already known.
+    LaunchedEffect(prefillUsername) {
+        val username = prefillUsername?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        if (state.username.isBlank()) viewModel.onUsernameChanged(username)
+        showPasswordForm = true
     }
 
     // Stop polling in the background (or under the screensaver); poll at once,
@@ -219,7 +227,12 @@ fun TvLoginScreen(
     }
     // Back steps out of the password form and the nearby-phone panel instead
     // of leaving the app.
-    BackHandler(enabled = passwordFormVisible && !device.passwordOnly && !isActivePairing, onBack = backToPhone)
+    // A saved account's sign-in again opens on its form; Back leaves it for
+    // the screen it came from (Change Account) rather than the code view.
+    BackHandler(
+        enabled = passwordFormVisible && !device.passwordOnly && !isActivePairing && prefillUsername.isNullOrBlank(),
+        onBack = backToPhone,
+    )
     BackHandler(enabled = isActivePairing, onBack = pairingReceiver::cancelActiveSession)
 
     // A server without device sign-in opens on the password form, so

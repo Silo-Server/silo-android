@@ -44,6 +44,12 @@ class SyncEngine(
      * Drain all currently-due ops for the active scope, pinning every send to the
      * captured snapshot. Loops over batches so a backlog larger than [batchLimit]
      * fully drains in one run.
+     *
+     * Only the snapshot's own account's rows are drained, and the snapshot names
+     * that account ([AuthScopeSnapshot.accountId]), so every replay is sent with
+     * the credentials of the account that recorded it. Two accounts on one
+     * server can share a profile id, so server + profile alone would replay one
+     * account's writes as the other.
      */
     suspend fun drainOnce(): DrainResult {
         memberships?.dispatch(batchLimit.coerceAtMost(100))
@@ -51,10 +57,12 @@ class SyncEngine(
         val serverId = scope.serverId
         // Ops are always enqueued with a profile; no profile → nothing to drain.
         val profileId = scope.profileId ?: return DrainResult()
+        // A scope with no saved account (a temporary overlay) recorded under ''.
+        val accountId = scope.accountId.orEmpty()
 
         // Reclaim crash-stranded in-flight rows before claiming new work.
-        dao.deleteSupersededInFlight(serverId, profileId)
-        dao.resetInFlightToPending(serverId, profileId)
+        dao.deleteSupersededInFlight(serverId, accountId, profileId)
+        dao.resetInFlightToPending(serverId, accountId, profileId)
 
         var synced = 0
         var dropped = 0
@@ -66,7 +74,7 @@ class SyncEngine(
             // The DAO selects only due target heads and applies its older-sibling
             // anti-join before LIMIT. This preserves per-item FIFO even when the
             // backing-off predecessor lies outside the current SQL page.
-            val batch = dao.dueTargetHeads(serverId, profileId, nowMs, batchLimit)
+            val batch = dao.dueTargetHeads(serverId, accountId, profileId, nowMs, batchLimit)
             if (batch.isEmpty()) break
 
             for (op in batch) {
@@ -75,7 +83,7 @@ class SyncEngine(
                     val authority = ebookAuthorities.snapshotDurableLoginAuthority()
                     if (authority == null || !authority.scope.isSameIdentityAs(scope))
                         return DrainResult(synced, dropped, retriable + 1,
-                            dao.runnableLegacyCountForScope(serverId, profileId) + (memberships?.readyCount() ?: 0))
+                            dao.runnableLegacyCountForScope(serverId, accountId, profileId) + (memberships?.readyCount() ?: 0))
                     if (op.opVersion < 2 || payload?.updatedAt == null || payload.loginId != authority.loginId ||
                         payload.origin != scope.serverUrl) {
                         dao.quarantineEbookProgress(op.id)
@@ -140,13 +148,14 @@ class SyncEngine(
         // land between the drain and the count. Including the end scope covers an
         // activation enqueue dropped by ExistingWorkPolicy.KEEP while this worker
         // was running.
-        var remaining = dao.runnableLegacyCountForScope(serverId, profileId)
+        var remaining = dao.runnableLegacyCountForScope(serverId, accountId, profileId)
         val endScope = snapshotProvider()
         val endProfileId = endScope?.profileId
+        val endAccountId = endScope?.accountId.orEmpty()
         if (endScope != null && endProfileId != null &&
-            (endScope.serverId != serverId || endProfileId != profileId)
+            (endScope.serverId != serverId || endAccountId != accountId || endProfileId != profileId)
         ) {
-            remaining += dao.runnableLegacyCountForScope(endScope.serverId, endProfileId)
+            remaining += dao.runnableLegacyCountForScope(endScope.serverId, endAccountId, endProfileId)
         }
 
         remaining += memberships?.readyCount() ?: 0

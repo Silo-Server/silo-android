@@ -431,6 +431,7 @@ class AudiobookPlayerViewModel(
                     val (downloadServerId, downloadProfileId) = resolveScope()
                     val offlineMedia = offlineMediaResolver.findLocalMedia(
                         serverId = downloadServerId,
+                        accountId = accountId.orEmpty(),
                         profileId = downloadProfileId,
                         contentId = d.contentId,
                         requestedFileId = selectedVersion.fileId,
@@ -957,6 +958,7 @@ class AudiobookPlayerViewModel(
         val (serverId, profileId) = resolveScope()
         val media = offlineMediaResolver.findLocalMedia(
             serverId = serverId,
+            accountId = accountId.orEmpty(),
             profileId = profileId,
             contentId = contentId,
             requestedFileId = requestedFileId,
@@ -1485,11 +1487,14 @@ class AudiobookPlayerViewModel(
         return serverId to profileId
     }
 
+    /** The saved account bookmarks belong to, read with [resolveScope]. */
+    private val accountId: String? get() = serverRegistry.activeAccountId.value
+
     private fun loadBookmarks() {
         viewModelScope.launch {
             val (serverId, profileId) = resolveScope()
             val loaded = withContext(Dispatchers.IO) {
-                bookmarksStore.list(serverId, profileId, contentId)
+                bookmarksStore.list(serverId, accountId, profileId, contentId)
             }
             _bookmarks.value = loaded
         }
@@ -1516,7 +1521,7 @@ class AudiobookPlayerViewModel(
         viewModelScope.launch {
             val (serverId, profileId) = resolveScope()
             val updated = withContext(Dispatchers.IO) {
-                bookmarksStore.add(serverId, profileId, contentId, bookmark)
+                bookmarksStore.add(serverId, accountId, profileId, contentId, bookmark)
             }
             _bookmarks.value = updated
         }
@@ -1526,7 +1531,7 @@ class AudiobookPlayerViewModel(
         viewModelScope.launch {
             val (serverId, profileId) = resolveScope()
             val updated = withContext(Dispatchers.IO) {
-                bookmarksStore.remove(serverId, profileId, contentId, id)
+                bookmarksStore.remove(serverId, accountId, profileId, contentId, id)
             }
             _bookmarks.value = updated
         }

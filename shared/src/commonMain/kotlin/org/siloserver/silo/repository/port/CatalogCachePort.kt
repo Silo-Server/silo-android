@@ -18,8 +18,11 @@ import org.siloserver.silo.repository.ArtworkSurface
  */
 data class CatalogCacheWriteLease(val identityGeneration: Long, val artworkFingerprint: String? = null)
 
-/** The durable cache owner, without credentials or a device session. */
-data class CatalogCacheScope(val serverId: String, val profileId: String)
+/**
+ * The durable cache owner, without credentials or a device session. [accountId]
+ * is the saved account ('' = rows written before accounts existed).
+ */
+data class CatalogCacheScope(val serverId: String, val profileId: String, val accountId: String = "")
 
 /**
  * Offline read cache for catalog browse (Track B). Backs repository-level

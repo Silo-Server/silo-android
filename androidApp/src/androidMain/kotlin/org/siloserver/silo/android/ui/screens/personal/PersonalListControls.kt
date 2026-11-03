@@ -34,7 +34,7 @@ object PersonalListSource {
  * Activity's ViewModelStore keyed by [source] and the active server/profile
  * so the For You inline grid and the standalone Watchlist / Favorites screens
  * share one selection (nav back-stack entries would otherwise each get their
- * own), while a profile or server switch starts fresh instead of inheriting
+ * own), while a profile, account or server switch starts fresh instead of inheriting
  * the previous identity's query and facet vocabulary.
  */
 @Composable
@@ -42,7 +42,7 @@ fun rememberPersonalListControls(source: String): PersonalListControlsViewModel 
     val registry: ServerRegistry = koinInject()
     val serverId by registry.activeServerId.collectAsState()
     val entry by registry.activeEntry.collectAsState()
-    val identity = "${serverId ?: "-"}:${entry?.profileId ?: "-"}"
+    val identity = "${serverId ?: "-"}:${entry?.accountId ?: "-"}:${entry?.profileId ?: "-"}"
     val key = "personal-controls-$source-$identity"
     val activity = LocalActivity.current as? ComponentActivity
     return if (activity != null) {

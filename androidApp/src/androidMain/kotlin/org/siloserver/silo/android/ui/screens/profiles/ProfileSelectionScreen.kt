@@ -1,6 +1,18 @@
 package org.siloserver.silo.android.ui.screens.profiles
 
+import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
+import org.siloserver.silo.android.ui.components.SignOutConfirmDialog
+import org.siloserver.silo.android.ui.components.SiloDialogColors
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.outlined.PersonAdd
+import androidx.compose.material.icons.outlined.SwitchAccount
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -14,6 +26,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -106,23 +120,32 @@ private val BottomGap = 20.dp
 /**
  * "Who's watching?" (silo-apple `ProfileSelectionView`): round avatars sized
  * to the household, centered between the title and small utilities (change
- * server, sign out, and manage profiles). Pressing a profile
- * tints the backdrop with that person's color; a PIN prompt opens full
- * screen over the same light.
+ * account, sign out, and manage profiles). Pressing a profile tints the
+ * backdrop with that person's color; a PIN prompt opens full screen over the
+ * same light.
+ *
+ * It shows the open account's profiles only (owner decision 2026-11-02, Roku
+ * spec §7.5), from the account's last list when the server can't be reached,
+ * then Add: a sheet offering another profile, another account, or another
+ * server. Change account reaches the other saved accounts.
  *
  * @param onNavigateToHome Called after a profile is selected.
- * @param onNavigateToCreateProfile Called when "Add profile" is tapped.
+ * @param onNavigateToCreateProfile Called when "Add a profile" is chosen.
  * @param onNavigateToEditProfile Called when a profile is tapped in manage mode.
- * @param onChangeServer "Change server" from the footer or the server chip.
- * @param onSignOut "Sign out" from the footer.
+ * @param onChangeAccount "Change account" from the footer or the server chip.
+ * @param onAddAccount "Add an account" from Add: Change Account at the active server's Add an account.
+ * @param onAddServer "Add a server" from Add.
+ * @param onSignOut "Sign out" from the footer, once confirmed; true to also remove the server.
  */
 @Composable
 fun ProfileSelectionScreen(
     onNavigateToHome: () -> Unit,
     onNavigateToCreateProfile: () -> Unit,
     onNavigateToEditProfile: (profileId: String) -> Unit,
-    onChangeServer: () -> Unit,
-    onSignOut: () -> Unit,
+    onChangeAccount: () -> Unit,
+    onAddAccount: () -> Unit,
+    onAddServer: () -> Unit,
+    onSignOut: (removeServer: Boolean) -> Unit,
     viewModel: ProfileSelectionViewModel = koinViewModel(),
     brandingLoader: ServerBrandingLoader = koinInject(),
     serverRegistry: ServerRegistry = koinInject(),
@@ -135,6 +158,8 @@ fun ProfileSelectionScreen(
         loader = brandingLoader,
     )
     var pressedProfileId by remember { mutableStateOf<String?>(null) }
+    var choosingAdd by remember { mutableStateOf(false) }
+    var confirmSignOut by remember { mutableStateOf(false) }
 
     // Reload on resume so a profile created/edited on a pushed screen is
     // reflected when we return (the VM otherwise only loads in init).
@@ -189,8 +214,41 @@ fun ProfileSelectionScreen(
         )
     }
 
+    if (choosingAdd) {
+        AddChoiceSheet(
+            canAddProfile = state.canManageProfiles,
+            onAddProfile = {
+                choosingAdd = false
+                viewModel.requestAddProfile()
+            },
+            onAddAccount = {
+                choosingAdd = false
+                onAddAccount()
+            },
+            onAddServer = {
+                choosingAdd = false
+                onAddServer()
+            },
+            onDismiss = { choosingAdd = false },
+        )
+    }
+
+    SignOutConfirmDialog(
+        visible = confirmSignOut,
+        onConfirm = {
+            confirmSignOut = false
+            onSignOut(false)
+        },
+        onDismiss = { confirmSignOut = false },
+        onConfirmAndRemoveServer = {
+            confirmSignOut = false
+            onSignOut(true)
+        },
+    )
+
     val pinOpen = state.pinDialogProfile != null
-    val pickerAlpha by animateFloatAsState(if (pinOpen || state.openingOnlyProfile) 0f else 1f, label = "pickerAlpha")
+    val busy = pinOpen || state.openingOnlyProfile
+    val pickerAlpha by animateFloatAsState(if (busy) 0f else 1f, label = "pickerAlpha")
 
     Box(Modifier.fillMaxSize()) {
         MarqueeScrim(MarqueeScrimStyle.Ambient)
@@ -215,24 +273,28 @@ fun ProfileSelectionScreen(
                     name = server.name,
                     hostLabel = server.hostLabel,
                     markUrl = server.branding?.markUrl,
-                    actionLabel = "Change server",
-                    onAction = onChangeServer,
-                    enabled = !pinOpen && !state.openingOnlyProfile,
+                    actionLabel = stringResource(R.string.picker_change_account),
+                    onAction = onChangeAccount,
+                    enabled = !busy,
                 )
             }
             Picker(
                 state = state,
-                enabled = !pinOpen && !state.openingOnlyProfile,
+                enabled = !busy,
                 onPressChange = { profile, pressed ->
                     pressedProfileId = if (pressed) profile.id else pressedProfileId.takeIf { it != profile.id }
                 },
-                onProfileTap = { profile ->
-                    if (state.isManageMode) onNavigateToEditProfile(profile.id) else viewModel.onProfileTapped(profile)
+                onItemTap = { item ->
+                    when (item) {
+                        is PickerItem.Person ->
+                            if (state.isManageMode) onNavigateToEditProfile(item.profile.id) else viewModel.onShownProfileTapped(item.profile)
+                        PickerItem.Add -> choosingAdd = true
+                        PickerItem.AddProfile -> viewModel.requestAddProfile()
+                    }
                 },
                 onProfileDelete = viewModel::requestDeleteProfile,
-                onAddProfile = viewModel::requestAddProfile,
-                onChangeServer = onChangeServer,
-                onSignOut = onSignOut,
+                onChangeAccount = onChangeAccount,
+                onSignOut = { confirmSignOut = true },
                 onToggleManage = viewModel::toggleManageMode,
                 modifier = Modifier.weight(1f).windowInsetsPadding(WindowInsets.navigationBars),
             )
@@ -257,15 +319,130 @@ fun ProfileSelectionScreen(
     }
 }
 
+/**
+ * Add (Roku spec §7.5): an app-styled bottom sheet of three choices, each
+ * with a line saying what it does, then Cancel. Add a profile shows only
+ * when the household has a primary profile to manage it.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddChoiceSheet(
+    canAddProfile: Boolean,
+    onAddProfile: () -> Unit,
+    onAddAccount: () -> Unit,
+    onAddServer: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = SiloDialogColors.Surface,
+        contentColor = MarqueeColors.Ink,
+        scrimColor = Color.Black.copy(alpha = 0.55f),
+    ) {
+        Column(
+            Modifier
+                .widthIn(max = 560.dp)
+                .fillMaxWidth()
+                .align(Alignment.CenterHorizontally)
+                .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                stringResource(R.string.picker_add),
+                color = MarqueeColors.Ink,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 8.dp, bottom = 8.dp).semantics { heading() },
+            )
+            if (canAddProfile) {
+                AddChoiceRow(
+                    icon = Icons.Outlined.PersonAdd,
+                    title = stringResource(R.string.picker_add_profile),
+                    detail = stringResource(R.string.picker_add_profile_detail),
+                    onClick = onAddProfile,
+                )
+            }
+            AddChoiceRow(
+                icon = Icons.Outlined.ManageAccounts,
+                title = stringResource(R.string.picker_add_account),
+                detail = stringResource(R.string.picker_add_account_detail),
+                onClick = onAddAccount,
+            )
+            AddChoiceRow(
+                icon = Icons.Outlined.Dns,
+                title = stringResource(R.string.picker_add_server),
+                detail = stringResource(R.string.picker_add_server_detail),
+                onClick = onAddServer,
+            )
+            Box(
+                Modifier
+                    .padding(top = 8.dp)
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(SiloDialogColors.DefaultButton)
+                    .clickable(role = Role.Button, onClick = onDismiss),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(stringResource(R.string.action_cancel), color = MarqueeColors.Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            }
+            Spacer(Modifier.windowInsetsPadding(WindowInsets.navigationBars))
+        }
+    }
+}
+
+@Composable
+private fun AddChoiceRow(icon: ImageVector, title: String, detail: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.White.copy(alpha = 0.05f))
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics(mergeDescendants = true) {}
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box(
+            Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.White.copy(alpha = 0.08f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = MarqueeColors.Ink, modifier = Modifier.size(24.dp))
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, color = MarqueeColors.Ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Text(detail, color = MarqueeColors.InkSecondary, fontSize = 13.sp, lineHeight = 18.sp)
+        }
+    }
+}
+
+private sealed interface PickerItem {
+    data class Person(val profile: Profile) : PickerItem
+    data object Add : PickerItem
+    data object AddProfile : PickerItem
+}
+
+/**
+ * The open account's profiles, then Add (a profile, an account or a
+ * server); in manage mode, Add profile.
+ */
+private fun ProfileSelectionUiState.pickerItems(): List<PickerItem> =
+    shownProfiles.map(PickerItem::Person) + if (isManageMode && canManageProfiles) PickerItem.AddProfile else PickerItem.Add
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun Picker(
     state: ProfileSelectionUiState,
     enabled: Boolean,
     onPressChange: (Profile, Boolean) -> Unit,
-    onProfileTap: (Profile) -> Unit,
+    onItemTap: (PickerItem) -> Unit,
     onProfileDelete: (Profile) -> Unit,
-    onAddProfile: () -> Unit,
-    onChangeServer: () -> Unit,
+    onChangeAccount: () -> Unit,
     onSignOut: () -> Unit,
     onToggleManage: () -> Unit,
     modifier: Modifier = Modifier,
@@ -273,16 +450,16 @@ private fun Picker(
     val density = LocalDensity.current
     var headerHeight by remember { mutableStateOf(0) }
     var footerHeight by remember { mutableStateOf(0) }
+    val items = state.pickerItems()
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val viewportHeight = maxHeight
-        val tileCount = state.profiles.size + if (state.canManageProfiles) 1 else 0
         // The room between the title and the footer decides how many avatars
         // share a row and how large they are. Nothing draws until it's
         // measured, so tiles never render at a placeholder size and jump.
         val layout = if (headerHeight > 0 && footerHeight > 0) {
             with(density) {
                 ProfilePickerLayout.of(
-                    tileCount = tileCount,
+                    tileCount = items.size,
                     width = minOf(maxWidth.value, 440f) - 48f,
                     height = viewportHeight.value - headerHeight.toDp().value - footerHeight.toDp().value -
                         (TopGap + GridGap + FooterGap + BottomGap).value,
@@ -323,33 +500,34 @@ private fun Picker(
                     state.error?.let { MarqueeErrorText(it) }
                 }
                 Spacer(Modifier.height(GridGap))
-                if (state.isLoading && state.profiles.isEmpty()) {
+                if (state.isLoading && state.shownProfiles.isEmpty()) {
                     CircularProgressIndicator(color = MarqueeColors.Ink, strokeWidth = 2.dp, modifier = Modifier.size(28.dp))
                 } else {
                     TileRows(
                         state = state,
+                        items = items,
                         layout = layout,
                         enabled = enabled,
                         onPressChange = onPressChange,
-                        onProfileTap = onProfileTap,
+                        onItemTap = onItemTap,
                         onProfileDelete = onProfileDelete,
-                        onAddProfile = onAddProfile,
                     )
                 }
                 Spacer(Modifier.height(FooterGap))
                 Spacer(Modifier.weight(1f))
-                // Changing server and signing out are utilities, kept small and below the people.
-                Row(
+                // Changing account and signing out are utilities, kept small and
+                // below the people; they wrap rather than cut a label short.
+                FlowRow(
                     Modifier.onSizeChanged { footerHeight = it.height },
                     horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
                 ) {
                     MarqueeButton(
-                        text = "Change server",
-                        onClick = onChangeServer,
+                        text = stringResource(R.string.picker_change_account),
+                        onClick = onChangeAccount,
                         kind = MarqueeButtonKind.Plain,
                         fullWidth = false,
                         compact = true,
-                        icon = Icons.Outlined.Dns,
+                        icon = Icons.Outlined.SwitchAccount,
                         enabled = enabled,
                     )
                     MarqueeButton(
@@ -378,24 +556,20 @@ private fun Picker(
     }
 }
 
-private sealed interface PickerItem {
-    data class Person(val profile: Profile) : PickerItem
-    data object Add : PickerItem
-}
-
 /** Rows are centered, so a short last row sits in the middle instead of hanging off the left. */
 @Composable
 private fun TileRows(
     state: ProfileSelectionUiState,
+    items: List<PickerItem>,
     layout: ProfilePickerLayout?,
     enabled: Boolean,
     onPressChange: (Profile, Boolean) -> Unit,
-    onProfileTap: (Profile) -> Unit,
+    onItemTap: (PickerItem) -> Unit,
     onProfileDelete: (Profile) -> Unit,
-    onAddProfile: () -> Unit,
 ) {
-    val items = state.profiles.map(PickerItem::Person) + if (state.canManageProfiles) listOf(PickerItem.Add) else emptyList()
     val perRow = layout?.perRow ?: 3
+    val avatar = (layout?.avatarSize ?: 0f).dp
+    val addSize = (layout?.addSize ?: 0f).dp
     Column(
         Modifier.fillMaxWidth().alpha(if (layout == null) 0f else 1f),
         verticalArrangement = Arrangement.spacedBy((layout?.rowSpacing ?: 0f).dp),
@@ -409,15 +583,26 @@ private fun TileRows(
                         when (item) {
                             is PickerItem.Person -> ProfileTile(
                                 profile = item.profile,
-                                size = (layout?.avatarSize ?: 0f).dp,
+                                size = avatar,
                                 isLastUsed = item.profile.id == state.activeProfileId,
                                 isManageMode = state.isManageMode,
                                 enabled = enabled,
                                 onPressChange = { onPressChange(item.profile, it) },
-                                onTap = { onProfileTap(item.profile) },
+                                onTap = { onItemTap(item) },
                                 onDelete = { onProfileDelete(item.profile) },
                             )
-                            PickerItem.Add -> AddProfileTile(size = (layout?.addSize ?: 0f).dp, enabled = enabled, onClick = onAddProfile)
+                            PickerItem.Add -> AddProfileTile(
+                                size = addSize,
+                                label = stringResource(R.string.picker_add),
+                                enabled = enabled,
+                                onClick = { onItemTap(item) },
+                            )
+                            PickerItem.AddProfile -> AddProfileTile(
+                                size = addSize,
+                                label = "Add profile",
+                                enabled = enabled,
+                                onClick = { onItemTap(item) },
+                            )
                         }
                     }
                 }
@@ -448,6 +633,7 @@ private fun ProfileTile(
             .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null, onClick = onTap)
             .marqueePressHaptic(interaction)
             .alpha(if (pressed) 0.8f else 1f)
+            .alpha(if (enabled) 1f else 0.45f)
             .semantics(mergeDescendants = true) {
                 contentDescription = profile.name
                 // The tile merges its children, so the delete badge is
@@ -505,13 +691,18 @@ private fun ProfileTile(
 }
 
 @Composable
-private fun AddProfileTile(size: androidx.compose.ui.unit.Dp, enabled: Boolean, onClick: () -> Unit) {
+private fun AddProfileTile(
+    size: androidx.compose.ui.unit.Dp,
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
     val interaction = remember { MutableInteractionSource() }
     Column(
         Modifier
             .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null, onClick = onClick)
             .marqueePressHaptic(interaction)
-            .semantics(mergeDescendants = true) { contentDescription = "Add profile" },
+            .semantics(mergeDescendants = true) { contentDescription = label },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
@@ -531,7 +722,7 @@ private fun AddProfileTile(size: androidx.compose.ui.unit.Dp, enabled: Boolean, 
             Icon(Icons.Filled.Add, contentDescription = null, tint = MarqueeColors.InkTertiary, modifier = Modifier.size(size * 0.3f))
         }
         Text(
-            "Add profile",
+            label,
             color = MarqueeColors.InkSecondary,
             fontSize = nameSize(size.value).sp,
             fontWeight = FontWeight.SemiBold,

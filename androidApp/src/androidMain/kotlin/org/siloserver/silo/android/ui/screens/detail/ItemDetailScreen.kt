@@ -378,6 +378,7 @@ fun ItemDetailScreen(
     fun localDownloadFor(fileId: Int) =
         downloadStorage.locateLocalMedia(
             serverId = serverRegistry.activeServerId.value ?: DownloadEnqueuer.DEFAULT_SERVER_ID,
+            accountId = serverRegistry.activeAccountId.value.orEmpty(),
             profileId = serverRegistry.activeEntry.value?.profileId ?: DownloadEnqueuer.DEFAULT_PROFILE_ID,
             fileId = fileId,
         )

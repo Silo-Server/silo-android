@@ -6818,6 +6818,7 @@ class PlayerViewModel(
             val (serverId, profileId) = resolveDownloadScope()
             offlineMediaResolver.findLocalMedia(
                 serverId = serverId,
+                accountId = serverRegistry.activeAccountId.value.orEmpty(),
                 profileId = profileId,
                 contentId = contentId,
                 requestedFileId = preferredFileId,

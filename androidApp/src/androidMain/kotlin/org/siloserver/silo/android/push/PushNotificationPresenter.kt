@@ -16,7 +16,9 @@ import org.siloserver.silo.android.ui.navigation.Route
 import org.siloserver.silo.model.notifications.NotificationRow
 import org.siloserver.silo.model.notifications.NotificationType
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.currentAccountOn
 import org.siloserver.silo.repository.NotificationsRepository
 
 class PushNotificationPresenter internal constructor(
@@ -24,6 +26,7 @@ class PushNotificationPresenter internal constructor(
     private val notificationsRepository: NotificationsRepository,
     private val tokenManager: TokenManager,
     private val targets: PushTargetResolver,
+    private val registry: ServerRegistry? = null,
 ) {
     suspend fun present(
         deliveryId: String,
@@ -50,6 +53,7 @@ class PushNotificationPresenter internal constructor(
         // wildcard at delivery, so a half-attributed notification can act under
         // an identity that never generated it.
         val issuingServerId = attribution?.serverId
+        val issuingAccountId = attribution?.accountId
         val issuingProfileId = attribution?.profileId
         val attributable = attribution != null
 
@@ -69,18 +73,22 @@ class PushNotificationPresenter internal constructor(
             // Only navigable when we know whose it is. Unattributable ones still
             // post — the user should see the event — but tapping just opens the
             // app rather than acting on someone else's library. An attributed
-            // one opens its route only while its server and profile are the
-            // active ones (MainActivity); otherwise it opens the app.
+            // one that names its account switches to its tile (server,
+            // account, profile) first; one from before accounts opens its route
+            // only while its server and profile are the active ones
+            // (MainActivity); otherwise it opens the app.
             if (attributable) {
                 putExtra(EXTRA_NAV_ROUTE, content.route)
                 putExtra(EXTRA_SERVER_ID, issuingServerId)
                 putExtra(EXTRA_PROFILE_ID, issuingProfileId)
+                issuingAccountId?.let { putExtra(EXTRA_ACCOUNT_ID, it) }
             }
         }
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(content.title)
             .setContentText(content.body)
+            .setSubText(attribution?.let(::tileSubtitle))
             .setStyle(NotificationCompat.BigTextStyle().bigText(content.body))
             .setAutoCancel(true)
             .setContentIntent(
@@ -120,7 +128,11 @@ class PushNotificationPresenter internal constructor(
         }
         return FetchedNotification(
             row = row,
-            attribution = PushNotificationAttribution(serverId = target.serverEntryId, profileId = target.profileId),
+            attribution = PushNotificationAttribution(
+                serverId = target.serverEntryId,
+                profileId = target.profileId,
+                accountId = target.accountId,
+            ),
         )
     }
 
@@ -153,8 +165,27 @@ class PushNotificationPresenter internal constructor(
                 identityGenerationBefore = scopeBeforeFetch?.identityGeneration,
                 serverIdAfter = scopeAfterFetch?.serverId,
                 identityGenerationAfter = scopeAfterFetch?.identityGeneration,
-            ),
+            )?.copy(accountId = scopeBeforeFetch?.accountId),
         )
+    }
+
+    /**
+     * "Profile · Server" for a notification attributed to [attribution], once
+     * this device has more than one tile (a profile of a saved account, or a
+     * saved server's Sign in tile) to tell it apart from; null otherwise.
+     */
+    private fun tileSubtitle(attribution: PushNotificationAttribution): String? {
+        val registry = registry ?: return null
+        val accounts = registry.accounts.value
+        val entries = registry.entries.value
+        val tiles = accounts.sumOf { it.cachedProfiles.size.coerceAtLeast(1) } +
+            entries.count { entry -> accounts.none { it.serverId == entry.id } }
+        if (tiles <= 1) return null
+        val account = accounts.firstOrNull { it.localAccountId == attribution.accountId && it.serverId == attribution.serverId }
+            ?: registry.currentAccountOn(attribution.serverId)
+        val profileName = account?.cachedProfiles?.firstOrNull { it.id == attribution.profileId }?.name?.takeIf { it.isNotBlank() }
+        val serverName = entries.firstOrNull { it.id == attribution.serverId }?.displayName?.takeIf { it.isNotBlank() }
+        return listOfNotNull(profileName, serverName).joinToString(" · ").ifBlank { null }
     }
 
     // sync refreshes the inbox for a background_wake push without posting a
@@ -262,6 +293,8 @@ class PushNotificationPresenter internal constructor(
         /** Identity the notification was generated for; see [present]. */
         const val EXTRA_SERVER_ID = "silo_notification_server_id"
         const val EXTRA_PROFILE_ID = "silo_notification_profile_id"
+        /** The saved account on that server; absent on notifications from before accounts. */
+        const val EXTRA_ACCOUNT_ID = "silo_notification_account_id"
     }
 }
 
@@ -276,8 +309,11 @@ private data class PushNotificationContent(
     val route: String,
 )
 
-/** A notification's established issuer, or null when it cannot be attributed. */
-data class PushNotificationAttribution(val serverId: String, val profileId: String)
+/**
+ * A notification's established issuer, or null when it cannot be attributed.
+ * [accountId] is the saved account on [serverId] it was read as, when known.
+ */
+data class PushNotificationAttribution(val serverId: String, val profileId: String, val accountId: String? = null)
 
 /**
  * Establishes who a notification belongs to — completely, or not at all.

@@ -69,10 +69,11 @@ fun HomeSectionsEditor(onDismiss: () -> Unit) {
         initialValue = entry?.profileId,
         key1 = entry?.id,
         key2 = entry?.profileId,
+        key3 = entry?.accountId,
     ) {
         value = entry?.profileId ?: profileRepository.getActiveProfileId()
     }
-    val arranged = remember(state.sections, preferenceRevision, serverId, profileId) {
+    val arranged = remember(state.sections, preferenceRevision, serverId, entry?.accountId, profileId) {
         preferences.arrangedSections(
             state.sections,
             includingHidden = true,

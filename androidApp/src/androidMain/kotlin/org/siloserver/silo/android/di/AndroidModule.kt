@@ -338,6 +338,7 @@ val androidModule = module {
                     get<org.siloserver.silo.repository.ServerIdentityRepository>().entriesFor(serverId, candidates)
                 },
             ),
+            registry = get(),
         )
     }
     single { PushMessageHandler(presenter = get()) }
@@ -583,7 +584,7 @@ val androidModule = module {
     single {
         org.siloserver.silo.android.auth.SignOutTeardown(
             get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
-            unregisterPush = { get<AndroidPushRegistrar>().unregisterDevice(it) },
+            unregisterPush = { serverId, accountId -> get<AndroidPushRegistrar>().unregisterDevice(serverId, accountId) },
             restorePush = { get<AndroidPushRegistrar>().restoreRegistration(it) },
         )
     }
@@ -630,7 +631,15 @@ val androidModule = module {
         val tokens = get<org.siloserver.silo.network.TokenManager>()
         ServerSetupViewModel(get(), get(), hasSession = { !tokens.getAccessToken().isNullOrBlank() })
     }
-    viewModel { LoginViewModel(get(), get(), get(), get(), get(), get()) }
+    viewModel {
+        val signOut = get<org.siloserver.silo.android.auth.SignOutTeardown>()
+        val downloads = get<org.siloserver.silo.common.downloads.DownloadMetadataStore>()
+        LoginViewModel(
+            get(), get(), get(), get(), get(), get(),
+            signOutAccount = { serverId, accountId -> signOut.signOutAccount(serverId, accountId) },
+            downloadSummary = { serverId, accountId -> downloads.downloadSummary(serverId, accountId) },
+        )
+    }
     viewModel {
         org.siloserver.silo.android.ui.screens.settings.SignInSettingsViewModel(get(), get(), get(), get(), get())
     }
@@ -638,14 +647,40 @@ val androidModule = module {
     viewModel { SignupViewModel(get()) }
     viewModel { InviteClaimViewModel(get(), get()) }
     viewModel { OnboardingTourViewModel(get(), get(), get(), get(), get()) }
-    viewModel { ProfileSelectionViewModel(get(), get(), profileVerificationRecovery = getOrNull()) }
+    viewModel {
+        ProfileSelectionViewModel(
+            get(), get(),
+            profileVerificationRecovery = getOrNull(),
+            registry = get(),
+            tokenManager = get(),
+            profilesRefresher = get(),
+        )
+    }
+    viewModel {
+        val signOut = get<org.siloserver.silo.android.auth.SignOutTeardown>()
+        org.siloserver.silo.android.ui.screens.servers.ChangeAccountViewModel(
+            registry = get(),
+            authRepository = get(),
+            tokenManager = get(),
+            profileRepository = get(),
+            profilesRefresher = get(),
+            flushPendingSettings = { signOut.flushPendingSettings() },
+            clearProfileCaches = profileCacheReset(),
+        )
+    }
     viewModel { CreateProfileViewModel(get()) }
     viewModel { EditProfileViewModel(get()) }
     viewModel {
+        val signOut = get<org.siloserver.silo.android.auth.SignOutTeardown>()
+        val downloads = get<org.siloserver.silo.common.downloads.DownloadMetadataStore>()
         ServerListViewModel(
             get(), get(), get(), get(),
             unregisterPush = { get<AndroidPushRegistrar>().unregisterDevice(it) },
             restorePush = { get<AndroidPushRegistrar>().restoreRegistration(it) },
+            signOutAccount = { serverId, accountId -> signOut.signOutAccount(serverId, accountId) },
+            downloadSummary = { serverId, accountId -> downloads.downloadSummary(serverId, accountId) },
+            flushPendingSettings = { signOut.flushPendingSettings() },
+            clearProfileCaches = profileCacheReset(),
         )
     }
     viewModel { params ->
@@ -784,4 +819,20 @@ private suspend fun accountNameOn(
             null
         }
     is org.siloserver.silo.network.ApiResult.Error -> null
+}
+
+/**
+ * Drops the per-profile caches after another account becomes active, as the
+ * server switch does, so its shell can't render (or write back) the previous
+ * profile's values. The picker re-hydrates them once a profile is chosen.
+ */
+private fun org.koin.core.scope.Scope.profileCacheReset(): () -> Unit {
+    val overlays = get<org.siloserver.silo.common.settings.OverlayPrefsStore>()
+    val activeProfile = get<org.siloserver.silo.model.profile.ActiveProfileStore>()
+    val cards = get<org.siloserver.silo.common.settings.CardPresentationStore>()
+    return {
+        overlays.clear()
+        activeProfile.reset()
+        cards.clear()
+    }
 }

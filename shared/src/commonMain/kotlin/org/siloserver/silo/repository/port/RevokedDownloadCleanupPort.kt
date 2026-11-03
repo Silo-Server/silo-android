@@ -13,10 +13,10 @@ package org.siloserver.silo.repository.port
  */
 interface RevokedDownloadCleanupPort {
     /** True once nothing of [recordId]'s local copy remains on this device. */
-    suspend fun removeLocalCopy(serverId: String, profileId: String, recordId: String, mediaFileId: Int): Boolean
+    suspend fun removeLocalCopy(serverId: String, accountId: String, profileId: String, recordId: String, mediaFileId: Int): Boolean
 }
 
 /** No local download copies on this platform, so there is nothing to remove. */
 object NoLocalDownloadCopies : RevokedDownloadCleanupPort {
-    override suspend fun removeLocalCopy(serverId: String, profileId: String, recordId: String, mediaFileId: Int) = true
+    override suspend fun removeLocalCopy(serverId: String, accountId: String, profileId: String, recordId: String, mediaFileId: Int) = true
 }

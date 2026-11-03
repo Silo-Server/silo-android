@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.settings
 
 import android.content.Context
+import org.siloserver.silo.common.store.AccountScopedKeys
 import org.siloserver.silo.model.settings.CardPresentation
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.SettingKeys
@@ -105,6 +106,7 @@ class DefaultCardPresentationStore(
     private val getActiveProfileId: suspend () -> String?,
     private val getServerUrl: suspend () -> String?,
     private val getDeviceMetadata: suspend () -> SiloDeviceMetadata?,
+    private val getActiveAccountId: suspend () -> String? = { null },
 ) : CardPresentationStore {
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -473,12 +475,15 @@ class DefaultCardPresentationStore(
      */
     private data class Identity(
         val serverUrl: String,
+        val accountId: String?,
         val profileId: String,
         val clientFamily: String,
         val deviceId: String,
     ) {
-        val cacheKeyPrefix: String =
-            settingsCachePrefix("cp_", "$serverUrl|$profileId|$clientFamily|$deviceId")
+        val cacheKeyPrefix: String = settingsCachePrefix(
+            "cp_",
+            AccountScopedKeys.identity(serverUrl, accountId, profileId) + "|$clientFamily|$deviceId",
+        )
     }
 
     private suspend fun currentIdentity(): Identity? {
@@ -486,6 +491,7 @@ class DefaultCardPresentationStore(
         val device = getDeviceMetadata()
         return Identity(
             serverUrl = getServerUrl().orEmpty(),
+            accountId = getActiveAccountId(),
             profileId = profileId,
             clientFamily = device?.clientFamily.orEmpty(),
             deviceId = device?.id.orEmpty(),

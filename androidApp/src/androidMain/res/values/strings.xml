@@ -70,14 +70,7 @@
     <string name="sign_in_tv_server_only">You\'ll sign it in to %1$s with your account.</string>
     <string name="sign_in_tv_server_with_host">%1$s (%2$s)</string>
     <string name="sign_in_tv_switch_account">Not you? Switch account</string>
-    <string name="sign_in_tv_switch_title">Switch account?</string>
-    <string name="sign_in_tv_switch_body">You\'ll be signed out of %1$s on this device, then asked which account to sign in with. The TV\'s code stays ready to approve.</string>
     <string name="sign_in_tv_switch_this_server">this server</string>
-    <string name="sign_in_tv_switch_confirm">Sign out and switch</string>
-    <string name="sign_in_tv_sign_out_account">Not you? Sign out</string>
-    <string name="sign_in_tv_sign_out_title">Sign out?</string>
-    <string name="sign_in_tv_sign_out_body">You\'ll be signed out of %1$s on this device. Sign in with the account the TV should use, then approve it. The TV\'s code stays ready to approve.</string>
-    <string name="sign_in_tv_sign_out_confirm">Sign out</string>
     <string name="sign_in_tv_account_unconfirmed">Couldn\'t confirm the account on %1$s.</string>
     <string name="sign_in_tv_account_retry">Try again</string>
     <string name="sign_in_tv_profiles_note">Anyone using this TV can pick from your profiles. Profiles with a PIN stay locked.</string>
@@ -158,4 +151,59 @@
     <string name="companion_try_again">Try again</string>
     <string name="marker_skip_recap">Skip Recap</string>
     <string name="marker_skip_credits">Skip Credits</string>
+
+    <!-- Multiple accounts per server (docs/superpowers/specs/2026-11-02-multi-account-design.md
+         §4). Same wording as silo-apple: "Account", never "User". -->
+    <string name="picker_add">Add</string>
+    <string name="picker_add_profile">Add a profile</string>
+    <string name="picker_add_profile_detail">For someone else on this account</string>
+    <string name="picker_add_account">Add an account</string>
+    <string name="picker_add_account_detail">Sign in to another account on a saved server</string>
+    <string name="picker_add_server">Add a server</string>
+    <string name="picker_add_server_detail">Connect this device to another Silo server</string>
+    <string name="picker_sign_in_again">Sign in again</string>
+    <string name="picker_change_account">Change account</string>
+    <string name="change_account_menu">Change account</string>
+    <string name="change_account_title">Change account</string>
+    <string name="change_account_current">Current</string>
+    <string name="change_account_add_account">Add an account</string>
+    <string name="change_account_sign_in_on">Sign in on %1$s</string>
+    <string name="change_account_more_below">More accounts below</string>
+    <string name="account_fallback_name">your account</string>
+    <plurals name="account_downloads_count">
+        <item quantity="one">%d download</item>
+        <item quantity="other">%d downloads</item>
+    </plurals>
+    <plurals name="account_profiles_count">
+        <item quantity="one">%d profile</item>
+        <item quantity="other">%d profiles</item>
+    </plurals>
+    <string name="account_sign_out_question">Sign out of %1$s on %2$s?</string>
+    <string name="account_sign_out_remove_server">Sign out &amp; remove server</string>
+    <string name="account_sign_out_downloads">This deletes %1$s (%2$s) from this device.</string>
+    <string name="account_sign_out_confirm">Sign out</string>
+    <string name="accounts_title">Accounts</string>
+    <string name="accounts_rename">Rename</string>
+    <string name="accounts_remove_server">Remove server</string>
+    <string name="accounts_add_account">Add an account on %1$s</string>
+    <string name="accounts_add_server">Add a server</string>
+    <string name="accounts_remove_title">Remove %1$s?</string>
+    <string name="accounts_remove_body">This signs out of every account on %1$s on this device, then removes the server.</string>
+    <string name="accounts_remove_downloads">It deletes %1$s (%2$s) from this device.</string>
+    <string name="account_username">Username</string>
+    <string name="account_server">Server</string>
+    <string name="account_profiles">Profiles</string>
+    <string name="account_downloads">Downloads</string>
+    <string name="account_downloads_none">None</string>
+    <string name="account_downloads_value">%1$s · %2$s</string>
+    <string name="account_sign_in_again">Sign in again</string>
+    <string name="account_sign_out">Sign out</string>
+    <string name="account_needs_sign_in_footer">This account\'s sign-in expired. Its downloads stay on this device until you sign in again or sign out.</string>
+    <string name="login_replace_title">Replace %1$s?</string>
+    <string name="login_replace_body">You signed in as %1$s. Replacing signs out of %2$s on this device.</string>
+    <string name="login_replace_confirm">Replace</string>
+    <string name="login_replace_keep">Keep both</string>
+    <string name="sign_in_tv_choose_account_title">Choose an account</string>
+    <string name="sign_in_tv_choose_account_body">Approve this TV with another account on %1$s.</string>
+    <string name="sign_in_tv_add_account">Add an account on %1$s</string>
 </resources>

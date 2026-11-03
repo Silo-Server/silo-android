@@ -154,7 +154,7 @@ fun SettingsScreen(
     val matchesFavorites = search.matches("library", "favorites")
     val matchesHistory = search.matches("library", "history", "watch history")
     val matchesCollections = search.matches("library", "collections")
-    val matchesServer = search.matches("server", "connection", serverLabel)
+    val matchesServer = search.matches("server", "connection", "accounts", serverLabel)
     val matchesPairDevice = search.matches("connection", "pair", "device", "tv", "link", "sign in")
     // External sign-in (OIDC/LDAP): shown only on servers that have it.
     val matchesSignIn = signInState.visible &&
@@ -343,8 +343,9 @@ fun SettingsScreen(
                 item(key = "connection") {
                     SettingsSection(title = "Connection") {
                         if (matchesServer) {
+                            // Settings › Accounts: every saved server and account (spec §4.5).
                             SettingsNavigationRow(
-                                label = "Server",
+                                label = stringResource(R.string.accounts_title),
                                 icon = Icons.Filled.Dns,
                                 value = serverLabel,
                                 onClick = onNavigateToServers,
@@ -423,7 +424,6 @@ fun SettingsScreen(
     // does not depend on which of the two routes was taken.
     SignOutConfirmDialog(
         visible = confirmSignOut,
-        accountName = state.user?.username,
         onConfirm = {
             confirmSignOut = false
             viewModel.logout()

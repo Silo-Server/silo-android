@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.data.db.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 
@@ -8,7 +9,7 @@ import androidx.room.Index
  * (server [org.siloserver.silo.model.download.DownloadRecord] + the catalog
  * metadata needed to render and play a download offline).
  *
- * Identity is `(serverId, profileId, mediaFileId)` to match how downloads are
+ * Identity is `(serverId, accountId, profileId, mediaFileId)` to match how downloads are
  * scoped on disk today (`DownloadStorage`). [recordId] (the server record id)
  * is kept uniquely indexed so server-driven reconciliation can look a row up
  * by record without re-deriving the scope.
@@ -22,15 +23,18 @@ import androidx.room.Index
  */
 @Entity(
     tableName = "downloads",
-    primaryKeys = ["serverId", "profileId", "mediaFileId"],
+    primaryKeys = ["serverId", "accountId", "profileId", "mediaFileId"],
     indices = [
-        Index(value = ["serverId", "profileId", "status"]),
-        Index(value = ["serverId", "profileId", "contentId"]),
+        Index(value = ["serverId", "accountId", "profileId", "status"]),
+        Index(value = ["serverId", "accountId", "profileId", "contentId"]),
         Index(value = ["recordId"], unique = true),
     ],
 )
 data class DownloadEntity(
     val serverId: String,
+    /** Saved account ([org.siloserver.silo.model.server.AccountEntry.localAccountId]); '' = written before accounts existed. */
+    @ColumnInfo(defaultValue = "")
+    val accountId: String,
     val profileId: String,
     val mediaFileId: Int,
     val recordId: String,

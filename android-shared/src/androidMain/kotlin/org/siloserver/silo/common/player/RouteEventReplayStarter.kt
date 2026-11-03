@@ -31,7 +31,7 @@ class RouteEventReplayStarter(
     fun start() {
         scope.launch {
             registry.activeEntry
-                .map { entry -> entry?.profileId?.takeIf(String::isNotBlank)?.let { entry.id to it } }
+                .map { entry -> entry?.profileId?.takeIf(String::isNotBlank)?.let { Triple(entry.id, entry.accountId, it) } }
                 .distinctUntilChanged()
                 .filterNotNull()
                 .collect {

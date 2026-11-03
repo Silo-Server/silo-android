@@ -14,6 +14,7 @@ import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.AccountSessionExpectation
+import org.siloserver.silo.network.AccountSignIn
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.AccountSessionChangedException
 import org.siloserver.silo.network.TokenManager
@@ -76,6 +77,7 @@ class AuthRepository(
                     refreshToken = data.refreshToken,
                     expiresIn = data.expiresIn,
                     expectedIdentity = expectedIdentity,
+                    account = accountSignIn(serverId, data.user),
                     )
                 } catch (_: AccountSessionChangedException) {
                     return staleSession()
@@ -87,6 +89,65 @@ class AuthRepository(
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
         }
+    }
+
+    /**
+     * Who a sign-in on [serverId] is for: the server user it returned, and the
+     * active account when it is waiting to be signed in again (its tile's
+     * Sign in again leads here), so the same person refreshes that account.
+     */
+    fun accountSignIn(serverId: String?, user: User?): AccountSignIn {
+        val reauth = serverRegistry?.activeAccount?.value
+            ?.takeIf { it.needsSignIn && it.serverId == (serverId ?: serverRegistry.activeServerId.value) }
+        return AccountSignIn(
+            serverUserId = user?.id?.takeIf(String::isNotBlank),
+            username = user?.username?.takeIf(String::isNotBlank),
+            reauthAccountId = reauth?.localAccountId,
+        )
+    }
+
+    /**
+     * Fills in the server user id and username of saved accounts that lack
+     * them (accounts migrated from the one-account-per-server layout) from a
+     * verified `/me` under each account's own credentials. Best effort: an
+     * unreachable server is tried again next time.
+     */
+    suspend fun backfillAccountIdentities() {
+        val registry = serverRegistry ?: return
+        for (account in registry.accounts.value) {
+            if (account.needsSignIn || (account.serverUserId != null && account.username != null)) continue
+            val url = registry.entries.value.firstOrNull { it.id == account.serverId }?.url ?: continue
+            val scope = AuthScopeSnapshot.profileless(
+                serverId = account.serverId,
+                serverUrl = url,
+                identityGeneration = runCatching { tokenManager.captureAccountSessionExpectation() }.getOrNull()?.generation ?: continue,
+                accountId = account.localAccountId,
+            )
+            val me = authApi.getMe(scope) as? ApiResult.Success ?: continue
+            registry.setAccountIdentity(account.localAccountId, me.data.id, me.data.username)
+        }
+    }
+
+    /**
+     * Signs out of [accountId] on [serverId] while another account stays
+     * active: ends its session on the server with a request pinned to that
+     * account (best effort; an expired account has none to end), then deletes
+     * the account on this device ([TokenManager.signOutAccount]). False when
+     * it is the active account, which signs out through [logout].
+     */
+    suspend fun signOutAccount(serverId: String, accountId: String): Boolean {
+        val registry = serverRegistry ?: return false
+        if (registry.activeServerId.value == serverId && registry.activeAccountId.value == accountId) return false
+        val account = registry.accounts.value.firstOrNull { it.localAccountId == accountId && it.serverId == serverId }
+            ?: return false
+        val url = registry.entries.value.firstOrNull { it.id == serverId }?.url
+        val generation = runCatching { tokenManager.captureAccountSessionExpectation() }.getOrNull()?.generation
+        if (!account.needsSignIn && url != null && generation != null) {
+            runCatching {
+                authApi.logout(AuthScopeSnapshot.profileless(serverId, url, generation, accountId))
+            }
+        }
+        return tokenManager.signOutAccount(serverId, accountId)
     }
 
     /**
@@ -353,11 +414,20 @@ class AuthRepository(
      * Without a scope everything runs inline in the caller and is cancelled
      * with it.
      */
-    suspend fun switchToServer(serverId: String) {
+    suspend fun switchToServer(serverId: String) = activateServer(serverId) { it.switchTo(serverId) }
+
+    /**
+     * [switchToServer] for one saved account on [serverId] (a picker tile), or
+     * for no account when [accountId] is null (a sign-in for a new account).
+     */
+    suspend fun switchToAccount(serverId: String, accountId: String?) =
+        activateServer(serverId) { it.switchToAccount(serverId, accountId) }
+
+    private suspend fun activateServer(serverId: String, select: suspend (ServerRegistry) -> Unit) {
         val registry = serverRegistry ?: return
         val scope = backgroundScope
         if (scope == null) {
-            registry.switchTo(serverId)
+            select(registry)
             tokenManager.switchActiveServer(serverId)
             refreshServerContractWithFallback(serverId)
             if (registry.activeServerId.value != serverId) return
@@ -366,7 +436,7 @@ class AuthRepository(
         }
         val ready = CompletableDeferred<Unit>()
         val job = scope.launch {
-            registry.switchTo(serverId)
+            select(registry)
             tokenManager.switchActiveServer(serverId)
             probeContractWithFallback(serverId) {
                 // Launch before releasing the caller so a test joining the

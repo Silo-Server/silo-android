@@ -3,9 +3,14 @@ package org.siloserver.silo.common.profiles
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import org.siloserver.silo.model.server.AccountEntry
+import org.siloserver.silo.network.ServerRegistry
 
 /**
  * When this device asks "Who's watching?" instead of reopening the last
@@ -148,6 +153,17 @@ data class ProfileLaunchState(
 }
 
 /**
+ * One profile of one saved account on one server: what Automatic reopens
+ * (multi-account spec §4.1).
+ */
+data class LaunchTile(
+    val serverId: String,
+    /** [AccountEntry.localAccountId]. */
+    val accountId: String,
+    val profileId: String,
+)
+
+/**
  * Device-wide Profile Selection setting. It is never sent to the server, so a
  * choice on this device leaves every other device alone (silo-apple
  * profile-launch design §12). It survives sign-out; the profile itself does
@@ -160,6 +176,11 @@ data class ProfileLaunchState(
  * The phone and TV apps each pass their own file name. The TV's is
  * [TV_PREFS_NAME], unchanged from when this lived in the TV app, so choices
  * made there survive the move.
+ *
+ * Also holds the device-wide [lastTile], which Automatic reopens (spec §4.2).
+ * Each account's remembered profile and its PIN proof are not kept here: they
+ * live in that account's registry entry ([AccountEntry.profileId]) and
+ * credential slot, so they already belong to the account and leave with it.
  */
 class ProfileLaunchPreferences(
     private val prefs: SharedPreferences,
@@ -170,6 +191,15 @@ class ProfileLaunchPreferences(
 
     private val _state = MutableStateFlow(read())
     val state: StateFlow<ProfileLaunchState> = _state.asStateFlow()
+
+    private val _lastTile = MutableStateFlow(readTile())
+
+    /**
+     * The tile last opened on this device, whichever server and account it
+     * is on. Recorded by [trackActiveTile]; survives a sign-out of a
+     * different account but not of its own ([retainAccounts]).
+     */
+    val lastTile: StateFlow<LaunchTile?> = _lastTile.asStateFlow()
 
     fun requiresSelectionAtLaunch(): Boolean = state.value.requiresSelectionAtLaunch(clock())
 
@@ -201,6 +231,63 @@ class ProfileLaunchPreferences(
     /** End the away interval: Silo is in use again with a chosen profile. */
     fun clearBackgroundedAt() = update { it.copy(backgroundedAtMs = null) }
 
+    /** Records [tile] as the one Automatic reopens. */
+    @Synchronized
+    fun rememberTile(tile: LaunchTile) {
+        if (_lastTile.value == tile) return
+        prefs.edit {
+            putString(KEY_TILE_SERVER, tile.serverId)
+            putString(KEY_TILE_ACCOUNT, tile.accountId)
+            putString(KEY_TILE_PROFILE, tile.profileId)
+        }
+        _lastTile.value = tile
+    }
+
+    @Synchronized
+    fun forgetTile() {
+        if (_lastTile.value == null && !prefs.contains(KEY_TILE_ACCOUNT)) return
+        prefs.edit {
+            remove(KEY_TILE_SERVER)
+            remove(KEY_TILE_ACCOUNT)
+            remove(KEY_TILE_PROFILE)
+        }
+        _lastTile.value = null
+    }
+
+    /**
+     * The tile Automatic should reopen: [lastTile] while its account is still
+     * saved on its server and, once the account's profiles are known, still
+     * has that profile. Null means show the picker. Whether to ask at all is
+     * [requiresSelectionAtLaunch]'s call; the picker also skips itself when
+     * there is a single tile with no PIN (spec §4.2).
+     */
+    fun restorableTile(accounts: List<AccountEntry>): LaunchTile? {
+        val tile = _lastTile.value ?: return null
+        val account = accounts.firstOrNull { it.localAccountId == tile.accountId && it.serverId == tile.serverId }
+            ?: return null
+        if (account.cachedProfiles.isNotEmpty() && account.cachedProfiles.none { it.id == tile.profileId }) return null
+        return tile
+    }
+
+    /** Sign-out deletes the account's launch memory: drop [lastTile] if its account is gone. */
+    fun retainAccounts(accountIds: Set<String>) {
+        val tile = _lastTile.value ?: return
+        if (tile.accountId !in accountIds) forgetTile()
+    }
+
+    /**
+     * Keeps [lastTile] on whatever tile is open: every time the active
+     * server's account has a profile. Clearing the profile for the picker
+     * leaves the last tile in place.
+     */
+    fun trackActiveTile(registry: ServerRegistry, scope: CoroutineScope): Job = scope.launch {
+        registry.activeEntry.collect { entry ->
+            val accountId = entry?.accountId ?: return@collect
+            val profileId = entry.profileId?.takeIf { it.isNotBlank() } ?: return@collect
+            rememberTile(LaunchTile(serverId = entry.id, accountId = accountId, profileId = profileId))
+        }
+    }
+
     @Synchronized
     private fun update(change: (ProfileLaunchState) -> ProfileLaunchState) {
         val next = change(_state.value)
@@ -216,6 +303,13 @@ class ProfileLaunchPreferences(
             if (next.rememberOfferPending) putBoolean(KEY_REMEMBER_OFFER, true) else remove(KEY_REMEMBER_OFFER)
         }
         _state.value = next
+    }
+
+    private fun readTile(): LaunchTile? {
+        val serverId = prefs.getString(KEY_TILE_SERVER, null) ?: return null
+        val accountId = prefs.getString(KEY_TILE_ACCOUNT, null) ?: return null
+        val profileId = prefs.getString(KEY_TILE_PROFILE, null) ?: return null
+        return LaunchTile(serverId, accountId, profileId)
     }
 
     private fun read(): ProfileLaunchState = ProfileLaunchState(
@@ -234,5 +328,8 @@ class ProfileLaunchPreferences(
         private const val KEY_BEHAVIOR = "behavior"
         private const val KEY_BACKGROUNDED_AT = "backgrounded_at_ms"
         private const val KEY_REMEMBER_OFFER = "remember_offer_pending"
+        private const val KEY_TILE_SERVER = "last_tile.server_id"
+        private const val KEY_TILE_ACCOUNT = "last_tile.account_id"
+        private const val KEY_TILE_PROFILE = "last_tile.profile_id"
     }
 }

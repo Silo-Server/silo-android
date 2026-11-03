@@ -52,6 +52,12 @@ data class AuthScopeSnapshot(
      * recorded.
      */
     val credentialEpoch: Long = 0L,
+    /**
+     * The saved account ([org.siloserver.silo.model.server.AccountEntry.localAccountId])
+     * whose credential slot this scope reads, or null for "[serverId]'s
+     * current account". Local data captured with this scope is keyed by it.
+     */
+    val accountId: String? = null,
 ) {
     /**
      * Whether [current] is still the identity this snapshot was captured from:
@@ -61,6 +67,7 @@ data class AuthScopeSnapshot(
     fun isSameIdentityAs(current: AuthScopeSnapshot?): Boolean =
         current != null &&
             current.serverId == serverId &&
+            (accountId == null || current.accountId == null || current.accountId == accountId) &&
             current.identityGeneration == identityGeneration &&
             current.credentialEpoch == credentialEpoch
 
@@ -72,8 +79,9 @@ data class AuthScopeSnapshot(
          * epoch, so the request is pinned to [identityGeneration] instead: a late
          * refresh can't overwrite a same-server account replacement.
          */
-        fun profileless(serverId: String, serverUrl: String, identityGeneration: Long) = AuthScopeSnapshot(
+        fun profileless(serverId: String, serverUrl: String, identityGeneration: Long, accountId: String? = null) = AuthScopeSnapshot(
             serverId = serverId,
+            accountId = accountId,
             serverUrl = serverUrl,
             profileId = null,
             profileToken = null,
@@ -92,7 +100,8 @@ data class AuthScopeSnapshot(
             profileId: String,
             profileToken: String?,
             identityGeneration: Long,
-        ) = profileless(serverId, serverUrl, identityGeneration).copy(profileId = profileId, profileToken = profileToken)
+            accountId: String? = null,
+        ) = profileless(serverId, serverUrl, identityGeneration, accountId).copy(profileId = profileId, profileToken = profileToken)
     }
 
     /**
@@ -107,7 +116,7 @@ data class AuthScopeSnapshot(
 
     override fun toString(): String =
         "AuthScopeSnapshot(" +
-            "serverId=<redacted>, profileId=<redacted>, serverUrl=<redacted>, " +
+            "serverId=<redacted>, accountId=<redacted>, profileId=<redacted>, serverUrl=<redacted>, " +
             "profileToken=<redacted>, credentialGenerationId=<redacted>, " +
             "identityGeneration=<redacted>, isIdentityGenerationStamped=<redacted>, " +
             "credentialEpoch=<redacted>)"
