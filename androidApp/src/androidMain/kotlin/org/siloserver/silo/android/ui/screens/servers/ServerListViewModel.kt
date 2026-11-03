@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.servers
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
@@ -222,6 +223,11 @@ class ServerListViewModel(
             _uiState.update { it.copy(isWorking = true, removeFailedServerId = null) }
             try {
                 if (!removeServer(serverId)) _uiState.update { it.copy(removeFailedServerId = serverId) }
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (failure: Exception) {
+                Log.w("ServerListViewModel", "server removal failed", failure)
+                _uiState.update { it.copy(removeFailedServerId = serverId) }
             } finally {
                 _uiState.update { it.copy(isWorking = false) }
             }

@@ -143,6 +143,8 @@ class ProfileSelectionViewModel(
                 .collect {
                     // The previous account's grid is not this one's: clear it
                     // before the reload, so it is never drawn or tapped meanwhile.
+                    // A PIN check still in flight belongs to that grid too.
+                    pinAttempt++
                     _uiState.update {
                         it.copy(profiles = emptyList(), pinDialogProfile = null, deleteDialogProfile = null, isManageMode = false)
                     }
