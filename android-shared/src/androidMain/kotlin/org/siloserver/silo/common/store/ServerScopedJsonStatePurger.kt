@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.store
 
+import android.system.Os
+import android.system.OsConstants
 import java.io.File
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
@@ -127,20 +129,21 @@ class ServerScopedJsonStatePurger(baseDir: File) {
         }
     }
 
+    /** A directory and not a symlink to one; `lstat` because java.nio.file needs API 26. */
     private fun isRealDirectory(file: File): Boolean =
-        Files.isDirectory(file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)
+        runCatching { OsConstants.S_ISDIR(Os.lstat(file.path).st_mode) }.getOrDefault(false)
 
     private fun moveIfAbsent(source: File, target: File) {
         target.parentFile?.mkdirs()
         if (!target.exists()) {
-            runCatching { Files.move(source.toPath(), target.toPath()) }.onSuccess { return }
+            if (source.renameTo(target)) return
         }
         // The account already has some of this profile's files: keep its own,
         // take the rest, then drop what is left of the old directory.
         target.mkdirs()
         source.listFiles().orEmpty().forEach { file ->
             val destination = File(target, file.name)
-            if (!destination.exists()) runCatching { Files.move(file.toPath(), destination.toPath()) }
+            if (!destination.exists()) file.renameTo(destination)
         }
         deleteTree(source)
     }

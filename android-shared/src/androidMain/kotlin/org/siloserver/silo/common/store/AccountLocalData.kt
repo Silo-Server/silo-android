@@ -14,7 +14,6 @@ import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.ServerRegistry
 import java.io.File
-import java.nio.file.Files
 
 /**
  * Keeps the account-scoped preferences, settings caches and local JSON state
@@ -146,7 +145,7 @@ class AccountLocalData(
         legacyDataStoreFiles().forEach { (base, profileHash, file) ->
             val target = File(dataStoreDir, AccountScopedKeys.profileFileName(base, accountId, profileHash) + DATASTORE_SUFFIX)
             if (target.exists()) return@forEach
-            runCatching { Files.copy(file.toPath(), target.toPath()) }
+            runCatching { file.copyTo(target) }
                 .onFailure { Log.w(TAG, "could not adopt a settings file", it) }
         }
     }
@@ -172,13 +171,13 @@ class AccountLocalData(
                 DATASTORE_BASES.any { file.name.startsWith(it + "_@") } &&
                     AccountScopedKeys.accountIdsIn(file.name).any { it !in live }
             }
-            .forEach { file -> runCatching { Files.deleteIfExists(file.toPath()) } }
+            .forEach { file -> file.delete() }
     }
 
     // ---- Legacy cleanup ----
 
     private fun dropLegacy() {
-        legacyDataStoreFiles().forEach { (_, _, file) -> runCatching { Files.deleteIfExists(file.toPath()) } }
+        legacyDataStoreFiles().forEach { (_, _, file) -> file.delete() }
         HASHED_CACHE_PREFS.forEach { name ->
             val prefs = prefs(name)
             val legacy = prefs.all.keys.filterNot(AccountScopedKeys::hasAccountToken)
