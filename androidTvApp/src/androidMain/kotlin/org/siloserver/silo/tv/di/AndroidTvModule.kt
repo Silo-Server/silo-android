@@ -582,7 +582,6 @@ val androidTvModule = module {
             mediaScope = params.values.getOrNull(3) as? String,
             browsePrefs = get(),
             catalogLanguage = get(),
-            boxSetsEnabled = params.values.getOrNull(4) as? Boolean ?: false,
         )
     }
     viewModel { params ->

@@ -5,9 +5,9 @@ import kotlinx.serialization.Serializable
 
 /**
  * A movie box set: the movies TMDB lists in one collection (a franchise such
- * as Harry Potter) that the viewer can see in one library. A library with
- * box sets on browses with `group=box_set`, and the server answers a card of
- * type [BOX_SET_TYPE] carrying this in place of the collection's movies.
+ * as Harry Potter) that the viewer can see in one library. Box sets open on
+ * their own page and appear in search and on a movie's page, never in a
+ * library grid.
  */
 @Serializable
 data class CatalogBoxSet(
@@ -34,11 +34,8 @@ data class CatalogBoxSetDetail(
     val items: List<BrowseItem>,
 )
 
-/** `type` of a box set card in a `group=box_set` browse. */
+/** `type` of a box set search card ([toSearchCard]). */
 const val BOX_SET_TYPE = "box_set"
-
-/** The catalog `group` that collapses a collection's movies into one box set card. */
-const val BOX_SET_GROUP = "box_set"
 
 /** The box set this card stands for, or null for any other card. */
 val BrowseItem.boxSetCard: CatalogBoxSet?
