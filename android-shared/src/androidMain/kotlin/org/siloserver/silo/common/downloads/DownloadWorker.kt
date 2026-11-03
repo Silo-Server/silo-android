@@ -137,7 +137,11 @@ class DownloadWorker(
             ?: return@withContext Result.failure()
         val profileId = inputData.getString(KEY_PROFILE_ID)
             ?: return@withContext Result.failure()
-        accountId = inputData.getString(KEY_ACCOUNT_ID) ?: storage.legacyFilesOwner(serverId).orEmpty()
+        // Work queued before accounts existed names none: it belongs to the
+        // server's adopting account once the startup adoption pass has run
+        // (until then the marker may not exist yet). Unadopted rows stay ''.
+        accountId = inputData.getString(KEY_ACCOUNT_ID)
+            ?: run { AccountDataAdoption.awaitFirstPass(); storage.legacyFilesOwner(serverId).orEmpty() }
         val fileName = inputData.getString(KEY_FILE_NAME)
         val container = inputData.getString(KEY_CONTAINER)
         val mediaType = inputData.getString(KEY_MEDIA_TYPE)
