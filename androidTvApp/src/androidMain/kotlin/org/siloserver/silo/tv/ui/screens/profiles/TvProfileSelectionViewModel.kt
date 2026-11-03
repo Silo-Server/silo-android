@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.siloserver.silo.common.ui.marquee.SignInHandoff
+import org.siloserver.silo.model.auth.isPasswordChangeRequired
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.authorizedProfileToken
 import org.siloserver.silo.model.profile.householdPrimary
@@ -81,6 +82,14 @@ internal fun CachedProfile.asProfile(): Profile = Profile(
     hasPin = hasPin,
     isChild = isChild,
 )
+
+/**
+ * The picker's refusal for an account holding a temporary password. The TV
+ * has no form for it: the password is changed on a phone or the web, which
+ * ends this TV's session, so Retry then leads to sign-in.
+ */
+internal const val TV_PASSWORD_CHANGE_REQUIRED_MESSAGE =
+    "Your password needs to be reset. Use the Silo mobile app or website to set a new one, then come back."
 
 /**
  * TV profile picker. PIN-protected profiles now work: selecting one opens a
@@ -301,10 +310,13 @@ class TvProfileSelectionViewModel(
                     }
                     if (only != null) onProfileSelected(only)
                 }
-                is ApiResult.Error -> showCachedProfiles(
-                    scope,
-                    result.message.ifBlank { "Failed to load profiles" },
-                )
+                is ApiResult.Error -> if (result.isPasswordChangeRequired()) {
+                    // The account can't use its profiles until the password is
+                    // replaced, so the cached grid is not offered either.
+                    _uiState.update { it.copy(isLoading = false, error = TV_PASSWORD_CHANGE_REQUIRED_MESSAGE) }
+                } else {
+                    showCachedProfiles(scope, result.message.ifBlank { "Failed to load profiles" })
+                }
                 is ApiResult.NetworkError -> showCachedProfiles(scope, "Network error. Please try again.")
             }
         }

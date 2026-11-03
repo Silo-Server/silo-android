@@ -565,11 +565,12 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             // scope's token is expiring. Same refresh as the 401 path below, so
             // a rotation can't race it. This runs for single-attempt requests
             // too: it happens before the one request is sent, not as a retry.
+            val forced = request.attributes.getOrNull(ForceSiloRefreshAttributeKey) == true
             if (
                 request.attributes.getOrNull(FreshSiloAuthAttributeKey) == true &&
                 sentAuth != null &&
                 (pinnedGeneration == null || pinnedGeneration !in deadCredentialGenerations.value) &&
-                tokenManager.accessTokenExpiresWithin(pinnedScope, PROACTIVE_REFRESH_MARGIN_MS)
+                (forced || tokenManager.accessTokenExpiresWithin(pinnedScope, PROACTIVE_REFRESH_MARGIN_MS))
             ) {
                 diagnosticsObserver.safeAuthRefresh("required")
                 when (refreshPinnedScope(pinnedScope, sentAuth)) {
@@ -583,14 +584,15 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                     // but an expired bearer would only come back 401 and read as
                     // "sign in again": fail the call with the reason instead.
                     PinnedRefresh.ProviderUnavailable ->
-                        if (tokenManager.accessTokenExpiresWithin(pinnedScope, 0L)) {
+                        if (forced || tokenManager.accessTokenExpiresWithin(pinnedScope, 0L)) {
                             request.removeSiloCredentialHeaders()
                             throw SiloAuthUnavailableException(SiloAuthUnavailableException.PROVIDER_UNAVAILABLE)
                         }
                     // The scope may have been signed out or replaced meanwhile:
                     // send the captured bearer only while the scope still holds it.
+                    // A forced refresh that didn't rotate the token isn't sent at all.
                     PinnedRefresh.Failed ->
-                        if (tokenManager.getAccessTokenForScope(pinnedScope)?.let { "Bearer $it" } != sentAuth) {
+                        if (forced || tokenManager.getAccessTokenForScope(pinnedScope)?.let { "Bearer $it" } != sentAuth) {
                             request.removeSiloCredentialHeaders()
                             throw SiloAuthUnavailableException(SiloAuthUnavailableException.CREDENTIALS_REPUDIATED)
                         }

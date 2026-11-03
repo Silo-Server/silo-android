@@ -96,6 +96,8 @@ sealed class Route(val route: String) {
 
     // --- Profile selection (no bottom nav) ---
     data object ProfileSelection : Route("profiles")
+    /** "Choose a new password": the account signed in with a temporary password an admin set. */
+    data object PasswordChange : Route("account/password_change")
 
     /**
      * Change Account: every saved server's accounts, to open another one.

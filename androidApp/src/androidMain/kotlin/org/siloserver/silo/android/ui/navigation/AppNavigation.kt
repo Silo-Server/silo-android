@@ -77,6 +77,7 @@ import org.siloserver.silo.android.ui.screens.cast.SiloCastMiniBar
 import org.siloserver.silo.android.ui.screens.cast.SiloCastRemoteScreen
 import org.siloserver.silo.android.ui.screens.MainScreen
 import org.siloserver.silo.android.ui.screens.auth.LoginScreen
+import org.siloserver.silo.android.ui.screens.auth.PasswordChangeScreen
 import org.siloserver.silo.android.ui.screens.auth.DevicePairingScreen
 import org.siloserver.silo.android.ui.screens.auth.ServerSetupScreen
 import org.siloserver.silo.android.ui.screens.auth.SetupScreen
@@ -192,6 +193,7 @@ private val ProfilePromptDeferredRoutes: Set<String> = setOf(
     Route.Signup.route,
     Route.PairDevice.ROUTE,
     Route.InviteClaim.ROUTE,
+    Route.PasswordChange.route,
 )
 
 /** Page-to-page cross-fade duration (ms). Snappier than Compose Nav's 700ms default. */
@@ -229,6 +231,7 @@ private val MarqueeRoutes = setOf(
     Route.InviteClaim.ROUTE,
     Route.ProfileSelection.route,
     Route.ChangeAccount.ROUTE,
+    Route.PasswordChange.route,
 )
 
 @OptIn(ExperimentalSharedTransitionApi::class)
@@ -1312,6 +1315,33 @@ fun AppNavigation(
                         }
                     }
                 },
+                onPasswordChangeRequired = {
+                    // The restricted session can't use any screen beneath
+                    // (another server's, or Home), so this becomes the root
+                    // and Back leaves the app, as the picker's Back does then.
+                    navController.navigate(Route.PasswordChange.route) {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
+            )
+        }
+        composable(Route.PasswordChange.route) {
+            PasswordChangeScreen(
+                onFinished = {
+                    navController.navigate(Route.ProfileSelection.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
+                onSignOut = {
+                    navScope.launch {
+                        if (!signOutTeardown.signOut()) return@launch
+                        // As the picker's Sign out: another signed-in account opens Change Account.
+                        navController.navigate(serverRegistry.routeAfterSignOut()) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
+                },
             )
         }
         composable(Route.CreateProfile.route) {
@@ -2274,6 +2304,7 @@ fun AppNavigation(
             Route.Setup.route,
             Route.Signup.route,
             Route.ProfileSelection.route,
+            Route.PasswordChange.route,
             Route.CreateProfile.route,
             Route.InviteClaim.ROUTE,
             Route.PairDevice.ROUTE,

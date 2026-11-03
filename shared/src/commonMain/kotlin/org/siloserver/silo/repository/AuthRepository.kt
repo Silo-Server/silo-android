@@ -7,6 +7,7 @@ import org.siloserver.silo.model.auth.LoginRequest
 import org.siloserver.silo.model.auth.SetupStatusResponse
 import org.siloserver.silo.model.auth.SignupRequest
 import org.siloserver.silo.model.auth.SignupStatusResponse
+import org.siloserver.silo.model.auth.PasswordRequirements
 import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.network.apiv2.ApiV2Probe
@@ -21,7 +22,10 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.api.AuthApi
 import org.siloserver.silo.network.api.BrandingApi
 import org.siloserver.silo.network.api.HealthApi
+import org.siloserver.silo.network.apiv2.identityChanged
+import org.siloserver.silo.network.getOrNull
 import org.siloserver.silo.network.map
+import org.siloserver.silo.viewmodel.TemporaryPasswordAccount
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -51,7 +55,7 @@ class AuthRepository(
      * work runs inline instead — single-server hosts and tests.
      */
     private val backgroundScope: CoroutineScope? = null,
-) {
+) : TemporaryPasswordAccount {
     /**
      * Persists a successful auth response's tokens into the active server's
      * scope and unwraps the [User] — the shared tail of every path that ends
@@ -327,6 +331,39 @@ class AuthRepository(
     /** Fetches the account signed in on [scope]'s server. */
     suspend fun getCurrentUser(scope: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<User> =
         authApi.getMe(scope)
+
+    // Temporary password: account-scoped calls on the active account, with no
+    // profile declared, which the server allows while the password is temporary.
+
+    override suspend fun readAccount(): ApiResult<User> {
+        val scope = tokenManager.snapshotCurrentScope() ?: return identityChanged()
+        return authApi.getAccount(scope)
+    }
+
+    override suspend fun passwordRequirements(): PasswordRequirements {
+        val scope = tokenManager.snapshotCurrentScope() ?: return PasswordRequirements.ServerDefault
+        val capability = authApi.passwordCapability(scope).getOrNull() ?: return PasswordRequirements.ServerDefault
+        return PasswordRequirements.from(capability)
+    }
+
+    override suspend fun changePassword(current: String, new: String): ApiResult<Unit> {
+        val scope = tokenManager.snapshotCurrentScope() ?: return identityChanged()
+        return authApi.changePassword(scope, current, new)
+    }
+
+    /**
+     * Swaps the access token that changed a temporary password for one the
+     * server no longer restricts, through the shared refresh. True only when
+     * the same account's token rotated.
+     */
+    override suspend fun refreshSessionAfterPasswordChange(): Boolean {
+        val scope = tokenManager.snapshotCurrentScope() ?: return false
+        val before = tokenManager.getAccessTokenForScope(scope) ?: return false
+        authApi.refreshAccountSession(scope)
+        if (!scope.isSameIdentityAs(tokenManager.snapshotCurrentScope())) return false
+        val after = tokenManager.getAccessTokenForScope(scope)
+        return after != null && after != before
+    }
 
     /**
      * Logs out by clearing all persisted tokens and profile state for the

@@ -89,6 +89,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.marquee.MarqueeButton
@@ -136,6 +137,7 @@ private val BottomGap = 20.dp
  * @param onAddAccount "Add an account" from Add: Change Account at the active server's Add an account.
  * @param onAddServer "Add a server" from Add.
  * @param onSignOut "Sign out" from the footer, once confirmed; true to also remove the server.
+ * @param onPasswordChangeRequired The account holds a temporary password; it must choose its own first.
  */
 @Composable
 fun ProfileSelectionScreen(
@@ -148,6 +150,7 @@ fun ProfileSelectionScreen(
     onSignOut: (removeServer: Boolean) -> Unit,
     /** The open account's sign-in expired: sign in to it again instead of choosing a profile. */
     onSignInAgain: () -> Unit = {},
+    onPasswordChangeRequired: () -> Unit,
     viewModel: ProfileSelectionViewModel = koinViewModel(),
     brandingLoader: ServerBrandingLoader = koinInject(),
     serverRegistry: ServerRegistry = koinInject(),
@@ -188,6 +191,18 @@ fun ProfileSelectionScreen(
         if (state.openAddProfile) {
             viewModel.onAddProfileConsumed()
             onNavigateToCreateProfile()
+        }
+    }
+
+    // Only the picker on screen hands off. One covered by Change Account, or
+    // leaving, must not pull the person away; it reloads when it's shown
+    // again and hands off from that answer.
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateAsState()
+    val onScreen = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
+    LaunchedEffect(state.requiresPasswordChange, onScreen) {
+        if (state.requiresPasswordChange && onScreen) {
+            viewModel.onPasswordChangeConsumed()
+            onPasswordChangeRequired()
         }
     }
 

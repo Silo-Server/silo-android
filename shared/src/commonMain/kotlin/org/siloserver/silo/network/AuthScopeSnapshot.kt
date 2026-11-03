@@ -172,6 +172,18 @@ fun HttpRequestBuilder.skipSiloAuth() {
 internal val FreshSiloAuthAttributeKey: AttributeKey<Boolean> = AttributeKey("SiloFreshAuth")
 internal fun HttpRequestBuilder.freshSiloAuth() { attributes.put(FreshSiloAuthAttributeKey, true) }
 
+/**
+ * A pinned [freshSiloAuth] request whose scope is refreshed first however long
+ * its access token has left, and which isn't sent unless the token rotated.
+ * Used after a temporary password changes: the token that changed it keeps the
+ * server's restriction until it is replaced.
+ */
+internal val ForceSiloRefreshAttributeKey: AttributeKey<Boolean> = AttributeKey("SiloForceRefresh")
+internal fun HttpRequestBuilder.forceSiloRefresh() {
+    freshSiloAuth()
+    attributes.put(ForceSiloRefreshAttributeKey, true)
+}
+
 /** A nonretryable mutation must not be replayed by the auth-refresh interceptor. */
 internal val SingleAttemptAttributeKey = AttributeKey<Boolean>("SiloSingleAttempt")
 internal fun HttpRequestBuilder.singleAttempt() { attributes.put(SingleAttemptAttributeKey, true) }
