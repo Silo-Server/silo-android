@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.siloserver.silo.common.ui.marquee.SignInHandoff
+import org.siloserver.silo.model.auth.isPasswordChangeRequired
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.authorizedProfileToken
 import org.siloserver.silo.model.profile.householdPrimary
@@ -46,6 +47,14 @@ data class TvProfileSelectionUiState(
     /** The profile just picked on a new TV, while the TV asks whether to open it automatically. */
     val rememberOffer: Profile? = null,
 )
+
+/**
+ * The picker's refusal for an account holding a temporary password. The TV
+ * has no form for it: the password is changed on a phone or the web, which
+ * ends this TV's session, so Retry then leads to sign-in.
+ */
+internal const val TV_PASSWORD_CHANGE_REQUIRED_MESSAGE =
+    "Your password needs to be reset. Use the Silo mobile app or website to set a new one, then come back."
 
 /**
  * TV profile picker. PIN-protected profiles now work: selecting one opens a
@@ -214,12 +223,12 @@ class TvProfileSelectionViewModel(
                     if (only != null) onProfileSelected(only)
                 }
                 is ApiResult.Error -> {
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            error = result.message.ifBlank { "Failed to load profiles" },
-                        )
+                    val message = if (result.isPasswordChangeRequired()) {
+                        TV_PASSWORD_CHANGE_REQUIRED_MESSAGE
+                    } else {
+                        result.message.ifBlank { "Failed to load profiles" }
                     }
+                    _uiState.update { it.copy(isLoading = false, error = message) }
                 }
                 is ApiResult.NetworkError -> {
                     _uiState.update {

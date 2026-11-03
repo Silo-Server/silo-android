@@ -16,8 +16,9 @@ internal data class AuthUserV2(
     val role: AccountRole,
     @SerialName("download_allowed") val downloadAllowed: Boolean = false,
     val impersonation: AuthImpersonationV2? = null,
+    @SerialName("password_change_required") val passwordChangeRequired: Boolean? = null,
 ) {
-    fun domain() = User(id, username, email, role.wire, downloadAllowed, impersonation?.domain())
+    fun domain() = User(id, username, email, role.wire, downloadAllowed, impersonation?.domain(), passwordChangeRequired)
 }
 
 @Serializable
@@ -93,4 +94,22 @@ internal data class InvitationAcceptanceV2(
             (loginStatus == "sign_in_required" && tokens == null))
     }
     fun domain() = InvitationAcceptance(username, tokens?.domain())
+}
+
+@Serializable
+internal data class ChangePasswordRequestV2(
+    @SerialName("current_password") val currentPassword: String,
+    @SerialName("new_password") val newPassword: String,
+) {
+    override fun toString() = "ChangePasswordRequestV2(<redacted>)"
+}
+
+@Serializable
+internal data class PasswordCapabilityV2(
+    val state: String,
+    val allowed: Boolean? = null,
+    @SerialName("minimum_password_length") val minimumPasswordLength: Int? = null,
+    @SerialName("maximum_password_bytes") val maximumPasswordBytes: Int? = null,
+) {
+    fun domain() = PasswordCapability(state, allowed, minimumPasswordLength, maximumPasswordBytes)
 }

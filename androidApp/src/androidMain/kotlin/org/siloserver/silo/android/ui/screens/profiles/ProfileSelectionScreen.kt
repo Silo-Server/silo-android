@@ -75,6 +75,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.marquee.MarqueeButton
@@ -115,6 +116,7 @@ private val BottomGap = 20.dp
  * @param onNavigateToEditProfile Called when a profile is tapped in manage mode.
  * @param onChangeServer "Change server" from the footer or the server chip.
  * @param onSignOut "Sign out" from the footer.
+ * @param onPasswordChangeRequired The account holds a temporary password; it must choose its own first.
  */
 @Composable
 fun ProfileSelectionScreen(
@@ -123,6 +125,7 @@ fun ProfileSelectionScreen(
     onNavigateToEditProfile: (profileId: String) -> Unit,
     onChangeServer: () -> Unit,
     onSignOut: () -> Unit,
+    onPasswordChangeRequired: () -> Unit,
     viewModel: ProfileSelectionViewModel = koinViewModel(),
     brandingLoader: ServerBrandingLoader = koinInject(),
     serverRegistry: ServerRegistry = koinInject(),
@@ -160,6 +163,18 @@ fun ProfileSelectionScreen(
         if (state.openAddProfile) {
             viewModel.onAddProfileConsumed()
             onNavigateToCreateProfile()
+        }
+    }
+
+    // Only the picker on screen hands off. One covered by the server list, or
+    // leaving, must not pull the person away; it reloads when it's shown
+    // again and hands off from that answer.
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateAsState()
+    val onScreen = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
+    LaunchedEffect(state.requiresPasswordChange, onScreen) {
+        if (state.requiresPasswordChange && onScreen) {
+            viewModel.onPasswordChangeConsumed()
+            onPasswordChangeRequired()
         }
     }
 

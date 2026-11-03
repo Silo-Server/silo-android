@@ -88,6 +88,8 @@ sealed class Route(val route: String) {
 
     // --- Profile selection (no bottom nav) ---
     data object ProfileSelection : Route("profiles")
+    /** "Choose a new password": the account signed in with a temporary password an admin set. */
+    data object PasswordChange : Route("account/password_change")
     data object CreateProfile : Route("profiles/create")
     data class EditProfile(val profileId: String) : Route("profiles/${Uri.encode(profileId)}/edit") {
         companion object {
