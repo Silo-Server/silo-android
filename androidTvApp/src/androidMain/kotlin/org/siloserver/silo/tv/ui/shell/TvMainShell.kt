@@ -533,11 +533,6 @@ fun TvMainShell(
         detailReturnRoot = null
         onOpenLibraryItemDetail(contentId, libraryId)
     }
-    val openBoxSet: (CatalogBoxSet) -> Unit = { boxSet ->
-        restoreContentAfterDetail = true
-        detailReturnRoot = null
-        onOpenBoxSet(boxSet)
-    }
     // Collections open outer routes too, so they need the same hand-back:
     // without it the return resume left focus to Compose's default search
     // (the top bar), which then visibly hopped to the grid a beat later.
@@ -1365,7 +1360,6 @@ fun TvMainShell(
                     TvLibrariesScreen(
                         onItemClick = openLibraryItemDetail,
                         onExploreSection = { section, libraryId -> openLibrarySection(section, libraryId, null) },
-                        onBoxSetClick = openBoxSet,
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -1376,7 +1370,6 @@ fun TvMainShell(
                     TvLibrariesScreen(
                         onItemClick = openLibraryItemDetail,
                         onExploreSection = { section, libraryId -> openLibrarySection(section, libraryId, null) },
-                        onBoxSetClick = openBoxSet,
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -1399,7 +1392,6 @@ fun TvMainShell(
                         onItemClick = { contentId ->
                             openLibraryItemDetail(contentId, activeLibrary(TvLibraryTabType.Movies)?.id)
                         },
-                        onBoxSetClick = openBoxSet,
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onExploreSection = openLibrarySection,
@@ -1419,7 +1411,6 @@ fun TvMainShell(
                         onItemClick = { contentId ->
                             openLibraryItemDetail(contentId, activeLibrary(TvLibraryTabType.Series)?.id)
                         },
-                        onBoxSetClick = openBoxSet,
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onExploreSection = openLibrarySection,
@@ -1439,7 +1430,6 @@ fun TvMainShell(
                         onItemClick = { contentId ->
                             openLibraryItemDetail(contentId, activeLibrary(TvLibraryTabType.Music)?.id)
                         },
-                        onBoxSetClick = openBoxSet,
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onExploreSection = openLibrarySection,
@@ -1459,7 +1449,6 @@ fun TvMainShell(
                         onItemClick = { contentId ->
                             openLibraryItemDetail(contentId, activeLibrary(TvLibraryTabType.Audiobooks)?.id)
                         },
-                        onBoxSetClick = openBoxSet,
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onExploreSection = openLibrarySection,
@@ -1849,7 +1838,6 @@ private fun TvLibraryTypeContent(
     selectedPill: TvLibraryPill,
     sectionRequestNonce: Int,
     onItemClick: (contentId: String) -> Unit,
-    onBoxSetClick: (CatalogBoxSet) -> Unit,
     onLibraryCollectionClick: (
         libraryId: Int,
         collectionId: String,
@@ -1893,9 +1881,7 @@ private fun TvLibraryTypeContent(
             libraryTitle = library.name,
             libraryType = library.type,
             mediaScope = type.mediaScope(library),
-            boxSetsEnabled = library.boxSetsEnabled,
             onItemClick = onItemClick,
-            onBoxSetClick = onBoxSetClick,
             onCollectionClick = { collectionId, title, isUserCollection ->
                 val scope = type.mediaScope(library)
                 if (scope != null) {

@@ -2,7 +2,6 @@ package org.siloserver.silo.repository
 
 import org.siloserver.silo.domain.settings.CatalogLanguageRevision
 import org.siloserver.silo.repository.port.CatalogCacheScope
-import org.siloserver.silo.model.catalog.BOX_SET_GROUP
 import org.siloserver.silo.model.catalog.CatalogBoxSet
 import org.siloserver.silo.model.catalog.CatalogBoxSetDetail
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
@@ -107,8 +106,6 @@ class CatalogRepository(
         yearMax: Int? = null,
         queryGroups: List<CatalogQueryGroup> = emptyList(),
         match: String? = null,
-        /** [BOX_SET_GROUP] for a library with box sets on; the server does the grouping. */
-        group: String? = null,
     ): ApiResult<CatalogResponse> {
         val requestIdentityGeneration = identityTransitions.generation.value
         val sized = if (continuation == null) artwork.sizedRead(ArtworkSurface.BROWSE) else null
@@ -130,14 +127,10 @@ class CatalogRepository(
             yearMax = yearMax,
             queryGroups = queryGroups,
             match = match,
-            group = group,
         )
 
         // Only the unfiltered, first-page default browse of a single library is
         // cached for offline (every request-shaping param must be at its default).
-        // A box set library's default browse is grouped; its grouped page is
-        // kept apart from the plain one, so a library whose box sets turn off
-        // never serves box set cards offline.
         val cacheableLibraryId = libraryId?.takeIf {
             continuation == null &&
                 query == null && genre == null && contentRating == null &&
@@ -150,13 +143,13 @@ class CatalogRepository(
         if (result is ApiResult.Success) {
             if (sized?.cacheable == true) {
                 writeIfIdentityUnchanged(requestIdentityGeneration, artworkFingerprint) { cacheWriteLease ->
-                    catalogCache.cacheDefaultLibraryPage(cacheableLibraryId, result.data, cacheWriteLease, group)
+                    catalogCache.cacheDefaultLibraryPage(cacheableLibraryId, result.data, cacheWriteLease)
                 }
             }
             return result
         }
         if (result.canServeCache()) {
-            catalogCache.getCachedDefaultLibraryPage(cacheableLibraryId, group)?.let { return ApiResult.Success(it.copy(hasMore = false, continuation = null)) }
+            catalogCache.getCachedDefaultLibraryPage(cacheableLibraryId)?.let { return ApiResult.Success(it.copy(hasMore = false, continuation = null)) }
         }
         return result
     }

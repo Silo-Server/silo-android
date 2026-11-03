@@ -1,11 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.library
 
 import org.siloserver.silo.model.section.ResolvedSection
-import org.siloserver.silo.model.catalog.CatalogBoxSet
-import org.siloserver.silo.model.catalog.boxSetCard
-import org.siloserver.silo.model.catalog.boxSetFilmCount
-import org.siloserver.silo.model.catalog.cardCaption
-import org.siloserver.silo.model.catalog.watchedFraction
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -111,10 +106,7 @@ fun TvLibraryDetailScreen(
     libraryTitle: String,
     libraryType: String,
     mediaScope: String? = null,
-    /** Browse with box set cards in place of a TMDB collection's movies. */
-    boxSetsEnabled: Boolean = false,
     onItemClick: (contentId: String) -> Unit,
-    onBoxSetClick: (CatalogBoxSet) -> Unit = {},
     onCollectionClick: (collectionId: String, title: String, isUserCollection: Boolean) -> Unit,
     /** Opens a Recommended row's full page from its "Explore all" card. */
     onExploreSection: ((ResolvedSection) -> Unit)? = null,
@@ -132,17 +124,11 @@ fun TvLibraryDetailScreen(
     // Plays the first pick of a shuffle started from the Library tab.
     onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: TvLibraryDetailViewModel = koinViewModel(
-        // Turning box sets on or off rebuilds the browse, which groups differently.
-        key = "library-$libraryId-${mediaScope.orEmpty()}${if (boxSetsEnabled) "-box-sets" else ""}",
-        parameters = { parametersOf(libraryId, libraryTitle, libraryType, mediaScope, boxSetsEnabled) },
+        key = "library-$libraryId-${mediaScope.orEmpty()}",
+        parameters = { parametersOf(libraryId, libraryTitle, libraryType, mediaScope) },
     ),
 ) {
     val state by viewModel.uiState.collectAsState()
-    // A browse grid card is a title or, in a box set library, a box set.
-    val openBrowseItem: (String) -> Unit = { contentId ->
-        val boxSet = state.browseItems.firstOrNull { it.contentId == contentId }?.boxSetCard
-        if (boxSet != null) onBoxSetClick(boxSet) else onItemClick(contentId)
-    }
     val shuffleLauncher = org.siloserver.silo.common.ui.rememberShuffleLauncher(
         org.koin.compose.koinInject(),
         onShuffleStarted,
@@ -191,7 +177,7 @@ fun TvLibraryDetailScreen(
             // control row over the grid, with the A–Z rail always on.
             TvLibraryTab.Browse -> LibraryTab(
                 state = state,
-                onItemClick = openBrowseItem,
+                onItemClick = onItemClick,
                 onNamePrefixChanged = viewModel::onNamePrefixChanged,
                 onGenreChanged = viewModel::onGenreChanged,
                 onLoadMore = viewModel::loadMoreBrowse,
@@ -207,7 +193,7 @@ fun TvLibraryDetailScreen(
             )
             TvLibraryTab.Genres -> LibraryTab(
                 state = state,
-                onItemClick = openBrowseItem,
+                onItemClick = onItemClick,
                 onNamePrefixChanged = viewModel::onNamePrefixChanged,
                 onGenreChanged = viewModel::onGenreChanged,
                 onLoadMore = viewModel::loadMoreBrowse,
@@ -217,7 +203,7 @@ fun TvLibraryDetailScreen(
             )
             TvLibraryTab.Alphabet -> LibraryTab(
                 state = state,
-                onItemClick = openBrowseItem,
+                onItemClick = onItemClick,
                 onNamePrefixChanged = viewModel::onNamePrefixChanged,
                 onGenreChanged = viewModel::onGenreChanged,
                 onLoadMore = viewModel::loadMoreBrowse,
@@ -228,7 +214,7 @@ fun TvLibraryDetailScreen(
             )
             TvLibraryTab.RecentlyAdded -> LibraryTab(
                 state = state,
-                onItemClick = openBrowseItem,
+                onItemClick = onItemClick,
                 onNamePrefixChanged = viewModel::onNamePrefixChanged,
                 onGenreChanged = viewModel::onGenreChanged,
                 onLoadMore = viewModel::loadMoreBrowse,
@@ -248,7 +234,7 @@ fun TvLibraryDetailScreen(
                 } else {
                     LibraryTab(
                         state = state,
-                        onItemClick = openBrowseItem,
+                        onItemClick = onItemClick,
                         onNamePrefixChanged = viewModel::onNamePrefixChanged,
                         onGenreChanged = viewModel::onGenreChanged,
                         onLoadMore = viewModel::loadMoreBrowse,
@@ -271,7 +257,7 @@ fun TvLibraryDetailScreen(
                 } else {
                     LibraryTab(
                         state = state,
-                        onItemClick = openBrowseItem,
+                        onItemClick = onItemClick,
                         onNamePrefixChanged = viewModel::onNamePrefixChanged,
                         onGenreChanged = viewModel::onGenreChanged,
                         onLoadMore = viewModel::loadMoreBrowse,
@@ -703,20 +689,13 @@ private fun LibraryGrid(
                             }
                         }
                     }
-                    // A box set card opens the box set and has no item menu.
-                    val boxSet = item.boxSetCard
                     TvMediaCard(
                         title = item.title,
-                        posterUrl = item.posterUrl ?: boxSet?.posterUrl,
-                        posterThumbhash = item.posterThumbhash ?: boxSet?.posterThumbhash,
+                        posterUrl = item.posterUrl,
+                        posterThumbhash = item.posterThumbhash,
                         year = item.year.takeIf { it > 0 },
-                        userState = userState.takeIf { boxSet == null },
-                        progress = boxSet?.watchedFraction,
-                        mediaType = if (boxSet != null) "movie" else item.type,
-                        badge = if (boxSet != null) "Box set" else null,
-                        cornerLabel = boxSet?.let { boxSetFilmCount(it.movieCount) },
-                        caption = boxSet?.cardCaption(),
-                        sleeves = org.siloserver.silo.tv.ui.theme.BoxSetSleeves.takeIf { boxSet != null },
+                        userState = userState,
+                        mediaType = item.type,
                         width = TvCardWidth,
                         fillWidth = true,
                         onClick = { onItemClick(item.contentId) },
@@ -724,8 +703,8 @@ private fun LibraryGrid(
                         modifier = Modifier
                             .fillMaxWidth()
                             .onFocusChanged { onItemFocused(index, it.hasFocus) },
-                        overlay = org.siloserver.silo.overlays.OverlayDataExtractor.fromBrowseItem(item).takeIf { boxSet == null },
-                        actions = if (boxSet != null) org.siloserver.silo.tv.ui.components.TvMediaCardActions() else actions,
+                        overlay = org.siloserver.silo.overlays.OverlayDataExtractor.fromBrowseItem(item),
+                        actions = actions,
                     )
                 }
             }

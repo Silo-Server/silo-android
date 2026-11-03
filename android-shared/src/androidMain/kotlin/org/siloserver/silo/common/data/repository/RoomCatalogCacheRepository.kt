@@ -63,11 +63,10 @@ class RoomCatalogCacheRepository(
         libraryId: Int,
         response: CatalogResponse,
         lease: CatalogCacheWriteLease,
-        group: String?,
-    ) = putArtwork(libraryPrefix(libraryId, group), ArtworkSurface.BROWSE, json.encodeToString(response), lease)
+    ) = putArtwork(libraryPrefix(libraryId), ArtworkSurface.BROWSE, json.encodeToString(response), lease)
 
-    override suspend fun getCachedDefaultLibraryPage(libraryId: Int, group: String?): CatalogResponse? =
-        getArtwork(libraryPrefix(libraryId, group), ArtworkSurface.BROWSE)
+    override suspend fun getCachedDefaultLibraryPage(libraryId: Int): CatalogResponse? =
+        getArtwork(libraryPrefix(libraryId), ArtworkSurface.BROWSE)
             ?.let { runCatching { json.decodeFromString<CatalogResponse>(it) }.getOrNull() }
 
     override suspend fun cacheLibrarySections(libraryId: Int, sections: List<ResolvedSection>) =
@@ -221,8 +220,7 @@ class RoomCatalogCacheRepository(
         if (key != prefix) runCatching { dao.delete(owner.serverId, owner.profileId, prefix) }
     }
 
-    private fun libraryPrefix(libraryId: Int, group: String?) =
-        if (group == null) "library:$libraryId" else "library:$libraryId:group=$group"
+    private fun libraryPrefix(libraryId: Int) = "library:$libraryId"
     private fun itemDetailPrefix(contentId: String) = "item-detail:$contentId"
     private fun episodesPrefix(seriesId: String, seasonNumber: Int) = "episodes:$seriesId:$seasonNumber"
 

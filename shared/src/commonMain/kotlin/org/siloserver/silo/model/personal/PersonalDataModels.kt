@@ -106,7 +106,7 @@ data class UserLibrary(
     val type: String,
     @SerialName("sort_order") val sortOrder: Int = 0,
     @SerialName("poster_url") val posterUrl: String? = null,
-    /** Browse this library with `group=box_set`; false on servers without box sets. */
+    /** Box sets exist for this library (search, box set pages, movie rows); false on servers without box sets. */
     @SerialName("box_sets_enabled") val boxSetsEnabled: Boolean = false,
 )
 
