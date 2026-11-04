@@ -7465,7 +7465,13 @@ class TvPlayerViewModel(
             positionSeconds = state.position,
             durationSeconds = state.duration.takeIf { it > 0.0 },
         )
-        state.seriesId?.takeIf { it.isNotBlank() && contentId.isNotBlank() }?.let { seriesId ->
+        // Recorded only while the launching identity is still current, so a
+        // player left over from an earlier identity never replaces a newer return.
+        val identityGeneration = launchIdentityGeneration
+            ?.takeIf { it == identityTransitions?.generation?.value }
+        state.seriesId?.takeIf {
+            it.isNotBlank() && contentId.isNotBlank() && identityGeneration != null
+        }?.let { seriesId ->
             // The series page lands on the episode on screen (auto-advance may
             // have moved past the one it launched), or on the next one once this
             // one reached its credits or end. A shuffle's next pick is not the
@@ -7478,9 +7484,7 @@ class TvPlayerViewModel(
                     seriesId = seriesId,
                     episodeId = next?.contentId ?: contentId,
                     seasonNumber = if (next != null) next.seasonNumber else state.seasonNumber,
-                    // Recorded only while the launching identity is still current.
-                    identityGeneration = launchIdentityGeneration
-                        ?.takeIf { it == identityTransitions?.generation?.value },
+                    identityGeneration = identityGeneration,
                 ),
             )
         }
