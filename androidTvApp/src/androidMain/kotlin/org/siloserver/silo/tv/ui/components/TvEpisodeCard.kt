@@ -80,6 +80,11 @@ fun TvEpisodeCard(
     userState: org.siloserver.silo.model.catalog.MediaItemUserState? = null,
     overlay: OverlayData? = null,
     actions: TvMediaCardActions = TvMediaCardActions(),
+    /**
+     * The item the card shows. A row can keep a card while its item changes;
+     * a new item closes the menu, whose actions belong to the old one.
+     */
+    contentKey: Any? = null,
     onLongClick: (() -> Unit)? = null,
 ) {
     val overlayState = LocalCardOverlayUiState.current
@@ -89,7 +94,7 @@ fun TvEpisodeCard(
     val cardShape = TvEpisodeCardShape
     val cardFocus = siloCardDefaults(shape = cardShape)
 
-    var menuExpanded by remember { mutableStateOf(false) }
+    var menuExpanded by remember(contentKey) { mutableStateOf(false) }
 
     Column(
         modifier = modifier.width(width),

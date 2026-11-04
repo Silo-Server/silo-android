@@ -1071,6 +1071,7 @@ fun TvSkylineSectionFeed(
                                     }
                                 },
                             onExploreAllFocused = { onExploreAllFocused(section, rowIndex) },
+                            keyEpisodesBySeries = section.isTvProgressRow(),
                         )
                     }
                 }

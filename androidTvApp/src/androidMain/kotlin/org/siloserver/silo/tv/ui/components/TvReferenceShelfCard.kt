@@ -58,12 +58,17 @@ fun TvReferenceShelfCard(
     cardModifier: Modifier = Modifier,
     userState: org.siloserver.silo.model.catalog.MediaItemUserState? = null,
     actions: TvMediaCardActions = TvMediaCardActions(),
+    /**
+     * The item the card shows. A row can keep a card while its item changes;
+     * a new item closes the menu, whose actions belong to the old one.
+     */
+    contentKey: Any? = null,
     onLongClick: (() -> Unit)? = null,
 ) {
     val shape = RoundedCornerShape(12.dp)
     val focus = siloCardDefaults(shape = shape, focusedScale = 1f)
 
-    var menuExpanded by remember { mutableStateOf(false) }
+    var menuExpanded by remember(contentKey) { mutableStateOf(false) }
 
     Box(
         modifier = modifier
