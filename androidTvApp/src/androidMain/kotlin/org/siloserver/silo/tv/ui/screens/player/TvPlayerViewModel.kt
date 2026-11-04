@@ -853,6 +853,8 @@ class TvPlayerViewModel(
     private val seriesTrackChoiceWriter: org.siloserver.silo.common.settings.SeriesTrackChoiceWriter? = null,
     /** The server's seek-bar previews. Optional for the same reason. */
     trickplayManifests: org.siloserver.silo.playback.trickplay.TrickplayManifestSource? = null,
+    /** Stamps the series return with the identity generation it was recorded under. */
+    private val identityTransitions: org.siloserver.silo.network.IdentityTransitionBarrier? = null,
 ) : ViewModel() {
 
     companion object {
@@ -1759,6 +1761,9 @@ class TvPlayerViewModel(
     // ---- Next-episode auto-advance (F2) ----
     private var autoAdvanceCount: Int = launchArgs.autoAdvanceCount
     private var autoAdvanceHandled = false // once-per-item guard
+    // The credits or the end of this item was reached. Unlike autoAdvanceHandled,
+    // opening Up Next by hand or Keep Watching never sets it.
+    private var reachedCreditsOrEnd = false
     private val nextUpTransitionGate = NextUpTransitionGate()
     private var resolveNextEpisodeJob: Job? = null
     // Set when the credits/end point fired but nextEpisode hadn't resolved yet,
@@ -4764,6 +4769,7 @@ class TvPlayerViewModel(
         pendingInitialSubtitleAttempts = 0
         autoTextSubtitleSelectionAttempted = false
         autoAdvanceHandled = false
+        reachedCreditsOrEnd = false
         pendingApproachingEndVideoEnded = null
         episodeSelectionHandoffSlot.invalidate()
         _uiState.update { it.copy(contentId = newContentId, nextEpisode = null) }
@@ -5338,6 +5344,7 @@ class TvPlayerViewModel(
 
     private fun commitApproachingEnd(next: NextEpisodeState, videoEnded: Boolean) {
         autoAdvanceHandled = true
+        reachedCreditsOrEnd = true
         pendingApproachingEndVideoEnded = null
         // Threshold 0 (or less) = off: never gate, always allow auto-countdown.
         val threshold = passOutThreshold.value
@@ -5519,6 +5526,7 @@ class TvPlayerViewModel(
             autoTextSubtitleSelectionAttempted = false
             autoAdvanceCount = nextAutoAdvanceCount
             autoAdvanceHandled = false
+            reachedCreditsOrEnd = false
             pendingApproachingEndVideoEnded = null
             shuffleNextPartFileId = null
             shuffleRefreshedForPostRoll = false
@@ -7455,14 +7463,18 @@ class TvPlayerViewModel(
         )
         state.seriesId?.takeIf { it.isNotBlank() && contentId.isNotBlank() }?.let { seriesId ->
             // The series page lands on the episode on screen (auto-advance may
-            // have moved past the one it launched). Up Next showing means that
-            // episode was finished, so it lands on the one Up Next offered.
-            val next = state.nextEpisode?.takeIf { state.showNextUp || state.nextUpVideoEnded }
+            // have moved past the one it launched), or on the next one once this
+            // one reached its credits or end. A shuffle's next pick is not the
+            // series' next episode, so shuffle always lands on the one on screen.
+            val next = state.nextEpisode?.takeIf {
+                shufflePlayback == null && (reachedCreditsOrEnd || state.nextUpVideoEnded)
+            }
             TvDetailTrackSelectionSession.rememberSeriesReturn(
                 TvDetailTrackSelectionSession.SeriesReturn(
                     seriesId = seriesId,
                     episodeId = next?.contentId ?: contentId,
                     seasonNumber = if (next != null) next.seasonNumber else state.seasonNumber,
+                    identityGeneration = identityTransitions?.generation?.value,
                 ),
             )
         }

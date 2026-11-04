@@ -965,7 +965,10 @@ class TvItemDetailViewModel(
     private fun applySeriesPlaybackReturn() {
         val detail = _uiState.value.detail ?: return
         if (detail.type.lowercase() != "series") return
-        val target = TvDetailTrackSelectionSession.consumeSeriesReturn(detail.contentId) ?: return
+        val target = TvDetailTrackSelectionSession.consumeSeriesReturn(
+            detail.contentId,
+            identityTransitions.generation.value,
+        ) ?: return
         pendingReturnEpisodeId = target.episodeId
         pendingReturnSeason = target.seasonNumber
         selectPendingReturnEpisode()
@@ -3110,6 +3113,8 @@ internal object TvDetailTrackSelectionSession {
         val seriesId: String,
         val episodeId: String,
         val seasonNumber: Int?,
+        /** Identity generation it was recorded under; the page applies it only under the same one. */
+        val identityGeneration: Long?,
     )
 
     private var seriesReturn: SeriesReturn? = null
@@ -3118,9 +3123,11 @@ internal object TvDetailTrackSelectionSession {
         seriesReturn = target
     }
 
-    /** Returns the series' pending playback return once. */
-    fun consumeSeriesReturn(seriesId: String): SeriesReturn? =
-        seriesReturn?.takeIf { it.seriesId == seriesId }?.also { seriesReturn = null }
+    /** Returns the series' pending playback return once, under the generation that recorded it. */
+    fun consumeSeriesReturn(seriesId: String, identityGeneration: Long): SeriesReturn? =
+        seriesReturn
+            ?.takeIf { it.seriesId == seriesId && it.identityGeneration == identityGeneration }
+            ?.also { seriesReturn = null }
 
     /**
      * Returns the pending player-exit progress once, while retaining the

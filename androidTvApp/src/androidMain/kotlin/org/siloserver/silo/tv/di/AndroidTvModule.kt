@@ -686,6 +686,7 @@ val androidTvModule = module {
             throughputMeter = get(),
             seriesTrackChoiceWriter = get(),
             trickplayManifests = get(),
+            identityTransitions = get(),
         )
     }
 
