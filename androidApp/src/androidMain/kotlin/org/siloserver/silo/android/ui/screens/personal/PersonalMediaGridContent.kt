@@ -4,7 +4,6 @@ import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,17 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items as lazyItems
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -42,7 +31,6 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,12 +47,11 @@ import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.PosterGridSkeleton
+import org.siloserver.silo.android.ui.screens.browse.CatalogGrid
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.components.MediaCardContextMenu
-import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.WatchedBadge
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
-import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.overlays.CardOverlayVariant
 import org.siloserver.silo.common.overlays.CardOverlays
@@ -87,9 +74,6 @@ private enum class PersonalMediaType(
     Movies("Movies", "No movies", "There are no movies in this list."),
     TvShows("TV Shows", "No TV shows", "There are no TV shows in this list."),
 }
-
-private const val PersonalMediaGridRowSize = 6
-private const val PersonalMediaGridPrefetchRows = 2
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -142,14 +126,7 @@ fun FavoritesGridContent(
         onRetry = viewModel::retry,
         onRefresh = viewModel::refresh,
         onLoadMore = viewModel::loadMore,
-        itemContent = { item ->
-            MediaGridItem(
-                item = item,
-                onClick = { onItemClick(item.contentId) },
-                onFavoriteToggle = { viewModel.toggleFavorite(item.contentId) },
-                isFavorite = true,
-            )
-        },
+        onItemClick = onItemClick,
     )
 }
 
@@ -186,14 +163,7 @@ fun WatchlistGridContent(
         onRetry = viewModel::retry,
         onRefresh = viewModel::refresh,
         onLoadMore = viewModel::loadMore,
-        itemContent = { item ->
-            MediaGridItem(
-                item = item,
-                onClick = { onItemClick(item.contentId) },
-                onWatchlistToggle = { viewModel.removeFromWatchlist(item.contentId) },
-                isInWatchlist = true,
-            )
-        },
+        onItemClick = onItemClick,
     )
 }
 
@@ -218,12 +188,7 @@ fun HistoryGridContent(
         onRetry = viewModel::retry,
         onRefresh = viewModel::refresh,
         onLoadMore = viewModel::loadMore,
-        itemContent = { item ->
-            MediaGridItem(
-                item = item,
-                onClick = { onItemClick(item.contentId) },
-            )
-        },
+        onItemClick = onItemClick,
     )
 }
 
@@ -237,7 +202,7 @@ private fun PersonalMediaGridContent(
     onRetry: () -> Unit,
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
-    itemContent: @Composable (BrowseItem) -> Unit,
+    onItemClick: (String) -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     // Optional full-width row that scrolls with the grid (For You's saved-list
@@ -247,8 +212,6 @@ private fun PersonalMediaGridContent(
     header: (@Composable (PersonalListUiState) -> Unit)? = null,
     mediaType: PersonalMediaType? = null,
 ) {
-    val gridState = rememberLazyListState()
-    val heroHandoff = LocalHeroSourceHandoff.current
     val layoutDirection = LocalLayoutDirection.current
     val visibleItems = remember(state.items, mediaType) {
         when (mediaType) {
@@ -264,20 +227,6 @@ private fun PersonalMediaGridContent(
             onLoadMore()
         }
     }
-    val shouldLoadMore by remember {
-        derivedStateOf {
-            val layoutInfo = gridState.layoutInfo
-            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            lastVisible >= layoutInfo.totalItemsCount - PersonalMediaGridPrefetchRows
-        }
-    }
-
-    LaunchedEffect(shouldLoadMore, state.hasMore, state.isLoadingMore, state.isLoading) {
-        if (shouldLoadMore && state.hasMore && !state.isLoadingMore && !state.isLoading) {
-            onLoadMore()
-        }
-    }
-
     when {
         state.isLoading -> {
             // Poster-grid skeleton (not a spinner) so the list keeps its shape
@@ -329,55 +278,26 @@ private fun PersonalMediaGridContent(
                 onRefresh = onRefresh,
                 modifier = modifier.fillMaxSize(),
             ) {
-                // contentPadding goes inside the grid so items scroll edge to
-                // edge under any chrome the caller reserved space for.
-                DeferImagePresentationWhileScrolling(gridState) {
-                LazyColumn(
-                    state = gridState,
-                    contentPadding = PaddingValues(
-                        start = 16.dp + contentPadding.calculateStartPadding(layoutDirection),
-                        top = 16.dp + contentPadding.calculateTopPadding(),
-                        end = 16.dp + contentPadding.calculateEndPadding(layoutDirection),
-                        bottom = 16.dp + contentPadding.calculateBottomPadding(),
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),
-                ) {
-                    if (header != null) {
-                        item(key = "header") {
-                            header(state)
-                        }
-                    }
-                    visibleItems.chunked(PersonalMediaGridRowSize).forEachIndexed { rowIndex, rowItems ->
-                        item(key = "media-row-$rowIndex") {
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),
-                            ) {
-                                lazyItems(rowItems, key = { it.contentId }) { item ->
-                                    Box(modifier = Modifier.width(MediaGridDefaults.scaledPosterGridMinWidth)) {
-                                        itemContent(item)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (state.isLoadingMore) {
-                        item {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(24.dp),
-                                    strokeWidth = 2.dp,
-                                )
-                            }
-                        }
-                    }
-                }
-                }
+                // The library's own grid: adaptive columns, MediaCard, and
+                // load-more. contentPadding becomes insets inside the grid so
+                // items scroll edge to edge under any chrome the caller
+                // reserved space for.
+                CatalogGrid(
+                    items = visibleItems,
+                    isLoadingMore = state.isLoadingMore,
+                    hasMore = state.hasMore && !state.isLoading,
+                    onItemClick = onItemClick,
+                    onLoadMore = onLoadMore,
+                    topContentInset = contentPadding.calculateTopPadding(),
+                    bottomContentInset = contentPadding.calculateBottomPadding(),
+                    header = header?.let { content -> { content(state) } },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(
+                            start = contentPadding.calculateStartPadding(layoutDirection),
+                            end = contentPadding.calculateEndPadding(layoutDirection),
+                        ),
+                )
             }
         }
     }
