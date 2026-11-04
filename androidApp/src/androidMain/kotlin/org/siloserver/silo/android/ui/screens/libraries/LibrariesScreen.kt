@@ -120,8 +120,6 @@ import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrol
 import org.siloserver.silo.common.diagnostics.DiagnosticsListLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSurface
-import org.siloserver.silo.model.catalog.BOX_SET_GROUP
-import org.siloserver.silo.model.catalog.CatalogBoxSet
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.android.ui.screens.home.HomeSectionRow
@@ -368,12 +366,7 @@ class LibrariesViewModel(
                     ?.let(::defaultMediaScope)
                     ?.let { default -> if (selectedLibraryId == previousLibraryId) previousScope ?: default else default }
                 val selectionChanged = selectedLibraryId != previousLibraryId || mediaScope != previousScope
-                // Box sets turning on or off changes how the open library's
-                // browse groups, so it starts again from its first page.
-                val groupingChanged = !selectionChanged && !recovering &&
-                    _uiState.value.libraries.browseGroup(selectedLibraryId) != libraries.browseGroup(selectedLibraryId)
                 if (selectionChanged) resetForLibrary(selectedLibraryId, mediaScope)
-                if (groupingChanged) browseLoadedLibraryId = null
                 _uiState.update {
                     it.copy(
                         isLoadingLibraries = false,
@@ -384,8 +377,6 @@ class LibrariesViewModel(
 
                 if (selectedLibraryId != null && (reload || selectionChanged || recovering)) {
                     loadCurrentTab(selectedLibraryId, force = true)
-                } else if (selectedLibraryId != null && groupingChanged && _uiState.value.selectedTab == LibrariesSubtab.Browse) {
-                    loadCatalog(selectedLibraryId, reset = true, force = true)
                 }
             }
             is ApiResult.Error -> {
@@ -724,10 +715,8 @@ class LibrariesViewModel(
         }
         browseLoadedLibraryId = libraryId
         val requestState = _uiState.value
-        val group = requestState.libraries.browseGroup(libraryId)
         val requestIdentity = CatalogRequestIdentity(
             libraryId = libraryId,
-            group = group,
             mediaScope = requestState.mediaScope,
             browseSort = requestState.browseSort,
             selectedNamePrefix = requestState.selectedNamePrefix,
@@ -782,8 +771,6 @@ class LibrariesViewModel(
                     continuation = if (reset) null else catalogContinuation,
                     limit = pageSize,
                     namePrefix = requestState.selectedNamePrefix,
-                    // The server groups before paging, so the grid never regroups.
-                    group = group,
                     // Full facet filtering (genre/decade/rating/studio/language/...)
                     // via the shared query builder — replaces the single-genre param.
                     queryGroups = CatalogFilterQueryBuilder.buildGroups(requestState.filterState),
@@ -974,7 +961,6 @@ class LibrariesViewModel(
 
     private fun CatalogRequestIdentity.matches(state: LibrariesUiState): Boolean =
         state.selectedLibraryId == libraryId &&
-            state.libraries.browseGroup(libraryId) == group &&
             state.mediaScope == mediaScope &&
             state.browseSort == browseSort &&
             state.selectedNamePrefix == selectedNamePrefix &&
@@ -987,14 +973,8 @@ class LibrariesViewModel(
     ): Boolean =
         generation == collectionsRequestGeneration && state.selectedLibraryId == libraryId
 
-    /** A library with box sets on browses them grouped ([BOX_SET_GROUP]). */
-    private fun List<UserLibrary>.browseGroup(libraryId: Int?): String? =
-        BOX_SET_GROUP.takeIf { firstOrNull { it.id == libraryId }?.boxSetsEnabled == true }
-
     private data class CatalogRequestIdentity(
         val libraryId: Int,
-        /** Pages of one browse share a grouping; a page in another one is dropped. */
-        val group: String?,
         val mediaScope: String?,
         val browseSort: LibraryBrowseSort,
         val selectedNamePrefix: String?,
@@ -1009,7 +989,6 @@ private const val ChromeFadeDistanceDp = 80f
 @Composable
 fun LibrariesScreen(
     onItemClick: (String, Int?) -> Unit,
-    onBoxSetClick: (CatalogBoxSet) -> Unit,
     onCollectionClick: (LibraryCollection, Int, String?) -> Unit,
     /** Opens a Recommended row's full page: the row, its library, and the Movies/Series scope. */
     onExploreSection: ((ResolvedSection, Int, String?) -> Unit)? = null,
@@ -1151,7 +1130,6 @@ fun LibrariesScreen(
                             state = state,
                             topInset = topInset,
                             onItemClick = { onItemClick(it, state.selectedLibraryId) },
-                            onBoxSetClick = onBoxSetClick,
                             onRetry = viewModel::retryCurrentTab,
                             onLoadMore = viewModel::loadMoreCatalog,
                             onSortChanged = viewModel::selectBrowseSort,
@@ -1304,7 +1282,6 @@ private fun BrowseTabContent(
     state: LibrariesUiState,
     topInset: Dp,
     onItemClick: (String) -> Unit,
-    onBoxSetClick: (CatalogBoxSet) -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onSortChanged: (LibraryBrowseSort) -> Unit,
@@ -1404,7 +1381,6 @@ private fun BrowseTabContent(
                     isLoadingMore = state.isLoadingMoreCatalog,
                     hasMore = state.catalogHasMore,
                     onItemClick = onItemClick,
-                    onBoxSetClick = onBoxSetClick,
                     onLoadMore = onLoadMore,
                     // Date sorts surface the sorted-by date under each card
                     // (mirrors the standalone BrowseScreen), Jim QA 2026-07-09.

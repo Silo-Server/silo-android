@@ -7,10 +7,7 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.test.runTest
-import org.siloserver.silo.model.catalog.BOX_SET_GROUP
-import org.siloserver.silo.model.catalog.CatalogBoxSet
 import org.siloserver.silo.model.catalog.CatalogBoxSetDetail
-import org.siloserver.silo.model.catalog.boxSetCard
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.api.CatalogApi
@@ -27,47 +24,6 @@ class BoxSetsV2Test {
     }) { install(ContentNegotiation) { json(SiloJson) } }
 
     data class HttpRequestDataView(val method: HttpMethod, val path: String, val parameters: Parameters)
-
-    @Test fun groupedBrowseSendsGroupAndDecodesBoxSetCards() = runTest {
-        val seen = mutableListOf<HttpRequestDataView>()
-        val c = client {
-            seen += it
-            """{"items":[{"content_id":"box_set:1241","type":"box_set","title":"Harry Potter Collection","box_set":{$boxSet}},""" +
-                """{"content_id":"m1","type":"movie","title":"Dune"}],"page":{"has_more":false},"total":2,"total_exact":true,"window_cursor":"w"}"""
-        }
-        try {
-            val repository = CatalogRepository(CatalogApi(c))
-            val page = assertIs<ApiResult.Success<*>>(repository.browse(libraryId = 3, group = BOX_SET_GROUP)).data
-                as org.siloserver.silo.model.catalog.CatalogResponse
-            assertEquals("/api/v2/catalog", seen.single().path)
-            assertEquals("box_set", seen.single().parameters["group"])
-            assertEquals("3", seen.single().parameters["library_id"])
-            val card = assertNotNull(page.items[0].boxSetCard)
-            assertEquals(CatalogBoxSet("1241", "3", "Harry Potter Collection", "Eight films.", "https://img/p", "ph",
-                movieCount = 8, playedCount = 5, firstYear = 2001, lastYear = 2011), card)
-            assertNull(page.items[1].boxSetCard)
-            // A library without box sets browses exactly as before: no group sent.
-            repository.browse(libraryId = 3)
-            assertNull(seen.last().parameters["group"])
-        } finally { c.close() }
-    }
-
-    @Test fun groupedStructuredQueryCarriesGroupInTheBody() = runTest {
-        var body: String? = null
-        val c = HttpClient(MockEngine { request ->
-            assertEquals("/api/v2/catalog/query", request.url.encodedPath)
-            body = (request.body as io.ktor.http.content.TextContent).text
-            respond("""{"items":[],"page":{"has_more":false},"total":0,"total_exact":true,"window_cursor":"w"}""",
-                headers = headersOf(HttpHeaders.ContentType, "application/json"))
-        }) { install(ContentNegotiation) { json(SiloJson) } }
-        try {
-            val groups = listOf(org.siloserver.silo.model.catalog.CatalogQueryGroup("all",
-                listOf(org.siloserver.silo.model.catalog.CatalogQueryRule("genre", "contains", "Fantasy"))))
-            assertIs<ApiResult.Success<*>>(CatalogRepository(CatalogApi(c)).browse(libraryId = 3, queryGroups = groups, group = BOX_SET_GROUP))
-            assertEquals("box_set", SiloJson.parseToJsonElement(body!!).let { (it as kotlinx.serialization.json.JsonObject)["group"] }
-                ?.let { (it as kotlinx.serialization.json.JsonPrimitive).content })
-        } finally { c.close() }
-    }
 
     @Test fun boxSetReadNamesItsLibraryAndKeepsCollectionOrder() = runTest {
         val seen = mutableListOf<HttpRequestDataView>()
