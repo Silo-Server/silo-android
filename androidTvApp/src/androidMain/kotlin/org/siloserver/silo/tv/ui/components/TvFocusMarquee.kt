@@ -292,8 +292,12 @@ private fun TvMarqueeBlock(
         // Reserve the detail row before the async item-detail response lands.
         // The real line fades over this fixed slot, so the bottom-anchored
         // title/meta/synopsis never jump upward on a cold first focus.
+        // The lift sits on the slot, not the Text: Crossfade draws each line
+        // in an alpha layer clipped to its bounds, which would cut the top
+        // off a Text shifted above them for the whole fade.
         Box(
             modifier = Modifier
+                .offset(y = (-4).dp)
                 .height(MarqueeDetailLineHeight)
                 .widthIn(max = MarqueeSynopsisMaxWidth),
             contentAlignment = Alignment.TopStart,
@@ -311,9 +315,7 @@ private fun TvMarqueeBlock(
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .offset(y = (-4).dp)
-                            .widthIn(max = MarqueeSynopsisMaxWidth),
+                        modifier = Modifier.widthIn(max = MarqueeSynopsisMaxWidth),
                     )
                 }
             }
