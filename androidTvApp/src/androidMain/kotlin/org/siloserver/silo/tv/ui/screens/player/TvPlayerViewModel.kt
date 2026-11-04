@@ -853,6 +853,8 @@ class TvPlayerViewModel(
     private val seriesTrackChoiceWriter: org.siloserver.silo.common.settings.SeriesTrackChoiceWriter? = null,
     /** The server's seek-bar previews. Optional for the same reason. */
     trickplayManifests: org.siloserver.silo.playback.trickplay.TrickplayManifestSource? = null,
+    /** Stamps the series return with the identity generation it was recorded under. */
+    private val identityTransitions: org.siloserver.silo.network.IdentityTransitionBarrier? = null,
 ) : ViewModel() {
 
     companion object {
@@ -1759,6 +1761,11 @@ class TvPlayerViewModel(
     // ---- Next-episode auto-advance (F2) ----
     private var autoAdvanceCount: Int = launchArgs.autoAdvanceCount
     private var autoAdvanceHandled = false // once-per-item guard
+    // The credits or the end of this item was reached. Unlike autoAdvanceHandled,
+    // opening Up Next by hand or Keep Watching never sets it.
+    private var reachedCreditsOrEnd = false
+    // The identity generation this player was launched under.
+    private val launchIdentityGeneration: Long? = identityTransitions?.generation?.value
     private val nextUpTransitionGate = NextUpTransitionGate()
     private var resolveNextEpisodeJob: Job? = null
     // Set when the credits/end point fired but nextEpisode hadn't resolved yet,
@@ -4764,6 +4771,7 @@ class TvPlayerViewModel(
         pendingInitialSubtitleAttempts = 0
         autoTextSubtitleSelectionAttempted = false
         autoAdvanceHandled = false
+        reachedCreditsOrEnd = false
         pendingApproachingEndVideoEnded = null
         episodeSelectionHandoffSlot.invalidate()
         _uiState.update { it.copy(contentId = newContentId, nextEpisode = null) }
@@ -5246,6 +5254,9 @@ class TvPlayerViewModel(
         // (it would silently leave/desync the room). Mirrors the remote-control
         // transport gate.
         if (roomId != null) return
+        // Recorded before the once-per-item guard below, which Keep Watching on
+        // a hand-opened Up Next also sets.
+        reachedCreditsOrEnd = true
         if (shufflePlayback != null) {
             // A multi-part pick plays its later parts before the shuffle moves on.
             shuffleNextPartFileId?.let { fileId ->
@@ -5519,6 +5530,7 @@ class TvPlayerViewModel(
             autoTextSubtitleSelectionAttempted = false
             autoAdvanceCount = nextAutoAdvanceCount
             autoAdvanceHandled = false
+            reachedCreditsOrEnd = false
             pendingApproachingEndVideoEnded = null
             shuffleNextPartFileId = null
             shuffleRefreshedForPostRoll = false
@@ -7453,6 +7465,29 @@ class TvPlayerViewModel(
             positionSeconds = state.position,
             durationSeconds = state.duration.takeIf { it > 0.0 },
         )
+        // Recorded only while the launching identity is still current, so a
+        // player left over from an earlier identity never replaces a newer return.
+        val identityGeneration = launchIdentityGeneration
+            ?.takeIf { it == identityTransitions?.generation?.value }
+        state.seriesId?.takeIf {
+            it.isNotBlank() && contentId.isNotBlank() && identityGeneration != null
+        }?.let { seriesId ->
+            // The series page lands on the episode on screen (auto-advance may
+            // have moved past the one it launched), or on the next one once this
+            // one reached its credits or end. A shuffle's next pick is not the
+            // series' next episode, so shuffle always lands on the one on screen.
+            val next = state.nextEpisode?.takeIf {
+                shufflePlayback == null && (reachedCreditsOrEnd || state.nextUpVideoEnded)
+            }
+            TvDetailTrackSelectionSession.rememberSeriesReturn(
+                TvDetailTrackSelectionSession.SeriesReturn(
+                    seriesId = seriesId,
+                    episodeId = next?.contentId ?: contentId,
+                    seasonNumber = if (next != null) next.seasonNumber else state.seasonNumber,
+                    identityGeneration = identityGeneration,
+                ),
+            )
+        }
         subtitleTransactions.invalidate()
         playbackMutationFence.invalidateAll()
         prepareSessionExit()

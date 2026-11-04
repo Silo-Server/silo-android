@@ -953,7 +953,42 @@ class TvItemDetailViewModel(
         // a pick; the series refresh keeps the loaded episode detail, so
         // re-read it.
         if (nextUpPlayed || pickedBefore.isNotEmpty()) refreshNextUpPlaybackDetail()
+        applySeriesPlaybackReturn()
         quietRefresh()
+    }
+
+    /**
+     * Back from playing this series: select the episode the player handed back
+     * (tvOS `SeriesPlaybackReturn`) — the one playback ended on, or the next
+     * one when it was finished.
+     */
+    private fun applySeriesPlaybackReturn() {
+        val detail = _uiState.value.detail ?: return
+        if (detail.type.lowercase() != "series") return
+        val target = TvDetailTrackSelectionSession.consumeSeriesReturn(
+            detail.contentId,
+            identityTransitions.generation.value,
+        ) ?: return
+        pendingReturnEpisodeId = target.episodeId
+        pendingReturnSeason = target.seasonNumber
+        selectPendingReturnEpisode()
+    }
+
+    /** Selects [pendingReturnEpisodeId] once its season is on the page. */
+    private fun selectPendingReturnEpisode() {
+        val id = pendingReturnEpisodeId ?: return
+        val state = _uiState.value
+        if ((state.carouselEpisodes + state.episodes).none { it.contentId == id }) {
+            val season = pendingReturnSeason
+            if (season != null && season != state.selectedSeason) {
+                onSeasonSelected(season)
+                // Selecting a season drops a pending return; this one is ours.
+                pendingReturnEpisodeId = id
+            }
+            return
+        }
+        onSeriesEpisodeActivated(id)
+        _uiState.update { it.copy(carouselJump = TvEpisodeCarouselJump(id, ++carouselJumpRevision)) }
     }
 
     /**
@@ -1638,6 +1673,7 @@ class TvItemDetailViewModel(
         if (_uiState.value.selectedSeason == seasonNumber) return
         seasonSelectionGeneration += 1
         pendingCarouselEdge = null
+        pendingReturnEpisodeId = null
         pendingCarouselSeasonJump = seasonNumber
         // A focused episode belongs to the old season. The newly loaded rail
         // chooses its own suggested/current episode, exactly like tvOS.
@@ -1673,6 +1709,7 @@ class TvItemDetailViewModel(
             (state.carouselEpisodes.ifEmpty { state.episodes }).firstOrNull { it.contentId == id }
         }
         pendingCarouselEdge = null
+        pendingReturnEpisodeId = null
         if (active != null) {
             pendingCarouselSeasonJump = null
             _uiState.update { it.copy(carouselJump = null) }
@@ -1741,6 +1778,7 @@ class TvItemDetailViewModel(
                 }
             }
         }
+        selectPendingReturnEpisode()
         prefetchCarouselNeighbors()
     }
 
@@ -1887,6 +1925,9 @@ class TvItemDetailViewModel(
     private var quietPlaybackReturn: TvDetailTrackSelectionSession.Saved? = null
     private var nextUpDetailJob: Job? = null
     private var activeSeriesEpisodeContentId: String? = null
+    /** Episode a playback return selects once its season loads, and that season. */
+    private var pendingReturnEpisodeId: String? = null
+    private var pendingReturnSeason: Int? = null
     // A seasons refresh may complete after the viewer has already changed the
     // selected chip. Preserve that newer choice instead of replaying the
     // refresh request's initial display plan.
@@ -3066,6 +3107,27 @@ internal object TvDetailTrackSelectionSession {
     }
 
     fun recall(contentId: String): Saved? = byContent[contentId]
+
+    /** The episode a series page selects when its playback closes. */
+    internal data class SeriesReturn(
+        val seriesId: String,
+        val episodeId: String,
+        val seasonNumber: Int?,
+        /** Identity generation it was recorded under; the page applies it only under the same one. */
+        val identityGeneration: Long?,
+    )
+
+    private var seriesReturn: SeriesReturn? = null
+
+    fun rememberSeriesReturn(target: SeriesReturn) {
+        seriesReturn = target
+    }
+
+    /** Returns the series' pending playback return once, under the generation that recorded it. */
+    fun consumeSeriesReturn(seriesId: String, identityGeneration: Long): SeriesReturn? =
+        seriesReturn
+            ?.takeIf { it.seriesId == seriesId && it.identityGeneration == identityGeneration }
+            ?.also { seriesReturn = null }
 
     /**
      * Returns the pending player-exit progress once, while retaining the
