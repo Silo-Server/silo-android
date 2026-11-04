@@ -587,7 +587,17 @@ class ProfileSelectionViewModel(
             }
             return
         }
-        viewModelScope.launch { selectProfile(profile.id, expectedScope = profileRepository.captureIdentityScope()) }
+        // The tile is the open account's cached copy: commit it only under
+        // that account. The drawn list can lag a switch, and the scope is read
+        // after this tap, so check the account on both sides of that read.
+        val accountId = registry?.activeAccountId?.value
+        val openAccountCached = registry?.activeAccount?.value?.cachedProfiles
+        if (registry != null && openAccountCached.orEmpty().none { it.id == profile.id }) return
+        viewModelScope.launch {
+            val scope = profileRepository.captureIdentityScope()
+            if (registry?.activeAccountId?.value != accountId) return@launch
+            selectProfile(profile.id, expectedScope = scope)
+        }
     }
 
     fun onPasswordChangeConsumed() {

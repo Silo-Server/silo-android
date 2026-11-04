@@ -186,9 +186,12 @@ class OrphanedServerDataPurger(
             .forEach { account ->
                 runCatching {
                     // Files first: once the rows say they belong to the account,
-                    // its lookups must already find the files they point at.
-                    storage.adoptLegacyFiles(account.serverId, account.localAccountId)
-                    purgeDao.adoptLegacyRows(account.serverId, account.localAccountId)
+                    // its lookups must already find the files they point at. No
+                    // recorded owner (or another one) leaves the rows for a
+                    // later pass to retry.
+                    if (storage.adoptLegacyFiles(account.serverId, account.localAccountId)) {
+                        purgeDao.adoptLegacyRows(account.serverId, account.localAccountId)
+                    }
                 }.onFailure { Log.w(TAG, "legacy data adoption failed for an account", it) }
             }
     }
