@@ -7453,6 +7453,19 @@ class TvPlayerViewModel(
             positionSeconds = state.position,
             durationSeconds = state.duration.takeIf { it > 0.0 },
         )
+        state.seriesId?.takeIf { it.isNotBlank() && contentId.isNotBlank() }?.let { seriesId ->
+            // The series page lands on the episode on screen (auto-advance may
+            // have moved past the one it launched). Up Next showing means that
+            // episode was finished, so it lands on the one Up Next offered.
+            val next = state.nextEpisode?.takeIf { state.showNextUp || state.nextUpVideoEnded }
+            TvDetailTrackSelectionSession.rememberSeriesReturn(
+                TvDetailTrackSelectionSession.SeriesReturn(
+                    seriesId = seriesId,
+                    episodeId = next?.contentId ?: contentId,
+                    seasonNumber = if (next != null) next.seasonNumber else state.seasonNumber,
+                ),
+            )
+        }
         subtitleTransactions.invalidate()
         playbackMutationFence.invalidateAll()
         prepareSessionExit()
