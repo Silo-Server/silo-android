@@ -19,6 +19,13 @@ internal enum class TvPlayerRemoteKeyAction {
      * subtitles), matching tvOS `preferredPlaybackHUDTab`.
      */
     OpenPlaybackHud,
+    /**
+     * The remote's Stop key. Ends playback and leaves the player, the same as
+     * Back from a paused frame. Left unmapped, the key reaches the Media3
+     * session, which calls `Player.stop()`: the picture freezes like a pause
+     * and Play can no longer resume because nothing prepares the player again.
+     */
+    Stop,
     // Unconsumed media-key events reach the system media-key fallback, which
     // toggles the Media3 session a second time — so both the UP half and any
     // auto-repeat DOWN events must be swallowed here without acting on them.
@@ -113,6 +120,15 @@ internal fun tvPlayerRemoteKeyAction(
         action == KeyEvent.ACTION_DOWN && repeatCount == 0 -> TvPlayerRemoteKeyAction.SkipForward
         else -> TvPlayerRemoteKeyAction.ConsumeOnly
     }
+
+    // Acts on the first DOWN; the UP half and auto-repeats are consumed so the
+    // Media3 session never sees the key and idles the player underneath the exit.
+    KeyEvent.KEYCODE_MEDIA_STOP ->
+        if (action == KeyEvent.ACTION_DOWN && repeatCount == 0) {
+            TvPlayerRemoteKeyAction.Stop
+        } else {
+            TvPlayerRemoteKeyAction.ConsumeOnly
+        }
 
     KeyEvent.KEYCODE_MENU,
     KeyEvent.KEYCODE_SETTINGS,
