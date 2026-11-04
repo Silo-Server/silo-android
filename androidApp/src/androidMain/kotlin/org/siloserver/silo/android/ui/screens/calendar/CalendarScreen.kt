@@ -85,7 +85,7 @@ import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.model.calendar.CalendarBadge
+import org.siloserver.silo.model.calendar.calendarBadgeLabel
 import org.siloserver.silo.model.calendar.CalendarFilter
 import org.siloserver.silo.model.calendar.CalendarItem
 import org.siloserver.silo.viewmodel.CalendarUiState
@@ -710,7 +710,7 @@ private fun CalendarEventCard(
             )
 
             // Badge pills, top-leading. overlayPadding (phone) = 6.
-            val badges = item.badges.mapNotNull(::badgeLabel)
+            val badges = item.badges.mapNotNull(::calendarBadgeLabel)
             if (badges.isNotEmpty()) {
                 Column(
                     modifier = Modifier
@@ -879,15 +879,6 @@ private fun EmptyState(filter: String, onSelectFilter: (String) -> Unit) {
             }
         }
     }
-}
-
-private fun badgeLabel(badge: String): String? = when (badge) {
-    // Same labels as web, iOS, and tvOS. PREMIERE, not SERIES PREMIERE, fits a
-    // poster badge, and NEW SEASON already marks season premieres.
-    CalendarBadge.SeriesPremiere -> "PREMIERE"
-    CalendarBadge.SeasonPremiere -> "NEW SEASON"
-    CalendarBadge.Finale -> "FINALE"
-    else -> null
 }
 
 /** iOS CalendarViewModel.sectionHeading: Today / Tomorrow / "Monday, June 9". */

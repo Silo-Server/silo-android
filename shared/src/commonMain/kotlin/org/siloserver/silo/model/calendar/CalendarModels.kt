@@ -24,6 +24,26 @@ object CalendarBadge {
     const val SeriesPremiere = "series_premiere"
     const val SeasonPremiere = "season_premiere"
     const val Finale = "finale"
+
+    /** A movie listed on its digital release (`/api/v2` only). */
+    const val Digital = "digital"
+
+    /** A movie listed on its physical (disc) release (`/api/v2` only). */
+    const val Physical = "physical"
+}
+
+/**
+ * Poster pill label for a calendar badge, or null to hide a badge this client
+ * does not know. Same labels as web, iOS, and tvOS. PREMIERE, not SERIES
+ * PREMIERE, fits a poster badge, and NEW SEASON already marks season premieres.
+ */
+fun calendarBadgeLabel(badge: String): String? = when (badge) {
+    CalendarBadge.SeriesPremiere -> "PREMIERE"
+    CalendarBadge.SeasonPremiere -> "NEW SEASON"
+    CalendarBadge.Finale -> "FINALE"
+    CalendarBadge.Digital -> "DIGITAL"
+    CalendarBadge.Physical -> "PHYSICAL"
+    else -> null
 }
 
 @Serializable
