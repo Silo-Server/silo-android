@@ -8,6 +8,22 @@ import kotlin.test.assertNull
 class TvPlayerRemoteKeyActionTest {
 
     @Test
+    fun mediaStopExitsOnFirstDownAndConsumesTheRestOfThePress() {
+        assertEquals(
+            TvPlayerRemoteKeyAction.Stop,
+            tvPlayerRemoteKeyAction(KeyEvent.KEYCODE_MEDIA_STOP, KeyEvent.ACTION_DOWN, repeatCount = 0),
+        )
+        assertEquals(
+            TvPlayerRemoteKeyAction.ConsumeOnly,
+            tvPlayerRemoteKeyAction(KeyEvent.KEYCODE_MEDIA_STOP, KeyEvent.ACTION_DOWN, repeatCount = 1),
+        )
+        assertEquals(
+            TvPlayerRemoteKeyAction.ConsumeOnly,
+            tvPlayerRemoteKeyAction(KeyEvent.KEYCODE_MEDIA_STOP, KeyEvent.ACTION_UP, repeatCount = 0),
+        )
+    }
+
+    @Test
     fun mediaPlayPauseKeysTogglePlaybackOnKeyDown() {
         listOf(
             KeyEvent.KEYCODE_MEDIA_PLAY,

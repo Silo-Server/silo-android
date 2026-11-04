@@ -1108,6 +1108,17 @@ fun TvPlayerScreen(
                     return@handler true
                 }
             }
+            // Stop leaves the player from every state, overlays and loading
+            // included, so no Stop press can reach the Media3 session, whose
+            // Player.stop() idles the player and leaves Play unable to resume.
+            // In a party it opens the party panel, like Back: a local stop
+            // would desync the room.
+            if (event.keyCode == KeyEvent.KEYCODE_MEDIA_STOP) {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    if (watchParty != null) showPartyPanel = true else stopPlaybackAndExit()
+                }
+                return@handler true
+            }
             // Until the item's first frame there are no controls to drive, so
             // the remote does nothing but Back (the BackHandler), as during the
             // session request.
@@ -1436,7 +1447,10 @@ fun TvPlayerScreen(
                     viewModel.openHUD()
                     true
                 }
-                TvPlayerRemoteKeyAction.ConsumeOnly -> true
+                // Handled above, before the overlay and loading guards.
+                TvPlayerRemoteKeyAction.Stop,
+                TvPlayerRemoteKeyAction.ConsumeOnly,
+                -> true
                 null -> {
                     if (
                         event.action == KeyEvent.ACTION_DOWN &&
@@ -3163,7 +3177,11 @@ private fun TvPlayerIdleOverlay(
                         onOpenHUD()
                         true
                     }
-                    TvPlayerRemoteKeyAction.ConsumeOnly -> true
+                    // The activity-level remote key bridge acts on Stop before
+                    // Compose sees it; consume any copy that gets here.
+                    TvPlayerRemoteKeyAction.Stop,
+                    TvPlayerRemoteKeyAction.ConsumeOnly,
+                    -> true
                     null -> false
                 }
             },
