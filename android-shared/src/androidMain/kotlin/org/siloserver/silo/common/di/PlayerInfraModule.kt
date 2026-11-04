@@ -105,8 +105,10 @@ val playerInfraModule = module {
                 .map { it.signedInServerId() }
                 .stateIn(probeScope, SharingStarted.Eagerly, registry.activeEntry.value.signedInServerId()),
             scope = probeScope,
+            // The account is part of the profile: two accounts on one server
+            // both have a `default` profile.
             profileSwitches = registry.activeEntry
-                .map { it?.id to it?.profileId?.takeIf(String::isNotBlank) }
+                .map { entry -> entry?.id to entry?.profileId?.takeIf(String::isNotBlank)?.let { "${entry.accountId}|$it" } }
                 .distinctUntilChanged()
                 .profileSwitches(),
             localRoute = org.siloserver.silo.network.localroute.LocalRoutes.state.active,
@@ -241,7 +243,7 @@ val playerInfraModule = module {
     single<PlayerSettingsStore> {
         val registry = get<ServerRegistry>()
         val profileChangeSignal = registry.activeEntry
-            .map { it?.profileId }
+            .map { it?.accountId to it?.profileId }
             .distinctUntilChanged()
             .map { Unit }
         val serverChangeSignal = registry.activeEntry
@@ -263,6 +265,7 @@ val playerInfraModule = module {
             // server records as `device_id` for each override.
             getDeviceId = { get<DeviceMetadataProvider>().current()?.id },
             contractRevision = get(),
+            getActiveAccountId = { get<TokenManager>().getCurrentAccountId() },
         )
     }
 
@@ -293,6 +296,7 @@ val playerInfraModule = module {
             getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
             getServerUrl = { get<TokenManager>().getServerUrl() },
             getDeviceMetadata = { get<DeviceMetadataProvider>().current() },
+            getActiveAccountId = { get<TokenManager>().getCurrentAccountId() },
         )
     }
 
@@ -302,7 +306,7 @@ val playerInfraModule = module {
     single<SeekIntervalStore> {
         val registry = get<ServerRegistry>()
         val identityChanges = registry.activeEntry
-            .map { it?.url to it?.profileId }
+            .map { Triple(it?.url, it?.accountId, it?.profileId) }
             .distinctUntilChanged()
             .map { Unit }
         DefaultSeekIntervalStore(
@@ -311,6 +315,7 @@ val playerInfraModule = module {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
             getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
             getServerUrl = { get<TokenManager>().getServerUrl() },
+            getActiveAccountId = { get<TokenManager>().getCurrentAccountId() },
             identityChanges = identityChanges,
         )
     }
@@ -322,7 +327,7 @@ val playerInfraModule = module {
     // Add Server → sign in → pick profile clears nothing on its own.
     single<EpisodeSpoilerStore> {
         val identityChanges = get<ServerRegistry>().activeEntry
-            .map { it?.url to it?.profileId }
+            .map { Triple(it?.url, it?.accountId, it?.profileId) }
             .distinctUntilChanged()
             .map { Unit }
         DefaultEpisodeSpoilerStore(
@@ -332,6 +337,7 @@ val playerInfraModule = module {
             getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
             getServerUrl = { get<TokenManager>().getServerUrl() },
             captureAuthority = { get<TokenManager>().snapshotCurrentScope() },
+            getActiveAccountId = { get<TokenManager>().getCurrentAccountId() },
             identityChanges = identityChanges,
         )
     }
@@ -342,7 +348,7 @@ val playerInfraModule = module {
     single<TitleArtStore> {
         val registry = get<ServerRegistry>()
         val identityChanges = registry.activeEntry
-            .map { it?.url to it?.profileId }
+            .map { Triple(it?.url, it?.accountId, it?.profileId) }
             .distinctUntilChanged()
             .map { Unit }
         DefaultTitleArtStore(
@@ -358,7 +364,7 @@ val playerInfraModule = module {
     // continues from one detail page to the next one with the same theme.
     single {
         val identityChanges = get<ServerRegistry>().activeEntry
-            .map { it?.url to it?.profileId }
+            .map { Triple(it?.url, it?.accountId, it?.profileId) }
             .distinctUntilChanged()
             .drop(1)
             .map { Unit }
@@ -418,13 +424,14 @@ val playerInfraModule = module {
     single {
         val registry = get<ServerRegistry>()
         val profileChangeSignal = registry.activeEntry
-            .map { it?.profileId }
+            .map { it?.accountId to it?.profileId }
             .distinctUntilChanged()
             .map { Unit }
         AudiobookSettingsStore(
             context = androidContext(),
             getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
             profileChangeSignal = profileChangeSignal,
+            getActiveAccountId = { get<TokenManager>().getCurrentAccountId() },
         )
     }
 

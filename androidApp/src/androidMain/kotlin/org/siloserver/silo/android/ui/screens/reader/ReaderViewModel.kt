@@ -144,9 +144,10 @@ class ReaderViewModel(
                         ebookReaderRepository.isKindleConversionAvailable()
                     val target = chosen.promotedForKindleConversion(conversionAvailable)
                     val version = target.version
-                    val (serverId, profileId) = resolveScope()
+                    val (serverId, accountId, profileId) = resolveScope()
                     val offlineMedia = offlineMediaResolver.findLocalMedia(
                         serverId = serverId,
+                        accountId = accountId.orEmpty(),
                         profileId = profileId,
                         contentId = d.contentId,
                         requestedFileId = version.fileId,
@@ -203,9 +204,10 @@ class ReaderViewModel(
     }
 
     private suspend fun loadOfflineOnly(error: String?) {
-        val (serverId, profileId) = resolveScope()
+        val (serverId, accountId, profileId) = resolveScope()
         val candidates = offlineMediaResolver.listLocalMedia(
             serverId = serverId,
+            accountId = accountId.orEmpty(),
             profileId = profileId,
             contentId = contentId,
         )
@@ -285,14 +287,14 @@ class ReaderViewModel(
         val authority = readerAuthority
         if (authority != null) annotationMutex.withLock {
             val receipts = mutableListOf<EbookAnnotation>()
-            val (serverId, profileId) = resolveScope()
-            val pending = withContext(Dispatchers.IO) { localStateStore.listBookmarks(serverId, profileId, contentId) }
+            val (serverId, accountId, profileId) = resolveScope()
+            val pending = withContext(Dispatchers.IO) { localStateStore.listBookmarks(serverId, accountId, profileId, contentId) }
             for (bookmark in pending.filter { it.loginId == authority.loginId && it.origin == authority.scope.serverUrl }) {
                 if (bookmark.deleteETag != null) {
                     val deletion = ebookReaderRepository.deleteAnnotation(contentId,
                         bookmark.toAnnotation().copy(etag = bookmark.deleteETag), authority.scope)
                     if (deletion is ApiResult.Success || (deletion is ApiResult.Error && deletion.code == 404))
-                        bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, profileId, contentId, bookmark.id) }
+                        bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, accountId, profileId, contentId, bookmark.id) }
                     else _uiState.update { it.copy(syncError = "Bookmark deletion needs a reload before retrying.") }
                     continue
                 }
@@ -300,14 +302,14 @@ class ReaderViewModel(
                     is ApiResult.Success -> {
                         if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return@withLock
                         receipts += result.data
-                        bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, profileId, contentId, bookmark.id) }
+                        bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, accountId, profileId, contentId, bookmark.id) }
                     }
                     else -> _uiState.update { it.copy(syncError = "Some bookmarks are local. Reopen the reader to retry sync.") }
                 }
             }
             val annotations = ebookReaderRepository.listAnnotations(contentId, authority.scope)
             if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return@withLock
-            val remaining = withContext(Dispatchers.IO) { localStateStore.listBookmarks(serverId, profileId, contentId) }
+            val remaining = withContext(Dispatchers.IO) { localStateStore.listBookmarks(serverId, accountId, profileId, contentId) }
                 .filter { it.loginId == null || (it.loginId == authority.loginId && it.origin == authority.scope.serverUrl) }
                 .map { it.toAnnotation() }
             val remote = if (annotations is ApiResult.Success) annotations.data.items else receipts
@@ -325,12 +327,12 @@ class ReaderViewModel(
     }
 
     private suspend fun loadLocalReaderState(fileId: Int): InitialReaderState {
-        val (serverId, profileId) = resolveScope()
+        val (serverId, accountId, profileId) = resolveScope()
         // Reading position now comes from the Track B local projection; bookmarks
         // still live in EbookLocalStateStore.
         val progress = userItemStatePort.localEbookProgress(contentId, fileId)
         val bookmarks = withContext(Dispatchers.IO) {
-            localStateStore.listBookmarks(serverId, profileId, contentId)
+            localStateStore.listBookmarks(serverId, accountId, profileId, contentId)
         }.filter { it.loginId == null || (it.loginId == readerAuthority?.loginId && it.origin == readerAuthority?.scope?.serverUrl) }
             .map { it.toAnnotation() }
         return InitialReaderState(
@@ -350,8 +352,8 @@ class ReaderViewModel(
 
     private suspend fun loadDisplaySettings(): ReaderDisplaySettings {
         val revision = displayRevision
-        val (serverId, profileId) = resolveScope()
-        val local = withContext(Dispatchers.IO) { localStateStore.readDisplaySettings(serverId, profileId) }
+        val (serverId, accountId, profileId) = resolveScope()
+        val local = withContext(Dispatchers.IO) { localStateStore.readDisplaySettings(serverId, accountId, profileId) }
             ?: ReaderDisplaySettings()
         val authority = readerAuthority ?: return local
         val api = ebookV2 ?: return local
@@ -508,16 +510,16 @@ class ReaderViewModel(
         val normalized = settings.normalized()
         _uiState.update { it.copy(displaySettings = normalized) }
         viewModelScope.launch {
-            val (serverId, profileId) = resolveScope()
+            val (serverId, accountId, profileId) = resolveScope()
             if (authority != null) {
                 if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return@launch
                 val saved = identityTransitions?.withCurrentGeneration(authority.scope.identityGeneration) {
-                    withContext(Dispatchers.IO) { localStateStore.writeDisplaySettings(serverId, profileId, normalized) }
+                    withContext(Dispatchers.IO) { localStateStore.writeDisplaySettings(serverId, accountId, profileId, normalized) }
                     true
                 }
                 if (saved != true) return@launch
             } else if (ebookAuthorities == null) withContext(Dispatchers.IO) {
-                localStateStore.writeDisplaySettings(serverId, profileId, normalized)
+                localStateStore.writeDisplaySettings(serverId, accountId, profileId, normalized)
             }
             if (session == null && ebookV2 != null) {
                 _uiState.update { it.copy(syncError = "Reader settings are local. Reopen the reader to load server settings.") }
@@ -553,9 +555,9 @@ class ReaderViewModel(
                     _uiState.update { it.copy(syncError = "Bookmarks need a saved account and profile.") }
                     return@withLock
                 }
-                val (serverId, profileId) = resolveScope()
+                val (serverId, accountId, profileId) = resolveScope()
                 val local = try {
-                    bookmarkWrite(authority) { localStateStore.addBookmark(serverId, profileId, contentId, location,
+                    bookmarkWrite(authority) { localStateStore.addBookmark(serverId, accountId, profileId, contentId, location,
                         loginId = authority.loginId, origin = authority.scope.serverUrl) }
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
@@ -566,7 +568,7 @@ class ReaderViewModel(
                 val result = ebookReaderRepository.createBookmark(contentId, local.id, location, authority.scope)
                 if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return@withLock
                 if (result is ApiResult.Success) {
-                    bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, profileId, contentId, local.id) }
+                    bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, accountId, profileId, contentId, local.id) }
                     _uiState.update { it.copy(bookmarks = it.bookmarks.filterNot { b -> b.id == local.id } + result.data) }
                 } else _uiState.update { it.copy(syncError = "Bookmark is local. Reopen the reader to retry sync.") }
             }
@@ -581,8 +583,8 @@ class ReaderViewModel(
                     _uiState.update { it.copy(syncError = "Bookmark deletion needs the original account and profile.") }
                     return@withLock
                 }
-                val (serverId, profileId) = resolveScope()
-                val pending = withContext(Dispatchers.IO) { localStateStore.listBookmarks(serverId, profileId, contentId) }
+                val (serverId, accountId, profileId) = resolveScope()
+                val pending = withContext(Dispatchers.IO) { localStateStore.listBookmarks(serverId, accountId, profileId, contentId) }
                     .find { it.id == bookmark.id }
                 // An uncertain create may already exist remotely. Resolve the same ID before deleting it.
                 val remote = if (pending?.loginId == authority.loginId && pending.origin == authority.scope.serverUrl && pending.deleteETag == null) {
@@ -602,7 +604,7 @@ class ReaderViewModel(
                         return@withLock
                     }
                     val saved = try {
-                        bookmarkWrite(authority) { localStateStore.markBookmarkDelete(serverId, profileId, contentId,
+                        bookmarkWrite(authority) { localStateStore.markBookmarkDelete(serverId, accountId, profileId, contentId,
                             remote.id, remote.location ?: bookmark.location.orEmpty(), authority.loginId, authority.scope.serverUrl, tag) }
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) throw e
@@ -614,18 +616,24 @@ class ReaderViewModel(
                     else ebookReaderRepository.deleteAnnotation(contentId, remote, authority.scope)
                 if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return@withLock
                 if (result is ApiResult.Success || (result is ApiResult.Error && result.code == 404)) {
-                    bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, profileId, contentId, bookmark.id) }
+                    bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, accountId, profileId, contentId, bookmark.id) }
                     _uiState.update { it.copy(bookmarks = it.bookmarks.filterNot { b -> b.id == bookmark.id }, syncError = null) }
                 } else _uiState.update { it.copy(syncError = "Bookmark was kept. Reopen the reader to reload before deleting again.") }
             }
         }
     }
 
-    private suspend fun resolveScope(): Pair<String, String> {
-        readerAuthority?.let { return it.scope.serverId to it.scope.profileId.orEmpty() }
+    /**
+     * Server, account and profile of local reader state, as one identity: the
+     * reader's pinned authority, else the active server with its account read
+     * together, before the profile read suspends.
+     */
+    private suspend fun resolveScope(): Triple<String, String?, String> {
+        readerAuthority?.let { return Triple(it.scope.serverId, it.scope.accountId ?: serverRegistry.activeAccountId.value, it.scope.profileId.orEmpty()) }
         val serverId = serverRegistry.activeServerId.value ?: DownloadEnqueuer.DEFAULT_SERVER_ID
+        val accountId = serverRegistry.activeAccountId.value
         val profileId = profileRepository.getActiveProfileId() ?: DownloadEnqueuer.DEFAULT_PROFILE_ID
-        return serverId to profileId
+        return Triple(serverId, accountId, profileId)
     }
 
     private fun OfflineMedia.toFileVersion(): FileVersion =

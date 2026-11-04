@@ -7,13 +7,15 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
-import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Inbox
+import androidx.compose.material.icons.rounded.ManageAccounts
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SwitchAccount
 import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.android.R
 import org.koin.compose.koinInject
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
 import org.siloserver.silo.common.ui.components.avatarRef
@@ -39,6 +41,9 @@ import org.siloserver.silo.network.ServerRegistry
  *
  * Sign out is gated by [SignOutConfirmDialog] — the same dialog the settings
  * Account card raises, so the confirmation does not depend on the route taken.
+ * It signs out of the active account only (multi-account spec §4.3). Switch
+ * profile opens the open account's picker; Change account (in Switch
+ * Server's old place) lists every saved server's accounts.
  */
 @Composable
 fun ProfileMenu(
@@ -46,8 +51,9 @@ fun ProfileMenu(
     onDismissRequest: () -> Unit,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
+    onChangeAccountClick: () -> Unit,
+    // True for "Sign out & remove server".
+    onSignOutClick: (removeServer: Boolean) -> Unit,
     onRequestsClick: (() -> Unit)? = null,
     onWatchPartyClick: (() -> Unit)? = null,
     // Who is signed in, for the header. Null hides the header.
@@ -56,6 +62,12 @@ fun ProfileMenu(
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
     val serverRegistry: ServerRegistry = koinInject()
     val activeServer by serverRegistry.activeEntry.collectAsState()
+    val activeAccount by serverRegistry.activeAccount.collectAsState()
+    val accounts by serverRegistry.accounts.collectAsState()
+    // The username only tells accounts apart when the server has more than one (spec §4.3).
+    val username = activeAccount?.username?.takeIf { name ->
+        name.isNotBlank() && accounts.count { it.serverId == activeServer?.id } > 1
+    }
 
     // Whether anything sits above the account actions.
     //
@@ -76,7 +88,9 @@ fun ProfileMenu(
             SiloMenuHeader(
                 title = activeProfile.name,
                 detail = activeServer?.let { server ->
-                    listOf(server.displayName, ServerBranding.hostLabel(server.url)).distinct().joinToString(" · ")
+                    listOfNotNull(username, server.displayName, ServerBranding.hostLabel(server.url))
+                        .distinct()
+                        .joinToString(" · ")
                 },
                 leading = {
                     ProfileAvatar(avatar = activeProfile.avatarRef(), name = activeProfile.name, size = 40.dp)
@@ -122,11 +136,11 @@ fun ProfileMenu(
             },
         )
         SiloMenuItem(
-            label = "Switch server",
-            icon = Icons.Rounded.Dns,
+            label = stringResource(R.string.change_account_menu),
+            icon = Icons.Rounded.ManageAccounts,
             onClick = {
                 onDismissRequest()
-                onSwitchServerClick()
+                onChangeAccountClick()
             },
         )
         SiloMenuItem(
@@ -145,8 +159,12 @@ fun ProfileMenu(
         visible = confirmSignOut,
         onConfirm = {
             confirmSignOut = false
-            onSignOutClick()
+            onSignOutClick(false)
         },
         onDismiss = { confirmSignOut = false },
+        onConfirmAndRemoveServer = {
+            confirmSignOut = false
+            onSignOutClick(true)
+        },
     )
 }

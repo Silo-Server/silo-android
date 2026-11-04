@@ -16,6 +16,7 @@ import org.siloserver.silo.repository.LibraryPlaybackPrefsRepository
 import org.siloserver.silo.repository.NotificationsRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.PlaybackRepository
+import org.siloserver.silo.repository.AccountProfilesRefresher
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.PushRegistrationRepository
 import org.siloserver.silo.repository.RecommendationRepository
@@ -92,6 +93,7 @@ val repositoryModule = module {
     }
     single { org.siloserver.silo.repository.HiddenLibrariesStore(get(), get()) }
     single { ProfileRepository(get(), get(), getOrNull(), get(), get(), get()) }
+    single { AccountProfilesRefresher(get(), get(), get()) }
     // Resolved by each Application right after startKoin (guarded there, like
     // the other starters) so a stale-profile refusal from background work
     // (downloads, outbox replay) is handled before any screen exists. Clears

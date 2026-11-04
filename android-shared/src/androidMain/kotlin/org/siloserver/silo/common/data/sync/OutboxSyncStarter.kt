@@ -42,7 +42,7 @@ class OutboxSyncStarter(
         // the actual run until the network is available.
         enqueueDrain()
 
-        // Drain when the active SCOPE changes — server or profile.
+        // Drain when the active SCOPE changes — server, account or profile.
         //
         // Profile matters as much as server and had no trigger at all. The
         // outbox is scoped by (serverId, profileId), and SyncEngine counts
@@ -52,12 +52,13 @@ class OutboxSyncStarter(
         // untouched, so the chain for the scope that still had queued work just
         // stopped: watched marks, ratings, favourites and resume positions from
         // that profile never synced again. On a TV, which is never relaunched,
-        // that is permanent and invisible.
-        val initialScope = registry.activeEntry.value?.let { it.id to it.profileId }
+        // that is permanent and invisible. An account switch on one server can
+        // keep both server and profile id (`default`), so the account counts too.
+        val initialScope = registry.activeEntry.value?.let { Triple(it.id, it.accountId, it.profileId) }
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             var previousScope = initialScope
             registry.activeEntry
-                .map { entry -> entry?.let { it.id to it.profileId } }
+                .map { entry -> entry?.let { Triple(it.id, it.accountId, it.profileId) } }
                 .collect { currentScope ->
                     if (currentScope != previousScope) {
                         previousScope = currentScope

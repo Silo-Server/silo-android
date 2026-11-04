@@ -12,6 +12,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
+import org.siloserver.silo.tv.profiles.noAccountOpenButAnotherSignedIn
 import org.siloserver.silo.tv.ui.screens.servers.TV_REMOVE_SERVER_FAILED
 import org.siloserver.silo.tv.ui.screens.servers.TvServerResolver
 import org.siloserver.silo.tv.ui.screens.servers.TvServerSwitchDestination
@@ -139,7 +140,16 @@ class TvSignOut(
             // Stale caches for a signed-out profile; the next sign-in replaces them.
         }
 
-        if (!removeServer) return TvSignOutResult.SignedOut(TvServerSwitchDestination.Login)
+        // The server stays (multi-account spec §4.4). With another account's
+        // session to go to, Change Account shows; otherwise sign-in.
+        if (!removeServer) {
+            val next = if (serverRegistry.noAccountOpenButAnotherSignedIn()) {
+                TvServerSwitchDestination.ChangeAccount
+            } else {
+                TvServerSwitchDestination.Login
+            }
+            return TvSignOutResult.SignedOut(next)
+        }
         val removal = try {
             resolver.remove(serverId)
         } catch (e: CancellationException) {

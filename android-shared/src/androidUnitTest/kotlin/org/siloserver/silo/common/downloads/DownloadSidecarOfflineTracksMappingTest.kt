@@ -37,14 +37,14 @@ class DownloadSidecarOfflineTracksMappingTest {
             ),
         )
 
-        val restored = sidecar.copy(offlineTracks = tracks).toEntity("srv", "prof").toSidecar()
+        val restored = sidecar.copy(offlineTracks = tracks).toEntity("srv", "acct", "prof").toSidecar()
 
         assertEquals(tracks, restored.offlineTracks)
     }
 
     @Test
     fun rowsWithoutOfflineTracksStillLoad() {
-        val entity = sidecar.toEntity("srv", "prof")
+        val entity = sidecar.toEntity("srv", "acct", "prof")
 
         assertNull(entity.offlineTracksJson)
         assertNull(entity.toSidecar().offlineTracks)

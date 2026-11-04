@@ -16,9 +16,17 @@ import org.siloserver.silo.repository.ProfileVerificationRecovery
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.siloserver.silo.common.ui.marquee.SignInHandoff
+import org.siloserver.silo.model.server.CachedProfile
+import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.repository.AccountProfilesRefresher
 
 data class ProfileSelectionUiState(
     val profiles: List<Profile> = emptyList(),
@@ -48,6 +56,18 @@ data class ProfileSelectionUiState(
     /** Manage mode just started for "Add profile"; the screen opens the add form and consumes this. */
     val openAddProfile: Boolean = false,
     /**
+     * The open account's last profile list (the registry's cache), drawn
+     * when the live load fails, so the picker still works when the server
+     * can't be reached.
+     */
+    val cachedProfiles: List<Profile> = emptyList(),
+    /**
+     * The open account's sign-in expired: its cached profiles are not
+     * offered (they would open an account with no session); the screen sends
+     * the person to sign in again.
+     */
+    val signInRequired: Boolean = false,
+    /**
      * The latest load found a temporary password, so the server refuses
      * profiles until it is replaced: the visible picker hands over to "Choose
      * a new password" and consumes this, keeping its loading state meanwhile.
@@ -55,13 +75,20 @@ data class ProfileSelectionUiState(
      * hands off again or shows the grid; it never waits on an earlier answer.
      */
     val requiresPasswordChange: Boolean = false,
-)
+) {
+    /** The live grid, or the cached one when the live load failed. */
+    val shownProfiles: List<Profile>
+        get() = profiles.ifEmpty { if (isLoading) emptyList() else cachedProfiles }
+}
 
 class ProfileSelectionViewModel(
     private val profileRepository: ProfileRepository,
     private val authRepository: AuthRepository? = null,
     private val consumeSkipsSingleProfile: () -> Boolean = SignInHandoff::consumeSkipsSingleProfilePicker,
     private val profileVerificationRecovery: ProfileVerificationRecovery? = null,
+    private val registry: ServerRegistry? = null,
+    private val tokenManager: TokenManager? = null,
+    private val profilesRefresher: AccountProfilesRefresher? = null,
     private val rearmSkipsSingleProfile: () -> Unit = { SignInHandoff.skipsSingleProfilePicker = true },
 ) : ViewModel() {
 
@@ -88,6 +115,54 @@ class ProfileSelectionViewModel(
         reloadWhenUpdateRequiredLifts()
         reloadWhenStaleProfileCleared()
         leaveManageModeWhenSessionEnds()
+        followOpenAccount()
+    }
+
+    /**
+     * Keeps the open account's cached profile list (drawn when the server
+     * can't be reached) and reloads the live grid when another account
+     * becomes active.
+     */
+    private fun followOpenAccount() {
+        val registry = registry ?: return
+        viewModelScope.launch {
+            registry.activeAccount
+                .map { account ->
+                    val expired = account?.needsSignIn == true
+                    expired to if (account == null || expired) emptyList() else account.cachedProfiles.map { it.toProfile() }
+                }
+                .distinctUntilChanged()
+                .collect { (expired, cached) ->
+                    _uiState.update { it.copy(cachedProfiles = cached, signInRequired = expired) }
+                }
+        }
+        viewModelScope.launch {
+            combine(registry.activeServerId, registry.activeAccountId) { server, account -> server to account }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect {
+                    // The previous account's grid is not this one's: clear it
+                    // before the reload, so it is never drawn or tapped meanwhile.
+                    // A PIN check still in flight belongs to that grid too, and
+                    // so does the household manager it may have unlocked.
+                    pinAttempt++
+                    addAfterUnlock = false
+                    profileRepository.householdManagement.end()
+                    _uiState.update {
+                        it.copy(
+                            profiles = emptyList(),
+                            pinDialogProfile = null,
+                            pinForManagement = false,
+                            pinIsVerifying = false,
+                            pinError = null,
+                            deleteDialogProfile = null,
+                            isManageMode = false,
+                            openAddProfile = false,
+                        )
+                    }
+                    loadProfiles()
+                }
+        }
     }
 
     /**
@@ -152,10 +227,30 @@ class ProfileSelectionViewModel(
     fun loadProfiles(clearError: Boolean = true) {
         val load = ++loadAttempt
         viewModelScope.launch {
+            // No signed-in account is active (signed out, an expired account,
+            // or a sign-in for a new one): nothing is asked of the server.
+            if (tokenManager != null && tokenManager.getAccessToken().isNullOrBlank()) {
+                if (load != loadAttempt) return@launch
+                gridScope = null
+                profileRepository.householdManagement.end()
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        error = null,
+                        profiles = emptyList(),
+                        canManageProfiles = false,
+                        isManageMode = false,
+                        deleteDialogProfile = null,
+                        requiresPasswordChange = false,
+                    )
+                }
+                return@launch
+            }
             _uiState.update {
                 it.copy(isLoading = true, error = if (clearError) null else it.error, requiresPasswordChange = false)
             }
 
+            val loadAccountId = registry?.activeAccountId?.value
             val scope = profileRepository.captureIdentityScope()
             val activeId = profileRepository.getActiveProfileId()
             val skipSingle = skipsSingleProfile ?: consumeSkipsSingleProfile().also { skipsSingleProfile = it }
@@ -197,6 +292,8 @@ class ProfileSelectionViewModel(
                     // picker after signing in: open it, once.
                     val only = result.data.singleOrNull()?.takeIf { skipSingle && !it.hasPin }
                     skipsSingleProfile = false
+                    // The picker's offline copy of this account's profiles.
+                    profilesRefresher?.let { runCatching { it.recordActive(loadAccountId, result.data) } }
                     // The server lets the household's verified primary profile
                     // manage it, whatever the account role, so any household
                     // with a primary can.
@@ -462,6 +559,47 @@ class ProfileSelectionViewModel(
         }
     }
 
+    /**
+     * A profile of the open account as drawn: from the live grid through
+     * [onProfileTapped] (PIN and all), or from the cached list while the
+     * server can't be reached.
+     */
+    fun onShownProfileTapped(profile: Profile) {
+        val state = _uiState.value
+        if (state.isManageMode) return
+        val live = state.profiles.firstOrNull { it.id == profile.id }
+        when {
+            live != null -> onProfileTapped(live)
+            state.cachedProfiles.any { it.id == profile.id } -> openCachedProfile(profile)
+        }
+    }
+
+    /**
+     * A profile of the open account that is in the cached list but not in
+     * the live grid: the live load failed (the server can't be reached).
+     * Selecting it works offline, as at launch; a PIN still needs the server.
+     */
+    private fun openCachedProfile(profile: Profile) {
+        // The tile is the open account's cached copy: act on it only under
+        // that account. The drawn list can lag a switch, and the scope is read
+        // after this tap, so check the account on both sides of that read.
+        val accountId = registry?.activeAccountId?.value
+        val openAccountCached = registry?.activeAccount?.value?.cachedProfiles
+        if (registry != null && openAccountCached.orEmpty().none { it.id == profile.id }) return
+        pinAttempt++
+        if (profile.hasPin) {
+            _uiState.update {
+                it.copy(pinDialogProfile = profile, pinForManagement = false, pinIsVerifying = false, pinError = null)
+            }
+            return
+        }
+        viewModelScope.launch {
+            val scope = profileRepository.captureIdentityScope()
+            if (registry?.activeAccountId?.value != accountId) return@launch
+            selectProfile(profile.id, expectedScope = scope)
+        }
+    }
+
     fun onPasswordChangeConsumed() {
         _uiState.update { it.copy(requiresPasswordChange = false) }
     }
@@ -502,3 +640,14 @@ class ProfileSelectionViewModel(
         }
     }
 }
+
+/** A cached profile, in the shape the grid and the PIN prompt draw. */
+internal fun CachedProfile.toProfile() = Profile(
+    id = id,
+    name = name,
+    avatar = avatar,
+    avatarUrl = avatarUrl,
+    isPrimary = isPrimary,
+    hasPin = hasPin,
+    isChild = isChild,
+)

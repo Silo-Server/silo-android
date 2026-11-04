@@ -215,6 +215,21 @@ class NativeSignInCompleterTest {
             installedOn += serverId
             inner.replaceAccountSession(serverId, serverUrl, accessToken, refreshToken, expiresIn, profileId, profileToken, expectedIdentity)
         }
+
+        override suspend fun replaceAccountSession(
+            serverId: String?,
+            serverUrl: String?,
+            accessToken: String,
+            refreshToken: String,
+            expiresIn: Long,
+            profileId: String?,
+            profileToken: String?,
+            expectedIdentity: AccountSessionExpectation?,
+            account: org.siloserver.silo.network.AccountSignIn?,
+        ): String? {
+            installedOn += serverId
+            return inner.replaceAccountSession(serverId, serverUrl, accessToken, refreshToken, expiresIn, profileId, profileToken, expectedIdentity, account)
+        }
     }
 
     /** Saved servers keyed by address, like the app's registry. */

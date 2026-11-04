@@ -34,6 +34,8 @@ enum class DownloadSubscriptionMediaKind(val wire: String) {
 data class DownloadSubscription(
     val id: String,
     val serverId: String,
+    /** Saved account ([org.siloserver.silo.model.server.AccountEntry.localAccountId]); '' = before accounts. */
+    val accountId: String,
     val profileId: String,
     val targetType: DownloadSubscriptionTargetType,
     val targetId: String,

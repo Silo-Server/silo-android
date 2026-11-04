@@ -20,6 +20,19 @@ sealed class TvRoute(val route: String) {
     data object ServerSetup : TvRoute("server_setup")
     data object ServerList : TvRoute("server_list")
 
+    /**
+     * Change Account (owner decision 2026-11-02): saved servers and their
+     * accounts. [addAccountOn] starts on that server's "Add an account".
+     */
+    data class ChangeAccount(val addAccountOn: String? = null) : TvRoute(
+        if (addAccountOn.isNullOrBlank()) "change_account" else "change_account?add=${addAccountOn.routeEncode()}",
+    ) {
+        companion object {
+            const val ROUTE = "change_account?add={add}"
+            const val ARG_ADD = "add"
+        }
+    }
+
     /** First-time server setup (first-admin creation) when the server isn't set up yet. */
     data object Setup : TvRoute("server_first_setup")
 
@@ -29,13 +42,26 @@ sealed class TvRoute(val route: String) {
     /**
      * [sessionExpired]: arrived because the session ended elsewhere (refresh
      * failed); the screen explains it with a "You were signed out" banner.
+     *
+     * [username]: the saved account this sign-in is for (it offered Sign in
+     * again, or its session expired); the password form opens with it filled
+     * in.
      */
-    data class Login(val signupEnabled: Boolean = false, val sessionExpired: Boolean = false) :
-        TvRoute("login?signupEnabled=$signupEnabled&sessionExpired=$sessionExpired") {
+    data class Login(
+        val signupEnabled: Boolean = false,
+        val sessionExpired: Boolean = false,
+        val username: String? = null,
+    ) : TvRoute(
+        buildString {
+            append("login?signupEnabled=$signupEnabled&sessionExpired=$sessionExpired")
+            username?.takeIf { it.isNotBlank() }?.let { append("&username=${it.routeEncode()}") }
+        },
+    ) {
         companion object {
-            const val ROUTE = "login?signupEnabled={signupEnabled}&sessionExpired={sessionExpired}"
+            const val ROUTE = "login?signupEnabled={signupEnabled}&sessionExpired={sessionExpired}&username={username}"
             const val ARG_SIGNUP_ENABLED = "signupEnabled"
             const val ARG_SESSION_EXPIRED = "sessionExpired"
+            const val ARG_USERNAME = "username"
         }
     }
 

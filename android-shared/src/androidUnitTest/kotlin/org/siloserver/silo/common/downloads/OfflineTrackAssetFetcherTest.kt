@@ -153,7 +153,7 @@ class OfflineTrackAssetFetcherTest {
             defaultRequest { url("https://silo.example/") }
         }
         val fetcher = OfflineTrackAssetFetcher(http, DownloadStorage(tmp.newFolder("filesDir")))
-        val saved = assertNotNull(fetcher.fetch("dl_1", "srv", "prof", 42) {}).tracks
+        val saved = assertNotNull(fetcher.fetch("dl_1", "srv", "acct", "prof", 42) {}).tracks
         assertEquals("r1", saved.subtitles.single().revision)
 
         // Nothing changed on the server: nothing is fetched.
@@ -175,7 +175,7 @@ class OfflineTrackAssetFetcherTest {
     fun aRetimedSidecarIsStagedAndReplacesTheSavedCopyOnlyWhenPublished() = runBlocking {
         val server = RetimingServer()
         val fetcher = OfflineTrackAssetFetcher(server.client, DownloadStorage(tmp.newFolder("filesDir")))
-        val saved = assertNotNull(fetcher.fetch("dl_1", "srv", "prof", 42) {}).tracks
+        val saved = assertNotNull(fetcher.fetch("dl_1", "srv", "acct", "prof", 42) {}).tracks
         val file = File(saved.subtitles.single().path)
         assertEquals("r1", saved.subtitles.single().revision)
         assertNull(fetcher.stageSubtitleRefresh("dl_1", saved) {}, "nothing changed on the server")
@@ -198,7 +198,7 @@ class OfflineTrackAssetFetcherTest {
     fun aSavedCopyRewrittenAfterStagingKeepsItsNewContents() = runBlocking {
         val server = RetimingServer()
         val fetcher = OfflineTrackAssetFetcher(server.client, DownloadStorage(tmp.newFolder("filesDir")))
-        val saved = assertNotNull(fetcher.fetch("dl_1", "srv", "prof", 42) {}).tracks
+        val saved = assertNotNull(fetcher.fetch("dl_1", "srv", "acct", "prof", 42) {}).tracks
         val file = File(saved.subtitles.single().path)
 
         server.revision = "r2"
@@ -218,7 +218,7 @@ class OfflineTrackAssetFetcherTest {
         val storage = DownloadStorage(tmp.newFolder("filesDir"))
 
         val info = assertNotNull(
-            OfflineTrackAssetFetcher(client(), storage).fetch("dl_1", "srv", "prof", 42) {},
+            OfflineTrackAssetFetcher(client(), storage).fetch("dl_1", "srv", "acct", "prof", 42) {},
         ).tracks
 
         assertEquals(listOf("eng", "jpn"), info.audioTracks.map { it.language })
@@ -231,7 +231,7 @@ class OfflineTrackAssetFetcherTest {
         val pgs = File(info.subtitles[1].path)
         assertTrue(ass.isFile && ass.name.endsWith(".ass"))
         assertTrue(pgs.isFile && pgs.name.endsWith(".sup"))
-        assertEquals(storage.offlineSubtitleDirectory("srv", "prof", 42), ass.parentFile)
+        assertEquals(storage.offlineSubtitleDirectory("srv", "acct", "prof", 42), ass.parentFile)
         assertFalse(requested.any { it.contains("sub.srt") })
         assertTrue(ass.parentFile!!.listFiles()!!.none { it.name.endsWith(".part") })
     }
@@ -240,12 +240,12 @@ class OfflineTrackAssetFetcherTest {
     fun deletingTheDownloadRemovesItsSidecars() = runBlocking {
         val storage = DownloadStorage(tmp.newFolder("filesDir"))
         val assets = assertNotNull(
-            OfflineTrackAssetFetcher(client(), storage).fetch("dl_1", "srv", "prof", 42) {},
+            OfflineTrackAssetFetcher(client(), storage).fetch("dl_1", "srv", "acct", "prof", 42) {},
         )
-        val artworkDirectory = assertNotNull(storage.offlineArtworkDirectory("srv", "prof", 42))
+        val artworkDirectory = assertNotNull(storage.offlineArtworkDirectory("srv", "acct", "prof", 42))
         assertTrue(artworkDirectory.isDirectory)
 
-        storage.delete("srv", "prof", 42)
+        storage.delete("srv", "acct", "prof", 42)
 
         assertTrue(assets.tracks.subtitles.none { File(it.path).exists() })
         assertFalse(artworkDirectory.exists())
@@ -256,7 +256,7 @@ class OfflineTrackAssetFetcherTest {
         val storage = DownloadStorage(tmp.newFolder("filesDir"))
 
         assertNull(
-            OfflineTrackAssetFetcher(client(HttpStatusCode.NotFound), storage).fetch("dl_1", "srv", "prof", 42) {},
+            OfflineTrackAssetFetcher(client(HttpStatusCode.NotFound), storage).fetch("dl_1", "srv", "acct", "prof", 42) {},
         )
         assertEquals(listOf("/api/v2/downloads/dl_1/manifest"), requested)
     }
@@ -267,7 +267,7 @@ class OfflineTrackAssetFetcherTest {
 
         val info = assertNotNull(
             OfflineTrackAssetFetcher(client(transientManifestFailures = 2), storage, manifestRetryDelayMs = 0)
-                .fetch("dl_1", "srv", "prof", 42) {},
+                .fetch("dl_1", "srv", "acct", "prof", 42) {},
         ).tracks
 
         assertEquals(3, requested.count { it.endsWith("/manifest") })
@@ -279,14 +279,14 @@ class OfflineTrackAssetFetcherTest {
         val storage = DownloadStorage(tmp.newFolder("filesDir"))
 
         val artwork = assertNotNull(
-            OfflineTrackAssetFetcher(client(), storage).fetch("dl_1", "srv", "prof", 42) {},
+            OfflineTrackAssetFetcher(client(), storage).fetch("dl_1", "srv", "acct", "prof", 42) {},
         ).artwork
 
         val poster = File(assertNotNull(artwork.posterPath))
         val seriesPoster = File(assertNotNull(artwork.seriesPosterPath))
         assertContentEquals(posterBytes, poster.readBytes())
         assertContentEquals(seriesPosterBytes, seriesPoster.readBytes())
-        val directory = storage.offlineArtworkDirectory("srv", "prof", 42)
+        val directory = storage.offlineArtworkDirectory("srv", "acct", "prof", 42)
         assertEquals(directory, poster.parentFile)
         assertEquals(directory, seriesPoster.parentFile)
         assertTrue(directory!!.listFiles()!!.none { it.name.endsWith(".part") })
@@ -305,7 +305,7 @@ class OfflineTrackAssetFetcherTest {
         val storage = DownloadStorage(tmp.newFolder("filesDir"))
 
         val artwork = assertNotNull(
-            OfflineTrackAssetFetcher(client(manifestBody = movieManifest), storage).fetch("dl_1", "srv", "prof", 42) {},
+            OfflineTrackAssetFetcher(client(manifestBody = movieManifest), storage).fetch("dl_1", "srv", "acct", "prof", 42) {},
         ).artwork
 
         assertNotNull(artwork.posterPath)
@@ -324,13 +324,13 @@ class OfflineTrackAssetFetcherTest {
             },
         )
 
-        val assets = assertNotNull(OfflineTrackAssetFetcher(client, storage).fetch("dl_1", "srv", "prof", 42) {})
+        val assets = assertNotNull(OfflineTrackAssetFetcher(client, storage).fetch("dl_1", "srv", "acct", "prof", 42) {})
 
         assertNull(assets.artwork.posterPath)
         assertNotNull(assets.artwork.seriesPosterPath)
         assertEquals(2, assets.tracks.audioTracks.size)
         assertEquals(2, assets.tracks.subtitles.size)
-        val directory = storage.offlineArtworkDirectory("srv", "prof", 42)!!
+        val directory = storage.offlineArtworkDirectory("srv", "acct", "prof", 42)!!
         assertFalse(File(directory, "poster").exists())
         assertFalse(File(directory, "poster.part").exists())
     }
@@ -344,10 +344,10 @@ class OfflineTrackAssetFetcherTest {
             artwork = { HttpStatusCode.OK to tooLarge },
         )
 
-        val artwork = assertNotNull(OfflineTrackAssetFetcher(client, storage).fetch("dl_1", "srv", "prof", 42) {}).artwork
+        val artwork = assertNotNull(OfflineTrackAssetFetcher(client, storage).fetch("dl_1", "srv", "acct", "prof", 42) {}).artwork
 
         assertNull(artwork.posterPath)
-        val directory = storage.offlineArtworkDirectory("srv", "prof", 42)!!
+        val directory = storage.offlineArtworkDirectory("srv", "acct", "prof", 42)!!
         assertTrue(directory.listFiles().orEmpty().isEmpty())
     }
 
@@ -362,7 +362,7 @@ class OfflineTrackAssetFetcherTest {
         """.trimIndent()
 
         val artwork = assertNotNull(
-            OfflineTrackAssetFetcher(client(manifestBody = foreign), storage).fetch("dl_1", "srv", "prof", 42) {},
+            OfflineTrackAssetFetcher(client(manifestBody = foreign), storage).fetch("dl_1", "srv", "acct", "prof", 42) {},
         ).artwork
 
         assertNull(artwork.posterPath)
@@ -393,7 +393,7 @@ class OfflineTrackAssetFetcherTest {
             defaultRequest { url("https://silo.example/") }
         }
 
-        val artwork = assertNotNull(OfflineTrackAssetFetcher(client, storage).fetch("dl_1", "srv", "prof", 42) {}).artwork
+        val artwork = assertNotNull(OfflineTrackAssetFetcher(client, storage).fetch("dl_1", "srv", "acct", "prof", 42) {}).artwork
 
         assertNull(artwork.posterPath)
         assertTrue(requested.none { it.contains("poster.jpg") })
@@ -402,14 +402,14 @@ class OfflineTrackAssetFetcherTest {
     @Test
     fun aRecaptureReplacesThePreviousArtwork() = runBlocking {
         val storage = DownloadStorage(tmp.newFolder("filesDir"))
-        OfflineTrackAssetFetcher(client(), storage).fetch("dl_1", "srv", "prof", 42) {}
+        OfflineTrackAssetFetcher(client(), storage).fetch("dl_1", "srv", "acct", "prof", 42) {}
 
         val artwork = assertNotNull(
-            OfflineTrackAssetFetcher(client(manifestBody = movieManifest), storage).fetch("dl_1", "srv", "prof", 42) {},
+            OfflineTrackAssetFetcher(client(manifestBody = movieManifest), storage).fetch("dl_1", "srv", "acct", "prof", 42) {},
         ).artwork
 
         assertNull(artwork.seriesPosterPath)
-        val directory = storage.offlineArtworkDirectory("srv", "prof", 42)!!
+        val directory = storage.offlineArtworkDirectory("srv", "acct", "prof", 42)!!
         assertEquals(listOf("poster"), directory.listFiles()!!.map { it.name })
     }
 

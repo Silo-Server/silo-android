@@ -60,20 +60,23 @@ class DiagnosticsIdentityTransitionAndroidTest {
             barrier.transitions.collect { observed += it }
         }
 
+        // Signing in installs an account's session: one account replacement.
         observed.clear()
-        tokens.saveTokens("access", "refresh", 60)
+        tokens.replaceAccountSession(serverId = id, accessToken = "access", refreshToken = "refresh", expiresIn = 60)
         assertEquals(
-            listOf(IdentityTransitionKind.SIGN_IN, IdentityTransitionKind.SIGN_IN),
+            listOf(IdentityTransitionKind.ACCOUNT_REPLACE, IdentityTransitionKind.ACCOUNT_REPLACE),
             observed.map(IdentityTransition::kind),
         )
         assertEquals(
             listOf(IdentityTransitionPhase.WILL_CHANGE, IdentityTransitionPhase.DID_CHANGE),
             observed.map(IdentityTransition::phase),
         )
+        assertEquals("access", tokens.getAccessToken())
 
         observed.clear()
         tokens.saveTokens("refreshed-access", "refreshed-refresh", 60)
         assertEquals(emptyList(), observed, "background token refresh must not close the identity gate")
+        assertEquals("refreshed-access", tokens.getAccessToken())
 
         observed.clear()
         tokens.invalidateSession()
@@ -83,10 +86,15 @@ class DiagnosticsIdentityTransitionAndroidTest {
         )
 
         observed.clear()
-        tokens.saveTokens("new-access", "new-refresh", 60)
+        tokens.replaceAccountSession(serverId = id, accessToken = "new-access", refreshToken = "new-refresh", expiresIn = 60)
         assertEquals(
-            listOf(IdentityTransitionKind.SIGN_IN, IdentityTransitionKind.SIGN_IN),
+            listOf(IdentityTransitionKind.ACCOUNT_REPLACE, IdentityTransitionKind.ACCOUNT_REPLACE),
             observed.map(IdentityTransition::kind),
         )
+        assertEquals(
+            listOf(IdentityTransitionPhase.WILL_CHANGE, IdentityTransitionPhase.DID_CHANGE),
+            observed.map(IdentityTransition::phase),
+        )
+        assertEquals("new-access", tokens.getAccessToken())
     }
 }

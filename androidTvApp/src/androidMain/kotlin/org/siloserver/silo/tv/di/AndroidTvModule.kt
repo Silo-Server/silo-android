@@ -20,7 +20,7 @@ import org.siloserver.silo.network.EncryptedTokenManagerImpl
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.createSecureSharedPrefs
-import org.siloserver.silo.tv.ui.screens.servers.TvServerListViewModel
+import org.siloserver.silo.tv.ui.screens.servers.TvAccountsViewModel
 import org.siloserver.silo.common.player.AudioCapabilityManager
 import org.siloserver.silo.common.player.AudioTrackManager
 import org.siloserver.silo.common.player.AndroidSubtitlePresentation
@@ -472,7 +472,14 @@ val androidTvModule = module {
         )
     }
     viewModel {
-        TvProfileSelectionViewModel(get(), get(), profileVerificationRecovery = getOrNull(), launchPreferences = get())
+        TvProfileSelectionViewModel(
+            get(),
+            get(),
+            profileVerificationRecovery = getOrNull(),
+            launchPreferences = get(),
+            serverRegistry = get(),
+            profilesRefresher = get(),
+        )
     }
     viewModel { org.siloserver.silo.tv.ui.screens.profiles.TvCreateProfileViewModel(get()) }
     viewModel { params ->
@@ -481,7 +488,24 @@ val androidTvModule = module {
             profileId = params.get(),
         )
     }
-    viewModel { TvServerListViewModel(get(), get(), get()) }
+    viewModel {
+        TvAccountsViewModel(
+            serverRegistry = get(),
+            authRepository = get(),
+            resolver = get(),
+            tvSignOut = get(),
+            profileReset = get(),
+            tokenManager = get(),
+        )
+    }
+    viewModel {
+        org.siloserver.silo.tv.ui.screens.servers.TvChangeAccountViewModel(
+            serverRegistry = get(),
+            authRepository = get(),
+            profileReset = get(),
+            profilesRefresher = get(),
+        )
+    }
     single {
         val profileReset = get<TvActiveProfileReset>()
         org.siloserver.silo.tv.ui.screens.servers.TvServerResolver(

@@ -26,16 +26,17 @@ private fun rec(id: String, fileId: Int): DownloadRecord = DownloadRecord(
 
 /** In-memory durable tombstone store standing in for the Room-backed port. */
 private class FakeDeletionPort : DownloadDeletionPort {
-    val rows = mutableMapOf<Triple<String, String, String>, Int?>()
-    override suspend fun enqueue(serverId: String, profileId: String, recordId: String, mediaFileId: Int?) {
-        rows[Triple(serverId, profileId, recordId)] = mediaFileId
+    data class Key(val serverId: String, val accountId: String, val profileId: String, val recordId: String)
+    val rows = mutableMapOf<Key, Int?>()
+    override suspend fun enqueue(serverId: String, accountId: String, profileId: String, recordId: String, mediaFileId: Int?) {
+        rows[Key(serverId, accountId, profileId, recordId)] = mediaFileId
     }
-    override suspend fun allPendingRecordIds(): Set<String> = rows.keys.map { it.third }.toSet()
-    override suspend fun pendingForScope(serverId: String, profileId: String): List<PendingDownloadDeletion> =
-        rows.filterKeys { it.first == serverId && it.second == profileId }
-            .map { (k, v) -> PendingDownloadDeletion(k.first, k.second, k.third, v) }
-    override suspend fun remove(serverId: String, profileId: String, recordId: String) {
-        rows.remove(Triple(serverId, profileId, recordId))
+    override suspend fun allPendingRecordIds(): Set<String> = rows.keys.map { it.recordId }.toSet()
+    override suspend fun pendingForScope(serverId: String, accountId: String, profileId: String): List<PendingDownloadDeletion> =
+        rows.filterKeys { it.serverId == serverId && it.accountId == accountId && it.profileId == profileId }
+            .map { (k, v) -> PendingDownloadDeletion(k.serverId, k.accountId, k.profileId, k.recordId, v) }
+    override suspend fun remove(serverId: String, accountId: String, profileId: String, recordId: String) {
+        rows.remove(Key(serverId, accountId, profileId, recordId))
     }
 }
 
@@ -76,21 +77,21 @@ class DownloadsRepositoryOfflineDeleteTest {
             override suspend fun current() = org.siloserver.silo.network.SiloDeviceMetadata("device", "test", "android")
         }
         val rows = mutableListOf(
-            PendingDownloadDeletion("s", "p", "owned", 1, "login", scope.serverUrl, "device"),
-            PendingDownloadDeletion("s", "p", "foreign", 2, "prior-login", scope.serverUrl, "device"),
-            PendingDownloadDeletion("s", "p", "legacy", 3),
+            PendingDownloadDeletion("s", "", "p", "owned", 1, "login", scope.serverUrl, "device"),
+            PendingDownloadDeletion("s", "", "p", "foreign", 2, "prior-login", scope.serverUrl, "device"),
+            PendingDownloadDeletion("s", "", "p", "legacy", 3),
         )
         val port = object : DownloadDeletionPort {
-            override suspend fun enqueue(serverId: String, profileId: String, recordId: String, mediaFileId: Int?) = Unit
+            override suspend fun enqueue(serverId: String, accountId: String, profileId: String, recordId: String, mediaFileId: Int?) = Unit
             override suspend fun allPendingRecordIds() = rows.map { it.recordId }.toSet()
-            override suspend fun pendingForScope(serverId: String, profileId: String) = rows.toList()
-            override suspend fun remove(serverId: String, profileId: String, recordId: String) { rows.removeAll { it.recordId == recordId } }
+            override suspend fun pendingForScope(serverId: String, accountId: String, profileId: String) = rows.toList()
+            override suspend fun remove(serverId: String, accountId: String, profileId: String, recordId: String) { rows.removeAll { it.recordId == recordId } }
         }
         val api = FakeApi(serverList = rows.mapIndexed { i, row -> rec(row.recordId, i + 1) })
         val repo = DownloadsRepository(api, port, owners, devices, org.siloserver.silo.network.DefaultIdentityTransitionBarrier())
         repo.refresh(serverId = "s", profileId = "p")
         assertEquals(listOf("owned", "owned"), api.deleteCalls)
-        assertEquals(listOf("owned"), repo.pendingDeletionsForScope("s", "p").map { it.recordId })
+        assertEquals(listOf("owned"), repo.pendingDeletionsForScope("s", "", "p").map { it.recordId })
         api.serverList = emptyList()
         repo.refresh(serverId = "s", profileId = "p")
         assertEquals(listOf("foreign", "legacy"), rows.map { it.recordId })
@@ -105,7 +106,7 @@ class DownloadsRepositoryOfflineDeleteTest {
         repo.refresh()
         assertEquals(setOf("a", "b"), repo.records.first().map { it.id }.toSet())
 
-        repo.enqueueDurableDelete("srv1", "prof1", "a", mediaFileId = 1)
+        repo.enqueueDurableDelete("srv1", "", "prof1", "a", mediaFileId = 1)
 
         assertEquals(listOf("b"), repo.records.first().map { it.id })
         assertEquals(setOf("a"), port.allPendingRecordIds())
@@ -116,7 +117,7 @@ class DownloadsRepositoryOfflineDeleteTest {
         val port = FakeDeletionPort()
         // Offline delete happened in a previous "session": tombstone persisted,
         // but the server still lists the record (delete never reached it).
-        port.enqueue("srv1", "prof1", "a", 1)
+        port.enqueue("srv1", "", "prof1", "a", 1)
 
         // Fresh repository instance = app restart (in-memory pendingDelete empty).
         val api = FakeApi(serverList = listOf(rec("a", 1), rec("b", 2)), deleteResult = { ApiResult.NetworkError(RuntimeException("offline")) })
@@ -130,7 +131,7 @@ class DownloadsRepositoryOfflineDeleteTest {
     @Test
     fun `scoped refresh replays the server delete for a still-present tombstone`() = runTest {
         val port = FakeDeletionPort()
-        port.enqueue("srv1", "prof1", "a", 1)
+        port.enqueue("srv1", "", "prof1", "a", 1)
         val api = FakeApi(serverList = listOf(rec("a", 1)))
         val repo = DownloadsRepository(api, port)
 
@@ -145,7 +146,7 @@ class DownloadsRepositoryOfflineDeleteTest {
     @Test
     fun `tombstone clears only once the server list confirms absence`() = runTest {
         val port = FakeDeletionPort()
-        port.enqueue("srv1", "prof1", "a", 1)
+        port.enqueue("srv1", "", "prof1", "a", 1)
         val api = FakeApi(serverList = listOf(rec("a", 1)))
         val repo = DownloadsRepository(api, port)
 
@@ -160,8 +161,8 @@ class DownloadsRepositoryOfflineDeleteTest {
     @Test
     fun `refreshing one scope never clears another scope's tombstone`() = runTest {
         val port = FakeDeletionPort()
-        port.enqueue("srvA", "prof1", "a", 1) // offline delete on server A, still pending
-        port.enqueue("srvB", "prof1", "b", 2)
+        port.enqueue("srvA", "", "prof1", "a", 1) // offline delete on server A, still pending
+        port.enqueue("srvB", "", "prof1", "b", 2)
         // Refresh scope B; its server lists nothing (b already gone there).
         val api = FakeApi(serverList = emptyList())
         val repo = DownloadsRepository(api, port)
@@ -178,7 +179,7 @@ class DownloadsRepositoryOfflineDeleteTest {
 
     private class FakeCleanup(private val log: MutableList<String>, var succeeds: Boolean = true) :
         org.siloserver.silo.repository.port.RevokedDownloadCleanupPort {
-        override suspend fun removeLocalCopy(serverId: String, profileId: String, recordId: String, mediaFileId: Int): Boolean {
+        override suspend fun removeLocalCopy(serverId: String, accountId: String, profileId: String, recordId: String, mediaFileId: Int): Boolean {
             log += "local:$serverId/$profileId/$recordId/$mediaFileId"
             return succeeds
         }

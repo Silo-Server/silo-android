@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
+import org.siloserver.silo.common.store.AccountScopedKeys
 import org.siloserver.silo.model.settings.LegacyAudiobookIntervals
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -30,36 +31,44 @@ import kotlinx.coroutines.flow.map
  * profile change) but is **device-local only** — there is no server flush,
  * scope prefix, or legacy migration, because these are playback preferences
  * tied to the device rather than the account (like an iOS device override).
+ * Profile ids repeat across saved accounts, so the file is per (account,
+ * profile).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AudiobookSettingsStore(
     private val context: Context,
     private val getActiveProfileId: suspend () -> String?,
     private val profileChangeSignal: Flow<Unit> = flowOf(Unit),
-    private val dataStoreFactory: (profileId: String) -> DataStore<Preferences> = { profileId ->
+    private val getActiveAccountId: suspend () -> String? = { null },
+    private val dataStoreFactory: (accountId: String?, profileId: String) -> DataStore<Preferences> = { accountId, profileId ->
         PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile("silo_audiobook_settings_${profileHash(profileId)}") },
+            produceFile = { context.preferencesDataStoreFile(fileNameFor(accountId, profileId)) },
         )
     },
 ) {
 
-    private val storeCache = mutableMapOf<String, DataStore<Preferences>>()
+    private data class StoreKey(val accountId: String?, val profileId: String)
 
-    // Re-resolve the active profile (and therefore which file backs the
-    // flows) whenever the profile changes.
-    private val currentProfileFlow: Flow<String?> = flow {
-        emit(getActiveProfileId())
-        profileChangeSignal.collect { emit(getActiveProfileId()) }
+    private val storeCache = mutableMapOf<StoreKey, DataStore<Preferences>>()
+
+    // Re-resolve the active account and profile (and therefore which file
+    // backs the flows) whenever either changes.
+    private val currentProfileFlow: Flow<StoreKey?> = flow {
+        emit(currentKey())
+        profileChangeSignal.collect { emit(currentKey()) }
     }.distinctUntilChanged()
 
-    private fun storeFor(profileId: String): DataStore<Preferences> =
+    private suspend fun currentKey(): StoreKey? =
+        getActiveProfileId()?.let { StoreKey(getActiveAccountId(), it) }
+
+    private fun storeFor(key: StoreKey): DataStore<Preferences> =
         synchronized(storeCache) {
-            storeCache.getOrPut(profileId) { dataStoreFactory(profileId) }
+            storeCache.getOrPut(key) { dataStoreFactory(key.accountId, key.profileId) }
         }
 
     private fun <T> profileScopedFlow(default: T, read: (Preferences) -> T): Flow<T> =
-        currentProfileFlow.flatMapLatest { profileId ->
-            if (profileId == null) flowOf(default) else storeFor(profileId).data.map(read)
+        currentProfileFlow.flatMapLatest { key ->
+            if (key == null) flowOf(default) else storeFor(key).data.map(read)
         }
 
     val skipBackSecondsFlow: Flow<Int> =
@@ -109,8 +118,8 @@ class AudiobookSettingsStore(
         write { it[KEY_VOLUME_BOOST_DB] = value.coerceIn(0, MAX_VOLUME_BOOST_DB) }
 
     private suspend fun write(mutate: (MutablePreferences) -> Unit) {
-        val profileId = getActiveProfileId() ?: return
-        storeFor(profileId).edit(mutate)
+        val key = currentKey() ?: return
+        storeFor(key).edit(mutate)
     }
 
     companion object {
@@ -138,6 +147,12 @@ class AudiobookSettingsStore(
         private val KEY_VOLUME_BOOST_DB = intPreferencesKey("volume_boost_db")
 
         private fun coerceSkip(value: Int): Int = if (value in ALLOWED_SKIP) value else DEFAULT_SKIP
+
+        /** Per (account, profile); `AccountLocalData` adopts and purges these files. */
+        const val FILE_BASE = "silo_audiobook_settings"
+
+        private fun fileNameFor(accountId: String?, profileId: String): String =
+            AccountScopedKeys.profileFileName(FILE_BASE, accountId, profileHash(profileId))
 
         private fun profileHash(profileId: String): String =
             java.security.MessageDigest.getInstance("SHA-256")

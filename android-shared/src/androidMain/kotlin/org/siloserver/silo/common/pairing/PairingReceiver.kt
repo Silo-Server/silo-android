@@ -781,6 +781,7 @@ class PairingReceiver(
                 expiresIn = response.expiresIn ?: 0L,
                 expectedIdentity = expectedIdentity,
                 verifiedServerId = target.verifiedServerId,
+                user = response.user,
             )
         } catch (e: CancellationException) {
             throw e

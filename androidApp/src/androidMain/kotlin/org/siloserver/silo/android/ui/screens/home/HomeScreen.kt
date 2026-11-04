@@ -138,8 +138,8 @@ fun HomeScreen(
     onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
+    onChangeAccountClick: () -> Unit,
+    onSignOutClick: (removeServer: Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -150,6 +150,7 @@ fun HomeScreen(
     val activeEntry by serverRegistry.activeEntry.collectAsState()
     val sections = state.sections
     val profileScopeId = activeEntry?.profileId ?: activeProfile?.id
+    val activeAccountId = activeEntry?.accountId
     val populatedServerSections = remember(sections) { sections.filter { it.items.isNotEmpty() } }
     // No hero billboard on phone (matches iOS): a `featured` section is just
     // another row, rendered in the order the server configured it.
@@ -157,6 +158,7 @@ fun HomeScreen(
         sections,
         preferenceRevision,
         activeServerId,
+        activeAccountId,
         profileScopeId,
     ) {
         sectionPreferences.arrangedSections(sections, profileId = profileScopeId)
@@ -194,10 +196,10 @@ fun HomeScreen(
             .take(4)
             .toList()
     }
-    var warmedSeriesArtwork by remember(activeServerId, profileScopeId, languageRevision) {
+    var warmedSeriesArtwork by remember(activeServerId, activeAccountId, profileScopeId, languageRevision) {
         mutableStateOf<Map<String, WarmedSeriesArtwork>>(emptyMap())
     }
-    LaunchedEffect(activeServerId, profileScopeId, languageRevision, seriesWarmTargets) {
+    LaunchedEffect(activeServerId, activeAccountId, profileScopeId, languageRevision, seriesWarmTargets) {
         // Warm each Continue Watching and Next Up series in row order. Within one
         // title, its parent detail, exact episode and selector data run in
         // parallel. CatalogRepository keeps these calls alive/single-flight if
@@ -490,7 +492,7 @@ fun HomeScreen(
             onWatchPartyClick = onWatchPartyClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
-            onSwitchServerClick = onSwitchServerClick,
+            onChangeAccountClick = onChangeAccountClick,
             onSignOutClick = onSignOutClick,
         )
 
@@ -527,8 +529,8 @@ private fun HomeFloatingChrome(
     onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
+    onChangeAccountClick: () -> Unit,
+    onSignOutClick: (removeServer: Boolean) -> Unit,
 ) {
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
     Box(modifier = Modifier.fillMaxWidth()) {
@@ -547,7 +549,7 @@ private fun HomeFloatingChrome(
                 onWatchPartyClick = onWatchPartyClick,
                 onSettingsClick = onSettingsClick,
                 onSwitchProfileClick = onSwitchProfileClick,
-                onSwitchServerClick = onSwitchServerClick,
+                onChangeAccountClick = onChangeAccountClick,
                 onSignOutClick = onSignOutClick,
                 leadingActions = {
                     // Mirrors Apple's SiloControlModeButton: chrome-free at rest,

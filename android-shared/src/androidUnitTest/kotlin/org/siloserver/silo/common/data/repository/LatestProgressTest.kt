@@ -9,6 +9,7 @@ class LatestProgressTest {
 
     private fun row(fileId: Int, position: Double, updatedAtMs: Long) = UserItemStateEntity(
         serverId = "s1",
+        accountId = "a1",
         profileId = "p1",
         contentId = "c1",
         fileId = fileId,

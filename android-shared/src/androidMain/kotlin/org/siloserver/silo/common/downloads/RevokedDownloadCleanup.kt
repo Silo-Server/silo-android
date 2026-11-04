@@ -18,15 +18,16 @@ class RevokedDownloadCleanup(
     private val metadataStore: DownloadMetadataStore,
 ) : RevokedDownloadCleanupPort {
 
-    override suspend fun removeLocalCopy(serverId: String, profileId: String, recordId: String, mediaFileId: Int): Boolean {
+    override suspend fun removeLocalCopy(serverId: String, accountId: String, profileId: String, recordId: String, mediaFileId: Int): Boolean {
         DownloadWorker.cancelTransferAndAwait(context, recordId)
-        return DownloadSlotLocks.of(serverId, profileId, mediaFileId).withLock {
-            val row = metadataStore.readSidecar(serverId, profileId, mediaFileId)
+        return DownloadSlotLocks.of(serverId, accountId, profileId, mediaFileId).withLock {
+            val row = metadataStore.readSidecar(serverId, accountId, profileId, mediaFileId)
             if (row != null && row.record.id != recordId) return@withLock true
             val bytesGone = withContext(Dispatchers.IO) {
-                storage.delete(serverId, profileId, mediaFileId) || !storage.exists(serverId, profileId, mediaFileId)
+                storage.delete(serverId, accountId, profileId, mediaFileId) ||
+                    !storage.exists(serverId, accountId, profileId, mediaFileId)
             }
-            if (bytesGone && row != null) metadataStore.deleteSidecar(serverId, profileId, mediaFileId)
+            if (bytesGone && row != null) metadataStore.deleteSidecar(serverId, accountId, profileId, mediaFileId)
             bytesGone
         }
     }

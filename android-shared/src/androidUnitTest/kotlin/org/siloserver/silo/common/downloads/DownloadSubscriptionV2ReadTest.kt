@@ -17,7 +17,7 @@ import kotlin.test.*
 
 class DownloadSubscriptionV2ReadTest {
     private val body = """{"items":[{"content_id":"e2","season_number":1,"episode_number":2,"title":"Second","files":[{"file_id":"42"}]},{"content_id":"e3","season_number":1,"episode_number":3,"files":[{"file_id":"43"}],"user_data":{"played":true}},{"content_id":"e4","season_number":1,"episode_number":4,"files":[{"file_id":"44"}]}]}"""
-    private fun subscription() = DownloadSubscription(id = "sub", serverId = "server", profileId = "p1",
+    private fun subscription() = DownloadSubscription(id = "sub", serverId = "server", accountId = "account", profileId = "p1",
         targetType = DownloadSubscriptionTargetType.Season, targetId = "season-item", displayTitle = "Season",
         mediaKind = DownloadSubscriptionMediaKind.Video, quality = DownloadQuality.Original,
         keepUnwatchedLimit = 3, createdAt = 1, updatedAt = 1)

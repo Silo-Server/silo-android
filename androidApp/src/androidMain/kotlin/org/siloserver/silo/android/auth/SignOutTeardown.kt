@@ -42,8 +42,11 @@ class SignOutTeardown(
     private val metadataAiFeatureStore: MetadataAiFeatureStore,
     private val serverRegistry: ServerRegistry,
     private val nativeSignIn: NativeSignInCoordinator,
-    /** Removes this device's push registration on a server ([AndroidPushRegistrar.unregisterDevice]). */
-    private val unregisterPush: suspend (serverEntryId: String) -> PushRemoval? = { null },
+    /**
+     * Removes this device's push registration on a server while the account
+     * leaving holds it ([AndroidPushRegistrar.unregisterDevice]).
+     */
+    private val unregisterPush: suspend (serverEntryId: String, accountId: String?) -> PushRemoval? = { _, _ -> null },
     /** Undoes that removal when the sign-out then stops ([AndroidPushRegistrar.restoreRegistration]). */
     private val restorePush: suspend (PushRemoval) -> Unit = {},
 ) {
@@ -70,8 +73,10 @@ class SignOutTeardown(
     suspend fun signOut(flushFirst: Boolean = true, startSignIn: Boolean = false): Boolean {
         // Captured before anything it waits on: this is the account that leaves.
         val signedOutOf = serverRegistry.activeServerId.value
+        val signedOutAccount = serverRegistry.activeAccountId.value
         val target = authRepository.captureSignOutTarget()
-        fun stillActive() = serverRegistry.activeServerId.value == signedOutOf
+        fun stillActive() = serverRegistry.activeServerId.value == signedOutOf &&
+            serverRegistry.activeAccountId.value == signedOutAccount
         if (flushFirst) flushPendingSettings()
         if (!stillActive()) return false
         // Before the credentials are cleared: a server without the retirement
@@ -81,7 +86,7 @@ class SignOutTeardown(
         // account it no longer holds. Failing to remove it never stops the
         // sign-out; cancellation still does, before anyone is signed out.
         var removal: PushRemoval? = null
-        if (signedOutOf != null) tolerateFailure { removal = unregisterPush(signedOutOf) }
+        if (signedOutOf != null) tolerateFailure { removal = unregisterPush(signedOutOf, signedOutAccount) }
         if (!stillActive()) {
             // Removed above, but that server keeps its login, so it keeps its pushes.
             removal?.let { tolerateFailure { restorePush(it) } }
@@ -100,5 +105,45 @@ class SignOutTeardown(
         requestsFeatureStore.reset()
         metadataAiFeatureStore.reset()
         return true
+    }
+
+    /**
+     * "Sign out & remove server": [signOut], then forget the server, which is
+     * offered only while it has no other account. Another saved server
+     * becomes active with no account open, as after a plain sign-out, so the
+     * person chooses where to go next. False when nothing was signed out, or
+     * the server gained another account meanwhile (it then stays saved).
+     */
+    suspend fun signOutAndRemoveServer(): Boolean {
+        val serverId = serverRegistry.activeServerId.value ?: return false
+        val accountId = serverRegistry.activeAccountId.value
+        fun hasOtherAccount() = serverRegistry.accounts.value.any { it.serverId == serverId && it.localAccountId != accountId }
+        if (hasOtherAccount()) return false
+        if (!signOut()) return false
+        if (hasOtherAccount()) return true
+        serverRegistry.remove(serverId)
+        // The registry promotes the next server with its last account; open
+        // none of them, and probe the promoted server as a switch does.
+        serverRegistry.activeServerId.value?.let { promoted -> authRepository.switchToAccount(promoted, null) }
+        return true
+    }
+
+    /**
+     * Sign out of [accountId] on [serverId] (Settings › Accounts, or replacing
+     * an expired account). The active account goes through [signOut]. Any
+     * other account is signed out where it is, without switching to it, so
+     * the person using the app keeps their profile and caches: its push
+     * registration (if it holds the server's) is removed, its session ends on
+     * the server, and its tokens, preferences and downloads are deleted.
+     */
+    suspend fun signOutAccount(serverId: String, accountId: String): Boolean {
+        if (serverRegistry.activeServerId.value == serverId && serverRegistry.activeAccountId.value == accountId) {
+            return signOut()
+        }
+        var removal: PushRemoval? = null
+        tolerateFailure { removal = unregisterPush(serverId, accountId) }
+        val signedOut = authRepository.signOutAccount(serverId, accountId)
+        if (!signedOut) removal?.let { tolerateFailure { restorePush(it) } }
+        return signedOut
     }
 }

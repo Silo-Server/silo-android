@@ -84,7 +84,7 @@ class ServerScopedJsonStatePurgerTest {
     fun `purge waits for an in-flight writer and rejects stale writes afterward`() {
         val base = Files.createTempDirectory("silo-json-writer-race").toFile()
         val store = ScopedJsonFileStore(base.resolve("ebook_state"), "test")
-        val target = store.fileFor("removed-server", "p1", "book")
+        val target = store.fileFor("removed-server", null, "p1", "book")
         val writerEntered = CountDownLatch(1)
         val releaseWriter = CountDownLatch(1)
         val executor = Executors.newFixedThreadPool(2)

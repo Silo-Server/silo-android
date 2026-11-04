@@ -107,7 +107,7 @@ class LocalRouteStarter private constructor(
     private val updates = Mutex()
 
     /** The entry fields the route depends on. */
-    private fun ServerEntry?.routeKey(): List<String?>? = this?.let { listOf(it.id, it.url, it.verifiedServerId, it.profileId) }
+    private fun ServerEntry?.routeKey(): List<String?>? = this?.let { listOf(it.id, it.url, it.verifiedServerId, it.accountId, it.profileId) }
 
     private suspend fun isSignedIn(entry: ServerEntry?): Boolean =
         entry != null && !tokenManager.getAccessTokenForScope(entry.id).isNullOrBlank()

@@ -32,7 +32,7 @@ class DownloadSubscriptionDaoTest {
         dao.upsert(subscription(id = "s2", targetId = "series-2", enabled = false))
         dao.upsert(subscription(id = "other", serverId = "server-b", targetId = "series-3", enabled = true))
 
-        val active = dao.getActive("server-a", "profile-a")
+        val active = dao.getActive("server-a", "account-a", "profile-a")
 
         assertEquals(listOf("s1"), active.map { it.id })
         assertEquals("series-1", active.single().targetId)
@@ -41,9 +41,9 @@ class DownloadSubscriptionDaoTest {
     @Test
     fun disableOnlyTouchesScopedRow() = runTest {
         dao.upsert(subscription(id = "s1", enabled = true))
-        dao.disable("server-a", "profile-a", "s1", updatedAt = 20L)
+        dao.disable("server-a", "account-a", "profile-a", "s1", updatedAt = 20L)
 
-        val row = dao.get("server-a", "profile-a", "s1")
+        val row = dao.get("server-a", "account-a", "profile-a", "s1")
 
         assertEquals(false, row?.enabled)
         assertEquals(20L, row?.updatedAt)
@@ -55,8 +55,8 @@ class DownloadSubscriptionDaoTest {
         dao.upsert(subscription(id = "s2", serverId = "server-b"))
         dao.deleteAllForServer("server-a")
 
-        assertNull(dao.get("server-a", "profile-a", "s1"))
-        assertTrue(dao.getActive("server-b", "profile-a").isNotEmpty())
+        assertNull(dao.get("server-a", "account-a", "profile-a", "s1"))
+        assertTrue(dao.getActive("server-b", "account-a", "profile-a").isNotEmpty())
     }
 
     private fun subscription(
@@ -68,6 +68,7 @@ class DownloadSubscriptionDaoTest {
     ) = DownloadSubscriptionEntity(
         id = id,
         serverId = serverId,
+        accountId = "account-a",
         profileId = profileId,
         targetType = "series",
         targetId = targetId,

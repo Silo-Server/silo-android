@@ -3,6 +3,7 @@ package org.siloserver.silo.common.settings
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import org.siloserver.silo.common.store.AccountScopedKeys
 import org.siloserver.silo.domain.settings.SeekIntervalController
 import org.siloserver.silo.model.settings.LegacyAudiobookIntervals
 import org.siloserver.silo.model.settings.SeekDirection
@@ -77,6 +78,7 @@ class DefaultSeekIntervalStore private constructor(
     private val scope: CoroutineScope,
     private val getActiveProfileId: suspend () -> String?,
     private val getServerUrl: suspend () -> String?,
+    private val getActiveAccountId: suspend () -> String?,
     private val cache: SeekIntervalCache,
     identityChanges: Flow<Unit>,
 ) : SeekIntervalStore {
@@ -87,12 +89,14 @@ class DefaultSeekIntervalStore private constructor(
         scope: CoroutineScope,
         getActiveProfileId: suspend () -> String?,
         getServerUrl: suspend () -> String?,
+        getActiveAccountId: suspend () -> String? = { null },
         identityChanges: Flow<Unit> = emptyFlow(),
     ) : this(
         controller = controller,
         scope = scope,
         getActiveProfileId = getActiveProfileId,
         getServerUrl = getServerUrl,
+        getActiveAccountId = getActiveAccountId,
         cache = SharedPreferencesSeekIntervalCache(
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
         ),
@@ -306,9 +310,9 @@ class DefaultSeekIntervalStore private constructor(
         _lastError.value = null
     }
 
-    private suspend fun currentIdentity(): String? {
-        val profileId = getActiveProfileId()?.takeIf { it.isNotBlank() } ?: return null
-        return "${getServerUrl().orEmpty()}|$profileId"
+    private suspend fun currentIdentity(): String? = AccountScopedKeys.readStable(getActiveAccountId) { accountId ->
+        val profileId = getActiveProfileId()?.takeIf { it.isNotBlank() } ?: return@readStable null
+        AccountScopedKeys.identity(getServerUrl().orEmpty(), accountId, profileId)
     }
 
     internal companion object {
@@ -329,6 +333,7 @@ class DefaultSeekIntervalStore private constructor(
             scope = scope,
             getActiveProfileId = getActiveProfileId,
             getServerUrl = getServerUrl,
+            getActiveAccountId = { null },
             cache = cache,
             identityChanges = identityChanges,
         )

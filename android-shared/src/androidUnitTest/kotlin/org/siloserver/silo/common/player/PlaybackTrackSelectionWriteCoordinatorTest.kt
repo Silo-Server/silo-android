@@ -76,7 +76,7 @@ class PlaybackTrackSelectionWriteCoordinatorTest {
             releaseOldAdapter.send(Unit)
             assertTrue(oldWrite.await())
 
-            val row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+            val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
             assertEquals("new-audio", row?.audioFingerprint)
             assertEquals("new-subtitle", row?.subtitleFingerprint)
             assertEquals(0, coordinator.activeKeyCount)

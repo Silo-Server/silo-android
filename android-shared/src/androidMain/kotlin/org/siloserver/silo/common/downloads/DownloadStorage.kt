@@ -40,6 +40,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Storage coordinator for downloads. Sidecars live under private [baseDir];
  * downloaded media bytes live in [publicStore] so other Android apps can
  * discover/open the original files.
+ *
+ * Layout: `<server>/acct-<account>/<profile>/<fileId>/` (silo-apple's `acct-`
+ * layout), because two accounts on one server can share a profile id. Files
+ * written before accounts existed stay at `<server>/<profile>/<fileId>/` and
+ * belong to the account that adopted the server's old data
+ * ([adoptLegacyFiles]); that account's lookups and deletes look there too.
+ * Leaving them in place keeps every recorded path valid (a row's `localUri`,
+ * the saved subtitle and artwork paths) without a move that could fail half
+ * way. An empty account id is that pre-account layout.
  */
 class DownloadStorage(
     private val baseDir: File,
@@ -65,14 +74,16 @@ class DownloadStorage(
         },
     )
 
+    private val legacyOwners = LegacyDownloadOwners(File(baseDir, LEGACY_OWNERS_DIR))
+
     // Byte resolution is fileId-based (no sidecar read) so it stays synchronous —
     // the player surface (Compose) and worker call these on non-suspend paths.
     // Download metadata now lives in Room (suspend); only the bytes are file/MediaStore.
-    fun locateLocalMedia(serverId: String, profileId: String, fileId: Int): DownloadLocation? =
-        publicStore.locateByFileId(serverId, profileId, fileId)
+    fun locateLocalMedia(serverId: String, accountId: String, profileId: String, fileId: Int): DownloadLocation? =
+        publicStore.locateByFileId(readScopes(serverId, accountId, profileId), fileId)
 
-    fun locateLocalFile(serverId: String, profileId: String, fileId: Int): File? =
-        (locateLocalMedia(serverId, profileId, fileId) as? FileDownloadLocation)?.file
+    fun locateLocalFile(serverId: String, accountId: String, profileId: String, fileId: Int): File? =
+        (locateLocalMedia(serverId, accountId, profileId, fileId) as? FileDownloadLocation)?.file
 
     /**
      * Ensures the parent directory exists and returns the target file.
@@ -81,6 +92,7 @@ class DownloadStorage(
      */
     fun prepareWrite(
         serverId: String,
+        accountId: String,
         profileId: String,
         fileId: Int,
         fileName: String? = null,
@@ -89,8 +101,7 @@ class DownloadStorage(
     ): DownloadTarget {
         val displayName = localMediaFileName(fileId, fileName, container)
         return publicStore.create(
-            serverId = serverId,
-            profileId = profileId,
+            scopes = readScopes(serverId, accountId, profileId),
             fileId = fileId,
             displayName = displayName,
             container = container,
@@ -98,18 +109,19 @@ class DownloadStorage(
         )
     }
 
-    fun exists(serverId: String, profileId: String, fileId: Int): Boolean =
-        locateLocalMedia(serverId, profileId, fileId) != null
+    fun exists(serverId: String, accountId: String, profileId: String, fileId: Int): Boolean =
+        locateLocalMedia(serverId, accountId, profileId, fileId) != null
 
     /**
-     * Deletes the local file for this triple. Returns true if a file was
+     * Deletes the local file for this slot. Returns true if a file was
      * actually removed (false if nothing existed to delete). Empty parent
      * directories are left in place; cleanup at higher granularity goes
-     * through [deleteAllForProfile] or [deleteAllForServer].
+     * through [deleteAllForProfile], [deleteAllForAccount] or [deleteAllForServer].
      */
-    fun delete(serverId: String, profileId: String, fileId: Int): Boolean {
-        containedSafeChild(offlineAssetsRoot, serverId, profileId, fileId.toString())?.deleteRecursively()
-        return publicStore.delete(serverId, profileId, fileId, uriString = null)
+    fun delete(serverId: String, accountId: String, profileId: String, fileId: Int): Boolean {
+        val scopes = readScopes(serverId, accountId, profileId)
+        scopes.forEach { scope -> containedSafeChild(offlineAssetsRoot, *scope.toTypedArray(), fileId.toString())?.deleteRecursively() }
+        return publicStore.delete(scopes, fileId, uriString = null)
     }
 
     fun completeWrite(uriString: String): String =
@@ -128,24 +140,65 @@ class DownloadStorage(
     fun openAppend(uriString: String): OutputStream? =
         publicStore.openAppend(uriString)
 
-    fun totalBytesUsed(serverId: String, profileId: String): Long =
-        publicStore.totalBytesUsed(serverId, profileId)
+    fun totalBytesUsed(serverId: String, accountId: String, profileId: String): Long =
+        readScopes(serverId, accountId, profileId).sumOf { publicStore.totalBytesUsed(it) }
 
     fun deleteUri(uriString: String): Boolean =
-        publicStore.delete("", "", -1, uriString)
+        publicStore.delete(emptyList(), -1, uriString)
 
-    /** Wipes every downloaded byte under (serverId, profileId). Used on sign-out
-     *  and profile switch. Metadata rows are cleared via [DownloadMetadataStore]. */
-    fun deleteAllForProfile(serverId: String, profileId: String): Boolean {
-        containedSafeChild(offlineAssetsRoot, serverId, profileId)?.deleteRecursively()
-        return publicStore.deleteAllForProfile(serverId, profileId)
+    /** Wipes every downloaded byte under (serverId, accountId, profileId). Used
+     *  on profile removal. Metadata rows are cleared via [DownloadMetadataStore]. */
+    fun deleteAllForProfile(serverId: String, accountId: String, profileId: String): Boolean {
+        var deleted = false
+        readScopes(serverId, accountId, profileId).forEach { scope ->
+            containedSafeChild(offlineAssetsRoot, *scope.toTypedArray())?.deleteRecursively()
+            deleted = publicStore.deleteAll(scope) || deleted
+        }
+        return deleted
+    }
+
+    /**
+     * Wipes every downloaded byte of one account on [serverId]: all of its
+     * profiles, plus the pre-account files when it adopted them. Used when the
+     * account is signed out. Never called with an empty [accountId]; files
+     * written before accounts existed go with their server or their adopter.
+     */
+    fun deleteAllForAccount(serverId: String, accountId: String): Boolean {
+        require(accountId.isNotEmpty()) { "Pre-account files are deleted with their server or adopter" }
+        val accountScope = listOf(serverId, accountPathSegment(accountId))
+        containedSafeChild(offlineAssetsRoot, *accountScope.toTypedArray())?.deleteRecursively()
+        var deleted = publicStore.deleteAll(accountScope)
+        if (legacyOwners.ownerOf(serverId) == accountId) {
+            containedSafeChild(offlineAssetsRoot, serverId)?.listFiles().orEmpty()
+                .filterNot { it.name.startsWith(ACCOUNT_SEGMENT_PREFIX) }
+                .forEach { it.deleteRecursively() }
+            deleted = publicStore.deleteLegacyScopes(serverId) || deleted
+            legacyOwners.clear(serverId)
+        }
+        return deleted
     }
 
     /** Wipes every downloaded byte under (serverId). Used on server delete / re-bind. */
     fun deleteAllForServer(serverId: String): Boolean {
         containedSafeChild(offlineAssetsRoot, serverId)?.deleteRecursively()
-        return publicStore.deleteAllForServer(serverId)
+        val deleted = publicStore.deleteAll(listOf(serverId))
+        legacyOwners.clear(serverId)
+        return deleted
     }
+
+    /**
+     * Gives [serverId]'s pre-account files to [accountId] (the account with
+     * `adoptsLegacyData`). Offline and idempotent: it records the owner and
+     * moves nothing. The first adopter keeps them; returns whether [accountId]
+     * owns them now.
+     */
+    fun adoptLegacyFiles(serverId: String, accountId: String): Boolean {
+        require(accountId.isNotEmpty())
+        return legacyOwners.adopt(serverId, accountId)
+    }
+
+    /** The account that adopted [serverId]'s pre-account files, or null. */
+    fun legacyFilesOwner(serverId: String): String? = legacyOwners.ownerOf(serverId)
 
     /**
      * Private directory for the offline subtitle sidecars of one download.
@@ -153,18 +206,33 @@ class DownloadStorage(
      * MediaStore-owned) media file: they are only meaningful to this app, and
      * a scoped directory is removed with the download by [delete].
      */
-    fun offlineSubtitleDirectory(serverId: String, profileId: String, fileId: Int): File? =
-        containedSafeChild(offlineAssetsRoot, serverId, profileId, fileId.toString(), SUBTITLES_DIR)
+    fun offlineSubtitleDirectory(serverId: String, accountId: String, profileId: String, fileId: Int): File? =
+        containedSafeChild(offlineAssetsRoot, *writeScope(serverId, accountId, profileId).toTypedArray(), fileId.toString(), SUBTITLES_DIR)
 
     /**
      * Private directory for the artwork saved with one download. Separate from
      * [offlineSubtitleDirectory], which the track capture clears on every run,
      * and removed with the download by [delete].
      */
-    fun offlineArtworkDirectory(serverId: String, profileId: String, fileId: Int): File? =
-        containedSafeChild(offlineAssetsRoot, serverId, profileId, fileId.toString(), ARTWORK_DIR)
+    fun offlineArtworkDirectory(serverId: String, accountId: String, profileId: String, fileId: Int): File? =
+        containedSafeChild(offlineAssetsRoot, *writeScope(serverId, accountId, profileId).toTypedArray(), fileId.toString(), ARTWORK_DIR)
 
     private val offlineAssetsRoot: File get() = File(baseDir, OFFLINE_ASSETS_DIR)
+
+    /** Where a slot's new files go. */
+    private fun writeScope(serverId: String, accountId: String, profileId: String): List<String> =
+        if (accountId.isEmpty()) listOf(serverId, profileId)
+        else listOf(serverId, accountPathSegment(accountId), profileId)
+
+    /** Where a slot's files may be: [writeScope], then the pre-account layout for its adopter. */
+    private fun readScopes(serverId: String, accountId: String, profileId: String): List<List<String>> {
+        val primary = writeScope(serverId, accountId, profileId)
+        return if (accountId.isNotEmpty() && legacyOwners.ownerOf(serverId) == accountId) {
+            listOf(primary, listOf(serverId, profileId))
+        } else {
+            listOf(primary)
+        }
+    }
 
     /** Sum of bytes across every downloaded file under this storage. */
     fun totalBytesUsed(): Long = publicStore.totalBytesUsed()
@@ -198,9 +266,54 @@ class DownloadStorage(
 
     private companion object {
         const val OFFLINE_ASSETS_DIR = "download-assets"
+        const val LEGACY_OWNERS_DIR = "download-legacy-owners"
         const val SUBTITLES_DIR = "subtitles"
         const val ARTWORK_DIR = "artwork"
     }
+}
+
+/** Directory segment prefix of an account's downloads, as on Apple (`acct-<account>`). */
+internal const val ACCOUNT_SEGMENT_PREFIX = "acct-"
+
+internal fun accountPathSegment(accountId: String): String = ACCOUNT_SEGMENT_PREFIX + accountId
+
+/**
+ * Which account owns each server's pre-account download files: one small file
+ * per server holding the account id. Survives the account's sign-out until
+ * its files are deleted, so a later purge still knows to remove them.
+ */
+private class LegacyDownloadOwners(private val dir: File) {
+    private val cache = ConcurrentHashMap<String, String>()
+    private val lock = Any()
+
+    fun ownerOf(serverId: String): String? {
+        cache[serverId]?.let { return it.ifEmpty { null } }
+        val owner = markerFor(serverId)?.takeIf { it.isFile }
+            ?.let { runCatching { it.readText().trim() }.getOrNull() }
+            .orEmpty()
+        cache[serverId] = owner
+        return owner.ifEmpty { null }
+    }
+
+    fun adopt(serverId: String, accountId: String): Boolean = synchronized(lock) {
+        ownerOf(serverId)?.let { return it == accountId }
+        val marker = markerFor(serverId) ?: return false
+        val written = runCatching {
+            check(dir.mkdirs() || dir.isDirectory) { "Could not create the legacy owner directory" }
+            val temp = File(dir, "${marker.name}.tmp")
+            temp.writeText(accountId)
+            check(temp.renameTo(marker)) { "Could not record the legacy owner" }
+        }.isSuccess
+        if (written) cache[serverId] = accountId
+        written
+    }
+
+    fun clear(serverId: String) = synchronized(lock) {
+        markerFor(serverId)?.delete()
+        cache[serverId] = ""
+    }
+
+    private fun markerFor(serverId: String): File? = containedSafeChild(dir, serverId)
 }
 
 data class DownloadTarget(
@@ -223,18 +336,24 @@ class FileDownloadLocation(
     val file: File,
 ) : DownloadLocation(uriString, displayName, sizeBytes)
 
+/**
+ * Media bytes, addressed by a scope (the path segments above the file id:
+ * `[server, acct-<account>, profile]`, or `[server, profile]` for files written
+ * before accounts existed) and a file id. Where a list of scopes is taken, the
+ * first is where a new file goes and the rest are older places a slot's file
+ * may still be.
+ */
 interface PublicDownloadStore {
     fun create(
-        serverId: String,
-        profileId: String,
+        scopes: List<List<String>>,
         fileId: Int,
         displayName: String,
         container: String?,
         mediaType: String?,
     ): DownloadTarget
     fun locate(uriString: String): DownloadLocation?
-    fun locateByFileId(serverId: String, profileId: String, fileId: Int): DownloadLocation?
-    fun delete(serverId: String, profileId: String, fileId: Int, uriString: String?): Boolean
+    fun locateByFileId(scopes: List<List<String>>, fileId: Int): DownloadLocation?
+    fun delete(scopes: List<List<String>>, fileId: Int, uriString: String?): Boolean
     fun complete(uriString: String): String = uriString
 
     /** Open an existing partial for append (resume). Null = unsupported/unavailable. */
@@ -243,10 +362,14 @@ interface PublicDownloadStore {
     /** Real on-disk byte count of a partial at [uriString] (fd stat, not a stale
      *  metadata SIZE column). 0 = gone/unreadable. */
     fun partialSize(uriString: String): Long = 0L
-    fun deleteAllForProfile(serverId: String, profileId: String): Boolean
-    fun deleteAllForServer(serverId: String): Boolean
+
+    /** Deletes everything under the scope prefix [scope] (a server, an account, or a profile). */
+    fun deleteAll(scope: List<String>): Boolean
+
+    /** Deletes [serverId]'s pre-account files: everything under it but the `acct-` directories. */
+    fun deleteLegacyScopes(serverId: String): Boolean
     fun totalBytesUsed(): Long
-    fun totalBytesUsed(serverId: String, profileId: String): Long
+    fun totalBytesUsed(scope: List<String>): Long
 }
 
 class FileBackedPublicDownloadStore(
@@ -265,8 +388,7 @@ class FileBackedPublicDownloadStore(
     private val pendingWrites = ConcurrentHashMap<String, StagedDownload>()
 
     override fun create(
-        serverId: String,
-        profileId: String,
+        scopes: List<List<String>>,
         fileId: Int,
         displayName: String,
         container: String?,
@@ -274,7 +396,7 @@ class FileBackedPublicDownloadStore(
     ): DownloadTarget {
         val collection = PublicDownloadCollection.forMediaType(mediaType)
         val root = collectionRoot(collection)
-        val dir = requireNotNull(containedSafeChild(root, serverId, profileId, fileId.toString())) {
+        val dir = requireNotNull(containedSafeChild(root, *scopes.first().toTypedArray(), fileId.toString())) {
             "Download path is outside its collection root"
         }
         check(dir.mkdirs() || dir.isDirectory) { "Could not create download directory" }
@@ -284,7 +406,7 @@ class FileBackedPublicDownloadStore(
         val replaced = PublicDownloadCollection.entries
             .flatMap { candidateCollection ->
                 val candidateRoot = collectionRoot(candidateCollection)
-                downloadCandidates(candidateRoot, serverId, profileId, fileId).flatMap { candidate ->
+                downloadCandidates(candidateRoot, scopes, fileId).flatMap { candidate ->
                     if (candidate.canonicalPath == dir.canonicalPath) {
                         candidate.listFiles()
                             .orEmpty()
@@ -321,10 +443,10 @@ class FileBackedPublicDownloadStore(
         return FileDownloadLocation(uriString, reference.displayName ?: file.name, file.length(), file)
     }
 
-    override fun locateByFileId(serverId: String, profileId: String, fileId: Int): DownloadLocation? {
+    override fun locateByFileId(scopes: List<List<String>>, fileId: Int): DownloadLocation? {
         PublicDownloadCollection.entries.forEach { collection ->
             val root = collectionRoot(collection)
-            downloadCandidates(root, serverId, profileId, fileId).forEach { dir ->
+            downloadCandidates(root, scopes, fileId).forEach { dir ->
                 val file = firstContainedFile(root, dir)
                 if (file != null) {
                     val staged = pendingWrites.values.firstOrNull { pending ->
@@ -342,7 +464,7 @@ class FileBackedPublicDownloadStore(
         return null
     }
 
-    override fun delete(serverId: String, profileId: String, fileId: Int, uriString: String?): Boolean {
+    override fun delete(scopes: List<List<String>>, fileId: Int, uriString: String?): Boolean {
         uriString?.let { pendingUri ->
             pendingWrites.remove(pendingUri)?.let { staged ->
                 pendingReplacedDeletes.remove(pendingUri)
@@ -357,7 +479,7 @@ class FileBackedPublicDownloadStore(
         var deleted = false
         PublicDownloadCollection.entries.forEach { collection ->
             val root = collectionRoot(collection)
-            downloadCandidates(root, serverId, profileId, fileId).forEach { target ->
+            downloadCandidates(root, scopes, fileId).forEach { target ->
                 abortPendingWithin(target)
                 deleted = deleteContainedRecursively(root, target) || deleted
             }
@@ -421,11 +543,11 @@ class FileBackedPublicDownloadStore(
     override fun partialSize(uriString: String): Long =
         (locate(uriString) as? FileDownloadLocation)?.file?.takeIf { it.isFile }?.length() ?: 0L
 
-    override fun deleteAllForProfile(serverId: String, profileId: String): Boolean {
+    override fun deleteAll(scope: List<String>): Boolean {
         var deleted = false
         PublicDownloadCollection.entries.forEach { collection ->
             val root = collectionRoot(collection)
-            scopedCandidates(root, serverId, profileId).forEach { target ->
+            scopedCandidates(root, *scope.toTypedArray()).forEach { target ->
                 abortPendingWithin(target)
                 deleted = deleteContainedRecursively(root, target) || deleted
             }
@@ -433,13 +555,17 @@ class FileBackedPublicDownloadStore(
         return deleted
     }
 
-    override fun deleteAllForServer(serverId: String): Boolean {
+    override fun deleteLegacyScopes(serverId: String): Boolean {
         var deleted = false
         PublicDownloadCollection.entries.forEach { collection ->
             val root = collectionRoot(collection)
-            scopedCandidates(root, serverId).forEach { target ->
-                abortPendingWithin(target)
-                deleted = deleteContainedRecursively(root, target) || deleted
+            scopedCandidates(root, serverId).forEach { serverDir ->
+                serverDir.listFiles().orEmpty()
+                    .filterNot { it.name.startsWith(ACCOUNT_SEGMENT_PREFIX) }
+                    .forEach { target ->
+                        abortPendingWithin(target)
+                        deleted = deleteContainedRecursively(root, target) || deleted
+                    }
             }
         }
         return deleted
@@ -453,11 +579,11 @@ class FileBackedPublicDownloadStore(
         return total
     }
 
-    override fun totalBytesUsed(serverId: String, profileId: String): Long {
+    override fun totalBytesUsed(scope: List<String>): Long {
         var total = 0L
         PublicDownloadCollection.entries.forEach { collection ->
             val root = collectionRoot(collection)
-            scopedCandidates(root, serverId, profileId).forEach { dir ->
+            scopedCandidates(root, *scope.toTypedArray()).forEach { dir ->
                 total += containedBytes(root, dir)
             }
         }
@@ -470,10 +596,12 @@ class FileBackedPublicDownloadStore(
     private fun fileUriString(file: File): String =
         URI("file", "", file.absolutePath, null).toASCIIString()
 
-    private fun downloadCandidates(root: File, serverId: String, profileId: String, fileId: Int): List<File> =
+    private fun downloadCandidates(root: File, scopes: List<List<String>>, fileId: Int): List<File> =
         distinctCandidates(
-            containedSafeChild(root, serverId, profileId, fileId.toString()),
-            containedLegacyChild(root, serverId, profileId, fileId.toString()),
+            *scopes.flatMap { scope ->
+                val segments = (scope + fileId.toString()).toTypedArray()
+                listOf(containedSafeChild(root, *segments), containedLegacyChild(root, *segments))
+            }.toTypedArray(),
         )
 
     private fun scopedCandidates(root: File, vararg segments: String): List<File> =
@@ -708,25 +836,25 @@ class MediaStorePublicDownloadStore(context: Context) : PublicDownloadStore {
     private val pendingReplacedDeletes = ConcurrentHashMap<String, MediaStoreScope>()
 
     override fun create(
-        serverId: String,
-        profileId: String,
+        scopes: List<List<String>>,
         fileId: Int,
         displayName: String,
         container: String?,
         mediaType: String?,
     ): DownloadTarget {
         val collection = PublicDownloadCollection.forMediaType(mediaType)
-        deleteByExactRelativePath(collection, mediaStoreRelativePath(collection, serverId, profileId, fileId))
+        val path = mediaStoreRelativePath(collection, scopes.first(), fileId)
+        deleteByExactRelativePath(collection, path)
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
             put(MediaStore.MediaColumns.MIME_TYPE, mimeTypeForDownloadName(displayName, container))
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.MediaColumns.RELATIVE_PATH, mediaStoreRelativePath(collection, serverId, profileId, fileId))
+                put(MediaStore.MediaColumns.RELATIVE_PATH, path)
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
         }
         val uri = resolver.insert(collection.contentUri(), values) ?: error("Could not create MediaStore download")
-        pendingReplacedDeletes[uri.toString()] = MediaStoreScope(collection, serverId, profileId, fileId)
+        pendingReplacedDeletes[uri.toString()] = MediaStoreScope(collection, scopes, fileId)
         return DownloadTarget(
             uriString = uri.toString(),
             displayName = displayName,
@@ -747,7 +875,7 @@ class MediaStorePublicDownloadStore(context: Context) : PublicDownloadStore {
         return null
     }
 
-    override fun locateByFileId(serverId: String, profileId: String, fileId: Int): DownloadLocation? {
+    override fun locateByFileId(scopes: List<List<String>>, fileId: Int): DownloadLocation? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
         val projection = arrayOf(
             MediaStore.MediaColumns._ID,
@@ -756,7 +884,7 @@ class MediaStorePublicDownloadStore(context: Context) : PublicDownloadStore {
         )
         val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
         PublicDownloadCollection.entries.forEach { collection ->
-            mediaStorePathCandidates(collection, serverId, profileId, fileId).forEach { path ->
+            mediaStorePathCandidates(collection, scopes, fileId).forEach { path ->
                 resolver.query(
                     collection.contentUri(),
                     projection,
@@ -793,7 +921,7 @@ class MediaStorePublicDownloadStore(context: Context) : PublicDownloadStore {
         }.getOrNull() ?: 0L
     }
 
-    override fun delete(serverId: String, profileId: String, fileId: Int, uriString: String?): Boolean {
+    override fun delete(scopes: List<List<String>>, fileId: Int, uriString: String?): Boolean {
         uriString?.let { uri ->
             return runCatching { resolver.delete(Uri.parse(uri), null, null) > 0 }.getOrDefault(false)
         }
@@ -803,27 +931,35 @@ class MediaStorePublicDownloadStore(context: Context) : PublicDownloadStore {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
         return deleteAcrossCollections { collection ->
             var deleted = false
-            mediaStorePathCandidates(collection, serverId, profileId, fileId).forEach { path ->
+            mediaStorePathCandidates(collection, scopes, fileId).forEach { path ->
                 deleted = deleteByExactRelativePath(collection, path) || deleted
             }
             deleted
         }
     }
 
-    override fun deleteAllForProfile(serverId: String, profileId: String): Boolean =
+    override fun deleteAll(scope: List<String>): Boolean =
         deleteAcrossCollections { collection ->
             var deleted = false
-            mediaStorePrefixCandidates(collection, serverId, profileId).forEach { pattern ->
+            mediaStorePrefixCandidates(collection, scope).forEach { pattern ->
                 deleted = deleteByRelativePathPrefix(collection, pattern) || deleted
             }
             deleted
         }
 
-    override fun deleteAllForServer(serverId: String): Boolean =
+    override fun deleteLegacyScopes(serverId: String): Boolean =
         deleteAcrossCollections { collection ->
             var deleted = false
-            mediaStorePrefixCandidates(collection, serverId).forEach { pattern ->
-                deleted = deleteByRelativePathPrefix(collection, pattern) || deleted
+            mediaStorePrefixCandidates(collection, listOf(serverId)).forEach { pattern ->
+                // The server prefix without its trailing `%`, then `acct-%`.
+                val accounts = pattern.removeSuffix("%") + escapeMediaStoreLike(ACCOUNT_SEGMENT_PREFIX) + "%"
+                deleted = deleteIncludingPending(
+                    collection,
+                    "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? ESCAPE '\\' AND " +
+                        "${MediaStore.MediaColumns.RELATIVE_PATH} NOT LIKE ? ESCAPE '\\'",
+                    pattern,
+                    accounts,
+                ) || deleted
             }
             deleted
         }
@@ -841,13 +977,13 @@ class MediaStorePublicDownloadStore(context: Context) : PublicDownloadStore {
         return total
     }
 
-    override fun totalBytesUsed(serverId: String, profileId: String): Long {
+    override fun totalBytesUsed(scope: List<String>): Long {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0L
         val projection = arrayOf(MediaStore.MediaColumns.SIZE)
         val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? ESCAPE '\\'"
         var total = 0L
         PublicDownloadCollection.entries.forEach { collection ->
-            mediaStorePrefixCandidates(collection, serverId, profileId).forEach { pattern ->
+            mediaStorePrefixCandidates(collection, scope).forEach { pattern ->
                 resolver.query(
                     collection.contentUri(),
                     projection,
@@ -867,9 +1003,9 @@ class MediaStorePublicDownloadStore(context: Context) : PublicDownloadStore {
         val values = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
         if (resolver.update(Uri.parse(uriString), values, null, null) <= 0) return uriString
         pendingReplacedDeletes.remove(uriString)?.let { scope ->
-            val newPath = mediaStoreRelativePath(scope.collection, scope.serverId, scope.profileId, scope.fileId)
+            val newPath = mediaStoreRelativePath(scope.collection, scope.scopes.first(), scope.fileId)
             PublicDownloadCollection.entries.forEach { collection ->
-                mediaStorePathCandidates(collection, scope.serverId, scope.profileId, scope.fileId)
+                mediaStorePathCandidates(collection, scope.scopes, scope.fileId)
                     .filterNot { path -> collection == scope.collection && path == newPath }
                     .forEach { path -> deleteByExactRelativePath(collection, path) }
             }
@@ -893,20 +1029,20 @@ class MediaStorePublicDownloadStore(context: Context) : PublicDownloadStore {
      * after its transfer ends, and other callers wait for the slot's worker to
      * stop (cancelAndAwait) before deleting.
      */
-    private fun deleteIncludingPending(collection: PublicDownloadCollection, selection: String, argument: String): Boolean {
+    private fun deleteIncludingPending(collection: PublicDownloadCollection, selection: String, vararg arguments: String): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
         val deleted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             resolver.delete(
                 collection.contentUri(),
                 Bundle().apply {
                     putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
-                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arrayOf(argument))
+                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arrayOf(*arguments))
                     putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
                 },
             )
         } else {
             @Suppress("DEPRECATION")
-            resolver.delete(MediaStore.setIncludePending(collection.contentUri()), selection, arrayOf(argument))
+            resolver.delete(MediaStore.setIncludePending(collection.contentUri()), selection, arrayOf(*arguments))
         }
         return deleted > 0
     }
@@ -927,30 +1063,26 @@ class MediaStorePublicDownloadStore(context: Context) : PublicDownloadStore {
 
     private data class MediaStoreScope(
         val collection: PublicDownloadCollection,
-        val serverId: String,
-        val profileId: String,
+        val scopes: List<List<String>>,
         val fileId: Int,
     )
 }
 
 fun mediaStoreRelativePath(
     collection: PublicDownloadCollection,
-    serverId: String,
-    profileId: String,
+    scope: List<String>,
     fileId: Int,
-): String = "${collection.relativeRoot}/Silo/${safePathSegment(serverId)}/${safePathSegment(profileId)}/${safePathSegment(fileId.toString())}/"
+): String = "${collection.relativeRoot}/Silo/" +
+    (scope + fileId.toString()).joinToString(separator = "/", postfix = "/") { safePathSegment(it) }
 
 internal fun mediaStoreRelativePathPrefix(
     collection: PublicDownloadCollection,
-    serverId: String,
-    profileId: String? = null,
+    scope: List<String>,
 ): String = buildString {
     append(collection.relativeRoot)
     append("/Silo/")
-    append(escapeMediaStoreLike(safePathSegment(serverId)))
-    append('/')
-    if (profileId != null) {
-        append(escapeMediaStoreLike(safePathSegment(profileId)))
+    scope.forEach { segment ->
+        append(escapeMediaStoreLike(safePathSegment(segment)))
         append('/')
     }
     append('%')
@@ -961,42 +1093,36 @@ internal fun escapeMediaStoreLike(value: String): String =
 
 private fun legacyMediaStoreRelativePath(
     collection: PublicDownloadCollection,
-    serverId: String,
-    profileId: String,
+    scope: List<String>,
     fileId: Int,
 ): String? {
-    if (!isLegacyMediaStoreSegment(serverId) || !isLegacyMediaStoreSegment(profileId)) return null
-    return "${collection.relativeRoot}/Silo/$serverId/$profileId/$fileId/"
+    if (!scope.all(::isLegacyMediaStoreSegment)) return null
+    return "${collection.relativeRoot}/Silo/${scope.joinToString("/")}/$fileId/"
 }
 
 private fun mediaStorePathCandidates(
     collection: PublicDownloadCollection,
-    serverId: String,
-    profileId: String,
+    scopes: List<List<String>>,
     fileId: Int,
 ): List<String> =
-    listOfNotNull(
-        mediaStoreRelativePath(collection, serverId, profileId, fileId),
-        legacyMediaStoreRelativePath(collection, serverId, profileId, fileId),
-    ).distinct()
+    scopes.flatMap { scope ->
+        listOfNotNull(
+            mediaStoreRelativePath(collection, scope, fileId),
+            legacyMediaStoreRelativePath(collection, scope, fileId),
+        )
+    }.distinct()
 
 private fun mediaStorePrefixCandidates(
     collection: PublicDownloadCollection,
-    serverId: String,
-    profileId: String? = null,
+    scope: List<String>,
 ): List<String> {
-    val encoded = mediaStoreRelativePathPrefix(collection, serverId, profileId)
-    val legacy = if (
-        isLegacyMediaStoreSegment(serverId) &&
-        (profileId == null || isLegacyMediaStoreSegment(profileId))
-    ) {
+    val encoded = mediaStoreRelativePathPrefix(collection, scope)
+    val legacy = if (scope.all(::isLegacyMediaStoreSegment)) {
         buildString {
             append(collection.relativeRoot)
             append("/Silo/")
-            append(escapeMediaStoreLike(serverId))
-            append('/')
-            if (profileId != null) {
-                append(escapeMediaStoreLike(profileId))
+            scope.forEach { segment ->
+                append(escapeMediaStoreLike(segment))
                 append('/')
             }
             append('%')

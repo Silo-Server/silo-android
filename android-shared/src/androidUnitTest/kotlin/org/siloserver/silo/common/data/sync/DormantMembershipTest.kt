@@ -43,7 +43,7 @@ class DormantMembershipTest {
     }
     private fun open(): SiloDatabase = Room.databaseBuilder(context,
         SiloDatabase::class.java, name)
-        .addMigrations(SiloDatabase.MIGRATION_9_10)
+        .addMigrations(SiloDatabase.MIGRATION_9_10, SiloDatabase.MIGRATION_15_16)
         .addCallback(SiloDatabase.CALLBACK).allowMainThreadQueries().build().also { db = it }
     private fun port(engine: MockEngine): RoomMembershipPort {
         val client = HttpClient(engine).also { clients += it }
@@ -54,7 +54,7 @@ class DormantMembershipTest {
     @Test fun migrationRetainsEveryLegacyFieldAndExcludesEveryGenericCleanupPath() = runTest {
         val legacy = migrationHelper.createDatabase(name, 9)
         val rows = listOf("pending", "in_flight", "custom_old_state").mapIndexed { index, state ->
-            DirtyOperationEntity(opKind = "SET_FAVORITE", serverId = "s", profileId = "p",
+            DirtyOperationEntity(opKind = "SET_FAVORITE", serverId = "s", accountId = "", profileId = "p",
                 targetContentId = "item", targetFileId = null, coalesceKey = "legacy-$index",
                 idempotencyKey = "key-$index", payloadJson = "true", state = state,
                 createdAtMs = 12, attemptCount = 4, lastAttemptAtMs = 13, nextAttemptAtMs = 500,
@@ -84,27 +84,27 @@ class DormantMembershipTest {
             assertNull(dao.getLatestByCoalesceKey(row.coalesceKey))
             assertEquals(row.copy(state = "legacy_membership_quarantined"), dao.getById(row.id))
         }
-        dao.resetInFlightToPending("s", "p")
-        dao.deleteSupersededInFlight("s", "p")
-        dao.deletePendingForTargetKind("s", "p", "item", "SET_FAVORITE")
-        dao.clearBackoffForTargetContent("s", "p", "item", 0)
+        dao.resetInFlightToPending("s", "", "p")
+        dao.deleteSupersededInFlight("s", "", "p")
+        dao.deletePendingForTargetKind("s", "", "p", "item", "SET_FAVORITE")
+        dao.clearBackoffForTargetContent("s", "", "p", "item", 0)
         assertEquals(0, dao.count())
-        assertEquals(0, dao.countForScope("s", "p"))
-        assertTrue(dao.dueBatch("s", "p", Long.MAX_VALUE, 10).isEmpty())
-        assertEquals(true, future.contentItemStateDao().get("s", "p", "item")?.favorite)
+        assertEquals(0, dao.countForScope("s", "", "p"))
+        assertTrue(dao.dueBatch("s", "", "p", Long.MAX_VALUE, 10).isEmpty())
+        assertEquals(true, future.contentItemStateDao().get("s", "", "p", "item")?.favorite)
         // Quarantine cannot block unrelated item FIFO, even when its IDs are older.
         val unrelated = dao.insert(rows.first().copy(id = 0, opKind = "SET_EBOOK_PROGRESS", state = "pending",
             coalesceKey = "ebook", idempotencyKey = "ebook", nextAttemptAtMs = 0))
-        assertEquals(listOf(unrelated), dao.dueTargetHeads("s", "p", Long.MAX_VALUE, 10).map { it.id })
+        assertEquals(listOf(unrelated), dao.dueTargetHeads("s", "", "p", Long.MAX_VALUE, 10).map { it.id })
         // Old producer must abort its whole projection+enqueue transaction after eventual cutover.
         assertFailsWith<IllegalStateException> { repository.recordFavorite("item", false) }
         assertFailsWith<android.database.sqlite.SQLiteConstraintException> {
             future.withTransaction {
-                future.contentItemStateDao().upsert(requireNotNull(future.contentItemStateDao().get("s", "p", "item")).copy(favorite = false))
+                future.contentItemStateDao().upsert(requireNotNull(future.contentItemStateDao().get("s", "", "p", "item")).copy(favorite = false))
                 dao.insert(rows.first().copy(id = 0, idempotencyKey = "obsolete-producer"))
             }
         }
-        assertEquals(true, future.contentItemStateDao().get("s", "p", "item")?.favorite)
+        assertEquals(true, future.contentItemStateDao().get("s", "", "p", "item")?.favorite)
         rows.forEach { assertEquals(it.copy(state = "legacy_membership_quarantined"), dao.getById(it.id)) }
     }
 
@@ -197,7 +197,7 @@ class DormantMembershipTest {
             restarted.projection(authority, "item", MembershipPort.Kind.FAVORITE)?.disposition)
         assertTrue(restarted.dispatch().isEmpty())
         assertNotNull(future.dirtyOperationDao().getById(command.id))
-        assertEquals(0, future.dirtyOperationDao().runnableLegacyCountForScope("s", "p"))
+        assertEquals(0, future.dirtyOperationDao().runnableLegacyCountForScope("s", "", "p"))
         assertEquals(listOf(HttpMethod.Get), methods)
     }
 

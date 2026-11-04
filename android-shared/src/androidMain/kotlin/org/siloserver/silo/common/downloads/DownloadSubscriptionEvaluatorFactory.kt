@@ -17,7 +17,7 @@ class DownloadSubscriptionEvaluatorFactory internal constructor(
         downloadEnqueuer: DownloadEnqueuer,
     ) : this(catalogRepository,
         existingFileIds = { subscription ->
-            metadataStore.listSidecars(subscription.serverId, subscription.profileId)
+            metadataStore.listSidecars(subscription.serverId, subscription.accountId, subscription.profileId)
                 .map { it.record.mediaFileId }.toSet()
         },
         enqueue = { candidate, quality -> enqueueCandidate(downloadEnqueuer, candidate, quality) },

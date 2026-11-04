@@ -4,6 +4,7 @@ import java.lang.reflect.Proxy
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.siloserver.silo.model.notifications.PushDeviceRegisterRequest
 import org.siloserver.silo.model.notifications.PushDeviceRegisterResponse
+import org.siloserver.silo.model.server.AccountEntry
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.DurableLoginAuthority
@@ -48,12 +49,16 @@ internal class SavedServers(vararg saved: ServerEntry) {
             override suspend fun savedLoginAuthority(serverId: String, profileId: String, profileToken: String?) =
                 logins[serverId]?.let { login ->
                     val url = entries.value.first { it.id == serverId }.url
-                    DurableLoginAuthority(login, AuthScopeSnapshot.savedLogin(serverId, url, profileId, profileToken, 7))
+                    DurableLoginAuthority(login, AuthScopeSnapshot.savedLogin(serverId, url, profileId, profileToken, 7, accountId = "account-$serverId"))
                 }
         },
         registry = Proxy.newProxyInstance(ServerRegistry::class.java.classLoader, arrayOf(ServerRegistry::class.java)) { _, method, _ ->
-            check(method.name == "getEntries") { "Unexpected ${method.name}" }
-            entries
+            when (method.name) {
+                "getEntries" -> entries
+                // Each saved server's login is its one account.
+                "getAccounts" -> MutableStateFlow(entries.value.map { AccountEntry(localAccountId = "account-${it.id}", serverId = it.id) })
+                else -> error("Unexpected ${method.name}")
+            }
         } as ServerRegistry,
         entriesWithIdentity = { serverId, candidates ->
             probed += candidates.map { it.id }

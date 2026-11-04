@@ -6,12 +6,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.siloserver.silo.common.store.AccountScopedKeys
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.ServerRegistry
 
 /**
- * Device-local Home row order and visibility, scoped to the active server and
- * profile. The server remains authoritative for row membership and content;
+ * Device-local Home row order and visibility, scoped to the active server,
+ * account and profile. The server remains authoritative for row membership and content;
  * unknown rows append in server order and start visible.
  */
 class HomeSectionPreferencesStore(
@@ -77,12 +78,14 @@ class HomeSectionPreferencesStore(
 
     private fun storageKey(profileIdOverride: String? = null): String? {
         val serverId = serverRegistry.activeServerId.value ?: "default"
+        val entry = serverRegistry.activeEntry.value
         val profileId = profileIdOverride
             ?.takeIf { it.isNotBlank() }
-            ?: serverRegistry.activeEntry.value?.profileId
+            ?: entry?.profileId
             ?.takeIf { it.isNotBlank() }
             ?: return null
-        return "android.homeSections.v1.$serverId.$profileId"
+        val account = entry?.accountId?.let { AccountScopedKeys.token(it) + "." }.orEmpty()
+        return "android.homeSections.v1.$serverId.$account$profileId"
     }
 
     private fun load(profileId: String? = null): StoredLayout {

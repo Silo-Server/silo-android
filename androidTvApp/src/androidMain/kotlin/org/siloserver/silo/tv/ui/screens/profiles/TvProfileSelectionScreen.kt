@@ -24,6 +24,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.ManageAccounts
+import androidx.compose.material.icons.outlined.PersonAdd
+import androidx.compose.material.icons.outlined.SwitchAccount
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -73,6 +75,8 @@ import org.siloserver.silo.tv.ui.components.TvDialog
 import org.siloserver.silo.tv.ui.components.TvDialogAction
 import org.siloserver.silo.tv.ui.components.TvDialogActionStyle
 import org.siloserver.silo.tv.ui.components.TvDialogOption
+import org.siloserver.silo.tv.ui.components.TvChoice
+import org.siloserver.silo.tv.ui.components.TvChoiceSheet
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.TvOptionDialog
@@ -93,12 +97,19 @@ private val ProfileAvatarSize = 110.dp
 private val ProfileColumnWidth = 128.dp
 private val ProfileColumnGap = 14.dp
 
+/** Focus key of the Add tile; profile tiles use their profile ID. */
+private const val AddTileKey = "add"
+
 /**
  * "Who's watching?" on Android TV (silo-apple `ProfileSelectionView` on
  * tvOS): round avatars centered over the brand light, "Signed in as", and
- * the utilities (change server, sign out, and manage) small and
- * below the people. A PIN prompt opens full screen over the same light,
- * tinted with that person's color.
+ * the utilities (manage, change account, sign out) small and below the
+ * people. A PIN prompt opens full screen over the same light, tinted with
+ * that person's color.
+ *
+ * It shows the open account's profiles only (owner decision 2026-11-02,
+ * Roku spec §7.5), then Add, which asks whether to add a profile, an account
+ * or a server. Other accounts and servers are on Change Account.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -106,7 +117,11 @@ fun TvProfileSelectionScreen(
     onProfileSelected: () -> Unit,
     onAddProfile: () -> Unit = {},
     onEditProfile: (String) -> Unit = {},
-    onChangeServer: () -> Unit = {},
+    /** Change Account; a server ID starts it on that server's "Add an account". */
+    onChangeAccount: (addAccountOn: String?) -> Unit = {},
+    onAddServer: () -> Unit = {},
+    /** No account is open, so there is nothing to pick: go to the account root. */
+    onNoAccountOpen: () -> Unit = {},
     onSignOut: (removeServer: Boolean) -> Unit = {},
     viewModel: TvProfileSelectionViewModel = koinViewModel(),
 ) {
@@ -164,6 +179,16 @@ fun TvProfileSelectionScreen(
         if (state.selectedProfileId != null) {
             viewModel.onSelectionConsumed()
             onProfileSelected()
+        }
+    }
+
+    LaunchedEffect(state.navigation) {
+        val navigation = state.navigation ?: return@LaunchedEffect
+        viewModel.onNavigationConsumed()
+        when (navigation) {
+            is TvPickerNavigation.ChangeAccount -> onChangeAccount(navigation.addAccountOn)
+            TvPickerNavigation.AddServer -> onAddServer()
+            TvPickerNavigation.NoAccountOpen -> onNoAccountOpen()
         }
     }
 
@@ -233,7 +258,7 @@ fun TvProfileSelectionScreen(
                         previousProfileIds = profileIds
                         // Requesters are keyed by ID, so a deleted profile's
                         // would otherwise be retained for the screen's lifetime.
-                        tileFocusRequesters.keys.retainAll(profileIds.toSet())
+                        tileFocusRequesters.keys.retainAll(profileIds.toSet() + AddTileKey)
                         if (target == null) return@LaunchedEffect
                         // Placement can trail the data by a frame or two.
                         val result = requestFocusUntilObserved(
@@ -263,16 +288,13 @@ fun TvProfileSelectionScreen(
                     }
                     ProfileTileGrid(
                         profiles = state.profiles,
-                        canAddProfile = state.canManageProfiles,
-                        focusRequesterFor = { id ->
-                            tileFocusRequesters.getOrPut(id) { FocusRequester() }
-                        },
-                        onProfileFocused = { focusedProfileId = it },
                         isManageMode = state.isManageMode,
+                        focusRequesterFor = { id -> tileFocusRequesters.getOrPut(id) { FocusRequester() } },
+                        onProfileFocused = { focusedProfileId = it },
                         onProfileSelected = viewModel::onProfileSelected,
                         onEditProfile = { onEditProfile(it.id) },
                         onDeleteProfile = viewModel::requestDelete,
-                        onAddProfile = viewModel::requestAddProfile,
+                        onAdd = viewModel::onAddSelected,
                     )
 
                     if (state.error != null) {
@@ -298,12 +320,13 @@ fun TvProfileSelectionScreen(
                                 icon = if (state.isManageMode) null else Icons.Outlined.ManageAccounts,
                             )
                         }
+                        // Where "Change server" was: other accounts and servers.
                         TvMarqueeButton(
-                            text = "Change server",
-                            onClick = onChangeServer,
+                            text = "Change account",
+                            onClick = viewModel::onChangeAccount,
                             kind = TvMarqueeButtonKind.Glass,
                             compact = true,
-                            icon = Icons.Outlined.Dns,
+                            icon = Icons.Outlined.SwitchAccount,
                         )
                         TvMarqueeButton(
                             text = "Sign out",
@@ -325,6 +348,38 @@ fun TvProfileSelectionScreen(
                 onSignOut(removeServer)
             },
             onDismiss = { showSignOutDialog = false },
+        )
+    }
+
+    // Add: a profile on this account (when the household has a primary to
+    // manage it), another account, or another server.
+    if (state.showAddChoice) {
+        TvChoiceSheet(
+            title = "Add",
+            choices = listOfNotNull(
+                TvChoice(
+                    key = "profile",
+                    title = "Add a profile",
+                    detail = "For someone else on this account",
+                    icon = Icons.Filled.Add,
+                    onClick = viewModel::onAddProfileChosen,
+                ).takeIf { state.canManageProfiles },
+                TvChoice(
+                    key = "account",
+                    title = "Add an account",
+                    detail = "Sign in to another account on a saved server",
+                    icon = Icons.Outlined.PersonAdd,
+                    onClick = viewModel::onAddAccountChosen,
+                ),
+                TvChoice(
+                    key = "server",
+                    title = "Add a server",
+                    detail = "Connect this TV to another Silo server",
+                    icon = Icons.Outlined.Dns,
+                    onClick = viewModel::onAddServerChosen,
+                ),
+            ),
+            onDismiss = viewModel::onAddChoiceDismissed,
         )
     }
 
@@ -387,21 +442,21 @@ fun TvProfileSelectionScreen(
     }
 }
 
+/** The open account's profiles, up to six columns, then Add. */
 @Composable
 private fun ProfileTileGrid(
     profiles: List<Profile>,
-    canAddProfile: Boolean,
+    isManageMode: Boolean,
     focusRequesterFor: (String) -> FocusRequester,
     // Null means no profile tile owns focus — the Add tile has it, or focus
     // left the grid entirely. Restoration must not re-request a tile then.
     onProfileFocused: (String?) -> Unit,
-    isManageMode: Boolean,
     onProfileSelected: (Profile) -> Unit,
     onEditProfile: (Profile) -> Unit,
     onDeleteProfile: (Profile) -> Unit,
-    onAddProfile: () -> Unit,
+    onAdd: () -> Unit,
 ) {
-    val itemCount = profiles.size + (if (canAddProfile) 1 else 0)
+    val itemCount = profiles.size + 1
     val rowCount = (itemCount + ProfileGridColumns - 1) / ProfileGridColumns
     Column(
         modifier = Modifier
@@ -420,32 +475,27 @@ private fun ProfileTileGrid(
                 repeat(itemsInRow) { columnIndex ->
                     val itemIndex = firstItemIndex + columnIndex
                     Box(modifier = Modifier.width(ProfileColumnWidth), contentAlignment = Alignment.TopCenter) {
-                        when {
-                            itemIndex < profiles.size -> {
-                                val profile = profiles[itemIndex]
-                                TvProfileTile(
-                                    profile = profile,
-                                    manageMode = isManageMode,
-                                    onClick = {
-                                        if (isManageMode) {
-                                            onEditProfile(profile)
-                                        } else {
-                                            onProfileSelected(profile)
-                                        }
-                                    },
-                                    onDelete = { onDeleteProfile(profile) },
-                                    modifier = Modifier
-                                        .focusRequester(focusRequesterFor(profile.id))
-                                        .onFocusChanged {
-                                            if (it.isFocused) onProfileFocused(profile.id)
-                                        },
-                                )
-                            }
-                            itemIndex == profiles.size && canAddProfile -> TvAddProfileTile(
-                                onClick = onAddProfile,
-                                modifier = Modifier.onFocusChanged {
-                                    if (it.isFocused) onProfileFocused(null)
+                        if (itemIndex < profiles.size) {
+                            val profile = profiles[itemIndex]
+                            TvProfileTile(
+                                profile = profile,
+                                manageMode = isManageMode,
+                                onClick = {
+                                    if (isManageMode) onEditProfile(profile) else onProfileSelected(profile)
                                 },
+                                onDelete = { onDeleteProfile(profile) },
+                                modifier = Modifier
+                                    .focusRequester(focusRequesterFor(profile.id))
+                                    .onFocusChanged { if (it.isFocused) onProfileFocused(profile.id) },
+                            )
+                        } else {
+                            TvAddTile(
+                                // Manage mode adds a profile to this account, as before.
+                                label = if (isManageMode) "Add profile" else "Add",
+                                onClick = onAdd,
+                                modifier = Modifier
+                                    .focusRequester(focusRequesterFor(AddTileKey))
+                                    .onFocusChanged { if (it.isFocused) onProfileFocused(null) },
                             )
                         }
                     }
@@ -538,12 +588,17 @@ private fun TvProfileTile(
     }
 }
 
+/** The dashed round Add tile after the profiles. */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TvAddProfileTile(onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun TvAddTile(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     var focused by remember { mutableStateOf(false) }
     val reduceMotion = rememberReduceMotion()
-    val scale by animateFloatAsState(if (focused && !reduceMotion) 1.12f else 1f, label = "tvAddTileScale")
+    val scale by animateFloatAsState(if (focused && !reduceMotion) 1.12f else 1f, label = "tvActionTileScale")
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = modifier
@@ -554,7 +609,7 @@ private fun TvAddProfileTile(onClick: () -> Unit, modifier: Modifier = Modifier)
                     indication = null,
                     onClick = onClick,
                 )
-                .semantics { contentDescription = "Add profile" }
+                .semantics { contentDescription = label }
                 .graphicsLayer { scaleX = scale; scaleY = scale }
                 .focusRing(focused)
                 .size(ProfileAvatarSize)
@@ -573,11 +628,11 @@ private fun TvAddProfileTile(onClick: () -> Unit, modifier: Modifier = Modifier)
                 Icons.Filled.Add,
                 contentDescription = null,
                 tint = MarqueeColors.Ink.copy(alpha = if (focused) 1f else 0.4f),
-                modifier = Modifier.size(33.dp),
+                modifier = Modifier.size(ProfileAvatarSize * 0.3f),
             )
         }
         Text(
-            text = "Add profile",
+            text = label,
             fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold,
             color = MarqueeColors.Ink.copy(alpha = if (focused) 1f else 0.62f),

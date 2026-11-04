@@ -47,9 +47,9 @@ class OfflineMediaResolverTest {
     fun `findLocalMedia returns completed original-named download`() = runTest {
         val storage = newStorage()
         storage.writeCompleted("srv1", "profA", 42, "Novel.epub")
-        metadata.writeSidecar("srv1", "profA", sidecar(42, contentId = "book-1", fileName = "Novel.epub"))
+        metadata.writeSidecar("srv1", "acct", "profA", sidecar(42, contentId = "book-1", fileName = "Novel.epub"))
 
-        val media = resolver(storage).findLocalMedia("srv1", "profA", "book-1", requestedFileId = 42)
+        val media = resolver(storage).findLocalMedia("srv1", "acct", "profA", "book-1", requestedFileId = 42)
 
         assertEquals("srv1", media?.serverId)
         assertEquals("profA", media?.profileId)
@@ -61,25 +61,27 @@ class OfflineMediaResolverTest {
     @Test
     fun `findLocalMedia ignores incomplete downloads`() = runTest {
         val storage = newStorage()
-        storage.prepareWrite("srv1", "profA", 42, fileName = "Novel.epub").writeTargetBytes(ByteArray(10))
+        storage.prepareWrite("srv1", "acct", "profA", 42, fileName = "Novel.epub").writeTargetBytes(ByteArray(10))
         metadata.writeSidecar(
             "srv1",
+            "acct",
             "profA",
             sidecar(42, contentId = "book-1", status = "downloading", fileName = "Novel.epub"),
         )
 
-        assertNull(resolver(storage).findLocalMedia("srv1", "profA", "book-1", requestedFileId = 42))
+        assertNull(resolver(storage).findLocalMedia("srv1", "acct", "profA", "book-1", requestedFileId = 42))
     }
 
     @Test
     fun `findLocalMedia honors requested file id when fallback is disabled`() = runTest {
         val storage = newStorage()
         storage.writeCompleted("srv1", "profA", 1, "A.epub")
-        metadata.writeSidecar("srv1", "profA", sidecar(1, contentId = "book-1", fileName = "A.epub"))
+        metadata.writeSidecar("srv1", "acct", "profA", sidecar(1, contentId = "book-1", fileName = "A.epub"))
 
         assertNull(
             resolver(storage).findLocalMedia(
                 serverId = "srv1",
+                accountId = "acct",
                 profileId = "profA",
                 contentId = "book-1",
                 requestedFileId = 2,
@@ -92,12 +94,13 @@ class OfflineMediaResolverTest {
     fun `findLocalMedia stays inside the requested server profile scope`() = runTest {
         val storage = newStorage()
         storage.writeCompleted("srv1", "profA", 42, "Wrong.epub")
-        metadata.writeSidecar("srv1", "profA", sidecar(42, contentId = "book-1", fileName = "Wrong.epub"))
+        metadata.writeSidecar("srv1", "acct", "profA", sidecar(42, contentId = "book-1", fileName = "Wrong.epub"))
         storage.writeCompleted("srv1", "profB", 42, "Right.epub")
-        metadata.writeSidecar("srv1", "profB", sidecar(42, contentId = "book-1", fileName = "Right.epub"))
+        metadata.writeSidecar("srv1", "acct", "profB", sidecar(42, contentId = "book-1", fileName = "Right.epub"))
 
         val media = resolver(storage).findLocalMedia(
             serverId = "srv1",
+            accountId = "acct",
             profileId = "profB",
             contentId = "book-1",
             requestedFileId = 42,
@@ -111,13 +114,13 @@ class OfflineMediaResolverTest {
     fun `listLocalMedia returns every completed local candidate for content`() = runTest {
         val storage = newStorage()
         storage.writeCompleted("srv1", "profA", 7, "Book.mobi")
-        metadata.writeSidecar("srv1", "profA", sidecar(7, contentId = "book-1", fileName = "Book.mobi"))
+        metadata.writeSidecar("srv1", "acct", "profA", sidecar(7, contentId = "book-1", fileName = "Book.mobi"))
         storage.writeCompleted("srv1", "profA", 8, "Book.epub")
-        metadata.writeSidecar("srv1", "profA", sidecar(8, contentId = "book-1", fileName = "Book.epub"))
+        metadata.writeSidecar("srv1", "acct", "profA", sidecar(8, contentId = "book-1", fileName = "Book.epub"))
         storage.writeCompleted("srv1", "profA", 9, "Other.epub")
-        metadata.writeSidecar("srv1", "profA", sidecar(9, contentId = "book-2", fileName = "Other.epub"))
+        metadata.writeSidecar("srv1", "acct", "profA", sidecar(9, contentId = "book-2", fileName = "Other.epub"))
 
-        val media = resolver(storage).listLocalMedia("srv1", "profA", "book-1")
+        val media = resolver(storage).listLocalMedia("srv1", "acct", "profA", "book-1")
 
         // Only the two book-1 candidates surface; book-2 is filtered out.
         // (Order follows the DAO's updatedAtMs sort, so assert on the set.)
@@ -158,7 +161,7 @@ class OfflineMediaResolverTest {
         fileId: Int,
         fileName: String,
     ) {
-        val target = prepareWrite(serverId, profileId, fileId, fileName = fileName)
+        val target = prepareWrite(serverId, "acct", profileId, fileId, fileName = fileName)
         target.writeTargetBytes(ByteArray(10))
         completeWrite(target.uriString)
     }

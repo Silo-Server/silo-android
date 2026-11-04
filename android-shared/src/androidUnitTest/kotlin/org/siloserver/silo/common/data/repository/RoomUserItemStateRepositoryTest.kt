@@ -66,7 +66,7 @@ class RoomUserItemStateRepositoryTest {
         val watched = repository.recordWatched("episode", true)
         repository.resolve(watched, WriteOutcome.SYNCED)
         repository.recordPosition("episode", 7, 30.0, 60.0)
-        db.dirtyOperationDao().dueBatch("s1", "p1", 1000L, 10).forEach {
+        db.dirtyOperationDao().dueBatch("s1", "", "p1", 1000L, 10).forEach {
             repository.resolve(OutboxHandle(it.id), WriteOutcome.SYNCED)
         }
         time = 3000L
@@ -89,12 +89,12 @@ class RoomUserItemStateRepositoryTest {
         repository.recordAudioTrackSelection("episode", 7, "audio")
         // A watched write admitted at 2000 must clear the older progress, even
         // though an unrelated track choice updated the row afterward.
-        db.userItemStateDao().clearPlaybackProgressBefore("s1", "p1", "episode", 2000L, 4000L)
+        db.userItemStateDao().clearPlaybackProgressBefore("s1", "", "p1", "episode", 2000L, 4000L)
         assertNull(repository.localPlaybackProgress("episode"))
         time = 5000L
         repository.recordSubtitleTrackSelection("episode", 7, "subtitle")
-        db.userItemStateDao().restorePlaybackProgressIfUnchanged("s1", "p1", "episode", 7, 30.0, 3000L, 1000L, 4000L)
-        val row = db.userItemStateDao().get("s1", "p1", "episode", 7)!!
+        db.userItemStateDao().restorePlaybackProgressIfUnchanged("s1", "", "p1", "episode", 7, 30.0, 3000L, 1000L, 4000L)
+        val row = db.userItemStateDao().get("s1", "", "p1", "episode", 7)!!
         assertEquals(30.0, row.positionSeconds)
         assertEquals("audio", row.audioFingerprint)
         assertEquals("subtitle", row.subtitleFingerprint)
@@ -109,13 +109,13 @@ class RoomUserItemStateRepositoryTest {
         val legacy = "UPDATE user_item_state SET positionUpdatedAtMs = NULL"
         db.openHelper.writableDatabase.execSQL(legacy)
         // A resume sample saved after the watched op was admitted survives its late acknowledgement.
-        db.userItemStateDao().clearPlaybackProgressBefore("s1", "p1", "episode", 500L, 2000L)
-        assertEquals(30.0, db.userItemStateDao().get("s1", "p1", "episode", 7)!!.positionSeconds)
+        db.userItemStateDao().clearPlaybackProgressBefore("s1", "", "p1", "episode", 500L, 2000L)
+        assertEquals(30.0, db.userItemStateDao().get("s1", "", "p1", "episode", 7)!!.positionSeconds)
         // A reset made before the upgrade is still undone when its op is rejected.
-        db.userItemStateDao().clearPlaybackProgress("s1", "p1", "episode", 4000L)
+        db.userItemStateDao().clearPlaybackProgress("s1", "", "p1", "episode", 4000L)
         db.openHelper.writableDatabase.execSQL(legacy)
-        db.userItemStateDao().restorePlaybackProgressIfUnchanged("s1", "p1", "episode", 7, 30.0, 1000L, null, 4000L)
-        assertEquals(30.0, db.userItemStateDao().get("s1", "p1", "episode", 7)!!.positionSeconds)
+        db.userItemStateDao().restorePlaybackProgressIfUnchanged("s1", "", "p1", "episode", 7, 30.0, 1000L, null, 4000L)
+        assertEquals(30.0, db.userItemStateDao().get("s1", "", "p1", "episode", 7)!!.positionSeconds)
     }
 
     @Test
@@ -123,12 +123,12 @@ class RoomUserItemStateRepositoryTest {
         val handle = repo.recordWatched("c1", watched = true)
         assertTrue(handle.opId >= 0)
 
-        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "c1")?.watched)
+        assertEquals(true, db.contentItemStateDao().get("s1", "", "p1", "c1")?.watched)
 
-        val op = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(OutboxOperation.SET_WATCHED, op.opKind)
         assertNull(op.targetFileId)
-        assertEquals("s1|p1|c1|${OutboxOperation.SET_WATCHED}", op.coalesceKey)
+        assertEquals("s1||p1|c1|${OutboxOperation.SET_WATCHED}", op.coalesceKey)
     }
 
     @Test
@@ -149,7 +149,7 @@ class RoomUserItemStateRepositoryTest {
 
         repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
 
-        val drained = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+        val drained = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 40_000L, limit = 10)
         assertEquals(
             listOf(OutboxOperation.SET_WATCHED, OutboxOperation.SET_POSITION),
             drained.map { it.opKind },
@@ -170,7 +170,7 @@ class RoomUserItemStateRepositoryTest {
 
         repo.recordWatched("c1", watched = true)
 
-        var row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        var row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertEquals(0.0, row?.positionSeconds)
         assertEquals(3600.0, row?.durationSeconds)
         assertEquals("audio", row?.audioFingerprint)
@@ -182,7 +182,7 @@ class RoomUserItemStateRepositoryTest {
         repo.recordPosition("c1", fileId = 7, positionSeconds = 789.0, durationSeconds = 3600.0)
         repo.recordWatched("c1", watched = false)
 
-        row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertEquals(0.0, row?.positionSeconds)
         assertNull(repo.localPlaybackProgress("c1"))
     }
@@ -193,7 +193,7 @@ class RoomUserItemStateRepositoryTest {
 
         repo.recordWatched("c1", watched = true)
 
-        val op = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(OutboxOperation.SET_WATCHED, op.opKind)
     }
 
@@ -247,7 +247,7 @@ class RoomUserItemStateRepositoryTest {
     @Test
     fun syncedWatchedChangeReplaysAfterAnInFlightPosition() = runTest {
         repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
-        val position = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        val position = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(1, db.dirtyOperationDao().claim(position.id))
         var syncRequests = 0
         val guardedRepo = RoomUserItemStateRepository(
@@ -269,7 +269,7 @@ class RoomUserItemStateRepositoryTest {
     fun watchedToggleDoesNotClobberExistingRating() = runTest {
         repo.recordRating("c1", rating = 5)
         repo.recordWatched("c1", watched = true)
-        val row = db.contentItemStateDao().get("s1", "p1", "c1")
+        val row = db.contentItemStateDao().get("s1", "", "p1", "c1")
         assertEquals(5, row?.ratingValue)
         assertEquals(true, row?.watched)
         // Distinct kinds do not coalesce against each other.
@@ -281,7 +281,7 @@ class RoomUserItemStateRepositoryTest {
         repo.recordWatched("c1", watched = true)
         repo.recordWatched("c1", watched = false)
         assertEquals(1, db.dirtyOperationDao().count())
-        val op = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(false, OutboxOperation.decodeBooleanPayload(op.payloadJson))
     }
 
@@ -295,11 +295,11 @@ class RoomUserItemStateRepositoryTest {
     @Test
     fun resolveTerminalDropsOpAndRevertsProjection() = runTest {
         val handle = repo.recordRating("c1", rating = 4)
-        assertEquals(4, db.contentItemStateDao().get("s1", "p1", "c1")?.ratingValue)
+        assertEquals(4, db.contentItemStateDao().get("s1", "", "p1", "c1")?.ratingValue)
         repo.resolve(handle, WriteOutcome.TERMINAL)
         assertEquals(0, db.dirtyOperationDao().count())
         // Optimistic rating reverted to null so the card overlay defers to server.
-        assertNull(db.contentItemStateDao().get("s1", "p1", "c1")?.ratingValue)
+        assertNull(db.contentItemStateDao().get("s1", "", "p1", "c1")?.ratingValue)
     }
 
     @Test
@@ -338,14 +338,14 @@ class RoomUserItemStateRepositoryTest {
         repo.recordPosition("c1", fileId = 7, positionSeconds = 123.0, durationSeconds = 3600.0)
 
         // File-level local projection for resume.
-        val row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertEquals(123.0, row?.positionSeconds)
         assertEquals(3600.0, row?.durationSeconds)
 
         // Single content-level position op (coalesce key omits fileId).
-        val op = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(OutboxOperation.SET_POSITION, op.opKind)
-        assertEquals("s1|p1|c1|${OutboxOperation.SET_POSITION}", op.coalesceKey)
+        assertEquals("s1||p1|c1|${OutboxOperation.SET_POSITION}", op.coalesceKey)
         assertEquals(7, op.targetFileId)
     }
 
@@ -355,8 +355,8 @@ class RoomUserItemStateRepositoryTest {
         currentSnapshot = authScope("server", "profile-b", generation = 5L)
 
         assertFalse(repo.recordPosition(captured, "movie", 7, 42.0, 100.0))
-        assertNull(db.userItemStateDao().get("server", "profile-a", "movie", 7))
-        assertNull(db.userItemStateDao().get("server", "profile-b", "movie", 7))
+        assertNull(db.userItemStateDao().get("server", "", "profile-a", "movie", 7))
+        assertNull(db.userItemStateDao().get("server", "", "profile-b", "movie", 7))
     }
 
     @Test
@@ -367,7 +367,7 @@ class RoomUserItemStateRepositoryTest {
         assertTrue(repo.recordPosition(captured, "movie", 7, 42.0, 100.0))
         assertEquals(
             42.0,
-            db.userItemStateDao().get("server", "profile-a", "movie", 7)?.positionSeconds,
+            db.userItemStateDao().get("server", "", "profile-a", "movie", 7)?.positionSeconds,
         )
     }
 
@@ -376,7 +376,7 @@ class RoomUserItemStateRepositoryTest {
         repo.recordPosition("c1", fileId = 7, positionSeconds = 10.0, durationSeconds = 3600.0)
         repo.recordPosition("c1", fileId = 7, positionSeconds = 99.0, durationSeconds = 3600.0)
         assertEquals(1, db.dirtyOperationDao().count())
-        val op = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(99.0, OutboxOperation.decodePositionPayload(op.payloadJson).first)
     }
 
@@ -430,7 +430,7 @@ class RoomUserItemStateRepositoryTest {
         repo.recordAudioTrackSelection("c1", fileId = 7, audioFingerprint = "1|eng|eac3|5.1|false")
         repo.recordSubtitleTrackSelection("c1", fileId = 7, subtitleFingerprint = "off")
 
-        val row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertEquals(456.0, row?.positionSeconds)
         assertEquals("1|eng|eac3|5.1|false", row?.audioFingerprint)
         assertEquals("off", row?.subtitleFingerprint)
@@ -457,7 +457,7 @@ class RoomUserItemStateRepositoryTest {
             subtitleFingerprint = " new-subtitle ",
         )
 
-        val row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertEquals(456.0, row?.positionSeconds)
         assertEquals(3600.0, row?.durationSeconds)
         assertEquals("new-audio", row?.audioFingerprint)
@@ -477,7 +477,7 @@ class RoomUserItemStateRepositoryTest {
             subtitleUpdate = TrackSelectionFingerprintUpdate.Set("new-subtitle"),
         )
 
-        val row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertEquals("old-audio", row?.audioFingerprint)
         assertEquals("new-subtitle", row?.subtitleFingerprint)
     }
@@ -494,7 +494,7 @@ class RoomUserItemStateRepositoryTest {
             subtitleUpdate = TrackSelectionFingerprintUpdate.Preserve,
         )
 
-        val row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertNull(row?.audioFingerprint)
         assertEquals("old-subtitle", row?.subtitleFingerprint)
     }
@@ -518,8 +518,8 @@ class RoomUserItemStateRepositoryTest {
         )
 
         assertFalse(accepted)
-        assertNull(db.userItemStateDao().get("s1", "p1", "c1", 7))
-        assertNull(db.userItemStateDao().get("s1", "p2", "c1", 7))
+        assertNull(db.userItemStateDao().get("s1", "", "p1", "c1", 7))
+        assertNull(db.userItemStateDao().get("s1", "", "p2", "c1", 7))
     }
 
     @Test
@@ -541,8 +541,8 @@ class RoomUserItemStateRepositoryTest {
         )
 
         assertFalse(accepted)
-        assertNull(db.userItemStateDao().get("s1", "p1", "c1", 7))
-        assertNull(db.userItemStateDao().get("s2", "p1", "c1", 7))
+        assertNull(db.userItemStateDao().get("s1", "", "p1", "c1", 7))
+        assertNull(db.userItemStateDao().get("s2", "", "p1", "c1", 7))
     }
 
     @Test
@@ -569,7 +569,7 @@ class RoomUserItemStateRepositoryTest {
             )
         }
 
-        val row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
         assertEquals("old-audio", row?.audioFingerprint)
         assertEquals("old-subtitle", row?.subtitleFingerprint)
     }
@@ -593,7 +593,7 @@ class RoomUserItemStateRepositoryTest {
         }
 
         assertSame(cancellation, thrown)
-        assertNull(db.userItemStateDao().get("s1", "p1", "c1", 7))
+        assertNull(db.userItemStateDao().get("s1", "", "p1", "c1", 7))
     }
 
     @Test
@@ -602,9 +602,9 @@ class RoomUserItemStateRepositoryTest {
         val back = repo.localEbookProgress("c1", fileId = 7)
         assertEquals("epubcfi(/6/4!/4)", back?.location)
         assertEquals(0.42, back?.progress)
-        val op = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(OutboxOperation.SET_EBOOK_PROGRESS, op.opKind)
-        assertEquals("s1|p1|c1|${OutboxOperation.SET_EBOOK_PROGRESS}", op.coalesceKey)
+        assertEquals("s1||p1|c1|${OutboxOperation.SET_EBOOK_PROGRESS}", op.coalesceKey)
     }
 
     @Test
@@ -612,7 +612,7 @@ class RoomUserItemStateRepositoryTest {
         repo.recordPosition("c1", fileId = 7, positionSeconds = Double.NaN, durationSeconds = 3600.0)
         repo.recordPosition("c1", fileId = 7, positionSeconds = -5.0, durationSeconds = 3600.0)
         // No projection row, no outbox op — invalid values can't poison the drain.
-        assertNull(db.userItemStateDao().get("s1", "p1", "c1", 7))
+        assertNull(db.userItemStateDao().get("s1", "", "p1", "c1", 7))
         assertEquals(0, db.dirtyOperationDao().count())
     }
 
@@ -627,7 +627,7 @@ class RoomUserItemStateRepositoryTest {
 
         assertEquals(1200.0, repo.localPosition("c1", fileId = 7))
         // Only the original 1200s op is queued; the 0 produced no new/overwriting op.
-        val op = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        val op = db.dirtyOperationDao().dueBatch("s1", "", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(1200.0, OutboxOperation.decodePositionPayload(op.payloadJson).first)
     }
 

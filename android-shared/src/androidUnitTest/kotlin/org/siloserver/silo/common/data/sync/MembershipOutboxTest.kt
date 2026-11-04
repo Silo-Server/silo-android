@@ -54,7 +54,7 @@ class MembershipOutboxTest {
         assertEquals(MembershipOutbox.Resolution.ACKNOWLEDGED, result.resolution)
         assertFalse(result.mayPublish)
         assertNull(dao.getById(first)); assertNotNull(dao.getById(newer)); assertEquals(1, sends)
-        assertTrue(dao.dueBatch("s", "p", Long.MAX_VALUE, 100).isEmpty())
+        assertTrue(dao.dueBatch("s", "", "p", Long.MAX_VALUE, 100).isEmpty())
     }
 
     @Test fun oldScopeAckRemovesOnlyClaimAndCannotPublish() = runTest {
@@ -89,7 +89,7 @@ class MembershipOutboxTest {
         db = Room.databaseBuilder(context, SiloDatabase::class.java, name).allowMainThreadQueries().build()
         val restarted = outbox(MockEngine { respond("", HttpStatusCode.NotFound) }, "process-two")
         assertEquals(1, restarted.recover())
-        dao.resetInFlightToPending("s", "p")
+        dao.resetInFlightToPending("s", "", "p")
         assertEquals(MembershipOutbox.RECONCILE, dao.getById(id)?.state)
         assertEquals(0, dao.resolveMembership(id, "wrong-claim", authority.key, MembershipOutbox.RECONCILE))
         assertEquals(MembershipOutbox.Resolution.NOT_CLAIMED, restarted.reconcile(id, authority.copy(key = "different-login")).resolution)

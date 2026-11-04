@@ -8,6 +8,7 @@ import org.siloserver.silo.android.auth.NativeSignInProtocol
 import org.siloserver.silo.android.auth.NativeSignInPurpose
 import org.siloserver.silo.android.auth.NativeSignInResult
 import org.siloserver.silo.android.auth.NativeSignInStart
+import org.siloserver.silo.common.downloads.DownloadSummary
 import org.siloserver.silo.model.auth.NetworkSignInFailure
 import org.siloserver.silo.model.auth.PasswordLoginFailure
 import org.siloserver.silo.model.auth.SignInOptions
@@ -19,6 +20,7 @@ import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ExternalSignInRepository
 import org.siloserver.silo.repository.ServerIdentityRepository
 import java.net.URI
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -53,6 +55,11 @@ data class LoginUiState(
     val browserLaunch: String? = null,
     /** "Use a different account" with several providers: which one to sign in with. */
     val choosingAccountProvider: Boolean = false,
+    /**
+     * Signed in as a different account from the expired one this sign-in was
+     * for: ask before replacing it (spec §4.4).
+     */
+    val replacePrompt: ReplaceExpiredPrompt? = null,
 ) {
     val showPasswordForm: Boolean get() = options?.showPasswordForm == true
     val providers: List<SignInProvider> get() = options?.oauthProviders.orEmpty()
@@ -67,6 +74,19 @@ data class LoginUiState(
     val signInBusy: Boolean get() = isLoading || providerBusy != null || networkSignInBusy
 }
 
+/**
+ * The person signed in as [newUsername] from [expiredUsername]'s Sign in
+ * again: replacing signs out of the expired account, which deletes
+ * [downloads] (spec §4.4); keeping leaves both saved.
+ */
+data class ReplaceExpiredPrompt(
+    val expiredUsername: String,
+    val newUsername: String,
+    val downloads: DownloadSummary?,
+    /** "Replace" didn't sign out of the expired account; it is still saved. */
+    val replaceFailed: Boolean = false,
+)
+
 class LoginViewModel(
     private val authRepository: AuthRepository,
     private val externalSignIn: ExternalSignInRepository,
@@ -74,6 +94,9 @@ class LoginViewModel(
     private val serverIdentities: ServerIdentityRepository,
     private val nativeSignIn: NativeSignInCoordinator,
     private val tokenManager: TokenManager,
+    /** Signs out of the expired account when the person replaces it. */
+    private val signOutAccount: suspend (serverId: String, accountId: String) -> Boolean = { _, _ -> false },
+    private val downloadSummary: suspend (serverId: String, accountId: String) -> DownloadSummary? = { _, _ -> null },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(LoginUiState())
@@ -83,12 +106,24 @@ class LoginViewModel(
     private val screenServerId: String? = serverRegistry.activeServerId.value
 
     /**
+     * The saved account this sign-in is for when its credentials expired (its
+     * Sign in again on Change Account or Settings › Accounts, or the session
+     * ending while in use): its username
+     * is filled in, and signing in as someone else asks before replacing it.
+     */
+    private val expiredAccount = serverRegistry.activeAccount.value
+        ?.takeIf { it.needsSignIn && it.serverId == screenServerId }
+
+    /**
      * This screen took the auto-start "Not you? Switch account" asked for and
      * the browser hasn't opened yet; handed back if the screen goes away first.
      */
     private var autoStartInFlight = false
 
     init {
+        expiredAccount?.username?.takeIf { it.isNotBlank() }?.let { name ->
+            _uiState.update { it.copy(username = name) }
+        }
         loadOptions()
         viewModelScope.launch {
             nativeSignIn.result.filterNotNull().collect { onNativeResult(it) }
@@ -155,7 +190,7 @@ class LoginViewModel(
             when (val result = authRepository.login(current.username, current.password)) {
                 is ApiResult.Success -> {
                     onSignedIn()
-                    _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
+                    finishSignIn { it.copy(isLoading = false) }
                 }
 
                 is ApiResult.Error -> {
@@ -204,7 +239,7 @@ class LoginViewModel(
             when (result) {
                 is ApiResult.Success -> {
                     onSignedIn()
-                    _uiState.update { it.copy(networkSignInBusy = false, loginSuccess = true) }
+                    finishSignIn { it.copy(networkSignInBusy = false) }
                 }
                 is ApiResult.Error -> _uiState.update {
                     it.copy(networkSignInBusy = false, error = networkSignInMessage(result, provider.displayName))
@@ -310,7 +345,11 @@ class LoginViewModel(
                 // must not route anywhere.
                 val signedIn = tokenManager.getAccessToken()?.isNotBlank() == true &&
                     (screenServerId == null || serverRegistry.activeServerId.value == screenServerId)
-                _uiState.update { it.copy(isLoading = false, loginSuccess = signedIn) }
+                if (signedIn) {
+                    finishSignIn { it.copy(isLoading = false) }
+                } else {
+                    _uiState.update { it.copy(isLoading = false, loginSuccess = false) }
+                }
             }
             is NativeSignInResult.Failed -> {
                 nativeSignIn.consume(result)
@@ -318,6 +357,65 @@ class LoginViewModel(
             }
             is NativeSignInResult.Linked -> Unit
         }
+    }
+
+    /**
+     * A sign-in saved its session. When it was meant to sign an expired
+     * account in again but landed on a different account (the core files a
+     * different server user, or any sign-in into an expired account whose
+     * server user was never known, as a new account), the expired one is still saved
+     * with its downloads: ask whether to replace it before going on.
+     */
+    private suspend fun finishSignIn(settle: (LoginUiState) -> LoginUiState) {
+        val expired = expiredAccount
+        val serverId = screenServerId
+        val stillSaved = expired != null && serverRegistry.accounts.value.any { it.localAccountId == expired.localAccountId }
+        if (expired == null || serverId == null || !stillSaved ||
+            serverRegistry.activeAccountId.value == expired.localAccountId
+        ) {
+            _uiState.update { settle(it).copy(loginSuccess = true) }
+            return
+        }
+        val downloads = runCatching { downloadSummary(serverId, expired.localAccountId) }.getOrNull()
+        _uiState.update {
+            settle(it).copy(
+                replacePrompt = ReplaceExpiredPrompt(
+                    expiredUsername = expired.username?.takeIf(String::isNotBlank) ?: "your account",
+                    newUsername = serverRegistry.activeAccount.value?.username?.takeIf(String::isNotBlank)
+                        ?: it.username.ifBlank { "another account" },
+                    downloads = downloads,
+                ),
+            )
+        }
+    }
+
+    /** "Replace": sign out of the expired account (deleting its downloads), then go on. */
+    fun onReplaceExpired() {
+        val expired = expiredAccount ?: return
+        val serverId = screenServerId ?: return
+        if (_uiState.value.replacePrompt == null) return
+        _uiState.update { it.copy(isLoading = true) }
+        viewModelScope.launch {
+            val signedOut = try {
+                signOutAccount(serverId, expired.localAccountId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                false
+            }
+            if (signedOut) {
+                _uiState.update { it.copy(isLoading = false, replacePrompt = null, loginSuccess = true) }
+            } else {
+                // Still saved: keep asking, so "Keep both" stays the honest way on.
+                _uiState.update { it.copy(isLoading = false, replacePrompt = it.replacePrompt?.copy(replaceFailed = true)) }
+            }
+        }
+    }
+
+    /** "Keep both": the expired account stays saved, waiting to sign in again. */
+    fun onKeepExpired() {
+        if (_uiState.value.replacePrompt == null) return
+        _uiState.update { it.copy(replacePrompt = null, loginSuccess = true) }
     }
 
     /** Resets the success flag after the UI has consumed it. */

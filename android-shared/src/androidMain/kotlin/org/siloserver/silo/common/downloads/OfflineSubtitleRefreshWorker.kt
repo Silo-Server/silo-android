@@ -57,7 +57,8 @@ class OfflineSubtitleRefreshWorker(
         val authority = authorities.snapshotDurableLoginAuthority() ?: return Result.success()
         val scope = authority.scope
         val profileId = scope.profileId ?: return Result.success()
-        for (sidecar in metadataStore.listSidecars(scope.serverId, profileId)) {
+        val accountId = scope.accountId.orEmpty()
+        for (sidecar in metadataStore.listSidecars(scope.serverId, accountId, profileId)) {
             if (sidecar.record.statusEnum() != DownloadStatus.Completed) continue
             val tracks = sidecar.offlineTracks ?: continue
             val downloadId = sidecar.record.id
@@ -77,11 +78,12 @@ class OfflineSubtitleRefreshWorker(
                 // slot lock keeps a capture or a delete from landing between
                 // the check and the writes, and the conditional update keeps a
                 // replacement download enqueued meanwhile from being overwritten.
-                DownloadSlotLocks.of(scope.serverId, profileId, fileId).withLock {
+                DownloadSlotLocks.of(scope.serverId, accountId, profileId, fileId).withLock {
                     transitions.withCurrentGeneration(scope.identityGeneration) {
                         if (authorities.snapshotDurableLoginAuthority() != authority) return@withCurrentGeneration false
                         metadataStore.updateSidecarIf(
                             scope.serverId,
+                            accountId,
                             profileId,
                             fileId,
                             matches = { it.record.id == downloadId && it.offlineTracks == tracks },

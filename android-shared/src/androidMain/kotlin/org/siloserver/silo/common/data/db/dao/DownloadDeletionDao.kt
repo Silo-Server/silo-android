@@ -21,9 +21,9 @@ interface DownloadDeletionDao {
     @Query("SELECT recordId FROM download_deletions")
     suspend fun allRecordIds(): List<String>
 
-    @Query("SELECT * FROM download_deletions WHERE serverId = :serverId AND profileId = :profileId")
-    suspend fun forScope(serverId: String, profileId: String): List<DownloadDeletionEntity>
+    @Query("SELECT * FROM download_deletions WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId")
+    suspend fun forScope(serverId: String, accountId: String, profileId: String): List<DownloadDeletionEntity>
 
-    @Query("DELETE FROM download_deletions WHERE serverId = :serverId AND profileId = :profileId AND recordId = :recordId")
-    suspend fun delete(serverId: String, profileId: String, recordId: String)
+    @Query("DELETE FROM download_deletions WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND recordId = :recordId")
+    suspend fun delete(serverId: String, accountId: String, profileId: String, recordId: String)
 }

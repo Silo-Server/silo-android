@@ -50,6 +50,8 @@ import org.siloserver.silo.android.ui.navigation.ExternalRouteScope
 import org.siloserver.silo.android.ui.navigation.notificationExternalRouteOrNull
 import org.siloserver.silo.android.ui.navigation.deviceLoginPairRouteOrNull
 import org.siloserver.silo.android.ui.navigation.hasLocalDownloadsForScope
+import org.siloserver.silo.android.ui.navigation.hasOtherSession
+import org.siloserver.silo.android.ui.navigation.hasSingleOpenTile
 import org.siloserver.silo.android.ui.navigation.inviteClaimRouteOrNull
 import org.siloserver.silo.android.ui.navigation.notificationNavigationRouteOrNull
 import org.siloserver.silo.android.ui.navigation.shouldStartOnDownloads
@@ -102,6 +104,11 @@ class MainActivity : ComponentActivity() {
         // follows the return rule instead. Mirrors MainTvActivity.
         @Volatile
         private var hasResolvedLaunchProfile = false
+
+        // Saved accounts migrated from one-account-per-server lack their
+        // server user id and username; fill them in once per process.
+        @Volatile
+        private var hasStartedAccountBackfill = false
 
         /**
          * Set on the launch Intent once its external route has been delivered.
@@ -191,6 +198,7 @@ class MainActivity : ComponentActivity() {
                     queueExternalRouteFrom(intent)
                 }
                 launchAuthenticatedStartupWarmup(route)
+                launchAccountBackfill()
             }
 
             SiloTheme {
@@ -419,6 +427,7 @@ class MainActivity : ComponentActivity() {
             route = notificationRouteOrNull(intent),
             serverId = intent?.getStringExtra(PushNotificationPresenter.EXTRA_SERVER_ID),
             profileId = intent?.getStringExtra(PushNotificationPresenter.EXTRA_PROFILE_ID),
+            accountId = intent?.getStringExtra(PushNotificationPresenter.EXTRA_ACCOUNT_ID),
         )
         val notificationRoute = notification?.first
         val contentRoute = contentDeepLinkRouteOrNull(intent?.dataString)
@@ -475,6 +484,7 @@ class MainActivity : ComponentActivity() {
                 serverId = scope.serverId,
                 profileId = scope.profileId,
                 identityGeneration = scope.identityGeneration,
+                accountId = scope.accountId,
             )
         }
         // A null snapshot means "no active server" — nothing to pin to, and the
@@ -527,6 +537,22 @@ class MainActivity : ComponentActivity() {
         // screen arrives on top of an authenticated stack — which also means
         // its Back/Done has somewhere real to return to.
 
+        val authRepository = get<AuthRepository>(AuthRepository::class.java)
+        val launchPreferences = get<ProfileLaunchPreferences>(ProfileLaunchPreferences::class.java)
+
+        // Automatic reopens the last tile (multi-account spec §4.2), whichever
+        // server and account it is on. The registry normally still has that
+        // account active; it differs only when a sign-in for another account
+        // was left unfinished. A tile that is gone falls through to the picker.
+        if (processStart && launchPreferences.state.value.behavior == ProfileLaunchBehavior.Automatic) {
+            val tile = launchPreferences.restorableTile(registry.accounts.value)
+            if (tile != null &&
+                (tile.serverId != registry.activeServerId.value || tile.accountId != registry.activeAccountId.value)
+            ) {
+                authRepository.switchToAccount(tile.serverId, tile.accountId)
+            }
+        }
+
         val activeEntry = registry.activeEntry.value
             ?: return Route.ServerSetup.route
 
@@ -538,7 +564,6 @@ class MainActivity : ComponentActivity() {
         // receive raw v2 404s from a v1-only server. Both wait (bounded) for
         // the probe before routing; only a settled V2 skips the wait. A null
         // result (V2, timeout, or failure) makes the name refresh re-probe.
-        val authRepository = get<AuthRepository>(AuthRepository::class.java)
         val knownContract = kotlinx.coroutines.withContext(Dispatchers.IO) {
             authRepository.awaitContractRefreshIfUnsettled()
         }
@@ -553,8 +578,14 @@ class MainActivity : ComponentActivity() {
             return Route.ServerSetup.route
         }
 
+        // No signed-in account here (signed out, its sign-in expired, or a
+        // new account's sign-in left unfinished): Change Account while
+        // another account still has a session, else sign-in (an expired
+        // account's username filled in).
         val accessToken = tokenManager.getAccessToken()
-        if (accessToken.isNullOrBlank()) return Route.Login.route
+        if (accessToken.isNullOrBlank()) {
+            return if (registry.hasOtherSession()) Route.ChangeAccount.ROUTE else Route.Login.route
+        }
 
         // Profile id is per-server: prefer the registry entry's saved value,
         // fall back to whatever the token manager has cached.
@@ -566,9 +597,9 @@ class MainActivity : ComponentActivity() {
         // whose away interval ran out while Silo was closed. A later Activity
         // in this process follows the return rule the away tracker evaluated
         // in onStart. Applied below, after the offline check.
-        val launchPreferences = get<ProfileLaunchPreferences>(ProfileLaunchPreferences::class.java)
         val profileAwayTracker = get<ProfileAwayTracker>(ProfileAwayTracker::class.java)
-        val requiresSelection = if (processStart) {
+        // The open account has one profile, with no PIN: the picker never shows.
+        val requiresSelection = !registry.hasSingleOpenTile() && if (processStart) {
             // A process the playback service started (Android's media
             // resumption) can already be playing this profile's audiobook;
             // that is use of the profile, as on a return.
@@ -585,7 +616,7 @@ class MainActivity : ComponentActivity() {
         // in a main-thread LaunchedEffect during cold start and would
         // otherwise block first-frame work.
         val hasDownloads = kotlinx.coroutines.withContext(Dispatchers.IO) {
-            hasLocalDownloads(activeEntry.id, profileId)
+            hasLocalDownloads(activeEntry.id, activeEntry.accountId, profileId)
         }
         val online = isOnline()
         val canUseServer = if (hasDownloads && online) {
@@ -628,7 +659,7 @@ class MainActivity : ComponentActivity() {
         // launches after the first; the gate itself fails open to Home on
         // any error, so it can't strand an offline start.
         val tourCache = get<OnboardingTourLocalCache>(OnboardingTourLocalCache::class.java)
-        if (!tourCache.isDone(activeEntry.id, profileId)) {
+        if (!tourCache.isDone(activeEntry.id, activeEntry.accountId, profileId)) {
             return Route.OnboardingTour.route
         }
 
@@ -641,6 +672,8 @@ class MainActivity : ComponentActivity() {
         // (Apple's prefetchForInitialRoute(.needsProfile)).
         if (startRoute == Route.ProfileSelection.route) {
             lifecycleScope.launch(Dispatchers.IO) {
+                // The picker can open with no signed-in account; nothing to warm then.
+                if (get<TokenManager>(TokenManager::class.java).getAccessToken().isNullOrBlank()) return@launch
                 warmProfileSelectionStartup(
                     context = applicationContext,
                     profileRepository = get(ProfileRepository::class.java),
@@ -667,6 +700,23 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Background, once per process: fill in migrated accounts' identities
+     * (§5) and refresh every account's cached profiles for the picker.
+     */
+    private fun launchAccountBackfill() {
+        if (hasStartedAccountBackfill) return
+        hasStartedAccountBackfill = true
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { get<AuthRepository>(AuthRepository::class.java).backfillAccountIdentities() }
+            runCatching {
+                get<org.siloserver.silo.repository.AccountProfilesRefresher>(
+                    org.siloserver.silo.repository.AccountProfilesRefresher::class.java,
+                ).refreshAll()
+            }
+        }
+    }
+
     private fun isOnline(): Boolean {
         val cm = getSystemService(android.net.ConnectivityManager::class.java)
             ?: return true   // unknown — assume online so we don't surprise online users
@@ -676,10 +726,10 @@ class MainActivity : ComponentActivity() {
             caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
-    private fun hasLocalDownloads(serverId: String, profileId: String): Boolean {
+    private fun hasLocalDownloads(serverId: String, accountId: String?, profileId: String): Boolean {
         val storage = get<org.siloserver.silo.common.downloads.DownloadStorage>(
             org.siloserver.silo.common.downloads.DownloadStorage::class.java
         )
-        return hasLocalDownloadsForScope(storage, serverId, profileId)
+        return hasLocalDownloadsForScope(storage, serverId, accountId, profileId)
     }
 }

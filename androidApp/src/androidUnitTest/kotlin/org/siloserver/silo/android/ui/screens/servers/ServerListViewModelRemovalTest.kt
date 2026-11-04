@@ -87,6 +87,9 @@ class ServerListViewModelRemovalTest {
                 "getEntries" -> entries
                 "getActiveServerId" -> active
                 "getActiveEntry" -> MutableStateFlow(home)
+                // No signed-in accounts: removal has none to sign out first.
+                "getAccounts" -> MutableStateFlow(emptyList<org.siloserver.silo.model.server.AccountEntry>())
+                "getActiveAccountId" -> MutableStateFlow<String?>(null)
                 "remove" -> {
                     removed += args[0] as String
                     Unit

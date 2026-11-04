@@ -44,6 +44,7 @@ class MembershipOutbox(
         // Fresh immutable command identity even if a repeated intent has identical payload.
         return dao.enqueueMembership(DirtyOperationEntity(
             opKind = "MEMBERSHIP_${kind.name}", serverId = authority.scope.serverId,
+            accountId = authority.scope.accountId.orEmpty(),
             profileId = authority.scope.profileId.orEmpty(), targetContentId = itemId,
             targetFileId = null, coalesceKey = "membership:${authority.key}:${kind.name}:$itemId",
             idempotencyKey = UUID.randomUUID().toString(), payloadJson = present.toString(),

@@ -18,11 +18,16 @@ package org.siloserver.silo.android.ui.navigation
  * therefore pinned by server and profile only, and remain deliverable across a
  * sign-out and back in to the same account. Closing that would need a durable
  * identity epoch rather than a process-local counter.
+ *
+ * One that names its saved account ([accountId]) opens its tile: delivery
+ * switches to that server, account and profile first. One posted before
+ * accounts keeps the server and profile pinning.
  */
 fun notificationExternalRouteOrNull(
     route: String?,
     serverId: String?,
     profileId: String?,
+    accountId: String? = null,
 ): Pair<String, ExternalRouteScope>? {
     val usableRoute = route?.takeIf { it.isNotBlank() } ?: return null
     val usableServerId = serverId?.takeIf { it.isNotBlank() } ?: return null
@@ -33,5 +38,7 @@ fun notificationExternalRouteOrNull(
         // Explicit: see the note above on why a process-local generation must
         // not be persisted into a PendingIntent.
         identityGeneration = null,
+        accountId = accountId?.takeIf { it.isNotBlank() },
+        switchesToTile = !accountId.isNullOrBlank(),
     )
 }

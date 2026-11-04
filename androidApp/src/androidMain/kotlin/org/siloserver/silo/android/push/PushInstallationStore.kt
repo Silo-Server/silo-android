@@ -49,6 +49,11 @@ internal data class PushInstallationIntent(
     val profileToken: String?,
     /** null is the ordered removal verb. */
     val registration: PushDeviceRegisterRequest?,
+    /**
+     * The saved account on [serverId] that holds this installation; null on
+     * records written before accounts, which the next registration replaces.
+     */
+    val accountId: String? = null,
 ) { override fun toString() = "PushInstallationIntent(<redacted>)" }
 
 internal interface PushInstallationStore {

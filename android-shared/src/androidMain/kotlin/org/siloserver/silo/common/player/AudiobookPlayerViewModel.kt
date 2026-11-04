@@ -428,9 +428,10 @@ class AudiobookPlayerViewModel(
                         overridePosition = explicitStartOverride,
                         detailPosition = resumePosition,
                     )
-                    val (downloadServerId, downloadProfileId) = resolveScope()
+                    val (downloadServerId, downloadAccountId, downloadProfileId) = resolveScope()
                     val offlineMedia = offlineMediaResolver.findLocalMedia(
                         serverId = downloadServerId,
+                        accountId = downloadAccountId.orEmpty(),
                         profileId = downloadProfileId,
                         contentId = d.contentId,
                         requestedFileId = selectedVersion.fileId,
@@ -954,9 +955,10 @@ class AudiobookPlayerViewModel(
     }
 
     private suspend fun loadOfflineOnly(error: String?) {
-        val (serverId, profileId) = resolveScope()
+        val (serverId, accountId, profileId) = resolveScope()
         val media = offlineMediaResolver.findLocalMedia(
             serverId = serverId,
+            accountId = accountId.orEmpty(),
             profileId = profileId,
             contentId = contentId,
             requestedFileId = requestedFileId,
@@ -1479,19 +1481,29 @@ class AudiobookPlayerViewModel(
 
     // ── Bookmarks ────────────────────────────────────────────────────────
 
-    private suspend fun resolveScope(): Pair<String, String> {
+    /** One identity for local data: the account is read with the server, before the profile read suspends. */
+    private data class LocalScope(val serverId: String, val accountId: String?, val profileId: String)
+
+    private suspend fun resolveScope(): LocalScope {
         val serverId = serverRegistry.activeServerId.value ?: DownloadEnqueuer.DEFAULT_SERVER_ID
+        val accountId = serverRegistry.activeAccountId.value
         val profileId = profileRepository.getActiveProfileId() ?: DownloadEnqueuer.DEFAULT_PROFILE_ID
-        return serverId to profileId
+        return LocalScope(serverId, accountId, profileId)
     }
+
+    /** False once the user switched server or account since [resolveScope]; that result is dropped. */
+    private fun LocalScope.isCurrent(): Boolean =
+        (serverRegistry.activeServerId.value ?: DownloadEnqueuer.DEFAULT_SERVER_ID) == serverId &&
+            serverRegistry.activeAccountId.value == accountId
 
     private fun loadBookmarks() {
         viewModelScope.launch {
-            val (serverId, profileId) = resolveScope()
+            val scope = resolveScope()
+            if (!scope.isCurrent()) return@launch
             val loaded = withContext(Dispatchers.IO) {
-                bookmarksStore.list(serverId, profileId, contentId)
+                bookmarksStore.list(scope.serverId, scope.accountId, scope.profileId, contentId)
             }
-            _bookmarks.value = loaded
+            if (scope.isCurrent()) _bookmarks.value = loaded
         }
     }
 
@@ -1514,21 +1526,23 @@ class AudiobookPlayerViewModel(
             createdAtMs = System.currentTimeMillis(),
         )
         viewModelScope.launch {
-            val (serverId, profileId) = resolveScope()
+            val scope = resolveScope()
+            if (!scope.isCurrent()) return@launch
             val updated = withContext(Dispatchers.IO) {
-                bookmarksStore.add(serverId, profileId, contentId, bookmark)
+                bookmarksStore.add(scope.serverId, scope.accountId, scope.profileId, contentId, bookmark)
             }
-            _bookmarks.value = updated
+            if (scope.isCurrent()) _bookmarks.value = updated
         }
     }
 
     fun removeBookmark(id: String) {
         viewModelScope.launch {
-            val (serverId, profileId) = resolveScope()
+            val scope = resolveScope()
+            if (!scope.isCurrent()) return@launch
             val updated = withContext(Dispatchers.IO) {
-                bookmarksStore.remove(serverId, profileId, contentId, id)
+                bookmarksStore.remove(scope.serverId, scope.accountId, scope.profileId, contentId, id)
             }
-            _bookmarks.value = updated
+            if (scope.isCurrent()) _bookmarks.value = updated
         }
     }
 

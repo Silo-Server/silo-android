@@ -3,6 +3,8 @@ package org.siloserver.silo.network
 import android.content.SharedPreferences
 import android.util.Base64
 import java.net.URI
+import org.siloserver.silo.model.server.AccountEntry
+import org.siloserver.silo.model.server.CachedProfile
 import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.model.server.ServerEntry
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +30,10 @@ import kotlinx.serialization.json.Json
  * profile_token/server_url keys) into a fresh [ServerEntry] keyed by the
  * derived server id.
  *
+ * Each server holds zero or more [AccountEntry]s. Their credentials live under
+ * "<serverId>.<localAccountId>.<key>" ([accountScopedKey]); [migrateAccountsIfNeededLocked]
+ * moves the one-account-per-server slots ("<serverId>.<key>") there once.
+ *
  * The constructor is intentionally synchronous: [org.siloserver.silo.android.MainActivity]
  * calls [activeServerId.value] inside a `runBlocking { resolveStartDestination() }`
  * before composition, so the registry must be fully loaded by the time Koin
@@ -52,6 +58,18 @@ class AndroidServerRegistry(
     private val _activeEntry = MutableStateFlow<ServerEntry?>(null)
     override val activeEntry: StateFlow<ServerEntry?> = _activeEntry.asStateFlow()
 
+    private val _accounts = MutableStateFlow<List<AccountEntry>>(emptyList())
+    override val accounts: StateFlow<List<AccountEntry>> = _accounts.asStateFlow()
+
+    private val _activeAccountId = MutableStateFlow<String?>(null)
+    override val activeAccountId: StateFlow<String?> = _activeAccountId.asStateFlow()
+
+    private val _activeAccount = MutableStateFlow<AccountEntry?>(null)
+    override val activeAccount: StateFlow<AccountEntry?> = _activeAccount.asStateFlow()
+
+    /** The last state applied, with persisted fields only (no derived account fields on entries). */
+    private var state = RegistryState()
+
     @Volatile
     override var stateLoadFailed: Boolean = false
         private set
@@ -60,9 +78,9 @@ class AndroidServerRegistry(
         // Synchronous load + migration so MainActivity.runBlocking can read state.
         runBlocking {
             mutex.withLock {
-                val state = loadStateLocked() ?: RegistryState()
-                val migrated = migrateLegacyIfNeededLocked(state)
-                applyStateLocked(migrated)
+                val loaded = loadStateLocked() ?: RegistryState()
+                val migrated = migrateLegacyIfNeededLocked(loaded)
+                applyStateLocked(migrateAccountsIfNeededLocked(migrated))
             }
         }
     }
@@ -134,13 +152,35 @@ class AndroidServerRegistry(
 
     override suspend fun setProfileId(serverId: String, profileId: String?) {
         mutex.withLock {
-            val current = _entries.value.firstOrNull { it.id == serverId } ?: return
-            if (current.profileId == profileId) return
-            val updated = _entries.value.map { entry ->
-                if (entry.id == serverId) entry.copy(profileId = profileId) else entry
-            }
-            persistAndApplyLocked(updated, _activeServerId.value)
+            val accountId = _entries.value.firstOrNull { it.id == serverId }?.accountId ?: return
+            updateAccountLocked(accountId) { it.copy(profileId = profileId) }
         }
+    }
+
+    override suspend fun setAccountProfileId(accountId: String, profileId: String?) {
+        mutex.withLock { updateAccountLocked(accountId) { it.copy(profileId = profileId) } }
+    }
+
+    override suspend fun setCachedProfiles(accountId: String, profiles: List<CachedProfile>) {
+        mutex.withLock { updateAccountLocked(accountId) { it.copy(cachedProfiles = profiles) } }
+    }
+
+    override suspend fun setAccountIdentity(accountId: String, serverUserId: String?, username: String?) {
+        mutex.withLock {
+            updateAccountLocked(accountId) {
+                it.copy(
+                    serverUserId = serverUserId?.takeIf(String::isNotBlank) ?: it.serverUserId,
+                    username = username?.takeIf(String::isNotBlank) ?: it.username,
+                )
+            }
+        }
+    }
+
+    private fun updateAccountLocked(accountId: String, transform: (AccountEntry) -> AccountEntry) {
+        val current = state.accounts.firstOrNull { it.localAccountId == accountId } ?: return
+        val updated = transform(current)
+        if (updated == current) return
+        persistAndApplyLocked(state.copy(accounts = state.accounts.map { if (it.localAccountId == accountId) updated else it }))
     }
 
     override suspend fun remove(serverId: String) {
@@ -166,16 +206,26 @@ class AndroidServerRegistry(
                     .filter { it.startsWith(scopePrefix) }
                     .forEach { editor.remove(it) }
 
-                val updated = _entries.value.filter { it.id != serverId }
+                val updated = state.entries.filter { it.id != serverId }
                 val newActive = if (_activeServerId.value == serverId) {
                     updated.maxByOrNull { it.lastUsedAtEpochMs }?.id
                 } else _activeServerId.value
                 val resolvedActive = newActive?.takeIf { id -> updated.any { it.id == id } }
                     ?: updated.maxByOrNull { it.lastUsedAtEpochMs }?.id
-                val state = RegistryState(entries = updated, activeServerId = resolvedActive)
-                editor.putString(KEY_REGISTRY_STATE, json.encodeToString(state))
+                val remainingAccounts = state.accounts.filter { it.serverId != serverId }
+                val next = RegistryState(
+                    entries = updated,
+                    activeServerId = resolvedActive,
+                    accounts = remainingAccounts,
+                    activeAccountId = if (resolvedActive == _activeServerId.value) {
+                        state.activeAccountId
+                    } else {
+                        mostRecentAccount(remainingAccounts, resolvedActive)
+                    },
+                )
+                editor.putString(KEY_REGISTRY_STATE, json.encodeToString(next))
                 check(commitEditor(editor)) { "unable to durably remove server" }
-                applyStateLocked(state)
+                applyStateLocked(next)
                 afterServerRemovalCommit()
             }
         }
@@ -183,18 +233,16 @@ class AndroidServerRegistry(
 
     override suspend fun signOut(serverId: String) {
         mutex.withLock {
-            val updated = _entries.value.map { entry ->
-                if (entry.id == serverId) entry.copy(profileId = null) else entry
-            }
-            persistAndApplyLocked(updated, _activeServerId.value)
+            val accountId = _entries.value.firstOrNull { it.id == serverId }?.accountId ?: return
+            updateAccountLocked(accountId) { it.copy(profileId = null) }
         }
     }
 
     override suspend fun switchTo(serverId: String) {
         identityTransitions.changing(IdentityTransitionKind.SERVER_SWITCH) {
             mutex.withLock {
-                if (_entries.value.none { it.id == serverId }) return@withLock
-                val updated = _entries.value.map { entry ->
+                if (state.entries.none { it.id == serverId }) return@withLock
+                val updated = state.entries.map { entry ->
                     if (entry.id == serverId) {
                         entry.copy(lastUsedAtEpochMs = System.currentTimeMillis())
                     } else entry
@@ -204,74 +252,144 @@ class AndroidServerRegistry(
         }
     }
 
+    override suspend fun switchToAccount(serverId: String, accountId: String?) {
+        identityTransitions.changing(IdentityTransitionKind.SERVER_SWITCH) {
+            mutex.withLock {
+                if (state.entries.none { it.id == serverId }) return@withLock
+                if (accountId != null && state.accounts.none { it.localAccountId == accountId && it.serverId == serverId }) {
+                    return@withLock
+                }
+                val now = System.currentTimeMillis()
+                persistAndApplyLocked(
+                    state.copy(
+                        entries = state.entries.map { if (it.id == serverId) it.copy(lastUsedAtEpochMs = now) else it },
+                        accounts = state.accounts.map {
+                            if (it.localAccountId == accountId) it.copy(lastUsedAtEpochMs = now) else it
+                        },
+                        activeServerId = serverId,
+                        activeAccountId = accountId,
+                    ),
+                )
+            }
+        }
+    }
+
     /**
-     * Commits registry selection and its matching account credentials in the
-     * one SharedPreferences transaction available to both owners. In-memory
-     * registry state is published only after the synchronous disk commit.
+     * Picks the account a sign-in on [serverId] lands in, then commits it as
+     * the active account with its credentials, in the one SharedPreferences
+     * transaction available to both owners. In-memory registry state is
+     * published only after the synchronous disk commit. Returns the account id.
+     *
+     * The account is the saved account with the same known [serverUserId]
+     * (signing in as a saved account refreshes it rather than adding a
+     * duplicate), [reauthAccountId] first when it is one of those; otherwise a
+     * new account. An account whose server user is unknown (migrated, never
+     * backfilled) is never adopted, as the spec's §2 rules say: the sign-in
+     * may be someone else, so it becomes a new account and the phone asks
+     * whether it replaces the expired one ("Replace?" / "Keep both").
      */
     internal suspend fun commitAccountReplacement(
         serverId: String,
+        reauthAccountId: String?,
+        serverUserId: String?,
+        username: String?,
         profileId: String?,
         profileToken: String?,
         accessToken: String,
         refreshToken: String,
         expiryEpochMs: Long,
         lifetimeMs: Long,
-    ) {
-        mutex.withLock {
-            check(_entries.value.any { it.id == serverId }) { "account replacement target is not registered" }
-            val updated = _entries.value.map { entry ->
-                if (entry.id == serverId) {
-                    entry.copy(
-                        profileId = profileId,
-                        lastUsedAtEpochMs = System.currentTimeMillis(),
-                    )
-                } else {
-                    entry
-                }
-            }
-            val state = RegistryState(entries = updated, activeServerId = serverId)
-            val editor = prefs.edit()
-                .putString(KEY_REGISTRY_STATE, json.encodeToString(state))
-                .putString(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_LOGIN_ID), java.util.UUID.randomUUID().toString())
-                .putString(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_ACCESS_TOKEN), accessToken)
-                .putString(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_REFRESH_TOKEN), refreshToken)
-                .putLong(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_TOKEN_EXPIRY), expiryEpochMs)
-                .putLong(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_TOKEN_LIFETIME), lifetimeMs)
-            val profileIdKey = serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_PROFILE_ID)
-            val profileTokenKey = serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_PROFILE_TOKEN)
-            if (profileId == null) editor.remove(profileIdKey) else editor.putString(profileIdKey, profileId)
-            if (profileToken == null) editor.remove(profileTokenKey) else editor.putString(profileTokenKey, profileToken)
-            check(commitEditor(editor)) { "unable to durably replace account session" }
-            applyStateLocked(state)
+    ): String = mutex.withLock {
+        check(state.entries.any { it.id == serverId }) { "account replacement target is not registered" }
+        val onServer = state.accounts.filter { it.serverId == serverId }
+        val existing = serverUserId?.takeIf(String::isNotBlank)?.let { uid ->
+            onServer.firstOrNull { it.localAccountId == reauthAccountId && it.serverUserId == uid }
+                ?: onServer.firstOrNull { it.serverUserId == uid }
         }
+        val now = System.currentTimeMillis()
+        val serverEntry = state.entries.first { it.id == serverId }
+        val account = (existing ?: AccountEntry(
+            localAccountId = java.util.UUID.randomUUID().toString(),
+            serverId = serverId,
+            addedAtEpochMs = now,
+            adoptsLegacyData = serverEntry.legacyDataUnclaimed,
+        )).copy(
+            serverUserId = serverUserId?.takeIf(String::isNotBlank) ?: existing?.serverUserId,
+            username = username?.takeIf(String::isNotBlank) ?: existing?.username,
+            profileId = profileId,
+            lastUsedAtEpochMs = now,
+            needsSignIn = false,
+        )
+        val accountId = account.localAccountId
+        val next = state.copy(
+            entries = state.entries.map {
+                if (it.id == serverId) it.copy(lastUsedAtEpochMs = now, legacyDataUnclaimed = false) else it
+            },
+            accounts = state.accounts.filter { it.localAccountId != accountId } + account,
+            activeServerId = serverId,
+            activeAccountId = accountId,
+        )
+        val editor = prefs.edit()
+            .putString(KEY_REGISTRY_STATE, json.encodeToString(next))
+            .putString(accountScopedKey(serverId, accountId, EncryptedTokenManagerImpl.KEY_LOGIN_ID), java.util.UUID.randomUUID().toString())
+            .putString(accountScopedKey(serverId, accountId, EncryptedTokenManagerImpl.KEY_ACCESS_TOKEN), accessToken)
+            .putString(accountScopedKey(serverId, accountId, EncryptedTokenManagerImpl.KEY_REFRESH_TOKEN), refreshToken)
+            .putLong(accountScopedKey(serverId, accountId, EncryptedTokenManagerImpl.KEY_TOKEN_EXPIRY), expiryEpochMs)
+            .putLong(accountScopedKey(serverId, accountId, EncryptedTokenManagerImpl.KEY_TOKEN_LIFETIME), lifetimeMs)
+        val profileIdKey = accountScopedKey(serverId, accountId, EncryptedTokenManagerImpl.KEY_PROFILE_ID)
+        val profileTokenKey = accountScopedKey(serverId, accountId, EncryptedTokenManagerImpl.KEY_PROFILE_TOKEN)
+        if (profileId == null) editor.remove(profileIdKey) else editor.putString(profileIdKey, profileId)
+        if (profileToken == null) editor.remove(profileTokenKey) else editor.putString(profileTokenKey, profileToken)
+        check(commitEditor(editor)) { "unable to durably replace account session" }
+        applyStateLocked(next)
+        accountId
     }
 
-    internal suspend fun commitAccountSignOut(serverId: String) {
+    /**
+     * Ends [accountId]'s session. A sign-out ([expired] false) deletes the
+     * account and every credential key it had; its local data then belongs to
+     * no account and is purged by the account-data purger. An expiry keeps the
+     * account, its remembered profile and its data, and marks it
+     * [AccountEntry.needsSignIn].
+     */
+    internal suspend fun commitAccountSignOut(serverId: String, accountId: String, expired: Boolean) {
         mutex.withLock {
-            check(_entries.value.any { it.id == serverId }) { "sign-out target is not registered" }
-            val updated = _entries.value.map { entry ->
-                if (entry.id == serverId) entry.copy(profileId = null) else entry
+            check(state.entries.any { it.id == serverId }) { "sign-out target is not registered" }
+            val next = if (expired) {
+                state.copy(
+                    accounts = state.accounts.map {
+                        if (it.localAccountId == accountId) it.copy(needsSignIn = true) else it
+                    },
+                )
+            } else {
+                state.copy(
+                    accounts = state.accounts.filter { it.localAccountId != accountId },
+                    activeAccountId = state.activeAccountId.takeIf { it != accountId },
+                )
             }
-            val state = RegistryState(entries = updated, activeServerId = _activeServerId.value)
-            val editor = prefs.edit()
-                .putString(KEY_REGISTRY_STATE, json.encodeToString(state))
-                .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_LOGIN_ID))
-                .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_ACCESS_TOKEN))
-                .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_REFRESH_TOKEN))
-                .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_TOKEN_EXPIRY))
-                .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_TOKEN_LIFETIME))
-                .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_PROFILE_ID))
-                .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_PROFILE_TOKEN))
+            val editor = prefs.edit().putString(KEY_REGISTRY_STATE, json.encodeToString(next))
+            if (expired) {
+                listOf(
+                    EncryptedTokenManagerImpl.KEY_LOGIN_ID,
+                    EncryptedTokenManagerImpl.KEY_ACCESS_TOKEN,
+                    EncryptedTokenManagerImpl.KEY_REFRESH_TOKEN,
+                    EncryptedTokenManagerImpl.KEY_TOKEN_EXPIRY,
+                    EncryptedTokenManagerImpl.KEY_TOKEN_LIFETIME,
+                    EncryptedTokenManagerImpl.KEY_PROFILE_TOKEN,
+                ).forEach { editor.remove(accountScopedKey(serverId, accountId, it)) }
+            } else {
+                val slotPrefix = accountScopedKey(serverId, accountId, "")
+                prefs.all.keys.filter { it.startsWith(slotPrefix) }.forEach { editor.remove(it) }
+            }
             check(commitEditor(editor)) { "unable to durably sign out account" }
-            applyStateLocked(state)
+            applyStateLocked(next)
         }
     }
 
     override suspend fun touchActive() {
         mutex.withLock {
             val activeId = _activeServerId.value ?: return
-            val updated = _entries.value.map { entry ->
+            val updated = state.entries.map { entry ->
                 if (entry.id == activeId) {
                     entry.copy(lastUsedAtEpochMs = System.currentTimeMillis())
                 } else entry
@@ -286,6 +404,8 @@ class AndroidServerRegistry(
     private data class RegistryState(
         val entries: List<ServerEntry> = emptyList(),
         val activeServerId: String? = null,
+        val accounts: List<AccountEntry> = emptyList(),
+        val activeAccountId: String? = null,
     )
 
     private fun loadStateLocked(): RegistryState? {
@@ -309,23 +429,128 @@ class AndroidServerRegistry(
         return decoded
     }
 
-    private fun applyStateLocked(state: RegistryState) {
-        _entries.value = state.entries
-        val resolvedActive = state.activeServerId?.takeIf { id ->
-            state.entries.any { it.id == id }
-        } ?: state.entries.maxByOrNull { it.lastUsedAtEpochMs }?.id
+    /**
+     * Publishes [next]. Each published [ServerEntry] carries its server's
+     * current account and that account's profile ([ServerEntry.accountId],
+     * [ServerEntry.profileId]), so observers of a server entry see account and
+     * profile switches too.
+     */
+    private fun applyStateLocked(next: RegistryState) {
+        val resolvedActive = next.activeServerId?.takeIf { id ->
+            next.entries.any { it.id == id }
+        } ?: next.entries.maxByOrNull { it.lastUsedAtEpochMs }?.id
+        val resolvedAccount = if (resolvedActive == next.activeServerId) {
+            next.activeAccountId?.takeIf { id -> next.accounts.any { it.localAccountId == id && it.serverId == resolvedActive } }
+        } else {
+            mostRecentAccount(next.accounts, resolvedActive)
+        }
+        state = next.copy(activeServerId = resolvedActive, activeAccountId = resolvedAccount)
+        val derived = next.entries.map { entry ->
+            val accountId = if (entry.id == resolvedActive) resolvedAccount else mostRecentAccount(next.accounts, entry.id)
+            val account = next.accounts.firstOrNull { it.localAccountId == accountId }
+            entry.copy(accountId = account?.localAccountId, profileId = account?.profileId)
+        }
+        _accounts.value = next.accounts
+        _entries.value = derived
         _activeServerId.value = resolvedActive
-        _activeEntry.value = state.entries.firstOrNull { it.id == resolvedActive }
+        _activeAccountId.value = resolvedAccount
+        _activeAccount.value = next.accounts.firstOrNull { it.localAccountId == resolvedAccount }
+        _activeEntry.value = derived.firstOrNull { it.id == resolvedActive }
     }
 
     private fun persistAndApplyLocked(entries: List<ServerEntry>, activeServerId: String?) {
-        val resolvedActive = activeServerId?.takeIf { id -> entries.any { it.id == id } }
-            ?: entries.maxByOrNull { it.lastUsedAtEpochMs }?.id
-        val state = RegistryState(entries = entries, activeServerId = resolvedActive)
-        prefs.edit().putString(KEY_REGISTRY_STATE, json.encodeToString(state)).apply()
-        _entries.value = entries
-        _activeServerId.value = resolvedActive
-        _activeEntry.value = entries.firstOrNull { it.id == resolvedActive }
+        val accountId = if (activeServerId == state.activeServerId) {
+            state.activeAccountId
+        } else {
+            mostRecentAccount(state.accounts, activeServerId)
+        }
+        persistAndApplyLocked(state.copy(entries = entries, activeServerId = activeServerId, activeAccountId = accountId))
+    }
+
+    private fun persistAndApplyLocked(next: RegistryState) {
+        prefs.edit().putString(KEY_REGISTRY_STATE, json.encodeToString(next)).apply()
+        applyStateLocked(next)
+    }
+
+    private fun mostRecentAccount(accounts: List<AccountEntry>, serverId: String?): String? =
+        serverId?.let { id -> accounts.filter { it.serverId == id }.maxByOrNull { it.lastUsedAtEpochMs }?.localAccountId }
+
+    // ---- One-account-per-server -> accounts migration ----
+
+    /**
+     * Turns each server's saved session into an [AccountEntry] with a new
+     * local id, once, before anything reads the registry. Needs no network:
+     * the account starts without a server user id, which the first verified
+     * `/me` fills in. The account adopts the server's local data
+     * ([AccountEntry.adoptsLegacyData]). A server with no session keeps any
+     * old data unclaimed for the next account that signs in there
+     * ([ServerEntry.legacyDataUnclaimed]), as sign-out used to keep downloads.
+     *
+     * The old slots are deleted only after the new records read back. A failed
+     * write leaves the old layout untouched and the flag unset, so the next
+     * launch tries again; nothing outside this function reads the old slots.
+     */
+    private fun migrateAccountsIfNeededLocked(loaded: RegistryState): RegistryState {
+        if (prefs.getBoolean(KEY_ACCOUNTS_MIGRATED, false)) return loaded
+        val now = System.currentTimeMillis()
+        val accounts = loaded.accounts.toMutableList()
+        val copies = mutableMapOf<String, Any>()
+        val stale = mutableListOf<String>()
+        val stored = prefs.all
+        val entries = loaded.entries.map { entry ->
+            val values = LEGACY_SLOT_KEYS.mapNotNull { key ->
+                stored[serverScopedKey(entry.id, key)]?.let { key to it }
+            }.toMap()
+            LEGACY_SLOT_KEYS.forEach { stale += serverScopedKey(entry.id, it) }
+            val hasSession = !(values[EncryptedTokenManagerImpl.KEY_ACCESS_TOKEN] as? String).isNullOrBlank() ||
+                !(values[EncryptedTokenManagerImpl.KEY_REFRESH_TOKEN] as? String).isNullOrBlank()
+            if (!hasSession || accounts.any { it.serverId == entry.id }) {
+                return@map entry.copy(legacyDataUnclaimed = accounts.none { it.serverId == entry.id })
+            }
+            val accountId = java.util.UUID.randomUUID().toString()
+            accounts += AccountEntry(
+                localAccountId = accountId,
+                serverId = entry.id,
+                profileId = values[EncryptedTokenManagerImpl.KEY_PROFILE_ID] as? String,
+                addedAtEpochMs = now,
+                lastUsedAtEpochMs = entry.lastUsedAtEpochMs,
+                adoptsLegacyData = true,
+            )
+            values.forEach { (key, value) -> copies[accountScopedKey(entry.id, accountId, key)] = value }
+            entry
+        }
+        val migrated = loaded.copy(
+            entries = entries,
+            accounts = accounts,
+            activeAccountId = loaded.activeAccountId ?: mostRecentAccount(accounts, loaded.activeServerId),
+        )
+        val write = prefs.edit().putString(KEY_REGISTRY_STATE, json.encodeToString(migrated))
+        copies.forEach { (key, value) ->
+            when (value) {
+                is String -> write.putString(key, value)
+                is Long -> write.putLong(key, value)
+                is Int -> write.putInt(key, value)
+                is Boolean -> write.putBoolean(key, value)
+            }
+        }
+        if (!commitEditor(write)) {
+            android.util.Log.e("AndroidServerRegistry", "account migration write failed; keeping the old layout")
+            return loaded
+        }
+        val readBack = runCatching {
+            json.decodeFromString<RegistryState>(prefs.getString(KEY_REGISTRY_STATE, null).orEmpty())
+        }.getOrNull()
+        val written = prefs.all
+        if (readBack?.accounts?.size != accounts.size || copies.any { (key, value) -> written[key] != value }) {
+            android.util.Log.e("AndroidServerRegistry", "account migration did not read back; keeping the old layout")
+            return loaded
+        }
+        val cleanup = prefs.edit().putBoolean(KEY_ACCOUNTS_MIGRATED, true)
+        stale.forEach { cleanup.remove(it) }
+        if (!commitEditor(cleanup)) {
+            android.util.Log.e("AndroidServerRegistry", "account migration cleanup failed; retrying next launch")
+        }
+        return migrated
     }
 
     // ---- Legacy single-server migration ----
@@ -402,6 +627,18 @@ class AndroidServerRegistry(
     companion object {
         const val KEY_REGISTRY_STATE = "server_registry.v1"
         const val KEY_MIGRATED = "server_registry.migrated.v1"
+        const val KEY_ACCOUNTS_MIGRATED = "server_registry.accounts_migrated.v1"
+
+        /** The one-account-per-server credential keys, read only by the account migration. */
+        private val LEGACY_SLOT_KEYS = listOf(
+            EncryptedTokenManagerImpl.KEY_LOGIN_ID,
+            EncryptedTokenManagerImpl.KEY_ACCESS_TOKEN,
+            EncryptedTokenManagerImpl.KEY_REFRESH_TOKEN,
+            EncryptedTokenManagerImpl.KEY_TOKEN_EXPIRY,
+            EncryptedTokenManagerImpl.KEY_TOKEN_LIFETIME,
+            EncryptedTokenManagerImpl.KEY_PROFILE_ID,
+            EncryptedTokenManagerImpl.KEY_PROFILE_TOKEN,
+        )
         const val DEFAULT_SERVER_URL_PLACEHOLDER = "http://localhost:8090"
 
         /**
@@ -560,5 +797,13 @@ class AndroidServerRegistry(
 
         fun serverScopedKey(serverId: String, baseKey: String): String =
             "$serverId.$baseKey"
+
+        /**
+         * Key of one of [accountId]'s credential values. Lives inside its
+         * server's "<serverId>." namespace, so removing a server sweeps its
+         * accounts too. Account ids are UUIDs and never contain '.'.
+         */
+        fun accountScopedKey(serverId: String, accountId: String, baseKey: String): String =
+            "$serverId.$accountId.$baseKey"
     }
 }

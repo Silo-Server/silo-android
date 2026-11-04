@@ -108,7 +108,7 @@ class OnboardingTourViewModel(
             // Known-done locally: skip the network entirely. The flag is only
             // ever set from a server-confirmed done state or our own
             // complete/skip, so trusting it can't hide a pending tour.
-            if (localCache.isDone(scope.serverId, scope.profileId)) {
+            if (localCache.isDone(scope.serverId, scope.accountId, scope.profileId)) {
                 _uiState.update { it.copy(isLoading = false, finished = true) }
                 return@launch
             }
@@ -158,10 +158,11 @@ class OnboardingTourViewModel(
             // Snapshot before the PUT: finished=true navigates to Home, where
             // the active profile can change while this is still in flight.
             val serverId = scope.serverId
+            val accountId = scope.accountId
             val profileId = scope.profileId
             withContext(NonCancellable) {
                 if (progress(scope, flow.tourId) { onboardingRepository.complete(flow.tourId, null, scope) } is ApiResult.Success) {
-                    localCache.markDone(serverId, profileId)
+                    localCache.markDone(serverId, accountId, profileId)
                 }
             }
             return
@@ -261,6 +262,7 @@ class OnboardingTourViewModel(
             // acknowledgement would then mark whichever profile is active by
             // then, letting it skip a tour it never saw.
             val serverId = scope.serverId
+            val accountId = scope.accountId
             val profileId = scope.profileId
             // finished=true (below) navigates away with popUpTo, which clears
             // this ViewModel and cancels its scope — the PUT must survive
@@ -275,7 +277,7 @@ class OnboardingTourViewModel(
                     else onboardingRepository.complete(current.tourId, lastStep, scope)
                 }
                 if (result is ApiResult.Success) {
-                    localCache.markDone(serverId, profileId)
+                    localCache.markDone(serverId, accountId, profileId)
                 }
             }
         }
@@ -284,7 +286,7 @@ class OnboardingTourViewModel(
 
     private fun markDoneLocally(scope: AuthScopeSnapshot) {
         // Never derive a persistence key from the identity active after a reply.
-        localCache.markDone(scope.serverId, scope.profileId)
+        localCache.markDone(scope.serverId, scope.accountId, scope.profileId)
     }
 
     /** Records a tapped option locally; nothing is written until advance. */

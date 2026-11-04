@@ -3,6 +3,7 @@ package org.siloserver.silo.common.settings
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import org.siloserver.silo.common.store.AccountScopedKeys
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
@@ -115,6 +116,7 @@ class DefaultEpisodeSpoilerStore private constructor(
     private val getActiveProfileId: suspend () -> String?,
     private val getServerUrl: suspend () -> String?,
     private val captureAuthority: suspend () -> AuthScopeSnapshot?,
+    private val getActiveAccountId: suspend () -> String?,
     private val cache: EpisodeSpoilerCache,
     identityChanges: Flow<Unit>,
 ) : EpisodeSpoilerStore {
@@ -126,6 +128,7 @@ class DefaultEpisodeSpoilerStore private constructor(
         getActiveProfileId: suspend () -> String?,
         getServerUrl: suspend () -> String?,
         captureAuthority: suspend () -> AuthScopeSnapshot?,
+        getActiveAccountId: suspend () -> String? = { null },
         identityChanges: Flow<Unit> = emptyFlow(),
     ) : this(
         repository = repository,
@@ -133,6 +136,7 @@ class DefaultEpisodeSpoilerStore private constructor(
         getActiveProfileId = getActiveProfileId,
         getServerUrl = getServerUrl,
         captureAuthority = captureAuthority,
+        getActiveAccountId = getActiveAccountId,
         cache = SharedPreferencesEpisodeSpoilerCache(
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
         ),
@@ -352,9 +356,9 @@ class DefaultEpisodeSpoilerStore private constructor(
         _lastError.value = null
     }
 
-    private suspend fun currentIdentity(): String? {
-        val profileId = getActiveProfileId()?.takeIf { it.isNotBlank() } ?: return null
-        return "${getServerUrl().orEmpty()}|$profileId"
+    private suspend fun currentIdentity(): String? = AccountScopedKeys.readStable(getActiveAccountId) { accountId ->
+        val profileId = getActiveProfileId()?.takeIf { it.isNotBlank() } ?: return@readStable null
+        AccountScopedKeys.identity(getServerUrl().orEmpty(), accountId, profileId)
     }
 
     internal companion object {
@@ -388,6 +392,7 @@ class DefaultEpisodeSpoilerStore private constructor(
             getActiveProfileId = getActiveProfileId,
             getServerUrl = getServerUrl,
             captureAuthority = captureAuthority,
+            getActiveAccountId = { null },
             cache = cache,
             identityChanges = identityChanges,
         )
@@ -444,11 +449,7 @@ private class SharedPreferencesEpisodeSpoilerCache(
         }
     }
 
-    private fun prefix(identity: String): String =
-        "es_" + java.security.MessageDigest.getInstance("SHA-256")
-            .digest(identity.toByteArray(Charsets.UTF_8))
-            .joinToString(separator = "") { "%02x".format(it) }
-            .take(24)
+    private fun prefix(identity: String): String = settingsCachePrefix("es_", identity)
 
     private companion object {
         const val SUPPORTED = "supported"

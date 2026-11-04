@@ -400,6 +400,9 @@ class TvLoginViewModel(
                             accessToken = result.data.accessToken,
                             refreshToken = result.data.refreshToken,
                             expiresIn = result.data.expiresIn,
+                            // The same server user refreshes its saved account
+                            // instead of adding a second one.
+                            account = authRepository.accountSignIn(expected.serverId, result.data.user),
                         )
                     } catch (cancelled: CancellationException) {
                         throw cancelled
@@ -533,7 +536,13 @@ class TvLoginViewModel(
         leavingServer = true
         viewModelScope.launch {
             try {
-                if (tokenManager.getAccessTokenForScope(serverId).isNullOrBlank()) registry.remove(serverId)
+                // A server that still holds an account (another one, or one
+                // waiting to be signed in again) stays: Change Account still lists it.
+                if (registry.accounts.value.none { it.serverId == serverId } &&
+                    tokenManager.getAccessTokenForScope(serverId).isNullOrBlank()
+                ) {
+                    registry.remove(serverId)
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
@@ -701,6 +710,7 @@ class TvLoginViewModel(
                 accessToken = accessToken,
                 refreshToken = refreshToken,
                 expiresIn = response.expiresIn ?: 0L,
+                account = authRepository.accountSignIn(expected.serverId, response.user),
             )
         } catch (cancelled: CancellationException) {
             throw cancelled

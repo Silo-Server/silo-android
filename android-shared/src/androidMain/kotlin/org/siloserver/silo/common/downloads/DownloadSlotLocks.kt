@@ -4,7 +4,7 @@ import kotlinx.coroutines.sync.Mutex
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * One lock per download slot (server, profile, file), shared by the whole
+ * One lock per download slot (server, account, profile, file), shared by the whole
  * process. The track capture, the subtitle refresh, and deleting a download
  * each check the slot's metadata row and then change its subtitle files and
  * row in separate steps. Holding the slot's lock across those steps keeps a
@@ -15,10 +15,10 @@ import java.util.concurrent.ConcurrentHashMap
  * or a database transaction, never inside either.
  */
 object DownloadSlotLocks {
-    private data class Slot(val serverId: String, val profileId: String, val fileId: Int)
+    private data class Slot(val serverId: String, val accountId: String, val profileId: String, val fileId: Int)
 
     private val locks = ConcurrentHashMap<Slot, Mutex>()
 
-    fun of(serverId: String, profileId: String, fileId: Int): Mutex =
-        locks.computeIfAbsent(Slot(serverId, profileId, fileId)) { Mutex() }
+    fun of(serverId: String, accountId: String, profileId: String, fileId: Int): Mutex =
+        locks.computeIfAbsent(Slot(serverId, accountId, profileId, fileId)) { Mutex() }
 }

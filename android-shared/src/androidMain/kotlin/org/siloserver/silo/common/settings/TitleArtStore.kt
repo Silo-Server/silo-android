@@ -3,6 +3,7 @@ package org.siloserver.silo.common.settings
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import org.siloserver.silo.common.store.AccountScopedKeys
 import org.siloserver.silo.domain.settings.TitleArtController
 import org.siloserver.silo.domain.settings.TitleArtPreference
 import org.siloserver.silo.network.AndroidServerRegistry
@@ -450,13 +451,14 @@ class DefaultTitleArtStore private constructor(
         fun saveErrorText(message: String?): String =
             "Couldn't save title art" + (message?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ".")
 
-        /** The cache key for this snapshot's server and profile; null without a profile. */
+        /** The cache key for this snapshot's server, account and profile; null without a profile. */
         private fun AuthScopeSnapshot.cacheIdentity(): String? =
-            profileId?.takeIf { it.isNotBlank() }?.let { "$serverUrl|$it" }
+            profileId?.takeIf { it.isNotBlank() }?.let { AccountScopedKeys.identity(serverUrl, accountId, it) }
 
         /**
-         * Same server and profile, and the same sign-in when both are the
-         * saved account. Not [AuthScopeSnapshot.isSameIdentityAs]: its
+         * Same server, account and profile, and the same sign-in when both
+         * are the saved account. A snapshot without an account (an overlay)
+         * matches on server and profile alone. Not [AuthScopeSnapshot.isSameIdentityAs]: its
          * identity generation also moves when a remote-playback overlay starts
          * or ends, which leaves the profile a toggle addresses unchanged. An
          * overlay's snapshot carries no credential epoch (it is always 0), so
@@ -468,6 +470,7 @@ class DefaultTitleArtStore private constructor(
         private fun AuthScopeSnapshot.isSameProfileAs(other: AuthScopeSnapshot): Boolean {
             if (profileId != other.profileId) return false
             if (!AndroidServerRegistry.serverIdsMatch(serverId, other.serverId)) return false
+            if (accountId != null && other.accountId != null && accountId != other.accountId) return false
             val bothSavedAccount = credentialGenerationId == null && other.credentialGenerationId == null
             return !bothSavedAccount || credentialEpoch == other.credentialEpoch
         }

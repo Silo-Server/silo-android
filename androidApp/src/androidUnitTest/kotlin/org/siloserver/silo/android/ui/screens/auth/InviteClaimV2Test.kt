@@ -57,14 +57,14 @@ class InviteClaimV2Test {
         val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>(); val finished = CompletableDeferred<Unit>()
         val tokens = object : TokenManager by actual {
             override suspend fun replaceAccountSession(serverId: String?, serverUrl: String?, accessToken: String,
-                refreshToken: String, expiresIn: Long, profileId: String?, profileToken: String?, expectedIdentity: AccountSessionExpectation?) {
+                refreshToken: String, expiresIn: Long, profileId: String?, profileToken: String?, expectedIdentity: AccountSessionExpectation?,
+                account: org.siloserver.silo.network.AccountSignIn?): String? =
                 withContext(NonCancellable) {
                     entered.complete(Unit); release.await()
                     try { actual.replaceAccountSession(serverId, serverUrl, accessToken, refreshToken,
-                        expiresIn, profileId, profileToken, expectedIdentity) }
+                        expiresIn, profileId, profileToken, expectedIdentity, account) }
                     finally { finished.complete(Unit) }
                 }
-            }
         }
         val client = client { request ->
             if (request.method == HttpMethod.Post) signedIn to HttpStatusCode.Created

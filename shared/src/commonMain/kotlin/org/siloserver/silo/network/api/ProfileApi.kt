@@ -83,6 +83,15 @@ class ProfileApi(
         exchange<ProfileCollectionV2>("/api/v2/profiles", HttpMethod.Get, HttpStatusCode.OK)
             .map { ProfilesResponse(it.items.map { profile -> profile.toProfile() }) }
 
+    /**
+     * The profiles of the saved account [scope] names, which need not be the
+     * active one: Change Account refreshes every account's cached list.
+     */
+    suspend fun listProfiles(scope: AuthScopeSnapshot): ApiResult<ProfilesResponse> =
+        safeApiV2Call<ProfileCollectionV2>(apiV2Gate.forServer(scope.serverId)) {
+            client.get("/api/v2/profiles") { authScope(scope) }
+        }.map { ProfilesResponse(it.items.map { profile -> profile.toProfile() }) }
+
     suspend fun createProfile(
         request: CreateProfileRequest,
         actingAs: HouseholdManager? = null,

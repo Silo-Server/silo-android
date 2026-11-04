@@ -36,6 +36,7 @@ class SiloDatabaseDaoTest {
         clientUpdatedAtMs: Long = 1000L,
     ) = UserItemStateEntity(
         serverId = serverId,
+        accountId = "a1",
         profileId = profileId,
         contentId = contentId,
         fileId = fileId,
@@ -53,9 +54,9 @@ class SiloDatabaseDaoTest {
     fun userItemStateUpsertAndReadByScope() = runTest {
         val dao = db.userItemStateDao()
         dao.upsert(userState())
-        assertEquals(120.0, dao.get("s1", "p1", "c1", 7)?.positionSeconds)
+        assertEquals(120.0, dao.get("s1", "a1", "p1", "c1", 7)?.positionSeconds)
         // Different server is a different scope — must not collide.
-        assertNull(dao.get("s2", "p1", "c1", 7))
+        assertNull(dao.get("s2", "a1", "p1", "c1", 7))
     }
 
     @Test
@@ -63,7 +64,7 @@ class SiloDatabaseDaoTest {
         val dao = db.userItemStateDao()
         dao.upsert(userState(positionSeconds = 10.0))
         dao.upsert(userState(positionSeconds = 99.0))
-        assertEquals(99.0, dao.get("s1", "p1", "c1", 7)?.positionSeconds)
+        assertEquals(99.0, dao.get("s1", "a1", "p1", "c1", 7)?.positionSeconds)
     }
 
     @Test
@@ -72,7 +73,7 @@ class SiloDatabaseDaoTest {
         dao.upsert(userState(fileId = 1, clientUpdatedAtMs = 100L))
         dao.upsert(userState(fileId = 2, clientUpdatedAtMs = 300L))
         dao.upsert(userState(fileId = 3, clientUpdatedAtMs = 200L))
-        val resume = dao.recentlyPlayed("s1", "p1", limit = 10)
+        val resume = dao.recentlyPlayed("s1", "a1", "p1", limit = 10)
         assertEquals(listOf(2, 3, 1), resume.map { it.fileId })
     }
 
@@ -81,20 +82,20 @@ class SiloDatabaseDaoTest {
         val dao = db.contentItemStateDao()
         dao.upsert(
             ContentItemStateEntity(
-                serverId = "s1", profileId = "p1", contentId = "c1",
+                serverId = "s1", accountId = "a1", profileId = "p1", contentId = "c1",
                 watched = true, ratingValue = 4, favorite = true,
                 clientUpdatedAtMs = 5L, serverUpdatedAtMs = null,
             ),
         )
         dao.upsert(
             ContentItemStateEntity(
-                serverId = "s1", profileId = "p1", contentId = "c2",
+                serverId = "s1", accountId = "a1", profileId = "p1", contentId = "c2",
                 watched = null, ratingValue = null, favorite = false,
                 clientUpdatedAtMs = 6L, serverUpdatedAtMs = null,
             ),
         )
-        assertEquals(4, dao.get("s1", "p1", "c1")?.ratingValue)
-        assertEquals(listOf("c1"), dao.favorites("s1", "p1").map { it.contentId })
+        assertEquals(4, dao.get("s1", "a1", "p1", "c1")?.ratingValue)
+        assertEquals(listOf("c1"), dao.favorites("s1", "a1", "p1").map { it.contentId })
     }
 
     @Test
@@ -104,7 +105,7 @@ class SiloDatabaseDaoTest {
         dao.enqueueCoalescing(op(coalesceKey = "k1", payload = "2", idempotencyKey = "i2"))
         // Older pending op with the same coalesce key was dropped.
         assertEquals(1, dao.count())
-        val due = dao.dueBatch("s1", "p1", nowMs = 10L, limit = 10)
+        val due = dao.dueBatch("s1", "a1", "p1", nowMs = 10L, limit = 10)
         assertEquals("2", due.single().payloadJson)
     }
 
@@ -113,7 +114,7 @@ class SiloDatabaseDaoTest {
         val dao = db.dirtyOperationDao()
         dao.enqueueCoalescing(op(coalesceKey = "a", idempotencyKey = "ia", nextAttemptAtMs = 0L))
         dao.enqueueCoalescing(op(coalesceKey = "b", idempotencyKey = "ib", nextAttemptAtMs = 5_000L))
-        assertEquals(1, dao.dueBatch("s1", "p1", nowMs = 1_000L, limit = 10).size)
+        assertEquals(1, dao.dueBatch("s1", "a1", "p1", nowMs = 1_000L, limit = 10).size)
     }
 
     @Test
@@ -139,9 +140,9 @@ class SiloDatabaseDaoTest {
         val dao = db.downloadDao()
         dao.upsert(download(mediaFileId = 1, recordId = "r1", status = "completed"))
         dao.upsert(download(mediaFileId = 2, recordId = "r2", status = "downloading"))
-        assertEquals("r1", dao.get("s1", "p1", 1)?.recordId)
-        assertEquals(2, dao.getAll("s1", "p1").size)
-        assertEquals(1, dao.getByStatus("s1", "p1", "downloading").size)
+        assertEquals("r1", dao.get("s1", "a1", "p1", 1)?.recordId)
+        assertEquals(2, dao.getAll("s1", "a1", "p1").size)
+        assertEquals(1, dao.getByStatus("s1", "a1", "p1", "downloading").size)
         assertNotNull(dao.getByRecordId("r2"))
     }
 
@@ -162,6 +163,7 @@ class SiloDatabaseDaoTest {
     ) = DirtyOperationEntity(
         opKind = "SET_POSITION",
         serverId = "s1",
+        accountId = "a1",
         profileId = "p1",
         targetContentId = "c1",
         targetFileId = 7,
@@ -178,6 +180,7 @@ class SiloDatabaseDaoTest {
         status: String,
     ) = DownloadEntity(
         serverId = "s1",
+        accountId = "a1",
         profileId = "p1",
         mediaFileId = mediaFileId,
         recordId = recordId,

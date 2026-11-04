@@ -19,25 +19,26 @@ interface UserItemStateDao {
 
     @Query(
         "SELECT * FROM user_item_state " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId AND fileId = :fileId",
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId AND fileId = :fileId",
     )
-    suspend fun get(serverId: String, profileId: String, contentId: String, fileId: Int): UserItemStateEntity?
+    suspend fun get(serverId: String, accountId: String, profileId: String, contentId: String, fileId: Int): UserItemStateEntity?
 
     /** All file-level rows for a content item (e.g. every version/track). */
     @Query(
         "SELECT * FROM user_item_state " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId",
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId",
     )
-    suspend fun getByContent(serverId: String, profileId: String, contentId: String): List<UserItemStateEntity>
+    suspend fun getByContent(serverId: String, accountId: String, profileId: String, contentId: String): List<UserItemStateEntity>
 
     /** Clears resume state without discarding per-file playback or reading preferences. */
     @Query(
         "UPDATE user_item_state SET positionSeconds = 0, clientUpdatedAtMs = :updatedAtMs, positionUpdatedAtMs = :updatedAtMs " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId " +
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId " +
             "AND positionSeconds <> 0",
     )
     suspend fun clearPlaybackProgress(
         serverId: String,
+        accountId: String,
         profileId: String,
         contentId: String,
         updatedAtMs: Long,
@@ -48,9 +49,9 @@ interface UserItemStateDao {
      * Rows written before positionUpdatedAtMs existed fall back to clientUpdatedAtMs.
      */
     @Query("UPDATE user_item_state SET positionSeconds = 0, clientUpdatedAtMs = :updatedAtMs, positionUpdatedAtMs = :updatedAtMs " +
-        "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId " +
+        "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId " +
         "AND COALESCE(positionUpdatedAtMs, clientUpdatedAtMs) < :admittedAtMs")
-    suspend fun clearPlaybackProgressBefore(serverId: String, profileId: String, contentId: String, admittedAtMs: Long, updatedAtMs: Long)
+    suspend fun clearPlaybackProgressBefore(serverId: String, accountId: String, profileId: String, contentId: String, admittedAtMs: Long, updatedAtMs: Long)
 
     /**
      * Restore a reset resume row only while it is still the untouched reset.
@@ -58,11 +59,12 @@ interface UserItemStateDao {
      */
     @Query(
         "UPDATE user_item_state SET positionSeconds = :positionSeconds, clientUpdatedAtMs = CASE WHEN clientUpdatedAtMs = :clearedAtMs THEN :previousUpdatedAtMs ELSE clientUpdatedAtMs END, positionUpdatedAtMs = :previousPositionUpdatedAtMs " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId " +
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId " +
             "AND fileId = :fileId AND positionSeconds = 0 AND COALESCE(positionUpdatedAtMs, clientUpdatedAtMs) = :clearedAtMs",
     )
     suspend fun restorePlaybackProgressIfUnchanged(
         serverId: String,
+        accountId: String,
         profileId: String,
         contentId: String,
         fileId: Int,
@@ -74,11 +76,12 @@ interface UserItemStateDao {
 
     @Query(
         "SELECT * FROM user_item_state " +
-            "WHERE serverId = :serverId AND profileId = :profileId " +
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId " +
             "AND contentId IN (:contentIds) AND positionSeconds > 0",
     )
     suspend fun progressForContentIds(
         serverId: String,
+        accountId: String,
         profileId: String,
         contentIds: List<String>,
     ): List<UserItemStateEntity>
@@ -89,14 +92,14 @@ interface UserItemStateDao {
      */
     @Query(
         "SELECT * FROM user_item_state " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND positionSeconds > 0 " +
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND positionSeconds > 0 " +
             "ORDER BY clientUpdatedAtMs DESC LIMIT :limit",
     )
-    suspend fun recentlyPlayed(serverId: String, profileId: String, limit: Int): List<UserItemStateEntity>
+    suspend fun recentlyPlayed(serverId: String, accountId: String, profileId: String, limit: Int): List<UserItemStateEntity>
 
     @Query(
         "DELETE FROM user_item_state " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId AND fileId = :fileId",
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId AND fileId = :fileId",
     )
-    suspend fun delete(serverId: String, profileId: String, contentId: String, fileId: Int)
+    suspend fun delete(serverId: String, accountId: String, profileId: String, contentId: String, fileId: Int)
 }

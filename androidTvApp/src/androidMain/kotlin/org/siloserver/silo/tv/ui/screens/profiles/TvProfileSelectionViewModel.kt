@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.screens.profiles
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,9 +13,12 @@ import org.siloserver.silo.model.auth.isPasswordChangeRequired
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.authorizedProfileToken
 import org.siloserver.silo.model.profile.householdPrimary
+import org.siloserver.silo.model.server.CachedProfile
 import org.siloserver.silo.model.server.ServerContract
+import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.repository.AccountProfilesRefresher
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfileCommitResult
 import org.siloserver.silo.repository.ProfileRepository
@@ -46,6 +50,37 @@ data class TvProfileSelectionUiState(
     val openingOnlyProfile: Boolean = false,
     /** The profile just picked on a new TV, while the TV asks whether to open it automatically. */
     val rememberOffer: Profile? = null,
+    val activeServerId: String? = null,
+    /** "Add" asked what to add: a profile, an account, or a server. */
+    val showAddChoice: Boolean = false,
+    /** Where the screen goes next; consumed by [TvProfileSelectionViewModel.onNavigationConsumed]. */
+    val navigation: TvPickerNavigation? = null,
+)
+
+/** Screens the picker hands off to. */
+sealed interface TvPickerNavigation {
+    /** Change Account; [addAccountOn] starts on that server's "Add an account" card. */
+    data class ChangeAccount(val addAccountOn: String? = null) : TvPickerNavigation
+
+    /** The existing server setup flow. */
+    data object AddServer : TvPickerNavigation
+
+    /**
+     * No account is open here (signed out, or waiting to sign in again): the
+     * picker has nothing to show, so the navigator picks the account root.
+     */
+    data object NoAccountOpen : TvPickerNavigation
+}
+
+/** The account's offline copy of a profile, in the shape the tiles and PIN prompt draw. */
+internal fun CachedProfile.asProfile(): Profile = Profile(
+    id = id,
+    name = name,
+    avatar = avatar,
+    avatarUrl = avatarUrl,
+    isPrimary = isPrimary,
+    hasPin = hasPin,
+    isChild = isChild,
 )
 
 /**
@@ -67,6 +102,10 @@ class TvProfileSelectionViewModel(
     private val consumeSkipsSingleProfile: () -> Boolean = SignInHandoff::consumeSkipsSingleProfilePicker,
     private val profileVerificationRecovery: ProfileVerificationRecovery? = null,
     private val launchPreferences: ProfileLaunchPreferences? = null,
+    /** The open account; null keeps the one-account picker of old. */
+    private val serverRegistry: ServerRegistry? = null,
+    /** Records the open account's list, the copy shown when its server can't be reached. */
+    private val profilesRefresher: AccountProfilesRefresher? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvProfileSelectionUiState())
@@ -88,10 +127,21 @@ class TvProfileSelectionViewModel(
     private var addAfterUnlock = false
 
     init {
+        followActiveServer()
         loadProfiles()
         reloadWhenUpdateRequiredLifts()
         reloadWhenStaleProfileCleared()
         leaveManageModeWhenSessionEnds()
+    }
+
+    /** The active server, which "Add an account" opens Change Account on. */
+    private fun followActiveServer() {
+        val registry = serverRegistry ?: return
+        viewModelScope.launch {
+            registry.activeServerId.collect { server ->
+                _uiState.update { it.copy(activeServerId = server) }
+            }
+        }
     }
 
     /**
@@ -167,7 +217,30 @@ class TvProfileSelectionViewModel(
     fun loadProfiles() {
         val load = ++loadAttempt
         viewModelScope.launch {
+            // No account open here (signed out, or waiting to sign in again):
+            // nothing to fetch, and nothing for this picker to show.
+            val registry = serverRegistry
+            if (registry != null) {
+                val active = registry.activeAccount.value
+                if (registry.activeAccountId.value == null || active?.needsSignIn == true) {
+                    gridScope = null
+                    profileRepository.householdManagement.end()
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error = null,
+                            profiles = emptyList(),
+                            canManageProfiles = false,
+                            isManageMode = false,
+                            deleteCandidate = null,
+                            navigation = TvPickerNavigation.NoAccountOpen,
+                        )
+                    }
+                    return@launch
+                }
+            }
             _uiState.update { it.copy(isLoading = true, error = null) }
+            val loadAccountId = serverRegistry?.activeAccountId?.value
             val scope = profileRepository.captureIdentityScope()
             val skipSingle = skipsSingleProfile ?: consumeSkipsSingleProfile().also { skipsSingleProfile = it }
             val user = (authRepository?.getCurrentUser() as? ApiResult.Success)?.data
@@ -195,6 +268,45 @@ class TvProfileSelectionViewModel(
             }
             when (val result = listed) {
                 is ApiResult.Success -> {
+                    // The account's offline copy (and Change Account's profile count).
+                    try {
+                        profilesRefresher?.recordActive(loadAccountId, result.data)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // The cached tiles stay as they were.
+                    }
+                    // Recording suspended: a newer load or another account
+                    // may have taken over meanwhile, so this grid is stale.
+                    if (load != loadAttempt) return@launch
+                    val accountChanged = serverRegistry?.activeAccountId?.value != loadAccountId
+                    if (accountChanged || !profileRepository.identityScopeUnchanged(scope)) {
+                        // Drop the old grid, as the pre-record check does.
+                        // Nothing else reloads this picker on an account
+                        // change, so load the open account then (or reach
+                        // NoAccountOpen if it was removed). A PIN prompt or
+                        // check still in flight belongs to that grid too.
+                        gridScope = null
+                        pinAttempt++
+                        addAfterUnlock = false
+                        profileRepository.householdManagement.end()
+                        _uiState.update {
+                            it.copy(
+                                isLoading = false,
+                                profiles = emptyList(),
+                                canManageProfiles = false,
+                                isManageMode = false,
+                                deleteCandidate = null,
+                                pinProfile = null,
+                                pinForManagement = false,
+                                pinError = null,
+                                isVerifyingPin = false,
+                            )
+                        }
+                        dropStaleRememberOffer()
+                        if (accountChanged) loadProfiles()
+                        return@launch
+                    }
                     // The scope moves with the grid, and ONLY with it. See the
                     // phone ViewModel: assigning it before the result meant a
                     // failed reload under a NEW identity left the OLD grid
@@ -222,20 +334,31 @@ class TvProfileSelectionViewModel(
                     }
                     if (only != null) onProfileSelected(only)
                 }
-                is ApiResult.Error -> {
-                    val message = if (result.isPasswordChangeRequired()) {
-                        TV_PASSWORD_CHANGE_REQUIRED_MESSAGE
-                    } else {
-                        result.message.ifBlank { "Failed to load profiles" }
-                    }
-                    _uiState.update { it.copy(isLoading = false, error = message) }
+                is ApiResult.Error -> if (result.isPasswordChangeRequired()) {
+                    // The account can't use its profiles until the password is
+                    // replaced, so the cached grid is not offered either.
+                    _uiState.update { it.copy(isLoading = false, error = TV_PASSWORD_CHANGE_REQUIRED_MESSAGE) }
+                } else {
+                    showCachedProfiles(scope, result.message.ifBlank { "Failed to load profiles" })
                 }
-                is ApiResult.NetworkError -> {
-                    _uiState.update {
-                        it.copy(isLoading = false, error = "Network error. Please try again.")
-                    }
-                }
+                is ApiResult.NetworkError -> showCachedProfiles(scope, "Network error. Please try again.")
             }
+        }
+    }
+
+    /**
+     * The server couldn't be reached: the account's last list stands in, with
+     * the error under it, so the picker still shows who is on this account.
+     */
+    private fun showCachedProfiles(scope: AuthScopeSnapshot?, error: String) {
+        val cached = serverRegistry?.activeAccount?.value?.cachedProfiles.orEmpty()
+        if (_uiState.value.profiles.isEmpty() && cached.isNotEmpty()) {
+            gridScope = scope
+            _uiState.update {
+                it.copy(isLoading = false, error = error, profiles = cached.map(CachedProfile::asProfile))
+            }
+        } else {
+            _uiState.update { it.copy(isLoading = false, error = error) }
         }
     }
 
@@ -339,6 +462,46 @@ class TvProfileSelectionViewModel(
         // trip to re-establish identity, so without this it was the one path
         // that committed unguarded.
         commitSelection(profile, expectedScope = gridScope)
+    }
+
+    /** "Add": in manage mode a profile in this account; otherwise asks what to add. */
+    fun onAddSelected() {
+        if (_uiState.value.isManageMode) {
+            requestAddProfile()
+            return
+        }
+        _uiState.update { it.copy(showAddChoice = true) }
+    }
+
+    fun onAddChoiceDismissed() {
+        _uiState.update { it.copy(showAddChoice = false) }
+    }
+
+    /** "Add a profile": the household's add form, after the primary profile's step. */
+    fun onAddProfileChosen() {
+        _uiState.update { it.copy(showAddChoice = false) }
+        requestAddProfile()
+    }
+
+    /** "Add an account": Change Account, on the active server's "Add an account". */
+    fun onAddAccountChosen() {
+        _uiState.update {
+            it.copy(showAddChoice = false, navigation = TvPickerNavigation.ChangeAccount(addAccountOn = it.activeServerId))
+        }
+    }
+
+    /** "Add a server": the existing server setup. */
+    fun onAddServerChosen() {
+        _uiState.update { it.copy(showAddChoice = false, navigation = TvPickerNavigation.AddServer) }
+    }
+
+    /** The footer's "Change account". */
+    fun onChangeAccount() {
+        _uiState.update { it.copy(navigation = TvPickerNavigation.ChangeAccount()) }
+    }
+
+    fun onNavigationConsumed() {
+        _uiState.update { it.copy(navigation = null) }
     }
 
     fun onPinDialogDismissed() {

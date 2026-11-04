@@ -6,10 +6,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
-import org.siloserver.silo.model.server.ServerEntry
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -21,18 +18,19 @@ class EncryptedTokenManagerScopeGenerationTest {
 
     @Test
     fun signOutTargetUsesTheLiveRegistryServerEvenBeforeTheCacheObserverRuns() = runTest {
-        val registry = FakeServerRegistry()
         val transitions = DefaultIdentityTransitionBarrier()
+        val prefs = seededRegistryPreferences(activeServerId = "server-a")
+        val registry = AndroidServerRegistry(prefs, identityTransitions = transitions)
         val observed = mutableListOf<IdentityTransition>()
         transitions.installObserverForTests(observed::add)
         val manager = EncryptedTokenManagerImpl(
-            prefs = inMemoryPreferences(),
+            prefs = prefs,
             registry = registry,
             identityTransitions = transitions,
         )
-        manager.saveTokens("server-a-access", "server-a-refresh", 3600)
+        manager.signIn("server-a", "server-a-access", "server-a-refresh")
 
-        registry.switchExternally("server-b")
+        registry.switchTo("server-b")
         observed.clear()
         manager.clearTokens()
 
@@ -42,16 +40,17 @@ class EncryptedTokenManagerScopeGenerationTest {
 
     @Test
     fun staleSameServerScopeCannotReadOrRestoreReloggedCredentials() = runTest {
-        val registry = FakeServerRegistry()
+        val prefs = seededRegistryPreferences(activeServerId = "server-a")
+        val registry = AndroidServerRegistry(prefs)
         val manager = EncryptedTokenManagerImpl(
-            prefs = inMemoryPreferences(),
+            prefs = prefs,
             registry = registry,
         )
-        manager.saveTokens("old-access", "old-refresh", 3600)
+        manager.signIn("server-a", "old-access", "old-refresh")
         val staleScope = checkNotNull(manager.snapshotCurrentScope())
 
         manager.clearTokens()
-        manager.saveTokens("new-access", "new-refresh", 3600)
+        manager.signIn("server-a", "new-access", "new-refresh")
 
         assertNull(manager.getAccessTokenForScope(staleScope))
         assertNull(manager.getRefreshTokenForScope(staleScope))
@@ -64,20 +63,23 @@ class EncryptedTokenManagerScopeGenerationTest {
 
     @Test
     fun startupSnapshotOfPreloadedCredentialsCannotReadOrRestoreReloggedCredentials() = runTest {
-        val registry = FakeServerRegistry()
+        // Credentials already on disk at startup: a pre-accounts slot the
+        // registry migrates into server-a's account before the manager loads it.
+        val prefs = seededRegistryPreferences(
+            activeServerId = "server-a",
+            key("server-a", EncryptedTokenManagerImpl.KEY_ACCESS_TOKEN) to "old-access",
+            key("server-a", EncryptedTokenManagerImpl.KEY_REFRESH_TOKEN) to "old-refresh",
+        )
+        val registry = AndroidServerRegistry(prefs)
         val manager = EncryptedTokenManagerImpl(
-            prefs = inMemoryPreferences(
-                AndroidServerRegistry.serverScopedKey("server-a", EncryptedTokenManagerImpl.KEY_ACCESS_TOKEN) to
-                    "old-access",
-                AndroidServerRegistry.serverScopedKey("server-a", EncryptedTokenManagerImpl.KEY_REFRESH_TOKEN) to
-                    "old-refresh",
-            ),
+            prefs = prefs,
             registry = registry,
         )
+        assertEquals("old-access", manager.getAccessToken())
         val staleScope = checkNotNull(manager.snapshotCurrentScope())
 
         manager.clearTokens()
-        manager.saveTokens("new-access", "new-refresh", 3600)
+        manager.signIn("server-a", "new-access", "new-refresh")
 
         assertNull(manager.getAccessTokenForScope(staleScope))
         assertNull(manager.getRefreshTokenForScope(staleScope))
@@ -88,15 +90,16 @@ class EncryptedTokenManagerScopeGenerationTest {
 
     @Test
     fun registryFirstSwitchInvalidatesSnapshotBeforeManagerSwitchCall() = runTest {
-        val registry = FakeServerRegistry()
+        val prefs = seededRegistryPreferences(activeServerId = "server-a")
+        val registry = AndroidServerRegistry(prefs)
         val manager = EncryptedTokenManagerImpl(
-            prefs = inMemoryPreferences(),
+            prefs = prefs,
             registry = registry,
         )
-        manager.saveTokens("server-a-access", "server-a-refresh", 3600)
+        manager.signIn("server-a", "server-a-access", "server-a-refresh")
         val staleScope = checkNotNull(manager.snapshotCurrentScope())
 
-        registry.switchExternally("server-b")
+        registry.switchTo("server-b")
         manager.getAccessToken()
         manager.switchActiveServer("server-b")
 
@@ -114,14 +117,15 @@ class EncryptedTokenManagerScopeGenerationTest {
      */
     @Test
     fun snapshotReportsTheNewServerImmediatelyAfterARegistryFirstSwitch() = runTest {
-        val registry = FakeServerRegistry()
+        val prefs = seededRegistryPreferences(activeServerId = "server-a")
+        val registry = AndroidServerRegistry(prefs)
         val manager = EncryptedTokenManagerImpl(
-            prefs = inMemoryPreferences(),
+            prefs = prefs,
             registry = registry,
         )
-        manager.saveTokens("server-a-access", "server-a-refresh", 3600)
+        manager.signIn("server-a", "server-a-access", "server-a-refresh")
 
-        registry.switchExternally("server-b")
+        registry.switchTo("server-b")
 
         assertEquals("server-b", manager.snapshotCurrentScope()?.serverId)
     }
@@ -129,12 +133,13 @@ class EncryptedTokenManagerScopeGenerationTest {
     /** An overlay owns identity outright; a switch underneath must not retarget it. */
     @Test
     fun aTemporaryOverlaySurvivesARegistryFirstSwitch() = runTest {
-        val registry = FakeServerRegistry()
+        val prefs = seededRegistryPreferences(activeServerId = "server-a")
+        val registry = AndroidServerRegistry(prefs)
         val manager = EncryptedTokenManagerImpl(
-            prefs = inMemoryPreferences(),
+            prefs = prefs,
             registry = registry,
         )
-        manager.saveTokens("server-a-access", "server-a-refresh", 3600)
+        manager.signIn("server-a", "server-a-access", "server-a-refresh")
         manager.beginTemporaryScope(
             TemporaryAuthScope(
                 generationId = "overlay-1",
@@ -148,23 +153,24 @@ class EncryptedTokenManagerScopeGenerationTest {
             ),
         )
 
-        registry.switchExternally("server-b")
+        registry.switchTo("server-b")
 
         assertEquals("overlay-server", manager.snapshotCurrentScope()?.serverId)
     }
 
     @Test
     fun clearingATemporaryOverlayDoesNotAuthorizePersistentIdentityPurge() = runTest {
-        val registry = FakeServerRegistry()
         val transitions = DefaultIdentityTransitionBarrier()
+        val prefs = seededRegistryPreferences(activeServerId = "server-a")
+        val registry = AndroidServerRegistry(prefs, identityTransitions = transitions)
         val observed = mutableListOf<IdentityTransition>()
         transitions.installObserverForTests(observed::add)
         val manager = EncryptedTokenManagerImpl(
-            prefs = inMemoryPreferences(),
+            prefs = prefs,
             registry = registry,
             identityTransitions = transitions,
         )
-        manager.saveTokens("saved-access", "saved-refresh", 3600)
+        manager.signIn("server-a", "saved-access", "saved-refresh")
         manager.beginTemporaryScope(
             TemporaryAuthScope(
                 generationId = "overlay-1",
@@ -189,10 +195,13 @@ class EncryptedTokenManagerScopeGenerationTest {
 
     @Test
     fun freshGenerationZeroCompanionScopeRefreshesButTrueUnversionedResponseFailsClosed() = runTest {
-        val registry = FakeServerRegistry()
         val transitions = DefaultIdentityTransitionBarrier()
+        // server-b holds a saved account (migrated at startup) that the
+        // companion scope, which names no account, refreshes.
+        val prefs = seededRegistryPreferences(activeServerId = "server-a", *savedSession("server-b", null))
+        val registry = AndroidServerRegistry(prefs, identityTransitions = transitions)
         val manager = EncryptedTokenManagerImpl(
-            prefs = inMemoryPreferences(),
+            prefs = prefs,
             registry = registry,
             identityTransitions = transitions,
         )
@@ -220,11 +229,11 @@ class EncryptedTokenManagerScopeGenerationTest {
 
     @Test
     fun removedInactiveServerCannotBeRecreatedByAStaleUnversionedRefresh() = runTest {
-        val registry = FakeServerRegistry()
         val transitions = DefaultIdentityTransitionBarrier()
-        val preferences = inMemoryPreferences()
+        val prefs = seededRegistryPreferences(activeServerId = "server-a", *savedSession("server-b", null))
+        val registry = AndroidServerRegistry(prefs, identityTransitions = transitions)
         val manager = EncryptedTokenManagerImpl(
-            prefs = preferences,
+            prefs = prefs,
             registry = registry,
             identityTransitions = transitions,
         )
@@ -235,16 +244,11 @@ class EncryptedTokenManagerScopeGenerationTest {
             profileToken = null,
         )
 
-        transitions.changing(IdentityTransitionKind.SERVER_REMOVE) {
-            registry.removeExternally("server-b")
-        }
+        registry.remove("server-b")
         manager.saveTokensForScope(scope, "stale-access", "stale-refresh", 3600)
 
-        assertFalse(
-            preferences.contains(
-                AndroidServerRegistry.serverScopedKey("server-b", EncryptedTokenManagerImpl.KEY_ACCESS_TOKEN),
-            ),
-        )
+        val prefix = AndroidServerRegistry.serverScopedKey("server-b", "")
+        assertTrue(prefs.all.keys.none { it.startsWith(prefix) })
     }
 
     @Test
@@ -263,7 +267,7 @@ class EncryptedTokenManagerScopeGenerationTest {
         )
         val serverB = "server-b"
         val manager = EncryptedTokenManagerImpl(preferences, registry, identityTransitions = transitions)
-        manager.saveTokens("server-b-access", "server-b-refresh", 3600)
+        manager.signIn(serverB, "server-b-access", "server-b-refresh")
         val scope = AuthScopeSnapshot(
             serverId = serverB,
             profileId = null,
@@ -300,7 +304,7 @@ class EncryptedTokenManagerScopeGenerationTest {
             registry = registry,
             identityTransitions = transitions,
         )
-        manager.saveTokens("account-a-access", "account-a-refresh", 3600)
+        manager.signIn(serverId, "account-a-access", "account-a-refresh")
         val companionScope = AuthScopeSnapshot(
             serverId = serverId,
             profileId = null,
@@ -398,6 +402,7 @@ class EncryptedTokenManagerScopeGenerationTest {
     // accessTokenExpiresWithin: whether the approver renews a scope's token
     // before looking a TV's code up (TV sign-in spec).
 
+    /** A pre-accounts per-server slot, which the registry migrates into an account at startup. */
     private fun key(serverId: String, name: String) = AndroidServerRegistry.serverScopedKey(serverId, name)
 
     private fun savedSession(serverId: String, expiresInMs: Long?): Array<Pair<String, Any?>> = listOfNotNull(
@@ -413,11 +418,9 @@ class EncryptedTokenManagerScopeGenerationTest {
     @Test
     fun aSavedLoginLendsAnInactiveServersCredentialsOnlyUntilTheNextIdentityTransition() = runTest {
         val transitions = DefaultIdentityTransitionBarrier()
-        val manager = EncryptedTokenManagerImpl(
-            inMemoryPreferences(*savedSession("server-a", null), *savedSession("server-b", null)),
-            FakeServerRegistry(),
-            transitions,
-        )
+        val prefs = seededRegistryPreferences("server-a", *savedSession("server-a", null), *savedSession("server-b", null))
+        val registry = AndroidServerRegistry(prefs, identityTransitions = transitions)
+        val manager = EncryptedTokenManagerImpl(prefs, registry, transitions)
 
         val inactive = checkNotNull(manager.savedLoginAuthority("server-b", "kids", "kids-proof"))
         assertEquals(manager.loginSessionId("server-b"), inactive.loginId)
@@ -433,18 +436,16 @@ class EncryptedTokenManagerScopeGenerationTest {
 
     @Test
     fun aSignOutClearsOnlyTheServerAndLoginItWasMeantFor() = runTest {
-        val registry = FakeServerRegistry()
-        val manager = EncryptedTokenManagerImpl(
-            inMemoryPreferences(*savedSession("server-a", null), *savedSession("server-b", null)),
-            registry,
-        )
+        val prefs = seededRegistryPreferences("server-a", *savedSession("server-a", null), *savedSession("server-b", null))
+        val registry = AndroidServerRegistry(prefs)
+        val manager = EncryptedTokenManagerImpl(prefs, registry)
         val loginA = manager.loginSessionId("server-a")
 
-        registry.switchExternally("server-b")
+        registry.switchTo("server-b")
         assertFalse(manager.signOutServer("server-a", loginA), "server-b became active first")
         assertEquals("server-b-access", manager.getAccessToken())
 
-        registry.switchExternally("server-a")
+        registry.switchTo("server-a")
         // A phone's borrowed identity installed while the sign-out waited.
         manager.beginTemporaryScope(
             TemporaryAuthScope(
@@ -470,65 +471,42 @@ class EncryptedTokenManagerScopeGenerationTest {
 
     @Test
     fun theActiveServersNearExpiryAsksForARefresh() = runTest {
-        val near = EncryptedTokenManagerImpl(inMemoryPreferences(*savedSession("server-a", 10_000L)), FakeServerRegistry())
+        val near = managerOver(*savedSession("server-a", 10_000L))
         assertTrue(near.accessTokenExpiresWithin(scope("server-a"), marginMs = 60_000L))
 
-        val far = EncryptedTokenManagerImpl(inMemoryPreferences(*savedSession("server-a", 3_000_000L)), FakeServerRegistry())
+        val far = managerOver(*savedSession("server-a", 3_000_000L))
         assertFalse(far.accessTokenExpiresWithin(scope("server-a"), marginMs = 60_000L))
     }
 
     @Test
     fun aNonActiveServersNearExpiryIsReadFromItsOwnSlot() = runTest {
-        val manager = EncryptedTokenManagerImpl(
-            inMemoryPreferences(*savedSession("server-a", 3_000_000L), *savedSession("server-b", 10_000L)),
-            FakeServerRegistry(),
-        )
+        val manager = managerOver(*savedSession("server-a", 3_000_000L), *savedSession("server-b", 10_000L))
         assertTrue(manager.accessTokenExpiresWithin(scope("server-b"), marginMs = 60_000L))
         assertFalse(manager.accessTokenExpiresWithin(scope("server-a"), marginMs = 60_000L), "the active slot is separate")
     }
 
     @Test
     fun aNonActiveServerWithoutAStoredExpiryDoesNotAsk() = runTest {
-        val manager = EncryptedTokenManagerImpl(
-            inMemoryPreferences(*savedSession("server-a", 10_000L), *savedSession("server-b", expiresInMs = null)),
-            FakeServerRegistry(),
-        )
+        val manager = managerOver(*savedSession("server-a", 10_000L), *savedSession("server-b", expiresInMs = null))
         assertFalse(manager.accessTokenExpiresWithin(scope("server-b"), marginMs = 60_000L))
     }
 
     @Test
     fun anOverlayScopeDoesNotAsk() = runTest {
-        val manager = EncryptedTokenManagerImpl(inMemoryPreferences(*savedSession("server-a", 10_000L)), FakeServerRegistry())
+        val manager = managerOver(*savedSession("server-a", 10_000L))
         assertFalse(manager.accessTokenExpiresWithin(scope("server-a", credentialGenerationId = "overlay-1"), marginMs = 60_000L))
     }
 
-    private class FakeServerRegistry : ServerRegistry {
-        private val serverA = ServerEntry(id = "server-a", url = "https://server-a.example")
-        private val serverB = ServerEntry(id = "server-b", url = "https://server-b.example")
-        private val entriesFlow = MutableStateFlow(listOf(serverA, serverB))
-        private val activeServerIdFlow = MutableStateFlow<String?>(serverA.id)
-        private val activeEntryFlow = MutableStateFlow<ServerEntry?>(serverA)
-        override val entries: StateFlow<List<ServerEntry>> = entriesFlow
-        override val activeServerId: StateFlow<String?> = activeServerIdFlow
-        override val activeEntry: StateFlow<ServerEntry?> = activeEntryFlow
-        override suspend fun addOrUpdate(url: String, fetchedName: String?): String = serverA.id
-        override suspend fun rename(serverId: String, userOverrideName: String?) = Unit
-        override suspend fun setFetchedName(serverId: String, fetchedName: String?) = Unit
-        override suspend fun setProfileId(serverId: String, profileId: String?) = Unit
-        override suspend fun remove(serverId: String) = Unit
-        override suspend fun signOut(serverId: String) = Unit
-        override suspend fun switchTo(serverId: String) = Unit
-        override suspend fun touchActive() = Unit
+    /** server-a active with [legacySlots] migrated into accounts at startup. */
+    private fun managerOver(vararg legacySlots: Pair<String, Any?>): EncryptedTokenManagerImpl {
+        val prefs = seededRegistryPreferences("server-a", *legacySlots)
+        val registry = AndroidServerRegistry(prefs)
+        return EncryptedTokenManagerImpl(prefs, registry)
+    }
 
-        fun switchExternally(serverId: String) {
-            activeServerIdFlow.value = serverId
-            activeEntryFlow.value = entriesFlow.value.first { it.id == serverId }
-        }
-
-        fun removeExternally(serverId: String) {
-            entriesFlow.value = entriesFlow.value.filterNot { it.id == serverId }
-            if (activeServerIdFlow.value == serverId) switchExternally(entriesFlow.value.first().id)
-        }
+    /** Signs in to [serverId] the way a login does: a fresh account with its own session. */
+    private suspend fun EncryptedTokenManagerImpl.signIn(serverId: String, access: String, refresh: String) {
+        replaceAccountSession(serverId = serverId, accessToken = access, refreshToken = refresh, expiresIn = 3600)
     }
 
     private fun inMemoryPreferences(vararg initialValues: Pair<String, Any?>): SharedPreferences {
@@ -582,6 +560,7 @@ class EncryptedTokenManagerScopeGenerationTest {
 
     private fun seededRegistryPreferences(
         activeServerId: String,
+        vararg legacySlots: Pair<String, Any?>,
         includeServerB: Boolean = true,
     ): SharedPreferences {
         val entries = buildList {
@@ -594,6 +573,7 @@ class EncryptedTokenManagerScopeGenerationTest {
             AndroidServerRegistry.KEY_MIGRATED to true,
             AndroidServerRegistry.KEY_REGISTRY_STATE to
                 """{"entries":[$entries],"activeServerId":"$activeServerId"}""",
+            *legacySlots,
         )
     }
 }

@@ -37,20 +37,20 @@ class MediaStorePublicDownloadStoreCollisionTest {
 
     @Test
     fun `raw reserved namespace cannot read encoded sibling`() {
-        assertNull(store.locateByFileId("~Pw", "prof", 42))
-        assertNotNull(store.locateByFileId("?", "prof", 42))
+        assertNull(store.locateByFileId(listOf(listOf("~Pw", "prof")), 42))
+        assertNotNull(store.locateByFileId(listOf(listOf("?", "prof")), 42))
     }
 
     @Test
     fun `raw reserved namespace cannot count encoded sibling`() {
-        assertEquals(0L, store.totalBytesUsed("~Pw", "prof"))
-        assertEquals(13L, store.totalBytesUsed("?", "prof"))
+        assertEquals(0L, store.totalBytesUsed(listOf("~Pw", "prof")))
+        assertEquals(13L, store.totalBytesUsed(listOf("?", "prof")))
     }
 
     @Test
     fun `raw reserved namespace cannot delete encoded sibling`() {
-        assertFalse(store.delete("~Pw", "prof", 42, uriString = null))
-        assertNotNull(store.locateByFileId("?", "prof", 42))
+        assertFalse(store.delete(listOf(listOf("~Pw", "prof")), 42, uriString = null))
+        assertNotNull(store.locateByFileId(listOf(listOf("?", "prof")), 42))
     }
 
     @Test
@@ -62,7 +62,7 @@ class MediaStorePublicDownloadStoreCollisionTest {
         provider.put(VIDEO_SIBLING_PATH, displayName = "Other.mp4", size = 10L)
         provider.put(VIDEO_SIBLING_PATH, displayName = ".pending-3-Other.mp4", size = 5L, pending = true)
 
-        assertTrue(store.delete("srv", "prof", 4, uriString = null))
+        assertTrue(store.delete(listOf(listOf("srv", "prof")), 4, uriString = null))
 
         assertEquals(emptyList(), provider.namesAt(VIDEO_SLOT_PATH))
         assertEquals(listOf("Other.mp4", ".pending-3-Other.mp4"), provider.namesAt(VIDEO_SIBLING_PATH))

@@ -110,7 +110,7 @@ class AndroidPlayerSettingsStoreTest {
             val store = AndroidPlayerSettingsStore(mockContextStub(), fakeLegacyCache,
                 { owner.profileId }, { owner.serverUrl }, fakeFlusher,
                 settingsRepository = SettingsRepository(api), getDeviceId = { "device" }, getAuthScope = { owner },
-                dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "legacy_import.preferences_pb") }) })
+                dataStoreFactory = { _, _ -> PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "legacy_import.preferences_pb") }) })
             assertFalse(store.importLegacyDeviceSettings(original, linkedMapOf(
                 PlaybackSettingsKeys.AutoPlayNext to "false", PlaybackSettingsKeys.AutoSkipCredits to "true")))
             assertEquals(listOf<org.siloserver.silo.network.AuthScopeSnapshot?>(original), seen)
@@ -137,7 +137,7 @@ class AndroidPlayerSettingsStoreTest {
             val store = AndroidPlayerSettingsStore(mockContextStub(), fakeLegacyCache,
                 { owner.profileId }, { owner.serverUrl }, fakeFlusher,
                 settingsRepository = SettingsRepository(api), getDeviceId = { "device" }, getAuthScope = { owner },
-                dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root,"legacy_ack.preferences_pb") }) })
+                dataStoreFactory = { _, _ -> PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root,"legacy_ack.preferences_pb") }) })
             assertTrue(store.importLegacyDeviceSettings(owner, linkedMapOf(
                 PlaybackSettingsKeys.PreferredQuality to "720p", PlaybackSettingsKeys.MaxBitrateKbps to "2000",
                 PlaybackSettingsKeys.AutoPlayNext to "false")))
@@ -175,7 +175,7 @@ class AndroidPlayerSettingsStoreTest {
             val store = AndroidPlayerSettingsStore(mockContextStub(), fakeLegacyCache,
                 { owner.profileId }, { owner.serverUrl }, fakeFlusher,
                 settingsRepository = SettingsRepository(SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl(), ApiV2Gate.Unrestricted))), getDeviceId = { "device" },
-                getAuthScope = { owner }, dataStoreFactory = { barrier })
+                getAuthScope = { owner }, dataStoreFactory = { _, _ -> barrier })
             assertFalse(store.importLegacyDeviceSettings(original, mapOf(PlaybackSettingsKeys.AutoPlayNext to "false")))
             assertEquals(0,localWrites)
             assertTrue(fakeFlusher.calls.isEmpty())
@@ -213,7 +213,7 @@ class AndroidPlayerSettingsStoreTest {
             profileChangeSignal = flowOf(Unit),
             settingsRepository = repository,
             getDeviceId = { deviceId },
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 val file = File(tempFolder.root, "ds_$id.preferences_pb")
                 PreferenceDataStoreFactory.create(produceFile = { file })
             },
@@ -243,7 +243,7 @@ class AndroidPlayerSettingsStoreTest {
             serverSettingsFlusher = fakeFlusher,
             profileChangeSignal = flowOf(Unit),
             getDeviceId = { null },
-            dataStoreFactory = { shared },
+            dataStoreFactory = { _, _ -> shared },
         )
     }
 
@@ -330,7 +330,7 @@ class AndroidPlayerSettingsStoreTest {
             context = mockContextStub(), legacyCache = fakeLegacyCache,
             getActiveProfileId = { profile }, getServerUrl = { server },
             getDeviceId = { "device" }, serverSettingsFlusher = fakeFlusher,
-            dataStoreFactory = { id -> stores.getOrPut(id) {
+            dataStoreFactory = { _, id -> stores.getOrPut(id) {
                 PreferenceDataStoreFactory.create(
                     produceFile = { File(tempFolder.root, "hdr_$id.preferences_pb") },
                 )
@@ -401,7 +401,7 @@ class AndroidPlayerSettingsStoreTest {
             getServerUrl = { serverUrl },
             serverSettingsFlusher = fakeFlusher,
             getDeviceId = { null },
-            dataStoreFactory = { gated },
+            dataStoreFactory = { _, _ -> gated },
         )
         // Runs the one-time migrations so the gate only sees the two edits.
         store.setSubtitleAppearance(SubtitleAppearance.DEFAULT)
@@ -438,7 +438,7 @@ class AndroidPlayerSettingsStoreTest {
             settingsRepository = SettingsRepository(FakeSettingsApi()),
             getDeviceId = { null },
             contractRevision = contractRevision,
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_rev_$id.preferences_pb") })
             },
         )
@@ -657,7 +657,7 @@ class AndroidPlayerSettingsStoreTest {
             serverSettingsFlusher = fakeFlusher,
             getDeviceId = { null },
             contractRevision = contractRevision,
-            dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_sync18.preferences_pb") }) },
+            dataStoreFactory = { _, _ -> PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_sync18.preferences_pb") }) },
         )
 
         store.setSubtitleSyncMs(400)
@@ -678,7 +678,7 @@ class AndroidPlayerSettingsStoreTest {
             serverSettingsFlusher = fakeFlusher,
             getDeviceId = { null },
             contractRevision = contractRevision,
-            dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_syncscope.preferences_pb") }) },
+            dataStoreFactory = { _, _ -> PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_syncscope.preferences_pb") }) },
         )
         contractRevision.refresh(serverUrl)
         assertFalse(store.subtitleSyncSavedToProfileFlow.first(), "below 19 timing stays on this device")
@@ -724,7 +724,7 @@ class AndroidPlayerSettingsStoreTest {
             serverSettingsFlusher = fakeFlusher,
             getDeviceId = { null },
             contractRevision = contractRevision,
-            dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_syncoff.preferences_pb") }) },
+            dataStoreFactory = { _, _ -> PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_syncoff.preferences_pb") }) },
         )
         store.setSubtitleDeviceOverrideEnabled(true)
         store.setSubtitleSyncMs(300)
@@ -748,7 +748,7 @@ class AndroidPlayerSettingsStoreTest {
             serverSettingsFlusher = fakeFlusher,
             getDeviceId = { null },
             contractRevision = contractRevision,
-            dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_syncoff18.preferences_pb") }) },
+            dataStoreFactory = { _, _ -> PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_syncoff18.preferences_pb") }) },
         )
         store.setSubtitleDeviceOverrideEnabled(true)
         store.setSubtitleSyncMs(300)
@@ -1089,7 +1089,7 @@ class AndroidPlayerSettingsStoreTest {
             context = mockContextStub(), legacyCache = fakeLegacyCache,
             getActiveProfileId = { profile }, getServerUrl = { serverUrl },
             getDeviceId = { "device" }, serverSettingsFlusher = fakeFlusher,
-            dataStoreFactory = { id -> stores.getOrPut(id) {
+            dataStoreFactory = { _, id -> stores.getOrPut(id) {
                 PreferenceDataStoreFactory.create(
                     produceFile = { File(tempFolder.root, "overrides_$id.preferences_pb") },
                 )
@@ -1153,7 +1153,7 @@ class AndroidPlayerSettingsStoreTest {
             getActiveProfileId = { owner.profileId }, getServerUrl = { serverUrl },
             getDeviceId = { "device" }, serverSettingsFlusher = fakeFlusher,
             settingsRepository = SettingsRepository(api), getAuthScope = { owner },
-            dataStoreFactory = { id -> stores.getOrPut(id) {
+            dataStoreFactory = { _, id -> stores.getOrPut(id) {
                 PreferenceDataStoreFactory.create(
                     produceFile = { File(tempFolder.root, "reset_switch_$id.preferences_pb") },
                 )
@@ -1305,7 +1305,7 @@ class AndroidPlayerSettingsStoreTest {
             settingsRepository = SettingsRepository(api),
             getDeviceId = { null },
             contractRevision = contractRevision,
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_theme_$id.preferences_pb") })
             },
         )
@@ -1372,7 +1372,7 @@ class AndroidPlayerSettingsStoreTest {
             settingsRepository = SettingsRepository(api),
             getDeviceId = { null },
             contractRevision = contractRevision,
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_cell_$id.preferences_pb") })
             },
         )
@@ -1410,7 +1410,7 @@ class AndroidPlayerSettingsStoreTest {
             settingsRepository = SettingsRepository(FakeSettingsApi()),
             getDeviceId = { null },
             contractRevision = SettingsContractRevision({ revision() }, { serverUrl }),
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_cell_${name}_$id.preferences_pb") })
             },
         )
@@ -1453,7 +1453,7 @@ class AndroidPlayerSettingsStoreTest {
                 },
                 { serverUrl },
             ),
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_cell_race_$id.preferences_pb") })
             },
         )
@@ -1494,7 +1494,7 @@ class AndroidPlayerSettingsStoreTest {
             settingsRepository = SettingsRepository(api),
             getDeviceId = { null },
             contractRevision = contractRevision,
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_cell_upgrade_$id.preferences_pb") })
             },
         )
@@ -1552,7 +1552,7 @@ class AndroidPlayerSettingsStoreTest {
             getDeviceId = { null },
             // A later revision than the setting's, so only the key's presence can tell.
             contractRevision = SettingsContractRevision({ contract }, { serverUrl }, { ApiResult.Success(keys) }),
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_bq_$id.preferences_pb") })
             },
         )
@@ -1590,7 +1590,7 @@ class AndroidPlayerSettingsStoreTest {
             settingsRepository = SettingsRepository(api),
             getDeviceId = { null },
             contractRevision = contractRevision,
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_cell_unknown_$id.preferences_pb") })
             },
         )

@@ -44,7 +44,7 @@ class DownloadResumeTest {
     @Test
     fun `openAppend continues an existing partial and partialSize reports real bytes`() {
         val storage = DownloadStorage(tmp.newFolder("filesDir"))
-        val target = storage.prepareWrite("srv1", "profA", 42, fileName = "Movie.mkv")
+        val target = storage.prepareWrite("srv1", "acct", "profA", 42, fileName = "Movie.mkv")
         target.openOutputStream().use { it.write(ByteArray(100)) }
 
         assertEquals(100L, storage.partialSize(target.uriString))

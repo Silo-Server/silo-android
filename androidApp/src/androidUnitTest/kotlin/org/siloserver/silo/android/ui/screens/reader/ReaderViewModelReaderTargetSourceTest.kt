@@ -288,9 +288,9 @@ class ReaderViewModelReaderTargetSourceTest {
         }
         val root = tmp.newFolder("annotation-state")
         val state = EbookLocalStateStore(root)
-        val create = state.addBookmark(SERVER_ID, PROFILE_ID, CONTENT_ID, "page:3", loginId = "login", origin = scope.serverUrl)
-        val deletion = state.markBookmarkDelete(SERVER_ID, PROFILE_ID, CONTENT_ID, "delete-me", "page:4", "login", scope.serverUrl, "old-tag")
-        state.addBookmark(SERVER_ID, PROFILE_ID, CONTENT_ID, "page:5", loginId = "other-login", origin = scope.serverUrl)
+        val create = state.addBookmark(SERVER_ID, null, PROFILE_ID, CONTENT_ID, "page:3", loginId = "login", origin = scope.serverUrl)
+        val deletion = state.markBookmarkDelete(SERVER_ID, null, PROFILE_ID, CONTENT_ID, "delete-me", "page:4", "login", scope.serverUrl, "old-tag")
+        state.addBookmark(SERVER_ID, null, PROFILE_ID, CONTENT_ID, "page:5", loginId = "other-login", origin = scope.serverUrl)
         val calls = mutableListOf<String>()
         val row = """{"id":"${create.id}","content_id":"$CONTENT_ID","kind":"bookmark","location":"page:9","etag":"current"}"""
         val client = HttpClient(MockEngine { request ->
@@ -319,7 +319,7 @@ class ReaderViewModelReaderTargetSourceTest {
             val loaded = vm.awaitLoaded()
             assertEquals(listOf(create.id), loaded.bookmarks.map { it.id })
             assertEquals("page:9", loaded.bookmarks.single().location)
-            assertEquals(listOf("other-login"), state.listBookmarks(SERVER_ID, PROFILE_ID, CONTENT_ID).map { it.loginId })
+            assertEquals(listOf("other-login"), state.listBookmarks(SERVER_ID, null, PROFILE_ID, CONTENT_ID).map { it.loginId })
             assertEquals(1, calls.count { it.startsWith("POST ") })
             assertEquals(1, calls.count { it.startsWith("DELETE ") })
         } finally { client.close() }
@@ -455,11 +455,12 @@ class ReaderViewModelReaderTargetSourceTest {
 
     private suspend fun DownloadStorage.writeCompletedDownload(fileId: Int = FILE_ID, fileName: String) {
         val container = fileName.substringAfterLast('.', missingDelimiterValue = "")
-        prepareWrite(SERVER_ID, PROFILE_ID, fileId, fileName = fileName, container = container).writeTargetBytes(
+        prepareWrite(SERVER_ID, "", PROFILE_ID, fileId, fileName = fileName, container = container).writeTargetBytes(
             container.encodeToByteArray(),
         )
         metadata.writeSidecar(
             SERVER_ID,
+            "",
             PROFILE_ID,
             DownloadSidecar(
                 record = DownloadRecord(

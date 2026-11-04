@@ -22,7 +22,7 @@ import kotlinx.serialization.json.Json
 /**
  * Room-backed [CatalogCachePort] (Track B). Stores each catalog read as a JSON
  * blob in the generic `catalog_cache` table, scoped to the active
- * `(serverId, profileId)`. Corrupt/forward-incompatible JSON decodes to null
+ * `(serverId, accountId, profileId)`. Corrupt/forward-incompatible JSON decodes to null
  * rather than crashing the browse screen. Reads that carry artwork are keyed by
  * the widths their screen draws it at.
  */
@@ -41,9 +41,9 @@ class RoomCatalogCacheRepository(
         val owner = scope ?: run {
             val snapshot = snapshotProvider() ?: return
             val profile = snapshot.profileId ?: return
-            CatalogCacheScope(snapshot.serverId, profile)
+            CatalogCacheScope(snapshot.serverId, profile, snapshot.accountId.orEmpty())
         }
-        dao.deleteDetailMetadata(owner.serverId, owner.profileId)
+        dao.deleteDetailMetadata(owner.serverId, owner.accountId, owner.profileId)
     }
 
     override suspend fun cacheLibraries(libraries: List<UserLibrary>) =
@@ -86,26 +86,28 @@ class RoomCatalogCacheRepository(
     override suspend fun cacheLibrarySectionsV2(libraryId: Int, sections: List<ResolvedSection>, owner: AuthScopeSnapshot,
         artworkFingerprint: String?) {
         val profile = owner.profileId ?: return
+        val account = owner.accountId.orEmpty()
         if (owner != snapshotProvider()) return
         val key = librarySectionsV2Key(libraryId, owner, artworkFingerprint)
         val body = json.encodeToString(sections)
         if (body.encodeToByteArray().size > MAX_CACHE_BYTES) {
-            dao.delete(owner.serverId, profile, key)
+            dao.delete(owner.serverId, account, profile, key)
             return
         }
         // Address only the captured owner's key, even if identity changes during Room's suspension.
-        dao.upsert(CatalogCacheEntity(owner.serverId, profile, key, body, now()))
+        dao.upsert(CatalogCacheEntity(owner.serverId, account, profile, key, body, now()))
         val legacy = librarySectionsV2LegacyKey(libraryId, owner)
-        if (key != legacy) runCatching { dao.delete(owner.serverId, profile, legacy) }
+        if (key != legacy) runCatching { dao.delete(owner.serverId, account, profile, legacy) }
     }
 
     override suspend fun getCachedLibrarySectionsV2(libraryId: Int, owner: AuthScopeSnapshot): List<ResolvedSection>? {
         val profile = owner.profileId ?: return null
+        val account = owner.accountId.orEmpty()
         if (owner != snapshotProvider()) return null
         val key = librarySectionsV2Key(libraryId, owner)
         val legacy = librarySectionsV2LegacyKey(libraryId, owner)
         val row = runCatching {
-            dao.get(owner.serverId, profile, key) ?: if (key != legacy) dao.get(owner.serverId, profile, legacy) else null
+            dao.get(owner.serverId, account, profile, key) ?: if (key != legacy) dao.get(owner.serverId, account, profile, legacy) else null
         }.getOrNull()
         if (owner != snapshotProvider()) return null
         return row?.json?.let { runCatching { json.decodeFromString<List<ResolvedSection>>(it) }.getOrNull() }
@@ -172,19 +174,20 @@ class RoomCatalogCacheRepository(
         // SQLiteBlobTooBigException. Big library pages can exceed it, so don't
         // store an unreadable row — drop any prior row for this key and skip.
         if (jsonStr.encodeToByteArray().size > MAX_CACHE_BYTES) {
-            runCatching { dao.delete(snapshot.serverId, profileId, cacheKey) }
+            runCatching { dao.delete(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, cacheKey) }
             return null
         }
         dao.upsert(
             CatalogCacheEntity(
                 serverId = snapshot.serverId,
+                accountId = snapshot.accountId.orEmpty(),
                 profileId = profileId,
                 cacheKey = cacheKey,
                 json = jsonStr,
                 cachedAtMs = now(),
             ),
         )
-        return CatalogCacheScope(snapshot.serverId, profileId)
+        return CatalogCacheScope(snapshot.serverId, profileId, snapshot.accountId.orEmpty())
     }
 
     private fun currentWriteLease() =
@@ -195,9 +198,9 @@ class RoomCatalogCacheRepository(
         val profileId = snapshot.profileId ?: return null
         // An oversized legacy row throws SQLiteBlobTooBigException on read; purge
         // it so it can't keep crashing the browse screen, and serve online.
-        return runCatching { dao.get(snapshot.serverId, profileId, cacheKey) }
+        return runCatching { dao.get(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, cacheKey) }
             .getOrElse {
-                runCatching { dao.delete(snapshot.serverId, profileId, cacheKey) }
+                runCatching { dao.delete(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, cacheKey) }
                 null
             }?.json
     }
@@ -217,7 +220,7 @@ class RoomCatalogCacheRepository(
         val key = artworkKey(prefix, surface, lease.artworkFingerprint)
         // Retire the legacy row of the owner the write went to, even if identity changed since.
         val owner = put(key, jsonStr, lease) ?: return
-        if (key != prefix) runCatching { dao.delete(owner.serverId, owner.profileId, prefix) }
+        if (key != prefix) runCatching { dao.delete(owner.serverId, owner.accountId, owner.profileId, prefix) }
     }
 
     private fun libraryPrefix(libraryId: Int) = "library:$libraryId"

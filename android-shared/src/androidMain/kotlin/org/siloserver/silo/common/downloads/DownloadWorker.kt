@@ -64,7 +64,7 @@ internal fun DownloadRecord.withWorkerStatus(
 
 /**
  * Streams `GET /api/v2/downloads/{id}/file` to the local
- * `<filesDir>/downloads/<serverId>/<profileId>/<fileId>/<original-name>`
+ * `<serverId>/acct-<accountId>/<profileId>/<fileId>/<original-name>`
  * location via [DownloadStorage], reporting progress to WorkManager at
  * most every ~200ms; the foreground notification is rebuilt only when
  * the integer percent actually changes.
@@ -89,6 +89,7 @@ class DownloadWorker(
     // paint progress/Failed onto the wrong scope's card. Null = legacy call
     // sites keep the old (unguarded) behavior.
     private val activeScope: (suspend () -> Pair<String?, String?>)? = null,
+    private val activeAccount: (suspend () -> String?)? = null,
     private val authorities: DurableLoginAuthorityProvider? = null,
     private val transitions: IdentityTransitionBarrier? = null,
     private val devices: DeviceMetadataProvider? = null,
@@ -96,6 +97,13 @@ class DownloadWorker(
 ) : CoroutineWorker(appContext, params) {
 
     private var transferAuthority: DurableLoginAuthority? = null
+
+    /**
+     * The account the download is filed under (its Room row and files), read
+     * from the work input. Work queued before accounts existed has none; its
+     * row belongs to whichever account adopted the server's old data.
+     */
+    private var accountId: String = ""
     private val offlineTrackFetcher = OfflineTrackAssetFetcher(httpClient, storage)
     private suspend fun requireOwner() {
         if (authorities != null && (transferAuthority == null || transferAuthority != authorities.snapshotDurableLoginAuthority() || inputData.getString(KEY_DEVICE_ID) != devices?.current()?.id)) throw DownloadOwnerChanged()
@@ -108,6 +116,9 @@ class DownloadWorker(
 
     private suspend fun uiPushAllowed(serverId: String, profileId: String): Boolean {
         if (authorities != null && transferAuthority != authorities.snapshotDurableLoginAuthority()) return false
+        // Another account of this server may share the profile id.
+        val account = activeAccount
+        if (account != null && runCatching { account() }.getOrNull().orEmpty() != accountId) return false
         val scope = activeScope ?: return true
         // Resolving the active scope must never abort an otherwise-healthy
         // download — this is called inside doWork()'s own catch block, where a
@@ -126,6 +137,16 @@ class DownloadWorker(
             ?: return@withContext Result.failure()
         val profileId = inputData.getString(KEY_PROFILE_ID)
             ?: return@withContext Result.failure()
+        // Work queued before accounts existed names none: it belongs to the
+        // server's adopting account once the startup adoption pass has run
+        // (until then the marker may not exist yet). Unadopted rows stay ''.
+        // A pass still running means adoption may be moving this job's row:
+        // retry rather than file the download under the empty account.
+        accountId = inputData.getString(KEY_ACCOUNT_ID)
+            ?: run {
+                if (!AccountDataAdoption.awaitFirstPassFinished()) return@withContext Result.retry()
+                storage.legacyFilesOwner(serverId).orEmpty()
+            }
         val fileName = inputData.getString(KEY_FILE_NAME)
         val container = inputData.getString(KEY_CONTAINER)
         val mediaType = inputData.getString(KEY_MEDIA_TYPE)
@@ -134,7 +155,8 @@ class DownloadWorker(
         if (authorities != null) {
             val captured = authorities.snapshotDurableLoginAuthority() ?: return@withContext Result.retry()
             if (!downloadWorkMatchesOwner(inputData.getString(KEY_LOGIN_ID), inputData.getString(KEY_ORIGIN),
-                inputData.getString(KEY_DEVICE_ID), serverId, profileId, captured, devices?.current()?.id)) return@withContext Result.failure()
+                inputData.getString(KEY_DEVICE_ID), serverId, profileId, captured, devices?.current()?.id,
+                accountId = inputData.getString(KEY_ACCOUNT_ID))) return@withContext Result.failure()
             transferAuthority = captured
         }
         if (gate.blocked() != null) return@withContext Result.retry()
@@ -154,12 +176,12 @@ class DownloadWorker(
         var mediaPublished = false
 
         try {
-            var existing = runCatching { metadataStore.readSidecar(serverId, profileId, fileId) }.getOrNull()
+            var existing = runCatching { metadataStore.readSidecar(serverId, accountId, profileId, fileId) }.getOrNull()
             // A stopped capture resumes from the completed local file, including
             // legacy rows whose original transfer revision is unknown.
             if (existing != null && existing.record.id == downloadId &&
                 existing.record.statusEnum() == DownloadStatus.Completed &&
-                storage.locateLocalMedia(serverId, profileId, fileId) != null
+                storage.locateLocalMedia(serverId, accountId, profileId, fileId) != null
             ) {
                 mediaPublished = true
                 requireOwner()
@@ -195,8 +217,8 @@ class DownloadWorker(
                             resumeValidator = null,
                         )
                         ownedWrite {
-                            storage.delete(serverId, profileId, fileId)
-                            metadataStore.writeSidecar(serverId, profileId, restarted)
+                            storage.delete(serverId, accountId, profileId, fileId)
+                            metadataStore.writeSidecar(serverId, accountId, profileId, restarted)
                             true
                         }
                         existing = restarted
@@ -246,7 +268,7 @@ class DownloadWorker(
                 // (shrank/changed). Drop it and retry fresh (no Range next time).
                 if (canResume && response.status == HttpStatusCode.RequestedRangeNotSatisfiable) {
                     // Drop the partial; partialSize→0 makes the retry a fresh GET.
-                    ownedWrite { storage.delete(serverId, profileId, fileId); true }
+                    ownedWrite { storage.delete(serverId, accountId, profileId, fileId); true }
                     throw IOException("range not satisfiable — restarting fresh")
                 }
                 // The v2 file route answers one bare `conflict` problem for every
@@ -284,7 +306,7 @@ class DownloadWorker(
                         catalogFileName = fileName,
                         contentDisposition = response.headers["Content-Disposition"],
                     )
-                    val fresh = ownedWrite { storage.prepareWrite(serverId, profileId, fileId, resolvedFileName, container, mediaType) }
+                    val fresh = ownedWrite { storage.prepareWrite(serverId, accountId, profileId, fileId, resolvedFileName, container, mediaType) }
                     activeUri = fresh.uriString
                     total = response.headers["Content-Length"]?.toLongOrNull() ?: -1L
                     written = 0L
@@ -420,7 +442,7 @@ class DownloadWorker(
                 // Delete by scope+fileId (not just activeUri): a cancel before the
                 // response is classified leaves activeUri null but a prior attempt's
                 // partial may still be on disk.
-                runCatching { ownedWrite { storage.delete(serverId, profileId, fileId); true } }
+                runCatching { ownedWrite { storage.delete(serverId, accountId, profileId, fileId); true } }
             }
             throw e
         } catch (e: DownloadPreparingException) {
@@ -510,18 +532,18 @@ class DownloadWorker(
             requireOwner()
             // Held until the new tracks are on the row, so a subtitle refresh
             // never publishes over the sidecars this capture writes.
-            DownloadSlotLocks.of(serverId, profileId, fileId).withLock {
-                val assets = offlineTrackFetcher.fetch(downloadId, serverId, profileId, fileId) {
+            DownloadSlotLocks.of(serverId, accountId, profileId, fileId).withLock {
+                val assets = offlineTrackFetcher.fetch(downloadId, serverId, accountId, profileId, fileId) {
                     transferAuthority?.let { managedDownloadAuth(it.scope) }
                 } ?: return
                 val tracks = assets.tracks
                 val artwork = assets.artwork
                 ownedWrite {
-                    val existing = metadataStore.readSidecar(serverId, profileId, fileId)
+                    val existing = metadataStore.readSidecar(serverId, accountId, profileId, fileId)
                         ?.takeIf { it.record.id == downloadId }
                     if (existing != null) {
                         metadataStore.writeSidecar(
-                            serverId, profileId,
+                            serverId, accountId, profileId,
                             existing.copy(
                                 offlineTracks = tracks,
                                 offlinePosterPath = artwork.posterPath,
@@ -565,7 +587,7 @@ class DownloadWorker(
         DiagnosticsDownloadLogger.error("download failed")
         // Delete by scope+fileId so a partial from any attempt is cleaned up
         // even if this attempt failed before activeUri was assigned.
-        runCatching { ownedWrite { storage.delete(serverId, profileId, fileId); true } }
+        runCatching { ownedWrite { storage.delete(serverId, accountId, profileId, fileId); true } }
         runCatching { DownloadStatusWorker.cancel(appContext, downloadId) }
         // Best-effort: publish failed state into the repo + sidecar.
         val record = if (uiPushAllowed(serverId, profileId)) repository.recordForFile(fileId) else null
@@ -622,9 +644,9 @@ class DownloadWorker(
         resumeValidator: String? = null,
         revision: Int? = null,
     ) {
-        val existing = metadataStore.readSidecar(serverId, profileId, fileId) ?: return
+        val existing = metadataStore.readSidecar(serverId, accountId, profileId, fileId) ?: return
         metadataStore.writeSidecar(
-            serverId, profileId,
+            serverId, accountId, profileId,
             existing.copy(
                 record = existing.record.withWorkerStatus(
                     status = status,
@@ -698,6 +720,7 @@ class DownloadWorker(
         const val KEY_DOWNLOAD_ID = "download_id"
         const val KEY_FILE_ID = "file_id"
         const val KEY_SERVER_ID = "server_id"
+        const val KEY_ACCOUNT_ID = "account_id"
         const val KEY_PROFILE_ID = "profile_id"
         const val KEY_FILE_NAME = "file_name"
         const val KEY_CONTAINER = "container"
@@ -730,7 +753,7 @@ class DownloadWorker(
 
         /**
          * Enqueue a unique one-time download for [downloadId]. Caller supplies
-         * the `(serverId, profileId, fileId)` triple + a display title for
+         * the `(serverId, accountId, profileId, fileId)` slot + a display title for
          * the notification. The [wifiOnly] flag drives the work constraint.
          *
          * Cancel via `WorkManager.cancelAllWorkByTag(tagFor(downloadId))`.
@@ -740,6 +763,7 @@ class DownloadWorker(
             downloadId: String,
             fileId: Int,
             serverId: String,
+            accountId: String,
             profileId: String,
             fileName: String?,
             container: String?,
@@ -759,6 +783,7 @@ class DownloadWorker(
                 KEY_DOWNLOAD_ID to downloadId,
                 KEY_FILE_ID to fileId,
                 KEY_SERVER_ID to serverId,
+                KEY_ACCOUNT_ID to accountId,
                 KEY_PROFILE_ID to profileId,
                 KEY_FILE_NAME to fileName,
                 KEY_CONTAINER to container,
@@ -970,6 +995,8 @@ internal fun downloadAuthFailureIsRetriable(e: Throwable): Boolean =
 private class DownloadOwnerChanged : IllegalStateException("The download owner changed")
 
 internal fun downloadWorkMatchesOwner(loginId: String?, origin: String?, deviceId: String?, serverId: String,
-    profileId: String, authority: DurableLoginAuthority, currentDevice: String?): Boolean =
+    profileId: String, authority: DurableLoginAuthority, currentDevice: String?, accountId: String? = null): Boolean =
     !deviceId.isNullOrBlank() && deviceId == currentDevice && loginId == authority.loginId &&
-        origin == authority.scope.serverUrl && serverId == authority.scope.serverId && profileId == authority.scope.profileId
+        origin == authority.scope.serverUrl && serverId == authority.scope.serverId && profileId == authority.scope.profileId &&
+        // Work queued before accounts existed names none; its login id still pins the owner.
+        (accountId == null || accountId == authority.scope.accountId.orEmpty())

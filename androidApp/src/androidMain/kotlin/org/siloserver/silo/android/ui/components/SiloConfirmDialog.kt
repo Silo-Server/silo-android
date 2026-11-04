@@ -16,14 +16,20 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -41,14 +47,20 @@ import androidx.compose.ui.window.DialogProperties
 import org.siloserver.silo.android.ui.theme.SiloDestructive
 import org.siloserver.silo.android.ui.theme.SiloForeground
 
-/** How a dialog button reads: the safe default, the one recommended action, or a destructive one. */
-enum class SiloDialogActionStyle { Default, Primary, Destructive }
+/**
+ * How a dialog button reads: the safe default, the one recommended action, a
+ * destructive one, or a destructive one that stays quiet (red text on the
+ * default fill) so a safe [Primary] beside it reads as the default.
+ */
+enum class SiloDialogActionStyle { Default, Primary, Destructive, DestructiveQuiet }
 
 data class SiloDialogAction(
     val label: String,
     val onClick: () -> Unit,
     val style: SiloDialogActionStyle = SiloDialogActionStyle.Default,
     val enabled: Boolean = true,
+    /** Takes focus when the dialog opens, for a keyboard or D-pad (touch never shows it). */
+    val focusedByDefault: Boolean = false,
 )
 
 /** The dialog card's palette: one raised surface over a dim, Paper and red for actions. */
@@ -87,6 +99,7 @@ fun SiloDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         val shape = RoundedCornerShape(28.dp)
+        val initialFocus = remember { FocusRequester() }
         Column(
             modifier = modifier
                 .padding(horizontal = 22.dp, vertical = 24.dp)
@@ -143,7 +156,12 @@ fun SiloDialog(
                     modifier = Modifier.padding(top = 22.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    actions.forEach { action -> SiloDialogButton(action) }
+                    actions.forEach { action ->
+                        SiloDialogButton(action, if (action.focusedByDefault) initialFocus else null)
+                    }
+                    if (actions.any { it.focusedByDefault && it.enabled }) {
+                        LaunchedEffect(Unit) { runCatching { initialFocus.requestFocus() } }
+                    }
                 }
             }
         }
@@ -151,21 +169,33 @@ fun SiloDialog(
 }
 
 @Composable
-private fun SiloDialogButton(action: SiloDialogAction) {
+private fun SiloDialogButton(action: SiloDialogAction, focusRequester: FocusRequester?) {
     val (fill, textColor) = when (action.style) {
         SiloDialogActionStyle.Primary -> SiloDialogColors.Paper to SiloDialogColors.Ink
         SiloDialogActionStyle.Destructive -> SiloDestructive to Color.White
+        SiloDialogActionStyle.DestructiveQuiet -> SiloDialogColors.DefaultButton to SiloDestructive
         SiloDialogActionStyle.Default -> SiloDialogColors.DefaultButton to SiloForeground
     }
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val shape = RoundedCornerShape(24.dp)
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
             // Before the fill, so a disabled button dims as a whole, not just its label.
             .alpha(if (action.enabled) 1f else 0.4f)
-            .clip(RoundedCornerShape(24.dp))
+            .clip(shape)
             .background(fill)
-            .clickable(enabled = action.enabled, role = Role.Button, onClick = action.onClick)
+            .then(if (focused) Modifier.border(2.dp, SiloForeground, shape) else Modifier)
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .clickable(
+                enabled = action.enabled,
+                role = Role.Button,
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = action.onClick,
+            )
             .padding(horizontal = 16.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -217,45 +247,3 @@ fun SiloConfirmDialog(
     )
 }
 
-/**
- * The sign-out gate, shared by both places that can sign this device out: the
- * profile menu in the top bar, and the Sign out row in the settings Account
- * card. Neither confirmed before, and gating only one of them would make the
- * app's answer to "are you sure?" depend on which button the user happened to
- * reach for.
- *
- * The body states what sign-out actually does, which is less than users tend
- * to assume: `AuthRepository.logout` clears the tokens and profile state for
- * the active server and deliberately keeps its `ServerRegistry` entry, and
- * downloaded files are only ever deleted by `OrphanedServerDataPurger`, which
- * fires on a server being *removed from the registry* — never on sign-out. So
- * the copy promises the downloads and the saved server survive, because they
- * do.
- *
- * @param accountName Named in the body where the caller knows it. The settings
- *   Account card has the signed-in [org.siloserver.silo.model.auth.User]; the
- *   top bar knows only the active profile, which is not the account being
- *   signed out and must not be substituted for it.
- */
-@Composable
-fun SignOutConfirmDialog(
-    visible: Boolean,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-    accountName: String? = null,
-) {
-    if (!visible) return
-    SiloConfirmDialog(
-        title = "Sign out?",
-        body = buildString {
-            append("This signs this device out of ")
-            append(if (accountName.isNullOrBlank()) "your account" else "$accountName's account")
-            append(". Downloads stay on this device and the server stays saved, ")
-            append("so you can sign back in without setting it up again.")
-        },
-        confirmLabel = "Sign out",
-        onConfirm = onConfirm,
-        onDismiss = onDismiss,
-        icon = Icons.AutoMirrored.Rounded.Logout,
-    )
-}

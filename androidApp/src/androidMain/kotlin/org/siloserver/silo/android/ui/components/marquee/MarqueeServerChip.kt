@@ -72,7 +72,7 @@ fun MarqueeServerChip(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            MarqueeServerMark(name = name, imageUrl = markUrl, size = 24.dp)
+            MarqueeServerMark(name = name, imageUrl = markUrl, size = 24.dp, siloIconFallback = true)
             Text(
                 name,
                 color = MarqueeColors.Ink,

@@ -9,14 +9,14 @@ class DownloadSlotLocksTest {
 
     @Test
     fun everyCallerSharesOneLockPerSlot() {
-        val capture = DownloadSlotLocks.of("server", "profile", 7)
+        val capture = DownloadSlotLocks.of("server", "account", "profile", 7)
         assertTrue(capture.tryLock())
         try {
             // A worker or view model looking the slot up separately gets the same lock.
-            assertSame(capture, DownloadSlotLocks.of("server", "profile", 7))
-            assertFalse(DownloadSlotLocks.of("server", "profile", 7).tryLock())
+            assertSame(capture, DownloadSlotLocks.of("server", "account", "profile", 7))
+            assertFalse(DownloadSlotLocks.of("server", "account", "profile", 7).tryLock())
 
-            val otherSlot = DownloadSlotLocks.of("server", "profile", 8)
+            val otherSlot = DownloadSlotLocks.of("server", "account", "profile", 8)
             assertTrue(otherSlot.tryLock())
             otherSlot.unlock()
         } finally {

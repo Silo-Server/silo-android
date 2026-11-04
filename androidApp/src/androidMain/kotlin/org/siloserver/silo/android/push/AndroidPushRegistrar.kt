@@ -183,11 +183,16 @@ class AndroidPushRegistrar internal constructor(
      * Bounded so an unreachable server cannot hold up the sign-out or removal
      * waiting on it, and never throws, so unreadable records cannot abort it
      * either.
+     *
+     * With [accountId] (signing out of one account), only that account's
+     * installation is removed: another account on [serverId] that holds it
+     * keeps it. Without it (removing the server), whoever holds it loses it.
      */
-    suspend fun unregisterDevice(serverId: String): PushRemoval {
+    suspend fun unregisterDevice(serverId: String, accountId: String? = null): PushRemoval {
         val attempt = beginRequest(serverId)
         val result = try {
-            withTimeoutOrNull(UNREGISTER_BUDGET_MS) { removeAsRegisteredOwner(serverId, attempt) } ?: failure("push_unregister_timed_out")
+            withTimeoutOrNull(UNREGISTER_BUDGET_MS) { removeAsRegisteredOwner(serverId, accountId, attempt) }
+                ?: failure("push_unregister_timed_out")
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -240,15 +245,31 @@ class AndroidPushRegistrar internal constructor(
         }
     }
 
-    private suspend fun removeAsRegisteredOwner(serverId: String, attempt: Any): ApiResult<Unit> {
+    /**
+     * Whether signing out of [accountId] removes [record]: that account holds it,
+     * or no saved account is known to (a record from before accounts whose login
+     * is gone). Every record goes when no account is named.
+     */
+    private suspend fun leavesWith(record: PushInstallation, accountId: String?): Boolean {
+        if (accountId == null) return true
+        val holder = record.intent.accountId ?: registeredOwnerOf(record)?.scope?.accountId ?: return true
+        return holder == accountId
+    }
+
+    private suspend fun removeAsRegisteredOwner(serverId: String, accountId: String?, attempt: Any): ApiResult<Unit> {
         val device = deviceIdProvider()
         val found = installations().firstOrNull { it.intent.serverId == serverId && it.deviceId == device && it.removable }
             ?: return failure("push_not_registered")
+        // Another account on that server holds it: it keeps its pushes.
+        if (!leavesWith(found, accountId)) return failure("push_not_registered")
         // Before waiting on anything: should the removal not finish, whatever this
         // record then holds belongs to a login about to be cleared.
         markOwnerLeaving(found.serverUrl, device)
         return serverLock(found.serverUrl).withLock {
             if (latestRequests[serverId] !== attempt) return@withLock failure("push_request_superseded")
+            // A registration finishing first may have handed it to another account.
+            val held = recordOf(found.serverUrl, device)
+            if (held != null && !leavesWith(held, accountId)) return@withLock failure("push_not_registered")
             // Read again under the server's lock, as a registration finishing first
             // changes the record: the removal is allocated over whatever it left.
             val retiring = queueRetirement(found.serverUrl, device, serverId) ?: return@withLock failure("push_not_registered")
@@ -501,14 +522,19 @@ class AndroidPushRegistrar internal constructor(
             val previous = recordOf(serverUrl, device)
             if (!current(owner)) return failure("push_authority_changed")
             if (!isLatest(owner, attempt)) return failure("push_request_superseded")
-            val intent = PushInstallationIntent(owner.scope.serverId, owner.loginId, requireNotNull(owner.scope.profileId), owner.scope.profileToken, request)
+            val intent = PushInstallationIntent(owner.scope.serverId, owner.loginId, requireNotNull(owner.scope.profileId),
+                owner.scope.profileToken, request, accountId = owner.scope.accountId)
             // An uncertain removal, or an uncertain registration whose login was leaving,
             // is superseded rather than replayed: the server takes a registration at a
             // higher generation whether the uncertain intent landed or never arrived, and
             // the login that sent it is usually gone, as sign-out removes first and then
-            // clears it. Any other uncertain registration is still replayed exactly.
+            // clears it. So is one another login on that server sent: the installation is
+            // being handed to this account (spec §7), and the one that sent it no longer
+            // owns it. Any other uncertain registration is still replayed exactly.
+            val handsOver = request != null && previous != null &&
+                previous.intent.serverId == intent.serverId && previous.intent.loginId != intent.loginId
             val supersedesUncertainty = request != null && previous != null && !previous.acknowledged &&
-                (previous.intent.registration == null || previous.ownerLeaving)
+                (previous.intent.registration == null || previous.ownerLeaving || handsOver)
             val reconciling = previous != null && !previous.acknowledged && previous.intent != intent && !supersedesUncertainty
             previous?.let {
                 check(it.generation > 0 && it.key.matches(Regex("[A-Za-z0-9_-]{43}")))
@@ -517,7 +543,9 @@ class AndroidPushRegistrar internal constructor(
                     check(receipt.generation == it.generation.toString() && receipt.id.isNotBlank() &&
                         receipt.serverDeviceId.isNotBlank() && receipt.pushMode == it.intent.registration.pushMode)
                 }
-                if (it.refusal != null) return failure(it.refusal)
+                // A refusal answered the login that sent it; the next account there
+                // starts over at the next generation with the same key.
+                if (it.refusal != null && !handsOver) return failure(it.refusal)
                 if (reconciling && (!mayReconcile || it.intent.serverId != intent.serverId || it.intent.loginId != intent.loginId ||
                         it.intent.profileId != intent.profileId || it.intent.profileToken != intent.profileToken)) {
                     return failure("push_previous_intent_uncertain")

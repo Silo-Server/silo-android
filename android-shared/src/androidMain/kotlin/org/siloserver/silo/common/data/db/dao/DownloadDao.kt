@@ -7,6 +7,9 @@ import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 import org.siloserver.silo.common.data.db.entity.DownloadEntity
 
+/** Count and size of one account's downloads, for [DownloadDao.summaryForAccount]. */
+data class DownloadSummaryRow(val count: Int, val totalBytes: Long)
+
 /** The artwork columns of one downloads row, for [DownloadDao.observeSavedArtwork]. */
 data class DownloadArtworkRow(
     val recordId: String,
@@ -29,7 +32,7 @@ interface DownloadDao {
 
     /**
      * Insert only when no conflicting row exists — neither the `(serverId,
-     * profileId, mediaFileId)` primary key nor the unique `recordId` index.
+     * accountId, profileId, mediaFileId)` primary key nor the unique `recordId` index.
      * Returns the new rowId, or -1 when a conflict caused the insert to be
      * ignored. Used by the legacy import so an existing Room row always wins
      * atomically, without [upsert]'s REPLACE (which would delete a row that
@@ -40,39 +43,39 @@ interface DownloadDao {
 
     @Query(
         "SELECT * FROM downloads " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND mediaFileId = :mediaFileId",
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND mediaFileId = :mediaFileId",
     )
-    suspend fun get(serverId: String, profileId: String, mediaFileId: Int): DownloadEntity?
+    suspend fun get(serverId: String, accountId: String, profileId: String, mediaFileId: Int): DownloadEntity?
 
     @Query("SELECT * FROM downloads WHERE recordId = :recordId")
     suspend fun getByRecordId(recordId: String): DownloadEntity?
 
     @Query(
         "SELECT * FROM downloads " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId",
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId",
     )
-    suspend fun getByContent(serverId: String, profileId: String, contentId: String): List<DownloadEntity>
+    suspend fun getByContent(serverId: String, accountId: String, profileId: String, contentId: String): List<DownloadEntity>
 
     @Query(
-        "SELECT * FROM downloads WHERE serverId = :serverId AND profileId = :profileId ORDER BY updatedAtMs DESC",
+        "SELECT * FROM downloads WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId ORDER BY updatedAtMs DESC",
     )
-    suspend fun getAll(serverId: String, profileId: String): List<DownloadEntity>
+    suspend fun getAll(serverId: String, accountId: String, profileId: String): List<DownloadEntity>
 
     @Query(
         "SELECT * FROM downloads " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND status = :status " +
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND status = :status " +
             "ORDER BY updatedAtMs DESC",
     )
-    suspend fun getByStatus(serverId: String, profileId: String, status: String): List<DownloadEntity>
+    suspend fun getByStatus(serverId: String, accountId: String, profileId: String, status: String): List<DownloadEntity>
 
     @Query(
         "DELETE FROM downloads " +
-            "WHERE serverId = :serverId AND profileId = :profileId AND mediaFileId = :mediaFileId",
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND mediaFileId = :mediaFileId",
     )
-    suspend fun delete(serverId: String, profileId: String, mediaFileId: Int)
+    suspend fun delete(serverId: String, accountId: String, profileId: String, mediaFileId: Int)
 
-    @Query("DELETE FROM downloads WHERE serverId = :serverId AND profileId = :profileId")
-    suspend fun deleteAll(serverId: String, profileId: String)
+    @Query("DELETE FROM downloads WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId")
+    suspend fun deleteAll(serverId: String, accountId: String, profileId: String)
 
     // -- Cross-scope (downloads metadata replaces the old sidecar tree-walk) --
 
@@ -105,4 +108,17 @@ interface DownloadDao {
 
     @Query("DELETE FROM downloads WHERE serverId = :serverId")
     suspend fun deleteAllForServer(serverId: String)
+
+    /**
+     * Every profile's downloads of one account: how many, and the bytes they
+     * hold on this device (a completed download's file size, a partial's bytes
+     * received so far).
+     */
+    @Query(
+        "SELECT COUNT(*) AS count, " +
+            "COALESCE(SUM(CASE WHEN status = 'completed' THEN fileSize ELSE bytesSent END), 0) AS totalBytes " +
+            "FROM downloads " +
+            "WHERE serverId = :serverId AND accountId = :accountId",
+    )
+    suspend fun summaryForAccount(serverId: String, accountId: String): DownloadSummaryRow
 }
