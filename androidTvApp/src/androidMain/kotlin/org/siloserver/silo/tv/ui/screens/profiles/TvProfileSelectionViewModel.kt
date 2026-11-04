@@ -284,8 +284,11 @@ class TvProfileSelectionViewModel(
                         // Drop the old grid, as the pre-record check does.
                         // Nothing else reloads this picker on an account
                         // change, so load the open account then (or reach
-                        // NoAccountOpen if it was removed).
+                        // NoAccountOpen if it was removed). A PIN prompt or
+                        // check still in flight belongs to that grid too.
                         gridScope = null
+                        pinAttempt++
+                        addAfterUnlock = false
                         profileRepository.householdManagement.end()
                         _uiState.update {
                             it.copy(
@@ -294,6 +297,10 @@ class TvProfileSelectionViewModel(
                                 canManageProfiles = false,
                                 isManageMode = false,
                                 deleteCandidate = null,
+                                pinProfile = null,
+                                pinForManagement = false,
+                                pinError = null,
+                                isVerifyingPin = false,
                             )
                         }
                         dropStaleRememberOffer()
