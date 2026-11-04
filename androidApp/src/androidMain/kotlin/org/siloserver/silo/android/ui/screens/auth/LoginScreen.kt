@@ -163,7 +163,8 @@ fun LoginScreen(
         val downloads = downloadsSentence(R.string.account_sign_out_downloads, prompt.downloads)
         SiloDialog(
             title = stringResource(R.string.login_replace_title, prompt.expiredUsername),
-            onDismissRequest = viewModel::onKeepExpired,
+            // Back or a scrim tap mid-Replace must not pick "Keep both".
+            onDismissRequest = { if (!state.isLoading) viewModel.onKeepExpired() },
             actions = listOf(
                 SiloDialogAction(
                     stringResource(R.string.login_replace_confirm),

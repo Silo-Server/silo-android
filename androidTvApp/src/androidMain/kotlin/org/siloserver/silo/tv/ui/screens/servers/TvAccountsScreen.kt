@@ -138,7 +138,7 @@ fun TvAccountsScreen(
                     is AccountsRow.Server -> ServerSectionLabel(row.server.displayName)
                     is AccountsRow.Account -> SettingsValueRow(
                         label = row.account.displayName(),
-                        value = accountValue(row.account),
+                        value = accountValue(row.account, current = row.account.localAccountId == state.activeAccountId),
                         onClick = { openAccount = row.account },
                         modifier = focus,
                     )
@@ -300,11 +300,14 @@ private fun AccountEntry.displayName(): String = username?.takeIf { it.isNotBlan
 
 private fun profileCount(count: Int): String = if (count == 1) "1 profile" else "$count profiles"
 
-/** "2 profiles", "1 profile", or "Sign in again" (Roku `accountValue`). */
-private fun accountValue(account: AccountEntry): String = when {
-    account.needsSignIn -> "Sign in again"
-    account.cachedProfiles.isEmpty() -> ""
-    else -> profileCount(account.cachedProfiles.size)
+/**
+ * "2 profiles", "1 profile", or "Sign in again" (Roku `accountValue`), led by
+ * "Current" on the open account so the list shows which one is in use.
+ */
+private fun accountValue(account: AccountEntry, current: Boolean): String {
+    if (account.needsSignIn) return "Sign in again"
+    val profiles = account.cachedProfiles.takeIf { it.isNotEmpty() }?.let { profileCount(it.size) }
+    return listOfNotNull("Current".takeIf { current }, profiles).joinToString(" · ")
 }
 
 /** The address without its scheme, as Rename Server's value shows it. */

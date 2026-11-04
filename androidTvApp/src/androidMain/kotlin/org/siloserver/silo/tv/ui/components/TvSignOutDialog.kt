@@ -40,7 +40,7 @@ fun TvSignOutDialog(
     val offerRemoveServer = targetServerId != null && accounts.count { it.serverId == targetServerId } <= 1
     TvDialog(
         title = tvSignOutTitle(account, server),
-        message = TV_SIGN_OUT_MESSAGE,
+        message = if (offerRemoveServer) TV_SIGN_OUT_OR_REMOVE_MESSAGE else TV_SIGN_OUT_MESSAGE,
         onDismissRequest = onDismiss,
         // Wide enough for the third label to sit on the same row.
         width = if (offerRemoveServer) 640.dp else TvDialogDefaults.Width,
@@ -63,6 +63,10 @@ fun TvSignOutDialog(
 
 private const val TV_SIGN_OUT_MESSAGE =
     "This account's profiles and settings leave this TV. The server stays saved, so you can sign in again."
+
+private const val TV_SIGN_OUT_OR_REMOVE_MESSAGE =
+    "This account's profiles and settings leave this TV. Sign Out keeps the server saved, so you can " +
+        "sign in again; Sign Out & Remove Server removes it too."
 
 /** "Sign out of alex on Home?", dropping whichever part is unknown. */
 internal fun tvSignOutTitle(account: String?, server: String?): String = when {

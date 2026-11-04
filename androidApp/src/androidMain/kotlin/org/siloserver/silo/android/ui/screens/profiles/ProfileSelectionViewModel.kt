@@ -143,10 +143,22 @@ class ProfileSelectionViewModel(
                 .collect {
                     // The previous account's grid is not this one's: clear it
                     // before the reload, so it is never drawn or tapped meanwhile.
-                    // A PIN check still in flight belongs to that grid too.
+                    // A PIN check still in flight belongs to that grid too, and
+                    // so does the household manager it may have unlocked.
                     pinAttempt++
+                    addAfterUnlock = false
+                    profileRepository.householdManagement.end()
                     _uiState.update {
-                        it.copy(profiles = emptyList(), pinDialogProfile = null, deleteDialogProfile = null, isManageMode = false)
+                        it.copy(
+                            profiles = emptyList(),
+                            pinDialogProfile = null,
+                            pinForManagement = false,
+                            pinIsVerifying = false,
+                            pinError = null,
+                            deleteDialogProfile = null,
+                            isManageMode = false,
+                            openAddProfile = false,
+                        )
                     }
                     loadProfiles()
                 }

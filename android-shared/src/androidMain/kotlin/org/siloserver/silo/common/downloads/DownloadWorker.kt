@@ -140,8 +140,13 @@ class DownloadWorker(
         // Work queued before accounts existed names none: it belongs to the
         // server's adopting account once the startup adoption pass has run
         // (until then the marker may not exist yet). Unadopted rows stay ''.
+        // A pass still running means adoption may be moving this job's row:
+        // retry rather than file the download under the empty account.
         accountId = inputData.getString(KEY_ACCOUNT_ID)
-            ?: run { AccountDataAdoption.awaitFirstPass(); storage.legacyFilesOwner(serverId).orEmpty() }
+            ?: run {
+                if (!AccountDataAdoption.awaitFirstPassFinished()) return@withContext Result.retry()
+                storage.legacyFilesOwner(serverId).orEmpty()
+            }
         val fileName = inputData.getString(KEY_FILE_NAME)
         val container = inputData.getString(KEY_CONTAINER)
         val mediaType = inputData.getString(KEY_MEDIA_TYPE)

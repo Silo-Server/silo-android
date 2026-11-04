@@ -26,6 +26,7 @@ import org.siloserver.silo.network.apiv2.identityChanged
 import org.siloserver.silo.network.getOrNull
 import org.siloserver.silo.network.map
 import org.siloserver.silo.viewmodel.TemporaryPasswordAccount
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -156,8 +157,13 @@ class AuthRepository(
         val url = registry.entries.value.firstOrNull { it.id == serverId }?.url
         val generation = runCatching { tokenManager.captureAccountSessionExpectation() }.getOrNull()?.generation
         if (!account.needsSignIn && url != null && generation != null) {
-            runCatching {
+            try {
                 authApi.logout(AuthScopeSnapshot.profileless(serverId, url, generation, accountId))
+            } catch (cancelled: CancellationException) {
+                // A cancelled caller must not go on to delete the account here.
+                throw cancelled
+            } catch (_: Exception) {
+                // Best effort: an unreachable server must not block local sign-out.
             }
         }
         return tokenManager.signOutAccount(serverId, accountId)

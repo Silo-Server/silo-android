@@ -269,10 +269,15 @@ class OrphanedServerDataPurger(
  * [FIRST_PASS_TIMEOUT_MS] once, not forever.
  */
 object AccountDataAdoption {
+    /** Released by the pass, or by a reader's timeout. */
     private val firstPass = CompletableDeferred<Unit>()
+
+    /** Released only by the pass itself; a timeout never completes it. */
+    private val passFinished = CompletableDeferred<Unit>()
     private const val FIRST_PASS_TIMEOUT_MS = 3_000L
 
     internal fun markFirstPassDone() {
+        passFinished.complete(Unit)
         firstPass.complete(Unit)
     }
 
@@ -280,6 +285,16 @@ object AccountDataAdoption {
         if (firstPass.isCompleted) return
         if (withTimeoutOrNull(FIRST_PASS_TIMEOUT_MS) { firstPass.await() } == null) firstPass.complete(Unit)
     }
+
+    /**
+     * True once the pass has really run, false if it hasn't within the
+     * timeout. Unlike [awaitFirstPass] a timeout here releases nobody: a
+     * caller that must know who owns legacy data (a pre-account download
+     * worker) retries instead of guessing while adoption is still moving it.
+     */
+    suspend fun awaitFirstPassFinished(): Boolean =
+        passFinished.isCompleted ||
+            withTimeoutOrNull(FIRST_PASS_TIMEOUT_MS) { passFinished.await() } != null
 }
 
 /**

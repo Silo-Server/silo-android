@@ -278,9 +278,26 @@ class TvProfileSelectionViewModel(
                     }
                     // Recording suspended: a newer load or another account
                     // may have taken over meanwhile, so this grid is stale.
-                    if (load != loadAttempt || !profileRepository.identityScopeUnchanged(scope) ||
-                        serverRegistry?.activeAccountId?.value != loadAccountId
-                    ) {
+                    if (load != loadAttempt) return@launch
+                    val accountChanged = serverRegistry?.activeAccountId?.value != loadAccountId
+                    if (accountChanged || !profileRepository.identityScopeUnchanged(scope)) {
+                        // Drop the old grid, as the pre-record check does.
+                        // Nothing else reloads this picker on an account
+                        // change, so load the open account then (or reach
+                        // NoAccountOpen if it was removed).
+                        gridScope = null
+                        profileRepository.householdManagement.end()
+                        _uiState.update {
+                            it.copy(
+                                isLoading = false,
+                                profiles = emptyList(),
+                                canManageProfiles = false,
+                                isManageMode = false,
+                                deleteCandidate = null,
+                            )
+                        }
+                        dropStaleRememberOffer()
+                        if (accountChanged) loadProfiles()
                         return@launch
                     }
                     // The scope moves with the grid, and ONLY with it. See the
