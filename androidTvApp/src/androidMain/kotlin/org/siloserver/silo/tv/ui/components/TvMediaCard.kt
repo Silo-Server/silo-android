@@ -95,6 +95,11 @@ fun TvMediaCard(
     cardModifier: Modifier = Modifier,
     overlay: OverlayData? = null,
     actions: TvMediaCardActions = TvMediaCardActions(),
+    /**
+     * The item the card shows. A row can keep a card while its item changes;
+     * a new item closes the menu, whose actions belong to the old one.
+     */
+    contentKey: Any? = null,
     onLongClick: (() -> Unit)? = null,
     /** A pill in the artwork's top-start corner, such as a box set's "Box set". */
     badge: String? = null,
@@ -123,7 +128,7 @@ fun TvMediaCard(
     val cardShape = TvMediaCardShape
     val cardFocus = siloCardDefaults(shape = cardShape, outlined = highlighted)
 
-    var menuExpanded by remember { mutableStateOf(false) }
+    var menuExpanded by remember(contentKey) { mutableStateOf(false) }
 
     Column(
         modifier = if (fillWidth) {

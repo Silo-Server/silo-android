@@ -10,6 +10,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -46,6 +48,8 @@ enum class TvRowCardLayout { Default, ReferenceShelf }
 
 private data class TvMediaRowItemModel(
     val item: SectionItem,
+    /** Lazy-list key; see [tvMediaRowSlotKeys]. */
+    val slotKey: String,
     val progress: Float?,
     val remainingMinutes: Int?,
     val backdropUrl: String?,
@@ -150,6 +154,12 @@ fun TvMediaRow(
      */
     markedContentId: String? = null,
     markedBadge: String? = null,
+    /**
+     * Set for rows that hold one card per series, such as Continue Watching:
+     * each episode card is keyed by its series, so a refresh that moves a
+     * series on to its next episode updates the card in place and keeps focus.
+     */
+    keyEpisodesBySeries: Boolean = false,
 ) {
     val diagnosticsKeySnapshot = remember(items) {
         DiagnosticsListSnapshot.fromKeys(items.map { it.contentId })
@@ -163,17 +173,20 @@ fun TvMediaRow(
     if (items.isEmpty()) return
     val rowState = rememberLazyListState()
     val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
-    val rowItems = remember(items, showProgress, style, cardLayout, spoilerPrefs, unwatchedById) {
+    val rowItems = remember(items, showProgress, style, cardLayout, spoilerPrefs, unwatchedById, keyEpisodesBySeries) {
         // Deduplicate before keying. A repeated contentId inside one row makes
         // the lazy list throw ("Key ... was already used"), which is fatal —
         // and a row has no reason to show the same title twice anyway. Feeds
         // can legitimately overlap, so this is a property of the row, not a
         // bug to fix upstream of it.
-        items.distinctBy { it.contentId }.map { item ->
+        val distinctItems = items.distinctBy { it.contentId }
+        val slotKeys = tvMediaRowSlotKeys(distinctItems, keyEpisodesBySeries)
+        distinctItems.mapIndexed { index, item ->
             val unwatchedEpisode = item.type.equals("episode", ignoreCase = true) &&
                 (unwatchedById?.get(item.contentId) ?: EpisodeSpoilers.isUnwatched(item))
             TvMediaRowItemModel(
                 item = item,
+                slotKey = slotKeys[index],
                 progress = if (showProgress) item.progressFraction() else null,
                 remainingMinutes = if (showProgress) item.remainingMinutes() else null,
                 backdropUrl = item.bestBackdropUrl(),
@@ -334,10 +347,29 @@ fun TvMediaRow(
 
             itemsIndexed(
                 items = rowItems,
-                key = { _, rowItem -> rowItem.item.contentId },
+                key = { _, rowItem -> rowItem.slotKey },
                 contentType = { _, rowItem -> rowItem.contentType },
             ) { index, rowItem ->
                 val item = rowItem.item
+                // A slot keyed by series keeps its card, and its focus, when the
+                // episode in it changes. The card then never gains focus again,
+                // so report the new item here, or the feed would take the old
+                // one as removed and pull focus back as if it had been lost.
+                val focusedAs = remember { mutableStateOf<String?>(null) }
+                val reportFocus = {
+                    onItemFocused?.invoke(item)
+                    onItemFocusedAtIndex?.invoke(
+                        item,
+                        rawIndexByContentId[item.contentId] ?: index,
+                    )
+                }
+                SideEffect {
+                    val focusedContentId = focusedAs.value
+                    if (focusedContentId != null && focusedContentId != item.contentId) {
+                        focusedAs.value = item.contentId
+                        reportFocus()
+                    }
+                }
                 val isRestoreFocusTarget =
                     restoreFocusRequest > 0 && index == resolvedRestoreFocusIndex
                 if (isRestoreFocusTarget && onRestoreFocusTargetDisposed != null) {
@@ -362,13 +394,8 @@ fun TvMediaRow(
                 .then(
                     if (onItemFocused != null || onItemFocusedAtIndex != null) {
                         Modifier.onFocusChanged { st ->
-                            if (st.isFocused) {
-                                onItemFocused?.invoke(item)
-                                onItemFocusedAtIndex?.invoke(
-                                    item,
-                                    rawIndexByContentId[item.contentId] ?: index,
-                                )
-                            }
+                            focusedAs.value = if (st.isFocused) item.contentId else null
+                            if (st.isFocused) reportFocus()
                         }
                     } else {
                         Modifier
@@ -404,6 +431,7 @@ fun TvMediaRow(
                         cardModifier = appliedCardModifier,
                         userState = item.userState,
                         actions = itemActions,
+                        contentKey = item.contentId,
                         onLongClick = itemLongClick,
                     )
                     TvRowCardLayout.Default -> when (style) {
@@ -424,6 +452,7 @@ fun TvMediaRow(
                             userState = item.userState,
                             overlay = rowItem.overlay,
                             actions = itemActions,
+                            contentKey = item.contentId,
                             onLongClick = itemLongClick,
                         )
                         TvRowStyle.Poster -> TvMediaCard(
@@ -441,6 +470,7 @@ fun TvMediaRow(
                             cardModifier = appliedCardModifier,
                             overlay = rowItem.overlay,
                             actions = itemActions,
+                            contentKey = item.contentId,
                             onLongClick = itemLongClick,
                             // Bottom corner: the top corners hold the quality overlays and watched check.
                             cornerLabel = markedBadge.takeIf { item.contentId == markedContentId },
@@ -541,5 +571,29 @@ private fun SectionItem.shelfSubtitle(showProgress: Boolean): String? {
         year > 0 -> year.toString()
         genres.isNotEmpty() -> genres.first()
         else -> null
+    }
+}
+
+/**
+ * Lazy-list keys for a row's cards, one per item.
+ *
+ * With [keyEpisodesBySeries], an episode is keyed by its series, so a refresh
+ * that moves the series on to its next episode (Continue Watching after
+ * playback, or progress from another device) updates the card in place. Keyed
+ * by episode, the focused card would be disposed, and Compose would hand focus
+ * to the first focusable on screen, the top bar's Search button. tvOS keeps
+ * focus on the card that takes the slot. Only the caller knows a row holds one
+ * card per series; a series that shows up twice anyway falls back to content
+ * ids, since a repeated key is fatal to the lazy list.
+ */
+internal fun tvMediaRowSlotKeys(items: List<SectionItem>, keyEpisodesBySeries: Boolean): List<String> {
+    if (!keyEpisodesBySeries) return items.map { it.contentId }
+    fun seriesOf(item: SectionItem): String? =
+        item.seriesId?.takeIf { it.isNotBlank() && item.type.equals("episode", ignoreCase = true) }
+    val cardsPerSeries = items.mapNotNull(::seriesOf).groupingBy { it }.eachCount()
+    // The NUL prefix keeps a series key from ever equalling a content id, as
+    // TvExploreAllItemKey does.
+    return items.map { item ->
+        seriesOf(item)?.takeIf { cardsPerSeries[it] == 1 }?.let { "\u0000series-slot:$it" } ?: item.contentId
     }
 }
