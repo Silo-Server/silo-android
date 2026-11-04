@@ -1764,6 +1764,8 @@ class TvPlayerViewModel(
     // The credits or the end of this item was reached. Unlike autoAdvanceHandled,
     // opening Up Next by hand or Keep Watching never sets it.
     private var reachedCreditsOrEnd = false
+    // The identity generation this player was launched under.
+    private val launchIdentityGeneration: Long? = identityTransitions?.generation?.value
     private val nextUpTransitionGate = NextUpTransitionGate()
     private var resolveNextEpisodeJob: Job? = null
     // Set when the credits/end point fired but nextEpisode hadn't resolved yet,
@@ -5252,6 +5254,9 @@ class TvPlayerViewModel(
         // (it would silently leave/desync the room). Mirrors the remote-control
         // transport gate.
         if (roomId != null) return
+        // Recorded before the once-per-item guard below, which Keep Watching on
+        // a hand-opened Up Next also sets.
+        reachedCreditsOrEnd = true
         if (shufflePlayback != null) {
             // A multi-part pick plays its later parts before the shuffle moves on.
             shuffleNextPartFileId?.let { fileId ->
@@ -5344,7 +5349,6 @@ class TvPlayerViewModel(
 
     private fun commitApproachingEnd(next: NextEpisodeState, videoEnded: Boolean) {
         autoAdvanceHandled = true
-        reachedCreditsOrEnd = true
         pendingApproachingEndVideoEnded = null
         // Threshold 0 (or less) = off: never gate, always allow auto-countdown.
         val threshold = passOutThreshold.value
@@ -7474,7 +7478,9 @@ class TvPlayerViewModel(
                     seriesId = seriesId,
                     episodeId = next?.contentId ?: contentId,
                     seasonNumber = if (next != null) next.seasonNumber else state.seasonNumber,
-                    identityGeneration = identityTransitions?.generation?.value,
+                    // Recorded only while the launching identity is still current.
+                    identityGeneration = launchIdentityGeneration
+                        ?.takeIf { it == identityTransitions?.generation?.value },
                 ),
             )
         }
