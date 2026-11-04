@@ -10,8 +10,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -64,6 +66,8 @@ class OrphanedServerDataPurger(
     private val scope: CoroutineScope,
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val activePlaybackFileId: () -> Int? = { ActivePlaybackFile.fileId.value },
+    /** Emits when the player lets go of its file, to retry a deferred sign-out purge. */
+    private val playbackFileChanges: Flow<Int?> = ActivePlaybackFile.fileId,
     private val purgeRows: suspend (String) -> Unit = purgeDao::deleteAllRowsForServer,
     private val deleteDownloadStorage: suspend (String) -> Unit = {
         storage.deleteAllForServer(it)
@@ -79,6 +83,10 @@ class OrphanedServerDataPurger(
 ) {
 
     private val runLock = Mutex()
+
+    /** A signed-out account's purge waited for playback; retry once it ends. */
+    @Volatile
+    private var accountPurgeDeferred = false
 
     private data class RegistryShape(val servers: Set<String>, val accounts: Set<String>, val adopters: Set<Pair<String, String>>)
 
@@ -108,6 +116,17 @@ class OrphanedServerDataPurger(
                             .onFailure { Log.w(TAG, "registry-change purge failed", it) }
                     }
                 }
+        }
+        launch {
+            // Nothing else re-runs a pass when playback ends, so a sign-out
+            // made mid-playback would keep its data until the next launch.
+            playbackFileChanges.filter { it == null }.collect {
+                if (accountPurgeDeferred) {
+                    accountPurgeDeferred = false
+                    runCatching { purgeOnce() }
+                        .onFailure { Log.w(TAG, "post-playback purge failed", it) }
+                }
+            }
         }
         try {
             runCatching { purgeOnce() }
@@ -201,6 +220,7 @@ class OrphanedServerDataPurger(
         val activeFileId = activePlaybackFileId()
         if (activeFileId != null && activeFileId in purgeDao.downloadFileIdsForAccount(serverId, accountId)) {
             Log.i(TAG, "deferring purge of a signed-out account: file $activeFileId is playing")
+            accountPurgeDeferred = true
             return false
         }
         // Cancel first, as for a server: a running worker would write its row back.
