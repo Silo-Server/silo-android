@@ -580,6 +580,12 @@ class ProfileSelectionViewModel(
      * Selecting it works offline, as at launch; a PIN still needs the server.
      */
     private fun openCachedProfile(profile: Profile) {
+        // The tile is the open account's cached copy: act on it only under
+        // that account. The drawn list can lag a switch, and the scope is read
+        // after this tap, so check the account on both sides of that read.
+        val accountId = registry?.activeAccountId?.value
+        val openAccountCached = registry?.activeAccount?.value?.cachedProfiles
+        if (registry != null && openAccountCached.orEmpty().none { it.id == profile.id }) return
         pinAttempt++
         if (profile.hasPin) {
             _uiState.update {
@@ -587,12 +593,6 @@ class ProfileSelectionViewModel(
             }
             return
         }
-        // The tile is the open account's cached copy: commit it only under
-        // that account. The drawn list can lag a switch, and the scope is read
-        // after this tap, so check the account on both sides of that read.
-        val accountId = registry?.activeAccountId?.value
-        val openAccountCached = registry?.activeAccount?.value?.cachedProfiles
-        if (registry != null && openAccountCached.orEmpty().none { it.id == profile.id }) return
         viewModelScope.launch {
             val scope = profileRepository.captureIdentityScope()
             if (registry?.activeAccountId?.value != accountId) return@launch
