@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
@@ -88,6 +89,7 @@ import org.siloserver.silo.model.request.withoutLibraryTitles
 import org.siloserver.silo.tv.ui.components.TvHideStockImeOnDispose
 import org.siloserver.silo.tv.ui.components.TvCatalogGrid
 import org.siloserver.silo.tv.ui.components.TvFilterChip
+import org.siloserver.silo.tv.ui.components.TvHeroToggleIconButton
 import org.siloserver.silo.tv.ui.components.TvSectionHeader
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.screens.requests.TvRequestCard
@@ -674,6 +676,21 @@ fun TvSearchScreen(
                         setFocusedRegion(TvSearchFocusRegion.Chips, focused)
                     },
                     onQueryChanged = viewModel::onQueryChanged,
+                    onClearQuery = {
+                        // Clearing is the start of a new query, so hand the
+                        // field back with the keyboard up: the mic key is one
+                        // press away instead of Select first.
+                        // Focus moves first: clearing removes the focused
+                        // button, and focus must not fall to the shell.
+                        pendingSearchFocus = false
+                        activeSearchFieldFocusRequester.claimFocusOrReport(
+                            target = "search_field",
+                            action = "query_cleared",
+                        )
+                        setKeyboardOpen(true)
+                        viewModel.onQueryChanged("")
+                        keyboardController?.show()
+                    },
                     onSearch = {
                         pendingSearchFocus = true
                         val query = state.query.trim()
@@ -978,6 +995,7 @@ private fun SearchStage(
     onSearchFieldFocusChanged: (Boolean) -> Unit,
     onChipsFocusChanged: (Boolean) -> Unit,
     onQueryChanged: (String) -> Unit,
+    onClearQuery: () -> Unit,
     onSearch: () -> Unit,
     onMediaTypeChanged: (TvSearchMediaType) -> Unit,
     isKeyboardOpen: Boolean,
@@ -987,6 +1005,8 @@ private fun SearchStage(
     val keyboardController = LocalSoftwareKeyboardController.current
     val mediaTypes = availableMediaTypes
     val fieldShape = RoundedCornerShape(14.dp)
+    val clearButtonFocusRequester = remember { FocusRequester() }
+    val canClear = query.isNotEmpty()
 
     // Rendered as the grid's header item, so the grid's contentPadding already
     // provides the horizontal gutters. Insetting again here put the field and
@@ -1004,109 +1024,140 @@ private fun SearchStage(
         // key on the keyboard itself, which listens through the remote. A
         // separate on-screen mic only added a second route to the same thing
         // and a sentence of copy to explain it.
-        OutlinedTextField(
-            value = query,
-            onValueChange = { onQueryChanged(it.take(TV_SEARCH_QUERY_MAX_LENGTH)) },
-            // Read-only until Select. This is what actually keeps the keyboard
-            // down — not withholding a show() call, which was the earlier
-            // mistake: Compose raises the IME itself whenever an editable field
-            // takes focus, so the only way to hold a focused field without a
-            // keyboard is for it not to be editable yet.
-            //
-            // Focus can then rest here harmlessly, the D-pad still belongs to
-            // the screen, and everything beside the field stays reachable.
-            readOnly = !isKeyboardOpen,
-            singleLine = true,
-            placeholder = {
-                Text(
-                    text = searchFieldPrompt(mediaTypes),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.56f),
-                )
-            },
-            leadingIcon = {
-                M3Icon(
-                    imageVector = Icons.Filled.Search,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.72f),
-                    modifier = Modifier.size(20.dp),
-                )
-            },
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Text,
-                imeAction = ImeAction.Search,
-            ),
-            keyboardActions = KeyboardActions(
-                onSearch = {
-                    // Submitting is the end of typing. Put the IME away here,
-                    // explicitly: focus later moving to a result does not
-                    // reliably dismiss it on TV, and a keyboard left standing
-                    // over the grid was the most-reported oddity of this
-                    // screen. Flip the open flag too so the field is read-only
-                    // again and Back/D-pad go to the screen, not the IME.
-                    onKeyboardOpenChanged(false)
-                    keyboardController?.hide()
-                    onSearch()
-                },
-            ),
-            textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
-            shape = fieldShape,
-            modifier = Modifier
-                .width(520.dp)
-                .height(52.dp)
-                // Pin DOWN to the chip rail so the user can always step from
-                // the search field onto the All/Movies/Series filters,
-                // regardless of whether result cards are also rendered below.
-                .focusRequester(searchFieldFocusRequester)
-                .onFocusChanged { state ->
-                    onSearchFieldFocusChanged(state.isFocused)
-                    // Leaving the field puts it back to read-only, so returning
-                    // to it later does not silently raise the keyboard again.
-                    if (!state.isFocused && isKeyboardOpen) onKeyboardOpenChanged(false)
-                }
-                // Select opens the keyboard; focus alone does not.
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { onQueryChanged(it.take(TV_SEARCH_QUERY_MAX_LENGTH)) },
+                // Read-only until Select. This is what actually keeps the keyboard
+                // down — not withholding a show() call, which was the earlier
+                // mistake: Compose raises the IME itself whenever an editable field
+                // takes focus, so the only way to hold a focused field without a
+                // keyboard is for it not to be editable yet.
                 //
-                // Raising it on focus is what made everything beside this field
-                // unreachable: the IME is a separate window that owns the
-                // D-pad, so with it up no key ever reaches this app. With the
-                // keyboard closed the D-pad belongs to the screen again. Typing
-                // costs one Select first, which is the trade, and it is the one
-                // the Wholphin client makes.
-                .onPreviewKeyEvent { event ->
-                    val opensKeyboard = event.key == Key.DirectionCenter || event.key == Key.Enter
-                    when {
-                        event.type == KeyEventType.KeyUp && opensKeyboard && !isKeyboardOpen -> {
-                            onKeyboardOpenChanged(true)
-                            keyboardController?.show()
-                            true
-                        }
-                        // DOWN has to be taken from the field. With the
-                        // keyboard closed and a query in the field, the
-                        // read-only text field still swallows Down
-                        // (caret-to-end), so `focusProperties { down = … }`
-                        // never gets a chance and the user is stuck on the
-                        // field after a search — nothing below is reachable.
-                        // Taking it in the preview phase fixes that; UP already
-                        // belongs to the shell.
-                        event.type == KeyEventType.KeyDown &&
-                            event.key == Key.DirectionDown &&
-                            !isKeyboardOpen -> {
-                            firstFilterChipFocusRequester.claimFocusOrReport(
-                                target = "search_first_filter_chip",
-                                action = "field_down",
-                            )
-                        }
-                        else -> false
+                // Focus can then rest here harmlessly, the D-pad still belongs to
+                // the screen, and everything beside the field stays reachable.
+                readOnly = !isKeyboardOpen,
+                singleLine = true,
+                placeholder = {
+                    Text(
+                        text = searchFieldPrompt(mediaTypes),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.56f),
+                    )
+                },
+                leadingIcon = {
+                    M3Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.72f),
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Text,
+                    imeAction = ImeAction.Search,
+                ),
+                keyboardActions = KeyboardActions(
+                    onSearch = {
+                        // Submitting is the end of typing. Put the IME away here,
+                        // explicitly: focus later moving to a result does not
+                        // reliably dismiss it on TV, and a keyboard left standing
+                        // over the grid was the most-reported oddity of this
+                        // screen. Flip the open flag too so the field is read-only
+                        // again and Back/D-pad go to the screen, not the IME.
+                        onKeyboardOpenChanged(false)
+                        keyboardController?.hide()
+                        onSearch()
+                    },
+                ),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
+                shape = fieldShape,
+                modifier = Modifier
+                    .width(520.dp)
+                    .height(52.dp)
+                    // Pin DOWN to the chip rail so the user can always step from
+                    // the search field onto the All/Movies/Series filters,
+                    // regardless of whether result cards are also rendered below.
+                    .focusRequester(searchFieldFocusRequester)
+                    .onFocusChanged { state ->
+                        onSearchFieldFocusChanged(state.isFocused)
+                        // Leaving the field puts it back to read-only, so returning
+                        // to it later does not silently raise the keyboard again.
+                        if (!state.isFocused && isKeyboardOpen) onKeyboardOpenChanged(false)
                     }
-                }
-                .focusProperties { down = firstFilterChipFocusRequester },
-            colors = tvOutlinedTextFieldColors(
-                focusedContainerColor = ElevatedSurface,
-                unfocusedContainerColor = Color.White.copy(alpha = 0.055f),
-                focusedBorderColor = Color.White.copy(alpha = 0.94f),
-                unfocusedBorderColor = Color.White.copy(alpha = 0.12f),
-            ),
-        )
+                    // Select opens the keyboard; focus alone does not.
+                    //
+                    // Raising it on focus is what made everything beside this field
+                    // unreachable: the IME is a separate window that owns the
+                    // D-pad, so with it up no key ever reaches this app. With the
+                    // keyboard closed the D-pad belongs to the screen again. Typing
+                    // costs one Select first, which is the trade, and it is the one
+                    // the Wholphin client makes.
+                    .onPreviewKeyEvent { event ->
+                        val opensKeyboard = event.key == Key.DirectionCenter || event.key == Key.Enter
+                        when {
+                            event.type == KeyEventType.KeyUp && opensKeyboard && !isKeyboardOpen -> {
+                                onKeyboardOpenChanged(true)
+                                keyboardController?.show()
+                                true
+                            }
+                            // RIGHT to the clear button, taken here for the same
+                            // reason as DOWN: the read-only field would spend it
+                            // moving the caret through the query.
+                            event.type == KeyEventType.KeyDown &&
+                                event.key == Key.DirectionRight &&
+                                !isKeyboardOpen &&
+                                canClear -> {
+                                clearButtonFocusRequester.claimFocusOrReport(
+                                    target = "search_clear_button",
+                                    action = "field_right",
+                                )
+                            }
+                            // DOWN has to be taken from the field. With the
+                            // keyboard closed and a query in the field, the
+                            // read-only text field still swallows Down
+                            // (caret-to-end), so `focusProperties { down = … }`
+                            // never gets a chance and the user is stuck on the
+                            // field after a search — nothing below is reachable.
+                            // Taking it in the preview phase fixes that; UP already
+                            // belongs to the shell.
+                            event.type == KeyEventType.KeyDown &&
+                                event.key == Key.DirectionDown &&
+                                !isKeyboardOpen -> {
+                                firstFilterChipFocusRequester.claimFocusOrReport(
+                                    target = "search_first_filter_chip",
+                                    action = "field_down",
+                                )
+                            }
+                            else -> false
+                        }
+                    }
+                    .focusProperties { down = firstFilterChipFocusRequester },
+                colors = tvOutlinedTextFieldColors(
+                    focusedContainerColor = ElevatedSurface,
+                    unfocusedContainerColor = Color.White.copy(alpha = 0.055f),
+                    focusedBorderColor = Color.White.copy(alpha = 0.94f),
+                    unfocusedBorderColor = Color.White.copy(alpha = 0.12f),
+                ),
+            )
+            if (canClear) {
+                TvHeroToggleIconButton(
+                    selected = false,
+                    selectedContainerColor = Color.Transparent,
+                    selectedContentColor = Color.White,
+                    icon = Icons.Filled.Close,
+                    contentDescription = "Clear search",
+                    onClick = onClearQuery,
+                    modifier = Modifier
+                        .focusRequester(clearButtonFocusRequester)
+                        .focusProperties { left = searchFieldFocusRequester },
+                    downFocusRequester = firstFilterChipFocusRequester,
+                )
+            }
+        }
 
         LazyRow(
             modifier = Modifier
