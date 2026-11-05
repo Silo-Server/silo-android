@@ -352,39 +352,42 @@ fun MainScreen(
     Scaffold(
         bottomBar = {
             // The cast bar rests above the nav menu (iOS tabViewBottomAccessory
-            // placement); the Scaffold then pads tab content past both.
-            Column {
-                SiloCastMiniBar(
-                    controller = siloCastController,
-                    onOpenRemote = {
-                        navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
-                    },
-                )
-                SiloBottomNavBar(
-                    currentTab = currentTab,
-                    minimizedToCurrentTab = currentTab == Tab.Home && homeBottomNavMinimized,
-                    onTabSelected = { tab ->
-                        if (tab == Tab.Home && currentTab == Tab.Home) {
-                            // The minimized Home control remains tappable. A
-                            // repeat tap expands the full capsule without
-                            // disturbing the user's feed position.
-                            homeBottomNavMinimized = false
-                        } else {
-                            navController.navigate(tab.route) {
-                                // Pop to the tab stack's live anchor, not a
-                                // hard-coded Home and not the graph's declared
-                                // start (which can name a tab that has since
-                                // been removed). Popping to a route that is not
-                                // on the stack pops nothing — every tab then
-                                // stacked, so Back walked back through
-                                // previously visited tabs instead of leaving.
-                                tabSwitchNavOptions(navController.bottomMostTabRoute())
-                            }
+            // placement) and moves inline beside the minimized Home control;
+            // the Scaffold pads tab content past the whole chrome.
+            SiloBottomNavBar(
+                currentTab = currentTab,
+                minimizedToCurrentTab = currentTab == Tab.Home && homeBottomNavMinimized,
+                onTabSelected = { tab ->
+                    if (tab == Tab.Home && currentTab == Tab.Home) {
+                        // The minimized Home control remains tappable. A
+                        // repeat tap expands the full capsule without
+                        // disturbing the user's feed position.
+                        homeBottomNavMinimized = false
+                    } else {
+                        navController.navigate(tab.route) {
+                            // Pop to the tab stack's live anchor, not a
+                            // hard-coded Home and not the graph's declared
+                            // start (which can name a tab that has since
+                            // been removed). Popping to a route that is not
+                            // on the stack pops nothing — every tab then
+                            // stacked, so Back walked back through
+                            // previously visited tabs instead of leaving.
+                            tabSwitchNavOptions(navController.bottomMostTabRoute())
                         }
-                    },
-                    tabs = visibleTabs,
-                )
-            }
+                    }
+                },
+                tabs = visibleTabs,
+                accessory = { inline, barModifier ->
+                    SiloCastMiniBar(
+                        controller = siloCastController,
+                        onOpenRemote = {
+                            navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
+                        },
+                        inline = inline,
+                        barModifier = barModifier,
+                    )
+                },
+            )
         },
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
