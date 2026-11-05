@@ -67,6 +67,7 @@ import org.siloserver.silo.android.ui.screens.calendar.CalendarScreen
 import org.siloserver.silo.android.ui.screens.home.HomeScreen
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.ui.screens.cast.SiloCastMiniBar
+import org.siloserver.silo.android.ui.screens.cast.rememberSiloCastArtwork
 import org.siloserver.silo.android.ui.screens.cast.SiloCastTargetPickerSheet
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesScreen
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesSelectorSheet
@@ -359,15 +360,16 @@ fun MainScreen(
     // Watchlist without making it an explicit selection); drives the title.
     var forYouDisplayed by remember { mutableStateOf<ForYouList?>(null) }
     // How far the For You / Downloads content has scrolled under the shared
-    // header, clamped to the glass fade distance. Driven by nested scroll so
-    // every list those tabs show feeds it; restarts with each tab or list.
+    // header. Driven by nested scroll so every list those tabs show feeds it;
+    // restarts with each tab or list. Only the opacity is clamped: clamping the
+    // distance would fade the glass out on the first 80dp back up a long list.
     val headerFadePx = with(LocalDensity.current) { TopBarGlassFadeDistance.toPx() }
     var headerScrollPx by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(currentTab, forYouDisplayed) { headerScrollPx = 0f }
     val headerScrollConnection = remember(headerFadePx) {
         object : NestedScrollConnection {
             override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-                headerScrollPx = (headerScrollPx - consumed.y).coerceIn(0f, headerFadePx)
+                headerScrollPx = (headerScrollPx - consumed.y).coerceAtLeast(0f)
                 return Offset.Zero
             }
         }
@@ -388,42 +390,51 @@ fun MainScreen(
         onChooseTv = { showSiloCastTargetPicker = true },
         onDisconnect = { siloCastController.disconnect() },
     )
+    // Resolved here, above both cast-bar placements, so the bar keeps its
+    // title and poster while it moves between them.
+    val siloCastArtwork = rememberSiloCastArtwork(
+        siloCastState.launch?.contentId ?: siloCastState.playbackState?.contentId,
+    )
     Scaffold(
         bottomBar = {
             // The cast bar rests above the nav menu (iOS tabViewBottomAccessory
-            // placement); the Scaffold then pads tab content past both.
-            Column {
-                SiloCastMiniBar(
-                    controller = siloCastController,
-                    onOpenRemote = {
-                        navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
-                    },
-                )
-                SiloBottomNavBar(
-                    currentTab = currentTab,
-                    minimizedToCurrentTab = currentTab == Tab.Home && homeBottomNavMinimized,
-                    onTabSelected = { tab ->
-                        if (tab == Tab.Home && currentTab == Tab.Home) {
-                            // The minimized Home control remains tappable. A
-                            // repeat tap expands the full capsule without
-                            // disturbing the user's feed position.
-                            homeBottomNavMinimized = false
-                        } else {
-                            navController.navigate(tab.route) {
-                                // Pop to the tab stack's live anchor, not a
-                                // hard-coded Home and not the graph's declared
-                                // start (which can name a tab that has since
-                                // been removed). Popping to a route that is not
-                                // on the stack pops nothing — every tab then
-                                // stacked, so Back walked back through
-                                // previously visited tabs instead of leaving.
-                                tabSwitchNavOptions(navController.bottomMostTabRoute())
-                            }
+            // placement) and moves inline beside the minimized Home control;
+            // the Scaffold pads tab content past the whole chrome.
+            SiloBottomNavBar(
+                currentTab = currentTab,
+                minimizedToCurrentTab = currentTab == Tab.Home && homeBottomNavMinimized,
+                onTabSelected = { tab ->
+                    if (tab == Tab.Home && currentTab == Tab.Home) {
+                        // The minimized Home control remains tappable. A
+                        // repeat tap expands the full capsule without
+                        // disturbing the user's feed position.
+                        homeBottomNavMinimized = false
+                    } else {
+                        navController.navigate(tab.route) {
+                            // Pop to the tab stack's live anchor, not a
+                            // hard-coded Home and not the graph's declared
+                            // start (which can name a tab that has since
+                            // been removed). Popping to a route that is not
+                            // on the stack pops nothing — every tab then
+                            // stacked, so Back walked back through
+                            // previously visited tabs instead of leaving.
+                            tabSwitchNavOptions(navController.bottomMostTabRoute())
                         }
-                    },
-                    tabs = visibleTabs,
-                )
-            }
+                    }
+                },
+                tabs = visibleTabs,
+                accessory = { inline, barModifier ->
+                    SiloCastMiniBar(
+                        controller = siloCastController,
+                        onOpenRemote = {
+                            navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
+                        },
+                        inline = inline,
+                        barModifier = barModifier,
+                        sharedArtwork = siloCastArtwork,
+                    )
+                },
+            )
         },
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
@@ -604,7 +615,7 @@ fun MainScreen(
                     remoteControl = remoteControl,
                     isProfileLoading = headerState.isLoading,
                     hazeState = hazeState,
-                    scrimProgress = headerScrollPx / headerFadePx,
+                    scrimProgress = (headerScrollPx / headerFadePx).coerceAtMost(1f),
                     onSearchClick = { navController.navigate(Route.Search().route) },
                     onRequestsClick = requestsMenuAction,
                     onWatchPartyClick = watchPartyMenuAction,

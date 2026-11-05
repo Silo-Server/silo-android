@@ -371,7 +371,15 @@ val androidTvModule = module {
     single {
         val identityApi = get<org.siloserver.silo.network.api.ServerIdentityApi>()
         org.siloserver.silo.common.pairing.PairingReceiver(
-            authPort = org.siloserver.silo.common.pairing.RegistryPairingAuthPort(get(), get(), get(), get()),
+            authPort = org.siloserver.silo.common.pairing.RegistryPairingAuthPort(
+                get(),
+                get(),
+                get(),
+                get(),
+                // An older server's approval names no user: read /me with the
+                // new token before committing, so a refresh isn't a duplicate.
+                accountOf = get<org.siloserver.silo.network.api.UnsavedSessionAccountReader>()::read,
+            ),
             // Its own device-login state machine: the sign-in screen runs its
             // own device code while it advertises, and the two must not share
             // one repository's state.

@@ -272,7 +272,8 @@ val androidModule = module {
             fetchName = probe::name,
         )
     }
-    single<CompanionPairingServerStore> { RegistryCompanionPairingServerStore(get(), get()) }
+    // Saved servers with their accounts; each account approves with its own credentials.
+    single<CompanionPairingServerStore> { RegistryCompanionPairingServerStore(get(), get(), identityTransitions = get()) }
     single<CompanionDeviceLoginApprover> {
         val authRepository = get<org.siloserver.silo.repository.AuthRepository>()
         // The nearby approval card names the account approving signs the TV in as.

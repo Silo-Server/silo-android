@@ -67,6 +67,7 @@ internal data class DeviceCapabilityV2(
     @SerialName("protocol_versions") val protocols: List<Int>,
     val cancel: Boolean = false,
     @SerialName("opened_signal") val openedSignal: Boolean = false,
+    @SerialName("session_binding") val sessionBinding: Boolean = false,
 ) {
     fun domain() = DeviceLoginCapabilityResponse(
         remotePlaybackHandoff = state == "available" && handoff,
@@ -74,6 +75,7 @@ internal data class DeviceCapabilityV2(
         deviceLoginAvailable = state == "available",
         cancel = state == "available" && cancel,
         openedSignal = state == "available" && openedSignal,
+        sessionBinding = state == "available" && sessionBinding,
     )
 }
 

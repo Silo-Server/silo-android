@@ -247,7 +247,7 @@ class EncryptedTokenManagerImpl(
                     // fence the server: its current slot is about to change.
                     val fenced = registry.currentAccountOn(targetServerId)?.localAccountId
                     fenced?.let(failedAuthorityWrites::add)
-                    val accountId = androidRegistry.commitAccountReplacement(
+                    val replacement = androidRegistry.commitAccountReplacement(
                         serverId = targetServerId,
                         reauthAccountId = account?.reauthAccountId,
                         serverUserId = account?.serverUserId,
@@ -258,12 +258,14 @@ class EncryptedTokenManagerImpl(
                         refreshToken = refreshToken,
                         expiryEpochMs = expiryEpochMs,
                         lifetimeMs = lifetimeMs,
+                        keepRememberedProfile = account?.keepsRememberedProfile == true,
                     )
+                    val accountId = replacement.accountId
                     fenced?.let(failedAuthorityWrites::remove)
                     failedAuthorityWrites.remove(accountId)
                     activeServerId = targetServerId
                     activeAccountId = accountId
-                    this.profileId = profileId
+                    this.profileId = replacement.profileId
                     this.profileToken = profileToken
                     this.accessToken = accessToken
                     this.refreshToken = refreshToken

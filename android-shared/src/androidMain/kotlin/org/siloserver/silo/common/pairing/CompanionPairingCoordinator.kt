@@ -25,15 +25,17 @@ import kotlinx.coroutines.withTimeout
 import org.siloserver.silo.model.auth.DeviceCodeFormat
 import org.siloserver.silo.model.auth.DeviceLoginDecisionResponse
 import org.siloserver.silo.model.auth.DeviceLoginLookupResponse
+import org.siloserver.silo.model.server.AccountEntry
+import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.SiloAuthUnavailableException
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
-import org.siloserver.silo.network.signedInEntries
 import org.siloserver.silo.network.api.ServerIdentityApi
 import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.currentAccountOn
 import org.siloserver.silo.pairing.PairingEndpoint
 import org.siloserver.silo.pairing.PairingFailureCode
 import org.siloserver.silo.pairing.PairingMessage
@@ -58,9 +60,27 @@ data class CompanionPairingTarget(
     val serverIdentity: String? = null,
     /** Found as `_silopair-roku._tcp`: dialed over plain TCP, never TLS-PSK, and signed in to one server. */
     val isRoku: Boolean = false,
+    /**
+     * TXT `acct=1`: the TV takes any number of pushes in one session, the
+     * same server again included, and keeps each sign-in as its own account.
+     */
+    val acceptsAccounts: Boolean = false,
+    /** TXT `lim=<n>`: the most sign-ins the TV can keep from one session; null when it states none. */
+    val signInLimit: Int? = null,
 ) {
-    /** A Roku keeps one server, so setup pushes exactly one (silo-roku `docs/companion-pairing.md` section 4). */
-    val keepsOneServer: Boolean get() = isRoku
+    /**
+     * A Roku without `acct=1` keeps one server and refuses a second push
+     * (silo-roku `docs/companion-pairing.md` section 4).
+     */
+    val keepsOneServer: Boolean get() = isRoku && !acceptsAccounts
+
+    /** How the chooser lets the person pick accounts for this TV (contract §C.1). */
+    val selectionMode: CompanionSelectionMode
+        get() = when {
+            acceptsAccounts -> CompanionSelectionMode.Several
+            keepsOneServer -> CompanionSelectionMode.One
+            else -> CompanionSelectionMode.OnePerServer
+        }
 
     /** What the phone calls this device in its copy. */
     val deviceNoun: String get() = if (isRoku) "Roku" else "TV"
@@ -77,13 +97,50 @@ data class CompanionPairingTarget(
             (isSignedOutTv && !serverIdentity.isNullOrBlank())
 }
 
+/**
+ * One saved account on a [CompanionPairingServer]. [id] is its local account
+ * id ([org.siloserver.silo.model.server.AccountEntry.localAccountId]), or
+ * null for "the server's current account" when the phone lists none.
+ */
+data class CompanionPairingAccount(
+    val id: String?,
+    val username: String?,
+    /** The account this phone is using on its server. */
+    val isCurrent: Boolean = false,
+    /** Its session expired here: shown, but it can't approve until it signs in again. */
+    val needsSignIn: Boolean = false,
+) {
+    val canApprove: Boolean get() = !needsSignIn
+}
+
 data class CompanionPairingServer(
     val id: String,
     val url: String,
     val displayName: String,
     /** The phone's active server, preselected in the chooser. */
     val isActive: Boolean = false,
-)
+    /** The server's saved accounts, the phone's current one first. */
+    val accounts: List<CompanionPairingAccount> = emptyList(),
+) {
+    /** The accounts to offer: the saved ones, or the server's current account when none are listed. */
+    val offeredAccounts: List<CompanionPairingAccount>
+        get() = accounts.ifEmpty { listOf(CompanionPairingAccount(id = null, username = null, isCurrent = true)) }
+
+    val approvableAccounts: List<CompanionPairingAccount> get() = offeredAccounts.filter { it.canApprove }
+}
+
+/** One thing the phone sends: [account] on [server], approved with that account's credentials. */
+data class CompanionPairingDestination(
+    val server: CompanionPairingServer,
+    val account: CompanionPairingAccount,
+) {
+    /** Stable chooser key. */
+    val key: String get() = destinationKey(server.id, account.id)
+
+    companion object {
+        fun destinationKey(serverId: String, accountId: String?): String = "$serverId/${accountId.orEmpty()}"
+    }
+}
 
 /**
  * What the phone knows about a saved server beyond its URL: the deployment
@@ -139,12 +196,17 @@ data class CompanionPairingServerSnapshot(
 )
 
 /**
- * The first server's confirmation. People compare [userCode], the code the TV
- * shows on screen (from the server's lookup, not the TV's frame). The match
- * words are checked programmatically; [serverMatchCode] is shown only on a
- * secondary line for TV apps released before user codes, which show the
- * words alone. Drop that line on the same schedule as the web `/activate`
- * card's "Older TV apps show ..." line.
+ * A code comparison. People compare [userCode], the code the TV shows on
+ * screen (from the server's lookup, not the TV's frame). The match words are
+ * checked programmatically; [serverMatchCode] is shown only on a secondary
+ * line for TV apps released before user codes, which show the words alone.
+ * Drop that line on the same schedule as the web `/activate` card's "Older
+ * TV apps show ..." line.
+ *
+ * The first target is always compared. [isFollowUp] marks a later target
+ * that needs its own comparison (its server has no session binding, or the
+ * phone holds no trusted binding yet): the card names the account and
+ * server it is for.
  */
 data class CompanionPairingApproval(
     val targetName: String,
@@ -153,24 +215,82 @@ data class CompanionPairingApproval(
     val serverMatchCode: String,
     /** The server's host, shown next to its name ("Home (silo.example.com)"). */
     val serverHost: String = "",
-    /** The account approving signs the TV in as; null when it couldn't be read. */
+    /** The account approving signs the TV in as; null when it couldn't be read (the card says "with your account"). */
     val accountName: String? = null,
+    val isFollowUp: Boolean = false,
+    /** This target's place in the session, 1-based, and how many are being sent. */
+    val position: Int = 1,
+    val total: Int = 1,
 )
+
+/** How one target ended. [failure] is the phone's text for it; null when it signed in. */
+data class CompanionTargetOutcome(
+    val serverName: String,
+    val accountName: String?,
+    val failure: String? = null,
+) {
+    val signedIn: Boolean get() = failure == null
+}
+
+/**
+ * The per-target summary (contract §C.6): one line per server that signed
+ * in, naming its accounts ("Home — alex, sam"), then one line per failure
+ * with its text, naming the account when known.
+ */
+fun companionSummaryLines(outcomes: List<CompanionTargetOutcome>): List<String> {
+    val signedIn = outcomes.filter { it.signedIn }
+        .groupBy { it.serverName }
+        .map { (server, targets) ->
+            val names = targets.mapNotNull { it.accountName }.distinct()
+            if (names.isEmpty()) server else "$server — ${names.joinToString(", ")}"
+        }
+    val failed = outcomes.filterNot { it.signedIn }.map { outcome ->
+        outcome.accountName?.let { "$it on ${outcome.serverName}: ${outcome.failure}" } ?: outcome.failure.orEmpty()
+    }
+    return signedIn + failed
+}
 
 sealed class CompanionPairingStatus {
     data object Idle : CompanionPairingStatus()
     data class Connecting(val targetName: String) : CompanionPairingStatus()
     data class PickServers(val targetName: String) : CompanionPairingStatus()
-    data class PushingServer(val targetName: String, val serverName: String) : CompanionPairingStatus()
+    data class PushingServer(
+        val targetName: String,
+        val serverName: String,
+        val accountName: String? = null,
+        val position: Int = 1,
+        val total: Int = 1,
+    ) : CompanionPairingStatus()
     data class AwaitingMatchConfirmation(val approval: CompanionPairingApproval) : CompanionPairingStatus()
-    data class Approving(val targetName: String, val serverName: String) : CompanionPairingStatus()
-    data class SignedIn(val targetName: String, val serverName: String, val serverCount: Int) : CompanionPairingStatus()
-    data class Completed(val targetName: String, val serverNames: List<String>) : CompanionPairingStatus()
+    data class Approving(
+        val targetName: String,
+        val serverName: String,
+        val accountName: String? = null,
+        val position: Int = 1,
+        val total: Int = 1,
+    ) : CompanionPairingStatus()
+    data class SignedIn(
+        val targetName: String,
+        val serverName: String,
+        val serverCount: Int,
+        val accountName: String? = null,
+    ) : CompanionPairingStatus()
+
+    /** At least one target signed in. [outcomes] lists every target sent, in order. */
+    data class Completed(val targetName: String, val outcomes: List<CompanionTargetOutcome>) : CompanionPairingStatus() {
+        val serverNames: List<String> get() = outcomes.filter { it.signedIn }.map { it.serverName }.distinct()
+        val failures: List<CompanionTargetOutcome> get() = outcomes.filterNot { it.signedIn }
+    }
+
     data class Failed(val targetName: String, val message: String) : CompanionPairingStatus()
 }
 
 sealed class CompanionPairingResult {
-    data class Completed(val serverCount: Int) : CompanionPairingResult()
+    /** [serverCount] targets signed in; [failures] are the ones that didn't. */
+    data class Completed(
+        val serverCount: Int,
+        val failures: List<CompanionTargetOutcome> = emptyList(),
+    ) : CompanionPairingResult()
     data class Failed(val message: String) : CompanionPairingResult()
 }
 
@@ -178,70 +298,109 @@ interface CompanionPairingServerStore {
     suspend fun snapshot(): CompanionPairingServerSnapshot
 }
 
+/** Device-login decisions taken with one saved account's credentials ([CompanionPairingDestination.account]). */
 interface CompanionDeviceLoginApprover {
-    suspend fun lookup(server: CompanionPairingServer, code: String): ApiResult<DeviceLoginLookupResponse>
-    suspend fun approve(server: CompanionPairingServer, code: String): ApiResult<DeviceLoginDecisionResponse>
-    suspend fun deny(server: CompanionPairingServer, code: String): ApiResult<DeviceLoginDecisionResponse>
+    suspend fun lookup(destination: CompanionPairingDestination, code: String): ApiResult<DeviceLoginLookupResponse>
+    suspend fun approve(destination: CompanionPairingDestination, code: String): ApiResult<DeviceLoginDecisionResponse>
+    suspend fun deny(destination: CompanionPairingDestination, code: String): ApiResult<DeviceLoginDecisionResponse>
 
     /**
-     * The account signed in on [server], which approving signs the TV in as
-     * (the approval card names it, like the web `/activate` card and the
-     * iPhone app). Null when it can't be read; the card then says "with this
-     * account".
+     * The account approving signs the TV in as, read from the server with
+     * that account's credentials (the approval card names it, like the web
+     * `/activate` card and the iPhone app). Null when it can't be read; the
+     * card then falls back to the saved username, or says "with your
+     * account" when that is unknown too. Never a reason to stop.
      */
-    suspend fun accountName(server: CompanionPairingServer): String? = null
+    suspend fun accountName(destination: CompanionPairingDestination): String? = null
 }
 
 fun interface CompanionPairingTransportFactory {
     suspend fun connect(target: CompanionPairingTarget): PairingTransport
 }
 
+/**
+ * The phone's saved servers, each with its accounts: the active server first,
+ * then most recently used; on each, the account in use first, then in the
+ * order they were added. An account can approve when it holds a token and
+ * hasn't expired; the rest are listed as needing sign-in again.
+ */
 class RegistryCompanionPairingServerStore(
     private val registry: ServerRegistry,
     private val tokenManager: TokenManager,
+    private val identityTransitions: IdentityTransitionBarrier? = null,
 ) : CompanionPairingServerStore {
     override suspend fun snapshot(): CompanionPairingServerSnapshot {
         val activeId = registry.activeServerId.value
-        return CompanionPairingServerSnapshot(
-            activeServerId = activeId,
-            servers = registry.signedInEntries(tokenManager).map {
+        val accounts = registry.accounts.value
+        val generation = identityTransitions?.generation?.value
+        val servers = registry.entries.value
+            .filter { it.url.isNotBlank() }
+            .sortedWith(compareByDescending<ServerEntry> { it.id == activeId }.thenByDescending { it.lastUsedAtEpochMs })
+            .mapNotNull { entry ->
+                val current = registry.currentAccountOn(entry.id)?.localAccountId
+                val saved = accounts.filter { it.serverId == entry.id }
+                    .sortedWith(compareByDescending<AccountEntry> { it.localAccountId == current }.thenBy { it.addedAtEpochMs })
+                    .map { account ->
+                        val hasToken = !account.needsSignIn && (
+                            if (generation == null) {
+                                account.localAccountId == current && !tokenManager.getAccessTokenForScope(entry.id).isNullOrBlank()
+                            } else {
+                                !tokenManager.getAccessTokenForScope(
+                                    AuthScopeSnapshot.profileless(entry.id, entry.url, generation, account.localAccountId),
+                                ).isNullOrBlank()
+                            }
+                            )
+                        CompanionPairingAccount(
+                            id = account.localAccountId,
+                            username = account.username,
+                            isCurrent = account.localAccountId == current,
+                            needsSignIn = !hasToken,
+                        )
+                    }
+                // A server whose session predates saved accounts: its one session.
+                val listed = saved.ifEmpty {
+                    if (tokenManager.getAccessTokenForScope(entry.id).isNullOrBlank()) return@mapNotNull null
+                    emptyList()
+                }
                 CompanionPairingServer(
-                    id = it.id,
-                    url = it.url,
-                    displayName = it.displayName,
-                    isActive = it.id == activeId,
+                    id = entry.id,
+                    url = entry.url,
+                    displayName = entry.displayName,
+                    isActive = entry.id == activeId,
+                    accounts = listed,
                 )
-            },
-        )
+            }
+        return CompanionPairingServerSnapshot(activeServerId = activeId, servers = servers)
     }
 }
 
 class RepositoryCompanionDeviceLoginApprover(
     private val repository: DeviceLoginRepository,
     private val identityTransitions: IdentityTransitionBarrier,
-    /** The account on a scope's server, read with that server's own credentials. */
+    /** The account on a scope's server, read with that account's own credentials. */
     private val accountNameOf: suspend (AuthScopeSnapshot) -> String? = { null },
 ) : CompanionDeviceLoginApprover {
-    override suspend fun accountName(server: CompanionPairingServer): String? =
-        runCatching { accountNameOf(server.profilelessScope()) }.getOrNull()?.takeIf { it.isNotBlank() }
+    override suspend fun accountName(destination: CompanionPairingDestination): String? =
+        runCatching { accountNameOf(destination.scope()) }.getOrNull()?.takeIf { it.isNotBlank() }
 
     override suspend fun lookup(
-        server: CompanionPairingServer,
+        destination: CompanionPairingDestination,
         code: String,
-    ): ApiResult<DeviceLoginLookupResponse> = repository.lookup(server.profilelessScope(), code)
+    ): ApiResult<DeviceLoginLookupResponse> = repository.lookup(destination.scope(), code)
 
     override suspend fun approve(
-        server: CompanionPairingServer,
+        destination: CompanionPairingDestination,
         code: String,
-    ): ApiResult<DeviceLoginDecisionResponse> = repository.approve(server.profilelessScope(), code)
+    ): ApiResult<DeviceLoginDecisionResponse> = repository.approve(destination.scope(), code)
 
     override suspend fun deny(
-        server: CompanionPairingServer,
+        destination: CompanionPairingDestination,
         code: String,
-    ): ApiResult<DeviceLoginDecisionResponse> = repository.deny(server.profilelessScope(), code)
+    ): ApiResult<DeviceLoginDecisionResponse> = repository.deny(destination.scope(), code)
 
-    private fun CompanionPairingServer.profilelessScope() =
-        AuthScopeSnapshot.profileless(id, url, identityTransitions.generation.value)
+    /** The chosen account's profileless scope; a null account id is the server's current account. */
+    private fun CompanionPairingDestination.scope() =
+        AuthScopeSnapshot.profileless(server.id, server.url, identityTransitions.generation.value, account.id)
 }
 
 class CompanionPairingCoordinator(
@@ -258,43 +417,76 @@ class CompanionPairingCoordinator(
     }
 
     /**
-     * The saved, signed-in server a signed-out TV ([CompanionPairingTarget.isSignedOutTv])
-     * wants, matched by verified identity against its `srv`; null when this
-     * phone doesn't hold it and must not offer the TV.
+     * The saved server a signed-out TV ([CompanionPairingTarget.isSignedOutTv])
+     * wants, matched by verified identity against its `srv`, with at least
+     * one account that can approve; null when this phone doesn't hold it and
+     * must not offer the TV.
      */
     suspend fun serverForSignedOutTv(target: CompanionPairingTarget): CompanionPairingServer? {
         val wanted = target.serverIdentity?.takeIf { target.isSignedOutTv && it.isNotBlank() } ?: return null
         val source = identitySource ?: return null
-        return source.serversWithIdentity(serverStore.snapshot().orderedServers(), wanted).firstOrNull()
+        val candidates = serverStore.snapshot().orderedServers().filter { it.approvableAccounts.isNotEmpty() }
+        return source.serversWithIdentity(candidates, wanted).firstOrNull()
     }
 
     /**
      * [signInServer]: for a signed-out TV, the server [serverForSignedOutTv]
-     * already matched when the offer was made; resolved again only when absent.
+     * already matched when the offer was made; resolved again only when
+     * absent. [signInAccountId]: the account the person chose on its card
+     * (null: the one in use on that server). One account per sign-in screen.
+     *
+     * [chooseAccounts] answers the chooser for a setup TV with the keys
+     * ([CompanionPairingDestination.key]) to send. [confirmMatch] asks the
+     * person to compare a code: always for the first target, and for a later
+     * one only when its binding can't be checked (contract §C.5).
+     *
+     * One target failing never ends the session: the rest are sent, `done`
+     * follows, and the result lists each target. Only the TV hanging up,
+     * cancelling or going silent, or the person declining the first code,
+     * ends it early.
      */
     suspend fun pair(
         target: CompanionPairingTarget,
         signInServer: CompanionPairingServer? = null,
-        chooseServers: suspend (List<CompanionPairingServer>) -> List<CompanionPairingServer> = { it },
-        confirmFirstMatch: suspend (CompanionPairingApproval) -> Boolean = { true },
+        signInAccountId: String? = null,
+        chooseAccounts: suspend (CompanionAccountChoice) -> Set<String> = { it.initialSelection() },
+        confirmMatch: suspend (CompanionPairingApproval) -> Boolean = { true },
     ): CompanionPairingResult {
         val snapshot = serverStore.snapshot()
+        val orderedServers = snapshot.orderedServers()
         // A signed-out TV wants exactly one server, the one it advertised:
-        // skip the chooser and push only that one. It must still be a server
-        // this phone is signed in to.
-        val signedOutServer = if (target.isSignedOutTv) {
-            (signInServer?.takeIf { matched -> snapshot.servers.any { it.id == matched.id } } ?: serverForSignedOutTv(target))
+        // skip the chooser and push only that one, as one account. It must
+        // still be a server this phone is signed in to.
+        val signInDestination = if (target.isSignedOutTv) {
+            val server = signInServer?.let { matched -> orderedServers.firstOrNull { it.id == matched.id } }
+                ?: serverForSignedOutTv(target)
                 ?: return fail(target, "This phone isn't signed in to the server ${target.name} uses.")
+            // The account chosen on the card, never a stand-in: one that has
+            // since signed out or expired fails instead of signing the TV in
+            // as someone else.
+            val account = server.approvableAccounts.let { accounts ->
+                if (signInAccountId != null) {
+                    accounts.firstOrNull { it.id == signInAccountId }
+                } else {
+                    accounts.firstOrNull { it.isCurrent } ?: accounts.firstOrNull()
+                }
+            } ?: return fail(target, "Sign in to ${server.displayName} on this device again, then try again.")
+            CompanionPairingDestination(server, account)
         } else {
             null
         }
-        val orderedServers = signedOutServer?.let(::listOf) ?: snapshot.orderedServers()
-        if (orderedServers.isEmpty()) {
+        if (orderedServers.none { it.approvableAccounts.isNotEmpty() }) {
             return fail(target, "No saved Silo servers are available to send.")
         }
+        val choice = CompanionAccountChoice(
+            targetName = target.name,
+            servers = orderedServers,
+            mode = target.selectionMode,
+            limit = target.signInLimit,
+        )
 
-        var signedInCount = 0
-        val signedInNames = mutableListOf<String>()
+        val outcomes = mutableListOf<CompanionTargetOutcome>()
+        var inFlight: TargetStep? = null
         var transport: PairingTransport? = null
         var reachedTv = false
         try {
@@ -328,31 +520,42 @@ class CompanionPairingCoordinator(
                 try {
                     awaitCompatibleHello(inbox)
                     _status.value = CompanionPairingStatus.PickServers(target.name)
-                    val selectedServers = (if (signedOutServer != null) orderedServers else chooseServers(orderedServers))
-                        .filter { selected -> orderedServers.any { it.id == selected.id } }
-                        // A Roku refuses a second push once one has signed in.
-                        .let { if (target.keepsOneServer) it.take(1) else it }
-                    if (selectedServers.isEmpty()) {
-                        error("Choose at least one server to continue.")
+                    val selected = signInDestination?.let(::listOf) ?: choice.resolve(chooseAccounts(choice))
+                    if (selected.isEmpty()) {
+                        error("Choose at least one account to continue.")
                     }
 
-                    selectedServers.forEachIndexed { index, server ->
-                        pushAndApproveServer(
-                            target = target,
-                            server = server,
-                            transport = connected,
-                            inbox = inbox,
-                            peer = peer,
-                            requireUserConfirmation = index == 0,
-                            confirmFirstMatch = confirmFirstMatch,
-                        )
-                        signedInCount += 1
-                        signedInNames += server.displayName
-                        _status.value = CompanionPairingStatus.SignedIn(
-                            targetName = target.name,
-                            serverName = server.displayName,
-                            serverCount = signedInCount,
-                        )
+                    // The binding the phone trusts: from a request the person
+                    // compared (contract §C.5). Kept when that target then fails.
+                    val trust = BindingTrust()
+                    selected.forEachIndexed { index, destination ->
+                        val step = TargetStep(destination, position = index + 1, total = selected.size)
+                        inFlight = step
+                        val outcome = try {
+                            pushAndApprove(
+                                target = target,
+                                step = step,
+                                transport = connected,
+                                inbox = inbox,
+                                peer = peer,
+                                trust = trust,
+                                confirmMatch = confirmMatch,
+                            )
+                            CompanionTargetOutcome(destination.server.displayName, step.accountName)
+                        } catch (failure: TargetFailedException) {
+                            Log.w(TAG, "Companion target ${index + 1} of ${selected.size} failed: ${failure.message}")
+                            CompanionTargetOutcome(destination.server.displayName, step.accountName, failure.message)
+                        }
+                        inFlight = null
+                        outcomes += outcome
+                        if (outcome.signedIn) {
+                            _status.value = CompanionPairingStatus.SignedIn(
+                                targetName = target.name,
+                                serverName = destination.server.displayName,
+                                serverCount = outcomes.count { it.signedIn },
+                                accountName = step.accountName,
+                            )
+                        }
                     }
                     connected.send(PairingMessage.Done)
                 } finally {
@@ -369,16 +572,12 @@ class CompanionPairingCoordinator(
                     }
                 }
             }
-            _status.value = CompanionPairingStatus.Completed(
-                targetName = target.name,
-                serverNames = signedInNames.toList(),
-            )
-            return CompanionPairingResult.Completed(signedInCount)
+            return finish(target, outcomes)
         } catch (e: TimeoutCancellationException) {
             // A step timeout is a failure, not a cancellation of the caller:
             // rethrowing it left the card spinning on its progress step.
             Log.w(TAG, "Companion setup timed out for ${target.name}", e)
-            return fail(target, "${target.name} stopped responding. Try again.")
+            return endedEarly(target, outcomes, inFlight, "${target.name} stopped responding. Try again.")
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
@@ -392,8 +591,7 @@ class CompanionPairingCoordinator(
                 is ClosedReceiveChannelException -> "${target.name} closed the connection. Try again."
                 else -> t.userFacingPairingMessage(target, reachedTv)
             }
-            _status.value = CompanionPairingStatus.Failed(target.name, message)
-            return CompanionPairingResult.Failed(message)
+            return endedEarly(target, outcomes, inFlight, message)
         } finally {
             val toClose = transport
             transport = null
@@ -401,6 +599,35 @@ class CompanionPairingCoordinator(
                 toClose?.close()
             }
         }
+    }
+
+    /** The session ran to its end: completed when anything signed in, else the failure(s). */
+    private fun finish(target: CompanionPairingTarget, outcomes: List<CompanionTargetOutcome>): CompanionPairingResult {
+        val signedIn = outcomes.count { it.signedIn }
+        if (signedIn == 0) {
+            val message = outcomes.singleOrNull()?.failure ?: companionSummaryLines(outcomes).joinToString("\n")
+            return fail(target, message)
+        }
+        _status.value = CompanionPairingStatus.Completed(target.name, outcomes.toList())
+        return CompanionPairingResult.Completed(signedIn, outcomes.filterNot { it.signedIn })
+    }
+
+    /**
+     * The session ended before every target was sent. What signed in stays
+     * signed in on the TV, so with any sign-in it is still a completed
+     * session, and [message] is the in-flight target's failure.
+     */
+    private fun endedEarly(
+        target: CompanionPairingTarget,
+        outcomes: List<CompanionTargetOutcome>,
+        inFlight: TargetStep?,
+        message: String,
+    ): CompanionPairingResult {
+        if (outcomes.none { it.signedIn }) return fail(target, message)
+        val all = outcomes + listOfNotNull(
+            inFlight?.let { CompanionTargetOutcome(it.server.displayName, it.accountName, message) },
+        )
+        return finish(target, all)
     }
 
     /** What the phone says when the TV reports [this] failure for [serverName]. */
@@ -414,6 +641,7 @@ class CompanionPairingCoordinator(
             PairingFailureCode.IdentityMismatch -> "$tvName reached a different server at that address. Nothing was signed in."
             PairingFailureCode.UpdateRequired -> "$serverName or the Silo app on $tvName needs an update first."
             PairingFailureCode.AuthFailed -> "$tvName couldn't finish signing in to $serverName."
+            PairingFailureCode.LimitReached -> "$tvName can't keep any more sign-ins."
         }
     }
 
@@ -432,15 +660,38 @@ class CompanionPairingCoordinator(
         }
     }
 
-    private suspend fun pushAndApproveServer(
+    /** One target being sent, and its place in the session. */
+    private class TargetStep(val destination: CompanionPairingDestination, val position: Int, val total: Int) {
+        val server: CompanionPairingServer get() = destination.server
+        val isFirst: Boolean get() = position == 1
+
+        /** Who the phone approves as: read from the server, else the saved username. */
+        var accountName: String? = destination.account.username
+    }
+
+    /** The session binding the phone trusts, once a compared request supplied one. */
+    private class BindingTrust {
+        var binding: String? = null
+    }
+
+    /**
+     * Pushes [step]'s server, checks the TV's request and approves it with
+     * [step]'s account, updating [trust]. Throws [TargetFailedException] for
+     * a failure that leaves the session usable; anything else ends the
+     * session.
+     */
+    private suspend fun pushAndApprove(
         target: CompanionPairingTarget,
-        server: CompanionPairingServer,
+        step: TargetStep,
         transport: PairingTransport,
-        inbox: ReceiveChannel<PairingMessage>,
+        inbox: Channel<PairingMessage>,
         peer: PeerState,
-        requireUserConfirmation: Boolean,
-        confirmFirstMatch: suspend (CompanionPairingApproval) -> Boolean,
+        trust: BindingTrust,
+        confirmMatch: suspend (CompanionPairingApproval) -> Boolean,
     ) {
+        val server = step.server
+        val destination = step.destination
+
         // A signed-out TV keeps its sign-in request after it cancels this
         // attempt, so once it has ended the attempt (cancelled, hung up, or
         // reported this server failed) the phone must not approve or deny
@@ -449,67 +700,87 @@ class CompanionPairingCoordinator(
             peer.interruption(server.url)?.let { throw it.failure(target, server.displayName) }
         }
 
-        _status.value = CompanionPairingStatus.PushingServer(target.name, server.displayName)
+        // A result left over from the previous target (the same server can
+        // come twice, once per account) must not read as this one's.
+        if (!step.isFirst) {
+            inbox.drainStale()
+            peer.ended.value?.let { throw it.failure(target, server.displayName) }
+        }
+        peer.beginAttempt(server.url)
+
+        // Read first: it renews this account's token for the lookup, and
+        // the TV shows the name ("Signing in sam on Home").
+        deviceLoginApprover.accountName(destination)?.let { step.accountName = it }
+        _status.value = CompanionPairingStatus.PushingServer(
+            target.name,
+            server.displayName,
+            step.accountName,
+            step.position,
+            step.total,
+        )
         transport.send(
             PairingMessage.PushServer(
                 serverURL = server.url,
                 serverName = server.displayName,
                 serverIdentity = identitySource?.identity(server),
                 endpoints = identitySource?.endpoints(server),
+                accountName = step.accountName,
             ),
         )
 
         // A TV can refuse the push before it starts a sign-in (a different
-        // server at that address, an expired code): it answers with the
-        // failed result instead, and the phone reports it at once.
+        // server at that address, an expired code, no room for more): it
+        // answers with the failed result instead, and the phone moves on.
         val started = when (
-            val first = inbox.receiveFirst<PairingMessage>(timeoutMs = deviceStartedTimeoutMs(requireUserConfirmation)) {
+            val first = inbox.receiveFirst<PairingMessage>(timeoutMs = deviceStartedTimeoutMs(step.isFirst)) {
                 (it is PairingMessage.DeviceStarted && it.serverURL == server.url) ||
-                    (it is PairingMessage.ServerResult && it.serverURL == server.url)
+                    (it is PairingMessage.ServerResult && it.serverURL == server.url && it.status != PairingServerStatus.SignedIn)
             }
         ) {
             is PairingMessage.DeviceStarted -> first
-            is PairingMessage.ServerResult ->
-                error(PairingFailureCode.fromWire(first.error).phoneMessage(target, server.displayName))
+            is PairingMessage.ServerResult -> targetFailed(PairingFailureCode.fromWire(first.error).phoneMessage(target, server.displayName))
             else -> error("Unexpected TV setup message.")
         }
-        val lookup = when (val result = deviceLoginApprover.lookup(server, started.userCode)) {
+        val lookup = when (val result = deviceLoginApprover.lookup(destination, started.userCode)) {
             is ApiResult.Success -> result.data
-            is ApiResult.Error -> error(approverFailure(result, target, server, "${server.displayName} couldn't check the code. Try again."))
-            is ApiResult.NetworkError -> error(approverFailure(result, server))
+            is ApiResult.Error -> targetFailed(approverFailure(result, target, server, "${server.displayName} couldn't check the code. Try again."))
+            is ApiResult.NetworkError -> targetFailed(approverFailure(result, server))
         }
-        val serverMatchCode = lookup.matchCode?.takeIf { it.isNotBlank() }
-            ?: error("Server did not return a match code for TV setup.")
         ensureAttemptLive()
+        val serverMatchCode = lookup.matchCode?.takeIf { it.isNotBlank() }
+            ?: targetFailed("${server.displayName} didn't return a code to check. Nothing was approved.")
+        // The TV relays the code pair the server gave it; a pair that doesn't
+        // match the server's own isn't this request. Nothing is approved; the
+        // TV withdraws the request when the next push (or done) supersedes it.
         if (serverMatchCode != started.matchCode) {
-            deviceLoginApprover.deny(server, started.userCode)
-            transport.send(PairingMessage.Cancel(reason = "match-code-mismatch"))
-            error("The codes didn't match. Nothing was approved.")
+            targetFailed("The codes didn't match. Nothing was approved.")
         }
 
-        val approval = CompanionPairingApproval(
-            targetName = target.name,
-            serverName = server.displayName,
-            userCode = lookup.userCode?.takeIf { it.isNotBlank() } ?: started.userCode,
-            serverMatchCode = serverMatchCode,
-            serverHost = DeviceCodeFormat.host(server.url),
-        )
-        if (requireUserConfirmation) {
-            // The card names the account approving signs the TV in as, and
-            // nothing is approved for an account it couldn't name. The TV
-            // keeps its code, so "Try again" can pick it up.
-            val accountName = deviceLoginApprover.accountName(server)
+        val binding = lookup.binding?.takeIf { it.isNotBlank() }
+        val trusted = trust.binding
+        // A later request bound to another session isn't this TV's: refuse it.
+        if (!step.isFirst && trusted != null && binding != null && binding != trusted) {
+            targetFailed(PairingFailureCode.AuthFailed.phoneMessage(target, server.displayName))
+        }
+        val compare = step.isFirst || trusted == null || binding == null
+        if (compare) {
+            val approval = CompanionPairingApproval(
+                targetName = target.name,
+                serverName = server.displayName,
+                userCode = lookup.userCode?.takeIf { it.isNotBlank() } ?: started.userCode,
+                serverMatchCode = serverMatchCode,
+                serverHost = DeviceCodeFormat.host(server.url),
+                accountName = step.accountName,
+                isFollowUp = !step.isFirst,
+                position = step.position,
+                total = step.total,
+            )
             ensureAttemptLive()
-            if (accountName.isNullOrBlank()) {
-                transport.send(PairingMessage.Cancel(reason = "account-unknown"))
-                error("Couldn't confirm which account would sign in on ${target.name}. Try again.")
-            }
-            val shown = approval.copy(accountName = accountName)
-            _status.value = CompanionPairingStatus.AwaitingMatchConfirmation(shown)
+            _status.value = CompanionPairingStatus.AwaitingMatchConfirmation(approval)
             // The TV can end the attempt while the person compares codes:
             // the card's buttons go away at once instead of acting on it.
             val confirmed = coroutineScope {
-                val answer = async { confirmFirstMatch(shown) }
+                val answer = async { confirmMatch(approval) }
                 val interrupted = async { peer.awaitInterruption(server.url) }
                 select<Unit> {
                     answer.onAwait {}
@@ -525,24 +796,43 @@ class CompanionPairingCoordinator(
                 // Leaving the scope above waits for the cancelled watcher,
                 // and the TV can end the attempt in that time.
                 ensureAttemptLive()
-                deviceLoginApprover.deny(server, started.userCode)
+                // A code the person says doesn't match what the TV shows is the
+                // strongest sign of someone else on the network: stop the whole
+                // session, for a later account as for the first (same as Apple).
+                deviceLoginApprover.deny(destination, started.userCode)
                 transport.send(PairingMessage.Cancel(reason = "user-cancelled"))
-                error("Cancelled. Nothing was approved.")
+                error(
+                    if (step.isFirst) {
+                        "Cancelled. Nothing was approved."
+                    } else {
+                        "The codes didn't match, so setup stopped. Accounts already signed in stay on the TV."
+                    },
+                )
             }
+            // A later target the person compared supplies the binding when
+            // none is trusted yet; the first one does once it is approved.
+            if (!step.isFirst && trust.binding == null) trust.binding = binding
         }
 
         ensureAttemptLive()
-        _status.value = CompanionPairingStatus.Approving(target.name, server.displayName)
-        when (val approved = deviceLoginApprover.approve(server, started.userCode)) {
+        _status.value = CompanionPairingStatus.Approving(
+            target.name,
+            server.displayName,
+            step.accountName,
+            step.position,
+            step.total,
+        )
+        when (val approved = deviceLoginApprover.approve(destination, started.userCode)) {
             is ApiResult.Success -> Unit
-            is ApiResult.Error -> error(approverFailure(approved, target, server, "${server.displayName} couldn't approve the sign-in. Try again."))
-            is ApiResult.NetworkError -> error(approverFailure(approved, server))
+            is ApiResult.Error -> targetFailed(approverFailure(approved, target, server, "${server.displayName} couldn't approve the sign-in. Try again."))
+            is ApiResult.NetworkError -> targetFailed(approverFailure(approved, server))
         }
+        if (step.isFirst && trust.binding == null) trust.binding = binding
         val result = inbox.receiveFirst<PairingMessage.ServerResult>(
             timeoutMs = SERVER_RESULT_TIMEOUT_MS,
         ) { it.serverURL == server.url }
         if (result.status != PairingServerStatus.SignedIn) {
-            error(PairingFailureCode.fromWire(result.error).phoneMessage(target, server.displayName))
+            targetFailed(PairingFailureCode.fromWire(result.error).phoneMessage(target, server.displayName))
         }
     }
 
@@ -572,11 +862,20 @@ class CompanionPairingCoordinator(
         found
     }
 
+    /** Drops what the TV already sent about earlier targets; a `cancel` among it still ends the session. */
+    private fun ReceiveChannel<PairingMessage>.drainStale() {
+        while (true) {
+            val message = tryReceive().getOrNull() ?: return
+            if (message is PairingMessage.Cancel) throw PeerCancelledException(message.reason)
+        }
+    }
+
     private fun CompanionPairingServerSnapshot.orderedServers(): List<CompanionPairingServer> {
         val activeId = activeServerId
         return servers
             .filter { it.url.isNotBlank() }
-            .sortedByDescending { it.id == activeId }
+            .map { it.copy(isActive = it.id == activeId) }
+            .sortedByDescending { it.isActive }
     }
 
     private fun fail(target: CompanionPairingTarget, message: String): CompanionPairingResult.Failed {
@@ -586,6 +885,11 @@ class CompanionPairingCoordinator(
 
     private fun deviceStartedTimeoutMs(isFirstServer: Boolean): Long =
         if (isFirstServer) FIRST_DEVICE_STARTED_TIMEOUT_MS else NEXT_DEVICE_STARTED_TIMEOUT_MS
+
+    /** One target failed; the session goes on with the next. */
+    private class TargetFailedException(message: String) : Exception(message)
+
+    private fun targetFailed(message: String): Nothing = throw TargetFailedException(message)
 
     /** The TV sent `cancel` while the phone waited for its next message. */
     private class PeerCancelledException(val reason: String) : IllegalStateException("peer cancelled: $reason")
@@ -604,7 +908,7 @@ class CompanionPairingCoordinator(
      * the decision it would have stopped.
      */
     private class PeerState {
-        private val ended = MutableStateFlow<PeerInterruption?>(null)
+        val ended = MutableStateFlow<PeerInterruption?>(null)
         private val failed = MutableStateFlow<Map<String, PeerInterruption.Failed>>(emptyMap())
 
         fun observe(message: PairingMessage) {
@@ -621,6 +925,11 @@ class CompanionPairingCoordinator(
             ended.compareAndSet(null, PeerInterruption.Closed)
         }
 
+        /** A new attempt for [serverURL]: an earlier attempt's failure there is not this one's. */
+        fun beginAttempt(serverURL: String) {
+            failed.update { it - serverURL }
+        }
+
         /** Why [serverURL]'s attempt is over, or null while it is live. */
         fun interruption(serverURL: String): PeerInterruption? = ended.value ?: failed.value[serverURL]
 
@@ -628,11 +937,15 @@ class CompanionPairingCoordinator(
             combine(ended, failed) { end, failures -> end ?: failures[serverURL] }.filterNotNull().first()
     }
 
-    /** The failure the phone reports for [this], phrased as when it's read from the inbox. */
+    /**
+     * The failure the phone reports for [this], phrased as when it's read
+     * from the inbox. The TV reporting this attempt failed leaves the
+     * session usable; a cancel or hang-up ends it.
+     */
     private fun PeerInterruption.failure(target: CompanionPairingTarget, serverName: String): Throwable = when (this) {
         is PeerInterruption.Cancelled -> PeerCancelledException(reason)
         PeerInterruption.Closed -> ClosedReceiveChannelException("${target.name} closed the connection")
-        is PeerInterruption.Failed -> IllegalStateException(PairingFailureCode.fromWire(error).phoneMessage(target, serverName))
+        is PeerInterruption.Failed -> TargetFailedException(PairingFailureCode.fromWire(error).phoneMessage(target, serverName))
     }
 
     private companion object {

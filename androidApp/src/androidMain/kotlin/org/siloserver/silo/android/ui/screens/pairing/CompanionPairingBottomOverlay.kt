@@ -15,9 +15,12 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
@@ -60,6 +63,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.paneTitle
@@ -75,10 +79,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.android.ui.screens.auth.tvSignInLine
+import org.siloserver.silo.common.pairing.CompanionAccountChoice
+import org.siloserver.silo.common.pairing.CompanionPairingAccount
 import org.siloserver.silo.common.pairing.CompanionPairingApproval
-import org.siloserver.silo.common.pairing.CompanionPairingServer
+import org.siloserver.silo.common.pairing.CompanionPairingDestination
 import org.siloserver.silo.common.pairing.CompanionPairingStatus
 import org.siloserver.silo.common.pairing.CompanionPairingTarget
+import org.siloserver.silo.common.pairing.CompanionSelectionMode
+import org.siloserver.silo.common.pairing.companionSummaryLines
 
 /**
  * App-wide host for the nearby-TV offer (iOS shows its card app-wide too).
@@ -94,8 +102,10 @@ fun CompanionPairingHost(
     val offers by viewModel.offers.collectAsState()
     val status by viewModel.status.collectAsState()
     val approval by viewModel.pendingApproval.collectAsState()
-    val serverChoices by viewModel.serverChoices.collectAsState()
+    val accountChoice by viewModel.accountChoice.collectAsState()
     var presented by remember { mutableStateOf<CompanionOffer?>(null) }
+    // The sign-in card's account, the one in use on that server to start with.
+    var signInAccountId by remember(presented?.target?.dismissalKey) { mutableStateOf(presented?.defaultSignInAccountId) }
     LaunchedEffect(offers, status, enabled) {
         // A route that hides the offer hides it mid-pairing too; the view
         // model cancels that pairing (setActive).
@@ -117,11 +127,14 @@ fun CompanionPairingHost(
     CompanionPairingBottomOverlay(
         target = presented?.target,
         signInServerName = presented?.signInServer?.displayName,
+        signInAccounts = presented?.signInAccounts.orEmpty(),
+        signInAccountId = signInAccountId,
+        onSignInAccountChosen = { signInAccountId = it },
         status = status,
         approval = approval,
-        serverChoices = serverChoices,
-        onPair = { presented?.let(viewModel::pair) },
-        onServersSelected = viewModel::continueWithServers,
+        accountChoice = accountChoice,
+        onPair = { presented?.let { viewModel.pair(it, signInAccountId) } },
+        onAccountsSelected = viewModel::continueWithAccounts,
         onApprove = viewModel::approveMatchCode,
         onDecline = viewModel::cancelMatchCode,
         onDismiss = {
@@ -139,11 +152,14 @@ fun CompanionPairingHost(
 fun CompanionPairingBottomOverlay(
     target: CompanionPairingTarget?,
     signInServerName: String? = null,
+    signInAccounts: List<CompanionPairingAccount> = emptyList(),
+    signInAccountId: String? = null,
+    onSignInAccountChosen: (String?) -> Unit = {},
     status: CompanionPairingStatus,
     approval: CompanionPairingApproval?,
-    serverChoices: List<CompanionPairingServer>?,
+    accountChoice: CompanionAccountChoice?,
     onPair: () -> Unit,
-    onServersSelected: (Set<String>) -> Unit,
+    onAccountsSelected: (Set<String>) -> Unit,
     onApprove: () -> Unit,
     onDecline: () -> Unit,
     onDismiss: () -> Unit,
@@ -195,11 +211,14 @@ fun CompanionPairingBottomOverlay(
                 PairingCard(
                     target = rememberedTarget,
                     signInServerName = signInServerName,
+                    signInAccounts = signInAccounts,
+                    signInAccountId = signInAccountId,
+                    onSignInAccountChosen = onSignInAccountChosen,
                     status = status,
                     approval = approval,
-                    serverChoices = serverChoices,
+                    accountChoice = accountChoice,
                     onPair = onPair,
-                    onServersSelected = onServersSelected,
+                    onAccountsSelected = onAccountsSelected,
                     onApprove = onApprove,
                     onDecline = onDecline,
                     onDismiss = onDismiss,
@@ -213,11 +232,14 @@ fun CompanionPairingBottomOverlay(
 private fun PairingCard(
     target: CompanionPairingTarget,
     signInServerName: String?,
+    signInAccounts: List<CompanionPairingAccount>,
+    signInAccountId: String?,
+    onSignInAccountChosen: (String?) -> Unit,
     status: CompanionPairingStatus,
     approval: CompanionPairingApproval?,
-    serverChoices: List<CompanionPairingServer>?,
+    accountChoice: CompanionAccountChoice?,
     onPair: () -> Unit,
-    onServersSelected: (Set<String>) -> Unit,
+    onAccountsSelected: (Set<String>) -> Unit,
     onApprove: () -> Unit,
     onDecline: () -> Unit,
     onDismiss: () -> Unit,
@@ -273,25 +295,26 @@ private fun PairingCard(
                     onApprove = onApprove,
                     onDecline = onDecline,
                 )
-                serverChoices != null -> ServerPicker(
-                    targetName = target.name,
-                    singleSelect = target.keepsOneServer,
-                    servers = serverChoices,
-                    onContinue = onServersSelected,
+                accountChoice != null -> AccountPicker(
+                    choice = accountChoice,
+                    onContinue = onAccountsSelected,
                     onCancel = onDismiss,
                 )
                 status is CompanionPairingStatus.Idle -> DiscoveryStep(
                     target = target,
                     signInServerName = signInServerName,
+                    signInAccounts = signInAccounts,
+                    signInAccountId = signInAccountId,
+                    onSignInAccountChosen = onSignInAccountChosen,
                     onPair = onPair,
                     onDismiss = onDismiss,
                 )
                 status is CompanionPairingStatus.Completed -> TerminalStep(
-                    successful = true,
-                    title = if (signIn) {
-                        stringResource(R.string.companion_signin_done_title, status.targetName)
-                    } else {
-                        status.serverNames.takeIf { it.isNotEmpty() }
+                    successful = status.failures.isEmpty(),
+                    title = when {
+                        signIn -> stringResource(R.string.companion_signin_done_title, status.targetName)
+                        status.failures.isNotEmpty() -> stringResource(R.string.companion_setup_partial_title, status.targetName)
+                        else -> status.serverNames.takeIf { it.isNotEmpty() }
                             ?.let { stringResource(R.string.companion_setup_done_title, it.joinToString()) }
                             ?: stringResource(
                                 if (target.isRoku) {
@@ -301,10 +324,12 @@ private fun PairingCard(
                                 },
                             )
                     },
-                    message = if (signIn) {
-                        stringResource(R.string.companion_signin_done_body, signInServerName.orEmpty())
-                    } else {
-                        stringResource(R.string.companion_setup_done_body, status.targetName)
+                    message = when {
+                        signIn -> stringResource(R.string.companion_signin_done_body, signInServerName.orEmpty())
+                        // One target, signed in: today's short line.
+                        status.outcomes.size <= 1 -> stringResource(R.string.companion_setup_done_body, status.targetName)
+                        // Each target: "Home — alex, sam", then failures with their reasons.
+                        else -> companionSummaryLines(status.outcomes).joinToString("\n")
                     },
                     primaryLabel = stringResource(R.string.companion_done),
                     onPrimary = onDismiss,
@@ -328,18 +353,16 @@ private fun PairingCard(
 }
 
 @Composable
-private fun ServerPicker(
-    targetName: String,
-    /** A Roku keeps one server: picking one replaces the choice. */
-    singleSelect: Boolean,
-    servers: List<CompanionPairingServer>,
+private fun AccountPicker(
+    choice: CompanionAccountChoice,
     onContinue: (Set<String>) -> Unit,
     onCancel: () -> Unit,
 ) {
-    // The phone's active server is preselected (the usual answer).
-    var selectedIds by remember(servers, singleSelect) {
-        mutableStateOf(companionInitialServerSelection(servers, singleSelect))
-    }
+    // Only the account this phone is using starts selected (D2).
+    var selected by remember(choice) { mutableStateOf(choice.initialSelection()) }
+    val singlePerRow = choice.mode != CompanionSelectionMode.Several
+    val count = choice.resolve(selected).size
+    val tablet = isTablet()
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxWidth(),
@@ -356,74 +379,98 @@ private fun ServerPicker(
             Column(modifier = Modifier.padding(start = 12.dp)) {
                 Text(
                     stringResource(
-                        if (singleSelect) R.string.companion_choose_server_title else R.string.companion_choose_servers_title,
+                        if (choice.mode == CompanionSelectionMode.One) {
+                            R.string.companion_choose_account_title
+                        } else {
+                            R.string.companion_choose_accounts_title
+                        },
                     ),
                     style = MaterialTheme.typography.titleLarge,
                 )
                 Text(
-                    text = stringResource(R.string.companion_choose_servers_body, targetName),
+                    text = stringResource(R.string.companion_choose_servers_body, choice.targetName),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
 
-        servers.forEach { server ->
-            val selected = server.id in selectedIds
-            Surface(
-                onClick = { selectedIds = companionToggleServer(selectedIds, server.id, singleSelect) },
-                shape = RoundedCornerShape(14.dp),
-                color = if (selected) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
+        // One section per saved server, the same shape for one account or many.
+        AccountList {
+            choice.servers.forEach { server ->
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(top = 4.dp)) {
                         Text(
                             text = server.displayName,
-                            style = MaterialTheme.typography.bodyLarge,
+                            style = MaterialTheme.typography.titleSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        val address = companionServerAddressLabel(server.url)
                         // Two servers can share a display name, so the address is
                         // what actually tells them apart. Skipped when the name is
                         // already the address and the line would just repeat it.
+                        val address = companionServerAddressLabel(server.url)
                         if (address != null && !address.equals(server.displayName, ignoreCase = true)) {
                             Text(
                                 text = address,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = LocalContentColor.current.copy(alpha = 0.7f),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(start = 8.dp),
                             )
                         }
                     }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    if (singleSelect) {
-                        RadioButton(selected = selected, onClick = null)
-                    } else {
-                        Checkbox(checked = selected, onCheckedChange = null)
+                    server.offeredAccounts.forEach { account ->
+                        val key = CompanionPairingDestination(server, account).key
+                        val isSelected = key in selected
+                        val enabled = choice.isEnabled(selected, key)
+                        AccountRow(
+                            name = companionAccountLabel(account, isPhones = server.isActive && account.isCurrent, tablet = tablet),
+                            detail = if (account.needsSignIn) {
+                                stringResource(if (tablet) R.string.companion_account_sign_in_again_tablet else R.string.companion_account_sign_in_again)
+                            } else {
+                                null
+                            },
+                            selected = isSelected,
+                            enabled = enabled,
+                            radio = singlePerRow,
+                            onClick = { selected = choice.toggle(selected, key) },
+                        )
                     }
                 }
             }
         }
 
+        // Why rows are single-select or disabled.
+        val limit = choice.limit
+        val note = when {
+            choice.mode == CompanionSelectionMode.OnePerServer ->
+                stringResource(R.string.companion_choose_one_per_server, choice.targetName)
+            limit != null && choice.mode == CompanionSelectionMode.Several ->
+                pluralStringResource(R.plurals.companion_choose_limit, limit, choice.targetName, limit)
+            else -> null
+        }
+        note?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
         Button(
-            onClick = { onContinue(selectedIds) },
-            enabled = selectedIds.isNotEmpty(),
+            onClick = { onContinue(selected) },
+            enabled = count > 0,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp)
                 .padding(top = 6.dp),
         ) {
-            Text(stringResource(R.string.companion_continue), style = MaterialTheme.typography.titleMedium)
+            Text(
+                if (count > 0) pluralStringResource(R.plurals.companion_continue_count, count, count) else stringResource(R.string.companion_continue),
+                style = MaterialTheme.typography.titleMedium,
+            )
         }
         TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.companion_cancel))
@@ -431,17 +478,85 @@ private fun ServerPicker(
     }
 }
 
-/** The chooser's starting selection: the phone's active server (the usual answer), only one for a Roku. */
-internal fun companionInitialServerSelection(servers: List<CompanionPairingServer>, singleSelect: Boolean): Set<String> {
-    val active = servers.filter { it.isActive }.map { it.id }
-    return if (singleSelect) active.take(1).toSet() else active.toSet()
+/**
+ * The account rows. They scroll within the height the rest of the card
+ * leaves, so a long list (or landscape, or large text) can't push the
+ * actions below it off screen.
+ */
+@Composable
+private fun ColumnScope.AccountList(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .weight(1f, fill = false)
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState()),
+        content = content,
+    )
 }
 
-/** A tap on [serverId]: a toggle, or for a single-select chooser, that server alone. */
-internal fun companionToggleServer(selected: Set<String>, serverId: String, singleSelect: Boolean): Set<String> = when {
-    singleSelect -> setOf(serverId)
-    serverId in selected -> selected - serverId
-    else -> selected + serverId
+/** One account row: its name, an optional line under it, and a checkbox or radio button. */
+@Composable
+private fun AccountRow(
+    name: String,
+    detail: String?,
+    selected: Boolean,
+    enabled: Boolean,
+    radio: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(14.dp),
+        color = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant
+        },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = LocalContentColor.current.copy(alpha = if (enabled) 1f else 0.5f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                detail?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LocalContentColor.current.copy(alpha = 0.7f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            if (radio) {
+                RadioButton(selected = selected, onClick = null, enabled = enabled)
+            } else {
+                Checkbox(checked = selected, onCheckedChange = null, enabled = enabled)
+            }
+        }
+    }
+}
+
+/** "alex", "alex · this phone" for the one in use, or "Your account" when the name isn't saved. */
+@Composable
+private fun companionAccountLabel(account: CompanionPairingAccount, isPhones: Boolean, tablet: Boolean): String {
+    val name = account.username?.takeIf { it.isNotBlank() } ?: stringResource(R.string.companion_account_unnamed)
+    return if (isPhones) {
+        stringResource(if (tablet) R.string.companion_account_this_tablet else R.string.companion_account_this_phone, name)
+    } else {
+        name
+    }
 }
 
 /**
@@ -465,6 +580,9 @@ internal fun companionServerAddressLabel(url: String): String? {
 private fun DiscoveryStep(
     target: CompanionPairingTarget,
     signInServerName: String?,
+    signInAccounts: List<CompanionPairingAccount>,
+    signInAccountId: String?,
+    onSignInAccountChosen: (String?) -> Unit,
     onPair: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -505,6 +623,30 @@ private fun DiscoveryStep(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+        // A sign-in screen takes one account; with two or more on that
+        // server the person picks which, the one in use to start with.
+        if (signIn && signInAccounts.size >= 2) {
+            val tablet = isTablet()
+            Text(
+                text = stringResource(R.string.companion_offer_signin_as),
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+            )
+            AccountList {
+                signInAccounts.forEach { account ->
+                    AccountRow(
+                        name = companionAccountLabel(account, isPhones = account.isCurrent, tablet = tablet),
+                        detail = null,
+                        selected = account.id == signInAccountId,
+                        enabled = true,
+                        radio = true,
+                        onClick = { onSignInAccountChosen(account.id) },
+                    )
+                }
+            }
+        }
         PrimaryAction(
             label = stringResource(
                 if (signIn) R.string.companion_offer_signin_action else R.string.companion_offer_setup_action,
@@ -530,8 +672,21 @@ private fun MatchConfirmation(
     ) {
         // People compare the TV's sign-in code, the one it shows on screen;
         // the match words are checked in code and never shown.
+        // A later target compared on its own names what it is for ("Check
+        // that Living Room shows this code for sam on Lake House").
+        val accountName = approval.accountName
+        val check = when {
+            !approval.isFollowUp -> stringResource(R.string.companion_confirm_check, approval.targetName)
+            accountName != null ->
+                stringResource(R.string.companion_confirm_check_for, approval.targetName, accountName, approval.serverName)
+            else -> stringResource(R.string.companion_confirm_check_for_server, approval.targetName, approval.serverName)
+        }
         Text(
-            text = stringResource(R.string.companion_confirm_check, approval.targetName),
+            text = if (approval.total > 1) {
+                stringResource(R.string.companion_progress_position, check, approval.position, approval.total)
+            } else {
+                check
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -601,7 +756,16 @@ private fun ProgressStep(status: CompanionPairingStatus, signIn: Boolean, onCanc
     val (title, message) = when (status) {
         is CompanionPairingStatus.Connecting -> connecting to status.targetName
         is CompanionPairingStatus.PickServers -> connecting to status.targetName
-        is CompanionPairingStatus.PushingServer -> working to if (signIn) {
+        // Later targets: "Signing in sam on Home… (2 of 4)".
+        is CompanionPairingStatus.PushingServer -> working to if (status.position > 1) {
+            stringResource(
+                R.string.companion_progress_position,
+                status.accountName?.let { stringResource(R.string.companion_progress_signing_in_account, it, status.serverName) }
+                    ?: stringResource(R.string.companion_progress_signing_in_server, status.serverName),
+                status.position,
+                status.total,
+            )
+        } else if (signIn) {
             stringResource(R.string.companion_signin_progress_allow, status.targetName)
         } else {
             stringResource(

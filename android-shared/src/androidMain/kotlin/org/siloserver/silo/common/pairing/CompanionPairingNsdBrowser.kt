@@ -214,8 +214,8 @@ internal class PairingResolveQueue {
 
 /**
  * A resolved `_silopair._tcp` or `_silopair-roku._tcp` record. Both carry the
- * same TXT keys (`v`, `name`, `id`, `sid`, `st`, `srv`); [isRoku] comes from
- * the browsed type alone, never from TXT.
+ * same TXT keys (`v`, `name`, `id`, `sid`, `st`, `srv`, `acct`, `lim`);
+ * [isRoku] comes from the browsed type alone, never from TXT.
  */
 internal fun pairingTargetFromRecord(
     host: String,
@@ -238,5 +238,7 @@ internal fun pairingTargetFromRecord(
         sessionId = string("sid"),
         serverIdentity = string("srv"),
         isRoku = isRoku,
+        acceptsAccounts = string(PairingProtocol.TXT_ACCEPTS_ACCOUNTS) == "1",
+        signInLimit = string(PairingProtocol.TXT_SIGN_IN_LIMIT)?.toIntOrNull()?.takeIf { it > 0 },
     )
 }
