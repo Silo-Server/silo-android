@@ -312,7 +312,8 @@ fun AudiobookPlayerScreen(
                 // Drive the icon from pause intent so it stays "pause" through the
                 // transient rebuffer a seek causes (isPlaying briefly flips false).
                 isPlaying = !state.isPaused,
-                enabled = state.streamUrl != null,
+                // After a failure Play stays live: it starts playback again.
+                enabled = state.streamUrl != null || state.canRetryPlayback,
                 hasChapters = state.chapters.isNotEmpty(),
                 skipBackSeconds = state.skipBackSeconds,
                 skipForwardSeconds = state.skipForwardSeconds,
