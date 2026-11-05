@@ -38,6 +38,34 @@ class OverlayRegistryTest {
         assertTrue(!OverlayRegistry.isSuppressed(OverlayId.Audio, prefs))
     }
 
+    // The profile document the web app writes with the defaults plus a
+    // combined badge turned on. Each combined badge hides the badges it
+    // repeats, and the wider one also hides the narrower.
+    private fun topLeftLabels(vararg combined: String): List<String> {
+        val items = combined.joinToString(",") { "\"$it\":{\"enabled\":true,\"position\":\"top-left\"}" }
+        val prefs = OverlaySchema.parse("""{"version":2,"preset":"classic","order":[],"items":{$items}}""")
+        val data = OverlayData(resolution = "2160p", hdr = "DV HDR10", audio = "Atmos")
+        return OverlayRegistry.enabled(OverlayPosition.TopLeft, prefs).mapNotNull { it.getValue(data) }
+    }
+
+    @Test
+    fun combinedBadges_hideTheBadgesTheyRepeat() {
+        assertEquals(listOf("4K DV", "Atmos"), topLeftLabels("resolution_hdr"))
+        assertEquals(listOf("4K DV Atmos"), topLeftLabels("resolution_hdr_audio"))
+        assertEquals(listOf("4K DV Atmos"), topLeftLabels("resolution_hdr", "resolution_hdr_audio"))
+    }
+
+    @Test
+    fun resolutionHdrAudio_getValue_joinsThePartsTheFileHas() {
+        val def = OverlayRegistry.all.single { it.id.raw == "resolution_hdr_audio" }
+        assertEquals("1080p TrueHD", def.getValue(OverlayData(resolution = "1080p", audio = "TrueHD")))
+        assertEquals("480p", def.getValue(OverlayData(resolution = "480p")))
+        assertEquals("HDR DTS-HD", def.getValue(OverlayData(hdr = "HDR10", audio = "DTS-HD")))
+        assertNull(def.getValue(OverlayData(audio = "")))
+        assertEquals(OverlayIconId.DolbyVision, def.getIcon?.invoke(OverlayData(hdr = "DV HDR10")))
+        assertNull(def.getIcon?.invoke(OverlayData(hdr = "HDR10", audio = "Atmos")))
+    }
+
     @Test
     fun enabled_respectsUserOrder() {
         val base = OverlaySchema.buildDefaults()
