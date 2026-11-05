@@ -15,6 +15,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlin.time.TimeSource
 
+/**
+ * A pairing session's binding (silo-server session binding): [binding] is
+ * sent on every device/start and [secret] on every poll, so only the device
+ * holding the secret can collect the tokens of a request a phone approved
+ * after checking another request's binding. Both are base64url without
+ * padding; [binding] is SHA-256 of the decoded [secret].
+ */
+data class DeviceLoginBinding(val binding: String, val secret: String) {
+    override fun toString(): String = "DeviceLoginBinding(<redacted>)"
+}
+
 /** Monotonic milliseconds, injectable so tests can drive deadlines with virtual time. */
 fun interface DeviceLoginClock {
     fun nowMs(): Long
@@ -260,10 +271,18 @@ class DeviceLoginRepository(
      * Begin against [serverUrl] without changing the globally active server.
      * Companion setup uses this persist-on-success path for candidate servers.
      */
-    suspend fun beginAt(serverUrl: String?, deviceName: String?, devicePlatform: String?) {
+    suspend fun beginAt(serverUrl: String?, deviceName: String?, devicePlatform: String?) =
+        beginAt(serverUrl, deviceName, devicePlatform, binding = null)
+
+    /**
+     * [beginAt] bound to a pairing session: [binding] goes on the start and
+     * every poll. Only for a [serverUrl] whose capability reports
+     * `session_binding`.
+     */
+    suspend fun beginAt(serverUrl: String?, deviceName: String?, devicePlatform: String?, binding: DeviceLoginBinding?) {
         _state.value = DeviceLoginState.Initiating
 
-        val session = when (val outcome = start(serverUrl, deviceName, devicePlatform)) {
+        val session = when (val outcome = start(serverUrl, deviceName, devicePlatform, binding)) {
             is StartOutcome.Started -> outcome.session
             is StartOutcome.Failed -> {
                 _state.value = DeviceLoginState.Failed(
@@ -280,7 +299,7 @@ class DeviceLoginRepository(
         }
 
         _state.value = DeviceLoginState.Awaiting(session)
-        runPollLoop(session, serverUrl)
+        runPollLoop(session, serverUrl, binding)
     }
 
     fun reset() {
@@ -288,11 +307,16 @@ class DeviceLoginRepository(
     }
 
     /** One start call against [serverUrl], or the active server when null. */
-    suspend fun start(serverUrl: String?, deviceName: String?, devicePlatform: String?): StartOutcome {
-        val result = if (serverUrl == null) {
-            api.startDeviceLogin(deviceName, devicePlatform)
-        } else {
-            api.startDeviceLoginAt(serverUrl, deviceName, devicePlatform)
+    suspend fun start(
+        serverUrl: String?,
+        deviceName: String?,
+        devicePlatform: String?,
+        binding: DeviceLoginBinding? = null,
+    ): StartOutcome {
+        val result = when {
+            serverUrl == null -> api.startDeviceLogin(deviceName, devicePlatform)
+            binding == null -> api.startDeviceLoginAt(serverUrl, deviceName, devicePlatform)
+            else -> api.startDeviceLoginAt(serverUrl, deviceName, devicePlatform, binding.binding)
         }
         return when (result) {
             is ApiResult.Success -> StartOutcome.Started(result.data)
@@ -301,11 +325,11 @@ class DeviceLoginRepository(
     }
 
     /** One poll call against [serverUrl], or the active server when null. */
-    suspend fun poll(serverUrl: String?, deviceCode: String): PollOutcome {
-        val result = if (serverUrl == null) {
-            api.pollDeviceLogin(deviceCode)
-        } else {
-            api.pollDeviceLoginAt(serverUrl, deviceCode)
+    suspend fun poll(serverUrl: String?, deviceCode: String, binding: DeviceLoginBinding? = null): PollOutcome {
+        val result = when {
+            serverUrl == null -> api.pollDeviceLogin(deviceCode)
+            binding == null -> api.pollDeviceLoginAt(serverUrl, deviceCode)
+            else -> api.pollDeviceLoginAt(serverUrl, deviceCode, binding.secret)
         }
         return when (result) {
             is ApiResult.Success -> PollOutcome.Answered(result.data)
@@ -342,8 +366,8 @@ class DeviceLoginRepository(
     suspend fun deny(scope: AuthScopeSnapshot, code: String) =
         api.denyDeviceLoginForScope(scope, code)
 
-    private suspend fun runPollLoop(session: DeviceLoginStartResponse, serverUrl: String?) {
-        val poller = DeviceLoginPoller(pollOnce = { poll(serverUrl, it) }, session = session, clock = clock)
+    private suspend fun runPollLoop(session: DeviceLoginStartResponse, serverUrl: String?, binding: DeviceLoginBinding?) {
+        val poller = DeviceLoginPoller(pollOnce = { poll(serverUrl, it, binding) }, session = session, clock = clock)
         while (true) {
             when (val step = poller.poll()) {
                 is DeviceLoginPoller.Step.Pending -> {

@@ -45,6 +45,8 @@ import org.siloserver.silo.tv.ui.screens.audiobook.TvAudiobookPlayerScreen
 import org.siloserver.silo.tv.ui.screens.auth.TvLoginScreen
 import org.siloserver.silo.tv.ui.screens.auth.TvPairDeviceScreen
 import org.siloserver.silo.tv.ui.screens.auth.TvServerSetupScreen
+import org.siloserver.silo.tv.ui.screens.auth.TvPairedSessionDestination
+import org.siloserver.silo.tv.ui.screens.auth.pairedSessionDestination
 import org.siloserver.silo.tv.ui.screens.auth.TvSetupScreen
 import org.siloserver.silo.tv.ui.screens.auth.TvSignupScreen
 import org.siloserver.silo.tv.ui.screens.profiles.TvCreateProfileScreen
@@ -93,6 +95,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.tv.ui.screens.cast.TvSiloCastStandbyView
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.siloserver.silo.common.player.playbackDisplayId
@@ -536,6 +539,7 @@ fun TvAppNavigation(
     val profileAwayTracker: ProfileAwayTracker = koinInject()
     val profileLaunchPreferences: ProfileLaunchPreferences = koinInject()
     val activeProfileReset: TvActiveProfileReset = koinInject()
+    val authRepository: org.siloserver.silo.repository.AuthRepository = koinInject()
     val remotePlaybackIdentityManager: RemotePlaybackIdentityManager = koinInject()
     val tvSignOut: TvSignOut = koinInject()
     val playbackLifecycle: PlaybackSessionLifecycle = koinInject()
@@ -1060,14 +1064,46 @@ fun TvAppNavigation(
                         }
                     },
                     onNeedsSetup = { navController.navigate(TvRoute.Setup.route) },
+                    // A saved server this TV is still signed in to.
+                    onSignedIn = {
+                        navController.navigate(TvRoute.ProfileSelection.route) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    },
                     // Companion pairing pushed a server AND completed device-login,
                     // so the TV is already authenticated — skip the login screen and
                     // go straight to profile selection (same as a successful sign-in).
-                    // Every account the phone signed in is saved, with no
-                    // separate account step.
-                    onPairedSignIn = {
-                        navController.navigate(TvRoute.ProfileSelection.route) {
-                            popUpTo(0) { inclusive = true }
+                    // Every account the phone signed in is saved. One opens its
+                    // picker; several open Change Account on the first, made
+                    // the open account first so Back opens its picker.
+                    onPairedAccounts = { accounts ->
+                        scope.launch {
+                            val destination = pairedSessionDestination(accounts)
+                            if (destination is TvPairedSessionDestination.ChangeAccount) {
+                                val first = destination.first
+                                // Opening the first is only the ordering: every
+                                // account is signed in either way, and Change
+                                // Account lets the person choose. So a failed
+                                // switch still goes on, on whichever is open.
+                                try {
+                                    if (serverRegistry.activeServerId.value != first.serverId ||
+                                        serverRegistry.activeAccountId.value != first.accountId
+                                    ) {
+                                        activeProfileReset.clearProfileCaches()
+                                        authRepository.switchToAccount(first.serverId, first.accountId)
+                                    }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    Log.w("TvPairing", "Couldn't open the first paired account", e)
+                                }
+                            }
+                            navController.navigate(TvRoute.ProfileSelection.route) {
+                                popUpTo(0) { inclusive = true }
+                            }
+                            if (destination is TvPairedSessionDestination.ChangeAccount) {
+                                navController.navigate(TvRoute.ChangeAccount().route) { launchSingleTop = true }
+                            }
                         }
                     },
                 )

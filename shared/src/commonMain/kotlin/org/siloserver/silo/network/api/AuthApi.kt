@@ -271,3 +271,29 @@ internal fun Account.toUser(): User = User(
     },
     passwordChangeRequired = passwordChangeRequired,
 )
+
+/**
+ * `GET /api/v2/account/me` at [serverUrl] with an access token that isn't
+ * saved anywhere yet (a TV checking whose account a pairing approval signed
+ * in before committing it). Runs on a client with no Silo auth plugin, so the
+ * active server's credentials never go with it. Null when it can't be read.
+ */
+class UnsavedSessionAccountReader(
+    private val client: HttpClient = org.siloserver.silo.network.createPlatformHttpClient(retryOnConnectionFailure = false),
+) {
+    suspend fun read(serverUrl: String, accessToken: String): User? = try {
+        val response = client.get("${serverUrl.trimEnd('/')}/api/v2/account/me") {
+            header(HttpHeaders.Authorization, "Bearer $accessToken")
+            accept(ContentType.Application.Json)
+        }
+        if (response.status.value != 200) {
+            null
+        } else {
+            SiloJson.decodeFromString(Account.serializer(), response.bodyAsText()).toUser()
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+}

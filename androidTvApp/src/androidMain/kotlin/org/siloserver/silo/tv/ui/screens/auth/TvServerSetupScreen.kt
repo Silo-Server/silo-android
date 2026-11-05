@@ -99,9 +99,14 @@ import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 fun TvServerSetupScreen(
     onContinueToLogin: (signupEnabled: Boolean) -> Unit,
     onNeedsSetup: () -> Unit,
-    onPairedSignIn: () -> Unit = {},
+    /**
+     * A phone's session ended after signing in [accounts] (the saved accounts,
+     * in the order they signed in). Opens the only one's picker, or Change
+     * Account on the first when there are several.
+     */
+    onPairedAccounts: (accounts: List<org.siloserver.silo.common.pairing.PairingCommittedAccount>) -> Unit,
     /** A saved server this TV is still signed in to: straight to its profiles. */
-    onSignedIn: () -> Unit = onPairedSignIn,
+    onSignedIn: () -> Unit,
     viewModel: TvServerSetupViewModel = koinViewModel(),
     pairingReceiver: PairingReceiver = koinInject(),
     pairingAdvertiser: TvPairingAdvertiser = koinInject(),
@@ -114,7 +119,12 @@ fun TvServerSetupScreen(
         onStopOrDispose { discovery.stop() }
     }
     val found by discovery.servers.collectAsState()
-    val pairingStatus by pairingReceiver.status.collectAsState()
+    val liveStatus by pairingReceiver.status.collectAsState()
+    // Once the session is finished, keep its summary on screen: stopping the
+    // advertiser returns the receiver to Idle, and opening the first account
+    // can take a moment before navigation, which flashed the setup page.
+    var finishedStatus by remember { mutableStateOf<PairingReceiverStatus?>(null) }
+    val pairingStatus = finishedStatus ?: liveStatus
     val isActivePairing = pairingStatus.isActivePairing
     var enteringAddress by rememberSaveable { mutableStateOf(false) }
 
@@ -130,11 +140,20 @@ fun TvServerSetupScreen(
         advertiserToken = token
         onDispose { pairingAdvertiser.stop(token) }
     }
+    // The dwell and the Continue button both finish; only the first counts.
+    var pairingFinished by remember { mutableStateOf(false) }
     val finishPairing = {
-        pairingAdvertiser.stop(advertiserToken)
-        // A one-profile household with no PIN goes straight to Home.
-        SignInHandoff.skipsSingleProfilePicker = true
-        onPairedSignIn()
+        if (!pairingFinished) {
+            pairingFinished = true
+            // Read before stopping: stopping returns the receiver to Idle.
+            val completed = pairingReceiver.status.value as? PairingReceiverStatus.Completed
+            finishedStatus = completed
+            val accounts = completed?.accounts.orEmpty()
+            pairingAdvertiser.stop(advertiserToken)
+            // A one-profile household with no PIN goes straight to Home.
+            SignInHandoff.skipsSingleProfilePicker = true
+            onPairedAccounts(accounts)
+        }
     }
     LaunchedEffect(pairingStatus) {
         if (pairingStatus is PairingReceiverStatus.Completed) {

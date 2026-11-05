@@ -24,7 +24,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * wiring.
  *
  * TXT record carries: v (protocol version), name (device name), id (stable
- * device id), sid (fresh nonce per [start]), st (receiver state) and, for a
+ * device id), sid (fresh nonce per [start]), st (receiver state), for a
+ * setup TV acct=1 (it keeps every account pushed in a session), and, for a
  * signed-out TV (`st=login`), srv (the deployment identity of the server it
  * wants, from `GET /api/v2/system/identity`). Phones offer a `login` TV only
  * when they hold a saved server with that verified identity.
@@ -201,6 +202,11 @@ class TvPairingAdvertiser(
             setAttribute("st", advertisement.state.wire)
             if (advertisement.state == PairingReceiverState.Login) {
                 advertisement.serverIdentity?.let { setAttribute("srv", it) }
+            } else {
+                // Any number of pushes per session, the same server again
+                // included, each kept as its own account (contract §B.3).
+                // A sign-in screen keeps one account, so it doesn't say so.
+                setAttribute(PairingProtocol.TXT_ACCEPTS_ACCOUNTS, "1")
             }
         }
         val listener = object : NsdManager.RegistrationListener {

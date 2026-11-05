@@ -78,19 +78,28 @@ private class FakeCompanionApprover(
     private val account: String? = "alice",
     private val approveFailure: ApiResult<DeviceLoginDecisionResponse>? = null,
     private val onLookup: suspend (String) -> Unit = {},
+    /** The lookup's session binding per code; absent codes have none. */
+    private val bindings: Map<String, String> = emptyMap(),
+    /** Lookup failures per code. */
+    private val lookupFailures: Map<String, ApiResult<DeviceLoginLookupResponse>> = emptyMap(),
 ) : CompanionDeviceLoginApprover {
-    override suspend fun accountName(server: CompanionPairingServer): String? = account
+    override suspend fun accountName(destination: CompanionPairingDestination): String? =
+        if (account == null) null else destination.account.username ?: account
 
     val lookups = mutableListOf<String>()
     val approvals = mutableListOf<String>()
     val denials = mutableListOf<String>()
 
+    /** Which saved account (server id / account id) approved each code. */
+    val approvedWith = mutableListOf<String>()
+
     override suspend fun lookup(
-        server: CompanionPairingServer,
+        destination: CompanionPairingDestination,
         code: String,
     ): ApiResult<DeviceLoginLookupResponse> {
         lookups += code
         onLookup(code)
+        lookupFailures[code]?.let { return it }
         return ApiResult.Success(
             DeviceLoginLookupResponse(
                 status = "pending",
@@ -98,28 +107,33 @@ private class FakeCompanionApprover(
                 matchCode = matchCodes[code],
                 deviceName = "Living Room",
                 devicePlatform = "Android TV",
+                binding = bindings[code],
             ),
         )
     }
 
     override suspend fun approve(
-        server: CompanionPairingServer,
+        destination: CompanionPairingDestination,
         code: String,
     ): ApiResult<DeviceLoginDecisionResponse> {
         approvals += code
+        approvedWith += destination.key
         approveFailure?.let { return it }
         onApprove(code)
         return ApiResult.Success(DeviceLoginDecisionResponse(status = "approved"))
     }
 
     override suspend fun deny(
-        server: CompanionPairingServer,
+        destination: CompanionPairingDestination,
         code: String,
     ): ApiResult<DeviceLoginDecisionResponse> {
         denials += code
         return ApiResult.Success(DeviceLoginDecisionResponse(status = "denied"))
     }
 }
+
+/** The chooser answer that sends every row. */
+private val everyAccount: suspend (CompanionAccountChoice) -> Set<String> = { choice -> choice.destinations.map { it.key }.toSet() }
 
 private class FakeCompanionServerStore(
     private val snapshot: CompanionPairingServerSnapshot,
@@ -188,6 +202,9 @@ class CompanionPairingCoordinatorTest {
                 "ABCD-0001" to "MATCH-1",
                 "ABCD-0002" to "MATCH-2",
             ),
+            // Both requests carry the TV session's binding, so the second
+            // one is approved on the strength of the first comparison.
+            bindings = mapOf("ABCD-0001" to "B", "ABCD-0002" to "B"),
             onApprove = { code ->
                 val serverUrl = when (code) {
                     "ABCD-0001" -> "https://secondary.example"
@@ -206,7 +223,8 @@ class CompanionPairingCoordinatorTest {
 
         val result = coordinator.pair(
             target = CompanionPairingTarget("tv-1", "Living Room", "127.0.0.1", 9999),
-            confirmFirstMatch = {
+            chooseAccounts = everyAccount,
+            confirmMatch = {
                 confirmations += it
                 true
             },
@@ -255,7 +273,7 @@ class CompanionPairingCoordinatorTest {
 
         val result = coordinator.pair(
             target = CompanionPairingTarget("tv-1", "Living Room", "127.0.0.1", 9999),
-            chooseServers = { choices -> choices.filter { it.id == selected.id } },
+            chooseAccounts = { choice -> choice.destinations.filter { it.server.id == selected.id }.map { it.key }.toSet() },
         )
 
         assertEquals(CompanionPairingResult.Completed(serverCount = 1), result)
@@ -264,7 +282,7 @@ class CompanionPairingCoordinatorTest {
             transport.sent.filterIsInstance<PairingMessage.PushServer>().map { it.serverURL },
         )
         assertEquals(
-            CompanionPairingStatus.Completed("Living Room", listOf("Selected")),
+            CompanionPairingStatus.Completed("Living Room", listOf(CompanionTargetOutcome("Selected", "alice"))),
             coordinator.status.value,
         )
     }
@@ -295,7 +313,7 @@ class CompanionPairingCoordinatorTest {
         assertEquals(other, coordinator.serverForSignedOutTv(target))
 
         var chooserShown = false
-        val result = coordinator.pair(target, chooseServers = { chooserShown = true; it })
+        val result = coordinator.pair(target, chooseAccounts = { chooserShown = true; it.initialSelection() })
 
         assertEquals(CompanionPairingResult.Completed(serverCount = 1), result)
         assertEquals(false, chooserShown)
@@ -359,27 +377,39 @@ class CompanionPairingCoordinatorTest {
         )
     }
 
-    /** The card can't name the account approving would sign the TV in as: nothing is approved. */
+    /**
+     * The account's name can't be read from the server: the card falls back
+     * to the saved username, or "with your account" when there is none, and
+     * the person still decides. Nothing is cancelled for it.
+     */
     @Test
-    fun anUnnamedAccountIsNeverApproved() = runTest {
-        val transport = ScriptedPhoneTransport()
-        val server = CompanionPairingServer(id = "srv-1", url = "https://lib.example", displayName = "Home")
-        val approver = FakeCompanionApprover(account = null)
-        val coordinator = CompanionPairingCoordinator(
-            serverStore = FakeCompanionServerStore(CompanionPairingServerSnapshot("srv-1", listOf(server))),
-            deviceLoginApprover = approver,
-            transportFactory = { transport },
-        )
+    fun anUnreadableAccountNameFallsBackInsteadOfStopping() = runTest {
+        for (saved in listOf("sam", null)) {
+            val transport = ScriptedPhoneTransport()
+            val server = CompanionPairingServer(
+                id = "srv-1",
+                url = "https://lib.example",
+                displayName = "Home",
+                accounts = listOf(CompanionPairingAccount(id = "acc-1", username = saved, isCurrent = true)),
+            )
+            val approver = FakeCompanionApprover(account = null, onApprove = { transport.signIn(server.url) })
+            val coordinator = CompanionPairingCoordinator(
+                serverStore = FakeCompanionServerStore(CompanionPairingServerSnapshot("srv-1", listOf(server))),
+                deviceLoginApprover = approver,
+                transportFactory = { transport },
+            )
+            val shown = mutableListOf<CompanionPairingApproval>()
 
-        val result = coordinator.pair(target = CompanionPairingTarget("tv-1", "Living Room", "127.0.0.1", 9999))
+            val result = coordinator.pair(
+                target = CompanionPairingTarget("tv-1", "Living Room", "127.0.0.1", 9999),
+                confirmMatch = { shown += it; true },
+            )
 
-        assertEquals(
-            CompanionPairingResult.Failed("Couldn't confirm which account would sign in on Living Room. Try again."),
-            result,
-        )
-        assertTrue(approver.approvals.isEmpty())
-        assertTrue(approver.denials.isEmpty())
-        assertTrue(transport.sent.any { it is PairingMessage.Cancel })
+            assertEquals(CompanionPairingResult.Completed(serverCount = 1), result, "saved=$saved")
+            assertEquals(saved, shown.single().accountName)
+            assertEquals(listOf("ABCD-0001"), approver.approvals)
+            assertTrue(transport.sent.none { it is PairingMessage.Cancel })
+        }
     }
 
     /** A TV that refuses the push before starting a sign-in fails the pairing at once, with its reason. */
@@ -523,7 +553,16 @@ class CompanionPairingCoordinatorTest {
                 val shown = if (case == "mismatched") "MATCH-X" else "MATCH-$n"
                 inbound.send(PairingMessage.DeviceStarted(push.serverURL, "ABCD-000$n", shown))
             }
-            assertEquals(CompanionPairingResult.Failed("Den TV cancelled."), result, case)
+            if (case == "second") {
+                // The first server signed in and stays signed in on the TV.
+                assertEquals(
+                    CompanionPairingResult.Completed(1, listOf(CompanionTargetOutcome("Cabin", "alice", "Den TV cancelled."))),
+                    result,
+                    case,
+                )
+            } else {
+                assertEquals(CompanionPairingResult.Failed("Den TV cancelled."), result, case)
+            }
             assertTrue(approver.denials.isEmpty(), case)
             assertEquals(if (case == "second") listOf("ABCD-0001") else emptyList(), approver.approvals, case)
         }
@@ -554,7 +593,11 @@ class CompanionPairingCoordinatorTest {
             transportFactory = { transport },
         )
         onCoordinator(coordinator)
-        return coordinator.pair(CompanionPairingTarget("tv-1", "Den TV", "127.0.0.1", 9999), confirmFirstMatch = confirm)
+        return coordinator.pair(
+            CompanionPairingTarget("tv-1", "Den TV", "127.0.0.1", 9999),
+            chooseAccounts = everyAccount,
+            confirmMatch = confirm,
+        )
     }
 
     /** A Roku keeps one server and refuses a second push (silo-roku `docs/companion-pairing.md` section 4). */
@@ -573,7 +616,7 @@ class CompanionPairingCoordinatorTest {
 
         val result = coordinator.pair(
             target = CompanionPairingTarget("roku-1", "Den Roku", "127.0.0.1", 52827, isRoku = true),
-            chooseServers = { it },
+            chooseAccounts = everyAccount,
         )
 
         assertEquals(CompanionPairingResult.Completed(serverCount = 1), result)

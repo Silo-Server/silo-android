@@ -49,6 +49,8 @@ val networkModule = module {
     single { OnboardingApi(get(), get(), get()) }
     single<DeviceLoginApi> { DefaultDeviceLoginApi(get(), get()) }
     single<ServerIdentityApi> { DefaultServerIdentityApi(get()) }
+    // /me with a token not saved yet, on a client without the Silo auth plugin.
+    single { UnsavedSessionAccountReader() }
     single<org.siloserver.silo.network.api.ExternalSignInApi> {
         org.siloserver.silo.network.api.DefaultExternalSignInApi(get(), get())
     }
