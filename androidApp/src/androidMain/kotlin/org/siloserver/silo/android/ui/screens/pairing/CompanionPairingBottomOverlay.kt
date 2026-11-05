@@ -15,9 +15,12 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
@@ -393,46 +396,48 @@ private fun AccountPicker(
         }
 
         // One section per saved server, the same shape for one account or many.
-        choice.servers.forEach { server ->
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(top = 4.dp)) {
-                    Text(
-                        text = server.displayName,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    // Two servers can share a display name, so the address is
-                    // what actually tells them apart. Skipped when the name is
-                    // already the address and the line would just repeat it.
-                    val address = companionServerAddressLabel(server.url)
-                    if (address != null && !address.equals(server.displayName, ignoreCase = true)) {
+        AccountList {
+            choice.servers.forEach { server ->
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(top = 4.dp)) {
                         Text(
-                            text = address,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            text = server.displayName,
+                            style = MaterialTheme.typography.titleSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                        // Two servers can share a display name, so the address is
+                        // what actually tells them apart. Skipped when the name is
+                        // already the address and the line would just repeat it.
+                        val address = companionServerAddressLabel(server.url)
+                        if (address != null && !address.equals(server.displayName, ignoreCase = true)) {
+                            Text(
+                                text = address,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(start = 8.dp),
+                            )
+                        }
+                    }
+                    server.offeredAccounts.forEach { account ->
+                        val key = CompanionPairingDestination(server, account).key
+                        val isSelected = key in selected
+                        val enabled = choice.isEnabled(selected, key)
+                        AccountRow(
+                            name = companionAccountLabel(account, isPhones = server.isActive && account.isCurrent, tablet = tablet),
+                            detail = if (account.needsSignIn) {
+                                stringResource(if (tablet) R.string.companion_account_sign_in_again_tablet else R.string.companion_account_sign_in_again)
+                            } else {
+                                null
+                            },
+                            selected = isSelected,
+                            enabled = enabled,
+                            radio = singlePerRow,
+                            onClick = { selected = choice.toggle(selected, key) },
                         )
                     }
-                }
-                server.offeredAccounts.forEach { account ->
-                    val key = CompanionPairingDestination(server, account).key
-                    val isSelected = key in selected
-                    val enabled = choice.isEnabled(selected, key)
-                    AccountRow(
-                        name = companionAccountLabel(account, isPhones = server.isActive && account.isCurrent, tablet = tablet),
-                        detail = if (account.needsSignIn) {
-                            stringResource(if (tablet) R.string.companion_account_sign_in_again_tablet else R.string.companion_account_sign_in_again)
-                        } else {
-                            null
-                        },
-                        selected = isSelected,
-                        enabled = enabled,
-                        radio = singlePerRow,
-                        onClick = { selected = choice.toggle(selected, key) },
-                    )
                 }
             }
         }
@@ -471,6 +476,23 @@ private fun AccountPicker(
             Text(stringResource(R.string.companion_cancel))
         }
     }
+}
+
+/**
+ * The account rows. They scroll within the height the rest of the card
+ * leaves, so a long list (or landscape, or large text) can't push the
+ * actions below it off screen.
+ */
+@Composable
+private fun ColumnScope.AccountList(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .weight(1f, fill = false)
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState()),
+        content = content,
+    )
 }
 
 /** One account row: its name, an optional line under it, and a checkbox or radio button. */
@@ -612,15 +634,17 @@ private fun DiscoveryStep(
                     .fillMaxWidth()
                     .padding(top = 8.dp),
             )
-            signInAccounts.forEach { account ->
-                AccountRow(
-                    name = companionAccountLabel(account, isPhones = account.isCurrent, tablet = tablet),
-                    detail = null,
-                    selected = account.id == signInAccountId,
-                    enabled = true,
-                    radio = true,
-                    onClick = { onSignInAccountChosen(account.id) },
-                )
+            AccountList {
+                signInAccounts.forEach { account ->
+                    AccountRow(
+                        name = companionAccountLabel(account, isPhones = account.isCurrent, tablet = tablet),
+                        detail = null,
+                        selected = account.id == signInAccountId,
+                        enabled = true,
+                        radio = true,
+                        onClick = { onSignInAccountChosen(account.id) },
+                    )
+                }
             }
         }
         PrimaryAction(

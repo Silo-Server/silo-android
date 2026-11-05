@@ -142,7 +142,7 @@
     <string name="tv_pairing_chip_approving">Your phone is approving</string>
     <string name="tv_pairing_connected_title">Choose accounts\non your phone</string>
     <string name="tv_pairing_connected_title_signin">Continue on\nyour phone</string>
-    <string name="tv_pairing_connected_detail">On your phone or tablet, choose which servers this TV should sign in to.</string>
+    <string name="tv_pairing_connected_detail">On your phone or tablet, choose which accounts this TV should sign in to.</string>
     <string name="tv_pairing_connected_detail_signin">Continue on your phone or tablet.</string>
     <string name="tv_pairing_consent_title">Allow this\nsetup?</string>
     <string name="tv_pairing_consent_title_signin">Allow this\nsign-in?</string>
@@ -189,7 +189,7 @@
     <string name="tv_pairing_use_alternate">Use %1$s</string>
     <!-- The card beside each state. -->
     <string name="tv_pairing_card_on_phone">On your phone</string>
-    <string name="tv_pairing_card_on_phone_note">Pick the servers to bring over, then tap Continue.</string>
+    <string name="tv_pairing_card_on_phone_note">Pick the accounts to bring over, then tap Continue.</string>
     <string name="tv_pairing_card_on_phone_note_signin">Approve the sign-in there.</string>
     <string name="tv_pairing_card_consent_note">After you allow it, a code appears here to compare with your phone.</string>
     <string name="tv_pairing_card_no_answer">No answer</string>

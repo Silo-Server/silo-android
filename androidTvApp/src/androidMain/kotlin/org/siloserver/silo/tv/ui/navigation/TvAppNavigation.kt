@@ -95,6 +95,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.tv.ui.screens.cast.TvSiloCastStandbyView
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.siloserver.silo.common.player.playbackDisplayId
@@ -1063,6 +1064,12 @@ fun TvAppNavigation(
                         }
                     },
                     onNeedsSetup = { navController.navigate(TvRoute.Setup.route) },
+                    // A saved server this TV is still signed in to.
+                    onSignedIn = {
+                        navController.navigate(TvRoute.ProfileSelection.route) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    },
                     // Companion pairing pushed a server AND completed device-login,
                     // so the TV is already authenticated — skip the login screen and
                     // go straight to profile selection (same as a successful sign-in).
@@ -1074,11 +1081,21 @@ fun TvAppNavigation(
                             val destination = pairedSessionDestination(accounts)
                             if (destination is TvPairedSessionDestination.ChangeAccount) {
                                 val first = destination.first
-                                runCatching {
-                                    if (serverRegistry.activeAccountId.value != first.accountId) {
+                                // Opening the first is only the ordering: every
+                                // account is signed in either way, and Change
+                                // Account lets the person choose. So a failed
+                                // switch still goes on, on whichever is open.
+                                try {
+                                    if (serverRegistry.activeServerId.value != first.serverId ||
+                                        serverRegistry.activeAccountId.value != first.accountId
+                                    ) {
                                         activeProfileReset.clearProfileCaches()
                                         authRepository.switchToAccount(first.serverId, first.accountId)
                                     }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    Log.w("TvPairing", "Couldn't open the first paired account", e)
                                 }
                             }
                             navController.navigate(TvRoute.ProfileSelection.route) {

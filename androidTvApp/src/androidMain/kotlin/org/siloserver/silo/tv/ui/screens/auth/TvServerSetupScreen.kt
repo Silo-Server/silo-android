@@ -99,15 +99,14 @@ import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 fun TvServerSetupScreen(
     onContinueToLogin: (signupEnabled: Boolean) -> Unit,
     onNeedsSetup: () -> Unit,
-    onPairedSignIn: () -> Unit = {},
     /**
      * A phone's session ended after signing in [accounts] (the saved accounts,
      * in the order they signed in). Opens the only one's picker, or Change
      * Account on the first when there are several.
      */
-    onPairedAccounts: (accounts: List<org.siloserver.silo.common.pairing.PairingCommittedAccount>) -> Unit = { onPairedSignIn() },
+    onPairedAccounts: (accounts: List<org.siloserver.silo.common.pairing.PairingCommittedAccount>) -> Unit,
     /** A saved server this TV is still signed in to: straight to its profiles. */
-    onSignedIn: () -> Unit = onPairedSignIn,
+    onSignedIn: () -> Unit,
     viewModel: TvServerSetupViewModel = koinViewModel(),
     pairingReceiver: PairingReceiver = koinInject(),
     pairingAdvertiser: TvPairingAdvertiser = koinInject(),

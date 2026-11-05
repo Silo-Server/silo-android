@@ -461,10 +461,15 @@ class CompanionPairingCoordinator(
             val server = signInServer?.let { matched -> orderedServers.firstOrNull { it.id == matched.id } }
                 ?: serverForSignedOutTv(target)
                 ?: return fail(target, "This phone isn't signed in to the server ${target.name} uses.")
+            // The account chosen on the card, never a stand-in: one that has
+            // since signed out or expired fails instead of signing the TV in
+            // as someone else.
             val account = server.approvableAccounts.let { accounts ->
-                accounts.firstOrNull { signInAccountId != null && it.id == signInAccountId }
-                    ?: accounts.firstOrNull { it.isCurrent }
-                    ?: accounts.firstOrNull()
+                if (signInAccountId != null) {
+                    accounts.firstOrNull { it.id == signInAccountId }
+                } else {
+                    accounts.firstOrNull { it.isCurrent } ?: accounts.firstOrNull()
+                }
             } ?: return fail(target, "Sign in to ${server.displayName} on this device again, then try again.")
             CompanionPairingDestination(server, account)
         } else {

@@ -350,4 +350,34 @@ class CompanionPairingMultiAccountTest {
         assertEquals(listOf("ABCD-0001" to key(home, "sam")), approver.approvedWith)
         assertEquals("sam", tv.pushed.single().accountName)
     }
+
+    /** The account chosen on the card has gone since: fail rather than sign the TV in as another one. */
+    @Test
+    fun aSignInTvFailsWhenTheChosenAccountIsGone() = runTest {
+        val tv = MultiPushTv(state = PairingReceiverState.Login)
+        val approver = AccountApprover(tv)
+        var connected = false
+        val coordinator = CompanionPairingCoordinator(
+            serverStore = object : CompanionPairingServerStore {
+                override suspend fun snapshot() = CompanionPairingServerSnapshot("home", listOf(home, lake))
+            },
+            deviceLoginApprover = approver,
+            transportFactory = { connected = true; tv },
+            identitySource = object : CompanionServerIdentitySource {
+                override suspend fun identity(server: CompanionPairingServer) = "S-${server.id}"
+                override suspend fun endpoints(server: CompanionPairingServer) = null
+            },
+        )
+        val target = CompanionPairingTarget("tv-1", "Den TV", "127.0.0.1", 9999, state = "login", serverIdentity = "S-home")
+
+        val result = coordinator.pair(
+            target = target,
+            signInServer = coordinator.serverForSignedOutTv(target),
+            signInAccountId = "removed",
+        )
+
+        assertIs<CompanionPairingResult.Failed>(result)
+        assertEquals(false, connected)
+        assertTrue(approver.approvedWith.isEmpty())
+    }
 }
