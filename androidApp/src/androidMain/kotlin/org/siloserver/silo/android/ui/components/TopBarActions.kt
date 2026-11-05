@@ -10,10 +10,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SettingsRemote
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Text
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -56,6 +61,36 @@ val TopBarEdgeMargin = 16.dp
  * pixels on every navigation.
  */
 val TopBarRowTopInset = 0.dp
+
+/*
+ * Vertical grid shared by the phone tabs (Home, Libraries, For You,
+ * Downloads), measured down from the bottom of the status bar:
+ *
+ *   header row   0..48   title or wordmark, actions centred in it
+ *   pill row    56..96   Libraries' subtabs, For You's Watchlist/Favorites
+ *   content     120..    first row (Home reserves the pill band empty)
+ *
+ * Every tab's first row starts at [TabContentTop], so rows do not jump
+ * vertically when switching tabs.
+ */
+
+/** Height of the row that holds the page title and the trailing actions. */
+val TabHeaderRowHeight = 48.dp
+
+/** Gap between the header row and the pill row. */
+val TabHeaderPillGap = 8.dp
+
+/** Height of the pill row under the header. */
+val TabPillRowHeight = 40.dp
+
+/** Gap between the pill row and the first content row. */
+val TabContentGap = 24.dp
+
+/** Scroll distance over which a tab header's glass fades in. */
+val TopBarGlassFadeDistance = 80.dp
+
+/** Top of the first content row, below the status bar. */
+val TabContentTop = TabHeaderRowHeight + TabHeaderPillGap + TabPillRowHeight + TabContentGap
 
 /**
  * A plain 40dp hit target: the glyph only, no disc, no border, no shadow.
@@ -141,12 +176,82 @@ fun TopBarProfileMenu(
 }
 
 /**
- * iOS `TabTopBarActions`: search then the profile avatar menu. [leadingActions]
- * lets a tab prepend its own button (Home's remote-control button).
+ * State and actions for the header's remote-control button, which every tab
+ * header shows beside search.
+ */
+@Immutable
+class TopBarRemoteControl(
+    /** True while this phone is controlling a TV. */
+    val isActive: Boolean,
+    /** Opens the remote, or the TV picker when nothing is connected. */
+    val onOpen: () -> Unit,
+    val onChooseTv: () -> Unit,
+    val onDisconnect: () -> Unit,
+)
+
+/**
+ * Mirrors Apple's SiloControlModeButton: chrome-free at rest, a filled disc
+ * while controlling a TV. In that state it opens a menu instead of jumping
+ * straight to the remote.
+ */
+@Composable
+private fun TopBarRemoteControlButton(remoteControl: TopBarRemoteControl) {
+    Box {
+        var menuExpanded by remember { mutableStateOf(false) }
+        TopBarIconButton(
+            onClick = {
+                if (remoteControl.isActive) menuExpanded = true else remoteControl.onOpen()
+            },
+            isActive = remoteControl.isActive,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.SettingsRemote,
+                contentDescription = "Remote Control",
+            )
+        }
+        SiloDropdownMenu(
+            expanded = menuExpanded,
+            onDismissRequest = { menuExpanded = false },
+        ) {
+            SiloDropdownMenuItem(
+                text = { Text("Remote Control") },
+                onClick = {
+                    menuExpanded = false
+                    remoteControl.onOpen()
+                },
+            )
+            SiloDropdownMenuItem(
+                text = { Text("Choose TV") },
+                onClick = {
+                    menuExpanded = false
+                    remoteControl.onChooseTv()
+                },
+            )
+            HorizontalDivider()
+            SiloDropdownMenuItem(
+                text = {
+                    Text(
+                        "Turn Off Control Mode",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                },
+                onClick = {
+                    menuExpanded = false
+                    remoteControl.onDisconnect()
+                },
+            )
+        }
+    }
+}
+
+/**
+ * iOS `TabTopBarActions`: remote control, search, then the profile avatar
+ * menu. [remoteControl] is required so no tab shows search without the remote.
  */
 @Composable
 fun TabTopBarActions(
     activeProfile: Profile?,
+    remoteControl: TopBarRemoteControl,
     onSearchClick: () -> Unit,
     onRequestsClick: (() -> Unit)?,
     onWatchPartyClick: (() -> Unit)?,
@@ -155,14 +260,13 @@ fun TabTopBarActions(
     onChangeAccountClick: () -> Unit,
     onSignOutClick: (removeServer: Boolean) -> Unit,
     modifier: Modifier = Modifier,
-    leadingActions: @Composable () -> Unit = {},
 ) {
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(TopBarActionSpacing),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        leadingActions()
+        TopBarRemoteControlButton(remoteControl)
         TopBarIconButton(onClick = onSearchClick) {
             Icon(
                 imageVector = Icons.Outlined.Search,

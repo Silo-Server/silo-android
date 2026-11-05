@@ -2,8 +2,6 @@ package org.siloserver.silo.android.ui.screens.home
 
 import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.domain.settings.CatalogLanguageRevision
-import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
-import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,9 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.SettingsRemote
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -58,12 +54,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import coil3.imageLoader
 import coil3.request.ImageRequest
+import org.siloserver.silo.android.ui.components.TabContentGap
+import org.siloserver.silo.android.ui.components.TabContentTop
+import org.siloserver.silo.android.ui.components.TabHeaderRowHeight
 import org.siloserver.silo.android.ui.components.TopBarEdgeMargin
+import org.siloserver.silo.android.ui.components.TopBarRemoteControl
 import org.siloserver.silo.android.ui.components.TopBarRowTopInset
 import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.android.ui.components.SiloWordmark
 import org.siloserver.silo.android.ui.components.TabTopBarActions
-import org.siloserver.silo.android.ui.components.TopBarIconButton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
@@ -130,10 +129,7 @@ fun HomeScreen(
     viewModel: HomeViewModel,
     activeProfile: Profile?,
     onSearchClick: () -> Unit,
-    onRemoteControlClick: () -> Unit,
-    onRemoteChooseTvClick: () -> Unit,
-    onRemoteDisconnectClick: () -> Unit,
-    isRemoteControlActive: Boolean,
+    remoteControl: TopBarRemoteControl,
     onRequestsClick: (() -> Unit)?,
     onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
@@ -371,20 +367,25 @@ fun HomeScreen(
                         // iOS `sectionSpacing` = SiloTheme.largePadding (24).
                         verticalArrangement = Arrangement.spacedBy(24.dp),
                     ) {
-                        // Reserve runway under the floating header so the first row
-                        // doesn't slide under the status-bar chrome. iOS runway =
-                        // topInset + 40 + smallPadding(8) + largePadding(24) +
-                        // smallPadding(8) - headerTopReclaim(16) = topInset + 64.
+                        // The wordmark sits in the header row; the space below
+                        // it covers the pill band Libraries and For You use, so
+                        // the first row starts at TabContentTop on every tab.
                         item(key = "homeIdentity") {
-                            Row(
+                            Box(
                                 modifier = Modifier
                                     .windowInsetsPadding(WindowInsets.statusBars)
                                     .fillMaxWidth()
-                                    .height(64.dp)
-                                    .padding(horizontal = 16.dp),
-                                verticalAlignment = Alignment.Top,
+                                    .height(TabContentTop - TabContentGap),
                             ) {
-                                SiloWordmark()
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(TabHeaderRowHeight)
+                                        .padding(horizontal = TopBarEdgeMargin),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    SiloWordmark()
+                                }
                             }
                         }
 
@@ -484,10 +485,7 @@ fun HomeScreen(
         HomeFloatingChrome(
             activeProfile = activeProfile,
             onSearchClick = onSearchClick,
-            onRemoteControlClick = onRemoteControlClick,
-            onRemoteChooseTvClick = onRemoteChooseTvClick,
-            onRemoteDisconnectClick = onRemoteDisconnectClick,
-            isRemoteControlActive = isRemoteControlActive,
+            remoteControl = remoteControl,
             onRequestsClick = onRequestsClick,
             onWatchPartyClick = onWatchPartyClick,
             onSettingsClick = onSettingsClick,
@@ -509,7 +507,7 @@ private fun HomeLoadingSkeleton() {
         Spacer(
             modifier = Modifier
                 .windowInsetsPadding(WindowInsets.statusBars)
-                .height(64.dp),
+                .height(TabContentTop - TabContentGap),
         )
         repeat(4) {
             MediaRowSkeleton(progress = shimmer)
@@ -521,10 +519,7 @@ private fun HomeLoadingSkeleton() {
 private fun HomeFloatingChrome(
     activeProfile: Profile?,
     onSearchClick: () -> Unit,
-    onRemoteControlClick: () -> Unit,
-    onRemoteChooseTvClick: () -> Unit,
-    onRemoteDisconnectClick: () -> Unit,
-    isRemoteControlActive: Boolean,
+    remoteControl: TopBarRemoteControl,
     onRequestsClick: (() -> Unit)?,
     onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
@@ -537,13 +532,15 @@ private fun HomeFloatingChrome(
         Box(
             modifier = Modifier
                 .padding(top = statusBarPadding.calculateTopPadding() + TopBarRowTopInset)
-                .padding(start = TopBarEdgeMargin, end = TopBarEdgeMargin, bottom = 8.dp)
-                .fillMaxWidth(),
+                .padding(start = TopBarEdgeMargin, end = TopBarEdgeMargin)
+                .fillMaxWidth()
+                .height(TabHeaderRowHeight),
         ) {
             // The SILO identity scrolls with the feed; only utilities remain pinned.
             TabTopBarActions(
                 modifier = Modifier.align(Alignment.CenterEnd),
                 activeProfile = activeProfile,
+                remoteControl = remoteControl,
                 onSearchClick = onSearchClick,
                 onRequestsClick = onRequestsClick,
                 onWatchPartyClick = onWatchPartyClick,
@@ -551,61 +548,6 @@ private fun HomeFloatingChrome(
                 onSwitchProfileClick = onSwitchProfileClick,
                 onChangeAccountClick = onChangeAccountClick,
                 onSignOutClick = onSignOutClick,
-                leadingActions = {
-                    // Mirrors Apple's SiloControlModeButton: chrome-free at rest,
-                    // filled disc while controlling a TV; the active state opens a
-                    // menu instead of jumping straight to the remote.
-                    Box {
-                        var remoteMenuExpanded by remember { mutableStateOf(false) }
-                        TopBarIconButton(
-                            onClick = {
-                                if (isRemoteControlActive) {
-                                    remoteMenuExpanded = true
-                                } else {
-                                    onRemoteControlClick()
-                                }
-                            },
-                            isActive = isRemoteControlActive,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.SettingsRemote,
-                                contentDescription = "Remote Control",
-                            )
-                        }
-                        SiloDropdownMenu(
-                            expanded = remoteMenuExpanded,
-                            onDismissRequest = { remoteMenuExpanded = false },
-                        ) {
-                            SiloDropdownMenuItem(
-                                text = { Text("Remote Control") },
-                                onClick = {
-                                    remoteMenuExpanded = false
-                                    onRemoteControlClick()
-                                },
-                            )
-                            SiloDropdownMenuItem(
-                                text = { Text("Choose TV") },
-                                onClick = {
-                                    remoteMenuExpanded = false
-                                    onRemoteChooseTvClick()
-                                },
-                            )
-                            HorizontalDivider()
-                            SiloDropdownMenuItem(
-                                text = {
-                                    Text(
-                                        "Turn Off Control Mode",
-                                        color = MaterialTheme.colorScheme.error,
-                                    )
-                                },
-                                onClick = {
-                                    remoteMenuExpanded = false
-                                    onRemoteDisconnectClick()
-                                },
-                            )
-                        }
-                    }
-                },
             )
         }
     }

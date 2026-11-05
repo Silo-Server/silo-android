@@ -22,6 +22,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -32,10 +33,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import org.siloserver.silo.android.ui.components.MainAppHeaderBodyHeight
 import org.siloserver.silo.android.ui.components.MainAppTopBar
+import org.siloserver.silo.android.ui.components.TabContentTop
+import org.siloserver.silo.android.ui.components.TopBarGlassFadeDistance
+import org.siloserver.silo.android.ui.components.TopBarRemoteControl
 import org.siloserver.silo.android.ui.components.TabTopBarActions
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.android.ui.navigation.SiloBottomNavBar
@@ -231,9 +241,11 @@ fun MainScreen(
 
     // The shared top bar floats over content; its real height is the status-bar
     // inset plus the fixed bar body. Offset tab content by that so the bar can't
-    // overlap content on tall-cutout / large-display devices.
-    val headerContentTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
-        MainAppHeaderBodyHeight
+    // overlap content on tall-cutout / large-display devices. Tabs without a
+    // pill row (Downloads) start at the first-row line instead.
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val headerContentTop = statusBarTop + MainAppHeaderBodyHeight
+    val tabContentTop = statusBarTop + TabContentTop
 
     // If the user is on a tab no longer supported by their libraries (or
     // Downloads disappears), move them to the nearest visible media tab.
@@ -346,9 +358,36 @@ fun MainScreen(
     // What For You is actually showing (the empty-feed fallback shows the
     // Watchlist without making it an explicit selection); drives the title.
     var forYouDisplayed by remember { mutableStateOf<ForYouList?>(null) }
+    // How far the For You / Downloads content has scrolled under the shared
+    // header, clamped to the glass fade distance. Driven by nested scroll so
+    // every list those tabs show feeds it; restarts with each tab or list.
+    val headerFadePx = with(LocalDensity.current) { TopBarGlassFadeDistance.toPx() }
+    var headerScrollPx by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(currentTab, forYouDisplayed) { headerScrollPx = 0f }
+    val headerScrollConnection = remember(headerFadePx) {
+        object : NestedScrollConnection {
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                headerScrollPx = (headerScrollPx - consumed.y).coerceIn(0f, headerFadePx)
+                return Offset.Zero
+            }
+        }
+    }
     // Instantiate with the shell, not when the lazy tab is first opened, so
     // Discover and taste-profile requests run alongside profile/header setup.
     val recommendationsViewModel = koinViewModel<RecommendationsViewModel>()
+    // Every tab header shows the remote-control button beside search.
+    val remoteControl = TopBarRemoteControl(
+        isActive = siloCastState.hasActiveSession,
+        onOpen = {
+            if (siloCastState.hasActiveSession) {
+                navController.navigate(Route.SiloCastRemote.route)
+            } else {
+                showSiloCastTargetPicker = true
+            }
+        },
+        onChooseTv = { showSiloCastTargetPicker = true },
+        onDisconnect = { siloCastController.disconnect() },
+    )
     Scaffold(
         bottomBar = {
             // The cast bar rests above the nav menu (iOS tabViewBottomAccessory
@@ -409,6 +448,7 @@ fun MainScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .hazeSource(hazeState)
+                    .nestedScroll(headerScrollConnection)
                     .siloPageBackdrop(),
             ) {
                 when (currentTab) {
@@ -433,16 +473,7 @@ fun MainScreen(
                             viewModel = homeViewModel,
                             activeProfile = headerState.activeProfile,
                             onSearchClick = { navController.navigate(Route.Search().route) },
-                            onRemoteControlClick = {
-                                if (siloCastState.hasActiveSession) {
-                                    navController.navigate(Route.SiloCastRemote.route)
-                                } else {
-                                    showSiloCastTargetPicker = true
-                                }
-                            },
-                            onRemoteChooseTvClick = { showSiloCastTargetPicker = true },
-                            onRemoteDisconnectClick = { siloCastController.disconnect() },
-                            isRemoteControlActive = siloCastState.hasActiveSession,
+                            remoteControl = remoteControl,
                             onRequestsClick = requestsMenuAction,
                             onWatchPartyClick = watchPartyMenuAction,
                             onSettingsClick = { navController.navigate(Route.Settings.route) },
@@ -477,6 +508,7 @@ fun MainScreen(
                             },
                             viewModel = requireNotNull(librariesViewModel),
                             activeProfile = headerState.activeProfile,
+                            remoteControl = remoteControl,
                             onLibrarySelectorClick = { showLibrarySelector = true },
                             onSearchClick = { navController.navigate(Route.Search().route) },
                             onRequestsClick = requestsMenuAction,
@@ -509,6 +541,7 @@ fun MainScreen(
                             headerActions = {
                                 TabTopBarActions(
                                     activeProfile = headerState.activeProfile,
+                                    remoteControl = remoteControl,
                                     onSearchClick = { navController.navigate(Route.Search().route) },
                                     onRequestsClick = requestsMenuAction,
                                     onWatchPartyClick = watchPartyMenuAction,
@@ -549,7 +582,9 @@ fun MainScreen(
                             onReadEbook = { contentId, fileId ->
                                 navController.navigate(Route.BookReader(contentId, fileId).route)
                             },
-                            contentTopPadding = headerContentTop,
+                            // Downloads has no pill row; its list still starts
+                            // where every other tab's first row does.
+                            contentTopPadding = tabContentTop,
                         )
                     }
                 }
@@ -566,8 +601,10 @@ fun MainScreen(
                 }
                 MainAppTopBar(
                     activeProfile = headerState.activeProfile,
+                    remoteControl = remoteControl,
                     isProfileLoading = headerState.isLoading,
                     hazeState = hazeState,
+                    scrimProgress = headerScrollPx / headerFadePx,
                     onSearchClick = { navController.navigate(Route.Search().route) },
                     onRequestsClick = requestsMenuAction,
                     onWatchPartyClick = watchPartyMenuAction,
@@ -577,9 +614,10 @@ fun MainScreen(
                     onSignOutClick = ::signOutFromProfileMenu,
                     leadingContent = {
                         if (title != null) {
+                            // Same type as Libraries' selector title.
                             Text(
                                 text = title,
-                                style = MaterialTheme.typography.titleLarge,
+                                fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
