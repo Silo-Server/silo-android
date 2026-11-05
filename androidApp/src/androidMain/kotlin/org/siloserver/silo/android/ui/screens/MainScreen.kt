@@ -57,6 +57,7 @@ import org.siloserver.silo.android.ui.screens.calendar.CalendarScreen
 import org.siloserver.silo.android.ui.screens.home.HomeScreen
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.ui.screens.cast.SiloCastMiniBar
+import org.siloserver.silo.android.ui.screens.cast.rememberSiloCastArtwork
 import org.siloserver.silo.android.ui.screens.cast.SiloCastTargetPickerSheet
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesScreen
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesSelectorSheet
@@ -349,6 +350,11 @@ fun MainScreen(
     // Instantiate with the shell, not when the lazy tab is first opened, so
     // Discover and taste-profile requests run alongside profile/header setup.
     val recommendationsViewModel = koinViewModel<RecommendationsViewModel>()
+    // Resolved here, above both cast-bar placements, so the bar keeps its
+    // title and poster while it moves between them.
+    val siloCastArtwork = rememberSiloCastArtwork(
+        siloCastState.launch?.contentId ?: siloCastState.playbackState?.contentId,
+    )
     Scaffold(
         bottomBar = {
             // The cast bar rests above the nav menu (iOS tabViewBottomAccessory
@@ -385,6 +391,7 @@ fun MainScreen(
                         },
                         inline = inline,
                         barModifier = barModifier,
+                        sharedArtwork = siloCastArtwork,
                     )
                 },
             )

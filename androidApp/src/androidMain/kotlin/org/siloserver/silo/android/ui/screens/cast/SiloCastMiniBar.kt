@@ -36,6 +36,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.android.cast.SiloCastArtwork
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 
@@ -55,7 +56,9 @@ import org.siloserver.silo.common.ui.components.ThumbhashImage
  * control (iOS's inline tab bar accessory): it fills the slot the caller gives
  * it instead of adding its own margins, and uses a smaller poster.
  * [barModifier] applies to the bar itself, inside its margins, so a caller can
- * animate the visible card between placements.
+ * animate the visible card between placements. A caller that shows the bar
+ * in more than one placement passes [sharedArtwork] resolved once above them, so
+ * moving the bar does not drop the loaded title and poster.
  */
 @Composable
 fun SiloCastMiniBar(
@@ -64,6 +67,7 @@ fun SiloCastMiniBar(
     modifier: Modifier = Modifier,
     inline: Boolean = false,
     barModifier: Modifier = Modifier,
+    sharedArtwork: SiloCastArtwork? = null,
 ) {
     val state by controller.state.collectAsState()
     val playback = state.playbackState
@@ -81,7 +85,7 @@ fun SiloCastMiniBar(
         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
         modifier = modifier,
     ) {
-        val artwork = rememberSiloCastArtwork(launch?.contentId ?: playback?.contentId)
+        val artwork = sharedArtwork ?: rememberSiloCastArtwork(launch?.contentId ?: playback?.contentId)
         Surface(
             onClick = onOpenRemote,
             modifier = if (inline) {
