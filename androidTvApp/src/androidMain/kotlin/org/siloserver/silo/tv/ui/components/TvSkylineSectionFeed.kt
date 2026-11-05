@@ -64,6 +64,8 @@ import org.siloserver.silo.tv.ui.focus.keyedBooleanSaver
 import org.siloserver.silo.tv.ui.focus.keyedIntSaver
 import org.siloserver.silo.tv.ui.focus.resolveTvReturnTarget
 import org.siloserver.silo.tv.ui.focus.toTvReturnSections
+import org.siloserver.silo.tv.ui.focus.tvReturnItemId
+import org.siloserver.silo.tv.ui.focus.tvReturnItemIds
 import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.model.settings.CardPresentation
@@ -249,6 +251,9 @@ fun TvSkylineSectionFeed(
     var focusedRowIndex by remember { mutableIntStateOf(-1) }
     var focusedItemIndex by remember { mutableIntStateOf(-1) }
     var focusedContentId by remember { mutableStateOf<String?>(null) }
+    // The focused card's return identity (see tvReturnItemId). Differs from
+    // focusedContentId on progress rows, where it names the show, not the episode.
+    var focusedReturnItemId by remember { mutableStateOf<String?>(null) }
     var removalFocusRequest by remember { mutableIntStateOf(0) }
 
     val priorityPrefetchRequest = remember(
@@ -382,6 +387,7 @@ fun TvSkylineSectionFeed(
 
     LaunchedEffect(rows) {
         val previousContentId = focusedContentId
+        val previousReturnItemId = focusedReturnItemId
         // The "Explore all" card is still there while its row still offers it.
         val focusedItemWasRemoved = previousContentId != null &&
             if (previousContentId == TvExploreAllItemId) {
@@ -404,9 +410,13 @@ fun TvSkylineSectionFeed(
             val targetRow = rows[focusedRowIndex]
             if (targetRow.items.isNotEmpty()) {
                 val itemIndex = focusedItemIndex.coerceIn(0, targetRow.items.lastIndex)
+                // A progress-row card that advanced to the next episode is
+                // still the same show; follow it rather than the old slot.
+                val rowReturnIds = targetRow.tvReturnItemIds()
                 returnTarget = TvReturnTarget(
                     sectionId = targetRow.id,
-                    itemId = targetRow.items[itemIndex].contentId,
+                    itemId = previousReturnItemId?.takeIf { it in rowReturnIds }
+                        ?: rowReturnIds[itemIndex],
                     sectionIndex = focusedRowIndex,
                     itemIndex = itemIndex,
                 )
@@ -420,12 +430,14 @@ fun TvSkylineSectionFeed(
     val rowBandScope = rememberCoroutineScope()
     // Skyline matches tvOS' view-aligned row stack: vertical motion is owned by
     // this feed, while each row's LazyRow still handles horizontal card scroll.
-    val onItemFocused: (SectionItem, String, String, Int, Int) -> Unit =
-        { item, rowTitle, rowIdentity, rowIndex, itemIndex ->
-        marquee.preview(item, rowTitle, rowIdentity)
+    val onItemFocused: (SectionItem, ResolvedSection, Int, Int) -> Unit =
+        { item, section, rowIndex, itemIndex ->
+        val returnItemId = section.tvReturnItemId(item)
+        marquee.preview(item, section.title, section.id)
         focusedRowIndex = rowIndex
         focusedItemIndex = itemIndex
         focusedContentId = item.contentId
+        focusedReturnItemId = returnItemId
         // Continuously mirror the browse position into the saveable return
         // slot and keep the restore armed. Any round trip that disposes this
         // feed — Settings, Search, an outer detail page — then recreates it on
@@ -438,8 +450,8 @@ fun TvSkylineSectionFeed(
         // restorationInFlight above.
         if (restorationsInFlight == 0) {
             returnTarget = TvReturnTarget(
-                sectionId = rowIdentity,
-                itemId = item.contentId,
+                sectionId = section.id,
+                itemId = returnItemId,
                 sectionIndex = rowIndex,
                 itemIndex = itemIndex,
             )
@@ -466,6 +478,7 @@ fun TvSkylineSectionFeed(
         focusedRowIndex = rowIndex
         focusedItemIndex = section.items.size
         focusedContentId = TvExploreAllItemId
+        focusedReturnItemId = TvExploreAllItemId
         if (restorationsInFlight == 0) armExploreAllReturn(section, rowIndex)
     }
 
@@ -697,7 +710,7 @@ fun TvSkylineSectionFeed(
     // index-only check reports success for whatever now occupies the slot.
     fun hasLandedOnReturnTarget(): Boolean {
         val located = currentResolution as? TvReturnResolution.Located ?: return false
-        return focusedRowIndex == located.sectionIndex && focusedContentId == located.itemId
+        return focusedRowIndex == located.sectionIndex && focusedReturnItemId == located.itemId
     }
 
     val detailReturnRowContainerFocusRequester = remember { FocusRequester() }
@@ -1000,7 +1013,7 @@ fun TvSkylineSectionFeed(
                                 val item = section.items.firstOrNull { it.contentId == contentId }
                                 returnTarget = TvReturnTarget(
                                     sectionId = section.id,
-                                    itemId = contentId,
+                                    itemId = item?.let { section.tvReturnItemId(it) } ?: contentId,
                                     sectionIndex = rowIndex,
                                     itemIndex = section.items
                                         .indexOfFirst { it.contentId == contentId },
@@ -1056,7 +1069,7 @@ fun TvSkylineSectionFeed(
                             restoreFocusRequester = detailReturnItemFocusRequester
                                 .takeIf { isReturnRow },
                             onItemFocusedAtIndex = { item, itemIndex ->
-                                onItemFocused(item, section.title, section.id, rowIndex, itemIndex)
+                                onItemFocused(item, section, rowIndex, itemIndex)
                             },
                             cardActions = { item -> cardActions(section, item) },
                             longClickAction = { item ->
