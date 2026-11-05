@@ -22,17 +22,24 @@ object OverlayRegistry {
         all.filter { it.category == category }
 
     /**
-     * Whether [id] should be hidden because another enabled overlay
-     * already displays the same information. The combined `resolution_hdr`
-     * badge subsumes the standalone `resolution` and `hdr` badges. The
-     * user's stored prefs are left untouched so toggling the combined
-     * badge off restores the standalones automatically.
+     * Combined badges and the badges whose information each already shows.
+     * Mirrors web's `COMBINED_BADGES`.
+     */
+    private val combinedBadges: Map<OverlayId, Set<OverlayId>> = mapOf(
+        OverlayId.ResolutionHdrAudio to
+            setOf(OverlayId.Resolution, OverlayId.Hdr, OverlayId.Audio, OverlayId.ResolutionHdr),
+        OverlayId.ResolutionHdr to setOf(OverlayId.Resolution, OverlayId.Hdr),
+    )
+
+    /**
+     * Whether [id] should be hidden because an enabled combined badge
+     * already displays the same information. The user's stored prefs are
+     * left untouched so toggling the combined badge off restores the
+     * badges it hid.
      */
     fun isSuppressed(id: OverlayId, prefs: CardOverlayPrefs): Boolean =
-        when (id) {
-            OverlayId.Resolution, OverlayId.Hdr ->
-                prefs.items[OverlayId.ResolutionHdr]?.enabled == true
-            else -> false
+        combinedBadges.any { (combined, covers) ->
+            id in covers && prefs.items[combined]?.enabled == true
         }
 
     /**
@@ -156,6 +163,26 @@ object OverlayRegistry {
                 val res = prettyResolution(data.resolution) ?: return@OverlayDef null
                 val hdr = compactHdrSuffix(data.hdr)
                 if (hdr != null) "$res $hdr" else res
+            },
+            getIcon = { resolutionHdrIcon(it.hdr) },
+        ),
+        OverlayDef(
+            id = OverlayId.ResolutionHdrAudio,
+            category = OverlayCategory.Tech,
+            label = "Resolution + HDR + Audio",
+            description = "Single badge combining resolution, dynamic range and audio codec (e.g. \"4K DV Atmos\", \"1080p TrueHD\").",
+            defaultPosition = OverlayPosition.TopLeft,
+            defaultEnabled = false,
+            iconCapable = true,
+            // The parts the file has, so a file without a known resolution
+            // still shows its audio codec while the standalone audio badge
+            // is hidden. Mirrors web's `resolution_hdr_audio.getValue`.
+            getValue = { data ->
+                listOfNotNull(
+                    prettyResolution(data.resolution),
+                    compactHdrSuffix(data.hdr),
+                    data.audio?.takeIf { it.isNotEmpty() },
+                ).joinToString(" ").ifEmpty { null }
             },
             getIcon = { resolutionHdrIcon(it.hdr) },
         ),

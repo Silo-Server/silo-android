@@ -21,6 +21,7 @@ enum class OverlayId(val raw: String) {
     @SerialName("resolution") Resolution("resolution"),
     @SerialName("hdr") Hdr("hdr"),
     @SerialName("resolution_hdr") ResolutionHdr("resolution_hdr"),
+    @SerialName("resolution_hdr_audio") ResolutionHdrAudio("resolution_hdr_audio"),
     @SerialName("audio") Audio("audio"),
     @SerialName("audio_channels") AudioChannels("audio_channels"),
     @SerialName("video_codec") VideoCodec("video_codec"),
