@@ -69,6 +69,12 @@ class MembershipRuntime(
         return outbox.reconcile(id, authority.commandAuthority())
     }
 
+    suspend fun retry(id: Long, authority: DurableLoginAuthority): MembershipOutbox.Result {
+        awaitRecovery()
+        if (authority != authorities.snapshotDurableLoginAuthority()) return MembershipOutbox.Result(MembershipOutbox.Resolution.NOT_CLAIMED)
+        return outbox.retry(id, authority.commandAuthority())
+    }
+
     /** Bounded READY-only selection. Uncertain/paused rows never trigger mutation retries. */
     suspend fun readyCommands(authority: DurableLoginAuthority, limit: Int): List<Long> {
         require(limit in 1..100)

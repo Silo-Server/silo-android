@@ -32,13 +32,13 @@ class MembershipV2Test {
         }
     }
 
-    @Test fun writesAreEmpty204SingleAttemptsAndAcknowledgementsRetainAuthority() = runTest {
+    @Test fun writesAreEmpty204AndAcknowledgementsRetainAuthority() = runTest {
         var scope = AuthScopeSnapshot("server", "p1", "https://example.invalid", null, identityGeneration = 1)
         val captured = scope
         val tokens = object : TokenManager by TokenManagerImpl() { override suspend fun snapshotCurrentScope() = scope }
         val calls = mutableListOf<String>()
         val client = HttpClient(MockEngine { request ->
-            assertEquals(true, request.attributes.getOrNull(SingleAttemptAttributeKey))
+            assertNull(request.attributes.getOrNull(SingleAttemptAttributeKey))
             assertEquals(captured, request.attributes.getOrNull(AuthScopeAttributeKey))
             calls += "${request.method.value} ${request.url.encodedPath}"
             if (calls.size == 4) scope = scope.copy(profileId = "p2", identityGeneration = 2)
@@ -64,7 +64,7 @@ class MembershipV2Test {
         } finally { client.close() }
     }
 
-    @Test fun realAuthPluginRetriesDefaultReadButNeverMembershipMutation() = runTest {
+    @Test fun realAuthPluginRefreshesAndReplaysReadsAndIdempotentMutations() = runTest {
         for (mutating in listOf(false, true)) {
             val tokens = TokenManagerImpl().apply {
                 setServerUrl("https://example.invalid")
@@ -76,7 +76,9 @@ class MembershipV2Test {
                 paths += request.url.encodedPath
                 when {
                     request.url.encodedPath.endsWith("/auth/refresh") -> respond("""{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
-                    request.headers[HttpHeaders.Authorization] == "Bearer new-access" -> respond("""{"item_id":"item","added_at":"date"}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
+                    request.headers[HttpHeaders.Authorization] == "Bearer new-access" ->
+                        if (request.method == HttpMethod.Put) respond("", HttpStatusCode.NoContent)
+                        else respond("""{"item_id":"item","added_at":"date"}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
                     else -> respond("""{"type":"https://siloserver.org/problems/unauthorized","title":"Unauthorized","status":401}""", HttpStatusCode.Unauthorized, headersOf(HttpHeaders.ContentType, "application/problem+json"))
                 }
             }) {
@@ -85,14 +87,8 @@ class MembershipV2Test {
             }
             try {
                 val api = MembershipV2Api(client, ApiV2Gate.Unrestricted, tokens)
-                if (mutating) {
-                    val result = assertIs<ApiResult.Error>(api.addFavorite("item"))
-                    assertEquals(401, result.code); assertEquals("unauthorized", result.error)
-                    assertEquals(listOf("/api/v2/favorites/item"), paths)
-                } else {
-                    assertIs<ApiResult.Success<*>>(api.favorite("item"))
-                    assertEquals(listOf("/api/v2/favorites/item", "/api/v2/auth/refresh", "/api/v2/favorites/item"), paths)
-                }
+                assertIs<ApiResult.Success<*>>(if (mutating) api.addFavorite("item") else api.favorite("item"))
+                assertEquals(listOf("/api/v2/favorites/item", "/api/v2/auth/refresh", "/api/v2/favorites/item"), paths)
             } finally { client.close() }
         }
     }
