@@ -140,7 +140,7 @@
     <string name="tv_pairing_chip_working">Getting a code</string>
     <string name="tv_pairing_chip_waiting">Waiting for your phone</string>
     <string name="tv_pairing_chip_approving">Your phone is approving</string>
-    <string name="tv_pairing_connected_title">Choose servers\non your phone</string>
+    <string name="tv_pairing_connected_title">Choose accounts\non your phone</string>
     <string name="tv_pairing_connected_title_signin">Continue on\nyour phone</string>
     <string name="tv_pairing_connected_detail">On your phone or tablet, choose which servers this TV should sign in to.</string>
     <string name="tv_pairing_connected_detail_signin">Continue on your phone or tablet.</string>
@@ -155,6 +155,8 @@
     <string name="tv_pairing_cancel">Cancel</string>
     <!-- One state on this TV covers checking the pushed address and getting the code. -->
     <string name="tv_pairing_working_title">Signing in to\n%1$s</string>
+    <string name="tv_pairing_working_title_account">Signing in %1$s\non %2$s</string>
+    <string name="tv_pairing_account_on_server">%1$s on %2$s</string>
     <string name="tv_pairing_working_detail">Getting this TV\'s sign-in code.</string>
     <string name="tv_pairing_confirm_title">Confirm on\nyour phone</string>
     <string name="tv_pairing_confirm_title_automatic">Signing in</string>
@@ -164,11 +166,12 @@
          words. Remove together with the phones' "Older TV apps show ..." line. -->
     <string name="tv_pairing_confirm_older_phones">Older phones show %1$s instead.</string>
     <string name="tv_pairing_signed_in">Signed in</string>
-    <string name="tv_pairing_signed_in_count">Signed in to\n%1$d servers</string>
+    <string name="tv_pairing_signed_in_count">Signed in\n%1$d accounts</string>
     <string name="tv_pairing_finishing">Finishing up on your phone or tablet…</string>
     <string name="tv_pairing_completed_title">You\'re all set</string>
     <string name="tv_pairing_completed_none">Taking you to your profiles…</string>
     <string name="tv_pairing_completed_named">Signed in to %1$s. Taking you to your profiles…</string>
+    <string name="tv_pairing_completed_choose_account">Signed in %1$d accounts. Choose one to start.</string>
     <string name="tv_pairing_continue">Continue</string>
     <string name="tv_pairing_failed_title">Setup didn\'t finish</string>
     <string name="tv_pairing_failed_title_signin">Sign-in didn\'t finish</string>

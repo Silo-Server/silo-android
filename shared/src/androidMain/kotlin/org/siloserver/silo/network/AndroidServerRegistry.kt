@@ -287,6 +287,10 @@ class AndroidServerRegistry(
      * backfilled) is never adopted, as the spec's §2 rules say: the sign-in
      * may be someone else, so it becomes a new account and the phone asks
      * whether it replaces the expired one ("Replace?" / "Keep both").
+     *
+     * [keepRememberedProfile]: when no [profileId] is given and the sign-in
+     * refreshes a saved account, that account keeps its remembered profile if
+     * it has no PIN (a PIN proof is bound to the old login session).
      */
     internal suspend fun commitAccountReplacement(
         serverId: String,
@@ -299,7 +303,8 @@ class AndroidServerRegistry(
         refreshToken: String,
         expiryEpochMs: Long,
         lifetimeMs: Long,
-    ): String = mutex.withLock {
+        keepRememberedProfile: Boolean = false,
+    ): AccountReplacement = mutex.withLock {
         check(state.entries.any { it.id == serverId }) { "account replacement target is not registered" }
         val onServer = state.accounts.filter { it.serverId == serverId }
         val existing = serverUserId?.takeIf(String::isNotBlank)?.let { uid ->
@@ -308,6 +313,12 @@ class AndroidServerRegistry(
         }
         val now = System.currentTimeMillis()
         val serverEntry = state.entries.first { it.id == serverId }
+        val keptProfileId = existing?.profileId?.takeIf { remembered ->
+            keepRememberedProfile && profileId == null &&
+                existing.cachedProfiles.any { it.id == remembered && !it.hasPin }
+        }
+        @Suppress("NAME_SHADOWING")
+        val profileId = profileId ?: keptProfileId
         val account = (existing ?: AccountEntry(
             localAccountId = java.util.UUID.randomUUID().toString(),
             serverId = serverId,
@@ -342,8 +353,11 @@ class AndroidServerRegistry(
         if (profileToken == null) editor.remove(profileTokenKey) else editor.putString(profileTokenKey, profileToken)
         check(commitEditor(editor)) { "unable to durably replace account session" }
         applyStateLocked(next)
-        accountId
+        AccountReplacement(accountId, profileId)
     }
+
+    /** Where [commitAccountReplacement] put the session: the account and its (possibly kept) profile. */
+    internal data class AccountReplacement(val accountId: String, val profileId: String?)
 
     /**
      * Ends [accountId]'s session. A sign-out ([expired] false) deletes the

@@ -146,7 +146,10 @@ internal fun ActivePairingPanel(
                 }
                 is PairingReceiverStatus.Pairing -> {
                     PanelChip(stringResource(R.string.tv_pairing_chip_working), spinner = true)
-                    PanelTitle(stringResource(R.string.tv_pairing_working_title, status.serverName))
+                    PanelTitle(
+                        status.accountName?.let { stringResource(R.string.tv_pairing_working_title_account, it, status.serverName) }
+                            ?: stringResource(R.string.tv_pairing_working_title, status.serverName),
+                    )
                     PanelDetail(stringResource(R.string.tv_pairing_working_detail))
                     PanelActions { CancelButton(onCancel, primaryFocus) }
                 }
@@ -221,8 +224,12 @@ internal fun ActivePairingPanel(
                 }
                 is PairingReceiverStatus.Completed -> {
                     PanelTitle(stringResource(R.string.tv_pairing_completed_title))
+                    val accountCount = status.accounts.distinct().size
                     PanelDetail(
-                        if (status.serverNames.isEmpty()) {
+                        if (accountCount > 1) {
+                            // Several accounts end on Change Account, not a profile picker.
+                            stringResource(R.string.tv_pairing_completed_choose_account, accountCount)
+                        } else if (status.serverNames.isEmpty()) {
                             stringResource(R.string.tv_pairing_completed_none)
                         } else {
                             stringResource(R.string.tv_pairing_completed_named, status.serverNames.joinToString(", "))
@@ -281,11 +288,19 @@ internal fun ActivePairingPanel(
                             TvMarqueeCodeTiles(DeviceCodeFormat.display(status.userCode), Modifier.padding(top = 11.dp))
                         }
                         olderPhonesMatchWords(status)?.let { words -> CardNote(stringResource(R.string.tv_pairing_confirm_older_phones, words)) }
-                        CardTitle(status.serverName)
+                        // Every push shows its own code, naming the account
+                        // the phone said it signs in ("sam on Home").
+                        CardTitle(
+                            status.accountName?.let { stringResource(R.string.tv_pairing_account_on_server, it, status.serverName) }
+                                ?: status.serverName,
+                        )
                     }
                     is PairingReceiverStatus.Pairing -> {
                         WaitingDots()
-                        CardTitle(status.serverName)
+                        CardTitle(
+                            status.accountName?.let { stringResource(R.string.tv_pairing_account_on_server, it, status.serverName) }
+                                ?: status.serverName,
+                        )
                     }
                     is PairingReceiverStatus.SignedIn, is PairingReceiverStatus.Completed -> {
                         TvMarqueeCardSymbol(Icons.Filled.Check, tint = MarqueeColors.Live, size = 70.dp)
@@ -345,7 +360,8 @@ private fun PairingFailureCode.messageRes(signIn: Boolean): Int = when (this) {
     PairingFailureCode.IdentityMismatch ->
         if (signIn) R.string.tv_pairing_failed_identity_signin else R.string.tv_pairing_failed_identity
     PairingFailureCode.UpdateRequired -> R.string.tv_pairing_failed_update
-    PairingFailureCode.AuthFailed -> R.string.tv_pairing_failed_generic
+    // This TV keeps every sign-in; only a TV with a storage limit sends it.
+    PairingFailureCode.AuthFailed, PairingFailureCode.LimitReached -> R.string.tv_pairing_failed_generic
 }
 
 @Composable

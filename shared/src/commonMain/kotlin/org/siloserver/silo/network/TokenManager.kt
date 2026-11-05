@@ -71,6 +71,13 @@ data class AccountSignIn(
     val serverUserId: String?,
     val username: String?,
     val reauthAccountId: String? = null,
+    /**
+     * A sign-in that lands in an already-saved account keeps that account's
+     * remembered profile instead of clearing it (companion pairing: a phone
+     * refreshing an account the TV already has). Only a profile without a
+     * PIN is kept: a PIN proof belongs to the old login session.
+     */
+    val keepsRememberedProfile: Boolean = false,
 )
 
 interface TokenManager {

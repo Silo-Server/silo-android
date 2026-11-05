@@ -149,6 +149,30 @@
     <string name="companion_close">Close</string>
     <string name="companion_done">Done</string>
     <string name="companion_try_again">Try again</string>
+    <string name="companion_choose_accounts_title">Choose accounts</string>
+    <!-- An older TV keeps one account per server; an older Roku keeps one in all. -->
+    <string name="companion_choose_account_title">Choose an account</string>
+    <string name="companion_choose_one_per_server">%1$s keeps one account per server.</string>
+    <plurals name="companion_choose_limit">
+        <item quantity="one">%1$s can keep %2$d sign-in from this setup.</item>
+        <item quantity="other">%1$s can keep %2$d sign-ins from this setup.</item>
+    </plurals>
+    <string name="companion_account_unnamed">Your account</string>
+    <string name="companion_account_this_phone">%1$s · this phone</string>
+    <string name="companion_account_this_tablet">%1$s · this tablet</string>
+    <string name="companion_account_sign_in_again">Sign in again on this phone</string>
+    <string name="companion_account_sign_in_again_tablet">Sign in again on this tablet</string>
+    <plurals name="companion_continue_count">
+        <item quantity="one">Continue — %d account</item>
+        <item quantity="other">Continue — %d accounts</item>
+    </plurals>
+    <string name="companion_offer_signin_as">Sign in as</string>
+    <string name="companion_confirm_check_for">Check that %1$s shows this code for %2$s on %3$s</string>
+    <string name="companion_confirm_check_for_server">Check that %1$s shows this code for %2$s</string>
+    <string name="companion_progress_position">%1$s (%2$d of %3$d)</string>
+    <string name="companion_progress_signing_in_account">Signing in %1$s on %2$s…</string>
+    <string name="companion_progress_signing_in_server">Signing in to %1$s…</string>
+    <string name="companion_setup_partial_title">Set up %1$s, with problems</string>
     <string name="marker_skip_recap">Skip Recap</string>
     <string name="marker_skip_credits">Skip Credits</string>
 

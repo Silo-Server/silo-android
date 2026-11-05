@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.pairing
 
+import org.siloserver.silo.repository.DeviceLoginBinding
 import org.siloserver.silo.repository.DeviceLoginRepository
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withTimeoutOrNull
@@ -18,6 +19,20 @@ interface DeviceLoginPort {
 
     /** Begin a device-login session; suspends until a terminal state is reached. */
     suspend fun begin(serverUrl: String, deviceName: String?, devicePlatform: String?)
+
+    /**
+     * [begin] bound to the pairing session: [binding] goes on the start and
+     * every poll. Callers pass one only for an HTTPS [serverUrl] that
+     * [supportsSessionBinding].
+     */
+    suspend fun begin(serverUrl: String, deviceName: String?, devicePlatform: String?, binding: DeviceLoginBinding?) =
+        begin(serverUrl, deviceName, devicePlatform)
+
+    /**
+     * Whether [serverUrl]'s capability reports `session_binding`. A
+     * capability that can't be read counts as no.
+     */
+    suspend fun supportsSessionBinding(serverUrl: String): Boolean = false
 
     /** Reset back to Idle for the next attempt. */
     fun reset()
@@ -38,6 +53,12 @@ class DeviceLoginRepositoryPort(
 
     override suspend fun begin(serverUrl: String, deviceName: String?, devicePlatform: String?) =
         repository.beginAt(serverUrl, deviceName, devicePlatform)
+
+    override suspend fun begin(serverUrl: String, deviceName: String?, devicePlatform: String?, binding: DeviceLoginBinding?) =
+        repository.beginAt(serverUrl, deviceName, devicePlatform, binding)
+
+    override suspend fun supportsSessionBinding(serverUrl: String): Boolean =
+        withTimeoutOrNull(CAPABILITY_TIMEOUT) { repository.capability(serverUrl) }?.sessionBinding == true
 
     override fun reset() = repository.reset()
 

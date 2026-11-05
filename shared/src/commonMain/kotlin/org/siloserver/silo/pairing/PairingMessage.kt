@@ -65,7 +65,14 @@ enum class PairingFailureCode(val wire: String) {
     IdentityMismatch("identity_mismatch"),
 
     /** The server is v1-only, or no longer accepts this app version. */
-    UpdateRequired("update_required");
+    UpdateRequired("update_required"),
+
+    /**
+     * The TV refused the push because it can't keep more sign-ins from this
+     * session (a Roku at its storage limit). Older phones read it as
+     * [AuthFailed] through the unknown-code rule.
+     */
+    LimitReached("limit_reached");
 
     companion object {
         fun fromWire(value: String?): PairingFailureCode =
@@ -135,12 +142,18 @@ sealed class PairingMessage {
      * verified at [serverURL], and the other addresses the deployment offers,
      * so a TV that cannot reach the phone's address can verify and use one it
      * can. Older peers omit and ignore them.
+     *
+     * [accountName] (optional, display only): the username the phone will
+     * approve with, so the TV can show "Signing in sam on Home". It is an
+     * unverified LAN claim and never used for matching; the account that
+     * signs in is read from the poll's `tokens.user`.
      */
     data class PushServer(
         val serverURL: String,
         val serverName: String?,
         val serverIdentity: String? = null,
         val endpoints: List<PairingEndpoint>? = null,
+        val accountName: String? = null,
     ) : PairingMessage()
 
     /**
@@ -221,6 +234,7 @@ object PairingMessageCodec {
                 msg.endpoints?.let { endpoints ->
                     put("endpoints", buildJsonArray { endpoints.forEach { add(it.toJson()) } })
                 }
+                if (msg.accountName != null) put("accountName", JsonPrimitive(msg.accountName))
             }
             is PairingMessage.DeviceStarted -> {
                 put(KEY_TYPE, JsonPrimitive("deviceStarted"))
@@ -267,6 +281,7 @@ object PairingMessageCodec {
                         displayName = endpoint.optionalString("displayName"),
                     )
                 },
+                accountName = obj.optionalString("accountName"),
             )
             "deviceStarted" -> PairingMessage.DeviceStarted(
                 serverURL = obj.requireString("serverURL"),

@@ -18,4 +18,14 @@ object PairingProtocol {
      * plain TCP; the separate type keeps it off the TLS path.
      */
     const val ROKU_SERVICE_TYPE = "_silopair-roku._tcp"
+
+    /**
+     * TXT `acct=1`: the TV accepts any number of `pushServer` messages in one
+     * session (the same server again included) and keeps each sign-in as its
+     * own account, matched by the poll's `tokens.user.id`.
+     */
+    const val TXT_ACCEPTS_ACCOUNTS = "acct"
+
+    /** TXT `lim=<n>` (optional, Roku): the most sign-ins the TV can keep from one session. */
+    const val TXT_SIGN_IN_LIMIT = "lim"
 }
