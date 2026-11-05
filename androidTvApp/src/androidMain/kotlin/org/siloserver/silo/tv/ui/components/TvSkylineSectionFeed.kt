@@ -65,6 +65,7 @@ import org.siloserver.silo.tv.ui.focus.keyedIntSaver
 import org.siloserver.silo.tv.ui.focus.resolveTvReturnTarget
 import org.siloserver.silo.tv.ui.focus.toTvReturnSections
 import org.siloserver.silo.tv.ui.focus.tvReturnItemId
+import org.siloserver.silo.tv.ui.focus.tvReturnItemIds
 import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.model.settings.CardPresentation
@@ -411,12 +412,11 @@ fun TvSkylineSectionFeed(
                 val itemIndex = focusedItemIndex.coerceIn(0, targetRow.items.lastIndex)
                 // A progress-row card that advanced to the next episode is
                 // still the same show; follow it rather than the old slot.
-                val survivingItemId = previousReturnItemId?.takeIf { id ->
-                    targetRow.items.any { targetRow.tvReturnItemId(it) == id }
-                }
+                val rowReturnIds = targetRow.tvReturnItemIds()
                 returnTarget = TvReturnTarget(
                     sectionId = targetRow.id,
-                    itemId = survivingItemId ?: targetRow.tvReturnItemId(targetRow.items[itemIndex]),
+                    itemId = previousReturnItemId?.takeIf { it in rowReturnIds }
+                        ?: rowReturnIds[itemIndex],
                     sectionIndex = focusedRowIndex,
                     itemIndex = itemIndex,
                 )
@@ -432,9 +432,8 @@ fun TvSkylineSectionFeed(
     // this feed, while each row's LazyRow still handles horizontal card scroll.
     val onItemFocused: (SectionItem, ResolvedSection, Int, Int) -> Unit =
         { item, section, rowIndex, itemIndex ->
-        val rowIdentity = section.id
         val returnItemId = section.tvReturnItemId(item)
-        marquee.preview(item, section.title, rowIdentity)
+        marquee.preview(item, section.title, section.id)
         focusedRowIndex = rowIndex
         focusedItemIndex = itemIndex
         focusedContentId = item.contentId
@@ -451,7 +450,7 @@ fun TvSkylineSectionFeed(
         // restorationInFlight above.
         if (restorationsInFlight == 0) {
             returnTarget = TvReturnTarget(
-                sectionId = rowIdentity,
+                sectionId = section.id,
                 itemId = returnItemId,
                 sectionIndex = rowIndex,
                 itemIndex = itemIndex,

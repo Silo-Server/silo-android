@@ -126,10 +126,9 @@ class TvReturnAdaptersTest {
             episode("y-e5", "show-y"),
             episode("z-e3", "show-z"),
         )
-        val launchedRow = before
         val launched = TvReturnTarget(
             "continue",
-            launchedRow.tvReturnItemId(launchedRow.items[2]),
+            before.tvReturnItemId(before.items[2]),
             sectionIndex = 0,
             itemIndex = 2,
         )
@@ -142,9 +141,13 @@ class TvReturnAdaptersTest {
         )
 
         assertEquals(
-            TvReturnResolution.Exact(0, 0, "continue", "show-z"),
+            TvReturnResolution.Exact(0, 0, "continue", launched.itemId),
             resolveTvReturnTarget(launched, listOf(after).toTvReturnSections()),
         )
+
+        // A show that appears twice can't be one target; its cards keep episode ids.
+        val repeated = continueWatching(episode("z-e3", "show-z"), episode("z-e4", "show-z"))
+        assertEquals(listOf("z-e3", "z-e4"), repeated.tvReturnItemIds())
     }
 
     @Test

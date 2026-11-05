@@ -3,6 +3,7 @@ package org.siloserver.silo.tv.ui.focus
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.tv.ui.components.isTvProgressRow
+import org.siloserver.silo.tv.ui.components.tvMediaRowSlotKeys
 
 /**
  * Projects a Skyline row feed into the shape [resolveTvReturnTarget] reads.
@@ -37,7 +38,7 @@ internal fun List<ResolvedSection>.toTvReturnSections(
     exploreAll: (ResolvedSection) -> Boolean = { false },
 ): List<TvReturnSection> =
     map { section ->
-        val itemIds = section.items.map { section.tvReturnItemId(it) }
+        val itemIds = section.tvReturnItemIds()
         TvReturnSection(
             id = section.id,
             itemIds = if (exploreAll(section)) itemIds + TvExploreAllItemId else itemIds,
@@ -46,24 +47,24 @@ internal fun List<ResolvedSection>.toTvReturnSections(
     }
 
 /**
- * The return identity of [item] in this row.
+ * The return identity of each card in this row, in order.
  *
  * A progress row (Continue Watching, Next Up) holds one card per show, and
  * that card's episode changes as the viewer watches: finishing E3 replaces it
  * with E4 and moves it to the front. Keyed on the episode id, the return
  * target no longer matched anything and fell back to the launch slot, which
- * by then held a different show. The series id stays the same across the
- * advance, so focus follows the show to its new position.
- *
- * Other rows keep the content id: an episode in Recently Added is that
- * episode, and two episodes of one show can sit side by side.
+ * by then held a different show. These are the row's own lazy-list keys
+ * ([tvMediaRowSlotKeys]), which name the show while it has a single card, so
+ * focus follows the show to its new position. A show with two cards keeps
+ * episode ids, as do all other rows.
  */
+internal fun ResolvedSection.tvReturnItemIds(): List<String> =
+    tvMediaRowSlotKeys(items, keyEpisodesBySeries = isTvProgressRow())
+
+/** The return identity of [item] in this row; see [tvReturnItemIds]. */
 internal fun ResolvedSection.tvReturnItemId(item: SectionItem): String =
-    if (isTvProgressRow()) {
-        item.seriesId?.takeIf { it.isNotBlank() } ?: item.contentId
-    } else {
-        item.contentId
-    }
+    tvReturnItemIds().getOrNull(items.indexOfFirst { it.contentId == item.contentId })
+        ?: item.contentId
 
 /**
  * The return-target item id of a row's "Explore all" card, so opening a row's
