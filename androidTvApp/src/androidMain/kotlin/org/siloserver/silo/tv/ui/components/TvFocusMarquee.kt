@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.LocalTextStyle
 import androidx.tv.material3.Text
+import kotlinx.coroutines.delay
 import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.components.MachineTranslatedLabel
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -153,6 +154,14 @@ private fun TvMarqueeBlock(
     // "Show title art" off: the marquee always names the title in text.
     val logoUrl = titleLogoUrl(content.logoUrl)
     var logoLoaded by remember(logoUrl) { mutableStateOf(false) }
+    // The text fallback stays invisible while the logo gets a short grace
+    // period, so a cached or fast logo never flashes the text title first. A
+    // failed or slow logo still falls back to the text.
+    var showTitleFallback by remember(logoUrl) { mutableStateOf(false) }
+    LaunchedEffect(logoUrl) {
+        delay(MarqueeLogoGraceMs)
+        showTitleFallback = true
+    }
     val logoAlpha by animateFloatAsState(
         targetValue = if (logoLoaded) 1f else 0f,
         animationSpec = tween(TvMarqueeCrossfadeMs, easing = TvMarqueeEasing),
@@ -165,9 +174,9 @@ private fun TvMarqueeBlock(
         modifier = Modifier.widthIn(max = MarqueeContentWidth),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // Keep the semantic text title visible until transparent logo artwork
-        // has actually decoded. A bad/slow URL therefore never creates a blank
-        // title slot; successful artwork fades over the fixed-height fallback.
+        // The text title stays composed (for layout and line count) until the
+        // logo decodes, but only becomes visible after the grace period or on
+        // error, so a bad/slow URL never leaves a blank title slot.
         if (!logoUrl.isNullOrBlank()) {
             Box(
                 modifier = Modifier
@@ -185,7 +194,9 @@ private fun TvMarqueeBlock(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         onTextLayout = { titleLineCount = it.lineCount },
-                        modifier = Modifier.alpha(1f - logoAlpha),
+                        modifier = Modifier.alpha(
+                            if (showTitleFallback) 1f - logoAlpha else 0f,
+                        ),
                     )
                 }
                 ThumbhashImage(
@@ -200,6 +211,7 @@ private fun TvMarqueeBlock(
                     transparent = true,
                     crossfadeMillis = 0,
                     onSuccess = { logoLoaded = true },
+                    onError = { showTitleFallback = true },
                     modifier = Modifier
                         .fillMaxHeight()
                         .widthIn(max = MarqueeLogoMaxWidth)
@@ -382,3 +394,6 @@ private val MarqueeMetaGap = 4.dp
 private val MarqueeDetailSize = 14.sp
 private val MarqueeSynopsisSize = 16.sp
 private val MarqueeBadgeSize = 10.5.sp
+
+/** How long the marquee waits on a logo before showing the text title. */
+private const val MarqueeLogoGraceMs = 700L
