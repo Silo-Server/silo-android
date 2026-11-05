@@ -160,7 +160,8 @@ private fun TvMarqueeBlock(
     var showTitleFallback by remember(logoUrl) { mutableStateOf(false) }
     LaunchedEffect(logoUrl) {
         delay(MarqueeLogoGraceMs)
-        showTitleFallback = true
+        // A logo that decoded inside the grace period fades in alone.
+        if (!logoLoaded) showTitleFallback = true
     }
     val logoAlpha by animateFloatAsState(
         targetValue = if (logoLoaded) 1f else 0f,
