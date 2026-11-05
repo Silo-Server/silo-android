@@ -16,7 +16,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableFloatState
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
@@ -88,6 +96,45 @@ val TabContentGap = 24.dp
 
 /** Scroll distance over which a tab header's glass fades in. */
 val TopBarGlassFadeDistance = 80.dp
+
+/**
+ * Where a tab's scrolling content reports how far it sits under the shared
+ * [MainAppTopBar], from 0 (at rest) to 1 (glass fully on). Only For You and
+ * Downloads provide it; elsewhere the reporters below do nothing.
+ */
+val LocalTabHeaderScrim = staticCompositionLocalOf<MutableFloatState?> { null }
+
+/** Reports [state]'s scroll position to [LocalTabHeaderScrim]. */
+@Composable
+fun ReportTabHeaderScrim(state: LazyListState) {
+    ReportTabHeaderScrim(state) { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
+}
+
+/** Reports [state]'s scroll position to [LocalTabHeaderScrim]. */
+@Composable
+fun ReportTabHeaderScrim(state: LazyGridState) {
+    ReportTabHeaderScrim(state) { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
+}
+
+/**
+ * Derived from the list's own position, like Libraries' chrome, so the glass
+ * is right after a restored scroll position (returning to the tab) as well as
+ * while scrolling. Clears the glass when the list leaves composition.
+ */
+@Composable
+private fun ReportTabHeaderScrim(key: Any, position: () -> Pair<Int, Int>) {
+    val sink = LocalTabHeaderScrim.current ?: return
+    val fadePx = with(LocalDensity.current) { TopBarGlassFadeDistance.toPx() }
+    LaunchedEffect(key, sink, fadePx) {
+        snapshotFlow {
+            val (index, offset) = position()
+            if (index > 0) 1f else (offset / fadePx).coerceIn(0f, 1f)
+        }.collect { sink.floatValue = it }
+    }
+    DisposableEffect(key, sink) {
+        onDispose { sink.floatValue = 0f }
+    }
+}
 
 /** Top of the first content row, below the status bar. */
 val TabContentTop = TabHeaderRowHeight + TabHeaderPillGap + TabPillRowHeight + TabContentGap

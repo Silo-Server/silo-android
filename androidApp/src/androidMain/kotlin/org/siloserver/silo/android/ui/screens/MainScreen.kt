@@ -33,18 +33,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import org.siloserver.silo.android.ui.components.MainAppHeaderBodyHeight
 import org.siloserver.silo.android.ui.components.MainAppTopBar
 import org.siloserver.silo.android.ui.components.TabContentTop
-import org.siloserver.silo.android.ui.components.TopBarGlassFadeDistance
+import org.siloserver.silo.android.ui.components.LocalTabHeaderScrim
 import org.siloserver.silo.android.ui.components.TopBarRemoteControl
 import org.siloserver.silo.android.ui.components.TabTopBarActions
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
@@ -359,21 +354,9 @@ fun MainScreen(
     // What For You is actually showing (the empty-feed fallback shows the
     // Watchlist without making it an explicit selection); drives the title.
     var forYouDisplayed by remember { mutableStateOf<ForYouList?>(null) }
-    // How far the For You / Downloads content has scrolled under the shared
-    // header. Driven by nested scroll so every list those tabs show feeds it;
-    // restarts with each tab or list. Only the opacity is clamped: clamping the
-    // distance would fade the glass out on the first 80dp back up a long list.
-    val headerFadePx = with(LocalDensity.current) { TopBarGlassFadeDistance.toPx() }
-    var headerScrollPx by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(currentTab, forYouDisplayed) { headerScrollPx = 0f }
-    val headerScrollConnection = remember(headerFadePx) {
-        object : NestedScrollConnection {
-            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-                headerScrollPx = (headerScrollPx - consumed.y).coerceAtLeast(0f)
-                return Offset.Zero
-            }
-        }
-    }
+    // How far For You / Downloads content sits under the shared header; the
+    // tab's own list reports it (see ReportTabHeaderScrim).
+    val headerScrim = remember { mutableFloatStateOf(0f) }
     // Instantiate with the shell, not when the lazy tab is first opened, so
     // Discover and taste-profile requests run alongside profile/header setup.
     val recommendationsViewModel = koinViewModel<RecommendationsViewModel>()
@@ -459,7 +442,6 @@ fun MainScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .hazeSource(hazeState)
-                    .nestedScroll(headerScrollConnection)
                     .siloPageBackdrop(),
             ) {
                 when (currentTab) {
@@ -530,7 +512,7 @@ fun MainScreen(
                             onSignOutClick = ::signOutFromProfileMenu,
                         )
                     }
-                    Tab.ForYou -> {
+                    Tab.ForYou -> CompositionLocalProvider(LocalTabHeaderScrim provides headerScrim) {
                         RecommendationsScreen(
                             onItemClick = { contentId ->
                                 navController.navigate(Route.ItemDetail(contentId).route)
@@ -564,7 +546,7 @@ fun MainScreen(
                             },
                         )
                     }
-                    Tab.Downloads -> {
+                    Tab.Downloads -> CompositionLocalProvider(LocalTabHeaderScrim provides headerScrim) {
                         org.siloserver.silo.android.ui.screens.downloads.DownloadsScreen(
                             // Tap on a downloaded row goes directly to the right
                             // player so it works offline (ItemDetail needs the
@@ -615,7 +597,7 @@ fun MainScreen(
                     remoteControl = remoteControl,
                     isProfileLoading = headerState.isLoading,
                     hazeState = hazeState,
-                    scrimProgress = (headerScrollPx / headerFadePx).coerceAtMost(1f),
+                    scrimProgress = headerScrim.floatValue,
                     onSearchClick = { navController.navigate(Route.Search().route) },
                     onRequestsClick = requestsMenuAction,
                     onWatchPartyClick = watchPartyMenuAction,

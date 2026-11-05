@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.browse
 
+import org.siloserver.silo.android.ui.components.ReportTabHeaderScrim
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 
@@ -106,6 +107,8 @@ fun CatalogGrid(
     header: (@Composable () -> Unit)? = null,
 ) {
     val gridState = rememberLazyGridState()
+    // Feeds the shared header's glass when this grid fills For You.
+    ReportTabHeaderScrim(gridState)
     val heroHandoff = LocalHeroSourceHandoff.current
     val uniqueItems = remember(items) { items.distinctBy { it.contentId } }
     // The session density picks the base cell; the server-driven poster-size
