@@ -28,27 +28,33 @@ fun DescriptionTranslationSection(
     modifier: Modifier = Modifier,
 ) {
     when (phase) {
-        DescriptionTranslationPhase.Translating -> Row(
-            modifier = modifier,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(14.dp),
-                strokeWidth = 2.dp,
-            )
-            Text(
-                text = "Translating description…",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        DescriptionTranslationPhase.Translating -> TranslatingDescriptionLabel(modifier)
         DescriptionTranslationPhase.Failed -> TextButton(onClick = onTranslate, modifier = modifier) {
             Text("Translation failed — retry")
         }
         DescriptionTranslationPhase.Idle -> TextButton(onClick = onTranslate, modifier = modifier) {
             Text("Translate description")
         }
+    }
+}
+
+/** "Translating description…" progress under an overview. */
+@Composable
+fun TranslatingDescriptionLabel(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(14.dp),
+            strokeWidth = 2.dp,
+        )
+        Text(
+            text = "Translating description…",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

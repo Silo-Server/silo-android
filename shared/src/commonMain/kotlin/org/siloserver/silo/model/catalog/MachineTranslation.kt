@@ -18,6 +18,20 @@ const val MACHINE_TRANSLATED_OVERVIEW = "overview"
 fun List<EpisodeListItem>.pendingEpisodeTranslationLanguage(): String? =
     firstNotNullOfOrNull { episode -> episode.pendingTranslationLanguage?.takeIf { it.isNotBlank() } }
 
+/**
+ * Whether a series page should show "Translating description…" for its shown
+ * episode: the shown season's job is running and the episode still reports a
+ * [pendingLanguage]. A job for another season, or an episode whose text already
+ * arrived, shows no progress.
+ */
+fun isEpisodeDescriptionTranslating(
+    pendingLanguage: String?,
+    shownSeasonContentId: String?,
+    translatingContentId: String?,
+): Boolean = !pendingLanguage.isNullOrBlank() &&
+    translatingContentId != null &&
+    translatingContentId == shownSeasonContentId
+
 /** Refresh description metadata without replacing playback or personal state. */
 fun ItemDetail.withEpisodeDescription(row: EpisodeListItem): ItemDetail {
     if (row.contentId != contentId) return this

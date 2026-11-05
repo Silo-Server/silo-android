@@ -39,6 +39,7 @@ import org.siloserver.silo.model.catalog.ItemExtra
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.trailerRailEntries
 import org.siloserver.silo.model.settings.EpisodeSpoilers
+import org.siloserver.silo.model.catalog.isEpisodeDescriptionTranslating
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
@@ -98,6 +99,8 @@ fun SeriesDetailContent(
     /** The Watch Party overflow action (host, add, or suggest), when one applies. */
     partyAction: org.siloserver.silo.android.ui.screens.watchparty.DetailPartyAction? = null,
     translation: (@Composable () -> Unit)? = null,
+    // The season whose translation job, which fills its episodes' descriptions, is running.
+    translatingSeasonContentId: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val dominantColor by rememberDominantColor(
@@ -137,12 +140,27 @@ fun SeriesDetailContent(
         selectedEpisodeOverview != null -> hasMachineTranslatedOverview(selectedEpisode?.machineTranslatedFields)
         else -> false
     }
-    val episodeTranslationLabel: (@Composable () -> Unit)? =
-        if (!hidesSelectedEpisodeOverview && selectedEpisodeOverviewMachineTranslated) {
-            { DetailMachineTranslatedLabel() }
-        } else {
-            null
+    // The loaded detail tracks the rail's pending language, and wins once loaded.
+    val selectedEpisodePendingLanguage = if (loadedSelectedEpisodeDetail != null) {
+        loadedSelectedEpisodeDetail.pendingTranslationLanguage
+    } else {
+        selectedEpisode?.pendingTranslationLanguage
+    }
+    val selectedEpisodeTranslating = isEpisodeDescriptionTranslating(
+        pendingLanguage = selectedEpisodePendingLanguage,
+        shownSeasonContentId = selectedSeason?.contentId,
+        translatingContentId = translatingSeasonContentId,
+    )
+    val episodeTranslationLabel: (@Composable () -> Unit)? = when {
+        hidesSelectedEpisodeOverview -> null
+        selectedEpisodeTranslating -> {
+            { TranslatingDescriptionLabel() }
         }
+        selectedEpisodeOverviewMachineTranslated -> {
+            { DetailMachineTranslatedLabel() }
+        }
+        else -> null
+    }
     // iOS keeps the series cast credit stable while the selected episode's
     // overview and playback options change. Reusing the series credit avoids
     // replacing it with a skeleton (and repainting different names) on every

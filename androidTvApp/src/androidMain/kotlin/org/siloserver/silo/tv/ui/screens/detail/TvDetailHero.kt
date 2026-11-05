@@ -187,21 +187,19 @@ internal fun TvDetailHero(
                     .focusGroup(),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                if (compactSeries && translation != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.weight(1f)) { actions() }
-                        translation()
-                    }
-                } else if (compactSeries && machineTranslated) {
+                // Keep actions() at one call site: moving it between branches
+                // would recreate the row and drop focus from a focused button
+                // whenever the translation state changes.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { actions() }
                     // Series reserves fixed editorial slots, so the marker sits
                     // at the end of the action row where the translate button
                     // would; it is not focusable and adds no D-pad stop.
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.weight(1f)) { actions() }
+                    if (compactSeries && translation != null) {
+                        translation()
+                    } else if (compactSeries && machineTranslated) {
                         TvMachineTranslatedLabel()
                     }
-                } else {
-                    actions()
                 }
             }
         }

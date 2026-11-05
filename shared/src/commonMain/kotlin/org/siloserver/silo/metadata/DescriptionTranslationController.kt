@@ -37,6 +37,11 @@ class DescriptionTranslationController(
      */
     val runningContentId: StateFlow<String?> = _runningContentId.asStateFlow()
 
+    private val _translatingContentId = MutableStateFlow<String?>(null)
+
+    /** The item being translated right now; null once the translation ends in any way. */
+    val translatingContentId: StateFlow<String?> = _translatingContentId.asStateFlow()
+
     private val autoFired = mutableSetOf<String>()
 
     /**
@@ -57,6 +62,7 @@ class DescriptionTranslationController(
     ) {
         if (_phase.value == DescriptionTranslationPhase.Translating) return
         _runningContentId.value = contentId
+        _translatingContentId.value = contentId
         _phase.value = DescriptionTranslationPhase.Translating
 
         val owner = repository.captureAuthority()
@@ -111,6 +117,8 @@ class DescriptionTranslationController(
             // A throwing refetch/onTranslated must not strand the phase at
             // Translating forever (resetFailure only clears Failed).
             _phase.value = DescriptionTranslationPhase.Failed
+        } finally {
+            _translatingContentId.value = null
         }
     }
 

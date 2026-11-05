@@ -55,6 +55,9 @@ class DescriptionTranslationControllerTest {
         )
 
         assertEquals(DescriptionTranslationPhase.Failed, controller.phase.value)
+        assertEquals(null, controller.translatingContentId.value)
+        // The failed item stays named so it can offer a retry.
+        assertEquals("movie-1", controller.runningContentId.value)
     }
 
     @Test
@@ -134,6 +137,7 @@ class DescriptionTranslationControllerTest {
         )
         var seenWhilePolling: String? = null
         var phaseWhilePolling: DescriptionTranslationPhase? = null
+        var translatingWhilePolling: String? = null
 
         assertEquals(null, controller.runningContentId.value)
         controller.translate(
@@ -142,6 +146,7 @@ class DescriptionTranslationControllerTest {
             refetchPendingLanguage = {
                 seenWhilePolling = controller.runningContentId.value
                 phaseWhilePolling = controller.phase.value
+                translatingWhilePolling = controller.translatingContentId.value
                 null
             },
             onTranslated = { },
@@ -150,6 +155,8 @@ class DescriptionTranslationControllerTest {
         assertEquals("movie-1", seenWhilePolling)
         assertEquals(DescriptionTranslationPhase.Translating, phaseWhilePolling)
         assertEquals(DescriptionTranslationPhase.Idle, controller.phase.value)
+        assertEquals("movie-1", translatingWhilePolling)
+        assertEquals(null, controller.translatingContentId.value)
     }
 
     @Test

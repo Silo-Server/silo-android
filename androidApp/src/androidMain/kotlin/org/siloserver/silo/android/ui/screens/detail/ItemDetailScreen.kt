@@ -447,6 +447,7 @@ fun ItemDetailScreen(
                 val metadataAiStore: MetadataAiFeatureStore = koinInject()
                 val metadataAiStatus by metadataAiStore.status.collectAsState()
                 val translationPhase by viewModel.translationPhase.collectAsState()
+                val translatingSeasonContentId by viewModel.translatingSeasonContentId.collectAsState()
                 val translationEligible = metadataAiStatus.onView != MetadataAiOnView.Off &&
                     detail.pendingTranslationLanguage != null
                 // `auto` on-view mode fires once per (content, language); the
@@ -747,6 +748,7 @@ fun ItemDetailScreen(
                             seriesResume
                         }
                         SeriesDetailContent(
+                            translatingSeasonContentId = translatingSeasonContentId,
                             translation = translationSlot,
                             detail = detail,
                             similarItems = state.similarItems,
