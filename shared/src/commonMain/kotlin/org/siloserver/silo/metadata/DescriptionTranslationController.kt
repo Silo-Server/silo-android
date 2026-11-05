@@ -65,8 +65,8 @@ class DescriptionTranslationController(
         _translatingContentId.value = contentId
         _phase.value = DescriptionTranslationPhase.Translating
 
-        val owner = repository.captureAuthority()
         try {
+            val owner = repository.captureAuthority()
             if (!repository.isCurrent(owner)) {
                 _phase.value = DescriptionTranslationPhase.Failed
                 return

@@ -61,6 +61,38 @@ class DescriptionTranslationControllerTest {
     }
 
     @Test
+    fun aThrowingAuthorityCaptureDoesNotStrandTheTranslation() = runTest {
+        val api = object : MetadataAiApi {
+            override suspend fun status(): ApiResult<MetadataAiStatus> =
+                ApiResult.NetworkError(IllegalStateException("not used"))
+
+            override suspend fun translateDescription(
+                contentId: String,
+                targetLanguage: String,
+                scope: org.siloserver.silo.network.AuthScopeSnapshot?,
+            ): ApiResult<org.siloserver.silo.model.metadata.MetadataTranslationJob> =
+                ApiResult.NetworkError(IllegalStateException("not used"))
+
+            override suspend fun captureAuthority(): org.siloserver.silo.network.AuthScopeSnapshot? =
+                throw IllegalStateException("token store unavailable")
+        }
+        val controller = DescriptionTranslationController(
+            repository = MetadataAiRepository(api),
+            delayMs = { },
+        )
+
+        controller.translate(
+            contentId = "season-1",
+            targetLanguage = "nl",
+            refetchPendingLanguage = { null },
+            onTranslated = { },
+        )
+
+        assertEquals(DescriptionTranslationPhase.Failed, controller.phase.value)
+        assertEquals(null, controller.translatingContentId.value)
+    }
+
+    @Test
     fun pollBudgetExhaustionFails() = runTest {
         val api = FakeApi(translateResult = ApiResult.Success(org.siloserver.silo.model.metadata.MetadataTranslationJob("1", "item", "movie-1", "nl", "pending")))
         var polls = 0
