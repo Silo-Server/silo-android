@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.recommendations
 
+import org.siloserver.silo.android.ui.components.ReportTabHeaderScrim
+import org.siloserver.silo.android.ui.components.TabPillRowHeight
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -144,7 +146,7 @@ fun RecommendationsScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = contentTopPadding + 16.dp),
+                    .padding(top = contentTopPadding),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
                 Box(modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -253,16 +255,18 @@ fun RecommendationsScreen(
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     val listState = rememberLazyListState()
+                    ReportTabHeaderScrim(listState)
                     DeferImagePresentationWhileScrolling(listState) {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
                         // Content starts under the header glass and keeps room for
                         // the floating bottom nav while preserving iOS section
-                        // rhythm inside the list. Top = header + the grid's own
-                        // 16dp inset so the pills sit at the same y in both modes.
+                        // rhythm inside the list. The pills sit in the shared pill
+                        // band, at the same y as in the saved-list grid and as
+                        // Libraries' subtabs; the first row follows at TabContentTop.
                         contentPadding = PaddingValues(
-                            top = contentTopPadding + 16.dp,
+                            top = contentTopPadding,
                             bottom = 24.dp + LocalBottomChromeInset.current,
                         ),
                         // iOS sectionSpacing (phone) = largePadding (24).
@@ -362,7 +366,9 @@ private fun SavedShortcutsRow(
     selection: ForYouList? = null,
 ) {
     Row(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(TabPillRowHeight),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

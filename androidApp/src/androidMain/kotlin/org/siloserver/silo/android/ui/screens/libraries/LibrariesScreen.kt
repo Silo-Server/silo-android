@@ -83,6 +83,13 @@ import kotlinx.coroutines.sync.withPermit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.android.ui.components.TabContentGap
+import org.siloserver.silo.android.ui.components.TabHeaderPillGap
+import org.siloserver.silo.android.ui.components.TabHeaderRowHeight
+import org.siloserver.silo.android.ui.components.TabPillRowHeight
+import org.siloserver.silo.android.ui.components.TopBarEdgeMargin
+import org.siloserver.silo.android.ui.components.TopBarGlassFadeDistance
+import org.siloserver.silo.android.ui.components.TopBarRemoteControl
 import org.siloserver.silo.android.ui.components.TopBarRowTopInset
 import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.android.ui.components.EmptyStateView
@@ -982,10 +989,6 @@ class LibrariesViewModel(
     )
 }
 
-// Distance the Recommended tab must scroll for the chrome scrim to fully
-// fade in. Mirrors `chromeScrimFadeDistance` on iOS.
-private const val ChromeFadeDistanceDp = 80f
-
 @Composable
 fun LibrariesScreen(
     onItemClick: (String, Int?) -> Unit,
@@ -994,6 +997,7 @@ fun LibrariesScreen(
     onExploreSection: ((ResolvedSection, Int, String?) -> Unit)? = null,
     viewModel: LibrariesViewModel,
     activeProfile: Profile?,
+    remoteControl: TopBarRemoteControl,
     onLibrarySelectorClick: () -> Unit,
     onSearchClick: () -> Unit,
     onRequestsClick: (() -> Unit)?,
@@ -1047,7 +1051,7 @@ fun LibrariesScreen(
     LaunchedEffect(state.selectedLibraryId, state.mediaScope) { recommendedListState.scrollToItem(0) }
     val density = LocalDensity.current
     val chromeFadePx = remember(density) {
-        with(density) { ChromeFadeDistanceDp.dp.toPx() }
+        with(density) { TopBarGlassFadeDistance.toPx() }
     }
     val recommendedScrollProgress by remember(chromeFadePx) {
         derivedStateOf {
@@ -1161,6 +1165,7 @@ fun LibrariesScreen(
             selectedLibrary = selectedLibrary,
             canSwitch = state.libraries.size > 1,
             activeProfile = activeProfile,
+            remoteControl = remoteControl,
             selectedTab = state.selectedTab,
             mediaScope = state.mediaScope,
             onMediaScopeSelected = viewModel::selectMediaScope,
@@ -1245,7 +1250,9 @@ private fun RecommendedTabContent(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 // Rows start below the floating chrome and scroll up under it.
-                contentPadding = PaddingValues(top = topInset + 16.dp),
+                // The chrome already ends at TabContentTop, where Home's first
+                // row sits.
+                contentPadding = PaddingValues(top = topInset),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
 
@@ -1497,7 +1504,7 @@ private fun CollectionsTabContent(
                 contentPadding = PaddingValues(
                     start = 16.dp,
                     end = 16.dp,
-                    top = topInset + 16.dp,
+                    top = topInset,
                     bottom = 24.dp + LocalBottomChromeInset.current,
                 ),
             ) {
@@ -1582,6 +1589,7 @@ private fun LibrariesFloatingChrome(
     selectedLibrary: UserLibrary?,
     canSwitch: Boolean,
     activeProfile: Profile?,
+    remoteControl: TopBarRemoteControl,
     selectedTab: LibrariesSubtab,
     mediaScope: String?,
     onMediaScopeSelected: (String) -> Unit,
@@ -1623,7 +1631,8 @@ private fun LibrariesFloatingChrome(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp),
+                .height(TabHeaderRowHeight)
+                .padding(horizontal = TopBarEdgeMargin),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             LibrarySelectorButton(
@@ -1635,6 +1644,7 @@ private fun LibrariesFloatingChrome(
 
             TabTopBarActions(
                 activeProfile = activeProfile,
+                remoteControl = remoteControl,
                 onSearchClick = onSearchClick,
                 onRequestsClick = onRequestsClick,
                 onWatchPartyClick = onWatchPartyClick,
@@ -1645,8 +1655,7 @@ private fun LibrariesFloatingChrome(
             )
         }
 
-        // iOS: top bar bottom inset = smallPadding (8).
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(TabHeaderPillGap))
 
         if (mediaScope != null) {
             Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1655,18 +1664,22 @@ private fun LibrariesFloatingChrome(
             }
         }
 
-        LibrarySubtabRow(
-            selectedTab = selectedTab,
-            onRecommendedClick = { onTabSelected(LibrariesSubtab.Recommended) },
-            onBrowseClick = { onTabSelected(LibrariesSubtab.Browse) },
-            onCollectionsClick = { onTabSelected(LibrariesSubtab.Collections) },
-            onShuffleClick = onShuffleClick,
-            shuffleEnabled = shuffleEnabled,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
+        Box(
+            modifier = Modifier.height(TabPillRowHeight),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            LibrarySubtabRow(
+                selectedTab = selectedTab,
+                onRecommendedClick = { onTabSelected(LibrariesSubtab.Recommended) },
+                onBrowseClick = { onTabSelected(LibrariesSubtab.Browse) },
+                onCollectionsClick = { onTabSelected(LibrariesSubtab.Collections) },
+                onShuffleClick = onShuffleClick,
+                shuffleEnabled = shuffleEnabled,
+                modifier = Modifier.padding(horizontal = TopBarEdgeMargin),
+            )
+        }
 
-            // iOS: tab selector bottom inset = padding (16).
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(TabContentGap))
         }
     }
 }
