@@ -1,6 +1,8 @@
 package org.siloserver.silo.tv.ui.focus
 
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.tv.ui.components.isTvProgressRow
 
 /**
  * Projects a Skyline row feed into the shape [resolveTvReturnTarget] reads.
@@ -35,12 +37,32 @@ internal fun List<ResolvedSection>.toTvReturnSections(
     exploreAll: (ResolvedSection) -> Boolean = { false },
 ): List<TvReturnSection> =
     map { section ->
-        val itemIds = section.items.map { it.contentId }
+        val itemIds = section.items.map { section.tvReturnItemId(it) }
         TvReturnSection(
             id = section.id,
             itemIds = if (exploreAll(section)) itemIds + TvExploreAllItemId else itemIds,
             isComplete = section.items.isNotEmpty() || section.totalCount == 0,
         )
+    }
+
+/**
+ * The return identity of [item] in this row.
+ *
+ * A progress row (Continue Watching, Next Up) holds one card per show, and
+ * that card's episode changes as the viewer watches: finishing E3 replaces it
+ * with E4 and moves it to the front. Keyed on the episode id, the return
+ * target no longer matched anything and fell back to the launch slot, which
+ * by then held a different show. The series id stays the same across the
+ * advance, so focus follows the show to its new position.
+ *
+ * Other rows keep the content id: an episode in Recently Added is that
+ * episode, and two episodes of one show can sit side by side.
+ */
+internal fun ResolvedSection.tvReturnItemId(item: SectionItem): String =
+    if (isTvProgressRow()) {
+        item.seriesId?.takeIf { it.isNotBlank() } ?: item.contentId
+    } else {
+        item.contentId
     }
 
 /**
