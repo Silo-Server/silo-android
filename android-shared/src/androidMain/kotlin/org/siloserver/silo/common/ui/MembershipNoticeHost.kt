@@ -55,17 +55,23 @@ fun MembershipNoticeHost(
     val generation by actions.generation.collectAsState()
     val legacy by actions.legacyNotice.collectAsState()
     val scope = rememberCoroutineScope()
-    var raised by remember { mutableStateOf<MembershipActions.Intent?>(null) }
+    // Oldest first, one per field: a later failure waits instead of replacing an open notice.
+    var raised by remember { mutableStateOf(emptyList<MembershipActions.Intent>()) }
     LaunchedEffect(generation) { actions.observeChanges() }
-    LaunchedEffect(actions) { actions.unconfirmedAttempts.collect { raised = it } }
+    LaunchedEffect(actions) {
+        actions.unconfirmedAttempts.collect { new -> raised = raised.filterNot { it.key == new.key } + new }
+    }
 
-    val intent = raised
-    val action = intent?.let { states[it.key] }
-        ?.takeIf { it.intent == intent && actions.current(intent) && !it.busy && !it.confirmed }
-    if (intent != null && action != null) {
+    val shown = raised.firstNotNullOfOrNull { intent ->
+        states[intent.key]
+            ?.takeIf { it.intent == intent && actions.current(intent) && !it.busy && !it.confirmed }
+            ?.let { intent to it }
+    }
+    if (shown != null) {
         if (deferred) return
-        show(unconfirmedNotice(action, onDismiss = { raised = null }) {
-            raised = null
+        val (intent, action) = shown
+        show(unconfirmedNotice(action, onDismiss = { raised = raised - intent }) {
+            raised = raised - intent
             scope.launch {
                 if (action.command != null) actions.checkStatus(intent) else actions.perform(intent)
             }
