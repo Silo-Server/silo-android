@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.common.ui.components.SpoilerImage
+import org.siloserver.silo.common.downloads.DownloadEnqueuer
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
@@ -507,11 +508,16 @@ private fun ExpandableAggregateRow(
     }
 }
 
-/** An aggregate row's title: "Season N", the series (or "Series" when no download named it), else the entry's own. */
+/**
+ * An aggregate row's title: "Season N", the series, else the entry's own. A
+ * series no download named, or saved under the stored English placeholder,
+ * shows the catalog's "Series".
+ */
 @Composable
 private fun downloadEntryTitle(entry: DownloadEntry): String = when (entry) {
     is DownloadEntry.Season -> stringResource(CommonR.string.downloads_entry_season, entry.seasonNumber)
-    is DownloadEntry.Series -> entry.title.ifEmpty { stringResource(CommonR.string.downloads_entry_seriesFallback) }
+    is DownloadEntry.Series -> entry.title.takeUnless { it.isEmpty() || it == DownloadEnqueuer.UNKNOWN_SERIES_TITLE }
+        ?: stringResource(CommonR.string.downloads_entry_seriesFallback)
     else -> entry.title
 }
 

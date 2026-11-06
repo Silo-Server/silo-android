@@ -195,7 +195,7 @@ class DownloadEnqueuer(
 
         val seriesDetail = (catalogRepository.getItemDetail(seriesContentId) as? ApiResult.Success)?.data
         val episodeByFileId = buildEpisodeIndexByFileId(seriesContentId)
-        val seriesTitle = seriesDetail?.title ?: "Series"
+        val seriesTitle = seriesDetail?.title ?: UNKNOWN_SERIES_TITLE
         val posterUrl = seriesDetail?.posterUrl
 
         for (record in records) {
@@ -261,7 +261,7 @@ class DownloadEnqueuer(
         if (episodes.isEmpty()) return ApiResult.Success(Unit)
 
         val seriesDetail = (catalogRepository.getItemDetail(seriesContentId) as? ApiResult.Success)?.data
-        val seriesTitle = seriesDetail?.title ?: "Series"
+        val seriesTitle = seriesDetail?.title ?: UNKNOWN_SERIES_TITLE
         val posterUrl = seriesDetail?.posterUrl
 
         var firstError: ApiResult<Unit>? = null
@@ -596,6 +596,13 @@ class DownloadEnqueuer(
 
         /** Local-only error code: this file already has a live download worker. */
         const val ALREADY_ACTIVE_ERROR = "download_already_active"
+
+        /**
+         * Saved as a download's series title when the series' own title is
+         * unknown. Stored data, so it stays English; Downloads shows the
+         * catalog's word in its place.
+         */
+        const val UNKNOWN_SERIES_TITLE = "Series"
 
         private const val WORK_VISIBILITY_GRACE_MS = 5_000L
     }
