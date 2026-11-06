@@ -42,10 +42,11 @@ case $version in
     if [ -z "$local" ]; then
       [ -n "${SILO_TRANSLATIONS_TOKEN:-}" ] || { echo "check-translations: skipped (no SILO_TRANSLATIONS_TOKEN to read the private catalog)"; exit 0; }
       # The token goes in a request header for the clone only: it is never
-      # written to .git/config and never reaches npm or the generator.
+      # written to .git/config and never reaches npm or the generator. A full
+      # clone, so the checkout below needs no further (unauthenticated) fetch.
       auth=$(printf 'x-access-token:%s' "$SILO_TRANSLATIONS_TOKEN" | base64 | tr -d '\n')
       git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
-        clone --quiet --filter=blob:none https://github.com/Silo-Server/silo-translations.git "$tmp/catalog"
+        clone --quiet https://github.com/Silo-Server/silo-translations.git "$tmp/catalog"
       unset SILO_TRANSLATIONS_TOKEN auth
       git -C "$tmp/catalog" checkout --quiet "$commit" \
         || die "catalog commit $commit is not on GitHub yet"

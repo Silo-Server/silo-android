@@ -19,11 +19,14 @@ class CatalogSourceTest {
      */
     @Test
     fun noHandWrittenResourceReusesAGeneratedName() {
-        val generated = names(File(root, "android-shared/src/androidMain/res/values/strings_catalog.xml").readText())
+        val catalog = File(root, "android-shared/src/androidMain/res")
+        val generated = names(File(catalog, "values/strings_catalog.xml").readText())
         assertTrue(generated.size > 300, "generated catalog not found or empty")
         val clashes = listOf("androidApp", "androidTvApp", "android-shared").flatMap { module ->
             File(root, "$module/src").walkTopDown()
-                .filter { it.isFile && it.extension == "xml" && it.parentFile.name.startsWith("values") && it.name != "strings_catalog.xml" }
+                .filter { it.isFile && it.extension == "xml" && it.parentFile.name.startsWith("values") }
+                // Only android-shared's generated files may declare catalog names.
+                .filterNot { it.name == "strings_catalog.xml" && it.parentFile.parentFile.canonicalFile == catalog.canonicalFile }
                 .flatMap { file -> names(file.readText()).filter { it in generated }.map { "${file.relativeTo(root)}: $it" } }
                 .toList()
         }
