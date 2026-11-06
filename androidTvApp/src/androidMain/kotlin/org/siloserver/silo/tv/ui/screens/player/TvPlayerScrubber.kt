@@ -8,6 +8,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import android.os.SystemClock
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -531,7 +533,9 @@ fun TvPlayerScrubber(
             Text(
                 text = listOfNotNull(
                     formatRemainingTime(remainingSec),
-                    finishTimeLabel(timeFormat, wallClockRemainingSec)?.let { "Ends $it" },
+                    finishTimeLabel(timeFormat, wallClockRemainingSec)?.let {
+                        stringResource(CommonR.string.player_scrubber_endsAt, it)
+                    },
                 ).joinToString(" · "),
                 style = TvPlayerType.Time.copy(color = TvPlayerChrome.Graphite),
             )
@@ -603,7 +607,7 @@ private fun TvScrubberAutoSeekChip(rate: Int, modifier: Modifier = Modifier) {
             modifier = Modifier.size(12.dp),
         )
         Text(
-            text = "${abs(rate)}x",
+            text = "${abs(rate)}x", // i18n-ignore
             color = Color.Black,
             maxLines = 1,
             softWrap = false,

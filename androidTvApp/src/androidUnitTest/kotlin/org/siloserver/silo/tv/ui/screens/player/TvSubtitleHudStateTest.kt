@@ -1,5 +1,10 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_BURN_IN_ONLY
 import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
@@ -11,7 +16,13 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class TvSubtitleHudStateTest {
+    // The HUD builders read their words from the app's resources (English here).
+    private val resources
+        get() = ApplicationProvider.getApplicationContext<Application>().resources
+
     @Test
     fun `sync status resolves server tracks by ordinal and merged stored rows by download id`() {
         val sync = TvHudSubtitleSync(
@@ -89,6 +100,7 @@ class TvSubtitleHudStateTest {
             pendingIdentity = null,
             hudOpen = false,
             focusedStableId = id(sidecar(4)),
+            resources = resources,
         )
 
         assertFalse(presentation.hudOpen)
@@ -103,6 +115,7 @@ class TvSubtitleHudStateTest {
             pendingIdentity = sidecar(4),
             hudOpen = true,
             focusedStableId = id(sidecar(4)),
+            resources = resources,
         )
 
         assertTrue(presentation.hudOpen)
@@ -135,6 +148,7 @@ class TvSubtitleHudStateTest {
             pendingIdentity = null,
             hudOpen = true,
             focusedStableId = id(sidecar(4)),
+            resources = resources,
         )
 
         assertTrue(cancelled.focusTrapActive)
@@ -163,6 +177,7 @@ class TvSubtitleHudStateTest {
             pendingIdentity = sidecar(4),
             hudOpen = true,
             focusedStableId = before.focusedStableId,
+            resources = resources,
         )
 
         assertEquals(id(sidecar(4)), refreshed.focusedStableId)
@@ -192,6 +207,7 @@ class TvSubtitleHudStateTest {
         val options = buildTvSubtitleHudOptions(
             subtitleUrls = listOf(english, unrecognized),
             subtitleTracks = emptyList(),
+            resources = resources,
         )
         assertEquals(listOf(false, false, true), options.map(TvSubtitleHudOption::unplayable))
 
@@ -202,6 +218,7 @@ class TvSubtitleHudStateTest {
             pendingIdentity = null,
             hudOpen = true,
             focusedStableId = options[2].stableId,
+            resources = resources,
         )
         assertEquals(options[0].stableId, presentation.focusedStableId)
         assertTrue(presentation.rows[2].unplayable)
@@ -224,6 +241,7 @@ class TvSubtitleHudStateTest {
             pendingIdentity = full,
             hudOpen = true,
             focusedStableId = choices[1].stableId,
+            resources = resources,
         )
         assertEquals(2, presentation.rows.map { it.stableId }.distinct().size)
         assertTrue(presentation.rows.single { it.identity == full }.focused)
@@ -239,6 +257,7 @@ class TvSubtitleHudStateTest {
         pendingIdentity = pending,
         hudOpen = true,
         focusedStableId = focusedId,
+        resources = resources,
     )
 
     private fun options(): List<TvSubtitleHudOption> = listOf(

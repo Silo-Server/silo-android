@@ -41,6 +41,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -116,7 +119,7 @@ import org.siloserver.silo.android.cast.SiloCastState
 import org.siloserver.silo.android.ui.navigation.Route
 import org.siloserver.silo.common.player.watchparty.IssuedSeekTracker
 import org.siloserver.silo.common.player.watchparty.WatchPartyPlayback
-import org.siloserver.silo.common.player.watchparty.watchPartyNoticeText
+import org.siloserver.silo.common.player.watchparty.localizedWatchPartyNotice
 import org.siloserver.silo.android.ui.screens.watchparty.WatchPartyPanelSheet
 import org.siloserver.silo.android.ui.screens.watchparty.formatWatchPartyNames
 import org.siloserver.silo.android.ui.screens.watchparty.rememberWatchPartyReconnectNotice
@@ -501,7 +504,7 @@ fun PlayerScreen(
         }
         if (present == null) {
             if (!exitRequested && party.ended.value == null) {
-                Toast.makeText(context, "This Watch Party isn't available anymore.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(CommonR.string.player_watchParty_unavailable), Toast.LENGTH_SHORT).show()
                 exitPlayer()
             }
             return@LaunchedEffect
@@ -513,7 +516,7 @@ fun PlayerScreen(
                 snapshot == null || snapshot.roomId != id -> if (party.ended.value == null) exitPlayer()
                 snapshot.phase == RoomPhase.Lobby -> {
                     if (snapshot.selfRole != MemberRole.Host) {
-                        Toast.makeText(context, "The host stopped playback", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, context.getString(CommonR.string.player_watchParty_hostStoppedPlayback), Toast.LENGTH_SHORT).show()
                     }
                     exitRequested = true
                     viewModel.onExit()
@@ -547,17 +550,20 @@ fun PlayerScreen(
         val waitingFor = watchPartyWaitingNames(room)
         when {
             showRoomReconnect -> if (roomConnection.disconnectedAtMs == null) {
-                "Connecting to the party…"
+                stringResource(CommonR.string.player_watchParty_connecting)
             } else {
-                "Reconnecting to the party…"
+                stringResource(CommonR.string.watchParty_player_reconnecting)
             }
             !room.hostConnected && room.selfRole != MemberRole.Host ->
-                "The host lost connection. The party ends in two minutes unless the host returns."
-            roomCatchingUp -> "Catching up to the party"
+                stringResource(CommonR.string.player_watchParty_hostLostConnection)
+            roomCatchingUp -> stringResource(CommonR.string.player_watchParty_catchingUp)
             room.playbackState == RoomPlaybackState.Waiting -> if (waitingFor.isEmpty()) {
-                "Syncing playback"
+                stringResource(CommonR.string.player_watchParty_syncing)
             } else {
-                "Syncing playback · Waiting for ${formatWatchPartyNames(waitingFor)}"
+                stringResourceWithNames(
+                    CommonR.string.player_watchParty_syncingWaitingFor,
+                    formatWatchPartyNames(waitingFor),
+                )
             }
             else -> null
         }
@@ -570,7 +576,7 @@ fun PlayerScreen(
             val leftBehind = watchPartyLeftBehindNames(previous, next)
             if (leftBehind.isNotEmpty()) {
                 roomEventNotice = SystemClock.elapsedRealtime() to
-                    "Continuing without ${formatWatchPartyNames(leftBehind)}"
+                    context.getString(CommonR.string.player_watchParty_continuingWithout, formatWatchPartyNames(leftBehind))
             }
             previous = next
         }
@@ -580,7 +586,8 @@ fun PlayerScreen(
         var wasCatchingUp = party.catchingUp.value
         party.catchingUp.collect { catchingUp ->
             if (catchingUp && !wasCatchingUp) {
-                roomEventNotice = SystemClock.elapsedRealtime() to "The party kept playing"
+                roomEventNotice = SystemClock.elapsedRealtime() to
+                    context.getString(CommonR.string.player_watchParty_keptPlaying)
             }
             wasCatchingUp = catchingUp
         }
@@ -600,7 +607,7 @@ fun PlayerScreen(
     LaunchedEffect(watchParty) {
         val party = watchParty ?: return@LaunchedEffect
         party.notices.collect { notice ->
-            Toast.makeText(context, watchPartyNoticeText(notice), Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.localizedWatchPartyNotice(notice), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -993,6 +1000,9 @@ fun PlayerScreen(
         }
     }
 
+    // The notification's second line, in the app language when the mount reads it.
+    val mediaSubtitle = uiState.displaySubtitle()
+
     // Set up the media item when stream URL becomes available
     LaunchedEffect(
         videoBackend,
@@ -1042,7 +1052,7 @@ fun PlayerScreen(
                     ?: uiState.committedSubtitleIdentity,
             ),
             title = uiState.title.ifBlank { null },
-            subtitle = uiState.subtitle.ifBlank { null },
+            subtitle = mediaSubtitle.ifBlank { null },
             artworkUrl = uiState.artworkUrl,
             startPositionSeconds = uiState.startPosition,
             timelineOffsetSeconds = plan?.timeline?.timelineOffsetSeconds ?: 0.0,
@@ -1123,7 +1133,7 @@ fun PlayerScreen(
                     ?: uiState.committedSubtitleIdentity,
             ),
             title = uiState.title.ifBlank { null },
-            subtitle = uiState.subtitle.ifBlank { null },
+            subtitle = mediaSubtitle.ifBlank { null },
             artworkUrl = uiState.artworkUrl,
             startPositionSeconds = uiState.startPosition,
             timelineOffsetSeconds = plan?.timeline?.timelineOffsetSeconds ?: 0.0,
@@ -1800,7 +1810,7 @@ fun PlayerScreen(
                     modifier = Modifier.padding(32.dp),
                 ) {
                     Text(
-                        text = uiState.error ?: "Unknown error",
+                        text = uiState.error?.text() ?: stringResource(CommonR.string.player_error_unknown),
                         color = Color.White,
                         style = MaterialTheme.typography.bodyLarge,
                     )
@@ -1808,10 +1818,10 @@ fun PlayerScreen(
                     // Try Anyway escape hatch; generic errors keep the bare message.
                     if (uiState.serverUnreachable) {
                         Button(onClick = { viewModel.retryServerReachability() }) {
-                            Text("Retry")
+                            Text(stringResource(CommonR.string.common_retry))
                         }
                         OutlinedButton(onClick = { viewModel.playIgnoringServerReachability() }) {
-                            Text("Try Anyway")
+                            Text(stringResource(CommonR.string.player_tryAnyway))
                         }
                     }
                 }
@@ -2149,7 +2159,7 @@ fun PlayerScreen(
                     modifier = Modifier.padding(start = 14.dp, end = 4.dp),
                 ) {
                     Text(
-                        text = "Playback keeps stopping. Lower the quality?",
+                        text = stringResource(CommonR.string.player_watchParty_lowerQualityPrompt),
                         color = Color.White,
                         fontSize = 13.sp,
                         modifier = Modifier.weight(1f, fill = false),
@@ -2157,8 +2167,8 @@ fun PlayerScreen(
                     TextButton(onClick = {
                         lowerQualityDeclined = true
                         viewModel.lowerRoomQuality()
-                    }) { Text("Lower") }
-                    TextButton(onClick = { lowerQualityDeclined = true }) { Text("Not now") }
+                    }) { Text(stringResource(CommonR.string.player_watchParty_lowerQuality)) }
+                    TextButton(onClick = { lowerQualityDeclined = true }) { Text(stringResource(CommonR.string.player_watchParty_lowerQualityDecline)) }
                 }
             }
         }
@@ -2200,7 +2210,7 @@ fun PlayerScreen(
                     .clickable { viewModel.dismissVersionSwitchMessage() },
             ) {
                 Text(
-                    text = message,
+                    text = message.text(),
                     color = Color.White,
                     fontSize = 13.sp,
                     lineHeight = 17.sp,
@@ -2238,7 +2248,7 @@ fun PlayerScreen(
                     if (result !is ApiResult.Success) {
                         Toast.makeText(
                             context,
-                            watchPartyErrorMessage(result, "Couldn't return everyone to the lobby."),
+                            watchPartyErrorMessage(result, context.getString(CommonR.string.player_watchParty_returnToLobbyFailed)),
                             Toast.LENGTH_SHORT,
                         ).show()
                     }

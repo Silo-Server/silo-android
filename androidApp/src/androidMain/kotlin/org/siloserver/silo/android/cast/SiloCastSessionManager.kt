@@ -36,6 +36,7 @@ import org.siloserver.silo.common.player.cast.CastStagedSubtitleChange
 import org.siloserver.silo.common.player.cast.CastSubtitleChangeResult
 import org.siloserver.silo.common.player.cast.castReceiverTrackId
 import org.siloserver.silo.common.diagnostics.DiagnosticsCastLogger
+import org.siloserver.silo.common.R as CommonR
 
 data class SiloCastState(
     val isConnected: Boolean = false,
@@ -681,7 +682,7 @@ class SiloCastSessionManager(private val context: Context) {
                     id = track.id,
                     label = track.name?.takeIf { it.isNotBlank() }
                         ?: track.language?.takeIf { it.isNotBlank() }
-                        ?: "Subtitle ${index + 1}",
+                        ?: context.getString(CommonR.string.player_tracks_subtitleNumbered, index + 1),
                 )
             }
             val activeIds = remoteClient?.mediaStatus?.activeTrackIds

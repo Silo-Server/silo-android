@@ -1868,6 +1868,6 @@ private fun logSubtitleCueGeometry(cues: List<Cue>) {
             " lineType=" + cue.lineType +
             " lineAnchor=" + cue.lineAnchor +
             " textAlignment=" + cue.textAlignment +
-            " text=" + cue.text?.toString()?.take(28),
+            " text=" + cue.text?.toString()?.take(28), // i18n-ignore
     )
 }

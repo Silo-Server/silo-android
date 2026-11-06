@@ -44,12 +44,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.screens.detail.CircleActionButton
 import org.siloserver.silo.audiobook.buildAudiobookTimeline
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.audiobook.AudiobookNarration
@@ -215,7 +218,7 @@ fun AudiobookDetailContent(
                 }
                 narratorText?.takeIf { it.isNotBlank() }?.let { narrator ->
                     Text(
-                        text = "Narrated by $narrator",
+                        text = stringResourceWithNames(CommonR.string.audiobook_narratedBy, narrator),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
@@ -246,9 +249,9 @@ fun AudiobookDetailContent(
                     // Primary label mirrors Apple: Resume (>30s, unfinished) →
                     // "Resume · h:mm:ss"; finished → "Play Again"; else "Play".
                     val primaryLabel = when {
-                        resumeSeconds != null -> "Resume · ${formatClock(resumeSeconds)}"
-                        isFinished -> "Play Again"
-                        else -> "Play"
+                        resumeSeconds != null -> stringResource(CommonR.string.audiobook_detail_resume, formatClock(resumeSeconds))
+                        isFinished -> stringResource(CommonR.string.audiobook_detail_playAgain)
+                        else -> stringResource(CommonR.string.common_play)
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -269,7 +272,7 @@ fun AudiobookDetailContent(
                             onClick = { onPlayFromStartClick() },
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text("Start Over")
+                            Text(stringResource(CommonR.string.detail_startOver))
                         }
                     }
                 } else {
@@ -278,7 +281,7 @@ fun AudiobookDetailContent(
                         enabled = false,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("Unavailable")
+                        Text(stringResource(CommonR.string.audiobook_detail_unavailable))
                     }
                 }
                 Row(
@@ -290,18 +293,26 @@ fun AudiobookDetailContent(
                         icon = Icons.Filled.FavoriteBorder,
                         activeIcon = Icons.Filled.Favorite,
                         isActive = isFavorite,
-                        contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
+                        contentDescription = if (isFavorite) {
+                            stringResource(CommonR.string.audiobook_detail_favoriteRemove)
+                        } else {
+                            stringResource(CommonR.string.audiobook_detail_favoriteAdd)
+                        },
                         onClick = onFavoriteClick,
                         activeTint = Color(0xFFEF5350),
-                        label = "Favorite",
+                        label = stringResource(CommonR.string.audiobook_detail_favorite),
                     )
                     CircleActionButton(
                         icon = Icons.Filled.BookmarkBorder,
                         activeIcon = Icons.Filled.Bookmark,
                         isActive = isInWatchlist,
-                        contentDescription = if (isInWatchlist) "Remove from watchlist" else "Add to watchlist",
+                        contentDescription = if (isInWatchlist) {
+                            stringResource(CommonR.string.detail_watchlistRemove)
+                        } else {
+                            stringResource(CommonR.string.detail_watchlistAdd)
+                        },
                         onClick = onWatchlistClick,
-                        label = "Watchlist",
+                        label = stringResource(CommonR.string.detail_watchlist),
                     )
                 }
                 OutlinedButton(
@@ -316,10 +327,10 @@ fun AudiobookDetailContent(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         when {
-                            isDownloaded -> "Downloaded"
-                            downloadProgress != null -> "Cancel Download"
-                            onDownloadClick != null -> "Download"
-                            else -> "Download Unavailable"
+                            isDownloaded -> stringResource(CommonR.string.audiobook_detail_downloaded)
+                            downloadProgress != null -> stringResource(CommonR.string.audiobook_detail_cancelDownload)
+                            onDownloadClick != null -> stringResource(CommonR.string.audiobook_detail_download)
+                            else -> stringResource(CommonR.string.audiobook_detail_downloadUnavailable)
                         },
                     )
                 }
@@ -344,7 +355,7 @@ fun AudiobookDetailContent(
 
         meta?.publisher?.takeIf { it.isNotBlank() }?.let { publisher ->
             item(contentType = "audiobook-publisher") {
-                AudiobookInfoLine(label = "Publisher", value = publisher)
+                AudiobookInfoLine(label = stringResource(CommonR.string.audiobook_detail_publisher), value = publisher)
             }
         }
 
@@ -357,7 +368,7 @@ fun AudiobookDetailContent(
         if (displayableNarrations.isNotEmpty()) {
             item(contentType = "audiobook-narrations-header") {
                 Text(
-                    text = "Other Narrations",
+                    text = stringResource(CommonR.string.audiobook_detail_otherNarrations),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -379,7 +390,7 @@ fun AudiobookDetailContent(
         if (timeline != null && !timeline.isSingle && parts.isNotEmpty()) {
             item(contentType = "audiobook-parts-header") {
                 Text(
-                    text = "Parts (${parts.size})",
+                    text = stringResource(CommonR.string.audiobook_detail_parts, parts.size),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -403,14 +414,18 @@ fun AudiobookDetailContent(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Chapters (${chapters.size})",
+                        text = stringResource(CommonR.string.audiobook_detail_chapters, chapters.size),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.weight(1f),
                     )
                     Icon(
                         imageVector = if (chaptersExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (chaptersExpanded) "Collapse chapters" else "Expand chapters",
+                        contentDescription = if (chaptersExpanded) {
+                            stringResource(CommonR.string.audiobook_detail_collapseChapters)
+                        } else {
+                            stringResource(CommonR.string.audiobook_detail_expandChapters)
+                        },
                     )
                 }
             }
@@ -448,14 +463,14 @@ private fun AudiobookSeriesSection(series: MediaSeriesGroup) {
     val entryLines = series.entries
         .mapNotNull { entry ->
             listOfNotNull(
-                entry.seriesIndex?.let { "Book ${formatSeriesIndex(it)}" },
+                entry.seriesIndex?.let { stringResource(CommonR.string.audiobook_series_bookNumber, formatSeriesIndex(it)) },
                 entry.title.takeIf { it.isNotBlank() },
             ).joinToString(" · ").takeIf { it.isNotBlank() }
         }
         .take(3)
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "Series",
+            text = stringResource(CommonR.string.audiobook_detail_series),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
         )
@@ -518,7 +533,7 @@ private fun OtherNarrationRow(narration: AudiobookNarration) {
 private fun AudiobookRelatedSection(lines: List<String>) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "Related",
+            text = stringResource(CommonR.string.audiobook_detail_related),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
         )
@@ -535,13 +550,14 @@ private fun AudiobookRelatedSection(lines: List<String>) {
     }
 }
 
+@Composable
 private fun MediaRelatedContent.displayLines(): List<String> = listOfNotNull(
     alsoByAuthor.joinToRelatedTitles()
         .takeIf { it.isNotBlank() }
-        ?.let { "Also by author: $it" },
+        ?.let { stringResourceWithNames(CommonR.string.audiobook_detail_alsoByAuthor, it) },
     similar.joinToRelatedTitles()
         .takeIf { it.isNotBlank() }
-        ?.let { "Similar: $it" },
+        ?.let { stringResourceWithNames(CommonR.string.audiobook_detail_similar, it) },
 )
 
 private fun List<MediaRelatedItem>.joinToRelatedTitles(): String =
@@ -565,7 +581,7 @@ private fun ChapterRow(chapter: VersionChapter, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "${chapter.index + 1}.",
+            text = "${chapter.index + 1}.", // i18n-ignore
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(36.dp),
@@ -619,11 +635,12 @@ private fun PartRow(title: String, runtimeSeconds: Double, onClick: () -> Unit) 
 /** Part row label: the file name when present, else "Part {index}" — mirrors
  *  Apple `partTitle`, using the version's `presentationPartIndex` (falling back
  *  to the 0-based [position], displayed 1-based). */
+@Composable
 private fun partTitle(version: FileVersion?, position: Int): String {
     version?.fileName?.takeIf { it.isNotBlank() }?.let { return it }
     val rawIndex = version?.presentationPartIndex ?: position
     val displayIndex = if (rawIndex <= 0) rawIndex + 1 else rawIndex
-    return "Part $displayIndex"
+    return stringResource(CommonR.string.audiobook_detail_partNumber, displayIndex)
 }
 
 private fun formatDuration(seconds: Double): String {

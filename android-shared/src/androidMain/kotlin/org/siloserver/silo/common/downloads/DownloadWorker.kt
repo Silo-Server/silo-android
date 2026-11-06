@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.downloads
 
+import org.siloserver.silo.common.R
 import org.siloserver.silo.network.localroute.stayOnSavedAddress
 import android.annotation.SuppressLint
 import android.app.Notification
@@ -150,7 +151,7 @@ class DownloadWorker(
         val fileName = inputData.getString(KEY_FILE_NAME)
         val container = inputData.getString(KEY_CONTAINER)
         val mediaType = inputData.getString(KEY_MEDIA_TYPE)
-        val displayTitle = inputData.getString(KEY_DISPLAY_TITLE) ?: "Download"
+        val displayTitle = inputData.getString(KEY_DISPLAY_TITLE) ?: appContext.getString(R.string.downloads_notification_defaultTitle)
         if (fileId < 0) return@withContext Result.failure()
         if (authorities != null) {
             val captured = authorities.snapshotDurableLoginAuthority() ?: return@withContext Result.retry()
@@ -696,11 +697,11 @@ class DownloadWorker(
         val notification = NotificationCompat.Builder(appContext, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)
-            .setContentText(if (indeterminate) "Starting…" else "$progress%")
+            .setContentText(if (indeterminate) appContext.getString(R.string.downloads_notification_starting) else "$progress%")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setProgress(100, progress, indeterminate)
-            .addAction(android.R.drawable.ic_delete, "Cancel", cancelIntent)
+            .addAction(android.R.drawable.ic_delete, appContext.getString(R.string.common_cancel), cancelIntent)
             .build()
 
         val notificationId = notificationIdFor(downloadId)

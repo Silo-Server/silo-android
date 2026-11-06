@@ -31,6 +31,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlin.math.round
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Speed picker bottom sheet. Slider in 0.05 increments from 0.5–3.0×,
@@ -58,14 +60,14 @@ fun AudiobookSpeedSheet(
     ) {
         Column(modifier = Modifier.padding(24.dp).fillMaxWidth()) {
             Text(
-                text = "Playback speed",
+                text = stringResource(CommonR.string.player_speed_title),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(modifier = Modifier.height(20.dp))
 
             Text(
-                text = "${formatSpeedLabel(pending)}x",
+                text = stringResource(CommonR.string.audiobook_speed_value, formatSpeedLabel(pending)),
                 style = MaterialTheme.typography.headlineLarge,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
@@ -90,16 +92,16 @@ fun AudiobookSpeedSheet(
                 modifier = Modifier.fillMaxWidth(),
             )
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("0.5x", style = MaterialTheme.typography.labelSmall)
-                Text("1x", style = MaterialTheme.typography.labelSmall)
-                Text("2x", style = MaterialTheme.typography.labelSmall)
-                Text("3x", style = MaterialTheme.typography.labelSmall)
+                Text(stringResource(CommonR.string.audiobook_speed_value, "0.5"), style = MaterialTheme.typography.labelSmall)
+                Text(stringResource(CommonR.string.audiobook_speed_value, "1"), style = MaterialTheme.typography.labelSmall)
+                Text(stringResource(CommonR.string.audiobook_speed_value, "2"), style = MaterialTheme.typography.labelSmall)
+                Text(stringResource(CommonR.string.audiobook_speed_value, "3"), style = MaterialTheme.typography.labelSmall)
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "Presets",
+                text = stringResource(CommonR.string.audiobook_speed_presets),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -113,7 +115,7 @@ fun AudiobookSpeedSheet(
             ) {
                 presets.forEach { preset ->
                     PresetChip(
-                        label = "${formatSpeedLabel(preset)}x",
+                        label = stringResource(CommonR.string.audiobook_speed_value, formatSpeedLabel(preset)),
                         selected = pending == preset,
                         onClick = {
                             pending = preset
@@ -131,7 +133,12 @@ fun AudiobookSpeedSheet(
                 onClick = { onSetDefault(pending) },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Set ${formatSpeedLabel(pending)}x as default")
+                Text(
+                    stringResource(
+                        CommonR.string.audiobook_speed_setDefault,
+                        stringResource(CommonR.string.audiobook_speed_value, formatSpeedLabel(pending)),
+                    ),
+                )
             }
             Spacer(modifier = Modifier.height(16.dp))
         }

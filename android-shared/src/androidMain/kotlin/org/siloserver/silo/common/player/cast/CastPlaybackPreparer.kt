@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.player.cast
 
+import android.content.Context
+import org.siloserver.silo.common.R
 import android.util.Log
 import java.net.URLEncoder
 import java.util.concurrent.atomic.AtomicBoolean
@@ -63,6 +65,8 @@ import org.siloserver.silo.repository.PlaybackRepository
  * phone's own audio sink.
  */
 class CastPlaybackPreparer(
+    /** Resolves the subtitle menu's catalog wording ([castSubtitleLabels]). */
+    private val context: Context,
     private val playbackRepository: PlaybackRepository,
     private val tokenManager: TokenManager,
     private val networkEvidenceProvider: PlaybackNetworkEvidenceProvider =
@@ -288,15 +292,15 @@ class CastPlaybackPreparer(
             }
             val base = display
                 ?: code?.replaceFirstChar { it.uppercase() }
-                ?: "Subtitle"
-            if (item.forced) "$base (Forced)" else base
+                ?: context.getString(R.string.cast_subtitles_unnamed)
+            if (item.forced) context.getString(R.string.cast_subtitles_forced, base) else base
         }
         val totals = bases.groupingBy { it }.eachCount()
         val seen = mutableMapOf<String, Int>()
         return bases.map { base ->
             val n = (seen[base] ?: 0) + 1
             seen[base] = n
-            if ((totals[base] ?: 0) > 1) "$base $n" else base
+            if ((totals[base] ?: 0) > 1) context.getString(R.string.cast_subtitles_numbered, base, n) else base
         }
     }
 

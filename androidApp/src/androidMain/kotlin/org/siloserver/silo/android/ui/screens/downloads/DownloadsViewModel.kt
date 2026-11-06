@@ -1,8 +1,11 @@
 package org.siloserver.silo.android.ui.screens.downloads
 
+import android.content.res.Resources
 import android.util.Log
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.downloads.DownloadEnqueuer
 import org.siloserver.silo.common.downloads.DownloadReclaimCandidate
 import org.siloserver.silo.common.downloads.DownloadReclaimPlan
@@ -214,9 +217,11 @@ sealed class DownloadEntry {
         val posterSource: DownloadItem? = null,
     ) : DownloadEntry() {
         override val id = "season:$seriesKey:$seasonNumber"
-        override val title = "Season $seasonNumber"
+        /** The series; rows show "Season N" ([downloadEntryTitle]). */
+        override val title = seriesTitle
         val completedCount = episodes.count { it.isComplete }
-        override val subtitle = "$completedCount of ${episodes.size} episodes"
+        /** Rows show "N of M episodes" ([downloadEntrySubtitle]). */
+        override val subtitle: String? = null
         override val totalBytesUsed = episodes.sumOf { it.totalBytesUsed }
         override val progress = if (episodes.isEmpty()) 0f
             else episodes.map { it.progress }.average().toFloat()
@@ -238,7 +243,8 @@ sealed class DownloadEntry {
         override val title = seriesTitle
         val totalEpisodes = seasons.sumOf { it.episodes.size }
         val completedEpisodes = seasons.sumOf { it.completedCount }
-        override val subtitle = "$completedEpisodes of $totalEpisodes episodes"
+        /** Rows show "N of M episodes" ([downloadEntrySubtitle]). */
+        override val subtitle: String? = null
         override val totalBytesUsed = seasons.sumOf { it.totalBytesUsed }
         override val progress = if (totalEpisodes == 0) 0f
             else seasons.sumOf { it.episodes.sumOf { ep -> ep.progress.toDouble() } }
@@ -258,8 +264,9 @@ sealed class DownloadEntry {
     ) : DownloadEntry() {
         override val id = "author:$authorName"
         override val title = authorName
-        private val completedCount = books.count { it.isComplete }
-        override val subtitle = "$completedCount of ${books.size} books"
+        val completedCount = books.count { it.isComplete }
+        /** Rows show "N of M books" ([downloadEntrySubtitle]). */
+        override val subtitle: String? = null
         override val totalBytesUsed = books.sumOf { it.totalBytesUsed }
         override val progress = if (books.isEmpty()) 0f
             else books.map { it.progress }.average().toFloat()
@@ -283,6 +290,30 @@ data class DownloadTypeSection(
     val itemCount: Int get() = entries.sumOf { it.recordIds.size }
 }
 
+/**
+ * A Downloads message: a catalog message resolved when it is shown, or text
+ * the server or a failure supplied, shown as it arrived.
+ */
+sealed interface DownloadsText {
+    data class Res(@StringRes val id: Int, val args: List<Any>) : DownloadsText {
+        constructor(@StringRes id: Int, vararg args: Any) : this(id, args.toList())
+    }
+
+    data class Verbatim(val text: String) : DownloadsText
+
+    fun resolve(resources: Resources): String = when (this) {
+        is Res -> resources.getString(id, *args.toTypedArray())
+        is Verbatim -> text
+    }
+}
+
+/** As [errorMessage]: the server's message, the network copy, else [fallback] with [args]. */
+private fun ApiResult<*>.downloadsError(@StringRes fallback: Int, vararg args: Any): DownloadsText = when (this) {
+    is ApiResult.Error -> if (message.isBlank()) DownloadsText.Res(fallback, args.toList()) else DownloadsText.Verbatim(message)
+    is ApiResult.NetworkError -> DownloadsText.Verbatim(errorMessage(""))
+    is ApiResult.Success -> DownloadsText.Res(fallback, args.toList())
+}
+
 data class DownloadsUiState(
     val sections: List<DownloadTypeSection> = emptyList(),
     val subscriptions: List<DownloadSubscriptionUiItem> = emptyList(),
@@ -293,7 +324,7 @@ data class DownloadsUiState(
     val isRunningMonitoredDownloads: Boolean = false,
     val isReclaiming: Boolean = false,
     val isRemovingAllDownloads: Boolean = false,
-    val error: String? = null,
+    val error: DownloadsText? = null,
 ) {
     /** "Is there anything?" — drives the Downloads-tab visibility in
      *  the bottom nav + the empty-state branch. */
@@ -547,7 +578,7 @@ class DownloadsViewModel(
                     publishSections(repository.records.value, forceReload = true)
                 }
                 is ApiResult.Error, is ApiResult.NetworkError ->
-                    _uiState.update { it.copy(error = r.errorMessage("Failed to refresh downloads")) }
+                    _uiState.update { it.copy(error = r.downloadsError(CommonR.string.downloads_error_refresh)) }
             }
         }
     }
@@ -558,14 +589,15 @@ class DownloadsViewModel(
             val (serverId, accountId, profileId) = activeDownloadScope()
             val now = System.currentTimeMillis()
             val evaluator = subscriptionEvaluatorFactory.create()
-            var firstError: String? = null
+            var firstError: DownloadsText? = null
 
             val active = runCatching { subscriptionRepository.active(serverId, accountId, profileId) }
                 .getOrElse { error ->
                     _uiState.update {
                         it.copy(
                             isRunningMonitoredDownloads = false,
-                            error = error.message ?: "Failed to load monitored downloads",
+                            error = error.message?.let(DownloadsText::Verbatim)
+                                ?: DownloadsText.Res(CommonR.string.downloads_error_loadMonitored),
                         )
                     }
                     return@launch
@@ -576,7 +608,10 @@ class DownloadsViewModel(
                     evaluator.evaluate(subscription)
                     subscriptionRepository.updateEvaluation(serverId, accountId, profileId, subscription.id, now, null, now)
                 }.onFailure { error ->
-                    if (firstError == null) firstError = error.message ?: "Monitored download failed"
+                    if (firstError == null) {
+                        firstError = error.message?.let(DownloadsText::Verbatim)
+                            ?: DownloadsText.Res(CommonR.string.downloads_error_monitoredFailed)
+                    }
                     subscriptionRepository.updateEvaluation(
                         serverId = serverId,
                         accountId = accountId,
@@ -693,7 +728,7 @@ class DownloadsViewModel(
         ++sectionsGeneration
         val activeScope = activeDownloadScope()
 
-        var firstError: String? = null
+        var firstError: DownloadsText? = null
         for (id in ids) {
             val record = repository.records.value.firstOrNull { it.id == id }
             val sidecar = metadataByRecordId[id]
@@ -743,7 +778,7 @@ class DownloadsViewModel(
                 is ApiResult.Success -> Log.i(TAG, "remove($id): server delete OK")
                 is ApiResult.Error -> {
                     Log.w(TAG, "remove($id): server returned ${result.code} ${result.message}")
-                    if (firstError == null) firstError = result.errorMessage("Delete failed (${result.code})")
+                    if (firstError == null) firstError = result.downloadsError(CommonR.string.downloads_error_delete, result.code)
                 }
                 is ApiResult.NetworkError -> {
                     Log.i(TAG, "remove($id): offline — tombstoned, will reconcile on reconnect")
@@ -1017,7 +1052,8 @@ class DownloadsViewModel(
             if (key == null) orphans += sc else bySeries.getOrPut(key) { mutableListOf() } += sc
         }
         val seriesEntries = bySeries.map { (seriesKey, group) ->
-            val seriesTitle = group.firstNotNullOfOrNull { it.seriesTitle?.takeIf { t -> t.isNotBlank() } } ?: "Series"
+            // Empty when no download named its series; rows then show "Series" ([downloadEntryTitle]).
+            val seriesTitle = group.firstNotNullOfOrNull { it.seriesTitle?.takeIf { t -> t.isNotBlank() } }.orEmpty()
             val artwork = group.tileArtwork()
             val poster = artwork.url
             val thumb = artwork.thumbhash

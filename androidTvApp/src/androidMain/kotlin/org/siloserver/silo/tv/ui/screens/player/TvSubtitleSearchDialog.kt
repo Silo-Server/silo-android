@@ -35,6 +35,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -48,6 +50,7 @@ import androidx.tv.material3.Glow
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.model.subtitles.SubtitleResult
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
@@ -183,7 +186,7 @@ fun TvSubtitleSearchDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    text = "SEARCH SUBTITLES",
+                    text = stringResource(CommonR.string.subtitleSearch_title).uppercase(),
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontSize = 16.sp,
                         letterSpacing = 1.1.sp,
@@ -195,7 +198,7 @@ fun TvSubtitleSearchDialog(
 
                 val langIndex = tvSubtitleLanguageIndex(state.language)
                 TvDialogCyclerRow(
-                    title = "Language",
+                    title = stringResource(CommonR.string.subtitleSearch_languageHeader),
                     value = tvLanguageDisplayName(TvSubtitleLanguageOptions[langIndex]),
                     onPrevious = {
                         val prev = (langIndex - 1 + TvSubtitleLanguageOptions.size) %
@@ -210,14 +213,20 @@ fun TvSubtitleSearchDialog(
                 )
 
                 TvDialogActionRow(
-                    title = if (state.isSearching) "Searching…" else "Search",
+                    title = stringResource(
+                        if (state.isSearching) {
+                            CommonR.string.subtitleSearch_inProgress
+                        } else {
+                            CommonR.string.subtitleSearch_search
+                        },
+                    ),
                     enabled = !state.isSearching && state.downloadingResultId == null,
                     onClick = onSearch,
                 )
 
                 state.error?.let { error ->
                     Text(
-                        text = error,
+                        text = tvPlayerMessageText(error),
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFFEF4444),
                         modifier = Modifier.padding(horizontal = 8.dp),
@@ -239,7 +248,7 @@ fun TvSubtitleSearchDialog(
                     state.results.isEmpty() && state.error == null
                 ) {
                     Text(
-                        text = "No subtitles found",
+                        text = stringResource(CommonR.string.subtitleSearch_emptyResults),
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.56f),
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
@@ -358,7 +367,7 @@ private fun TvSubtitleResultRow(
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 Text(
-                    text = result.releaseName.ifBlank { "Unnamed release" },
+                    text = result.releaseName.ifBlank { stringResource(CommonR.string.subtitleSearch_unnamedRelease) },
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontSize = 16.sp,
                         lineHeight = 19.sp,
@@ -390,7 +399,7 @@ private fun TvSubtitleResultRow(
                     }
                     if (result.hearingImpaired) {
                         Text(
-                            text = "HI",
+                            text = stringResource(CommonR.string.subtitleSearch_hearingImpaired),
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontWeight = FontWeight.Bold,
                             ),
@@ -402,7 +411,12 @@ private fun TvSubtitleResultRow(
                         )
                     }
                     Text(
-                        text = "${result.downloads} downloads · ${tvLanguageDisplayName(result.language)}",
+                        text = pluralStringResource(
+                            CommonR.plurals.subtitleSearch_downloadCount,
+                            result.downloads,
+                            result.downloads,
+                            result.downloads.toString(),
+                        ) + " · " + tvLanguageDisplayName(result.language),
                         style = MaterialTheme.typography.bodySmall,
                         color = if (isFocused) {
                             FocusedContent.copy(alpha = 0.70f)

@@ -143,6 +143,7 @@ import androidx.compose.ui.layout.ContentScale
 import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
 import org.siloserver.silo.tv.data.preferences.SubtitleMode
 import org.siloserver.silo.tv.ui.screens.player.TvSubtitleAppearanceOptions
+import org.siloserver.silo.tv.ui.screens.player.tvLabelResources
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsSettingsPane
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsViewModel
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
@@ -1874,6 +1875,7 @@ private fun TvSubtitleSettingsPane(
     var activePicker by remember { mutableStateOf<SubtitlePicker?>(null) }
     var showResetConfirmation by remember { mutableStateOf(false) }
     val appearance = state.subtitleAppearance
+    val appearanceLabels = tvLabelResources()
     val subtitleLanguages = remember(
         state.subtitleLanguage,
         state.subtitleLanguageSuggestions,
@@ -1964,17 +1966,17 @@ private fun TvSubtitleSettingsPane(
                 SettingsNestedGroup(enabled = true) {
                     SettingsValueRow(
                         label = stringResource(CommonR.string.settings_subtitles_fontSize),
-                        value = TvSubtitleAppearanceOptions.fontSizeLabel(appearance.fontSize),
+                        value = TvSubtitleAppearanceOptions.fontSizeLabel(appearance.fontSize, appearanceLabels),
                         onClick = { activePicker = SubtitlePicker.FontSize },
                     )
                     SettingsValueRow(
                         label = stringResource(CommonR.string.settings_subtitles_fontFamily),
-                        value = TvSubtitleAppearanceOptions.fontFamilyLabel(appearance.fontFamily),
+                        value = TvSubtitleAppearanceOptions.fontFamilyLabel(appearance.fontFamily, appearanceLabels),
                         onClick = { activePicker = SubtitlePicker.FontFamily },
                     )
                     SettingsValueRow(
                         label = stringResource(CommonR.string.settings_subtitles_fontColor),
-                        value = TvSubtitleAppearanceOptions.fontColorLabel(appearance.fontColor),
+                        value = TvSubtitleAppearanceOptions.fontColorLabel(appearance.fontColor, appearanceLabels),
                         onClick = { activePicker = SubtitlePicker.FontColor },
                     )
                     if (state.subtitleTextOpacitySupported) {
@@ -1991,12 +1993,12 @@ private fun TvSubtitleSettingsPane(
                     )
                     SettingsValueRow(
                         label = stringResource(CommonR.string.settings_subtitles_outlineColor),
-                        value = TvSubtitleAppearanceOptions.outlineColorLabel(appearance.textOutlineColor),
+                        value = TvSubtitleAppearanceOptions.outlineColorLabel(appearance.textOutlineColor, appearanceLabels),
                         onClick = { activePicker = SubtitlePicker.OutlineColor },
                     )
                     SettingsValueRow(
                         label = stringResource(CommonR.string.settings_subtitles_backgroundStyle),
-                        value = TvSubtitleAppearanceOptions.backgroundStyleLabel(appearance.backgroundStyle),
+                        value = TvSubtitleAppearanceOptions.backgroundStyleLabel(appearance.backgroundStyle, appearanceLabels),
                         onClick = { activePicker = SubtitlePicker.BackgroundStyle },
                     )
                     SettingsValueRow(
@@ -2006,12 +2008,12 @@ private fun TvSubtitleSettingsPane(
                     )
                     SettingsValueRow(
                         label = stringResource(CommonR.string.settings_subtitles_backgroundColor),
-                        value = TvSubtitleAppearanceOptions.backgroundColorLabel(appearance.backgroundColor),
+                        value = TvSubtitleAppearanceOptions.backgroundColorLabel(appearance.backgroundColor, appearanceLabels),
                         onClick = { activePicker = SubtitlePicker.BackgroundColor },
                     )
                     SettingsValueRow(
                         label = stringResource(CommonR.string.settings_subtitles_position),
-                        value = TvSubtitleAppearanceOptions.positionLabel(appearance.position),
+                        value = TvSubtitleAppearanceOptions.positionLabel(appearance.position, appearanceLabels),
                         onClick = { activePicker = SubtitlePicker.Position },
                     )
                     SettingsActionRow(
@@ -2060,10 +2062,10 @@ private fun TvSubtitleSettingsPane(
         )
         SubtitlePicker.FontSize -> TvSettingsPickerSheet(
             title = stringResource(CommonR.string.settings_subtitles_fontSize),
-            options = TvSubtitleAppearanceOptions.FONT_SIZES.map { PickerOption(it.first.name, it.second) },
+            options = TvSubtitleAppearanceOptions.fontSizes(appearanceLabels).map { PickerOption(it.first.name, it.second) },
             selectedId = appearance.fontSize.name,
             onSelect = { id ->
-                TvSubtitleAppearanceOptions.FONT_SIZES.firstOrNull { it.first.name == id }?.let {
+                TvSubtitleAppearanceOptions.fontSizes(appearanceLabels).firstOrNull { it.first.name == id }?.let {
                     onSubtitleFontSizeChanged(it.first)
                 }
                 activePicker = null
@@ -2072,10 +2074,10 @@ private fun TvSubtitleSettingsPane(
         )
         SubtitlePicker.FontFamily -> TvSettingsPickerSheet(
             title = stringResource(CommonR.string.settings_subtitles_fontFamily),
-            options = TvSubtitleAppearanceOptions.FONT_FAMILIES.map { PickerOption(it.first, it.second) },
+            options = TvSubtitleAppearanceOptions.fontFamilies(appearanceLabels).map { PickerOption(it.first, it.second) },
             selectedId = appearance.fontFamily,
             onSelect = { id ->
-                TvSubtitleAppearanceOptions.FONT_FAMILIES.firstOrNull { it.first == id }?.let {
+                TvSubtitleAppearanceOptions.fontFamilies(appearanceLabels).firstOrNull { it.first == id }?.let {
                     onSubtitleFontFamilyChanged(it.first)
                 }
                 activePicker = null
@@ -2084,7 +2086,7 @@ private fun TvSubtitleSettingsPane(
         )
         SubtitlePicker.FontColor -> TvSettingsPickerSheet(
             title = stringResource(CommonR.string.settings_subtitles_fontColor),
-            options = TvSubtitleAppearanceOptions.FONT_COLORS.map { PickerOption(it.first, it.second) },
+            options = TvSubtitleAppearanceOptions.fontColors(appearanceLabels).map { PickerOption(it.first, it.second) },
             selectedId = appearance.fontColor.lowercase(),
             onSelect = { id ->
                 onSubtitleFontColorChanged(id)
@@ -2107,7 +2109,7 @@ private fun TvSubtitleSettingsPane(
         )
         SubtitlePicker.OutlineColor -> TvSettingsPickerSheet(
             title = stringResource(CommonR.string.settings_subtitles_outlineColor),
-            options = TvSubtitleAppearanceOptions.OUTLINE_COLORS.map { PickerOption(it.first, it.second) },
+            options = TvSubtitleAppearanceOptions.outlineColors(appearanceLabels).map { PickerOption(it.first, it.second) },
             selectedId = appearance.textOutlineColor.lowercase(),
             onSelect = { id ->
                 onSubtitleTextOutlineColorChanged(id)
@@ -2117,10 +2119,10 @@ private fun TvSubtitleSettingsPane(
         )
         SubtitlePicker.BackgroundStyle -> TvSettingsPickerSheet(
             title = stringResource(CommonR.string.settings_subtitles_backgroundStyle),
-            options = TvSubtitleAppearanceOptions.BACKGROUND_STYLES.map { PickerOption(it.first.name, it.second) },
+            options = TvSubtitleAppearanceOptions.backgroundStyles(appearanceLabels).map { PickerOption(it.first.name, it.second) },
             selectedId = appearance.backgroundStyle.name,
             onSelect = { id ->
-                TvSubtitleAppearanceOptions.BACKGROUND_STYLES.firstOrNull { it.first.name == id }?.let {
+                TvSubtitleAppearanceOptions.backgroundStyles(appearanceLabels).firstOrNull { it.first.name == id }?.let {
                     onSubtitleBackgroundStyleChanged(it.first)
                 }
                 activePicker = null
@@ -2142,7 +2144,7 @@ private fun TvSubtitleSettingsPane(
         )
         SubtitlePicker.BackgroundColor -> TvSettingsPickerSheet(
             title = stringResource(CommonR.string.settings_subtitles_backgroundColor),
-            options = TvSubtitleAppearanceOptions.BACKGROUND_COLORS.map { PickerOption(it.first, it.second) },
+            options = TvSubtitleAppearanceOptions.backgroundColors(appearanceLabels).map { PickerOption(it.first, it.second) },
             selectedId = appearance.backgroundColor.lowercase(),
             onSelect = { id ->
                 onSubtitleBackgroundColorChanged(id)
@@ -2152,10 +2154,10 @@ private fun TvSubtitleSettingsPane(
         )
         SubtitlePicker.Position -> TvSettingsPickerSheet(
             title = stringResource(CommonR.string.settings_subtitles_position),
-            options = TvSubtitleAppearanceOptions.POSITIONS.map { PickerOption(it.first.name, it.second) },
+            options = TvSubtitleAppearanceOptions.positions(appearanceLabels).map { PickerOption(it.first.name, it.second) },
             selectedId = appearance.position.name,
             onSelect = { id ->
-                TvSubtitleAppearanceOptions.POSITIONS.firstOrNull { it.first.name == id }?.let {
+                TvSubtitleAppearanceOptions.positions(appearanceLabels).firstOrNull { it.first.name == id }?.let {
                     onSubtitlePositionChanged(it.first)
                 }
                 activePicker = null

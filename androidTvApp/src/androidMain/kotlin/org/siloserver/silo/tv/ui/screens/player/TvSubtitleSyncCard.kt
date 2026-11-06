@@ -119,6 +119,6 @@ internal fun TvSyncProgressBar(percent: Int, modifier: Modifier = Modifier) {
             strokeCap = StrokeCap.Round,
             modifier = Modifier.weight(1f),
         )
-        Text(text = "$percent%", color = Color.White.copy(alpha = 0.62f), fontSize = 14.sp)
+        Text(text = "$percent%", color = Color.White.copy(alpha = 0.62f), fontSize = 14.sp) // i18n-ignore
     }
 }

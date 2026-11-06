@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.cast
 
+import org.siloserver.silo.android.ui.screens.player.mobileVideoGravityLabel
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
@@ -73,8 +75,10 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -93,6 +97,8 @@ import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.settings.SeekIntervalPair
 import org.siloserver.silo.android.cast.RemoteControlBatteryOptimization
 import org.siloserver.silo.android.cast.SiloCastController
+import org.siloserver.silo.android.cast.SiloCastResourceReplaceText
+import org.siloserver.silo.android.cast.resolve
 import org.siloserver.silo.cast.SiloCastPlaybackState
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 
@@ -182,7 +188,7 @@ fun SiloCastRemoteScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 when {
-                    state.isReconnecting -> RemoteStatus(title = "Reconnecting…", showSpinner = true)
+                    state.isReconnecting -> RemoteStatus(title = stringResource(CommonR.string.cast_reconnecting), showSpinner = true)
                     // From the tap until the TV reports the title, including
                     // over an idle TV or the title being replaced.
                     launch != null -> RemoteLaunching(
@@ -195,8 +201,9 @@ fun SiloCastRemoteScreen(
                         targetName = state.connectedTarget?.name,
                         // A fully torn-down session (TV disconnected, reconnect
                         // exhausted) must not spin forever — offer a way out.
-                        error = state.error
-                            ?: "Not connected to a TV.".takeIf { state.connectedTarget == null && !state.isConnecting },
+                        error = state.error?.resolve()
+                            ?: stringResource(CommonR.string.cast_remote_notConnected)
+                                .takeIf { state.connectedTarget == null && !state.isConnecting },
                         onChooseTv = { showTargetPicker = true },
                     )
                     playback.contentId == null -> RemoteIdleConnected(
@@ -207,7 +214,7 @@ fun SiloCastRemoteScreen(
                         targetName = state.connectedTarget?.name,
                         posterUrl = artwork.posterUrl ?: artwork.backdropUrl,
                         posterThumbhash = artwork.posterThumbhash ?: artwork.backdropThumbhash,
-                        error = state.error,
+                        error = state.error?.resolve(),
                         volumeMuteOnly = state.volumeMuteOnly,
                         showSpeed = !state.noPlaybackSpeed,
                         controller = controller,
@@ -225,10 +232,11 @@ fun SiloCastRemoteScreen(
     }
 
     state.pendingReplace?.let { pending ->
+        val replaceText = SiloCastResourceReplaceText(LocalResources.current)
         SiloConfirmDialog(
             title = stringResource(CommonR.string.remote_replace_title),
-            body = pending.message,
-            confirmLabel = pending.confirmLabel,
+            body = pending.message(replaceText),
+            confirmLabel = pending.confirmLabel(replaceText),
             dismissLabel = stringResource(CommonR.string.common_cancel),
             destructive = false,
             onConfirm = controller::confirmReplace,
@@ -301,7 +309,7 @@ private fun RemoteTopBar(
         IconButton(onClick = onMinimize) {
             Icon(
                 Icons.Filled.KeyboardArrowDown,
-                contentDescription = "Minimize",
+                contentDescription = stringResource(CommonR.string.cast_remote_minimize),
                 tint = RemoteOnSurface,
             )
         }
@@ -310,13 +318,13 @@ private fun RemoteTopBar(
             IconButton(onClick = { menuExpanded = true }) {
                 Icon(
                     Icons.Filled.MoreHoriz,
-                    contentDescription = "More options",
+                    contentDescription = stringResource(CommonR.string.cast_remote_moreOptions),
                     tint = RemoteOnSurface,
                 )
             }
             SiloDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                 SiloDropdownMenuItem(
-                    text = { Text("Choose a Different TV") },
+                    text = { Text(stringResource(CommonR.string.cast_remote_chooseDifferentTv)) },
                     leadingIcon = { Icon(Icons.Outlined.Tv, contentDescription = null) },
                     onClick = {
                         menuExpanded = false
@@ -324,7 +332,7 @@ private fun RemoteTopBar(
                     },
                 )
                 SiloDropdownMenuItem(
-                    text = { Text("Stop Playback") },
+                    text = { Text(stringResource(CommonR.string.cast_remote_stopPlayback)) },
                     leadingIcon = { Icon(Icons.Filled.Stop, contentDescription = null) },
                     onClick = {
                         menuExpanded = false
@@ -333,7 +341,7 @@ private fun RemoteTopBar(
                 )
                 if (playback?.supportsVideoGravity == true) {
                     SiloDropdownMenuItem(
-                        text = { Text("Aspect Ratio") },
+                        text = { Text(stringResource(CommonR.string.cast_remote_aspectRatio)) },
                         leadingIcon = {
                             Icon(Icons.Outlined.AspectRatio, contentDescription = null)
                         },
@@ -360,7 +368,7 @@ private fun RemoteTopBar(
                 }
                 HorizontalDivider()
                 SiloDropdownMenuItem(
-                    text = { Text("Disconnect", color = MaterialTheme.colorScheme.error) },
+                    text = { Text(stringResource(CommonR.string.cast_remote_disconnect), color = MaterialTheme.colorScheme.error) },
                     leadingIcon = {
                         Icon(
                             Icons.Outlined.TvOff,
@@ -379,13 +387,14 @@ private fun RemoteTopBar(
                 onDismissRequest = { aspectMenuExpanded = false },
             ) {
                 Text(
-                    "Aspect Ratio",
+                    stringResource(CommonR.string.cast_remote_aspectRatio),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                 )
-                listOf("fit" to "Fit", "fill" to "Fill", "stretch" to "Stretch")
-                    .forEach { (id, label) ->
+                listOf("fit", "fill", "stretch")
+                    .forEach { id ->
+                        val label = stringResource(mobileVideoGravityLabel(id))
                         val selected = playback?.videoGravity == id ||
                             (id == "fill" && playback?.videoGravity in listOf("zoom", "crop"))
                         SiloDropdownMenuItem(
@@ -394,7 +403,7 @@ private fun RemoteTopBar(
                                 if (selected) {
                                     Icon(
                                         Icons.Filled.Check,
-                                        contentDescription = "Selected",
+                                        contentDescription = stringResource(CommonR.string.player_menu_selected),
                                         modifier = Modifier.size(18.dp),
                                     )
                                 } else {
@@ -458,7 +467,7 @@ private fun RemoteLaunching(
                 modifier = Modifier.size(18.dp),
             )
             Text(
-                "Starting on ${targetName ?: "Silo TV"}…",
+                stringResourceWithNames(CommonR.string.cast_startingOn, targetName ?: SILO_TV_NAME),
                 style = MaterialTheme.typography.titleMedium,
                 color = RemoteSecondary,
                 textAlign = TextAlign.Center,
@@ -482,13 +491,13 @@ private fun RemoteIdleConnected(targetName: String?) {
             modifier = Modifier.size(48.dp),
         )
         Text(
-            "Connected to ${targetName ?: "Silo TV"}",
+            stringResourceWithNames(CommonR.string.cast_remote_connectedTo, targetName ?: SILO_TV_NAME),
             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
             color = RemoteOnSurface,
             textAlign = TextAlign.Center,
         )
         Text(
-            "Pick something from your library to start playing.",
+            stringResource(CommonR.string.cast_remote_idleHint),
             style = MaterialTheme.typography.bodyMedium,
             color = RemoteSecondary,
             textAlign = TextAlign.Center,
@@ -527,12 +536,12 @@ private fun RemoteConnecting(
             OutlinedButton(onClick = onChooseTv) {
                 Icon(Icons.Outlined.Tv, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Choose a TV")
+                Text(stringResource(CommonR.string.cast_remote_chooseTv))
             }
         } else {
             CircularProgressIndicator(color = RemoteOnSurface)
             Text(
-                "Connecting to ${targetName ?: "Silo TV"}…",
+                stringResourceWithNames(CommonR.string.cast_remote_connectingTo, targetName ?: SILO_TV_NAME),
                 style = MaterialTheme.typography.titleMedium,
                 color = RemoteSecondary,
                 textAlign = TextAlign.Center,
@@ -602,7 +611,7 @@ private fun RemoteNowPlaying(
             }
 
             Text(
-                playback.title.ifEmpty { "Loading" },
+                playback.title.ifEmpty { stringResource(CommonR.string.common_loading) },
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                 color = RemoteOnSurface,
                 textAlign = TextAlign.Center,
@@ -638,7 +647,7 @@ private fun RemoteNowPlaying(
                         modifier = Modifier.size(13.dp),
                     )
                     Text(
-                        "Playing on $targetName",
+                        stringResourceWithNames(CommonR.string.cast_playingOn, targetName),
                         style = MaterialTheme.typography.labelMedium,
                         color = RemoteSecondary,
                     )
@@ -782,7 +791,11 @@ private fun RemoteTransport(
             SeekIntervalIcon(
                 forward = false,
                 seconds = intervals.backSeconds,
-                contentDescription = "Back ${intervals.backSeconds} seconds",
+                contentDescription = pluralStringResource(
+                    CommonR.plurals.player_skip_back,
+                    intervals.backSeconds,
+                    intervals.backSeconds,
+                ),
                 tint = RemoteOnSurface,
                 modifier = Modifier.size(34.dp),
             )
@@ -804,7 +817,9 @@ private fun RemoteTransport(
                 } else {
                     Icon(
                         if (controller.isPlaying()) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (controller.isPlaying()) "Pause" else "Play",
+                        contentDescription = stringResource(
+                            if (controller.isPlaying()) CommonR.string.player_controls_pause else CommonR.string.common_play,
+                        ),
                         tint = Color.Black,
                         modifier = Modifier.size(32.dp),
                     )
@@ -821,7 +836,11 @@ private fun RemoteTransport(
             SeekIntervalIcon(
                 forward = true,
                 seconds = intervals.forwardSeconds,
-                contentDescription = "Forward ${intervals.forwardSeconds} seconds",
+                contentDescription = pluralStringResource(
+                    CommonR.plurals.player_skip_forward,
+                    intervals.forwardSeconds,
+                    intervals.forwardSeconds,
+                ),
                 tint = RemoteOnSurface,
                 modifier = Modifier.size(34.dp),
             )
@@ -831,7 +850,8 @@ private fun RemoteTransport(
             IconButton(onClick = { controller.playNext() }) {
                 Icon(
                     Icons.Filled.SkipNext,
-                    contentDescription = playback.nextEpisodeTitle?.let { "Next: $it" } ?: "Next episode",
+                    contentDescription = playback.nextEpisodeTitle?.let { stringResourceWithNames(CommonR.string.cast_remote_nextNamed, it) }
+                        ?: stringResource(CommonR.string.cast_remote_nextEpisode),
                     tint = RemoteOnSurface,
                     modifier = Modifier.size(30.dp),
                 )
@@ -862,7 +882,9 @@ private fun RemoteVolumeRow(
                 } else {
                     Icons.AutoMirrored.Filled.VolumeDown
                 },
-                contentDescription = if (playback.isMuted) "Unmute" else "Mute",
+                contentDescription = stringResource(
+                    if (playback.isMuted) CommonR.string.cast_remote_unmute else CommonR.string.cast_remote_mute,
+                ),
                 tint = RemoteOnSurface,
             )
         }
@@ -904,7 +926,10 @@ private fun RemoteMuteToggle(
             modifier = Modifier.size(18.dp),
         )
         Spacer(modifier = Modifier.width(8.dp))
-        Text(if (playback.isMuted) "Unmute" else "Mute", color = RemoteOnSurface)
+        Text(
+            stringResource(if (playback.isMuted) CommonR.string.cast_remote_unmute else CommonR.string.cast_remote_mute),
+            color = RemoteOnSurface,
+        )
     }
 }
 
@@ -939,7 +964,7 @@ private fun RemoteSecondaryControls(
         if (playback.qualityOptions.isNotEmpty()) {
             RemoteChipMenu(
                 icon = Icons.Outlined.Tune,
-                caption = "Quality",
+                caption = stringResource(CommonR.string.cast_remote_quality),
                 enabled = !playback.isQualitySwitching,
                 entries = playback.qualityOptions.map { option ->
                     MenuEntry(
@@ -955,7 +980,7 @@ private fun RemoteSecondaryControls(
         if (playback.audioTracks.isNotEmpty()) {
             RemoteChipMenu(
                 icon = Icons.Outlined.GraphicEq,
-                caption = "Audio",
+                caption = stringResource(CommonR.string.cast_remote_audio),
                 entries = playback.audioTracks.map { track ->
                     MenuEntry(
                         label = track.title,
@@ -972,8 +997,8 @@ private fun RemoteSecondaryControls(
         if (playback.subtitleTracks.isNotEmpty()) {
             RemoteChipMenu(
                 icon = Icons.Outlined.ClosedCaption,
-                caption = "Subtitles",
-                entries = subtitleMenuEntries(playback, controller),
+                caption = stringResource(CommonR.string.cast_subtitles_title),
+                entries = subtitleMenuEntries(playback, controller, offLabel = stringResource(CommonR.string.cast_subtitles_off)),
                 modifier = Modifier.weight(1f),
             )
         }
@@ -982,7 +1007,7 @@ private fun RemoteSecondaryControls(
         if (showSpeed) {
             RemoteChipMenu(
                 icon = Icons.Outlined.Speed,
-                caption = "Speed",
+                caption = stringResource(CommonR.string.player_settings_speed),
                 entries = listOf(0.75, 1.0, 1.25, 1.5, 2.0).map { speed ->
                     MenuEntry(
                         label = "${speed}×",
@@ -999,10 +1024,11 @@ private fun RemoteSecondaryControls(
 private fun subtitleMenuEntries(
     playback: SiloCastPlaybackState,
     controller: SiloCastController,
+    offLabel: String,
 ): List<MenuEntry> = buildList {
     add(
         MenuEntry(
-            label = "Off",
+            label = offLabel,
             selected = playback.selectedSubtitleTrackId == null,
             onClick = { controller.selectSubtitleTrack(null) },
         ),
@@ -1056,7 +1082,11 @@ private fun RemoteChipMenu(
                     enabled = entry.enabled,
                     leadingIcon = {
                         if (entry.selected) {
-                            Icon(Icons.Filled.Check, contentDescription = "Selected", modifier = Modifier.size(18.dp))
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = stringResource(CommonR.string.player_menu_selected),
+                                modifier = Modifier.size(18.dp),
+                            )
                         } else {
                             Spacer(modifier = Modifier.size(18.dp))
                         }
