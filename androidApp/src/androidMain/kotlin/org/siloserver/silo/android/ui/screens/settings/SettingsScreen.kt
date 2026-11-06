@@ -132,7 +132,7 @@ fun SettingsScreen(
 
     val matchesInterface = search.matches(
         "interface", "appearance", "cards", "posters", "home", "sections",
-        "title art", "logos",
+        "title art", "logos", "language",
     )
     val matchesNotifications = state.notificationsAvailable && search.matches(
         "notifications", "alerts", "favorites", "watchlist", "continue watching", "next up",

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Temporary: the App language picker's own strings, so Spanish visibly
+     applies before the generated translation catalog replaces this file. -->
+<resources>
+    <string name="settings_app_language_title">Idioma de la app</string>
+    <string name="settings_app_language_match_device">Igual que el dispositivo</string>
+    <string name="settings_app_language_footer">El idioma de los menús y botones de Silo en este dispositivo. Los idiomas de audio, subtítulos y metadatos son ajustes aparte.</string>
+</resources>

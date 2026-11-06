@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.screens.settings
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
@@ -59,6 +60,8 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.common.i18n.AppLanguageStore
+import org.siloserver.silo.common.i18n.appLanguageOptions
 import org.siloserver.silo.common.settings.SeekIntervalSettingsModel
 import org.siloserver.silo.common.settings.SeekIntervalSettingsUiState
 import org.siloserver.silo.model.settings.SeekDirection
@@ -1031,6 +1034,8 @@ private fun TvGeneralSettingsPane(
     // device. Kept out of the LazyColumn item, which re-enters composition on
     // scroll.
     LaunchedEffect(titleArtStore) { titleArtStore.refresh() }
+    val appLanguageStore: AppLanguageStore = koinInject()
+    LaunchedEffect(appLanguageStore) { appLanguageStore.refresh() }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1049,6 +1054,9 @@ private fun TvGeneralSettingsPane(
                 )
                 SettingsFooterText(text = state.profileLaunchBehavior.description(PROFILE_LAUNCH_DEVICE))
             }
+        }
+        item {
+            TvAppLanguageSettingsGroup(store = appLanguageStore)
         }
         item {
             // Device-local, server/profile-specific visibility and order for
@@ -3142,5 +3150,41 @@ private fun TvTitleArtSettingsGroup(store: TitleArtStore) {
             },
         )
         saveError?.let { SettingsFooterText(text = it) }
+    }
+}
+
+/**
+ * App language (`ui.app_language`). Android TV has no system per-app language
+ * screen, so this is the only place to choose it on TV. Saves this TV's choice
+ * for the profile. Renders nothing until the server confirms the key.
+ */
+@Composable
+private fun TvAppLanguageSettingsGroup(store: AppLanguageStore) {
+    val state by store.state.collectAsState()
+    if (!state.supported) return
+    val activity = LocalActivity.current ?: return
+    var showPicker by remember { mutableStateOf(false) }
+    val title = stringResource(CommonR.string.settings_app_language_title)
+    val options = appLanguageOptions(stringResource(CommonR.string.settings_app_language_match_device), state.choice)
+    val selectedId = state.choice.orEmpty()
+    SettingsGroup(title = title) {
+        SettingsValueRow(
+            label = title,
+            value = options.firstOrNull { it.id == selectedId }?.label.orEmpty(),
+            onClick = { showPicker = true },
+        )
+        SettingsFooterText(text = stringResource(CommonR.string.settings_app_language_footer))
+    }
+    if (showPicker) {
+        TvSettingsPickerSheet(
+            title = title,
+            options = options.map { PickerOption(it.id, it.label) },
+            selectedId = selectedId,
+            onSelect = { id ->
+                if (id != selectedId) store.choose(activity, id.ifEmpty { null })
+                showPicker = false
+            },
+            onDismiss = { showPicker = false },
+        )
     }
 }

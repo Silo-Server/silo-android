@@ -2,6 +2,7 @@
 
 package org.siloserver.silo.common.di
 
+import org.siloserver.silo.common.i18n.AppLanguageStore
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.player.ActivePlayerHolder
@@ -363,6 +364,28 @@ val playerInfraModule = module {
         )
     }
 
+    // App language (settings revision 28): applies the active profile's
+    // ui.app_language to the per-app language and writes a system-settings
+    // change back as this device's value. Resets on a server, account or
+    // profile change like the other settings stores.
+    single {
+        val identityChanges = get<ServerRegistry>().activeEntry
+            .map { Triple(it?.url, it?.accountId, it?.profileId) }
+            .distinctUntilChanged()
+            .map { Unit }
+        AppLanguageStore(
+            context = androidContext(),
+            repository = get<SettingsRepository>(),
+            // Off the main thread: it commits preferences synchronously.
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
+            getServerUrl = { get<TokenManager>().getServerUrl() },
+            getActiveAccountId = { get<TokenManager>().getCurrentAccountId() },
+            captureAuthority = { get<TokenManager>().snapshotCurrentScope() },
+            identityChanges = identityChanges,
+        )
+    }
+
     // "Show title art" (settings revision 16) for this device. Every title
     // surface and both settings screens read this one instance, so a change
     // reaches an open detail page without a restart.
@@ -414,6 +437,7 @@ val playerInfraModule = module {
             episodeSpoilerStore = get(),
             titleArtStore = get(),
             hiddenLibrariesStore = get(),
+            appLanguageStore = get(),
             hasAuthenticatedProfile = {
                 !get<ProfileRepository>().getActiveProfileId().isNullOrBlank()
             },

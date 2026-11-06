@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.pairing.PairingReceiverStatus
 import org.siloserver.silo.model.auth.DeviceCodeFormat
 import org.siloserver.silo.pairing.PairingFailureCode
@@ -291,14 +292,14 @@ internal fun ActivePairingPanel(
                         // Every push shows its own code, naming the account
                         // the phone said it signs in ("sam on Home").
                         CardTitle(
-                            status.accountName?.let { stringResource(R.string.tv_pairing_account_on_server, it, status.serverName) }
+                            status.accountName?.let { stringResourceWithNames(R.string.tv_pairing_account_on_server, it, status.serverName) }
                                 ?: status.serverName,
                         )
                     }
                     is PairingReceiverStatus.Pairing -> {
                         WaitingDots()
                         CardTitle(
-                            status.accountName?.let { stringResource(R.string.tv_pairing_account_on_server, it, status.serverName) }
+                            status.accountName?.let { stringResourceWithNames(R.string.tv_pairing_account_on_server, it, status.serverName) }
                                 ?: status.serverName,
                         )
                     }

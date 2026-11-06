@@ -66,4 +66,11 @@
     <!-- Subtitle pickers (player and detail page): the secondary line on a
          track the server has no way to show, listed but not selectable. -->
     <string name="subtitle_track_unsupported_format">Unsupported format</string>
+
+    <!-- App language picker (ui.app_language), phone Settings → Interface and
+         TV Settings → General. Language names come from Locale, in their own
+         language. -->
+    <string name="settings_app_language_title">App language</string>
+    <string name="settings_app_language_match_device">Match device</string>
+    <string name="settings_app_language_footer">The language of Silo’s menus and buttons on this device. Audio, subtitle and metadata languages are separate settings.</string>
 </resources>

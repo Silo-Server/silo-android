@@ -209,6 +209,11 @@ android {
         // flavor wiring.
         buildConfigField("boolean", "FFMPEG_AUDIO_ENABLED", "true")
     }
+    // Lists the shipped languages in the system per-app language screen
+    // (Settings → Apps → Silo → Language). Reads res/resources.properties.
+    androidResources {
+        generateLocaleConfig = true
+    }
     buildFeatures {
         compose = true
         buildConfig = true
@@ -234,6 +239,8 @@ android {
     }
     buildTypes {
         debug {
+            // en-XA (accented, longer) and ar-XB (mirrored) for layout checks.
+            isPseudoLocalesEnabled = true
             buildConfigField("String", "RELEASE_CHANNEL", "\"dev\"")
         }
         release {
@@ -316,6 +323,9 @@ android {
         baseline = file("lint-baseline.xml")
         abortOnError = true
         fatal += setOf("NewApi", "InlinedApi")
+        // Translations arrive per language and may lag English; a missing
+        // one falls back to English at runtime by design.
+        disable += "MissingTranslation"
         checkReleaseBuilds = true
     }
 }
