@@ -1132,6 +1132,7 @@ private fun HudVideoPane(
     onPresentPicker: (HudPickerPresentation) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val playbackText = org.siloserver.silo.tv.ui.screens.detail.rememberTvPlaybackText()
     // Which row carries the pane's entry requester: the first row that is
     // actually focusable. A disabled row is not focusable, so pointing the
     // requester at it would cancel the move in from the rail.
@@ -1169,7 +1170,7 @@ private fun HudVideoPane(
                     HudFocusedSettingRow(
                         label = versionLabel,
                         value = org.siloserver.silo.tv.ui.screens.detail.TvPlaybackFormatting
-                            .versionShortLabel(currentVersion),
+                            .versionShortLabel(currentVersion, playbackText),
                         enabled = enabled,
                         entryFocusRequester = entryFocusRequester.takeIf { entryRow == "version" },
                         onActivate = {
@@ -1179,7 +1180,7 @@ private fun HudVideoPane(
                                     // Disambiguated as a set: two 4K DV files
                                     // otherwise render as two identical rows.
                                     options = org.siloserver.silo.tv.ui.screens.detail
-                                        .TvPlaybackFormatting.versionPickerLabels(fileVersions)
+                                        .TvPlaybackFormatting.versionPickerLabels(fileVersions, playbackText)
                                         .mapIndexed { index, label ->
                                             HudPickerOption(
                                                 id = fileVersions[index].fileId.toString(),
@@ -1397,6 +1398,7 @@ private fun HudAudioPane(
     onPresentPicker: (HudPickerPresentation) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val playbackText = org.siloserver.silo.tv.ui.screens.detail.rememberTvPlaybackText()
     // Two columns like every other pane. A lone full-width column put the
     // value 500dp from its label — "Audio track ……… English · DTS · 5.1" —
     // and left the card two-thirds empty. The right column is read-only
@@ -1492,7 +1494,7 @@ private fun HudAudioPane(
                                 options = catalogAudio.indices.map { ordinal ->
                                     HudPickerOption(
                                         id = ordinal.toString(),
-                                        label = formatting.audioChoiceLabelForOrdinal(catalogAudio, ordinal)
+                                        label = formatting.audioChoiceLabelForOrdinal(catalogAudio, ordinal, playbackText)
                                             ?: trackFallbackLabels[ordinal],
                                     )
                                 },
