@@ -2152,10 +2152,26 @@ fun TvAppNavigation(
         }
     }
     val membershipRepository: org.siloserver.silo.repository.PersonalDataRepository = koinInject()
-    org.siloserver.silo.common.ui.MembershipStatusBanner(
-        membershipRepository.memberships,
-        Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(),
-    )
+    org.siloserver.silo.common.ui.MembershipNoticeHost(
+        actions = membershipRepository.memberships,
+        deferred = currentEntry?.destination?.route in tvPlayerRoutes,
+        legacyModifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(),
+    ) { notice ->
+        // OK comes first so it takes focus: a stray Select closes the notice.
+        org.siloserver.silo.tv.ui.components.TvDialog(
+            title = notice.title,
+            message = notice.message,
+            onDismissRequest = notice.onDismiss,
+            actions = listOf(
+                org.siloserver.silo.tv.ui.components.TvDialogAction(label = "OK", onClick = notice.onDismiss),
+                org.siloserver.silo.tv.ui.components.TvDialogAction(
+                    label = notice.actionLabel,
+                    onClick = notice.onAction,
+                    style = org.siloserver.silo.tv.ui.components.TvDialogActionStyle.Primary,
+                ),
+            ),
+        )
+    }
 
     org.siloserver.silo.tv.ui.screens.profiles.TvHouseholdReverifyHost(profileRepository)
     siloCastStandby?.let { state ->

@@ -2218,10 +2218,26 @@ fun AppNavigation(
 
     }
     val membershipRepository: org.siloserver.silo.repository.PersonalDataRepository = koinInject()
-    org.siloserver.silo.common.ui.MembershipStatusBanner(
-        membershipRepository.memberships,
-        Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(),
-    )
+    org.siloserver.silo.common.ui.MembershipNoticeHost(
+        actions = membershipRepository.memberships,
+        deferred = currentEntry?.destination?.route == Route.Player.ROUTE ||
+            currentEntry?.destination?.route == Route.AudiobookPlayer.ROUTE,
+        legacyModifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(),
+    ) { notice ->
+        org.siloserver.silo.android.ui.components.SiloDialog(
+            title = notice.title,
+            message = notice.message,
+            onDismissRequest = notice.onDismiss,
+            actions = listOf(
+                org.siloserver.silo.android.ui.components.SiloDialogAction(
+                    label = notice.actionLabel,
+                    onClick = notice.onAction,
+                    style = org.siloserver.silo.android.ui.components.SiloDialogActionStyle.Primary,
+                ),
+                org.siloserver.silo.android.ui.components.SiloDialogAction(label = "OK", onClick = notice.onDismiss),
+            ),
+        )
+    }
         diagnosticsState.prompt
             ?.takeIf {
                 currentEntry?.destination?.route != Route.Diagnostics.route &&
