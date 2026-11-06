@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import android.content.res.Resources
+import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
@@ -56,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.flow.distinctUntilChanged
 import org.siloserver.silo.android.ui.util.formatCardDate
 import org.siloserver.silo.android.ui.util.playbackResumePosition
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
@@ -237,7 +240,7 @@ private fun EpisodeRailCard(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Check,
-                        contentDescription = "Watched",
+                        contentDescription = stringResource(CommonR.string.detail_watched),
                         tint = Color.Black,
                         modifier = Modifier.size(12.dp),
                     )
@@ -256,7 +259,11 @@ private fun EpisodeRailCard(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.PlayArrow,
-                        contentDescription = "Play Season ${episode.seasonNumber}, Episode ${episode.episodeNumber}",
+                        contentDescription = stringResource(
+                            CommonR.string.detail_playSeasonEpisode,
+                            episode.seasonNumber,
+                            episode.episodeNumber,
+                        ),
                         tint = Color.Black,
                         modifier = Modifier.size(24.dp),
                     )
@@ -286,7 +293,7 @@ private fun EpisodeRailCard(
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (isCurrent || reservesNowViewing) {
                 Text(
-                    text = "NOW VIEWING",
+                    text = stringResource(CommonR.string.detail_nowViewing),
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Black,
                     letterSpacing = 0.8.sp,
@@ -350,7 +357,13 @@ private fun EpisodeRailCard(
             onDismissRequest = { menuExpanded = false },
         ) {
             SiloDropdownMenuItem(
-                text = { Text(if (isWatched) "Mark as Unwatched" else "Mark as Watched") },
+                text = {
+                    Text(
+                        stringResource(
+                            if (isWatched) CommonR.string.detail_more_markUnwatched else CommonR.string.detail_more_markWatched,
+                        ),
+                    )
+                },
                 onClick = {
                     menuExpanded = false
                     onWatchedChange?.invoke(!isWatched)
@@ -414,5 +427,5 @@ private fun EpisodeSkeletonLine(width: Dp, height: Dp) {
     )
 }
 
-internal fun episodeNumberText(episode: EpisodeListItem): String =
-    "S${episode.seasonNumber}·E${episode.episodeNumber}"
+internal fun episodeNumberText(resources: Resources, episode: EpisodeListItem): String =
+    episodeCode(resources, episode.seasonNumber, episode.episodeNumber)

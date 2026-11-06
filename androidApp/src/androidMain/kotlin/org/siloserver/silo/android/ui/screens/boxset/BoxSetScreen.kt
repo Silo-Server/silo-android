@@ -26,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -51,6 +52,7 @@ import org.siloserver.silo.android.ui.screens.watchparty.WatchPartySoloGuardDial
 import org.siloserver.silo.android.ui.screens.watchparty.rememberWatchPartySoloGuard
 import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.util.rememberDominantColor
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.OnViewerAccessChanged
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.catalog.BOX_SET_TYPE
@@ -110,8 +112,8 @@ fun BoxSetScreen(
                 watchedWriteScope = viewModel.viewModelScope,
             )
             state.unavailable -> EmptyStateView(
-                title = "This box set isn't available",
-                subtitle = "Box sets may be turned off for this library, or too few of its movies are here.",
+                title = stringResource(CommonR.string.boxSets_unavailable),
+                subtitle = stringResource(CommonR.string.boxSets_unavailableBody),
                 icon = Icons.Outlined.VideoLibrary,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -193,7 +195,7 @@ private fun BoxSetContent(
                     item(contentType = "detail-hero") {
                         AdaptiveDetailHero(
                             detail = hero,
-                            eyebrow = "Box set",
+                            eyebrow = stringResource(CommonR.string.boxSets_eyebrow),
                             sourceTokens = emptyList(),
                             factsLine = boxSet.heroFacts(),
                             portraitArtwork = DetailPortraitArtwork(url = boxSet.posterUrl, thumbhash = boxSet.posterThumbhash),
@@ -213,7 +215,7 @@ private fun BoxSetContent(
                     }
                     item(contentType = "box-set-movies-header") {
                         SectionHeader(
-                            title = "Movies",
+                            title = stringResource(CommonR.string.boxSets_movies),
                             modifier = Modifier.padding(top = 20.dp, bottom = 14.dp),
                         )
                     }

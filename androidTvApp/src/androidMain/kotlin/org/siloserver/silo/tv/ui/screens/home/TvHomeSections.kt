@@ -28,7 +28,11 @@ private fun ResolvedSection.splitAudioProgress(): List<ResolvedSection> {
     val listening = copy(
         id = "$id-continue-listening",
         sectionType = "continue_listening",
+        // English fallback; sectionTitle() shows the catalog's text for titleKey.
+        // The key must be replaced, or the row would inherit the source row's.
         title = "Continue Listening",
+        titleKey = "home.section.continueListening",
+        titleArgs = null,
         totalCount = audioItems.size,
         items = audioItems,
     )

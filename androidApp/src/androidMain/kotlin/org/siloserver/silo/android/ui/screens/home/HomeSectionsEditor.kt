@@ -40,6 +40,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -48,7 +50,9 @@ import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.SiloTopBar
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.sectionTitle
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.ProfileRepository
@@ -99,7 +103,7 @@ fun HomeSectionsEditor(onDismiss: () -> Unit) {
             containerColor = MaterialTheme.colorScheme.background,
             topBar = {
                 SiloTopBar(
-                    title = "Home Sections",
+                    title = stringResource(CommonR.string.home_editor_title),
                     onBackClick = onDismiss,
                     containerColor = MaterialTheme.colorScheme.background,
                 )
@@ -116,12 +120,12 @@ fun HomeSectionsEditor(onDismiss: () -> Unit) {
                         contentAlignment = Alignment.Center,
                     ) { CircularProgressIndicator() }
                     state.error != null && rows.isEmpty() -> ErrorView(
-                        message = state.error ?: "Could not load Home sections",
+                        message = state.error ?: stringResource(CommonR.string.home_editor_loadFailed),
                         onRetry = viewModel::loadSections,
                     )
                     rows.isEmpty() -> EmptyStateView(
-                        title = "No Home sections",
-                        subtitle = "Home has no populated rows to arrange yet.",
+                        title = stringResource(CommonR.string.home_editor_empty),
+                        subtitle = stringResource(CommonR.string.home_editor_emptyBody),
                     )
                     else -> HomeSectionReorderList(
                         rows = rows,
@@ -156,7 +160,7 @@ private fun HomeSectionReorderList(
     ) {
         item(key = "instructions") {
             Text(
-                text = "Open eye: shown on Home. Closed eye: hidden. Drag the handle to reorder. Changes save automatically for this profile on this device.",
+                text = stringResource(CommonR.string.home_editor_instructions),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(16.dp),
@@ -187,13 +191,17 @@ private fun HomeSectionReorderList(
                 ) {
                     Icon(
                         imageVector = if (isVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
-                        contentDescription = if (isVisible) "Hide $title" else "Show $title",
+                        contentDescription = if (isVisible) {
+                            stringResourceWithNames(CommonR.string.home_editor_hide, title)
+                        } else {
+                            stringResourceWithNames(CommonR.string.home_editor_show, title)
+                        },
                     )
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(text = title, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
                     Text(
-                        text = if (section.items.size == 1) "1 item" else "${section.items.size} items",
+                        text = pluralStringResource(CommonR.plurals.rowPage_item, section.items.size, section.items.size),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -242,7 +250,10 @@ private fun HomeSectionReorderList(
                         },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Filled.DragHandle, contentDescription = "Reorder $title")
+                    Icon(
+                        Icons.Filled.DragHandle,
+                        contentDescription = stringResourceWithNames(CommonR.string.home_editor_reorder, title),
+                    )
                 }
             }
         }

@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.people
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.asString
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -44,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -69,6 +72,7 @@ import org.siloserver.silo.model.catalog.personInitials
 import org.siloserver.silo.model.catalog.personMetadataBadges
 import org.siloserver.silo.model.catalog.personWorksCountLabel
 import java.time.LocalDate
+import org.siloserver.silo.common.R as CommonR
 
 private val SafePadding = 16.dp
 private val LargePadding = 24.dp
@@ -100,7 +104,7 @@ fun PersonDetailScreen(
             }
             state.error != null && state.person == null -> {
                 ErrorView(
-                    message = state.error ?: "Something went wrong",
+                    message = state.error?.asString() ?: stringResource(CommonR.string.status_errorGeneric),
                     onRetry = { viewModel.reload() },
                 )
             }
@@ -142,7 +146,7 @@ fun PersonDetailScreen(
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
+                contentDescription = stringResource(CommonR.string.common_back),
                 tint = Color.White,
             )
         }
@@ -159,7 +163,7 @@ private fun PersonDetailContent(
     availableFilters: List<PersonMediaFilter>,
     totalItems: Int,
     hasMore: Boolean,
-    pagingError: String?,
+    pagingError: UiText?,
     onFilterSelected: (PersonMediaFilter) -> Unit,
     onLoadMore: () -> Unit,
     onRetryItems: () -> Unit,
@@ -225,8 +229,8 @@ private fun PersonDetailContent(
                     contentAlignment = Alignment.Center,
                 ) {
                     EmptyStateView(
-                        title = "No titles found",
-                        subtitle = "There are no works linked to this person yet.",
+                        title = stringResource(CommonR.string.person_empty),
+                        subtitle = stringResource(CommonR.string.person_emptyWorksBody),
                         icon = Icons.Outlined.Movie,
                     )
                 }
@@ -309,7 +313,7 @@ private fun PersonHeader(person: Person, isRefreshingMetadata: Boolean = false) 
                                     modifier = Modifier.size(11.dp),
                                 )
                                 Text(
-                                    text = "Loading metadata",
+                                    text = stringResource(CommonR.string.person_loadingMetadata),
                                     fontSize = 12.sp,
                                     color = SiloOnSurface,
                                 )
@@ -393,7 +397,7 @@ private fun FilmographyHeader(
     ) {
         Row(verticalAlignment = Alignment.Bottom) {
             Text(
-                text = "Filmography",
+                text = stringResource(CommonR.string.person_filmography),
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = SiloOnSurface,
@@ -414,7 +418,7 @@ private fun FilmographyHeader(
         ) {
             availableFilters.forEach { filter ->
                 FilterChip(
-                    title = filter.title,
+                    title = stringResource(filter.title),
                     isSelected = filter == selected,
                     onClick = { onSelect(filter) },
                 )
@@ -454,7 +458,7 @@ private fun ExternalProfileSection(person: Person) {
     // Provider ids (TMDB/IMDb/TVDB/Plex) are internal bookkeeping; no other
     // client surfaces them. Only the homepage is user-facing.
     val rows = buildList {
-        person.homepage?.trim()?.takeIf { it.isNotBlank() }?.let { add("Homepage" to it) }
+        person.homepage?.trim()?.takeIf { it.isNotBlank() }?.let { add(CommonR.string.person_homepage to it) }
     }
     if (rows.isEmpty()) return
     FlowRow(
@@ -467,7 +471,7 @@ private fun ExternalProfileSection(person: Person) {
                 color = SiloSurfaceElevated.copy(alpha = 0.7f),
             ) {
                 Text(
-                    text = "$label: $value",
+                    text = stringResource(label, value),
                     fontSize = 12.sp,
                     color = SiloSecondaryText,
                     maxLines = 1,
@@ -482,7 +486,7 @@ private fun ExternalProfileSection(person: Person) {
 @Composable
 private fun PagingFooter(
     isLoading: Boolean,
-    error: String?,
+    error: UiText?,
     onRetry: () -> Unit,
 ) {
     Box(
@@ -494,7 +498,7 @@ private fun PagingFooter(
         when {
             isLoading -> CircularProgressIndicator(color = SiloOnSurface)
             error != null -> Text(
-                text = error,
+                text = error.asString(),
                 color = SiloSecondaryText,
                 modifier = Modifier.clickable(onClick = onRetry),
             )

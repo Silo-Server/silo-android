@@ -45,6 +45,8 @@ import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.viewmodel.HomeDismissal
 import org.siloserver.silo.viewmodel.HomeViewModel
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 internal fun shouldShowHomeEmptyState(
     isLoading: Boolean,
@@ -198,18 +200,18 @@ private fun TvHomeEmptyState(
         ) {
             Text(
                 text = if (sectionsHiddenByPreference) {
-                    "Home sections are hidden"
+                    stringResource(CommonR.string.home_hiddenSections)
                 } else {
-                    "Nothing to watch yet"
+                    stringResource(CommonR.string.home_empty)
                 },
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
                 text = if (sectionsHiddenByPreference) {
-                    "Choose which rows appear in Settings → General → Home Sections."
+                    stringResource(CommonR.string.home_hiddenSectionsBodyTv)
                 } else {
-                    "Add media to your libraries or start watching to see it here."
+                    stringResource(CommonR.string.home_emptyBody)
                 },
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -220,7 +222,11 @@ private fun TvHomeEmptyState(
                 contentPadding = PaddingValues(horizontal = 32.dp, vertical = 12.dp),
             ) {
                 Text(
-                    text = if (sectionsHiddenByPreference) "Open Settings" else "Refresh",
+                    text = if (sectionsHiddenByPreference) {
+                        stringResource(CommonR.string.home_openSettings)
+                    } else {
+                        stringResource(CommonR.string.states_refresh)
+                    },
                     style = MaterialTheme.typography.labelLarge,
                 )
             }
@@ -251,6 +257,8 @@ private fun TvHomeContent(
     sectionsFullyResolved: Boolean = true,
     onMarqueeTranslated: () -> Unit = {},
 ) {
+    val resumeText = stringResource(CommonR.string.cardMenu_resume)
+    val playText = stringResource(CommonR.string.cardMenu_play)
     TvSkylineSectionFeed(
         onMarqueeTranslated = onMarqueeTranslated,
         surfaceKey = "home",
@@ -316,7 +324,7 @@ private fun TvHomeContent(
                 } else {
                     null
                 },
-                playLabel = if (item.positionSeconds != null) "Resume" else "Play",
+                playLabel = if (item.positionSeconds != null) resumeText else playText,
                 onSetWatched = { watched -> onSetWatched(item.contentId, watched) },
                 onToggleFavorite = { fav -> onToggleFavorite(item.contentId, fav) },
                 onToggleWatchlist = { wl -> onToggleWatchlist(item.contentId, wl) },

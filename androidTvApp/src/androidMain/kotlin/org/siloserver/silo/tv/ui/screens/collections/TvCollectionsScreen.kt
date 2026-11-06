@@ -41,6 +41,8 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.ui.OnViewerAccessChanged
@@ -161,7 +163,7 @@ private fun Header() {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
             Text(
-                text = "YOUR LIBRARY",
+                text = stringResource(CommonR.string.catalog_yourLibraryEyebrow),
                 style = sectionEyebrow,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.46f),
             )
@@ -176,7 +178,7 @@ private fun Header() {
                     modifier = Modifier.size(16.dp),
                 )
                 Text(
-                    text = "Collections",
+                    text = stringResource(CommonR.string.collections_title),
                     style = MaterialTheme.typography.displaySmall,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
@@ -205,7 +207,7 @@ private fun SectionHeader(section: CollectionSection) {
 @Composable
 private fun EmptyGroupHint() {
     Text(
-        text = "No collections in this group.",
+        text = stringResource(CommonR.string.collections_emptyGroup),
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(bottom = Spacing.sm),
@@ -229,12 +231,12 @@ private fun EmptyState() {
                 modifier = Modifier.size(48.dp),
             )
             Text(
-                text = "No collections yet",
+                text = stringResource(CommonR.string.collections_empty),
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = "Collections from your library will appear here.",
+                text = stringResource(CommonR.string.collections_emptyLibraryBody),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
