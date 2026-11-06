@@ -19,6 +19,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
@@ -26,6 +27,7 @@ import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.LoadingIndicator
 import org.siloserver.silo.android.ui.components.SiloTopBar
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.viewmodel.SectionBrowseArgs
 import org.siloserver.silo.viewmodel.SectionBrowseViewModel
@@ -53,20 +55,20 @@ fun SectionBrowseScreen(
         val contentModifier = Modifier.padding(padding)
         when {
             state.unavailable -> EmptyStateView(
-                title = "This row is no longer available",
-                subtitle = "It may have been removed or hidden.",
+                title = stringResource(CommonR.string.rowPage_noLongerAvailable),
+                subtitle = stringResource(CommonR.string.rowPage_removedOrHidden),
                 icon = Icons.Outlined.VisibilityOff,
                 modifier = contentModifier,
             )
             state.isLoading && state.items.isEmpty() -> LoadingIndicator(modifier = contentModifier)
             state.error != null -> ErrorView(
-                message = state.error ?: "Couldn't load this row.",
+                message = state.error ?: stringResource(CommonR.string.rowPage_loadFailed),
                 onRetry = viewModel::retry,
                 modifier = contentModifier,
             )
             state.items.isEmpty() -> EmptyStateView(
-                title = "Nothing here yet",
-                subtitle = "This row has no titles right now.",
+                title = stringResource(CommonR.string.rowPage_empty),
+                subtitle = stringResource(CommonR.string.rowPage_noTitles),
                 icon = Icons.Outlined.VideoLibrary,
                 modifier = contentModifier,
             )
@@ -109,11 +111,11 @@ private fun LoadMoreRetryBar(onRetry: () -> Unit, modifier: Modifier = Modifier)
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Couldn't load more",
+                text = stringResource(CommonR.string.rowPage_loadMoreFailed),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            TextButton(onClick = onRetry) { Text("Retry") }
+            TextButton(onClick = onRetry) { Text(stringResource(CommonR.string.common_retry)) }
         }
     }
 }

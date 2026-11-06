@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.openYoutubeTrailer
@@ -66,7 +68,7 @@ fun TrailersRail(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = modifier,
     ) {
-        SectionHeader(title = "Trailers & More")
+        SectionHeader(title = stringResource(CommonR.string.detail_trailers))
         val rowState = rememberLazyListState()
         DeferImagePresentationWhileScrolling(rowState) {
         LazyRow(
@@ -108,12 +110,13 @@ private fun TrailerCard(
 ) {
     val kindLabel = extraKindLabel(entry.kind)
     val durationLabel = trailerRailDurationLabel(entry)
+    val cardDescription = stringResource(CommonR.string.detail_trailerCardDescription, entry.title, kindLabel)
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier
             .width(TrailerCardWidth)
             .clickable(onClick = onClick)
-            .semantics { contentDescription = "${entry.title}, $kindLabel" },
+            .semantics { contentDescription = cardDescription },
     ) {
         Box(
             contentAlignment = Alignment.Center,

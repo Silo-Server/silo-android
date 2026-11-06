@@ -65,6 +65,7 @@ import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
@@ -94,6 +95,7 @@ import org.koin.compose.viewmodel.koinViewModel
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import org.siloserver.silo.common.R as CommonR
 
 // iOS SiloTheme tokens (phone).
 private val CornerRadius = 8.dp
@@ -210,7 +212,7 @@ fun CalendarScreen(
                     when {
                         state.error != null && !state.hasAnyItems -> item(key = "error") {
                             ErrorView(
-                                message = state.error ?: "Something went wrong",
+                                message = state.error ?: stringResource(CommonR.string.status_errorGeneric),
                                 onRetry = viewModel::load,
                                 modifier = Modifier.fillMaxWidth().padding(vertical = LargePadding),
                             )
@@ -350,7 +352,7 @@ private fun TodayPill(onClick: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = "Today",
+            text = stringResource(CommonR.string.calendar_today),
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface,
@@ -374,9 +376,9 @@ private fun CalendarFilterBar(
     modifier: Modifier = Modifier,
 ) {
     val presets = listOf(
-        CalendarFilter.Following to "Following",
-        CalendarFilter.Trending to "Trending",
-        CalendarFilter.Everything to "All",
+        CalendarFilter.Following to stringResource(CommonR.string.calendar_filter_following),
+        CalendarFilter.Trending to stringResource(CommonR.string.calendar_filter_trending),
+        CalendarFilter.Everything to stringResource(CommonR.string.calendar_filter_all),
     )
     val selectedIndex = presets.indexOfFirst { (value, _) ->
         value == selected ||
@@ -471,7 +473,7 @@ private fun CalendarWeekStrip(
     ) {
         ChevronButton(
             icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-            contentDescription = "Previous week",
+            contentDescription = stringResource(CommonR.string.calendar_previousWeek),
             onClick = onPrevWeek,
         )
         Row(modifier = Modifier.weight(1f)) {
@@ -489,7 +491,7 @@ private fun CalendarWeekStrip(
         }
         ChevronButton(
             icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = "Next week",
+            contentDescription = stringResource(CommonR.string.calendar_nextWeek),
             onClick = onNextWeek,
         )
     }
@@ -651,7 +653,7 @@ private fun DayShelf(
                     modifier = Modifier.size(14.dp),
                 )
                 Text(
-                    text = "Nothing scheduled",
+                    text = stringResource(CommonR.string.calendar_nothingScheduled),
                     fontSize = 12.sp, // iOS siloCaption = 12
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -735,7 +737,7 @@ private fun CalendarEventCard(
                 ) {
                     Icon(
                         imageVector = androidx.compose.material.icons.Icons.Filled.Check,
-                        contentDescription = "Watched",
+                        contentDescription = stringResource(CommonR.string.calendar_watched),
                         tint = MaterialTheme.colorScheme.background,
                         modifier = Modifier.size(12.dp),
                     )
@@ -814,12 +816,12 @@ private fun BadgePill(label: String) {
  * screen (silo-server #1494, silo-apple #513). "all" is the legacy spelling of
  * Everything; any other legacy filter links to all three views.
  */
-private fun emptyStateLinks(filter: String): List<Pair<String, String>> {
+private fun emptyStateLinks(filter: String): List<Pair<String, Int>> {
     val view = if (filter == CalendarFilter.All) CalendarFilter.Everything else filter
     return listOf(
-        CalendarFilter.Following to "Following",
-        CalendarFilter.Trending to "Trending",
-        CalendarFilter.Everything to "All",
+        CalendarFilter.Following to CommonR.string.calendar_filter_following,
+        CalendarFilter.Trending to CommonR.string.calendar_filter_trending,
+        CalendarFilter.Everything to CommonR.string.calendar_filter_all,
     ).filter { (value, _) -> value != view }
 }
 
@@ -845,13 +847,13 @@ private fun EmptyState(filter: String, onSelectFilter: (String) -> Unit) {
             modifier = Modifier.size(44.dp),
         )
         Text(
-            text = emptyTitle(filter),
+            text = stringResource(emptyTitle(filter)),
             fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
-            text = emptySubtitle(filter),
+            text = stringResource(emptySubtitle(filter)),
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.fillMaxWidth(),
@@ -874,7 +876,7 @@ private fun EmptyState(filter: String, onSelectFilter: (String) -> Unit) {
                         contentColor = MaterialTheme.colorScheme.background,
                     ),
                 ) {
-                    Text(label, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text(stringResource(label), fontWeight = FontWeight.SemiBold, maxLines = 1)
                 }
             }
         }
@@ -882,12 +884,13 @@ private fun EmptyState(filter: String, onSelectFilter: (String) -> Unit) {
 }
 
 /** iOS CalendarViewModel.sectionHeading: Today / Tomorrow / "Monday, June 9". */
+@Composable
 private fun sectionHeading(date: String, today: String, locale: Locale): String {
     val localDate = LocalDate.parse(date)
     if (today.isNotBlank()) {
         val todayDate = LocalDate.parse(today)
-        if (localDate == todayDate) return "Today"
-        if (localDate == todayDate.plusDays(1)) return "Tomorrow"
+        if (localDate == todayDate) return stringResource(CommonR.string.calendar_today)
+        if (localDate == todayDate.plusDays(1)) return stringResource(CommonR.string.calendar_tomorrow)
     }
     return localDate.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", locale))
 }
@@ -906,32 +909,34 @@ private fun displayAirTime(item: CalendarItem): String? = item.localDisplayAirTi
  * iOS CalendarCardCaption.subtitle: "S5 · E14 · Title" for episodes,
  * "Season 2" for season premieres, "Movie" for movies, joined with " · ".
  */
+@Composable
 private fun cardSubtitle(item: CalendarItem): String? {
     val parts = mutableListOf<String>()
     when (item.type) {
         "episode" -> {
             val season = item.seasonNumber
             val episode = item.episodeNumber
-            if (season != null && episode != null) parts.add("S$season · E$episode")
+            if (season != null && episode != null) {
+                parts.add(stringResource(CommonR.string.catalog_episodeCaption, season.toString(), episode.toString()))
+            }
             item.episodeTitle?.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
         }
         "season_premiere" -> {
-            item.seasonNumber?.let { parts.add("Season $it") }
+            item.seasonNumber?.let { parts.add(stringResource(CommonR.string.calendar_season, it.toString())) }
         }
-        "movie" -> parts.add("Movie")
+        "movie" -> parts.add(stringResource(CommonR.string.calendar_movie))
     }
     return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
-private fun emptyTitle(filter: String): String = when (filter) {
-    CalendarFilter.Following -> "Nothing from shows you follow"
-    CalendarFilter.Trending -> "Nothing trending this week"
-    else -> "Nothing scheduled this week"
+private fun emptyTitle(filter: String): Int = when (filter) {
+    CalendarFilter.Following -> CommonR.string.calendar_empty_following
+    CalendarFilter.Trending -> CommonR.string.calendar_empty_trending
+    else -> CommonR.string.calendar_empty_everything
 }
 
-private fun emptySubtitle(filter: String): String = when (filter) {
-    CalendarFilter.Following ->
-        "No upcoming releases this week from shows you watch, favorite, or watchlist."
-    CalendarFilter.Trending -> "No trending releases this week."
-    else -> "No movie releases or episode airings in this week."
+private fun emptySubtitle(filter: String): Int = when (filter) {
+    CalendarFilter.Following -> CommonR.string.calendar_empty_followingBody
+    CalendarFilter.Trending -> CommonR.string.calendar_empty_trendingReleasesBody
+    else -> CommonR.string.calendar_empty_everythingBody
 }

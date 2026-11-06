@@ -1,5 +1,8 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 import kotlinx.coroutines.flow.stateIn
 
 import androidx.lifecycle.SavedStateHandle
@@ -21,7 +24,6 @@ import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadStatus
 import org.siloserver.silo.model.download.statusEnum
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.network.isAccessRefusal
 import org.siloserver.silo.model.catalog.isBookLikeItemType
 import org.siloserver.silo.metadata.DescriptionTranslationController
@@ -55,6 +57,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ensureActive
+
+private const val MISSING_SERIES_ERROR = "missing_series"
 
 /**
  * UI state for the item detail screen.
@@ -118,7 +122,7 @@ data class ItemDetailUiState(
     val isFavorite: Boolean = false,
     val isInWatchlist: Boolean = false,
     val userRating: Int? = null,
-    val error: String? = null,
+    val error: UiText? = null,
     val selectedVersionIndex: Int = 0,
     val selectedAudioIndex: Int = 0,
     val selectedSubtitleIndex: Int = -1,
@@ -341,13 +345,20 @@ class ItemDetailViewModel(
      *  download limit reached". The screen shows it; without it a rejected
      *  request, and above all a rejected series batch, looked like nothing
      *  happened. */
-    private val _downloadFailureMessages = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
-    val downloadFailureMessages: kotlinx.coroutines.flow.SharedFlow<String> = _downloadFailureMessages
+    private val _downloadFailureMessages =
+        kotlinx.coroutines.flow.MutableSharedFlow<UiText>(extraBufferCapacity = 4)
+    val downloadFailureMessages: kotlinx.coroutines.flow.SharedFlow<UiText> = _downloadFailureMessages
 
     private suspend fun reportDownloadStart(result: ApiResult<*>) {
         _downloadStartEvents.emit(result is ApiResult.Success)
         if (result !is ApiResult.Success) {
-            _downloadFailureMessages.emit(result.errorMessage("Couldn't start the download."))
+            _downloadFailureMessages.emit(
+                if (result is ApiResult.Error && result.error == MISSING_SERIES_ERROR) {
+                    UiText.Resource(CommonR.string.detail_error_episodeMissingSeries)
+                } else {
+                    result.errorText(CommonR.string.detail_error_downloadStart)
+                },
+            )
         }
     }
 
@@ -401,7 +412,7 @@ class ItemDetailViewModel(
                 )
             }
             // The server rejects an episode sent without its series.
-            item?.type == "episode" -> ApiResult.Error(0, "missing_series", "This episode isn't linked to a series.")
+            item?.type == "episode" -> ApiResult.Error(0, MISSING_SERIES_ERROR, "")
             else -> downloadEnqueuer.start(
                 contentId = item?.contentId ?: contentId,
                 fileId = version.fileId,
@@ -532,7 +543,7 @@ class ItemDetailViewModel(
                         it.copy(
                             isLoading = false,
                             detail = detail,
-                            error = result.message.ifBlank { "Failed to load details" },
+                            error = result.errorText(CommonR.string.detail_error_loadFailed),
                             episodeFallbackContentId = initialEpisodeContentId.takeIf { detail == null },
                         )
                     }
@@ -541,7 +552,7 @@ class ItemDetailViewModel(
                     _uiState.update { state ->
                         state.copy(
                             isLoading = false,
-                            error = "Network error. Check your connection.",
+                            error = UiText.Resource(CommonR.string.catalog_error_network),
                             // Offline, the episode may still be cached when its series is not.
                             episodeFallbackContentId = initialEpisodeContentId.takeIf { state.detail == null },
                         )
@@ -654,7 +665,7 @@ class ItemDetailViewModel(
                         it.copy(
                             isLoading = false,
                             detail = null,
-                            error = result.message.ifBlank { "Failed to load details" },
+                            error = result.errorText(CommonR.string.detail_error_loadFailed),
                         )
                     }
                 }

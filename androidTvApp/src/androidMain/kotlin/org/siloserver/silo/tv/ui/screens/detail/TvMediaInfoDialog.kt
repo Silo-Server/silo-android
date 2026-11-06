@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.localizedResources
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -47,36 +48,39 @@ import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
 import java.util.Locale
 import kotlinx.coroutines.launch
 import org.siloserver.silo.tv.ui.screens.player.TvPlayerChrome
+import android.content.res.Resources
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 data class TvMediaInfoTrackSummary(
     val primary: String,
     val secondary: String? = null,
 )
 
-internal fun tvMediaInfoAudioSummary(track: AudioTrack): TvMediaInfoTrackSummary {
+internal fun tvMediaInfoAudioSummary(resources: Resources, track: AudioTrack): TvMediaInfoTrackSummary {
     val primary = normalizedHumanTitle(track.title)
         ?: languageDisplayName(track.language)
-        ?: "Audio Track ${track.index}"
+        ?: resources.getString(CommonR.string.detail_mediaInfo_audioTrack, track.index.toString())
     val secondary = listOfNotNull(
         languageDisplayName(track.language)?.takeUnless { it.equals(primary, ignoreCase = true) },
-        track.channelLayout?.trim()?.takeIf { it.isNotBlank() } ?: channelLabel(track.channels),
+        track.channelLayout?.trim()?.takeIf { it.isNotBlank() } ?: channelLabel(resources, track.channels),
         codecLabel(track.codec),
-        if (track.isDefault) "Default" else null,
+        if (track.isDefault) resources.getString(CommonR.string.detail_trackDefault) else null,
     ).distinct().joinToString(" · ").ifBlank { null }
     return TvMediaInfoTrackSummary(primary = primary, secondary = secondary)
 }
 
-internal fun tvMediaInfoSubtitleSummary(track: SubtitleTrack): TvMediaInfoTrackSummary {
+internal fun tvMediaInfoSubtitleSummary(resources: Resources, track: SubtitleTrack): TvMediaInfoTrackSummary {
     val rawTitle = track.title?.trim()
     val primary = normalizedHumanTitle(rawTitle)
         ?: languageDisplayName(track.language)
-        ?: "Subtitle Track ${track.index}"
+        ?: resources.getString(CommonR.string.detail_mediaInfo_subtitleTrack, track.index.toString())
     val secondary = listOfNotNull(
         codecLabel(track.codec),
-        if (track.isDefault) "Default" else null,
-        if (track.forced) "Forced" else null,
-        if (subtitleLabelIndicatesHearingImpaired(rawTitle)) "SDH" else null,
-        if (track.external) "External" else null,
+        if (track.isDefault) resources.getString(CommonR.string.detail_trackDefault) else null,
+        if (track.forced) resources.getString(CommonR.string.detail_trackForced) else null,
+        if (subtitleLabelIndicatesHearingImpaired(rawTitle)) resources.getString(CommonR.string.detail_trackSdh) else null,
+        if (track.external) resources.getString(CommonR.string.detail_trackExternal) else null,
     ).distinct().joinToString(" · ").ifBlank { null }
     return TvMediaInfoTrackSummary(primary = primary, secondary = secondary)
 }
@@ -94,6 +98,7 @@ fun TvMediaInfoDialog(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val resources = localizedResources()
     val focus = remember { FocusRequester() }
     val scrollState = rememberScrollState()
     val scrollScope = rememberCoroutineScope()
@@ -147,7 +152,7 @@ fun TvMediaInfoDialog(
             verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             Text(
-                text = "Media info",
+                text = stringResource(CommonR.string.detail_mediaInfo_title),
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontSize = 18.sp,
                     lineHeight = 22.sp,
@@ -157,7 +162,7 @@ fun TvMediaInfoDialog(
             )
             if (versions.isEmpty()) {
                 Text(
-                    text = "No media details available.",
+                    text = stringResource(CommonR.string.detail_mediaInfo_empty),
                     style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                 )
@@ -165,7 +170,8 @@ fun TvMediaInfoDialog(
             versions.forEachIndexed { index, version ->
                 if (versions.size > 1) {
                     Text(
-                        text = version.fileName ?: "Version ${index + 1}",
+                        text = version.fileName
+                            ?: stringResource(CommonR.string.detail_mediaInfo_version, index + 1),
                         style = MaterialTheme.typography.bodyMedium.copy(
                             fontSize = 14.sp,
                             lineHeight = 18.sp,
@@ -177,24 +183,32 @@ fun TvMediaInfoDialog(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                InfoRow("Resolution", version.resolution ?: "Unknown")
-                InfoRow("Video codec", version.codecVideo ?: "Unknown")
-                InfoRow("Audio codec", version.codecAudio ?: "Unknown")
-                if (version.hdr) InfoRow("HDR", "Yes")
-                version.container?.let { InfoRow("Container", it) }
-                if (version.fileSize > 0) InfoRow("Size", formatBytes(version.fileSize))
-                if (version.bitrate > 0) InfoRow("Bitrate", "${version.bitrate / 1000} kbps")
+                val unknown = stringResource(CommonR.string.detail_unknown)
+                InfoRow(stringResource(CommonR.string.detail_mediaInfo_resolution), version.resolution ?: unknown)
+                InfoRow(stringResource(CommonR.string.detail_mediaInfo_videoCodec), version.codecVideo ?: unknown)
+                InfoRow(stringResource(CommonR.string.detail_mediaInfo_audioCodec), version.codecAudio ?: unknown)
+                if (version.hdr) InfoRow("HDR", stringResource(CommonR.string.detail_mediaInfo_yes))
+                version.container?.let { InfoRow(stringResource(CommonR.string.detail_mediaInfo_container), it) }
+                if (version.fileSize > 0) {
+                    InfoRow(stringResource(CommonR.string.detail_mediaInfo_size), formatBytes(resources, version.fileSize))
+                }
+                if (version.bitrate > 0) {
+                    InfoRow(
+                        stringResource(CommonR.string.detail_mediaInfo_bitrate),
+                        stringResource(CommonR.string.settings_rate_kbps, (version.bitrate / 1000).toString()),
+                    )
+                }
 
                 version.audioTracks?.takeIf { it.isNotEmpty() }?.let { tracks ->
-                    SectionLabel("Audio tracks")
+                    SectionLabel(stringResource(CommonR.string.detail_mediaInfo_audioTracks))
                     tracks.forEach { t ->
-                        TrackSummaryRow(tvMediaInfoAudioSummary(t))
+                        TrackSummaryRow(tvMediaInfoAudioSummary(resources, t))
                     }
                 }
                 version.subtitleTracks?.takeIf { it.isNotEmpty() }?.let { tracks ->
-                    SectionLabel("Subtitle tracks")
+                    SectionLabel(stringResource(CommonR.string.detail_mediaInfo_subtitleTracks))
                     tracks.forEach { t ->
-                        TrackSummaryRow(tvMediaInfoSubtitleSummary(t))
+                        TrackSummaryRow(tvMediaInfoSubtitleSummary(resources, t))
                     }
                 }
             }
@@ -250,7 +264,7 @@ private fun TrackSummaryRow(summary: TvMediaInfoTrackSummary) {
         verticalArrangement = Arrangement.spacedBy(1.dp),
     ) {
         Text(
-            text = "• ${summary.primary}",
+            text = "• ${summary.primary}", // i18n-ignore
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f),
             maxLines = 1,
@@ -299,12 +313,12 @@ private fun MediaInfoScrollAffordance(
     }
 }
 
-private fun formatBytes(bytes: Long): String {
+private fun formatBytes(resources: Resources, bytes: Long): String {
     if (bytes <= 0) return "0 B"
     val gb = bytes / 1_000_000_000.0
-    if (gb >= 1.0) return "%.2f GB".format(gb)
+    if (gb >= 1.0) return resources.getString(CommonR.string.detail_sizeGb, "%.2f".format(gb))
     val mb = bytes / 1_000_000.0
-    return "%.0f MB".format(mb)
+    return resources.getString(CommonR.string.detail_sizeMb, "%.0f".format(mb))
 }
 
 private fun normalizedHumanTitle(value: String?): String? {
@@ -369,11 +383,11 @@ private fun codecLabel(value: String?): String? {
     }
 }
 
-private fun channelLabel(channels: Int?): String? = when (channels) {
+private fun channelLabel(resources: Resources, channels: Int?): String? = when (channels) {
     null, 0 -> null
-    1 -> "Mono"
-    2 -> "Stereo"
+    1 -> resources.getString(CommonR.string.detail_mono)
+    2 -> resources.getString(CommonR.string.detail_stereo)
     6 -> "5.1"
     8 -> "7.1"
-    else -> "${channels}ch"
+    else -> resources.getString(CommonR.string.detail_channels, channels.toString())
 }

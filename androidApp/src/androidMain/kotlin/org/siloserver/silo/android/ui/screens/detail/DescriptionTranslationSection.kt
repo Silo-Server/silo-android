@@ -10,8 +10,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.components.MachineTranslatedLabel
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
 
@@ -30,10 +32,10 @@ fun DescriptionTranslationSection(
     when (phase) {
         DescriptionTranslationPhase.Translating -> TranslatingDescriptionLabel(modifier)
         DescriptionTranslationPhase.Failed -> TextButton(onClick = onTranslate, modifier = modifier) {
-            Text("Translation failed — retry")
+            Text(stringResource(CommonR.string.detail_translation_failedRetry))
         }
         DescriptionTranslationPhase.Idle -> TextButton(onClick = onTranslate, modifier = modifier) {
-            Text("Translate description")
+            Text(stringResource(CommonR.string.detail_translation_translateDescription))
         }
     }
 }
@@ -51,7 +53,7 @@ fun TranslatingDescriptionLabel(modifier: Modifier = Modifier) {
             strokeWidth = 2.dp,
         )
         Text(
-            text = "Translating description…",
+            text = stringResource(CommonR.string.detail_translation_translatingDescription),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

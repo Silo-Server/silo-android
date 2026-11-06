@@ -15,6 +15,8 @@ import org.siloserver.silo.common.ui.components.MachineTranslatedLabel
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * TV description-translation affordance (Apple tvOS parity): a focusable
@@ -40,13 +42,13 @@ internal fun TvDescriptionTranslationSection(
             onClick = onTranslate,
             modifier = modifier,
         ) {
-            Text("Translation failed — retry")
+            Text(stringResource(CommonR.string.detail_translation_failedRetry))
         }
         DescriptionTranslationPhase.Idle -> androidx.tv.material3.Button(
             onClick = onTranslate,
             modifier = modifier,
         ) {
-            Text("Translate description")
+            Text(stringResource(CommonR.string.detail_translation_translateDescription))
         }
     }
 }
@@ -69,7 +71,7 @@ internal fun TvTranslatingDescriptionLabel(modifier: Modifier = Modifier) {
             color = Color.White,
         )
         Text(
-            text = "Translating description…",
+            text = stringResource(CommonR.string.detail_translation_translatingDescription),
             style = MaterialTheme.typography.labelLarge,
             color = Color.White.copy(alpha = 0.75f),
         )
