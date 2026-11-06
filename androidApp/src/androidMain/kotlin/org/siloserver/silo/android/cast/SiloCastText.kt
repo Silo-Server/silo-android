@@ -5,6 +5,7 @@ import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalResources
 import org.siloserver.silo.common.i18n.EnglishText
+import org.siloserver.silo.common.i18n.getStringWithNames
 
 /**
  * Text the remote shows: a catalog message resolved when it is drawn, so a
@@ -18,8 +19,13 @@ sealed interface SiloCastText {
 
     data class Verbatim(val text: String) : SiloCastText
 
+    /** The text as shown; TV names and other text arguments are isolated in a right-to-left interface. */
     fun resolve(resources: Resources): String = when (this) {
-        is Res -> resources.getString(id, *args.toTypedArray())
+        is Res -> if (args.isNotEmpty() && args.all { it is String }) {
+            resources.getStringWithNames(id, *args.map { it as String }.toTypedArray())
+        } else {
+            resources.getString(id, *args.toTypedArray())
+        }
         is Verbatim -> text
     }
 
