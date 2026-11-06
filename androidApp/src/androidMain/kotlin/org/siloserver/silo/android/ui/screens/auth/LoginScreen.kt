@@ -75,6 +75,8 @@ import org.siloserver.silo.android.ui.components.marquee.MarqueeStage
 import org.siloserver.silo.android.ui.components.marquee.MarqueeTextField
 import org.siloserver.silo.android.ui.components.marquee.MarqueeTopBarSpacer
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.ui.marquee.marqueeShake
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeScene
@@ -161,8 +163,10 @@ fun LoginScreen(
 
     state.replacePrompt?.let { prompt ->
         val downloads = downloadsSentence(CommonR.string.account_signOut_downloads, prompt.downloads)
+        val expiredName = prompt.expiredUsername ?: stringResource(CommonR.string.account_fallbackName)
+        val newName = prompt.newUsername ?: stringResource(CommonR.string.account_fallbackOther)
         SiloDialog(
-            title = stringResource(CommonR.string.loginReplace_title, prompt.expiredUsername),
+            title = stringResource(CommonR.string.loginReplace_title, expiredName),
             // Back or a scrim tap mid-Replace must not pick "Keep both".
             onDismissRequest = { if (!state.isLoading) viewModel.onKeepExpired() },
             actions = listOf(
@@ -179,12 +183,12 @@ fun LoginScreen(
                 ),
             ),
         ) {
-            val body = boldFormat(stringResource(CommonR.string.loginReplace_body), prompt.newUsername, prompt.expiredUsername)
+            val body = boldFormat(stringResource(CommonR.string.loginReplace_body), newName, expiredName)
             Column {
                 Text(if (downloads == null) body else body + AnnotatedString(" $downloads"))
                 if (prompt.replaceFailed) {
                     MarqueeErrorText(
-                        stringResource(CommonR.string.loginReplace_failed, prompt.expiredUsername),
+                        stringResource(CommonR.string.loginReplace_failed, expiredName),
                         Modifier.padding(top = 8.dp).then(announced),
                     )
                 }
@@ -220,7 +224,7 @@ fun LoginScreen(
         topBar = {
             MarqueeIconButton(
                 icon = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Change server",
+                contentDescription = stringResource(CommonR.string.common_changeServer),
                 onClick = onChangeServer,
                 enabled = !state.signInBusy,
             )
@@ -229,15 +233,15 @@ fun LoginScreen(
                 name = server.name,
                 hostLabel = server.hostLabel,
                 markUrl = server.branding?.markUrl,
-                actionLabel = "Use a different server",
+                actionLabel = stringResource(CommonR.string.signIn_useDifferentServer),
                 onAction = onChangeServer,
                 enabled = !state.signInBusy,
             )
         },
     ) {
         MarqueeHeadline(
-            title = "Sign in",
-            lead = server.branding?.loginSubtitle ?: "Use your ${server.name} account.",
+            title = stringResource(CommonR.string.signIn_title),
+            lead = server.branding?.loginSubtitle ?: stringResourceWithNames(CommonR.string.signIn_lead, server.name),
         )
 
         Column(Modifier.fillMaxWidth().padding(top = 24.dp).animateContentSize()) {
@@ -247,22 +251,24 @@ fun LoginScreen(
             }
 
             state.networkProvider?.let { provider ->
+                val signingIn = stringResource(CommonR.string.tvSignIn_form_submitting)
+                val continueAs = continueAsLabel(provider).text()
                 MarqueeButton(
                     onClick = viewModel::onNetworkSignIn,
                     isLoading = state.networkSignInBusy,
                     enabled = !state.signInBusy,
                     modifier = Modifier.semantics {
-                        contentDescription = if (state.networkSignInBusy) "Signing in…" else continueAsLabel(provider)
+                        contentDescription = if (state.networkSignInBusy) signingIn else continueAs
                     },
                 ) {
                     if (state.networkSignInBusy) {
-                        Text("Signing in…")
+                        Text(signingIn)
                     } else {
                         NetworkSignInLabel(provider)
                     }
                 }
                 if (state.providers.isNotEmpty() || state.showPasswordForm) {
-                    MarqueeLabeledDivider("or", Modifier.padding(vertical = 18.dp))
+                    MarqueeLabeledDivider(stringResource(CommonR.string.signIn_divider_or), Modifier.padding(vertical = 18.dp))
                 }
             }
 
@@ -278,16 +284,16 @@ fun LoginScreen(
                     modifier = Modifier.padding(top = if (index > 0) 10.dp else 0.dp),
                 ) {
                     if (busy) {
-                        Text("Waiting for sign-in…")
+                        Text(stringResource(CommonR.string.signIn_provider_waiting))
                     } else {
                         MarqueeProviderMark(provider)
-                        Text(signInWithLabel(provider), maxLines = 2, textAlign = TextAlign.Center)
+                        Text(signInWithLabel(provider).text(), maxLines = 2, textAlign = TextAlign.Center)
                     }
                 }
             }
             if (state.offersAccountChoice) {
                 MarqueeButton(
-                    text = differentAccountLabel(state.providers),
+                    text = differentAccountLabel(state.providers).text(),
                     onClick = viewModel::onUseDifferentAccount,
                     kind = MarqueeButtonKind.Plain,
                     enabled = !state.signInBusy,
@@ -296,9 +302,7 @@ fun LoginScreen(
             }
 
             if (state.options != null && !state.showPasswordForm && state.providers.isEmpty() && state.networkProvider == null) {
-                MarqueeErrorText(
-                    "This server doesn't offer a sign-in this app can use. Sign in on the web, or ask the server's admin.",
-                )
+                MarqueeErrorText(stringResource(CommonR.string.signIn_error_noUsableMethod))
             }
 
             // Discovery failed: the password form still shows, and this row
@@ -308,9 +312,9 @@ fun LoginScreen(
                     Modifier.fillMaxWidth().padding(bottom = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    MarqueeErrorText("Couldn't load sign-in options.", Modifier.weight(1f).then(announced))
+                    MarqueeErrorText(stringResource(CommonR.string.signIn_error_optionsUnavailable), Modifier.weight(1f).then(announced))
                     TextButton(onClick = viewModel::loadOptions, enabled = !state.signInBusy) {
-                        Text("Retry", color = MarqueeColors.Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text(stringResource(CommonR.string.common_retry), color = MarqueeColors.Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -318,27 +322,27 @@ fun LoginScreen(
             if (state.showPasswordForm) {
                 if (state.providers.isNotEmpty()) {
                     MarqueeLabeledDivider(
-                        if (foldsPasswordForm) "or" else "or use your password",
+                        stringResource(if (foldsPasswordForm) CommonR.string.signIn_divider_or else CommonR.string.signIn_divider_orPassword),
                         Modifier.padding(vertical = 18.dp),
                     )
                 }
                 if (foldsPasswordForm) {
                     MarqueeButton(
-                        text = "Sign in with a password",
+                        text = stringResource(CommonR.string.tvSignIn_action_password),
                         onClick = { expandsPasswordForm = true },
                         kind = MarqueeButtonKind.Plain,
                         icon = Icons.Outlined.Key,
                         enabled = !state.signInBusy,
                     )
                     // A provider's failure has no form to show it in.
-                    state.error?.let { MarqueeErrorText(it, Modifier.padding(top = 14.dp).then(announced)) }
+                    state.error?.let { MarqueeErrorText(it.text(), Modifier.padding(top = 14.dp).then(announced)) }
                 } else {
                     MarqueeFieldGroup(isError = state.error != null, modifier = Modifier.marqueeShake(passwordFailures)) {
                         MarqueeTextField(
                             value = state.username,
                             onValueChange = viewModel::onUsernameChanged,
                             icon = Icons.Outlined.Person,
-                            placeholder = "Username",
+                            placeholder = stringResource(CommonR.string.tvSignIn_form_usernamePlaceholder),
                             imeAction = ImeAction.Next,
                             focusRequester = usernameFocus,
                             enabled = !state.signInBusy,
@@ -348,7 +352,7 @@ fun LoginScreen(
                             value = state.password,
                             onValueChange = viewModel::onPasswordChanged,
                             icon = Icons.Outlined.Lock,
-                            placeholder = "Password",
+                            placeholder = stringResource(CommonR.string.tvSignIn_form_passwordPlaceholder),
                             isSecure = true,
                             isError = state.error != null,
                             enabled = !state.signInBusy,
@@ -359,9 +363,9 @@ fun LoginScreen(
                             },
                         )
                     }
-                    state.error?.let { MarqueeErrorText(it, Modifier.padding(top = 10.dp, start = 4.dp).then(announced)) }
+                    state.error?.let { MarqueeErrorText(it.text(), Modifier.padding(top = 10.dp, start = 4.dp).then(announced)) }
                     MarqueeButton(
-                        text = if (state.isLoading) "Signing in…" else "Sign in",
+                        text = stringResource(if (state.isLoading) CommonR.string.tvSignIn_form_submitting else CommonR.string.tvSignIn_form_submit),
                         onClick = {
                             focusManager.clearFocus()
                             viewModel.onLoginClick()
@@ -373,10 +377,10 @@ fun LoginScreen(
                     )
                 }
             } else {
-                state.error?.let { MarqueeErrorText(it, Modifier.padding(top = 14.dp).then(announced)) }
+                state.error?.let { MarqueeErrorText(it.text(), Modifier.padding(top = 14.dp).then(announced)) }
                 if (state.isLoading) {
                     Text(
-                        text = "Finishing sign-in…",
+                        text = stringResource(CommonR.string.signIn_finishing),
                         modifier = Modifier.fillMaxWidth().padding(top = 14.dp).then(announced),
                         color = MarqueeColors.InkTertiary,
                         textAlign = TextAlign.Center,
@@ -388,7 +392,7 @@ fun LoginScreen(
 
             if (state.signupEnabled) {
                 MarqueeButton(
-                    text = "Create account",
+                    text = stringResource(CommonR.string.signIn_createAccount),
                     onClick = onNavigateToSignup,
                     kind = MarqueeButtonKind.Plain,
                     enabled = !state.signInBusy,
@@ -404,9 +408,9 @@ private fun NetworkSignInLabel(provider: SignInProvider) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         MarqueeProviderMark(provider)
         Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            Text(continueAsLabel(provider), maxLines = 1)
+            Text(continueAsLabel(provider).text(), maxLines = 1)
             continueViaLabel(provider)?.let { via ->
-                Text(via, fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.alpha(0.7f), maxLines = 1)
+                Text(via.text(), fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.alpha(0.7f), maxLines = 1)
             }
         }
     }
@@ -416,8 +420,8 @@ private fun NetworkSignInLabel(provider: SignInProvider) {
 private fun Footnote(state: LoginUiState) {
     val options = state.options ?: return
     val text = when {
-        options.oauthProviders.isEmpty() && options.showPasswordForm -> "Forgot your password? Ask the server admin."
-        options.oauthProviders.isNotEmpty() && !options.showPasswordForm -> "Password sign-in is turned off on this server."
+        options.oauthProviders.isEmpty() && options.showPasswordForm -> stringResource(CommonR.string.signIn_forgotPassword)
+        options.oauthProviders.isNotEmpty() && !options.showPasswordForm -> stringResource(CommonR.string.signIn_error_passwordOff)
         else -> return
     }
     Text(
@@ -444,10 +448,11 @@ private fun LoadingSkeleton() {
             label = "skeletonAlpha",
         ).value
     }
+    val loading = stringResource(CommonR.string.signIn_loadingOptions)
     Column(
         Modifier
             .fillMaxWidth()
-            .semantics(mergeDescendants = true) { contentDescription = "Loading sign-in options" },
+            .semantics(mergeDescendants = true) { contentDescription = loading },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -471,10 +476,10 @@ private fun AccountProviderChooser(
     onDismiss: () -> Unit,
 ) {
     SiloDialog(
-        title = "Use a different account",
+        title = stringResource(CommonR.string.signIn_differentAccount),
         onDismissRequest = onDismiss,
         actions = providers.map { provider ->
-            SiloDialogAction(label = signInWithLabel(provider), onClick = { onChoose(provider) })
-        } + SiloDialogAction(label = "Cancel", onClick = onDismiss),
+            SiloDialogAction(label = signInWithLabel(provider).text(), onClick = { onChoose(provider) })
+        } + SiloDialogAction(label = stringResource(CommonR.string.common_cancel), onClick = onDismiss),
     )
 }

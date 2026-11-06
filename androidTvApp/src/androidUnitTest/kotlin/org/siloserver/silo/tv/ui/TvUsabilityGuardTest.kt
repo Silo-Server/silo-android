@@ -61,7 +61,7 @@ class TvUsabilityGuardTest {
         val shell = File(
             "src/androidMain/kotlin/org/siloserver/silo/tv/ui/shell/TvMainShell.kt",
         ).readText()
-        assertTrue(shell.contains("ProfileDropdownRow(label = \"Requests\""))
+        assertTrue(shell.contains("ProfileDropdownRow(label = stringResource(CommonR.string.menu_requests)"))
     }
 
     @Test
@@ -77,6 +77,6 @@ class TvUsabilityGuardTest {
         assertTrue(shell.contains("exit = { FocusRequester.Cancel }"))
         assertTrue(shell.contains(".zIndex(2f)"))
         assertTrue(shell.contains("ev.key == Key.Back || ev.key == Key.Escape"))
-        assertTrue(shell.contains("label = \"Sign Out\""))
+        assertTrue(shell.contains("label = stringResource(CommonR.string.menu_signOut)"))
     }
 }

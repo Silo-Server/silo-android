@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -223,7 +225,7 @@ fun SiloConfirmDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
-    dismissLabel: String = "Cancel",
+    dismissLabel: String = stringResource(CommonR.string.common_cancel),
     destructive: Boolean = true,
     confirmEnabled: Boolean = true,
     icon: ImageVector? = null,

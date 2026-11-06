@@ -12,6 +12,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -19,6 +20,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.feature.WatchPartyExposure
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomPhase
@@ -93,8 +96,8 @@ internal fun rememberTvWatchPartyDetailOption(
     if (current == null) {
         if (!watchPartyHostingOffered(available)) return null
         return TvWatchPartyDetailOption(
-            title = "Watch Party",
-            subtitle = "Host a party with this title",
+            title = stringResource(CommonR.string.watchParty_entry_watchParty),
+            subtitle = stringResource(CommonR.string.watchParty_entry_hostSubtitle),
             onSelect = { entry.request = TvDetailPartyRequest.Host(item) },
         )
     }
@@ -106,15 +109,15 @@ internal fun rememberTvWatchPartyDetailOption(
         host && current.phase == RoomPhase.Lobby && current.selectionMode == RoomSelectionMode.HostPick &&
             stagingSupported ->
             TvWatchPartyDetailOption(
-                title = "Add to party",
-                subtitle = "Make this the party's next title",
+                title = stringResource(CommonR.string.watchParty_entry_addToParty),
+                subtitle = stringResource(CommonR.string.watchParty_entry_addSubtitle),
                 onSelect = { entry.request = TvDetailPartyRequest.Stage(current.roomId, item) },
             )
         // The server refuses a direct selection in a voting room; those suggest instead.
         host && current.phase == RoomPhase.Playing && current.selectionMode == RoomSelectionMode.HostPick ->
             TvWatchPartyDetailOption(
-                title = "Play for everyone",
-                subtitle = "Switch the party to this title",
+                title = stringResource(CommonR.string.watchParty_confirm_playForEveryone),
+                subtitle = stringResource(CommonR.string.watchParty_entry_playSubtitle),
                 onSelect = {
                     entry.selectConfirmed = false
                     entry.request = TvDetailPartyRequest.Select(current.roomId, item)
@@ -123,8 +126,8 @@ internal fun rememberTvWatchPartyDetailOption(
         current.selfRole != MemberRole.Unknown && knownMode &&
             (current.phase == RoomPhase.Lobby || current.phase == RoomPhase.Playing) ->
             TvWatchPartyDetailOption(
-                title = "Suggest to Party",
-                subtitle = "Add it to the party's suggestions",
+                title = stringResource(CommonR.string.watchParty_entry_suggest),
+                subtitle = stringResource(CommonR.string.watchParty_entry_suggestSubtitle),
                 onSelect = { entry.request = TvDetailPartyRequest.Suggest(current.roomId, item) },
             )
         else -> null
@@ -148,9 +151,9 @@ internal fun TvWatchPartyDetailEffects(
         is TvDetailPartyRequest.Suggest -> DetailSuggestRunner(entry, request)
         is TvDetailPartyRequest.Select -> if (!entry.selectConfirmed) {
             TvWatchPartyConfirmDialog(
-                title = "Play this for everyone?",
-                message = "The party switches to ${request.item.title} now.",
-                confirmLabel = "Play for everyone",
+                title = stringResource(CommonR.string.watchParty_select_title),
+                message = stringResourceWithNames(CommonR.string.watchParty_select_bodyTitle, request.item.title),
+                confirmLabel = stringResource(CommonR.string.watchParty_confirm_playForEveryone),
                 focusConfirm = true,
                 onConfirm = { entry.selectConfirmed = true },
                 onDismiss = { entry.request = null },
@@ -238,7 +241,11 @@ private fun DetailStageRunner(
         }
         entry.request = null
         if (staged != null && staged.roomId == request.roomId && staged.selectedContentId == request.item.contentId) {
-            Toast.makeText(context, "Added ${request.item.title} to the party.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                context,
+                context.getString(CommonR.string.watchParty_toast_added, request.item.title),
+                Toast.LENGTH_SHORT,
+            ).show()
             latestNavigate(WatchPartyDestination.Lobby(request.roomId))
         }
     }
@@ -266,7 +273,11 @@ private fun DetailSuggestRunner(entry: TvWatchPartyDetailEntry, request: TvDetai
         }
         entry.request = null
         if (added != null) {
-            Toast.makeText(context, "Suggested ${request.item.title} to the party.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                context,
+                context.getString(CommonR.string.watchParty_toast_suggested, request.item.title),
+                Toast.LENGTH_SHORT,
+            ).show()
         }
     }
     LaunchedEffect(lobby) {
@@ -301,7 +312,10 @@ private fun DetailSelectRunner(
         } else {
             Toast.makeText(
                 context,
-                watchPartyErrorMessage(result, "Couldn't switch the party to ${request.item.title}."),
+                watchPartyErrorMessage(
+                    result,
+                    context.getString(CommonR.string.watchParty_error_switchPartyTo, request.item.title),
+                ),
                 Toast.LENGTH_LONG,
             ).show()
         }
@@ -360,9 +374,9 @@ internal fun rememberTvWatchPartyPlayGuard(
 internal fun TvWatchPartyPlayGuardDialog(guard: TvWatchPartyPlayGuard) {
     if (guard.pending == null) return
     TvWatchPartyConfirmDialog(
-        title = "Leave the Watch Party to play this?",
-        message = "You're in a Watch Party. Leaving it stops the party on this TV.",
-        confirmLabel = "Leave and play",
+        title = stringResource(CommonR.string.watchParty_soloGuard_title),
+        message = stringResource(CommonR.string.watchParty_soloGuard_tvBody),
+        confirmLabel = stringResource(CommonR.string.watchParty_soloGuard_confirm),
         onConfirm = guard::confirm,
         onDismiss = guard::cancel,
     )

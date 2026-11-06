@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.pairing
 
+import android.app.Application
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.consumeAsFlow
@@ -10,6 +11,9 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.pairing.PairingMessage
 import org.siloserver.silo.pairing.PairingReceiverState
 import org.siloserver.silo.pairing.PairingServerStatus
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -94,6 +98,8 @@ private class AccountApprover(
         ApiResult.Success(DeviceLoginDecisionResponse("denied"))
 }
 
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 class CompanionPairingMultiAccountTest {
     private val home = CompanionPairingServer(
         id = "home",
@@ -159,7 +165,7 @@ class CompanionPairingMultiAccountTest {
         assertEquals(listOf("alex", "alex", "sam"), compared.map { it.accountName })
         assertIs<PairingMessage.Done>(tv.sent.last())
         val completed = assertIs<CompanionPairingStatus.Completed>(coordinator.status.value)
-        assertEquals(listOf("Lake House — alex", "Home — alex, sam"), companionSummaryLines(completed.outcomes))
+        assertEquals(listOf("Lake House — alex", "Home — alex, sam"), companionSummary(completed.outcomes).map { it.inEnglish() })
     }
 
     /** One comparison covers every later target whose lookup carries the same binding. */
@@ -212,8 +218,8 @@ class CompanionPairingMultiAccountTest {
         val completed = assertIs<CompanionPairingResult.Completed>(result)
         assertEquals(3, completed.serverCount)
         assertEquals(
-            listOf(CompanionTargetOutcome("Lake House", "kim", "Living Room couldn't finish signing in to Lake House.")),
-            completed.failures,
+            listOf(EnglishOutcome("Lake House", "kim", "Living Room couldn't finish signing in to Lake House.")),
+            completed.failures.map { it.inEnglish() },
         )
         assertEquals(listOf("ABCD-0001", "ABCD-0003"), compared.map { it.userCode })
         assertEquals(listOf("ABCD-0001", "ABCD-0003", "ABCD-0004"), approver.approvedWith.map { it.first })
@@ -246,17 +252,17 @@ class CompanionPairingMultiAccountTest {
         assertTrue(tv.sent.none { it is PairingMessage.Done })
         // What already signed in is still reported, with the reason it stopped.
         assertEquals(
-            CompanionPairingResult.Completed(
+            EnglishResult.Completed(
                 serverCount = 1,
                 failures = listOf(
-                    CompanionTargetOutcome(
+                    EnglishOutcome(
                         "Home",
                         "alex",
                         "The codes didn't match, so setup stopped. Accounts already signed in stay on the TV.",
                     ),
                 ),
             ),
-            result,
+            result.inEnglish(),
         )
     }
 
@@ -299,7 +305,7 @@ class CompanionPairingMultiAccountTest {
                 "alex on Home: Living Room can't keep any more sign-ins.",
                 "sam on Home: Home couldn't approve the sign-in. Try again.",
             ),
-            companionSummaryLines(listOf(CompanionTargetOutcome("Lake House", "alex")) + completed.failures),
+            companionSummary(listOf(CompanionTargetOutcome("Lake House", "alex")) + completed.failures).map { it.inEnglish() },
         )
         assertEquals(3, tv.pushed.size)
         assertIs<PairingMessage.Done>(tv.sent.last())
@@ -313,9 +319,9 @@ class CompanionPairingMultiAccountTest {
             target = acctTv,
             chooseAccounts = { setOf(key(lake, "alex-lake"), key(home, "alex")) },
         )
-        val failed = assertIs<CompanionPairingResult.Failed>(result)
-        assertTrue("Living Room can't reach Lake House" in failed.message, failed.message)
-        assertTrue("The code on Living Room expired" in failed.message, failed.message)
+        val failed = assertIs<CompanionPairingResult.Failed>(result).text.inEnglish()
+        assertTrue("Living Room can't reach Lake House" in failed, failed)
+        assertTrue("The code on Living Room expired" in failed, failed)
         assertIs<PairingMessage.Done>(tv.sent.last())
     }
 

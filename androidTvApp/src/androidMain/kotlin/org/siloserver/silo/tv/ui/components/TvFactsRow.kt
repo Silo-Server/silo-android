@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.components
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -10,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -31,6 +33,8 @@ import org.siloserver.silo.tv.ui.theme.SuccessGreen
  *   lets a long value (an episode title) end in "…" instead of dropping.
  *   [TextToken.givesWayFirst] marks a source token (type, genre, episode
  *   number) that drops before any rating or format.
+ * - [ResToken] plain text from a catalog string (runtime, "Season 2"), resolved
+ *   when drawn so it follows the app language.
  * - [ExternalRating] one external rating as its source's mark and score.
  * - [Rating] a maturity/check token: green check icon + label.
  * - [Chip] a playback-format value (4K / HDR / DOLBY VISION / ATMOS / CC).
@@ -43,6 +47,7 @@ sealed class TvHeroFactToken {
         val truncates: Boolean = false,
         val givesWayFirst: Boolean = false,
     ) : TvHeroFactToken()
+    data class ResToken(@StringRes val id: Int, val args: List<Any> = emptyList()) : TvHeroFactToken()
     data class ExternalRating(val rating: DisplayRating) : TvHeroFactToken()
     data class Rating(val value: String) : TvHeroFactToken()
     data class Chip(val value: String) : TvHeroFactToken()
@@ -98,11 +103,21 @@ internal fun TvFactsRow(
     }
 }
 
+/** The catalog string with its arguments, in the app language. */
+@Composable
+internal fun TvHeroFactToken.ResToken.resolved(): String = stringResource(id, *args.toTypedArray())
+
 @Composable
 private fun FactToken(token: TvHeroFactToken, style: TextStyle) {
     when (token) {
         is TvHeroFactToken.TextToken -> Text(
             text = token.value,
+            style = style,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        is TvHeroFactToken.ResToken -> Text(
+            text = token.resolved(),
             style = style,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

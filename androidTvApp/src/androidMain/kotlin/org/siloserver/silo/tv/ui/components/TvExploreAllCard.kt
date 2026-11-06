@@ -20,6 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -30,6 +31,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
 
 /**
@@ -88,7 +90,7 @@ internal fun TvExploreAllCard(
                     )
                 }
                 Text(
-                    text = "Explore all",
+                    text = stringResource(CommonR.string.rows_exploreAll),
                     style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.5.sp, lineHeight = 18.5.sp),
                     color = if (isFocused) Color.White else Color.White.copy(alpha = 0.85f),
                     textAlign = TextAlign.Center,
