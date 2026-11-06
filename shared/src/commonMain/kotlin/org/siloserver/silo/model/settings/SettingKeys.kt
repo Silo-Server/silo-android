@@ -24,7 +24,7 @@ data class SettingPresentation(
 )
 
 object SettingKeys {
-    const val REVISION = 24
+    const val REVISION = 28
 
     /** Blur unwatched episode images */
     const val CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES = "catalog.hide_unwatched_episode_images"
@@ -78,6 +78,10 @@ object SettingKeys {
     const val PLAYBACK_PREFERRED_QUALITY = "playback.preferred_quality"
     /** Show forced subtitles */
     const val PLAYBACK_SHOW_FORCED_SUBTITLES = "playback.show_forced_subtitles"
+    /** Show marker confidence */
+    const val PLAYBACK_SHOW_MARKER_CONFIDENCE = "playback.show_marker_confidence"
+    /** Show marker source */
+    const val PLAYBACK_SHOW_MARKER_SOURCE = "playback.show_marker_source"
     /** Subtitle appearance */
     const val PLAYBACK_SUBTITLE_APPEARANCE = "playback.subtitle_appearance"
     /** Preferred subtitle language */
@@ -126,6 +130,8 @@ object SettingKeys {
     const val SEARCH_MEDIA_SCOPE = "search.media_scope"
     /** Match device caption settings */
     const val SUBTITLE_MATCHES_DEVICE = "subtitle.matches_device"
+    /** App language */
+    const val UI_APP_LANGUAGE = "ui.app_language"
     /** Poster badges */
     const val UI_CARD_OVERLAYS = "ui.card_overlays"
     /** Card overlays enabled */
@@ -172,6 +178,8 @@ object SettingKeys {
     const val UI_TIME_FORMAT = "ui.time_format"
     /** Show title art */
     const val UI_TITLE_ART = "ui.title_art"
+    /** Watch Party playback controls */
+    const val WATCH_PARTY_GUEST_CONTROL_POLICY = "watch_party.guest_control_policy"
 
     /** Every key the server stores. Safe to flush. */
     val REMOTE: List<String> = listOf(
@@ -197,6 +205,8 @@ object SettingKeys {
         PLAYBACK_NEXT_UP_PROMPT_SECONDS,
         PLAYBACK_PREFERRED_QUALITY,
         PLAYBACK_SHOW_FORCED_SUBTITLES,
+        PLAYBACK_SHOW_MARKER_CONFIDENCE,
+        PLAYBACK_SHOW_MARKER_SOURCE,
         PLAYBACK_SUBTITLE_APPEARANCE,
         PLAYBACK_SUBTITLE_LANGUAGE,
         PLAYBACK_SUBTITLE_MODE,
@@ -217,6 +227,7 @@ object SettingKeys {
         PLAYER_VIDEO_SKIP_FORWARD_SECONDS,
         REQUESTS_WATCHLIST_AUTO_REQUEST,
         SEARCH_MEDIA_SCOPE,
+        UI_APP_LANGUAGE,
         UI_CARD_OVERLAYS,
         UI_CARD_OVERLAYS_ENABLED,
         UI_CARD_PRESENTATION,
@@ -240,6 +251,7 @@ object SettingKeys {
         UI_THEME_MUSIC_LOOP,
         UI_TIME_FORMAT,
         UI_TITLE_ART,
+        WATCH_PARTY_GUEST_CONTROL_POLICY,
     )
 
     /** Contract-known keys that never leave the device. */
@@ -275,6 +287,8 @@ object SettingKeys {
         PLAYBACK_AUTO_SKIP_INTRO,
         PLAYBACK_AUTO_SKIP_RECAP,
         PLAYBACK_SHOW_FORCED_SUBTITLES,
+        PLAYBACK_SHOW_MARKER_CONFIDENCE,
+        PLAYBACK_SHOW_MARKER_SOURCE,
         PLAYER_DOLBY_VISION_ENABLED,
         PLAYER_DV_PROFILE7_HDR10_FALLBACK,
         PLAYER_HDR_ENABLED,
@@ -307,6 +321,19 @@ object SettingKeys {
 
 object SettingPresentationMetadata {
     val OPTION_SETS: Map<String, SettingOptionSet> = mapOf(
+        "app_languages" to SettingOptionSet(
+            type = "language_tag",
+            options = listOf(
+                SettingSuggestedOption("en", 28),
+                SettingSuggestedOption("es", 28),
+                SettingSuggestedOption("de", 28),
+                SettingSuggestedOption("fr", 28),
+                SettingSuggestedOption("pt-BR", 28),
+                SettingSuggestedOption("ja", 28),
+                SettingSuggestedOption("zh-Hans", 28),
+                SettingSuggestedOption("ar", 28),
+            ),
+        ),
         "catalog_metadata_languages" to SettingOptionSet(
             type = "language_tag",
             options = listOf(
@@ -474,6 +501,10 @@ object SettingPresentationMetadata {
         SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE to SettingPresentation(
             suggestedOptions = "playback_subtitle_languages",
             unsetLabel = "None",
+        ),
+        SettingKeys.UI_APP_LANGUAGE to SettingPresentation(
+            suggestedOptions = "app_languages",
+            unsetLabel = "Match device",
         ),
     )
 
