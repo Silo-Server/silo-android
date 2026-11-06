@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.collections
 
+import org.siloserver.silo.common.i18n.asString
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -29,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.EmptyStateView
@@ -38,6 +40,7 @@ import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.android.ui.screens.personal.MediaGridItem
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
+import org.siloserver.silo.common.R as CommonR
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,7 +78,7 @@ fun CollectionDetailScreen(
     Scaffold(
         topBar = {
             SiloTopBar(
-                title = state.title,
+                title = state.title ?: stringResource(CommonR.string.collections_collection),
                 onBackClick = onBackClick,
                 actions = {
                     if (shuffleKind != null && state.items.isNotEmpty() && shuffleLauncher.supports(shuffleKind)) {
@@ -83,7 +86,7 @@ fun CollectionDetailScreen(
                             onClick = { shuffleLauncher.start(shuffleKind, collectionId) },
                             enabled = !shuffleLauncher.isStarting,
                         ) {
-                            Icon(Icons.Filled.Shuffle, contentDescription = "Shuffle")
+                            Icon(Icons.Filled.Shuffle, contentDescription = stringResource(CommonR.string.shuffle_action))
                         }
                     }
                 },
@@ -97,15 +100,15 @@ fun CollectionDetailScreen(
             }
             state.error != null -> {
                 ErrorView(
-                    message = state.error ?: "Unknown error",
+                    message = state.error?.asString() ?: stringResource(CommonR.string.catalog_error_unknown),
                     onRetry = viewModel::refresh,
                     modifier = Modifier.padding(padding),
                 )
             }
             state.items.isEmpty() && !state.isLoading -> {
                 EmptyStateView(
-                    title = "Collection is empty",
-                    subtitle = "This collection does not have any items yet.",
+                    title = stringResource(CommonR.string.collections_emptyItemsTitle),
+                    subtitle = stringResource(CommonR.string.collections_emptyItemsBody),
                     icon = Icons.Outlined.CollectionsBookmark,
                     modifier = Modifier.padding(padding),
                 )

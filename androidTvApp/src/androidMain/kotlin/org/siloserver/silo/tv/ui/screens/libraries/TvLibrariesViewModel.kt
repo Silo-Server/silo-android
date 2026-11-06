@@ -1,11 +1,15 @@
 package org.siloserver.silo.tv.ui.screens.libraries
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.common.i18n.detailedErrorText
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.common.network.ServerReachabilityState
 import org.siloserver.silo.common.network.ServerReachabilityStatus
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
 import org.siloserver.silo.tv.data.preferences.TvLibrarySelectionStore
@@ -40,7 +44,7 @@ class TvLibrariesViewModel(
         val isLoading: Boolean = true,
         val libraries: List<UserLibrary> = emptyList(),
         val selectedLibraryId: Int? = null,
-        val error: String? = null,
+        val error: UiText? = null,
     )
 
     private val _uiState = MutableStateFlow(UiState())
@@ -134,7 +138,7 @@ class TvLibrariesViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = result.message.ifBlank { "Failed to load libraries" },
+                            error = result.errorText(CommonR.string.library_error_loadLibraries),
                         )
                     }
                 }
@@ -143,7 +147,7 @@ class TvLibrariesViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = "Network error: ${result.exception.message ?: "unknown"}",
+                            error = result.detailedErrorText(),
                         )
                     }
                 }

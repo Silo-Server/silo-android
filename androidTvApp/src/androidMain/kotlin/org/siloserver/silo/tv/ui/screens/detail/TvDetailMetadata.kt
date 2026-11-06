@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.getStringWithNames
 import org.siloserver.silo.model.catalog.DisplayRating
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.EpisodeListItem
@@ -12,6 +13,8 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneId
+import android.content.res.Resources
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Pure functions that build the hero metadata for the cinematic detail
@@ -20,30 +23,30 @@ import java.time.ZoneId
  */
 internal object TvDetailMetadata {
 
-    fun sourceTokens(detail: ItemDetail): List<String> = when {
+    fun sourceTokens(resources: Resources, detail: ItemDetail): List<String> = when {
         detail.type.equals("episode", ignoreCase = true) -> buildList {
-            episodeNumberLabel(detail)?.let { add(it) }
+            episodeNumberLabel(resources, detail)?.let { add(it) }
             detail.genres.firstOrNull { it.isNotBlank() }?.let { add(it) }
         }
         detail.type.equals("series", ignoreCase = true) -> buildList {
-            add("TV Show")
+            add(resources.getString(CommonR.string.detail_type_tvShow))
             detail.genres.filter { it.isNotBlank() }.take(2).forEach { add(it) }
         }
         detail.type.equals("season", ignoreCase = true) -> buildList {
             // tvOS `TVSeasonDetailView.sourceTokens`: leading episode-count token,
             // then up to two genres.
             detail.episodeCount?.takeIf { it > 0 }?.let {
-                add("$it Episode${if (it == 1) "" else "s"}")
+                add(resources.getQuantityString(CommonR.plurals.detail_seasonEpisodeCount, it, it, it.toString()))
             }
             detail.genres.filter { it.isNotBlank() }.take(2).forEach { add(it) }
         }
         isAudiobookItemType(detail.type) -> listOfNotNull(
-            "Audiobook",
+            resources.getString(CommonR.string.detail_type_audiobook),
             detail.audiobook?.publisher,
-            detail.audiobook?.narratorNames?.let { "Narrated by $it" },
+            detail.audiobook?.narratorNames?.let { resources.getStringWithNames(CommonR.string.detail_narratedBy, it) },
         )
         else -> buildList {
-            add(typeLabel(detail))
+            add(typeLabel(resources, detail))
             detail.genres.filter { it.isNotBlank() }.take(2).forEach { add(it) }
         }
     }
@@ -51,9 +54,10 @@ internal object TvDetailMetadata {
     fun ratingChip(detail: ItemDetail): String? =
         detail.contentRating?.trim()?.takeIf { it.isNotEmpty() }
 
-    fun seriesEpisodeSourceTokens(episode: EpisodeListItem): List<String> = listOfNotNull(
-        if (episode.seasonNumber == 0) "Specials" else "Season ${episode.seasonNumber}",
-        "Episode ${episode.episodeNumber}".takeIf { episode.episodeNumber > 0 },
+    fun seriesEpisodeSourceTokens(resources: Resources, episode: EpisodeListItem): List<String> = listOfNotNull(
+        seasonLabel(resources, episode.seasonNumber),
+        resources.getString(CommonR.string.detail_episode, episode.episodeNumber.toString())
+            .takeIf { episode.episodeNumber > 0 },
     )
 
     /** Episode editorial facts used by the combined Series page. These mirror
@@ -62,6 +66,7 @@ internal object TvDetailMetadata {
      * [ratings] stay, like its content-rating chip, so focusing an episode
      * never drops the ratings row. */
     fun seriesEpisodeFactsLine(
+        resources: Resources,
         episode: EpisodeListItem,
         runtimeMinutes: Int = episode.runtime,
         ratings: List<DisplayRating> = emptyList(),
@@ -70,11 +75,12 @@ internal object TvDetailMetadata {
         abbreviatedDate(episode.airDate, zone)?.let {
             add(TvHeroFactToken.TextToken(it))
         }
-        runtimeLabel(runtimeMinutes)?.let { add(TvHeroFactToken.TextToken(it)) }
+        runtimeLabel(resources, runtimeMinutes)?.let { add(TvHeroFactToken.TextToken(it)) }
         ratings.forEach { add(TvHeroFactToken.ExternalRating(it)) }
     }
 
     fun factsLine(
+        resources: Resources,
         detail: ItemDetail,
         preferredQuality: String? = null,
         selectedFileId: Int? = null,
@@ -93,10 +99,12 @@ internal object TvDetailMetadata {
         when {
             detail.type.equals("series", ignoreCase = true) ->
                 detail.seasonCount?.takeIf { it > 0 }?.let {
-                    tokens += TvHeroFactToken.TextToken("$it Season${if (it == 1) "" else "s"}")
+                    tokens += TvHeroFactToken.TextToken(
+                        resources.getQuantityString(CommonR.plurals.catalog_seasons, it, it),
+                    )
                 }
             else ->
-                runtimeLabel(selectedMediaRuntimeMinutes(detail, selectedVersion))?.let {
+                runtimeLabel(resources, selectedMediaRuntimeMinutes(detail, selectedVersion))?.let {
                     tokens += TvHeroFactToken.TextToken(it)
                 }
         }
@@ -107,22 +115,29 @@ internal object TvDetailMetadata {
         return tokens
     }
 
-    private fun typeLabel(detail: ItemDetail): String = when {
-        isAudiobookItemType(detail.type) -> "Audiobook"
+    private fun typeLabel(resources: Resources, detail: ItemDetail): String = when {
+        isAudiobookItemType(detail.type) -> resources.getString(CommonR.string.detail_type_audiobook)
         else -> when (detail.type.lowercase()) {
-            "movie" -> "Movie"
-            "series" -> "Series"
-            "season" -> "Season"
-            "episode" -> "Episode"
+            "movie" -> resources.getString(CommonR.string.detail_type_movie)
+            "series" -> resources.getString(CommonR.string.detail_type_series)
+            "season" -> resources.getString(CommonR.string.detail_type_season)
+            "episode" -> resources.getString(CommonR.string.detail_type_episode)
             else -> detail.type.replaceFirstChar { it.titlecase() }
         }
     }
 
-    private fun episodeNumberLabel(detail: ItemDetail): String? {
-        val seasonPart = detail.seasonNumber?.let { n ->
-            if (n == 0) "Specials" else "Season $n"
+    private fun seasonLabel(resources: Resources, seasonNumber: Int): String =
+        if (seasonNumber == 0) {
+            resources.getString(CommonR.string.detail_specials)
+        } else {
+            resources.getString(CommonR.string.detail_season, seasonNumber.toString())
         }
-        val episodePart = detail.episodeNumber?.takeIf { it > 0 }?.let { "Episode $it" }
+
+    private fun episodeNumberLabel(resources: Resources, detail: ItemDetail): String? {
+        val seasonPart = detail.seasonNumber?.let { n -> seasonLabel(resources, n) }
+        val episodePart = detail.episodeNumber?.takeIf { it > 0 }?.let {
+            resources.getString(CommonR.string.detail_episode, it.toString())
+        }
         return when {
             seasonPart != null && episodePart != null -> "$seasonPart · $episodePart"
             seasonPart != null -> seasonPart
@@ -131,9 +146,17 @@ internal object TvDetailMetadata {
         }
     }
 
-    private fun runtimeLabel(minutes: Int): String? {
+    private fun runtimeLabel(resources: Resources, minutes: Int): String? {
         if (minutes <= 0) return null
-        return if (minutes >= 60) "${minutes / 60}h ${minutes % 60}m" else "$minutes min"
+        return if (minutes >= 60) {
+            resources.getString(
+                CommonR.string.catalog_runtimeHoursMinutes,
+                (minutes / 60).toString(),
+                (minutes % 60).toString(),
+            )
+        } else {
+            resources.getString(CommonR.string.catalog_runtimeMinutes, minutes.toString())
+        }
     }
 
     /**

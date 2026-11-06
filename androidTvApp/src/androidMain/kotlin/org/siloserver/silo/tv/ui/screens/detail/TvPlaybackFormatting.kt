@@ -2,6 +2,7 @@
 
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.localizedResources
 import org.siloserver.silo.common.player.TrackSelectionPresets
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.editionLabel
@@ -19,9 +20,105 @@ import org.siloserver.silo.player.DolbyVisionDetection
 import org.siloserver.silo.tv.ui.navigation.TvSubtitleLaunchSelection
 import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 import java.util.Locale
+import android.content.res.Resources
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalConfiguration
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.runtime.ReadOnlyComposable
 
-internal fun automaticTrackLabel(resolvedLabel: String?): String =
-    "Auto - ${resolvedLabel ?: "None"}"
+internal fun automaticTrackLabel(resolvedLabel: String?, text: TvPlaybackText): String =
+    text.autoTrack(resolvedLabel ?: text.none)
+
+/**
+ * The words [TvPlaybackFormatting] puts into labels. Build it from the catalog
+ * with `TvPlaybackText(resources)`, or [rememberTvPlaybackText] in composition.
+ *
+ * [English] exists only for the player HUD, which calls [TvPlaybackFormatting]
+ * without one until the player screens move into the catalog; every detail
+ * caller passes resolved text.
+ */
+data class TvPlaybackText(
+    val auto: String,
+    val none: String,
+    val on: String,
+    val off: String,
+    val unknown: String,
+    val default: String,
+    val preferred: String,
+    val forced: String,
+    val sdh: String,
+    val external: String,
+    val stereo: String,
+    val mono: String,
+    /** A selector value for Auto with what it resolved to ("Auto: English · AAC"). */
+    val autoResolved: (value: String) -> String,
+    /** The subtitle Auto value with its resolved track ("Auto - English"). */
+    val autoTrack: (value: String) -> String,
+    /** Fallback track name ("Track 2"); takes the 1-based position. */
+    val track: (number: String) -> String,
+    /** Channel count with no named layout ("3ch"). */
+    val channels: (count: String) -> String,
+    val sizeGb: (size: String) -> String,
+    val sizeMb: (size: String) -> String,
+    /** A track name with a flag in parentheses ("English (SDH)"). */
+    val trackWithFlag: (name: String, flag: String) -> String,
+) {
+    constructor(resources: Resources) : this(
+        auto = resources.getString(CommonR.string.detail_auto),
+        none = resources.getString(CommonR.string.detail_none),
+        on = resources.getString(CommonR.string.detail_subtitlesOn),
+        off = resources.getString(CommonR.string.detail_off),
+        unknown = resources.getString(CommonR.string.detail_unknown),
+        default = resources.getString(CommonR.string.detail_trackDefault),
+        preferred = resources.getString(CommonR.string.detail_trackPreferred),
+        forced = resources.getString(CommonR.string.detail_trackForced),
+        sdh = resources.getString(CommonR.string.detail_trackSdh),
+        external = resources.getString(CommonR.string.detail_trackExternal),
+        stereo = resources.getString(CommonR.string.detail_stereo),
+        mono = resources.getString(CommonR.string.detail_mono),
+        autoResolved = { resources.getString(CommonR.string.detail_autoSelectorValue, it) },
+        autoTrack = { resources.getString(CommonR.string.detail_autoWithValue, it) },
+        track = { resources.getString(CommonR.string.detail_track, it) },
+        channels = { resources.getString(CommonR.string.detail_channels, it) },
+        sizeGb = { resources.getString(CommonR.string.detail_sizeGb, it) },
+        sizeMb = { resources.getString(CommonR.string.detail_sizeMb, it) },
+        trackWithFlag = { name, flag -> resources.getString(CommonR.string.detail_trackWithFlag, name, flag) },
+    )
+
+    companion object {
+        /** Player HUD fallback only; see the class comment. */
+        val English = TvPlaybackText(
+            auto = "Auto",
+            none = "None",
+            on = "On",
+            off = "Off",
+            unknown = "Unknown",
+            default = "Default",
+            preferred = "Preferred",
+            forced = "Forced",
+            sdh = "SDH",
+            external = "External",
+            stereo = "Stereo",
+            mono = "Mono",
+            autoResolved = { "Auto: $it" },
+            autoTrack = { "Auto - $it" },
+            track = { "Track $it" },
+            channels = { "${it}ch" },
+            sizeGb = { "$it GB" },
+            sizeMb = { "$it MB" },
+            trackWithFlag = { name, flag -> "$name ($flag)" },
+        )
+    }
+}
+
+/** [TvPlaybackText] for the current configuration, rebuilt when the language changes. */
+@Composable
+internal fun rememberTvPlaybackText(): TvPlaybackText {
+    val configuration = LocalConfiguration.current
+    val resources = localizedResources()
+    return remember(resources, configuration) { TvPlaybackText(resources) }
+}
 
 internal fun resolveTvAutomaticAudioTrackOrdinal(
     version: FileVersion?,
@@ -82,18 +179,18 @@ object TvPlaybackFormatting {
     // --- Version ---------------------------------------------------------
 
     /** Selector value mirrors tvOS's resolved stream summary. */
-    fun versionValueLabel(version: FileVersion?, selectedVersionFileId: Int?): String {
-        val detail = versionResolvedLabel(version)
+    fun versionValueLabel(version: FileVersion?, selectedVersionFileId: Int?, text: TvPlaybackText): String {
+        val detail = versionResolvedLabel(version, text)
         return if (selectedVersionFileId == null) {
-            if (version == null) "Auto" else "Auto: $detail"
+            if (version == null) text.auto else text.autoResolved(detail)
         } else {
             detail
         }
     }
 
     /** "2160p · HEVC · DV · TrueHD" — the same facts tvOS exposes inline. */
-    fun versionResolvedLabel(version: FileVersion?): String {
-        if (version == null) return "Auto"
+    fun versionResolvedLabel(version: FileVersion?, text: TvPlaybackText): String {
+        if (version == null) return text.auto
         val tokens = buildList {
             resolvedResolution(version)?.let { add(it) }
             resolvedVideoCodec(version)?.let { add(it) }
@@ -103,7 +200,7 @@ object TvPlaybackFormatting {
             }
             resolvedAudioCodec(version)?.let { add(it) }
         }
-        return if (tokens.isEmpty()) "Auto" else tokens.joinToString(" · ")
+        return if (tokens.isEmpty()) text.auto else tokens.joinToString(" · ")
     }
 
     /**
@@ -113,8 +210,8 @@ object TvPlaybackFormatting {
      * dynamic range · audio codec) so the Version pill tells the user which
      * audio the file carries, not just its resolution.
      */
-    fun versionShortLabel(version: FileVersion?): String {
-        if (version == null) return "Auto"
+    fun versionShortLabel(version: FileVersion?, text: TvPlaybackText = TvPlaybackText.English): String {
+        if (version == null) return text.auto
         val tokens = buildList {
             displayResolution(version.resolution)?.let { add(it) }
             resolvedVideoCodec(version)?.let { add(it) }
@@ -124,12 +221,12 @@ object TvPlaybackFormatting {
             }
             resolvedAudioCodec(version)?.let { add(it) }
         }
-        return if (tokens.isEmpty()) "Auto" else tokens.joinToString(" · ")
+        return if (tokens.isEmpty()) text.auto else tokens.joinToString(" · ")
     }
 
     /** Resting connected-segment value: resolution plus HDR family. */
-    fun versionCompactLabel(version: FileVersion?): String {
-        if (version == null) return "Auto"
+    fun versionCompactLabel(version: FileVersion?, text: TvPlaybackText): String {
+        if (version == null) return text.auto
         val tokens = buildList {
             resolvedResolution(version)?.let(::displayResolution)?.let { add(it) }
             when {
@@ -137,7 +234,7 @@ object TvPlaybackFormatting {
                 isHdr(version) -> add("HDR")
             }
         }
-        return if (tokens.isEmpty()) "Auto" else tokens.joinToString(" · ")
+        return if (tokens.isEmpty()) text.auto else tokens.joinToString(" · ")
     }
 
     /**
@@ -155,9 +252,13 @@ object TvPlaybackFormatting {
      * Size usually does the work when a remux and an encode share a codec;
      * container is the last resort.
      */
-    fun versionPickerLabels(versions: List<FileVersion>): List<String> {
+    fun versionPickerLabels(
+        versions: List<FileVersion>,
+        text: TvPlaybackText = TvPlaybackText.English,
+    ): List<String> {
+        val discriminators = versionDiscriminators(text)
         val base = versions.map { version ->
-            listOfNotNull(version.editionLabel, versionShortLabel(version)).joinToString(" · ")
+            listOfNotNull(version.editionLabel, versionShortLabel(version, text)).joinToString(" · ")
         }
         val colliding = base.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
         if (colliding.isEmpty()) return base
@@ -167,9 +268,9 @@ object TvPlaybackFormatting {
             val indexes = base.indices.filter { base[it] == label }
             // Widen the attribute tuple until this group is separated, or until
             // we run out of attributes and accept an honest duplicate.
-            for (depth in 1..VERSION_DISCRIMINATORS.size) {
+            for (depth in 1..discriminators.size) {
                 val attempt = indexes.associateWith { index ->
-                    VERSION_DISCRIMINATORS.take(depth)
+                    discriminators.take(depth)
                         .mapNotNull { it(versions[index]) }
                         .joinToString(" · ")
                 }
@@ -191,8 +292,8 @@ object TvPlaybackFormatting {
      * Attributes tried, in order, when version labels collide. Codecs are
      * already part of [versionShortLabel], so they never need to be appended.
      */
-    private val VERSION_DISCRIMINATORS: List<(FileVersion) -> String?> = listOf(
-        { v -> formatFileSize(v.fileSize) },
+    private fun versionDiscriminators(text: TvPlaybackText): List<(FileVersion) -> String?> = listOf(
+        { v -> formatFileSize(v.fileSize, text) },
         { v -> v.container?.takeIf { it.isNotBlank() }?.uppercase(Locale.ROOT) },
     )
 
@@ -240,24 +341,28 @@ object TvPlaybackFormatting {
     }
 
     /** resolution · codec · container · size detail line. */
-    fun versionDetailLabel(version: FileVersion): String {
+    fun versionDetailLabel(version: FileVersion, text: TvPlaybackText): String {
         val tokens = buildList {
             normalizedVideoCodec(version.codecVideo)?.let { add(it) }
             nonEmpty(version.container)?.uppercase(Locale.US)?.let { add(it) }
-            formatFileSize(version.fileSize)?.let { add(it) }
+            formatFileSize(version.fileSize, text)?.let { add(it) }
         }
         return tokens.joinToString(" · ")
     }
 
     // --- Audio -----------------------------------------------------------
 
-    fun audioOptions(version: FileVersion?, selectedAudioTrackIndex: Int?): List<TvAudioOption> {
+    fun audioOptions(
+        version: FileVersion?,
+        selectedAudioTrackIndex: Int?,
+        text: TvPlaybackText,
+    ): List<TvAudioOption> {
         if (version == null) return emptyList()
         return (version.audioTracks ?: emptyList()).mapIndexed { ordinal, track ->
             TvAudioOption(
                 ordinal = ordinal,
-                title = audioTitle(track, ordinal),
-                detail = audioDetail(track, ordinal, version),
+                title = audioTitle(track, ordinal, text),
+                detail = audioDetail(track, ordinal, version, text),
                 isSelected = isAudioSelectorOptionSelected(ordinal, selectedAudioTrackIndex),
             )
         }
@@ -267,19 +372,20 @@ object TvPlaybackFormatting {
         version: FileVersion?,
         selectedAudioTrackIndex: Int?,
         automaticAudioTrackOrdinal: Int? = null,
+        text: TvPlaybackText,
     ): String {
-        val tracks = version?.audioTracks ?: return "Unknown"
+        val tracks = version?.audioTracks ?: return text.unknown
         val ordinal = resolvedAudioOrdinal(
             version,
             selectedAudioTrackIndex,
             automaticAudioTrackOrdinal,
-        ) ?: return "Unknown"
-        val track = tracks.getOrNull(ordinal) ?: return "Unknown"
-        val summary = audioSummary(track, ordinal)
+        ) ?: return text.unknown
+        val track = tracks.getOrNull(ordinal) ?: return text.unknown
+        val summary = audioSummary(track, ordinal, text)
         // Auto shows what it resolved to ("Auto: English · EAC3 · 5.1"); a
         // manual pick shows just the track (tvOS `annotateAuto`). Audio auto
         // follows the same language/capability resolution used by playback.
-        return if (selectedAudioTrackIndex == null) "Auto: $summary" else summary
+        return if (selectedAudioTrackIndex == null) text.autoResolved(summary) else summary
     }
 
     /**
@@ -325,10 +431,10 @@ object TvPlaybackFormatting {
 
     /** Menu-row title. Mirrors tvOS `audioTitle`: language → useful custom
      *  title → "Track N". */
-    private fun audioTitle(track: AudioTrack, ordinal: Int): String =
+    private fun audioTitle(track: AudioTrack, ordinal: Int, text: TvPlaybackText): String =
         languageDisplayName(track.language)
             ?: usefulAudioTitle(track.title)
-            ?: "Track ${ordinal + 1}"
+            ?: text.track((ordinal + 1).toString())
 
     /** Pill-value summary. Mirrors tvOS `audioSummary`:
      *  "English · EAC3 · 5.1". */
@@ -349,11 +455,12 @@ object TvPlaybackFormatting {
         version: FileVersion?,
         ordinal: Int?,
         tracks: List<AudioTrack>? = null,
+        text: TvPlaybackText = TvPlaybackText.English,
     ): String? {
         if (ordinal == null) return null
         val rows = tracks?.takeIf { it.isNotEmpty() } ?: version?.audioTracks ?: return null
         val track = rows.getOrNull(ordinal) ?: return null
-        return audioSummary(track, ordinal)
+        return audioSummary(track, ordinal, text)
     }
 
     /**
@@ -362,9 +469,13 @@ object TvPlaybackFormatting {
      * and "Director Commentary" summarise identically, and the title is often
      * the only thing that separates them.
      */
-    fun audioChoiceLabelForOrdinal(tracks: List<AudioTrack>, ordinal: Int): String? {
+    fun audioChoiceLabelForOrdinal(
+        tracks: List<AudioTrack>,
+        ordinal: Int,
+        text: TvPlaybackText = TvPlaybackText.English,
+    ): String? {
         val track = tracks.getOrNull(ordinal) ?: return null
-        val summary = audioSummary(track, ordinal)
+        val summary = audioSummary(track, ordinal, text)
         // Keyed off the RENDERED summary, not audioTitle: an untitled-language
         // track falls back to its title for audioTitle, which then rejected the
         // qualifier and dropped the only thing naming it ("Director Commentary"
@@ -373,7 +484,7 @@ object TvPlaybackFormatting {
         return buildString {
             append(summary)
             if (qualifier != null) append(" · ").append(qualifier)
-            if (track.isDefault) append(" · Default")
+            if (track.isDefault) append(" · ").append(text.default)
         }
     }
 
@@ -390,26 +501,26 @@ object TvPlaybackFormatting {
         return tracks.indexOfFirst { it.isDefault }.takeIf { it >= 0 } ?: 0
     }
 
-    private fun audioSummary(track: AudioTrack, ordinal: Int): String {
+    private fun audioSummary(track: AudioTrack, ordinal: Int, text: TvPlaybackText): String {
         val tokens = listOfNotNull(
             languageDisplayName(track.language),
             normalizedAudioCodec(track.codec),
-            compactAudioLayout(track),
+            compactAudioLayout(track, text),
         )
-        return if (tokens.isEmpty()) audioTitle(track, ordinal) else tokens.joinToString(" · ")
+        return if (tokens.isEmpty()) audioTitle(track, ordinal, text) else tokens.joinToString(" · ")
     }
 
     /** Menu-row detail. Mirrors tvOS `audioDetail`: custom title (when it
      *  isn't already the row title), codec, layout, Default, Preferred. */
-    private fun audioDetail(track: AudioTrack, ordinal: Int, version: FileVersion?): String {
+    private fun audioDetail(track: AudioTrack, ordinal: Int, version: FileVersion?, text: TvPlaybackText): String {
         val tokens = buildList {
             usefulAudioTitle(track.title)
-                ?.takeIf { it != audioTitle(track, ordinal) }
+                ?.takeIf { it != audioTitle(track, ordinal, text) }
                 ?.let { add(it) }
             normalizedAudioCodec(track.codec)?.let { add(it) }
-            compactAudioLayout(track)?.let { add(it) }
-            if (track.isDefault) add("Default")
-            if (version?.effectiveAudioTrackIndex == ordinal) add("Preferred")
+            compactAudioLayout(track, text)?.let { add(it) }
+            if (track.isDefault) add(text.default)
+            if (version?.effectiveAudioTrackIndex == ordinal) add(text.preferred)
         }
         return tokens.joinToString(" · ")
     }
@@ -420,6 +531,7 @@ object TvPlaybackFormatting {
         version: FileVersion?,
         selectedSubtitleTrackIndex: Int?,
         preferredLanguage: String? = null,
+        text: TvPlaybackText,
     ): List<TvSubtitleOption> {
         val tracks = version?.subtitleTracks ?: return emptyList()
         // Selection travels in the server's COMBINED space (externals first,
@@ -432,8 +544,8 @@ object TvPlaybackFormatting {
             val track = tracks[ordinal]
             TvSubtitleOption(
                 selectionIndex = combined[ordinal],
-                title = subtitleTitle(track, ordinal),
-                detail = subtitleDetail(track),
+                title = subtitleTitle(track, ordinal, text),
+                detail = subtitleDetail(track, text),
                 isSelected = selectedSubtitleTrackIndex == combined[ordinal],
                 stableId = "sub-$ordinal",
                 unplayable = track.isUnplayableSubtitle(),
@@ -554,29 +666,30 @@ object TvPlaybackFormatting {
         version: FileVersion?,
         selectedSubtitleTrackIndex: Int?,
         autoContext: SubtitleAutoContext? = null,
+        text: TvPlaybackText,
     ): String {
         val tracks = version?.subtitleTracks
         if (selectedSubtitleTrackIndex == null) {
             if (autoContext != null) {
                 val resolved = autoResolvedSubtitle(version, autoContext)
                 return if (resolved != null) {
-                    automaticTrackLabel(subtitlePillSummary(resolved.first, resolved.second))
+                    automaticTrackLabel(subtitlePillSummary(resolved.first, resolved.second, text), text)
                 } else {
-                    automaticTrackLabel(null)
+                    automaticTrackLabel(null, text)
                 }
             }
-            if (tracks != null && tracks.size == 1) return subtitlePillSummary(tracks[0], 0)
-            return "Auto"
+            if (tracks != null && tracks.size == 1) return subtitlePillSummary(tracks[0], 0, text)
+            return text.auto
         }
-        if (selectedSubtitleTrackIndex == -1) return "Off"
+        if (selectedSubtitleTrackIndex == -1) return text.off
         // An explicit positive selection that doesn't resolve in this version's
         // track list: a subtitle IS requested, so "On" (not "Auto"/"Off").
-        if (tracks == null) return "On"
+        if (tracks == null) return text.on
         // The selection is a combined-space index (see subtitleOptions); map it
         // back to the catalog position for display.
         val ordinal = combinedSubtitleSelectionIndexes(tracks).indexOf(selectedSubtitleTrackIndex)
-        val track = tracks.getOrNull(ordinal) ?: return "On"
-        return subtitlePillSummary(track, ordinal)
+        val track = tracks.getOrNull(ordinal) ?: return text.on
+        return subtitlePillSummary(track, ordinal, text)
     }
 
     /**
@@ -666,22 +779,22 @@ object TvPlaybackFormatting {
 
     /** Menu-row title. Mirrors tvOS `subtitleTitle`: language → meaningful
      *  custom title → "Track N". */
-    private fun subtitleTitle(track: SubtitleTrack, ordinal: Int): String =
+    private fun subtitleTitle(track: SubtitleTrack, ordinal: Int, text: TvPlaybackText): String =
         languageDisplayName(track.language)
             ?: meaningfulSubtitleTitle(track)
-            ?: "Track ${ordinal + 1}"
+            ?: text.track((ordinal + 1).toString())
 
     /**
      * Pill-value summary. Mirrors tvOS `subtitlePillSummary`:
      * "English (Forced) · SRT" / "English (SDH) · PGS".
      */
-    private fun subtitlePillSummary(track: SubtitleTrack, ordinal: Int): String {
-        var name = subtitleTitle(track, ordinal)
+    private fun subtitlePillSummary(track: SubtitleTrack, ordinal: Int, text: TvPlaybackText): String {
+        var name = subtitleTitle(track, ordinal, text)
         if (isHearingImpairedSubtitle(track) && !containsAccessibilityMarker(name)) {
-            name += " (SDH)"
+            name = text.trackWithFlag(name, text.sdh)
         }
         if (isForcedSubtitle(track) && !name.contains("forced", ignoreCase = true)) {
-            name += " (Forced)"
+            name = text.trackWithFlag(name, text.forced)
         }
         val codec = normalizedSubtitleCodec(track.codec) ?: return name
         return "$name · $codec"
@@ -689,14 +802,14 @@ object TvPlaybackFormatting {
 
     /** Menu-row detail. Mirrors tvOS `subtitleDetail`: custom title, codec,
      *  Forced, SDH, Default, External. */
-    private fun subtitleDetail(track: SubtitleTrack): String {
+    private fun subtitleDetail(track: SubtitleTrack, text: TvPlaybackText): String {
         val tokens = buildList {
             meaningfulSubtitleTitle(track)?.let { add(it) }
             normalizedSubtitleCodec(track.codec)?.let { add(it) }
-            if (isForcedSubtitle(track)) add("Forced")
-            if (isHearingImpairedSubtitle(track)) add("SDH")
-            if (track.isDefault) add("Default")
-            if (track.external) add("External")
+            if (isForcedSubtitle(track)) add(text.forced)
+            if (isHearingImpairedSubtitle(track)) add(text.sdh)
+            if (track.isDefault) add(text.default)
+            if (track.external) add(text.external)
         }
         return tokens.joinToString(" · ")
     }
@@ -810,32 +923,32 @@ object TvPlaybackFormatting {
      * DECIMAL units (÷1000), GB to 2 decimals / MB to 1 decimal. e.g. 8 GiB →
      * "8.59 GB", 500 MiB → "524.3 MB". Returns null for non-positive counts.
      */
-    private fun formatFileSize(bytes: Long): String? {
+    private fun formatFileSize(bytes: Long, text: TvPlaybackText): String? {
         if (bytes <= 0) return null
         val gb = bytes / 1_000_000_000.0
-        if (gb >= 1.0) return String.format(Locale.US, "%.2f GB", gb)
+        if (gb >= 1.0) return text.sizeGb(String.format(Locale.US, "%.2f", gb))
         val mb = bytes / 1_000_000.0
-        return String.format(Locale.US, "%.1f MB", mb)
+        return text.sizeMb(String.format(Locale.US, "%.1f", mb))
     }
 
-    private fun compactAudioLayout(track: AudioTrack): String? {
+    private fun compactAudioLayout(track: AudioTrack, text: TvPlaybackText): String? {
         nonEmpty(track.channelLayout)?.let { layout ->
             val lowered = layout.lowercase(Locale.US)
             return when {
                 lowered.contains("atmos") -> "Atmos"
                 lowered.contains("7.1") -> "7.1"
                 lowered.contains("5.1") -> "5.1"
-                lowered.contains("stereo") -> "Stereo"
+                lowered.contains("stereo") -> text.stereo
                 else -> layout
             }
         }
         return when (track.channels) {
             null -> null
-            1 -> "Mono"
-            2 -> "Stereo"
+            1 -> text.mono
+            2 -> text.stereo
             6 -> "5.1"
             8 -> "7.1"
-            else -> "${track.channels}ch"
+            else -> text.channels(track.channels.toString())
         }
     }
 

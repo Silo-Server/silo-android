@@ -62,6 +62,8 @@ import org.siloserver.silo.tv.ui.screens.detail.TvDetailPageBottomPadding
 import org.siloserver.silo.tv.ui.screens.detail.TvDetailSectionHeader
 import org.siloserver.silo.tv.ui.screens.detail.tvDetailPageSurfaceColor
 import org.siloserver.silo.viewmodel.BoxSetViewModel
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * One movie box set on TV: the movie detail hero (backdrop, title, facts,
@@ -97,8 +99,7 @@ fun TvBoxSetScreen(
     when {
         detail != null -> BoxSetContent(detail, viewModel, guardedPlayMovie, onOpenMovie)
         state.unavailable -> TvCatalogEmptyState(
-            message = "This box set isn't available. Box sets may be turned off for this library, " +
-                "or too few of its movies are here.",
+            message = stringResource(CommonR.string.boxSets_unavailableMessage),
             modifier = Modifier.fillMaxSize(),
         )
         state.error != null -> TvErrorScreen(message = state.error.orEmpty(), onRetry = viewModel::retry)
@@ -115,6 +116,8 @@ private fun BoxSetContent(
 ) {
     val boxSet = detail.boxSet
     val next = boxSetNextMovie(detail.items)
+    val boxSetLabel = stringResource(CommonR.string.boxSets_eyebrow)
+    val moviesTitle = stringResource(CommonR.string.boxSets_movies)
     // Each movie's card menu marks it watched or adds it to a list, as on the
     // library grid; the view model moves the hero's count and play target.
     val coordinator: MediaActionsCoordinator = koinInject()
@@ -219,7 +222,7 @@ private fun BoxSetContent(
                     ratingChip = null,
                     overview = boxSet.overview,
                     tagline = null,
-                    factsLine = (listOf("Box set") + boxSet.heroFacts()).map { TvHeroFactToken.TextToken(it) },
+                    factsLine = (listOf(boxSetLabel) + boxSet.heroFacts()).map { TvHeroFactToken.TextToken(it) },
                     directorText = null,
                     actions = {
                         if (next != null) {
@@ -242,11 +245,11 @@ private fun BoxSetContent(
             item(key = "movies", contentType = "box-set-movies") {
                 Column(verticalArrangement = Arrangement.spacedBy(TvBoxSetRowHeaderGap)) {
                     TvDetailSectionHeader(
-                        title = "Movies",
+                        title = moviesTitle,
                         modifier = Modifier.padding(horizontal = TvDetailHorizontalInset),
                     )
                     TvMediaRow(
-                        title = "Movies",
+                        title = moviesTitle,
                         showHeader = false,
                         items = movies,
                         showProgress = true,

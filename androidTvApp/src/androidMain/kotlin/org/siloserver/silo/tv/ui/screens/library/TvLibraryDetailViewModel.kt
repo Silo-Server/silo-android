@@ -1,7 +1,14 @@
 package org.siloserver.silo.tv.ui.screens.library
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.common.i18n.detailedErrorText
+import androidx.annotation.StringRes
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.settings.BrowsePrefsStore
 import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.catalog.BrowseItem
@@ -35,15 +42,15 @@ import kotlinx.coroutines.sync.withPermit
  * variants are request presets over the same catalog grid, while Collections
  * and Recommended keep their dedicated surfaces.
  */
-enum class TvLibraryTab(val label: String) {
-    Recommended("Recommended"),
-    Collections("Collections"),
-    Browse("Browse"),
-    Genres("Genres"),
-    Alphabet("A-Z"),
-    RecentlyAdded("Recently Added"),
-    Authors("Authors"),
-    Series("Series"),
+enum class TvLibraryTab {
+    Recommended,
+    Collections,
+    Browse,
+    Genres,
+    Alphabet,
+    RecentlyAdded,
+    Authors,
+    Series,
 }
 
 /**
@@ -67,14 +74,14 @@ data class TvCollectionSection(
  * `CatalogSortKey` (labels, per-media-type availability, default order, and
  * direction hints). Wire values are the canonical server sort fields.
  */
-enum class TvLibrarySortOption(val label: String, val wireValue: String) {
+enum class TvLibrarySortOption(@StringRes val labelRes: Int, val wireValue: String) {
     /**
      * "Send no sort at all" — the server then keeps the source's intrinsic
      * order (a library collection's manual / MDBList / smart order). Only
      * offered where such an order exists ([availableForCollection]); the
      * Browse grid has none, so it never lists this.
      */
-    CollectionOrder("Collection Order", ""),
+    CollectionOrder(CommonR.string.catalog_sort_collectionOrder, ""),
     /**
      * The same "send no sort" behaviour for personal lists (favorites /
      * watchlist), where the stored order is most-recently-saved-first. It is a
@@ -83,17 +90,21 @@ enum class TvLibrarySortOption(val label: String, val wireValue: String) {
      * [fromWire] and the panel's current-selection lookup ambiguous. The
      * personal query builder maps it back to "no sort".
      */
-    ListOrder("Recently Saved", "__list_order"),
-    Title("Title", "title"),
-    DateAdded("Date Added", "added_at"),
-    ReleaseDate("Release Date", "release_date"),
-    Year("Year", "year"),
-    Rating("Rating", "rating_imdb"),
-    Runtime("Runtime", "runtime"),
-    Resolution("Resolution", "resolution"),
-    Author("Author", "author"),
-    Narrator("Narrator", "narrator"),
-    SeriesName("Series", "series");
+    ListOrder(CommonR.string.catalog_sort_recentlySaved, "__list_order"),
+    Title(CommonR.string.catalog_sort_title, "title"),
+    DateAdded(CommonR.string.catalog_sort_added, "added_at"),
+    ReleaseDate(CommonR.string.catalog_sort_released, "release_date"),
+    Year(CommonR.string.catalog_sort_year, "year"),
+    Rating(CommonR.string.catalog_sort_rating, "rating_imdb"),
+    Runtime(CommonR.string.catalog_sort_runtime, "runtime"),
+    Resolution(CommonR.string.catalog_sort_resolution, "resolution"),
+    Author(CommonR.string.catalog_sort_author, "author"),
+    Narrator(CommonR.string.catalog_sort_narrator, "narrator"),
+    SeriesName(CommonR.string.catalog_sort_series, "series");
+
+    /** The sort key's name, as the sort pill and panel show it. */
+    val label: String
+        @Composable get() = stringResource(labelRes)
 
     /**
      * False for the "keep the source's own order" entries: they send no sort,
@@ -102,14 +113,21 @@ enum class TvLibrarySortOption(val label: String, val wireValue: String) {
     val hasDirection: Boolean get() = this != CollectionOrder && this != ListOrder
 
     /** Short hint for the active direction (tvOS `directionLabel`). */
-    fun directionLabel(order: String): String = when (this) {
-        // No direction to report — the order is whatever the source defines.
-        CollectionOrder, ListOrder -> "Default"
-        Title, Author, Narrator, SeriesName -> if (order == "asc") "A–Z" else "Z–A"
-        ReleaseDate, Year, DateAdded -> if (order == "asc") "Oldest" else "Newest"
-        Runtime -> if (order == "asc") "Shortest" else "Longest"
-        Rating, Resolution -> if (order == "asc") "Lowest" else "Highest"
-    }
+    @Composable
+    fun directionLabel(order: String): String = stringResource(
+        when (this) {
+            // No direction to report — the order is whatever the source defines.
+            CollectionOrder, ListOrder -> CommonR.string.library_direction_default
+            Title, Author, Narrator, SeriesName ->
+                if (order == "asc") CommonR.string.library_direction_az else CommonR.string.library_direction_za
+            ReleaseDate, Year, DateAdded ->
+                if (order == "asc") CommonR.string.library_direction_oldest else CommonR.string.library_direction_newest
+            Runtime ->
+                if (order == "asc") CommonR.string.library_direction_shortest else CommonR.string.library_direction_longest
+            Rating, Resolution ->
+                if (order == "asc") CommonR.string.library_direction_lowest else CommonR.string.library_direction_highest
+        },
+    )
 
     companion object {
         fun fromWire(value: String): TvLibrarySortOption =
@@ -177,7 +195,7 @@ class TvLibraryDetailViewModel(
         val selectedTab: TvLibraryTab = TvLibraryTab.Recommended,
         val sections: List<ResolvedSection> = emptyList(),
         val recommendedLoading: Boolean = true,
-        val recommendedError: String? = null,
+        val recommendedError: UiText? = null,
         val genres: List<String> = emptyList(),
         /** Full facet vocabulary for the Browse filter panel (lazy-loaded). */
         val facetOptions: org.siloserver.silo.model.catalog.CatalogFiltersResponse? = null,
@@ -188,18 +206,18 @@ class TvLibraryDetailViewModel(
         val browseLibraryHasItems: Boolean? = null,
         val browseLoading: Boolean = false,
         val browseLoadingMore: Boolean = false,
-        val browseError: String? = null,
+        val browseError: UiText? = null,
         val browseFilter: TvLibraryBrowseFilter = TvLibraryBrowseFilter(),
         val audiobookGroups: List<AudiobookGroup> = emptyList(),
         val audiobookGroupsHasMore: Boolean = false,
         val audiobookGroupsLoading: Boolean = false,
         val audiobookGroupsLoadingMore: Boolean = false,
-        val audiobookGroupsError: String? = null,
+        val audiobookGroupsError: UiText? = null,
         val selectedAudiobookGroup: AudiobookGroup? = null,
         val collections: List<LibraryCollection> = emptyList(),
         val collectionSections: List<TvCollectionSection> = emptyList(),
         val collectionsLoading: Boolean = false,
-        val collectionsError: String? = null,
+        val collectionsError: UiText? = null,
         /** "Preserve sort & filters" for this library's Browse grid (default ON). */
         val preserveFilters: Boolean = true,
     )
@@ -536,7 +554,7 @@ class TvLibraryDetailViewModel(
             if (run != recommendedGeneration || !kotlinx.coroutines.currentCoroutineContext().isActive) return@launch
             if (owner == null) {
                 loadedRecommended = false
-                _uiState.update { it.copy(sections = emptyList(), recommendedLoading = false, recommendedError = "Sign in to load library sections.") }
+                _uiState.update { it.copy(sections = emptyList(), recommendedLoading = false, recommendedError = UiText.Resource(CommonR.string.library_error_signInForSections)) }
                 return@launch
             }
             suspend fun mayPublish(): Boolean {
@@ -557,7 +575,7 @@ class TvLibraryDetailViewModel(
                     _uiState.update {
                         it.copy(
                             recommendedLoading = false,
-                            recommendedError = layoutResult.message.ifBlank { "Failed to load sections" },
+                            recommendedError = layoutResult.errorText(CommonR.string.library_error_loadSections),
                         )
                     }
                     return@launch
@@ -567,7 +585,7 @@ class TvLibraryDetailViewModel(
                     _uiState.update {
                         it.copy(
                             recommendedLoading = false,
-                            recommendedError = "Network error: ${layoutResult.exception.message ?: "unknown"}",
+                            recommendedError = layoutResult.detailedErrorText(),
                         )
                     }
                     return@launch
@@ -623,8 +641,11 @@ class TvLibraryDetailViewModel(
                 it.copy(
                     sections = scoped.map { it.section }.visibleOnTv(),
                     recommendedLoading = false,
-                    recommendedError = if (scoped.any { it.incomplete })
-                        "Some shelves could not be fully loaded for this media type. Retry or open Browse." else null,
+                    recommendedError = if (scoped.any { it.incomplete }) {
+                        UiText.Resource(CommonR.string.library_error_someShelvesForType)
+                    } else {
+                        null
+                    },
                 )
             }
         }
@@ -764,7 +785,7 @@ class TvLibraryDetailViewModel(
                         it.copy(
                             browseLoading = false,
                             browseLoadingMore = false,
-                            browseError = result.message.ifBlank { "Failed to load library" },
+                            browseError = result.errorText(CommonR.string.library_error_loadLibrary),
                         )
                     }
                 }
@@ -774,7 +795,7 @@ class TvLibraryDetailViewModel(
                         it.copy(
                             browseLoading = false,
                             browseLoadingMore = false,
-                            browseError = "Network error: ${result.exception.message ?: "unknown"}",
+                            browseError = result.detailedErrorText(),
                         )
                     }
                 }
@@ -841,7 +862,7 @@ class TvLibraryDetailViewModel(
                         it.copy(
                             audiobookGroupsLoading = false,
                             audiobookGroupsLoadingMore = false,
-                            audiobookGroupsError = result.message.ifBlank { "Failed to load audiobook groups" },
+                            audiobookGroupsError = result.errorText(CommonR.string.library_error_loadAudiobookGroups),
                         )
                     }
                 }
@@ -852,7 +873,7 @@ class TvLibraryDetailViewModel(
                         it.copy(
                             audiobookGroupsLoading = false,
                             audiobookGroupsLoadingMore = false,
-                            audiobookGroupsError = "Network error: ${result.exception.message ?: "unknown"}",
+                            audiobookGroupsError = result.detailedErrorText(),
                         )
                     }
                 }
@@ -885,7 +906,7 @@ class TvLibraryDetailViewModel(
                     _uiState.update {
                         it.copy(
                             collectionsLoading = false,
-                            collectionsError = result.message.ifBlank { "Failed to load collections" },
+                            collectionsError = result.errorText(CommonR.string.collections_error_loadCollections),
                         )
                     }
                 }
@@ -894,7 +915,7 @@ class TvLibraryDetailViewModel(
                     _uiState.update {
                         it.copy(
                             collectionsLoading = false,
-                            collectionsError = "Network error: ${result.exception.message ?: "unknown"}",
+                            collectionsError = result.detailedErrorText(),
                         )
                     }
                 }

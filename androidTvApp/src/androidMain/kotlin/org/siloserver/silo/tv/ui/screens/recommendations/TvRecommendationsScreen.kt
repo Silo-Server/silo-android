@@ -50,6 +50,8 @@ import org.siloserver.silo.tv.ui.shell.TvTopMenuLayout
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import org.siloserver.silo.viewmodel.RecommendationsViewModel
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /** Saved-list grids arrive a page at a time; pace the claim to that, not to frames. */
 private const val SavedListFocusRetryDelayMillis = 60L
@@ -223,7 +225,7 @@ fun TvRecommendationsScreen(
                 modifier = Modifier.background(MaterialTheme.colorScheme.background),
             )
             state.error != null && state.sections.isEmpty() -> TvErrorScreen(
-                message = state.error ?: "Failed to load recommendations",
+                message = state.error ?: stringResource(CommonR.string.home_forYou_loadFailed),
                 onRetry = viewModel::loadRecommendations,
                 modifier = Modifier.background(MaterialTheme.colorScheme.background),
             )
@@ -246,12 +248,12 @@ fun TvRecommendationsScreen(
                             modifier = Modifier.size(28.dp),
                         )
                         Text(
-                            text = "Not enough data yet",
+                            text = stringResource(CommonR.string.home_forYou_notEnoughData),
                             style = MaterialTheme.typography.headlineSmall,
                             color = Color.White,
                         )
                         Text(
-                            text = "Watch and rate more content to unlock personalized recommendations.",
+                            text = stringResource(CommonR.string.home_forYou_notEnoughDataBody),
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White.copy(alpha = 0.7f),
                         )
@@ -260,7 +262,7 @@ fun TvRecommendationsScreen(
                             onClick = viewModel::loadRecommendations,
                             contentPadding = PaddingValues(horizontal = 32.dp, vertical = 12.dp),
                         ) {
-                            Text("Check again", style = MaterialTheme.typography.labelLarge)
+                            Text(stringResource(CommonR.string.home_forYou_checkAgain), style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 }
@@ -288,7 +290,7 @@ fun TvRecommendationsScreen(
 
         if (showFallbackCaption) {
             Text(
-                text = "No recommendations yet — showing your saved titles.",
+                text = stringResource(CommonR.string.home_forYou_savedFallback),
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontSize = 16.sp,
                     lineHeight = 20.sp,

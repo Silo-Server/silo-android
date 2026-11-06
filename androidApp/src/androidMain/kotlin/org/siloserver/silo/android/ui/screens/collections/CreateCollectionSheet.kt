@@ -24,8 +24,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Bottom sheet for creating a new collection.
@@ -59,7 +61,7 @@ fun CreateCollectionSheet(
                 .padding(bottom = 16.dp),
         ) {
             Text(
-                text = "New Collection",
+                text = stringResource(CommonR.string.collections_create_title),
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -69,7 +71,7 @@ fun CreateCollectionSheet(
             OutlinedTextField(
                 value = name,
                 onValueChange = onNameChanged,
-                label = { Text("Collection name") },
+                label = { Text(stringResource(CommonR.string.collections_create_nameLabel)) },
                 singleLine = true,
                 isError = error != null,
                 supportingText = if (error != null) {
@@ -89,7 +91,7 @@ fun CreateCollectionSheet(
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "Collection Type",
+                text = stringResource(CommonR.string.collections_create_typeLabel),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -98,14 +100,14 @@ fun CreateCollectionSheet(
 
             Column(modifier = Modifier.selectableGroup()) {
                 CollectionTypeOption(
-                    label = "Manual",
-                    description = "Manually add and organize items",
+                    label = stringResource(CommonR.string.collections_type_manual),
+                    description = stringResource(CommonR.string.collections_type_manualDescription),
                     selected = selectedType == "manual",
                     onClick = { onTypeChanged("manual") },
                 )
                 CollectionTypeOption(
-                    label = "Smart",
-                    description = "Automatically populated by rules",
+                    label = stringResource(CommonR.string.collections_type_smart),
+                    description = stringResource(CommonR.string.collections_type_smartDescription),
                     selected = selectedType == "smart",
                     onClick = { onTypeChanged("smart") },
                 )
@@ -132,7 +134,7 @@ fun CreateCollectionSheet(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                 }
-                Text("Create Collection")
+                Text(stringResource(CommonR.string.collections_create_action))
             }
         }
     }

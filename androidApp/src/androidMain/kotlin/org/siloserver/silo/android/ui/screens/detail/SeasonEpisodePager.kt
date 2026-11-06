@@ -26,9 +26,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.Season
 import kotlin.math.absoluteValue
@@ -196,7 +198,7 @@ private fun SeasonEpisodePage(
         }
         episodes.isEmpty() -> {
             Text(
-                text = "No episodes available",
+                text = stringResource(CommonR.string.detail_episodes_empty),
                 style = MaterialTheme.typography.bodySmall,
                 color = DetailTertiaryText,
                 modifier = modifier.padding(horizontal = SafePadding),

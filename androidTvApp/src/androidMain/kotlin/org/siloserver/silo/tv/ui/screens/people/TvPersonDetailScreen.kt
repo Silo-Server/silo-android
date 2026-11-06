@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.people
 
+import org.siloserver.silo.common.i18n.asString
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -54,6 +55,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -84,6 +87,7 @@ import java.time.LocalDate
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Android TV person detail surface — the cast/crew profile plus their
@@ -119,7 +123,7 @@ fun TvPersonDetailScreen(
                 modifier = Modifier.background(MaterialTheme.colorScheme.background),
             )
             state.error != null && state.person == null -> TvErrorScreen(
-                message = state.error!!,
+                message = state.error!!.asString(),
                 onRetry = viewModel::reload,
                 modifier = Modifier.background(MaterialTheme.colorScheme.background),
             )
@@ -175,7 +179,7 @@ private fun TvPersonDetailContent(
         itemIds = state.items.map { it.contentId },
         hasMore = state.hasMore,
         isLoadingMore = state.isLoadingItems,
-        errorMessage = state.pagingError,
+        errorMessage = state.pagingError?.asString(),
         surfaceKey = "person-${person.id}-${state.selectedFilter.name}",
         onLoadMore = onLoadMore,
         // The header is one full-span slot ahead of the posters, so the grid's
@@ -293,7 +297,7 @@ private fun TvPersonDetailContent(
                     )
                     state.pagingError?.let { error ->
                         Text(
-                            text = error,
+                            text = error.asString(),
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontSize = 14.sp,
                                 lineHeight = 17.sp,
@@ -308,14 +312,14 @@ private fun TvPersonDetailContent(
                                 onClick = onRetryItems,
                                 contentPadding = PaddingValues(horizontal = 32.dp, vertical = 12.dp),
                             ) {
-                                Text("Retry", style = MaterialTheme.typography.labelLarge)
+                                Text(stringResource(CommonR.string.common_retry), style = MaterialTheme.typography.labelLarge)
                             }
                         }
                     }
                 }
             },
             emptyState = {
-                TvCatalogEmptyState(message = "No titles found.")
+                TvCatalogEmptyState(message = stringResource(CommonR.string.person_emptyGrid))
             },
         )
     }
@@ -363,7 +367,7 @@ private fun PersonHeader(person: Person, bioFocusRequester: FocusRequester) {
                 TvExpandablePersonBio(bio = bio, focusRequester = bioFocusRequester)
             } else {
                 Text(
-                    text = "No biography or personal details are available yet.",
+                    text = stringResource(CommonR.string.person_noBio),
                     style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 20.sp),
                     color = Color.White.copy(alpha = 0.48f),
                     modifier = Modifier.widthIn(max = 530.dp),
@@ -626,7 +630,7 @@ private fun FilmographyHeader(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = "Filmography",
+                text = stringResource(CommonR.string.person_filmography),
                 style = MaterialTheme.typography.headlineMedium.copy(
                     fontSize = 18.sp,
                     lineHeight = 22.sp,
@@ -667,7 +671,7 @@ private fun FilmographyHeader(
         ) {
             availableFilters.forEachIndexed { index, filter ->
                 FilterChoiceChip(
-                    label = filter.title,
+                    label = stringResource(filter.title),
                     selected = filter == selected,
                     onClick = { onSelect(filter) },
                     // Falls back to the first chip when the selection is not
@@ -795,12 +799,12 @@ private fun cleanPersonBio(raw: String?): String? {
 
 // tvOS `personFilmographyCountLabel`: the known total wins ("72 titles"),
 // otherwise the loaded count with a "+" while more pages remain.
+@Composable
 private fun tvPersonFilmographyCountLabel(total: Int, loaded: Int, hasMore: Boolean): String? = when {
-    total > 0 -> if (total == 1) "1 title" else "$total titles"
+    total > 0 -> pluralStringResource(CommonR.plurals.person_count, total, total)
     loaded <= 0 -> null
-    hasMore -> "$loaded+ titles"
-    loaded == 1 -> "1 title"
-    else -> "$loaded titles"
+    hasMore -> pluralStringResource(CommonR.plurals.person_countMore, loaded, loaded)
+    else -> pluralStringResource(CommonR.plurals.person_count, loaded, loaded)
 }
 
 private fun personWorkCardAspectRatio(item: BrowseItem): Float? =

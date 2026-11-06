@@ -4,7 +4,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.android.ui.components.SiloTopBar
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Screen displaying the user's favorite items in a grid layout.
@@ -23,7 +25,7 @@ fun FavoritesScreen(
     Scaffold(
         topBar = {
             SiloTopBar(
-                title = "Favorites",
+                title = stringResource(CommonR.string.personal_favorites_title),
                 onBackClick = onBackClick,
             )
         },

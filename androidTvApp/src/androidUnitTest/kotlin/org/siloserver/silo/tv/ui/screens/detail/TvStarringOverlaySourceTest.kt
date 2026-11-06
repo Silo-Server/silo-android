@@ -20,8 +20,8 @@ class TvStarringOverlaySourceTest {
             .substringAfter("translation?.invoke()")
             .substringBefore("@Composable\nprivate fun HeroCreditLine")
 
-        assertTrue(screen.contains("internal fun seriesStarringCredit(detail: ItemDetail)"))
-        assertTrue(screen.contains("prefix = \"Starring \""))
+        assertTrue(screen.contains("internal fun seriesStarringNames(detail: ItemDetail)"))
+        assertTrue(screen.contains("stringResourceWithNames(CommonR.string.detail_starring, it)"))
         assertTrue(screen.contains("val heroCreditText = if (isSeriesDetail)"))
         assertTrue(hero.contains("SERIES_CREDIT_SLOT_HEIGHT"))
         assertTrue(lockedSeriesFooter.indexOf("SERIES_CREDIT_SLOT_HEIGHT") >= 0)

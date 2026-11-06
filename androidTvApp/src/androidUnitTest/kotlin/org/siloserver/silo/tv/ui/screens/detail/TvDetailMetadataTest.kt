@@ -1,5 +1,10 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.siloserver.silo.model.audiobook.AudiobookMetadata
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.EpisodeListItem
@@ -20,7 +25,12 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = Application::class)
 class TvDetailMetadataTest {
+    private val resources = ApplicationProvider.getApplicationContext<Application>().resources
+    private val text = TvPlaybackText(resources)
+
     @Test
     fun seriesEpisodeEditorialMatchesTvOsHierarchy() {
         val episode = EpisodeListItem(
@@ -34,14 +44,14 @@ class TvDetailMetadataTest {
 
         assertEquals(
             listOf("Season 3", "Episode 1"),
-            TvDetailMetadata.seriesEpisodeSourceTokens(episode),
+            TvDetailMetadata.seriesEpisodeSourceTokens(resources, episode),
         )
         assertEquals(
             listOf(
                 TvHeroFactToken.TextToken("Mar 30, 2026"),
                 TvHeroFactToken.TextToken("52 min"),
             ),
-            TvDetailMetadata.seriesEpisodeFactsLine(episode, zone = ZoneId.of("UTC")),
+            TvDetailMetadata.seriesEpisodeFactsLine(resources, episode, zone = ZoneId.of("UTC")),
         )
     }
 
@@ -55,7 +65,7 @@ class TvDetailMetadataTest {
 
         assertEquals(
             listOf("Specials", "Episode 1"),
-            TvDetailMetadata.seriesEpisodeSourceTokens(episode),
+            TvDetailMetadata.seriesEpisodeSourceTokens(resources, episode),
         )
     }
 
@@ -69,7 +79,7 @@ class TvDetailMetadataTest {
 
         assertEquals(
             listOf("Specials"),
-            TvDetailMetadata.seriesEpisodeSourceTokens(episode),
+            TvDetailMetadata.seriesEpisodeSourceTokens(resources, episode),
         )
     }
 
@@ -145,7 +155,7 @@ class TvDetailMetadataTest {
                 TvHeroFactToken.TextToken("Mar 30, 2026"),
                 TvHeroFactToken.TextToken("52 min"),
             ),
-            TvDetailMetadata.factsLine(detail, zone = ZoneId.of("UTC")),
+            TvDetailMetadata.factsLine(resources, detail, zone = ZoneId.of("UTC")),
         )
     }
 
@@ -185,7 +195,7 @@ class TvDetailMetadataTest {
 
         assertEquals(
             listOf("Audiobook", "Silo Press", "Narrated by Nia Narrator"),
-            TvDetailMetadata.sourceTokens(detail),
+            TvDetailMetadata.sourceTokens(resources, detail),
         )
     }
 
@@ -203,7 +213,7 @@ class TvDetailMetadataTest {
 
         assertEquals(
             listOf(TvHeroFactToken.Chip("HD")),
-            TvDetailMetadata.factsLine(detail, preferredQuality = "1080p"),
+            TvDetailMetadata.factsLine(resources, detail, preferredQuality = "1080p"),
         )
     }
 
@@ -237,6 +247,7 @@ class TvDetailMetadataTest {
                 TvHeroFactToken.Chip("CC"),
             ),
             TvDetailMetadata.factsLine(
+                resources,
                 detail = detail,
                 preferredQuality = "1080p",
                 selectedFileId = 2160,
@@ -278,14 +289,14 @@ class TvDetailMetadataTest {
 
         assertEquals(229, selectedMediaRuntimeMinutes(detail, theatrical))
         assertEquals(251, selectedMediaRuntimeMinutes(detail, directorsCut))
-        assertEquals("1080P · H.264 · AAC", TvPlaybackFormatting.versionShortLabel(theatrical))
-        assertEquals("4K · HEVC · DV · TrueHD", TvPlaybackFormatting.versionShortLabel(directorsCut))
+        assertEquals("1080P · H.264 · AAC", TvPlaybackFormatting.versionShortLabel(theatrical, text = text))
+        assertEquals("4K · HEVC · DV · TrueHD", TvPlaybackFormatting.versionShortLabel(directorsCut, text = text))
         assertEquals(
             listOf(
                 TvHeroFactToken.TextToken("3h 49m"),
                 TvHeroFactToken.Chip("HD"),
             ),
-            TvDetailMetadata.factsLine(detail, selectedFileId = theatrical.fileId),
+            TvDetailMetadata.factsLine(resources, detail, selectedFileId = theatrical.fileId),
         )
         assertEquals(
             listOf(
@@ -295,7 +306,7 @@ class TvDetailMetadataTest {
                 TvHeroFactToken.Chip("7.1"),
                 TvHeroFactToken.Chip("CC"),
             ),
-            TvDetailMetadata.factsLine(detail, selectedFileId = directorsCut.fileId),
+            TvDetailMetadata.factsLine(resources, detail, selectedFileId = directorsCut.fileId),
         )
     }
 
@@ -322,7 +333,7 @@ class TvDetailMetadataTest {
                 TvHeroFactToken.Chip("4K"),
                 TvHeroFactToken.Chip("DOLBY VISION"),
             ),
-            TvDetailMetadata.factsLine(detail),
+            TvDetailMetadata.factsLine(resources, detail),
         )
     }
 }
