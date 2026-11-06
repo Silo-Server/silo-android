@@ -401,7 +401,7 @@ class ItemDetailViewModel(
                     seriesContentId = seriesId,
                     episodeContentId = item.contentId,
                     fileId = version.fileId,
-                    seriesTitle = knownTitle ?: parent?.title?.takeIf { it.isNotBlank() } ?: "Series",
+                    seriesTitle = knownTitle ?: parent?.title?.takeIf { it.isNotBlank() } ?: DownloadEnqueuer.UNKNOWN_SERIES_TITLE,
                     seasonNumber = item.seasonNumber,
                     episodeNumber = item.episodeNumber,
                     episodeTitle = item.title,
