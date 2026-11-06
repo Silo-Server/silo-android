@@ -1939,6 +1939,16 @@ private fun openBrowseItem(
 }
 
 /**
+ * A server role as shown: the catalog's word for a known role (in any case, as
+ * the Settings rows read it), else the role as sent, capitalized.
+ */
+private fun roleText(role: String): UiText = when (role.lowercase()) {
+    "admin" -> UiText.Res(CommonR.string.shell_profileMenu_role_admin)
+    "user" -> UiText.Res(CommonR.string.shell_profileMenu_role_user)
+    else -> UiText.Raw(role.replaceFirstChar { it.uppercase() })
+}
+
+/**
  * Maps an in-app route string to the corresponding top-menu destination, or
  * `null` when the route is not one of the media-root tabs. Non-tab routes
  * (Settings, Collections, Favorites, Watchlist, History, ForYou, …) are
@@ -1947,13 +1957,6 @@ private fun openBrowseItem(
  * top bar from highlighting any tab and tells the redirect effect to leave the
  * user where they are instead of ejecting them to the first visible tab.
  */
-/** A server role as shown: the catalog's word for a known role, else the role as sent, capitalized. */
-private fun roleText(role: String): UiText = when (role) {
-    "admin" -> UiText.Res(CommonR.string.shell_profileMenu_role_admin)
-    "user" -> UiText.Res(CommonR.string.shell_profileMenu_role_user)
-    else -> UiText.Raw(role.replaceFirstChar { it.uppercase() })
-}
-
 private fun mapRouteToRoot(route: String): TvRootDestination? = when (route) {
     // Video/Audio/Libraries are legacy aliases kept harmless during the nav
     // alignment; Video maps to Home and the others to no specific tab now that

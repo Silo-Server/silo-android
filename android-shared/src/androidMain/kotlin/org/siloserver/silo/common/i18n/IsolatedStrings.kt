@@ -33,16 +33,15 @@ fun pluralStringResourceWithNames(@PluralsRes id: Int, count: Int, vararg names:
     pluralStringResource(id, count, count, count.toString(), *isolated(names))
 
 @Composable
-private fun isolated(names: Array<out String>): Array<String> {
-    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
-    return names.map { if (rtl) "\u2068$it\u2069" else it }.toTypedArray()
-}
+private fun isolated(names: Array<out String>): Array<String> =
+    isolated(names, rtl = LocalLayoutDirection.current == LayoutDirection.Rtl)
+
+private fun isolated(names: Array<out String>, rtl: Boolean): Array<String> =
+    names.map { if (rtl) "\u2068$it\u2069" else it }.toTypedArray()
 
 /** [stringResourceWithNames] outside composition, for helpers that take [Resources]. */
-fun Resources.getStringWithNames(@StringRes id: Int, vararg names: String): String {
-    val rtl = configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
-    return getString(id, *names.map { if (rtl) "\u2068$it\u2069" else it }.toTypedArray())
-}
+fun Resources.getStringWithNames(@StringRes id: Int, vararg names: String): String =
+    getString(id, *isolated(names, rtl = configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL))
 
 /**
  * [Context.getString] for a message whose arguments are titles or names, for
