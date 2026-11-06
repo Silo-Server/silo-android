@@ -1,0 +1,78 @@
+#!/bin/sh
+# check-translations: the committed generated translation files match a fresh
+# install of the version recorded in .silo-translations (docs/i18n.md).
+#
+#   scripts/check-translations --local <silo-translations checkout>
+#       for a local-<commit> version: the checkout must be at that commit,
+#       with no uncommitted changes.
+#   scripts/check-translations
+#       in CI: needs SILO_TRANSLATIONS_TOKEN (read access to the private
+#       Silo-Server/silo-translations); without it the check is skipped. A
+#       local-<commit> version is generated from a clone at that commit (Node
+#       22.18+ and npm on PATH); a release version is downloaded with gh.
+#
+# Fails when a generated file differs, is missing, or is committed but no
+# longer generated.
+set -eu
+
+die() { echo "check-translations: $*" >&2; exit 1; }
+
+root=$(git rev-parse --show-toplevel)
+config=$root/.silo-translations
+[ -f "$config" ] || die "no .silo-translations; run scripts/sync-translations first"
+version=$(sed -n 's/^version=//p' "$config")
+local=
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    --local) local=${2:?}; shift 2 ;;
+    *) die "unknown argument $1" ;;
+  esac
+done
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT INT TERM
+mkdir "$tmp/out"
+cp "$config" "$tmp/out/.silo-translations"
+
+case $version in
+  local-*)
+    commit=${version#local-}
+    case $commit in *-dirty) die "$version was generated from uncommitted catalog changes; regenerate from a commit" ;; esac
+    if [ -z "$local" ]; then
+      [ -n "${SILO_TRANSLATIONS_TOKEN:-}" ] || { echo "check-translations: skipped (no SILO_TRANSLATIONS_TOKEN to read the private catalog)"; exit 0; }
+      git clone --quiet --filter=blob:none \
+        "https://x-access-token:${SILO_TRANSLATIONS_TOKEN}@github.com/Silo-Server/silo-translations.git" "$tmp/catalog"
+      git -C "$tmp/catalog" checkout --quiet "$commit" 2>/dev/null \
+        || die "catalog commit $commit is not on GitHub yet"
+      (cd "$tmp/catalog" && npm ci --silent >/dev/null)
+      local=$tmp/catalog
+    fi
+    head=$(git -C "$local" rev-parse HEAD)
+    case $head in "$commit"*) ;; *) die "$local is at $head, not $commit" ;; esac
+    SILO_TRANSLATIONS_ROOT=$tmp/out "$root/scripts/sync-translations" --local "$local" 2>/dev/null
+    ;;
+  *)
+    if [ -n "${SILO_TRANSLATIONS_TOKEN:-}" ]; then
+      export GH_TOKEN="$SILO_TRANSLATIONS_TOKEN"
+    elif ! gh auth status >/dev/null 2>&1; then
+      echo "check-translations: skipped (no SILO_TRANSLATIONS_TOKEN or gh login to download $version)"
+      exit 0
+    fi
+    SILO_TRANSLATIONS_ROOT=$tmp/out "$root/scripts/sync-translations" 2>/dev/null
+    ;;
+esac
+
+fail=0
+# Every file the fresh install wrote, plus the two lists themselves.
+for f in .silo-translations .silo-translations-files $(cat "$tmp/out/.silo-translations-files"); do
+  if [ ! -f "$root/$f" ]; then echo "missing: $f"; fail=1
+  elif ! cmp -s "$tmp/out/$f" "$root/$f"; then echo "differs: $f"; fail=1
+  fi
+done
+# Generated files committed here that the version no longer produces.
+for f in $(cd "$root" && git ls-files -- 'android-shared/src/*/res/values*/strings_catalog.xml' 'android-shared/silo-locales.properties'); do
+  grep -qx "$f" "$tmp/out/.silo-translations-files" || { echo "stale: $f"; fail=1; }
+done
+[ "$fail" = 0 ] || die "generated translation files don't match $version; run scripts/sync-translations"
+echo "check-translations: $version matches"
