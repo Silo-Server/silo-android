@@ -64,6 +64,7 @@ import org.siloserver.silo.model.watchtogether.RoomMember
 import org.siloserver.silo.tv.ui.components.TvMediaRow
 import org.siloserver.silo.tv.ui.components.TvPoster
 import org.siloserver.silo.tv.ui.components.TvTextInputDialog
+import org.siloserver.silo.tv.ui.components.bidiIsolated
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
 import org.siloserver.silo.tv.ui.focus.TvRestoreFocusOnModalDismiss
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
@@ -178,7 +179,7 @@ internal fun TvWatchPartyPicker(
                     ),
                     title = item.title,
                     subtitle = "S${nextUp.seasonNumber} · E${nextUp.episodeNumber}" +
-                        nextUp.title.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(),
+                        nextUp.title.takeIf { it.isNotBlank() }?.let { " · ${bidiIsolated(it)}" }.orEmpty(),
                     posterUrl = item.posterUrl,
                     posterThumbhash = item.posterThumbhash,
                     backdropUrl = item.backdropUrl,
