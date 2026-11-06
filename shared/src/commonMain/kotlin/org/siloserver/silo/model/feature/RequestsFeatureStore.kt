@@ -34,6 +34,10 @@ class RequestsFeatureStore(
     /** The server lets a viewer follow a title someone else requested (`follow_supported`). */
     val followSupported: StateFlow<Boolean> = _followSupported.asStateFlow()
 
+    private val _removeFailedSupported = MutableStateFlow(false)
+    /** The server lets a viewer remove their own failed request (`remove_failed_supported`). */
+    val removeFailedSupported: StateFlow<Boolean> = _removeFailedSupported.asStateFlow()
+
     // Written on the UI dispatcher (reset) and read after IO resumption
     // (refresh); Volatile gives the stale-response guard a happens-before.
     @kotlin.concurrent.Volatile
@@ -51,8 +55,10 @@ class RequestsFeatureStore(
         }
         // Like [isEnabled], a failed probe keeps the previous answer.
         val follows = enabled && ((status as? ApiResult.Success)?.data?.followSupported ?: _followSupported.value)
+        val removes = enabled && ((status as? ApiResult.Success)?.data?.removeFailedSupported ?: _removeFailedSupported.value)
         if (refreshGeneration != generation) return
         _followSupported.value = follows
+        _removeFailedSupported.value = removes
         _isEnabled.value = enabled
         _isResolved.value = true
     }
@@ -62,6 +68,7 @@ class RequestsFeatureStore(
         repository.reset()
         _isEnabled.value = false
         _followSupported.value = false
+        _removeFailedSupported.value = false
         _isResolved.value = false
     }
 }

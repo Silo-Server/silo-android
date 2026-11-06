@@ -1,6 +1,8 @@
 package org.siloserver.silo.viewmodel
 
+import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.request.CreateMediaRequest
+import org.siloserver.silo.model.request.RequestActionCopy
 import org.siloserver.silo.model.request.RequestDisplayState
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestAvailability
@@ -12,6 +14,7 @@ import org.siloserver.silo.model.request.RequestMediaType
 import org.siloserver.silo.model.request.RequestOutcome
 import org.siloserver.silo.model.request.RequestState
 import org.siloserver.silo.model.request.RequestStatus
+import org.siloserver.silo.model.request.RequestTarget
 import org.siloserver.silo.model.request.RequestsDiscoverResponse
 import org.siloserver.silo.model.request.RequestsFeatureStatus
 import org.siloserver.silo.model.request.RequestsListResponse
@@ -358,7 +361,163 @@ class RequestsViewModelTest {
         assertNull(state.error)
         assertEquals(listOf("request-1"), api.cancelCalls)
     }
+
+    @Test
+    fun `remove is offered only on a failed request that delivered nothing, and only when the server supports it`() = runTest(dispatcher) {
+        val failed = stubRequest(id = "r-failed", tmdbId = 80, title = "Gone", status = RequestStatus.Failed, outcome = RequestOutcome.Failed)
+        val partly = failed.copy(id = "r-partly", tmdbId = 81, targets = listOf(stubTarget("r-partly", RequestStatus.Completed), stubTarget("r-partly", RequestStatus.Failed)))
+        val pending = stubRequest(id = "r-pending", tmdbId = 82, title = "Waiting")
+        val records = ApiResult.Success(RequestsListResponse(listOf(failed, partly, pending)))
+
+        val older = FakeRequestsApi(mineResult = records)
+        val olderRepository = RequestsRepository(older)
+        val olderStore = RequestsFeatureStore(olderRepository).also { it.refresh() }
+        val olderModel = MyRequestsViewModel(olderRepository, featureStore = olderStore)
+        assertFalse(olderModel.uiState.value.canRemove(failed))
+
+        val api = FakeRequestsApi(statusResult = removableStatus(), mineResult = records)
+        val repository = RequestsRepository(api)
+        val store = RequestsFeatureStore(repository).also { it.refresh() }
+        val state = MyRequestsViewModel(repository, featureStore = store).uiState.value
+
+        assertTrue(state.canRemove(failed))
+        assertFalse(state.canRemove(partly))
+        assertFalse(state.canRemove(pending))
+    }
+
+    @Test
+    fun `removing a failed request drops its row, re-reads, confirms, and makes the title requestable again`() = runTest(dispatcher) {
+        val failed = stubRequest(id = "r-failed", tmdbId = 80, title = "Gone", status = RequestStatus.Failed, outcome = RequestOutcome.Failed)
+        val api = FakeRequestsApi(
+            statusResult = removableStatus(),
+            mineResult = ApiResult.Success(RequestsListResponse(listOf(failed))),
+            searchResult = ApiResult.Success(
+                RequestMediaPage(results = listOf(stubResult(tmdbId = 80, title = "Gone").copy(request = failed.toRequestStateForTest()))),
+            ),
+        )
+        val repository = RequestsRepository(api)
+        val store = RequestsFeatureStore(repository).also { it.refresh() }
+        val hub = RequestsViewModel(repository)
+        val search = RequestSearchViewModel(repository)
+        search.onQueryChanged("Gone")
+        search.search()
+        val mine = MyRequestsViewModel(repository, featureStore = store)
+        assertEquals(listOf("r-failed"), hub.uiState.value.myRequests.map { it.id })
+
+        api.mineResult = ApiResult.Success(RequestsListResponse(emptyList()))
+        val readsBefore = api.calls.count { it == "mine" }
+        mine.removeFailed(failed)
+
+        assertEquals(listOf("r-failed"), api.removeCalls)
+        val state = mine.uiState.value
+        assertNull(state.removingId)
+        assertTrue(state.requests.isEmpty())
+        assertEquals("Request removed", state.notice?.message)
+        assertNull(state.actionErrorMessage)
+        assertTrue(api.calls.count { it == "mine" } > readsBefore)
+        // Every surface showing the title agrees it is gone.
+        assertTrue(hub.uiState.value.myRequests.isEmpty())
+        val card = search.uiState.value.results.single().request
+        assertTrue(card.requestable)
+        assertNull(card.requestId)
+    }
+
+    @Test
+    fun `a removal refused because the request changed re-reads the list and says why`() = runTest(dispatcher) {
+        val failed = stubRequest(id = "r-failed", tmdbId = 80, title = "Gone", status = RequestStatus.Failed, outcome = RequestOutcome.Failed)
+        val retried = failed.copy(status = RequestStatus.Approved, outcome = RequestOutcome.Active, updatedAt = "2026-06-02T00:00:00Z")
+        val api = FakeRequestsApi(
+            statusResult = removableStatus(),
+            mineResult = ApiResult.Success(RequestsListResponse(listOf(failed))),
+            removeResult = ApiResult.Error(409, "conflict", "The request is not in a state that allows this action."),
+        )
+        val repository = RequestsRepository(api)
+        val store = RequestsFeatureStore(repository).also { it.refresh() }
+        val mine = MyRequestsViewModel(repository, featureStore = store)
+
+        api.mineResult = ApiResult.Success(RequestsListResponse(listOf(retried)))
+        mine.removeFailed(failed)
+
+        val state = mine.uiState.value
+        assertNull(state.removingId)
+        assertEquals(listOf(retried), state.requests)
+        assertEquals(RequestActionCopy.RemoveConflict, state.actionErrorMessage)
+        assertNull(state.notice)
+        assertFalse(state.canRemove(retried))
+    }
+
+    @Test
+    fun `a removed request leaves the list even when the re-read after it fails`() = runTest(dispatcher) {
+        val failed = stubRequest(id = "r-failed", tmdbId = 80, title = "Gone", status = RequestStatus.Failed, outcome = RequestOutcome.Failed)
+        val pending = stubRequest(id = "r-pending", tmdbId = 82, title = "Waiting")
+        val api = FakeRequestsApi(
+            statusResult = removableStatus(),
+            mineResult = ApiResult.Success(RequestsListResponse(listOf(failed, pending))),
+        )
+        val repository = RequestsRepository(api)
+        val store = RequestsFeatureStore(repository).also { it.refresh() }
+        val mine = MyRequestsViewModel(repository, featureStore = store)
+
+        api.mineResult = ApiResult.NetworkError(IllegalStateException("offline"))
+        mine.removeFailed(failed)
+
+        val state = mine.uiState.value
+        assertEquals(listOf("r-pending"), state.requests.map { it.id })
+        assertEquals("Request removed", state.notice?.message)
+    }
+
+    @Test
+    fun `a request already removed elsewhere leaves the list even when the re-read fails`() = runTest(dispatcher) {
+        val failed = stubRequest(id = "r-failed", tmdbId = 80, title = "Gone", status = RequestStatus.Failed, outcome = RequestOutcome.Failed)
+        val pending = stubRequest(id = "r-pending", tmdbId = 82, title = "Waiting")
+        val api = FakeRequestsApi(
+            statusResult = removableStatus(),
+            mineResult = ApiResult.Success(RequestsListResponse(listOf(failed, pending))),
+            removeResult = ApiResult.Error(404, "not_found", "The request was not found."),
+        )
+        val repository = RequestsRepository(api)
+        val store = RequestsFeatureStore(repository).also { it.refresh() }
+        val hub = RequestsViewModel(repository)
+        val mine = MyRequestsViewModel(repository, featureStore = store)
+
+        api.mineResult = ApiResult.NetworkError(IllegalStateException("offline"))
+        mine.removeFailed(failed)
+
+        assertEquals(listOf("r-pending"), mine.uiState.value.requests.map { it.id })
+        assertEquals(listOf("r-pending"), hub.uiState.value.myRequests.map { it.id })
+        assertNull(mine.uiState.value.actionErrorMessage)
+    }
+
+    @Test
+    fun `a removal refused because requests are turned off says so, not that the request changed`() = runTest(dispatcher) {
+        val failed = stubRequest(id = "r-failed", tmdbId = 80, title = "Gone", status = RequestStatus.Failed, outcome = RequestOutcome.Failed)
+        val api = FakeRequestsApi(
+            statusResult = removableStatus(),
+            mineResult = ApiResult.Success(RequestsListResponse(listOf(failed))),
+            removeResult = ApiResult.Error(409, "capability_disabled", "The requests capability is disabled by an administrator."),
+        )
+        val repository = RequestsRepository(api)
+        val store = RequestsFeatureStore(repository).also { it.refresh() }
+        val mine = MyRequestsViewModel(repository, featureStore = store)
+
+        mine.removeFailed(failed)
+
+        assertEquals("Requests are turned off", mine.uiState.value.actionErrorMessage)
+    }
 }
+
+private fun removableStatus(): ApiResult<RequestsFeatureStatus> =
+    ApiResult.Success(RequestsFeatureStatus(requestsEnabled = true, allowed = true, state = "available", removeFailedSupported = true))
+
+private fun MediaRequest.toRequestStateForTest() = RequestState(status = status, state = state, requestable = true, requestId = id)
+
+private fun stubTarget(requestId: String, status: String) = RequestTarget(
+    id = "$requestId-$status",
+    requestId = requestId,
+    status = status,
+    createdAt = "2026-06-01T00:00:00Z",
+    updatedAt = "2026-06-01T00:00:00Z",
+)
 
 private data class SearchCall(
     val query: String,
@@ -381,6 +540,7 @@ private class FakeRequestsApi(
         ApiResult.Success(RequestsListResponse()),
     private val cancelResult: ApiResult<MediaRequest> =
         ApiResult.NetworkError(IllegalStateException("no cancel fake")),
+    private val removeResult: ApiResult<Unit> = ApiResult.Success(Unit),
     private val searchHandler: (suspend (
         query: String,
         mediaType: String?,
@@ -398,6 +558,7 @@ private class FakeRequestsApi(
     val searchCalls = mutableListOf<SearchCall>()
     val createRequests = mutableListOf<CreateMediaRequest>()
     val cancelCalls = mutableListOf<String>()
+    val removeCalls = mutableListOf<String>()
 
     override suspend fun status(): ApiResult<RequestsFeatureStatus> {
         calls += "status"
@@ -448,6 +609,11 @@ private class FakeRequestsApi(
     override suspend fun cancel(id: String): ApiResult<MediaRequest> {
         cancelCalls += id
         return cancelResult
+    }
+
+    override suspend fun removeFailed(id: String): ApiResult<Unit> {
+        removeCalls += id
+        return removeResult
     }
 
 }

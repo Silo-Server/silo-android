@@ -66,6 +66,7 @@ import org.siloserver.silo.common.requests.RequestRowCopy
 import org.siloserver.silo.common.requests.RequestStageTrack
 import org.siloserver.silo.model.catalog.ExternalRatings
 import org.siloserver.silo.model.request.MediaRequest
+import org.siloserver.silo.model.request.RequestActionCopy
 import org.siloserver.silo.model.request.RequestDisplayState
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestProgress
@@ -94,6 +95,10 @@ import org.siloserver.silo.tv.ui.components.rememberAmbientBackdropTintState
 import org.siloserver.silo.tv.ui.components.tvSkylineRowBandHeight
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
+import org.siloserver.silo.tv.ui.focus.TvReturnResolution
+import org.siloserver.silo.tv.ui.focus.TvReturnSection
+import org.siloserver.silo.tv.ui.focus.TvReturnTarget
+import org.siloserver.silo.tv.ui.focus.resolveTvReturnTarget
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
@@ -124,7 +129,7 @@ fun TvRequestsPage(
     /** Shell token bumped when the tab is selected from the bar. */
     focusRequest: Int = 0,
     hub: RequestsViewModel = koinViewModel(key = "tv-requests-hub") { parametersOf(false) },
-    /** For Cancel on the user's own cards; the hub's list shows the rows. */
+    /** For Cancel and Remove on the user's own cards; the hub's list shows the rows. */
     mine: MyRequestsViewModel = koinViewModel(key = "tv-requests-mine") { parametersOf(false) },
     repository: RequestsRepository = koinInject(),
 ) {
@@ -132,6 +137,8 @@ fun TvRequestsPage(
     val mineState by mine.uiState.collectAsState()
     var hasLoaded by rememberSaveable { mutableStateOf(false) }
     var actionTarget by remember { mutableStateOf<TvRequestItem?>(null) }
+    /** The failed request whose removal waits on its confirmation. */
+    var removeTarget by remember { mutableStateOf<MediaRequest?>(null) }
     val scope = rememberCoroutineScope()
 
     // Rows appear together once every read for the page has answered, so the
@@ -143,18 +150,31 @@ fun TvRequestsPage(
     LaunchedEffect(Unit) { load() }
 
     val rows = if (hasLoaded) tvRequestRows(hubState.myRequests, hubState.sections) else emptyList()
-    // A failed cancel's reason shows for a few seconds.
-    // The view models outlive this page's composition (a detail push and
-    // Back re-enter it), so remember what was already shown and replay nothing.
+    // A failed cancel's or removal's reason, or a removal's confirmation, shows
+    // for a few seconds. The view models outlive this page's composition (a
+    // detail push and Back re-enter it), so remember what was already shown
+    // and replay nothing.
     var transientMessage by remember { mutableStateOf<String?>(null) }
     var seenCancelMessage by rememberSaveable { mutableStateOf(mineState.actionErrorMessage) }
-    LaunchedEffect(mineState.actionErrorMessage) {
-        val message = mineState.actionErrorMessage
-        if (message == null || message == seenCancelMessage) return@LaunchedEffect
-        seenCancelMessage = message
+    var seenNotice by rememberSaveable { mutableStateOf(mineState.notice?.sequence) }
+    suspend fun showTransient(message: String) {
         transientMessage = message
         delay(ActionMessageMs)
         if (transientMessage == message) transientMessage = null
+    }
+    LaunchedEffect(mineState.actionErrorMessage) {
+        val message = mineState.actionErrorMessage
+        // Cleared by the next action: the same text after it is a new message.
+        if (message == null) seenCancelMessage = null
+        if (message == null || message == seenCancelMessage) return@LaunchedEffect
+        seenCancelMessage = message
+        showTransient(message)
+    }
+    LaunchedEffect(mineState.notice) {
+        val notice = mineState.notice
+        if (notice == null || notice.sequence == seenNotice) return@LaunchedEffect
+        seenNotice = notice.sequence
+        showTransient(notice.message)
     }
     val actionMessage = transientMessage
 
@@ -167,7 +187,7 @@ fun TvRequestsPage(
     }
 
     fun actionsFor(item: TvRequestItem): List<TvRequestAction> =
-        item.actions(canCancel = mineState::canCancel)
+        item.actions(canCancel = mineState::canCancel, canRemove = mineState::canRemove)
 
     val target = actionTarget
     val targetActions = target?.let(::actionsFor).orEmpty()
@@ -186,8 +206,29 @@ fun TvRequestsPage(
                 when (action) {
                     // The hub's list shows the row; it settles an uncertain cancel.
                     TvRequestAction.Cancel -> mine.cancel(record, refresh = { hub.fetch() })
+                    TvRequestAction.Remove -> removeTarget = record
                 }
             },
+        )
+    }
+    removeTarget?.let { record ->
+        // Keep request comes first and takes focus, so a stray Select deletes nothing.
+        TvDialog(
+            title = RequestActionCopy.RemoveConfirmTitle,
+            message = RequestActionCopy.removeConfirmMessage(record.title),
+            onDismissRequest = { removeTarget = null },
+            actions = listOf(
+                TvDialogAction(label = RequestActionCopy.RemoveKeep, onClick = { removeTarget = null }),
+                TvDialogAction(
+                    label = RequestActionCopy.RemoveConfirm,
+                    onClick = {
+                        removeTarget = null
+                        // The hub's list shows the row; it re-reads unless the removal is confirmed.
+                        mine.removeFailed(record, refresh = { hub.fetch() })
+                    },
+                    style = TvDialogActionStyle.Destructive,
+                ),
+            ),
         )
     }
 
@@ -296,6 +337,10 @@ private fun TvRequestsFeed(
     var focusedCardKey by remember { mutableStateOf<String?>(null) }
     /** Last focused card, restored when the page returns from a detail page. */
     var lastFocusedKey by rememberSaveable { mutableStateOf<String?>(null) }
+    /** That card's place, for handing focus on when it leaves the page. */
+    var lastFocusedTarget by remember { mutableStateOf<TvReturnTarget?>(null) }
+    /** The viewer moved focus off that card (to the top bar, say) while it was still on the page. */
+    var focusMovedAway by remember { mutableStateOf(false) }
     var appliedFocusRequest by rememberSaveable { mutableStateOf(0) }
     // Set when a card opens a page. Focus moves while this page is torn down
     // (an outer route takes the whole shell out of composition), and those
@@ -318,6 +363,21 @@ private fun TvRequestsFeed(
         return null
     }
 
+    /** Scrolls [key]'s card into view and claims focus for it. */
+    suspend fun focusCard(key: String): TvObservedFocusResult {
+        val (rowIndex, itemIndex) = locate(key) ?: (0 to 0)
+        bandState.scrollToItem(rowIndex)
+        rowStates[latestRows[rowIndex].id]?.scrollToItem(itemIndex)
+        return requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = { requesterFor(key).requestFocus() },
+            // The target card itself: focus entering the page lands on some
+            // other card first, and that must not count as the claim.
+            isFocused = { focusedCardKey == key },
+        )
+    }
+
     // Entry: the first card when the tab is selected from the bar, the last
     // focused card on a return from detail.
     LaunchedEffect(focusRequest) {
@@ -325,18 +385,18 @@ private fun TvRequestsFeed(
         appliedFocusRequest = focusRequest
         val first = latestRows.first().let { it.key(it.items.first()) }
         val target = if (fromBar) first else lastFocusedKey?.takeIf { locate(it) != null } ?: first
-        val (rowIndex, itemIndex) = locate(target) ?: (0 to 0)
-        bandState.scrollToItem(rowIndex)
-        rowStates[latestRows[rowIndex].id]?.scrollToItem(itemIndex)
-        val result = requestFocusUntilObserved(
-            maxAttempts = TvContentInitialFocusMaxAttempts,
-            awaitAttempt = { withFrameNanos { } },
-            requestFocus = { requesterFor(target).requestFocus() },
-            // The target card itself: focus entering the page lands on some
-            // other card first, and that must not count as the claim.
-            isFocused = { focusedCardKey == target },
-        )
+        val result = focusCard(target)
         if (result == TvObservedFocusResult.Focused) onInitialContentFocus() else onFocusHandoffFailed()
+    }
+
+    // The focused card left the page (its request was removed or cancelled):
+    // focus goes to the card that took its place instead of falling to the top bar.
+    LaunchedEffect(rows) {
+        val key = lastFocusedKey ?: return@LaunchedEffect
+        if (leaving || focusMovedAway || locate(key) != null) return@LaunchedEffect
+        val sections = latestRows.map { row -> TvReturnSection(row.id, row.items.map(row::key)) }
+        val successor = resolveTvReturnTarget(lastFocusedTarget, sections, treatAbsenceAsFinal = true)
+        if (successor is TvReturnResolution.Located) focusCard(successor.itemId)
     }
 
     // The band's vertical bring-into-view is off (TvSkylineBringIntoViewSpec),
@@ -400,7 +460,7 @@ private fun TvRequestsFeed(
                     verticalArrangement = Arrangement.spacedBy(TvSkylineRowPreviewSpacing),
                     contentPadding = PaddingValues(bottom = trailingPadding),
                 ) {
-                    itemsIndexed(rows, key = { _, row -> row.id }) { _, row ->
+                    itemsIndexed(rows, key = { _, row -> row.id }) { rowIndex, row ->
                         val rowState = rowStates.getOrPut(row.id) { LazyListState() }
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             TvSectionHeader(
@@ -419,17 +479,21 @@ private fun TvRequestsFeed(
                                     bottom = TvSkylineRowCardVerticalPadding,
                                 ),
                             ) {
-                                itemsIndexed(row.items, key = { _, item -> item.id }) { _, item ->
+                                itemsIndexed(row.items, key = { _, item -> item.id }) { index, item ->
                                     val key = row.key(item)
                                     val cardModifier = Modifier.onFocusChanged {
                                         if (it.hasFocus) {
                                             focusedCardKey = key
+                                            focusMovedAway = false
                                         } else if (focusedCardKey == key) {
                                             focusedCardKey = null
+                                            // A card that left the rows lost focus with them; one still listed lost it to the viewer.
+                                            focusMovedAway = locate(key) != null
                                         }
                                         if (it.hasFocus && !leaving) {
                                             focusedKey = key
                                             lastFocusedKey = key
+                                            lastFocusedTarget = TvReturnTarget(row.id, key, rowIndex, index)
                                         }
                                     }
                                     when (item) {
@@ -689,13 +753,18 @@ private fun TvRequestsLoadingView() {
 
 internal enum class TvRequestAction(val label: String) {
     Cancel("Cancel Request"),
+    Remove(RequestActionCopy.RemoveConfirm),
 }
 
 /** The long-press actions a card offers right now; empty when it has none. */
 internal fun TvRequestItem.actions(
     canCancel: (MediaRequest) -> Boolean,
+    canRemove: (MediaRequest) -> Boolean,
 ): List<TvRequestAction> = when (this) {
-    is TvRequestItem.Record -> if (canCancel(record)) listOf(TvRequestAction.Cancel) else emptyList()
+    is TvRequestItem.Record -> buildList {
+        if (canCancel(record)) add(TvRequestAction.Cancel)
+        if (canRemove(record)) add(TvRequestAction.Remove)
+    }
     is TvRequestItem.Result -> emptyList()
 }
 
@@ -722,7 +791,7 @@ private fun TvRequestActionDialog(
                 label = action.label,
                 onClick = { onAction(action, record) },
                 style = when (action) {
-                    TvRequestAction.Cancel -> TvDialogActionStyle.Destructive
+                    TvRequestAction.Cancel, TvRequestAction.Remove -> TvDialogActionStyle.Destructive
                 },
             )
         },

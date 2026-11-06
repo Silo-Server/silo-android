@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -69,6 +70,8 @@ internal fun MyRequestRow(
     isBusy: Boolean = false,
     onOpenInLibrary: (() -> Unit)? = null,
     onCancel: (() -> Unit)? = null,
+    /** Offered only on a failed request that delivered nothing; the caller confirms first. */
+    onRemove: (() -> Unit)? = null,
     showDivider: Boolean = false,
 ) {
     val progress = RequestProgress.of(record)
@@ -117,7 +120,7 @@ internal fun MyRequestRow(
                         .combinedClickable(
                             enabled = !isBusy,
                             onClick = onOpen,
-                            onLongClick = if (onCancel != null) ({ menuOpen = true }) else null,
+                            onLongClick = if (onCancel != null || onRemove != null) ({ menuOpen = true }) else null,
                         ),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -153,21 +156,26 @@ internal fun MyRequestRow(
                 when {
                     onOpenInLibrary != null && progress.display == RequestDisplayState.InLibrary ->
                         RequestCapsuleButton(title = "Open", icon = Icons.AutoMirrored.Filled.OpenInNew, onClick = onOpenInLibrary)
+                    onRemove != null && !isBusy ->
+                        RequestCapsuleButton(title = "Remove", icon = Icons.Outlined.Delete, onClick = onRemove)
                     else -> Text(text = "›", fontSize = 20.sp, color = SiloSecondaryText.copy(alpha = 0.7f))
                 }
             }
             SiloDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                SiloDropdownMenuItem(
-                    text = { Text("Cancel Request", color = RequestColors.Rose) },
-                    leadingIcon = { Icon(Icons.Filled.Close, contentDescription = null, tint = RequestColors.Rose) },
-                    onClick = {
-                        menuOpen = false
-                        onCancel?.invoke()
-                    },
-                )
+                onCancel?.let { RoseMenuItem("Cancel Request", Icons.Filled.Close) { menuOpen = false; it() } }
+                onRemove?.let { RoseMenuItem("Remove Request", Icons.Outlined.Delete) { menuOpen = false; it() } }
             }
         }
     }
+}
+
+@Composable
+private fun RoseMenuItem(label: String, icon: ImageVector, onClick: () -> Unit) {
+    SiloDropdownMenuItem(
+        text = { Text(label, color = RequestColors.Rose) },
+        leadingIcon = { Icon(icon, contentDescription = null, tint = RequestColors.Rose) },
+        onClick = onClick,
+    )
 }
 
 private fun Modifier.rowClickable(enabled: Boolean, onClick: () -> Unit): Modifier =

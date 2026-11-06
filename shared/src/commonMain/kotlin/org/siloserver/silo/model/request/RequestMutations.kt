@@ -44,6 +44,18 @@ object RequestMutationFailure {
 object RequestActionCopy {
     const val UnconfirmedSubmit = "We couldn't confirm the request. Check My Requests before trying again."
     const val UnconfirmedCancel = "We couldn't confirm the cancellation. Refresh your requests to check it."
+    const val UnconfirmedRemove = "We couldn't confirm the removal. Refresh your requests to check it."
+
+    /** Removing a failed request (the web's copy). */
+    const val Removed = "Request removed"
+    const val RemoveConfirmTitle = "Remove this request?"
+    const val RemoveConfirm = "Remove request"
+    const val RemoveKeep = "Keep request"
+    fun removeConfirmMessage(title: String): String =
+        "Your failed request for \"$title\" will be deleted. You can request the title again later."
+
+    /** A 409 on removal: an admin retried the request, or the library completed it, since the list loaded. */
+    const val RemoveConflict = "This request changed since the list loaded, so it wasn't removed."
 
     /**
      * Copy for a definite failure. v2 folds "already requested", "already
@@ -124,6 +136,14 @@ fun RequestMediaResult.applying(record: MediaRequest): RequestMediaResult =
 
 fun List<RequestMediaResult>.applyingRequestUpdate(record: MediaRequest): List<RequestMediaResult> =
     map { it.applying(record) }
+
+/** This state once the server deleted [record]: requestable again, unless it shows a different request. */
+fun RequestState.without(record: MediaRequest): RequestState =
+    if (requestId == record.id) RequestState(requestable = true) else this
+
+/** These results once the server deleted [record]. */
+fun List<RequestMediaResult>.applyingRemoval(record: MediaRequest): List<RequestMediaResult> =
+    map { if (record.mediaType == it.mediaType && record.tmdbId == it.tmdbId) it.copy(request = it.request.without(record)) else it }
 
 /**
  * The viewer started or stopped following one title. [state] is the server's

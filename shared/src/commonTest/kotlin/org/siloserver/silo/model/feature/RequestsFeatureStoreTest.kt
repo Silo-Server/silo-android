@@ -49,6 +49,33 @@ class RequestsFeatureStoreTest {
     }
 
     @Test
+    fun removeFailedFollowsTheProbeAndStaysOffWhenRequestsAre() = runTest {
+        val store = RequestsFeatureStore(
+            RequestsRepository(
+                FakeRequestsApi(
+                    ApiResult.Success(available().copy(removeFailedSupported = true)),
+                    ApiResult.NetworkError(IllegalStateException("offline")),
+                    ApiResult.Success(available(allowed = false).copy(removeFailedSupported = true)),
+                ),
+            ),
+        )
+        assertFalse(store.removeFailedSupported.value)
+
+        store.refresh()
+        assertTrue(store.removeFailedSupported.value)
+
+        // A failed probe keeps the previous answer.
+        store.refresh()
+        assertTrue(store.removeFailedSupported.value)
+
+        store.refresh()
+        assertFalse(store.removeFailedSupported.value)
+
+        store.reset()
+        assertFalse(store.removeFailedSupported.value)
+    }
+
+    @Test
     fun transientFailureKeepsPreviousCapabilityValue() = runTest {
         val api = FakeRequestsApi(
             ApiResult.Success(available()),

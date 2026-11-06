@@ -62,6 +62,15 @@ interface RequestsApi {
     suspend fun cancel(id: String): ApiResult<MediaRequest>
 
     /**
+     * `DELETE /api/v2/requests/{id}`: delete one of the viewer's failed
+     * requests that delivered nothing. Answers 204, or 409 once the request was
+     * retried, completed, or delivered a copy. Offered only when the server
+     * reports `remove_failed_supported`; fakes that don't exercise it inherit this refusal.
+     */
+    suspend fun removeFailed(id: String): ApiResult<Unit> =
+        ApiResult.Error(0, "capability_unsupported", "Removing failed requests is not supported.")
+
+    /**
      * `PUT /api/v2/requests/follows/{media_type}/{tmdb_id}`: notify the viewer
      * when a title someone else requested becomes available. Answers with the
      * title's request state. Idempotent. Fakes that don't exercise following
@@ -182,6 +191,10 @@ class DefaultRequestsApi(
             contentType(ContentType.Application.Json)
             setBody(kotlinx.serialization.json.JsonObject(emptyMap()))
         }
+    }
+
+    override suspend fun removeFailed(id: String): ApiResult<Unit> = safeApiV2Call(gate) {
+        client.delete("/api/v2/requests/${id.encodeURLPathPart()}")
     }
 
     override suspend fun follow(mediaType: String, tmdbId: Int): ApiResult<RequestState> = safeApiV2Call(gate) {
