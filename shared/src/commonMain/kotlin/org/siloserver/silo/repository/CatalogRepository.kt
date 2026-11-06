@@ -263,6 +263,16 @@ class CatalogRepository(
     suspend fun getCachedItemDetail(contentId: String, libraryId: Int? = null): ItemDetail? =
         if (libraryId != null) null else readLocalizedCache { catalogCache.getCachedItemDetail(contentId) }
 
+    /** Keeps the offline copy of a title in step with a rating the server just saved. */
+    suspend fun recordUserRating(contentId: String, rating: Int?) {
+        val requestIdentityGeneration = identityTransitions.generation.value
+        val requestLanguageRevision = currentLanguageRevision
+        val cached = getCachedItemDetail(contentId) ?: return
+        writeLocalizedCache(requestIdentityGeneration, requestLanguageRevision) { cacheWriteLease ->
+            catalogCache.cacheItemDetail(contentId, cached.copy(userRating = rating), cacheWriteLease)
+        }
+    }
+
     /**
      * Cache-first detail for speculative UI enrichment. Unlike a detail screen,
      * prefetch must not re-download metadata that is already durable locally.

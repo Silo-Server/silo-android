@@ -179,6 +179,9 @@ open class PersonalDataRepository(
     suspend fun deleteRating(itemId: String): ApiResult<Unit> =
         writePersonal(org.siloserver.silo.repository.port.PersonalWrite.Rating(itemId, null))
 
+    /** The stored stars for an item, null when unrated, read from the server. */
+    suspend fun readRating(itemId: String): ApiResult<Int?> = personalDataApi.getRating(itemId)
+
     open suspend fun setWatched(itemId: String, watched: Boolean): ApiResult<Unit> =
         writePersonal(org.siloserver.silo.repository.port.PersonalWrite.Watched(itemId, watched))
 

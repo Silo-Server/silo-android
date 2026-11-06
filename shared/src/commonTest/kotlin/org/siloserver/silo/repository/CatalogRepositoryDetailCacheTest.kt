@@ -129,6 +129,19 @@ class CatalogRepositoryDetailCacheTest {
     }
 
     @Test
+    fun aSavedRatingUpdatesTheOfflineCopy() = runTest {
+        val cache = FakeCache(preset = ItemDetail(contentId = "c1", type = "movie", title = "Cached", userRating = 2))
+        val repository = repoThatFailsOnNetwork(cache)
+
+        repository.recordUserRating("c1", 5)
+        assertEquals(5, repository.getCachedItemDetail("c1")?.userRating)
+        assertEquals("Cached", repository.getCachedItemDetail("c1")?.title)
+
+        repository.recordUserRating("c1", null)
+        assertEquals(null, repository.getCachedItemDetail("c1")?.userRating)
+    }
+
+    @Test
     fun cachesOnSuccess() = runTest {
         val cache = FakeCache(preset = null)
         val result = repo(HttpStatusCode.OK, """{"content_id":"c1","type":"movie","title":"A","cast":[],"crew":[],"subtitles":[],"versions":[]}""", cache)

@@ -391,6 +391,8 @@ fun TvSquareToggleButton(
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
     titleOnFocus: String? = null,
+    /** The icon's color while active and not focused. */
+    activeTint: Color = Color.White,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
@@ -426,6 +428,15 @@ fun TvSquareToggleButton(
         targetValue = if (isFocused) Color.Black else Color.White,
         animationSpec = focusSpring(),
         label = "toggleForeground",
+    )
+    val iconTint by animateColorAsState(
+        targetValue = when {
+            isFocused -> Color.Black
+            isActive -> activeTint
+            else -> Color.White
+        },
+        animationSpec = focusSpring(),
+        label = "toggleIconTint",
     )
     val innerBorderColor by animateColorAsState(
         targetValue = if (isFocused) Color.Black.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.34f),
@@ -512,7 +523,7 @@ fun TvSquareToggleButton(
             Icon(
                 imageVector = if (isActive) iconActive else icon,
                 contentDescription = null,
-                tint = foreground,
+                tint = iconTint,
                 modifier = Modifier.size(if (titleOnFocus != null) 19.dp else 16.dp),
             )
             if (showTitle && titleOnFocus != null) {

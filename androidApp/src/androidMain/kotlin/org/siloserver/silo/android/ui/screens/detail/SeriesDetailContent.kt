@@ -60,6 +60,9 @@ fun SeriesDetailContent(
     episodesBySeason: Map<Int, List<EpisodeListItem>>,
     isLoadingEpisodes: Boolean,
     isFavorite: Boolean,
+    userRating: Int?,
+    isSavingRating: Boolean,
+    onSetRating: (Int?) -> Unit,
     isInWatchlist: Boolean,
     nextEpisodeLabel: String?,
     selectedEpisodeContentId: String?,
@@ -346,6 +349,9 @@ fun SeriesDetailContent(
                     onToggleFavorite = onFavoriteClick,
                     onToggleWatchlist = onWatchlistClick,
                     onToggleWatched = onToggleWatched,
+                    userRating = userRating,
+                    isSavingRating = isSavingRating,
+                    onSetRating = onSetRating,
                     overflow = if (
                         markableSelectedSeason != null || partyAction != null ||
                         onShuffleSeries != null || shuffleableSelectedSeason != null

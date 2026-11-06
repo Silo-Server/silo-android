@@ -39,6 +39,8 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.rounded.CheckCircleOutline
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Groups
@@ -65,6 +67,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -99,6 +102,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.ui.UserStarColor
+import org.siloserver.silo.domain.TitleRatingController
+import org.siloserver.silo.domain.UserStarRating
+import org.siloserver.silo.tv.ui.components.TvDialog
+import org.siloserver.silo.tv.ui.components.TvDialogAction
 import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.common.ui.OnViewerAccessChanged
 import org.siloserver.silo.network.AccessChangeSignals
@@ -1511,6 +1519,17 @@ private fun TvDetailContent(
             }
         }
 
+        // Here rather than with the hero's controls: the hero leaves composition
+        // once the viewer scrolls down, and a failure can arrive after that.
+        state.ratingFailureMessage?.let { message ->
+            TvDialog(
+                title = TitleRatingController.FAILURE_TITLE,
+                message = message,
+                onDismissRequest = viewModel::onDismissRatingFailure,
+                actions = listOf(TvDialogAction(label = "OK", onClick = viewModel::onDismissRatingFailure)),
+            )
+        }
+
         if (chaptersDialogOpen && audiobookChapters.isNotEmpty()) {
             TvOptionDialog(
                 title = "Chapters",
@@ -1760,6 +1779,7 @@ private fun HeroActionRow(
 ) {
     val watchPartyEntry = rememberTvWatchPartyDetailEntry()
     var moreOpen by remember(detail.contentId) { mutableStateOf(false) }
+    var ratingOpen by remember(detail.contentId) { mutableStateOf(false) }
     var playLaunchPending by remember(detail.contentId) { mutableStateOf(false) }
     LaunchedEffect(playLaunchPending) {
         if (playLaunchPending) {
@@ -2036,6 +2056,20 @@ private fun HeroActionRow(
                     titleOnFocus = "Watchlist",
                 )
 
+                if (detail.type == "movie" || detail.type == "series") {
+                    TvSquareToggleButton(
+                        icon = Icons.Filled.StarBorder,
+                        iconActive = Icons.Filled.Star,
+                        isActive = state.userRating != null,
+                        contentDescription = UserStarRating.accessibilityLabel(state.userRating),
+                        onClick = { if (!state.isSavingRating) ratingOpen = true },
+                        // Dimmed rather than disabled so the button keeps D-pad focus.
+                        modifier = Modifier.alpha(if (state.isSavingRating) 0.5f else 1f),
+                        titleOnFocus = UserStarRating.caption(state.userRating),
+                        activeTint = UserStarColor,
+                    )
+                }
+
                 TvSquareToggleButton(
                     icon = Icons.Filled.MoreHoriz,
                     iconActive = Icons.Filled.MoreHoriz,
@@ -2046,6 +2080,17 @@ private fun HeroActionRow(
                 )
             }
         }
+    }
+
+    if (ratingOpen) {
+        TvRatingPicker(
+            currentRating = state.userRating,
+            onPick = { picked ->
+                ratingOpen = false
+                viewModel.onSetRating(picked)
+            },
+            onDismiss = { ratingOpen = false },
+        )
     }
 
     if (moreOpen) {

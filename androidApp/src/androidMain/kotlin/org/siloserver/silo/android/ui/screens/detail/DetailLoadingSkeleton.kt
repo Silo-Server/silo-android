@@ -117,13 +117,13 @@ private fun MetadataPlaceholder(shimmer: Float) {
     }
 }
 
-/** Play pill and the five equal-width circle columns of [HeroActionStack]. */
+/** Play pill and the equal-width circle columns (up to six) of [HeroActionStack]. */
 @Composable
 private fun ActionPlaceholders(shimmer: Float) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.fillMaxWidth().height(52.dp).skeleton(shimmer, CircleShape))
         Row(Modifier.fillMaxWidth()) {
-            repeat(5) {
+            repeat(6) {
                 Column(
                     modifier = Modifier.weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
