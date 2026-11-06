@@ -20,6 +20,7 @@ import org.siloserver.silo.network.skipSiloAuth
 import org.siloserver.silo.network.apiv2.Account
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.network.apiv2.Problem
+import org.siloserver.silo.network.apiv2.ProblemText
 import org.siloserver.silo.network.apiv2.invalidResponse
 import org.siloserver.silo.network.apiv2.SetupStatus
 import org.siloserver.silo.network.apiv2.safeApiV2Call
@@ -212,12 +213,11 @@ const val WRONG_CURRENT_PASSWORD = "wrong_current_password"
 internal fun passwordChangeError(status: Int, body: String): ApiResult.Error {
     val problem = runCatching { SiloJson.decodeFromString(Problem.serializer(), body) }.getOrNull()
     val rejected = problem?.errors?.firstOrNull()
-    return when {
-        status == 422 && rejected?.location == "body.current_password" ->
-            ApiResult.Error(status, WRONG_CURRENT_PASSWORD, rejected.detail)
-        status == 422 -> ApiResult.Error(status, problem?.code.orEmpty(), rejected?.detail.orEmpty())
-        else -> ApiResult.Error(status, problem?.code.orEmpty(), problem?.detail.orEmpty())
-    }
+    // A refused field's own detail is the most specific server text.
+    val detail = if (status == 422) rejected?.detail.orEmpty() else problem?.detail.orEmpty()
+    val message = problem?.let { ProblemText.message(it, detail) } ?: detail
+    val code = if (status == 422 && rejected?.location == "body.current_password") WRONG_CURRENT_PASSWORD else problem?.code.orEmpty()
+    return ApiResult.Error(status, code, message, detail)
 }
 
 private fun AuthScopeSnapshot.withoutProfile() = copy(profileId = null, profileToken = null)

@@ -100,12 +100,17 @@ object AppLocales {
     }
 
     /**
-     * The shipped language the interface shows now, for `Accept-Language`.
-     * The default locale list already carries the per-app value on 13+, and
-     * [wrap] sets the default locale before 13.
+     * The shipped language the interface shows now, for `Accept-Language`
+     * and server text. The default locale list already carries the per-app
+     * value on 13+. Before 13 the stored tag is read directly: [wrap] sets
+     * the default only once an activity starts, and a process can run
+     * without one (a worker, a notification action).
      */
-    fun appliedTag(context: Context): String =
-        AppLanguage.match(LocaleList.getDefault().toLanguageTags().split(','), shipped(context)) ?: AppLanguage.DEFAULT
+    fun appliedTag(context: Context): String {
+        val tags = current(context).takeIf { it.isNotEmpty() && Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU }
+            ?: LocaleList.getDefault().toLanguageTags()
+        return AppLanguage.match(tags.split(','), shipped(context)) ?: AppLanguage.DEFAULT
+    }
 
     @Volatile private var shippedCache: List<String>? = null
 

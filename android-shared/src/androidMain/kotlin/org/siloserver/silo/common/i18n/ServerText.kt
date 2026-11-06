@@ -10,7 +10,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import org.siloserver.silo.model.section.ResolvedSection
-import org.siloserver.silo.model.settings.AppLanguage
 import org.siloserver.silo.network.apiv2.Problem
 import org.siloserver.silo.network.apiv2.ProblemText
 import java.util.Locale
@@ -75,7 +74,7 @@ object ServerText {
         val app = context.applicationContext
         ProblemText.localize = { problem ->
             val tag = AppLocales.appliedTag(app)
-            problem(problem, english = tag == AppLanguage.DEFAULT) { key -> translated(app, tag, key) }
+            problem(problem, english = Locale.forLanguageTag(tag).language == "en") { key -> translated(app, tag, key) }
         }
     }
 

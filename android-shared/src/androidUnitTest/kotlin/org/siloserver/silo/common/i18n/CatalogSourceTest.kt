@@ -31,14 +31,14 @@ class CatalogSourceTest {
     }
 
     /**
-     * Directories whose UI text all comes from the catalog. Add a directory
-     * here once its extraction lands; a new `Text("…")` or `text = "…"`
+     * Directories whose UI text all comes from the catalog, including
+     * constants and messages, not only `Text` calls. Add a directory here
+     * once its extraction lands; a new `Text("…")` or `text = "…"`
      * literal in it then fails this test. `// i18n-ignore` on the line opts
      * out (brand names, symbols).
      */
     private val convertedDirectories = listOf(
         "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/pairing",
-        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/settings",
     )
 
     @Test

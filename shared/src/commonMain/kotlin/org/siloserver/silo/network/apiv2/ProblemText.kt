@@ -12,6 +12,7 @@ object ProblemText {
     @Volatile
     var localize: ((Problem) -> String?)? = null
 
-    fun message(problem: Problem): String =
-        localize?.let { runCatching { it(problem) }.getOrNull() } ?: problem.detail
+    /** [problem]'s text for a screen; [fallback] is the server text shown when nothing translates it. */
+    fun message(problem: Problem, fallback: String = problem.detail): String =
+        localize?.let { runCatching { it(problem) }.getOrNull() } ?: fallback
 }
