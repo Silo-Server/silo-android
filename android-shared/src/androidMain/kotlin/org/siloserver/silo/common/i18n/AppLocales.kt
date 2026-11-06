@@ -125,7 +125,16 @@ object AppLocales {
      * counts once its translations ship, and debug-only resources count only
      * in debug builds.
      */
-    fun shipped(context: Context): List<String> = shippedCache ?: readLocaleConfig(context).also { shippedCache = it }
+    fun shipped(context: Context): List<String> =
+        shippedCache ?: (listOf(AppLanguage.DEFAULT) + readLocaleConfig(context).filterNot(AppLanguage::isPseudo))
+            .distinct().also { shippedCache = it }
+
+    /**
+     * The pseudo-locales (`en-XA`, `ar-XB`) in this build's localeConfig.
+     * Only debug builds have them; the picker offers them there for
+     * pseudo-locale checks on devices whose system settings list none.
+     */
+    fun pseudoLocales(context: Context): List<String> = readLocaleConfig(context).filter(AppLanguage::isPseudo)
 
     // AGP generates this resource into each app; android-shared can't see the
     // apps' R classes, so it is looked up by name.
@@ -144,7 +153,7 @@ object AppLocales {
                 }
             }
         }.getOrDefault(emptyList())
-        return (listOf(AppLanguage.DEFAULT) + tags.filterNot(AppLanguage::isPseudo)).distinct()
+        return tags
     }
 
     private const val ANDROID_NS = "http://schemas.android.com/apk/res/android"

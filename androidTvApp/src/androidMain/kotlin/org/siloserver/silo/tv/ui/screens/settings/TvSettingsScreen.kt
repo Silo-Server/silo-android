@@ -3183,8 +3183,8 @@ private fun TvAppLanguageSettingsGroup(store: AppLanguageStore) {
     val activity = LocalActivity.current ?: return
     var showPicker by remember { mutableStateOf(false) }
     val title = stringResource(CommonR.string.settings_control_appLanguage)
-    val options = appLanguageOptions(stringResource(CommonR.string.settings_appLanguage_matchDevice), state)
-    val selectedId = state.choice.orEmpty()
+    val options = appLanguageOptions(stringResource(CommonR.string.settings_appLanguage_matchDevice), state, store.pseudoLocales)
+    val selectedId = store.appliedPseudoLocale() ?: state.choice.orEmpty()
     SettingsGroup(title = title) {
         SettingsValueRow(
             label = title,
