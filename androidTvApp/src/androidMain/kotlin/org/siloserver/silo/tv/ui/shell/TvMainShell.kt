@@ -3,7 +3,10 @@ package org.siloserver.silo.tv.ui.shell
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.i18n.sectionTitle
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.uppercaseForUi
 import org.siloserver.silo.model.catalog.CatalogBoxSet
 import org.siloserver.silo.model.catalog.boxSetCard
 import androidx.activity.compose.BackHandler
@@ -679,13 +682,13 @@ fun TvMainShell(
         val serverId = activeServerEntry?.id
         val severalAccounts = serverId != null && serverRegistry.accountsOn(serverId).size > 1
         val subtitle = if (severalAccounts) {
-            serverRegistry.activeAccount.value?.username?.takeIf { it.isNotBlank() }
-                ?: user?.username.orEmpty()
+            (serverRegistry.activeAccount.value?.username?.takeIf { it.isNotBlank() } ?: user?.username)
+                ?.takeIf { it.isNotBlank() }?.let(UiText::Raw)
         } else if (activeProfile?.isPrimary == true) {
-            user?.role?.takeIf { it.isNotBlank() }?.replaceFirstChar { it.uppercase() }
-                ?: user?.username.orEmpty()
+            user?.role?.takeIf { it.isNotBlank() }?.let(::roleText)
+                ?: user?.username?.takeIf { it.isNotBlank() }?.let(UiText::Raw)
         } else {
-            ""
+            null
         }
         value = TvAccountState(
             displayName = activeProfile?.name ?: user?.username,
@@ -1944,6 +1947,13 @@ private fun openBrowseItem(
  * top bar from highlighting any tab and tells the redirect effect to leave the
  * user where they are instead of ejecting them to the first visible tab.
  */
+/** A server role as shown: the catalog's word for a known role, else the role as sent, capitalized. */
+private fun roleText(role: String): UiText = when (role) {
+    "admin" -> UiText.Res(CommonR.string.shell_profileMenu_role_admin)
+    "user" -> UiText.Res(CommonR.string.shell_profileMenu_role_user)
+    else -> UiText.Raw(role.replaceFirstChar { it.uppercase() })
+}
+
 private fun mapRouteToRoot(route: String): TvRootDestination? = when (route) {
     // Video/Audio/Libraries are legacy aliases kept harmless during the nav
     // alignment; Video maps to Home and the others to no specific tab now that
@@ -2176,12 +2186,12 @@ private fun ProfileDropdownHeader(accountState: TvAccountState) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            val subtitle = listOf(accountState.subtitle, accountState.serverName)
+            val subtitle = listOf(accountState.subtitle?.text().orEmpty(), accountState.serverName)
                 .filter { it.isNotBlank() }
                 .joinToString("  ·  ")
             if (subtitle.isNotEmpty()) {
                 Text(
-                    text = subtitle.uppercase(),
+                    text = subtitle.uppercaseForUi(),
                     color = SiloOnSurface.copy(alpha = 0.38f),
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontSize = TvSkyline.profileMenuHeaderSubtitleSize,
