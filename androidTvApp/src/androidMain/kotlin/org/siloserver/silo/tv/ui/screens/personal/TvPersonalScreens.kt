@@ -38,6 +38,10 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import androidx.annotation.StringRes
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.tv.ui.components.TvCatalogGrid
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
@@ -92,11 +96,11 @@ private const val WatchlistSource = "watchlist"
 private const val PersonalListFacetType = "mixed"
 
 private enum class TvFavoriteMediaKind(
-    val label: String,
+    @StringRes val label: Int,
     val mediaType: String,
 ) {
-    Movies(label = "Movies", mediaType = "movie"),
-    TvShows(label = "TV Shows", mediaType = "series"),
+    Movies(label = CommonR.string.personal_filter_movies, mediaType = "movie"),
+    TvShows(label = CommonR.string.personal_filter_tvShows, mediaType = "series"),
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -110,10 +114,10 @@ fun TvFavoritesScreen(
     val controls = rememberPersonalListControls(FavoritesSource, viewModel)
     PersonalListResumeRefresh(viewModel.uiState, { viewModel.hasLoadedOnce }, viewModel::refresh)
     PersonalGrid(
-        title = "Favorites",
+        title = stringResource(CommonR.string.personal_favorites_title),
         surfaceKey = "personal-favorites",
         icon = Icons.Filled.Favorite,
-        emptyMessage = "No favorites yet",
+        emptyMessage = stringResource(CommonR.string.personal_favorites_emptyYet),
         state = state,
         controls = controls,
         onItemClick = onItemClick,
@@ -134,10 +138,10 @@ fun TvWatchlistScreen(
     val controls = rememberPersonalListControls(WatchlistSource, viewModel)
     PersonalListResumeRefresh(viewModel.uiState, { viewModel.hasLoadedOnce }, viewModel::refresh)
     PersonalGrid(
-        title = "Watchlist",
+        title = stringResource(CommonR.string.personal_watchlist_title),
         surfaceKey = "personal-watchlist",
         icon = Icons.Outlined.BookmarkBorder,
-        emptyMessage = "Your watchlist is empty",
+        emptyMessage = stringResource(CommonR.string.personal_watchlist_emptyYours),
         state = state,
         controls = controls,
         onItemClick = onItemClick,
@@ -167,8 +171,8 @@ fun TvFavoritesInline(
         state = state,
         controls = controls,
         emptyMessage = when (selectedMediaKind) {
-            TvFavoriteMediaKind.Movies -> "No favorite movies yet"
-            TvFavoriteMediaKind.TvShows -> "No favorite TV shows yet"
+            TvFavoriteMediaKind.Movies -> stringResource(CommonR.string.personal_favorites_emptyMovies)
+            TvFavoriteMediaKind.TvShows -> stringResource(CommonR.string.personal_favorites_emptyTvShows)
         },
         emptyIcon = Icons.Filled.Favorite,
         onItemClick = onItemClick,
@@ -195,7 +199,7 @@ fun TvWatchlistInline(
     PersonalInlineGrid(
         state = state,
         controls = controls,
-        emptyMessage = "Your watchlist is empty",
+        emptyMessage = stringResource(CommonR.string.personal_watchlist_emptyYours),
         emptyIcon = Icons.Outlined.BookmarkBorder,
         onItemClick = onItemClick,
         onLoadMore = viewModel::loadMore,
@@ -220,10 +224,10 @@ fun TvHistoryScreen(
         }
     }
     PersonalGrid(
-        title = "Watch History",
+        title = stringResource(CommonR.string.personal_history_watchHistoryTitle),
         surfaceKey = "personal-history",
         icon = Icons.Filled.History,
-        emptyMessage = "No watch history yet",
+        emptyMessage = stringResource(CommonR.string.personal_history_emptyYet),
         state = state,
         controls = null,
         onItemClick = onItemClick,
@@ -369,7 +373,7 @@ private fun PersonalGrid(
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
             Text(
-                text = "YOUR LIBRARY",
+                text = stringResource(CommonR.string.catalog_yourLibraryEyebrow),
                 style = sectionEyebrow,
                 color = SiloBlue.copy(alpha = 0.92f),
             )
@@ -465,7 +469,7 @@ private fun PersonalGrid(
                         } else {
                             EmptyState(
                                 message = if (controlsState?.facetSelection?.hasActiveFilters == true) {
-                                    "No titles match the current filters."
+                                    stringResource(CommonR.string.personal_noMatchesBody)
                                 } else {
                                     emptyMessage
                                 },
@@ -547,7 +551,7 @@ private fun PersonalInlineGrid(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TvFavoriteMediaKind.entries.forEach { kind ->
                                 TvFilterChip(
-                                    text = kind.label,
+                                    text = stringResource(kind.label),
                                     selected = kind == favoriteMediaKind,
                                     onClick = { onFavoriteMediaKindSelected(kind) },
                                     contentPadding = PaddingValues(
@@ -578,7 +582,7 @@ private fun PersonalInlineGrid(
                 } else {
                     EmptyState(
                         message = if (controlsState.facetSelection.hasActiveFilters) {
-                            "No titles match the current filters."
+                            stringResource(CommonR.string.personal_noMatchesBody)
                         } else {
                             emptyMessage
                         },
@@ -627,7 +631,7 @@ private fun PersonalControlHeader(
         // list that is still being replaced.
         if (!isLoading && total != null && total > 0) {
             Text(
-                text = if (total == 1) "1 item" else "$total items",
+                text = pluralStringResource(CommonR.plurals.personal_count, total, total),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
             )

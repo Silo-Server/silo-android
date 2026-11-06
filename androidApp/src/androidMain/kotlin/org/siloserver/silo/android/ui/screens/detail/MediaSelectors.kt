@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.localizedResources
+import android.content.res.Resources
 import org.siloserver.silo.model.playback.matchesSignature
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -123,7 +125,7 @@ fun TrackSelectorRow(
         if (interactive) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = "Select",
+                contentDescription = stringResource(CommonR.string.detail_picker_select),
                 modifier = Modifier.size(11.dp),
                 tint = Color.White.copy(alpha = 0.35f),
             )
@@ -217,11 +219,12 @@ fun EditionVersionSelectorRows(
     val currentEdition = editions.firstOrNull { selectedVersion?.fileId in it.fileIds }
         ?: editions.firstOrNull()
     val versions = if (showEditions) currentEdition?.versions.orEmpty() else detail.versions
+    val resources = localizedResources()
 
     if (showEditions) {
         TrackSelectorRow(
             icon = Icons.Outlined.Layers,
-            label = "Edition",
+            label = stringResource(CommonR.string.detail_edition),
             value = currentEdition?.label.orEmpty(),
             onClick = { showEditionPicker = true },
         )
@@ -229,17 +232,20 @@ fun EditionVersionSelectorRows(
     }
     TrackSelectorRow(
         icon = Icons.Outlined.HighQuality,
-        label = "Version",
-        value = formatVersionValueLabel(selectedVersion, isAutoVersion && !showEditions),
+        label = stringResource(CommonR.string.detail_version),
+        value = formatVersionValueLabel(resources, selectedVersion, isAutoVersion && !showEditions),
         onClick = { showVersionPicker = true },
         interactive = versions.size > 1,
     )
     if (showEditionPicker) {
-        PickerSheetScaffold(title = "Select Edition", onDismiss = { showEditionPicker = false }) {
+        PickerSheetScaffold(
+            title = stringResource(CommonR.string.detail_picker_selectEdition),
+            onDismiss = { showEditionPicker = false },
+        ) {
             itemsIndexed(editions) { index, edition ->
                 PickerItem(
                     title = edition.label,
-                    subtitle = formatVersionMenuLabel(edition.defaultVersion),
+                    subtitle = formatVersionMenuLabel(resources, edition.defaultVersion),
                     badges = emptyList(),
                     isSelected = edition.id == currentEdition?.id,
                     onClick = {
@@ -284,11 +290,12 @@ fun VersionPickerSheet(
     onDismiss: () -> Unit,
     allowAuto: Boolean = true,
 ) {
-    PickerSheetScaffold(title = "Select Version", onDismiss = onDismiss) {
+    val resources = localizedResources()
+    PickerSheetScaffold(title = stringResource(CommonR.string.detail_picker_selectVersion), onDismiss = onDismiss) {
         if (allowAuto) item {
             PickerItem(
-                title = "Auto",
-                subtitle = "Best available version",
+                title = stringResource(CommonR.string.detail_auto),
+                subtitle = stringResource(CommonR.string.detail_picker_bestVersion),
                 badges = emptyList(),
                 isSelected = selectedIndex == null,
                 onClick = { onSelect(null) },
@@ -300,8 +307,8 @@ fun VersionPickerSheet(
 
         itemsIndexed(versions) { index, version ->
             PickerItem(
-                title = formatVersionTitle(version),
-                subtitle = formatVersionSubtitle(version),
+                title = formatVersionTitle(resources, version),
+                subtitle = formatVersionSubtitle(resources, version),
                 badges = buildVersionBadges(version),
                 isSelected = index == selectedIndex,
                 onClick = { onSelect(index) },
@@ -321,11 +328,12 @@ fun AudioPickerSheet(
     onSelect: (Int?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    PickerSheetScaffold(title = "Select Audio Track", onDismiss = onDismiss) {
+    val resources = localizedResources()
+    PickerSheetScaffold(title = stringResource(CommonR.string.detail_picker_selectAudioTrack), onDismiss = onDismiss) {
         item {
             PickerItem(
-                title = "Auto",
-                subtitle = "Use the file default track",
+                title = stringResource(CommonR.string.detail_auto),
+                subtitle = stringResource(CommonR.string.detail_picker_fileDefaultTrack),
                 badges = emptyList(),
                 isSelected = selectedIndex == null,
                 onClick = { onSelect(null) },
@@ -337,9 +345,9 @@ fun AudioPickerSheet(
 
         itemsIndexed(tracks) { index, track ->
             PickerItem(
-                title = formatAudioTitle(track, index),
-                subtitle = formatAudioSubtitle(track),
-                badges = buildAudioBadges(track),
+                title = formatAudioTitle(resources, track, index),
+                subtitle = formatAudioSubtitle(resources, track),
+                badges = buildAudioBadges(resources, track),
                 isSelected = index == selectedIndex,
                 onClick = { onSelect(index) },
             )
@@ -358,11 +366,12 @@ fun SubtitlePickerSheet(
     onSelect: (Int?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    PickerSheetScaffold(title = "Select Subtitles", onDismiss = onDismiss) {
+    val resources = localizedResources()
+    PickerSheetScaffold(title = stringResource(CommonR.string.detail_picker_selectSubtitles), onDismiss = onDismiss) {
         item {
             PickerItem(
-                title = "Auto",
-                subtitle = "Use the file default track",
+                title = stringResource(CommonR.string.detail_auto),
+                subtitle = stringResource(CommonR.string.detail_picker_fileDefaultTrack),
                 badges = emptyList(),
                 isSelected = selectedIndex == null,
                 onClick = { onSelect(null) },
@@ -373,8 +382,8 @@ fun SubtitlePickerSheet(
         // Off option
         item {
             PickerItem(
-                title = "Off",
-                subtitle = "No subtitles",
+                title = stringResource(CommonR.string.detail_off),
+                subtitle = stringResource(CommonR.string.detail_picker_noSubtitles),
                 badges = emptyList(),
                 isSelected = selectedIndex == -1,
                 onClick = { onSelect(-1) },
@@ -388,13 +397,13 @@ fun SubtitlePickerSheet(
             // A track the server has no way to show stays listed, disabled.
             val unplayable = track.isUnplayableSubtitle()
             PickerItem(
-                title = formatSubtitleTitle(track, index),
+                title = formatSubtitleTitle(resources, track, index),
                 subtitle = if (unplayable) {
                     stringResource(CommonR.string.subtitle_trackUnsupportedFormat)
                 } else {
-                    formatSubtitleSubtitle(track)
+                    formatSubtitleSubtitle(resources, track)
                 },
-                badges = buildSubtitleBadges(track),
+                badges = buildSubtitleBadges(resources, track),
                 isSelected = index == selectedIndex,
                 enabled = !unplayable,
                 onClick = { onSelect(index) },
@@ -510,7 +519,7 @@ private fun PickerItem(
             if (isSelected) {
                 Icon(
                     imageVector = Icons.Outlined.Check,
-                    contentDescription = "Selected",
+                    contentDescription = stringResource(CommonR.string.detail_picker_selected),
                     tint = Color.White,
                     modifier = Modifier.size(20.dp),
                 )
@@ -574,10 +583,10 @@ internal fun detailDisplayVersionIndex(
  * previews what it resolves to — "Auto - 1080p · HEVC" — mirroring the
  * TV client's `versionValueLabel` (QA 2026-07-08 / Apple parity).
  */
-fun formatVersionValueLabel(version: FileVersion?, isAuto: Boolean): String {
-    if (version == null) return "Auto"
-    val label = formatVersionMenuLabel(version)
-    return if (isAuto) "Auto - $label" else label
+fun formatVersionValueLabel(resources: Resources, version: FileVersion?, isAuto: Boolean): String {
+    if (version == null) return resources.getString(CommonR.string.detail_auto)
+    val label = formatVersionMenuLabel(resources, version)
+    return if (isAuto) resources.getString(CommonR.string.detail_autoWithValue, label) else label
 }
 
 /**
@@ -590,17 +599,18 @@ fun formatVersionValueLabel(version: FileVersion?, isAuto: Boolean): String {
  * first. [selectedIndex] null = Auto; an explicit pick is named outright.
  */
 fun formatAudioValueLabel(
+    resources: Resources,
     tracks: List<AudioTrack>,
     selectedIndex: Int?,
     effectiveIndex: Int? = null,
 ): String {
-    if (tracks.isEmpty()) return "Unknown"
+    if (tracks.isEmpty()) return resources.getString(CommonR.string.detail_unknown)
     val resolved = selectedIndex?.takeIf { it in tracks.indices }
         ?: effectiveIndex?.takeIf { it in tracks.indices }
         ?: tracks.indexOfFirst { it.isDefault }.takeIf { it >= 0 }
         ?: 0
-    val label = formatAudioLabel(tracks[resolved])
-    return if (selectedIndex == null) "Auto - $label" else label
+    val label = formatAudioLabel(resources, tracks[resolved])
+    return if (selectedIndex == null) resources.getString(CommonR.string.detail_autoWithValue, label) else label
 }
 
 /**
@@ -617,6 +627,7 @@ fun formatAudioValueLabel(
  * (Jim 2026-07-09). -1 = Off.
  */
 fun formatSubtitleValueLabel(
+    resources: Resources,
     tracks: List<SubtitleTrack>,
     selectedIndex: Int?,
     seriesSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
@@ -625,48 +636,55 @@ fun formatSubtitleValueLabel(
     if (selectedIndex == null) {
         // A remembered series choice is what Auto plays, so it can be named:
         // the track its signature finds in this file, or Off.
-        if (seriesOff) return "Auto - Off"
+        if (seriesOff) {
+            return resources.getString(CommonR.string.detail_autoWithValue, resources.getString(CommonR.string.detail_off))
+        }
         seriesSignature?.let { signature ->
             val candidates = org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates(tracks)
             candidates.indexOfFirst { it.matchesSignature(signature) }
                 .takeIf { it >= 0 }
-                ?.let { return "Auto - ${formatSubtitleLabel(tracks[it])}" }
+                ?.let {
+                    return resources.getString(
+                        CommonR.string.detail_autoWithValue,
+                        formatSubtitleLabel(resources, tracks[it]),
+                    )
+                }
         }
-        val single = tracks.singleOrNull() ?: return "Auto"
-        return "Auto - ${formatSubtitleLabel(single)}"
+        val single = tracks.singleOrNull() ?: return resources.getString(CommonR.string.detail_auto)
+        return resources.getString(CommonR.string.detail_autoWithValue, formatSubtitleLabel(resources, single))
     }
-    if (selectedIndex == -1) return "Off"
+    if (selectedIndex == -1) return resources.getString(CommonR.string.detail_off)
     // A stale explicit index (the track list shrank under the selection) still
     // means subtitles ARE requested — surface "On" rather than a bare track
     // label (which reads as an explicit pick) or "Auto" (mirrors iOS).
-    val track = tracks.getOrNull(selectedIndex) ?: return "On"
-    return formatSubtitleLabel(track)
+    val track = tracks.getOrNull(selectedIndex) ?: return resources.getString(CommonR.string.detail_subtitlesOn)
+    return formatSubtitleLabel(resources, track)
 }
 
-fun formatVersionMenuLabel(version: FileVersion): String {
+fun formatVersionMenuLabel(resources: Resources, version: FileVersion): String {
     val parts = mutableListOf<String>()
     formatResolutionLabel(version.resolution)?.let { parts.add(it) }
     formatHdrLabel(version)?.let { parts.add(it) }
     formatVideoCodecLabel(version.codecVideo)?.let { parts.add(it) }
-    formatPrimaryAudioSummary(version)?.let { parts.add(it) }
-    return parts.joinToString(" · ").ifBlank { "Default" }
+    formatPrimaryAudioSummary(resources, version)?.let { parts.add(it) }
+    return parts.joinToString(" · ").ifBlank { resources.getString(CommonR.string.detail_defaultVersion) }
 }
 
-fun formatAudioLabel(track: AudioTrack?): String {
-    if (track == null) return "Auto"
+fun formatAudioLabel(resources: Resources, track: AudioTrack?): String {
+    if (track == null) return resources.getString(CommonR.string.detail_auto)
     val parts = mutableListOf<String>()
     trackHeadline(track.language, track.title)?.let { parts.add(it) }
     track.channelLayout?.let { parts.add(it) }
-        ?: track.channels?.let { parts.add("${it}ch") }
-    return parts.joinToString(" \u00B7 ").ifBlank { "Track 1" }
+        ?: track.channels?.let { parts.add(resources.getString(CommonR.string.detail_channels, it.toString())) }
+    return parts.joinToString(" \u00B7 ").ifBlank { resources.getString(CommonR.string.detail_track, "1") }
 }
 
-fun formatSubtitleLabel(track: SubtitleTrack?): String {
-    if (track == null) return "Off"
+fun formatSubtitleLabel(resources: Resources, track: SubtitleTrack?): String {
+    if (track == null) return resources.getString(CommonR.string.detail_off)
     val parts = mutableListOf<String>()
     trackHeadline(track.language, track.title)?.let { parts.add(it) }
-    if (track.forced) parts.add("Forced")
-    return parts.joinToString(" \u00B7 ").ifBlank { "Track" }
+    if (track.forced) parts.add(resources.getString(CommonR.string.detail_trackForced))
+    return parts.joinToString(" \u00B7 ").ifBlank { resources.getString(CommonR.string.detail_trackFallback) }
 }
 
 /**
@@ -700,21 +718,25 @@ private val TECHNICAL_TRACK_TITLE = Regex(
         "subrip|srt|webvtt|vtt|ass|ssa|pgs|vobsub)(?![\\p{L}\\p{N}])",
 )
 
-private fun formatVersionTitle(version: FileVersion): String {
+private fun formatVersionTitle(resources: Resources, version: FileVersion): String {
     val parts = mutableListOf<String>()
     version.editionLabel?.let(parts::add)
     formatResolutionLabel(version.resolution)?.let { parts.add(it) }
     formatHdrLabel(version)?.let { parts.add(it) }
-    return parts.joinToString(" · ").ifBlank { "Unknown" }
+    return parts.joinToString(" · ").ifBlank { resources.getString(CommonR.string.detail_unknown) }
 }
 
-private fun formatVersionSubtitle(version: FileVersion): String {
+private fun formatVersionSubtitle(resources: Resources, version: FileVersion): String {
     val parts = mutableListOf<String>()
-    version.codecVideo?.let { parts.add("Video: ${it.uppercase()}") }
-    version.codecAudio?.let { parts.add("Audio: ${it.uppercase()}") }
+    version.codecVideo?.let { parts.add(resources.getString(CommonR.string.detail_versionVideoCodec, it.uppercase())) }
+    version.codecAudio?.let { parts.add(resources.getString(CommonR.string.detail_versionAudioCodec, it.uppercase())) }
     if (version.fileSize > 0) {
         val sizeMB = version.fileSize / (1024.0 * 1024.0)
-        val sizeStr = if (sizeMB >= 1024) "%.1f GB".format(sizeMB / 1024.0) else "%.0f MB".format(sizeMB)
+        val sizeStr = if (sizeMB >= 1024) {
+            resources.getString(CommonR.string.detail_sizeGb, "%.1f".format(sizeMB / 1024.0))
+        } else {
+            resources.getString(CommonR.string.detail_sizeMb, "%.0f".format(sizeMB))
+        }
         parts.add(sizeStr)
     }
     return parts.joinToString(" \u00B7 ")
@@ -788,13 +810,13 @@ private fun formatHdrLabel(version: FileVersion): String? {
 
 private fun formatHdrBadge(version: FileVersion): String? = formatHdrLabel(version)
 
-private fun formatPrimaryAudioSummary(version: FileVersion): String? {
+private fun formatPrimaryAudioSummary(resources: Resources, version: FileVersion): String? {
     val track = version.audioTracks
         ?.firstOrNull { it.isDefault }
         ?: version.audioTracks?.firstOrNull()
 
     val codec = formatAudioCodecLabel(track?.codec ?: version.codecAudio)
-    val layout = track?.let(::formatCompactAudioLayout)
+    val layout = track?.let { formatCompactAudioLayout(resources, it) }
     val hasAtmos = track?.channelLayout
         ?.lowercase()
         ?.contains("atmos") == true
@@ -809,61 +831,63 @@ private fun formatPrimaryAudioSummary(version: FileVersion): String? {
     }
 }
 
-private fun formatCompactAudioLayout(track: AudioTrack): String? {
+private fun formatCompactAudioLayout(resources: Resources, track: AudioTrack): String? {
     val layout = track.channelLayout?.trim()
     val lowered = layout?.lowercase()
     return when {
         lowered == null || lowered.isEmpty() -> when (track.channels) {
-            1 -> "Mono"
-            2 -> "Stereo"
+            1 -> resources.getString(CommonR.string.detail_mono)
+            2 -> resources.getString(CommonR.string.detail_stereo)
             6 -> "5.1"
             8 -> "7.1"
-            else -> track.channels?.let { "${it}ch" }
+            else -> track.channels?.let { resources.getString(CommonR.string.detail_channels, it.toString()) }
         }
         "7.1" in lowered -> "7.1"
         "5.1" in lowered -> "5.1"
-        "stereo" in lowered || lowered == "2.0" -> "Stereo"
-        "mono" in lowered || lowered == "1.0" -> "Mono"
+        "stereo" in lowered || lowered == "2.0" -> resources.getString(CommonR.string.detail_stereo)
+        "mono" in lowered || lowered == "1.0" -> resources.getString(CommonR.string.detail_mono)
         "atmos" in lowered -> null
         else -> layout
     }
 }
 
-private fun formatAudioTitle(track: AudioTrack, index: Int): String {
-    return trackHeadline(track.language, track.title) ?: track.title ?: "Audio ${index + 1}"
+private fun formatAudioTitle(resources: Resources, track: AudioTrack, index: Int): String {
+    return trackHeadline(track.language, track.title) ?: track.title
+        ?: resources.getString(CommonR.string.detail_audioTrackNumber, (index + 1).toString())
 }
 
-private fun formatAudioSubtitle(track: AudioTrack): String {
+private fun formatAudioSubtitle(resources: Resources, track: AudioTrack): String {
     val parts = mutableListOf<String>()
     track.codec?.uppercase()?.let { parts.add(it) }
     track.channelLayout?.let { parts.add(it) }
-        ?: track.channels?.let { parts.add("${it}ch") }
+        ?: track.channels?.let { parts.add(resources.getString(CommonR.string.detail_channels, it.toString())) }
     track.bitrate?.let { br ->
-        if (br > 0) parts.add("${br / 1000}kbps")
+        if (br > 0) parts.add(resources.getString(CommonR.string.detail_bitrateKbps, (br / 1000).toString()))
     }
     return parts.joinToString(" \u00B7 ")
 }
 
-private fun buildAudioBadges(track: AudioTrack): List<String> {
+private fun buildAudioBadges(resources: Resources, track: AudioTrack): List<String> {
     val badges = mutableListOf<String>()
-    if (track.isDefault) badges.add("Default")
+    if (track.isDefault) badges.add(resources.getString(CommonR.string.detail_trackDefault))
     return badges
 }
 
-private fun formatSubtitleTitle(track: SubtitleTrack, index: Int): String {
-    return trackHeadline(track.language, track.title) ?: track.title ?: "Track ${index + 1}"
+private fun formatSubtitleTitle(resources: Resources, track: SubtitleTrack, index: Int): String {
+    return trackHeadline(track.language, track.title) ?: track.title
+        ?: resources.getString(CommonR.string.detail_track, (index + 1).toString())
 }
 
-private fun formatSubtitleSubtitle(track: SubtitleTrack): String {
+private fun formatSubtitleSubtitle(resources: Resources, track: SubtitleTrack): String {
     val parts = mutableListOf<String>()
     track.codec?.uppercase()?.let { parts.add(it) }
-    if (track.external) parts.add("External")
+    if (track.external) parts.add(resources.getString(CommonR.string.detail_trackExternal))
     return parts.joinToString(" \u00B7 ")
 }
 
-private fun buildSubtitleBadges(track: SubtitleTrack): List<String> {
+private fun buildSubtitleBadges(resources: Resources, track: SubtitleTrack): List<String> {
     val badges = mutableListOf<String>()
-    if (track.forced) badges.add("Forced")
-    if (track.isDefault) badges.add("Default")
+    if (track.forced) badges.add(resources.getString(CommonR.string.detail_trackForced))
+    if (track.isDefault) badges.add(resources.getString(CommonR.string.detail_trackDefault))
     return badges
 }

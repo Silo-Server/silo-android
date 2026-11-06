@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.localizedResources
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -57,6 +58,9 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
 import org.siloserver.silo.tv.ui.theme.TvControlCorner
+import android.content.res.Resources
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Horizontal scroll of season chips. Mirrors `TVSeasonChipRow` on tvOS:
@@ -201,7 +205,7 @@ fun TvSeriesModePicker(
     ) {
         item(key = "series-show-overview", contentType = "series-mode") {
             TvSeriesModeTab(
-                title = "Show",
+                title = stringResource(CommonR.string.detail_seriesShowTab),
                 isSelected = isShowingSeriesOverview,
                 onActivated = onShowSelected,
                 modifier = if (isShowingSeriesOverview) {
@@ -218,7 +222,7 @@ fun TvSeriesModePicker(
         ) { season ->
             val selected = !isShowingSeriesOverview && season.seasonNumber == selectedSeason
             TvSeriesModeTab(
-                title = tvSeasonPickerLabel(season),
+                title = tvSeasonPickerLabel(localizedResources(), season),
                 isSelected = selected,
                 onActivated = { onSeasonSelected(season) },
                 modifier = if (selected) {
@@ -387,7 +391,7 @@ private fun TvSeasonChip(
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = tvSeasonPickerLabel(season),
+            text = tvSeasonPickerLabel(localizedResources(), season),
             style = MaterialTheme.typography.titleLarge.copy(
                 fontSize = 16.sp,
                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
@@ -397,7 +401,8 @@ private fun TvSeasonChip(
     }
 }
 
-internal fun tvSeasonPickerLabel(season: Season): String {
-    if (season.isSpecialsForDisplay()) return "Specials"
-    return season.title?.takeIf { it.isNotBlank() } ?: "Season ${season.seasonNumber}"
+internal fun tvSeasonPickerLabel(resources: Resources, season: Season): String {
+    if (season.isSpecialsForDisplay()) return resources.getString(CommonR.string.detail_specials)
+    return season.title?.takeIf { it.isNotBlank() }
+        ?: resources.getString(CommonR.string.detail_season, season.seasonNumber.toString())
 }

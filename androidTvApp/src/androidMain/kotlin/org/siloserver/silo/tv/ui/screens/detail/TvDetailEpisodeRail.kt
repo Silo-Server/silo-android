@@ -92,6 +92,8 @@ import org.siloserver.silo.tv.ui.theme.InterFamily
 import org.siloserver.silo.tv.ui.theme.CardOutline
 import org.siloserver.silo.tv.ui.theme.cardFocusedScale
 import org.siloserver.silo.tv.ui.theme.cardScaled
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /** Includes the still, the two-line caption, and vertical rail padding from the first frame. */
 @Composable
@@ -413,7 +415,9 @@ private fun TvEpisodeBoundaryPlaceholder(failed: Boolean) {
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = if (failed) "Press again to retry" else "Loading episodes…",
+                text = stringResource(
+                    if (failed) CommonR.string.detail_episodes_pressToRetry else CommonR.string.detail_episodes_loading,
+                ),
                 fontSize = 14.sp,
                 color = SiloSecondaryText,
             )

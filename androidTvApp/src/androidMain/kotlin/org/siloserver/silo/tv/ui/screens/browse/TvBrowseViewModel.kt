@@ -1,10 +1,15 @@
 package org.siloserver.silo.tv.ui.screens.browse
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.common.i18n.detailedErrorText
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.apiv2.CatalogContinuationV2
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,14 +22,14 @@ import kotlinx.coroutines.launch
  * Sort options for the global Browse surface. Mirrors the phone Browse defaults
  * (`added_at` desc) while exposing the same wire values the catalog API accepts.
  */
-enum class TvBrowseSortOption(val label: String, val wireValue: String) {
-    DateAdded("Date Added", "added_at"),
-    Title("Title", "title"),
+enum class TvBrowseSortOption(@StringRes val labelRes: Int, val wireValue: String) {
+    DateAdded(CommonR.string.catalog_sort_added, "added_at"),
+    Title(CommonR.string.catalog_sort_title, "title"),
     // Server sorts release date by "year" (matches the phone + the person
     // filmography endpoint); "release_date" was unsupported and silently
     // fell back to the default order.
-    ReleaseDate("Release Year", "year"),
-    Rating("Rating", "rating_imdb");
+    ReleaseDate(CommonR.string.catalog_sort_releaseYear, "year"),
+    Rating(CommonR.string.catalog_sort_rating, "rating_imdb");
 
     companion object {
         fun fromWire(value: String): TvBrowseSortOption =
@@ -65,7 +70,7 @@ class TvBrowseViewModel(
         val hasMore: Boolean = false,
         val loading: Boolean = true,
         val loadingMore: Boolean = false,
-        val error: String? = null,
+        val error: UiText? = null,
         val genres: List<String> = emptyList(),
         val contentRatings: List<String> = emptyList(),
         val filtersLoading: Boolean = true,
@@ -197,14 +202,14 @@ class TvBrowseViewModel(
                     it.copy(
                         loading = false,
                         loadingMore = false,
-                        error = result.message.ifBlank { "Failed to load catalog" },
+                        error = result.errorText(CommonR.string.library_error_loadCatalog),
                     )
                 }
                 is ApiResult.NetworkError -> _uiState.update {
                     it.copy(
                         loading = false,
                         loadingMore = false,
-                        error = "Network error: ${result.exception.message ?: "unknown"}",
+                        error = result.detailedErrorText(),
                     )
                 }
             }
