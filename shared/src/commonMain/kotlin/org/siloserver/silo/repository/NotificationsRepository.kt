@@ -22,7 +22,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
@@ -125,6 +126,7 @@ class NotificationsRepository(
     private val authorities: DurableLoginAuthorityProvider? = null,
     private val checkpoints: NotificationSyncStore? = null,
     private val identityTransitions: IdentityTransitionBarrier? = null,
+    private val recoveryFactory: () -> GenericEventsBackoff = { GenericEventsBackoff() },
 ) {
     // Observable so a parked realtime loop can wait for the next identity.
     private val epochState = MutableStateFlow(0L)
@@ -364,49 +366,37 @@ class NotificationsRepository(
      */
     fun connectRealtime(scope: CoroutineScope): Job = scope.launch {
         val client = realtimeFactory() ?: return@launch
-        var backoffMs = INITIAL_BACKOFF_MS
-        while (true) {
-            var established = false // true once the first non-Closed event of this connection arrives
-            var authFailed = false  // set inside collect, checked after to break the loop
-            val connectionViewer = viewer()
-            try {
-                client.connect().collect { event ->
-                    if (!current(connectionViewer)) return@collect
-                    // Auth-class closes are terminal — stop reconnecting.
-                    if (event.isAuthClose()) {
-                        _realtimeFatal.value = true
-                        authFailed = true
-                        return@collect
+        genericEventsForIdentity(identityTransitions) {
+            // A reset cancels the current collector or pending delay even without a starter.
+            epochState.collectLatest {
+                val recovery = recoveryFactory()
+                val connectionViewer = viewer()
+                while (current(connectionViewer)) {
+                    var closed = GenericEventsClose()
+                    var authFailed = false
+                    try {
+                        client.connect().collect { event ->
+                            if (!current(connectionViewer)) return@collect
+                            if (event.isAuthClose()) {
+                                _realtimeFatal.value = true
+                                authFailed = true
+                                return@collect
+                            }
+                            if (event is NotificationRealtimeEvent.Closed) closed = event.recovery
+                            // Reconcile snapshots and signed read cutoffs with authoritative REST.
+                            if (event is NotificationRealtimeEvent.Snapshot || event is NotificationRealtimeEvent.Invalidate) refresh()
+                            else publishFor(connectionViewer) { mutate { applyEvent(it, event) } }
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // A failed attempt follows the same ladder as an unacknowledged close.
                     }
-                    if (!established && event !is NotificationRealtimeEvent.Closed) {
-                        // First healthy event: the connection is up — reset backoff so a
-                        // healthy-then-clean-close cycle does not escalate the delay.
-                        backoffMs = INITIAL_BACKOFF_MS
-                        established = true
-                    }
-                    // The connection snapshot is the reconnect moment, and a signed read
-                    // cutoff from another device cannot be folded locally: both reread the
-                    // authoritative counts and displayed cutoff. Every other event folds.
-                    if (event is NotificationRealtimeEvent.Snapshot || event is NotificationRealtimeEvent.Invalidate) refresh()
-                    else publishFor(connectionViewer) { mutate { applyEvent(it, event) } }
+                    // A stale proof stays stale. Reset/identity replacement cancels this park.
+                    if (authFailed) awaitCancellation()
+                    delay(recovery.disconnected(closed))
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Throwable) {
-                // fall through to backoff-reconnect
             }
-            if (authFailed) {
-                // Retrying the same identity would be refused again (a stale
-                // profile token stays stale). Park until the identity changes —
-                // the user re-enters the PIN, picks another profile, or the
-                // account changes — then reconnect with a fresh ticket.
-                epochState.first { it != connectionViewer.epoch }
-                _realtimeFatal.value = false
-                backoffMs = INITIAL_BACKOFF_MS
-                continue
-            }
-            delay(backoffMs)
-            backoffMs = (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
         }
     }
 
@@ -418,8 +408,4 @@ class NotificationsRepository(
     /** Applies one realtime event via the production mutate path. For tests only. */
     internal fun applyForTest(event: NotificationRealtimeEvent) = mutate { applyEvent(it, event) }
 
-    private companion object {
-        const val INITIAL_BACKOFF_MS = 1_000L
-        const val MAX_BACKOFF_MS = 30_000L
-    }
 }

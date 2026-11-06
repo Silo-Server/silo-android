@@ -15,6 +15,12 @@ import org.siloserver.silo.network.HomeRealtimeClient
 import org.siloserver.silo.network.HomeRealtimeEvent
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.homeRefreshTrigger
+import org.siloserver.silo.network.GenericEventsBackoff
+import org.siloserver.silo.network.GenericEventsClose
+import org.siloserver.silo.network.IdentityTransitionBarrier
+import org.siloserver.silo.network.genericEventsForIdentity
+import org.siloserver.silo.network.apiv2.OwnerPolicy
+import org.siloserver.silo.network.apiv2.matches
 
 /**
  * Owns the live-home websocket lifecycle (Apple realtime-updates spec):
@@ -37,6 +43,8 @@ class HomeRealtimeCoordinator(
      * [connect] reconnect with a freshly minted ticket.
      */
     private val accessChanges: AccessChangeSignals? = null,
+    private val identityTransitions: IdentityTransitionBarrier? = null,
+    private val recoveryFactory: () -> GenericEventsBackoff = { GenericEventsBackoff() },
 ) {
     private val triggers = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
 
@@ -46,32 +54,29 @@ class HomeRealtimeCoordinator(
         .debounce(DEBOUNCE_MS)
 
     fun connect(scope: CoroutineScope): Job = scope.launch {
-        var backoffMs = INITIAL_BACKOFF_MS
-        while (true) {
-            var established = false
-            try {
-                client.connect().collect { event ->
-                    if (!established && event !is HomeRealtimeEvent.Closed) {
-                        backoffMs = INITIAL_BACKOFF_MS
-                        established = true
+        genericEventsForIdentity(identityTransitions) {
+            val recovery = recoveryFactory()
+            val owner = tokenManager.snapshotCurrentScope()
+            while (true) {
+                if (owner != null && !owner.matches(tokenManager.snapshotCurrentScope(), OwnerPolicy.PROFILE)) return@genericEventsForIdentity
+                var closed = GenericEventsClose()
+                try {
+                    client.connect().collect { event ->
+                        if (owner != null && !owner.matches(tokenManager.snapshotCurrentScope(), OwnerPolicy.PROFILE)) return@collect
+                        if (event is HomeRealtimeEvent.Closed) closed = event.recovery
+                        if (homeRefreshTrigger(event, tokenManager.getProfileId())) triggers.tryEmit(Unit)
                     }
-                    if (homeRefreshTrigger(event, tokenManager.getProfileId())) {
-                        triggers.tryEmit(Unit)
-                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // A failed attempt follows the same ladder as an unacknowledged close.
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Throwable) {
-                // fall through to backoff-reconnect
+                delay(recovery.disconnected(closed))
             }
-            delay(backoffMs)
-            backoffMs = (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
         }
     }
 
     private companion object {
         const val DEBOUNCE_MS = 2_000L
-        const val INITIAL_BACKOFF_MS = 1_000L
-        const val MAX_BACKOFF_MS = 30_000L
     }
 }

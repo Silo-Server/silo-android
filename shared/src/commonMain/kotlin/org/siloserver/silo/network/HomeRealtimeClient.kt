@@ -1,15 +1,12 @@
 package org.siloserver.silo.network
 
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.mapNotNull
-import kotlinx.coroutines.flow.onCompletion
-import kotlinx.coroutines.flow.catch
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.siloserver.silo.model.notifications.WsFrameEnvelope
-import org.siloserver.silo.model.notifications.WsSubscribe
+import org.siloserver.silo.network.apiv2.genericEventsConnection
 
 /** `user_state.changed` payload (server: user_state_events.go). */
 @Serializable
@@ -36,7 +33,7 @@ sealed class HomeRealtimeEvent {
     object CatalogChanged : HomeRealtimeEvent()
 
     /** The socket closed (or failed to connect). The coordinator reconnects. */
-    data class Closed(val reason: String? = null) : HomeRealtimeEvent()
+    data class Closed(val reason: String? = null, val recovery: GenericEventsClose = GenericEventsClose()) : HomeRealtimeEvent()
 }
 
 /**
@@ -52,15 +49,11 @@ class DefaultHomeRealtimeClient(
     private val json: Json = SiloJson,
 ) : HomeRealtimeClient {
 
-    override fun connect(): Flow<HomeRealtimeEvent> = socket.frames(listOf(CHANNEL_USER_STATE, CHANNEL_CATALOG))
-        .mapNotNull { decodeHomeRealtimeFrame(json, it) }
-        .onCompletion { cause -> if (cause == null) emit(HomeRealtimeEvent.Closed()) }
-        .catch { error ->
-            if (error is kotlinx.coroutines.CancellationException) throw error
-            val reason = if (error is org.siloserver.silo.network.apiv2.EventsTicketFailure)
-                "ticket_error_${error.code}" else "socket_error"
-            emit(HomeRealtimeEvent.Closed(reason))
-        }
+    override fun connect(): Flow<HomeRealtimeEvent> = socket.genericEventsConnection(
+        channels = listOf(CHANNEL_USER_STATE, CHANNEL_CATALOG),
+        decode = { decodeHomeRealtimeFrame(json, it) },
+        closed = { reason, recovery -> HomeRealtimeEvent.Closed(reason, recovery) },
+    )
 
     companion object {
         const val CHANNEL_USER_STATE = "user_state"
