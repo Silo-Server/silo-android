@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -67,7 +68,9 @@ import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.components.SpoilerImage
+import org.siloserver.silo.common.watchparty.watchPartyDisplayName
 import org.siloserver.silo.model.watchtogether.RoomMember
 import org.siloserver.silo.model.watchtogether.RoomPhase
 import org.siloserver.silo.watchtogether.WatchPartySeatState
@@ -170,12 +173,16 @@ private data class BackdropArt(val url: String, val thumbhash: String?, val isPo
 
 /** Transparent bar: a round Back and the centred page title. */
 @Composable
-internal fun WatchPartyTopBar(onBack: (() -> Unit)?, modifier: Modifier = Modifier, title: String = "Watch Party") {
+internal fun WatchPartyTopBar(
+    onBack: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    title: String = stringResource(CommonR.string.watchParty_title),
+) {
     Box(modifier.fillMaxWidth().height(56.dp).padding(horizontal = 16.dp)) {
         if (onBack != null) {
             WatchPartyCircleButton(
                 icon = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Navigate back",
+                contentDescription = stringResource(CommonR.string.common_navigateBack),
                 onClick = onBack,
                 size = 44.dp,
                 modifier = Modifier.align(Alignment.CenterStart),
@@ -219,6 +226,7 @@ internal fun WatchPartyCircleButton(
 @Composable
 internal fun WatchPartyCodePill(code: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val size = WatchPartyMetrics.CODE
+    val description = stringResource(CommonR.string.watchParty_codePill_description, code.toList().joinToString(" "))
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy((size * 0.5f).dp),
@@ -227,7 +235,7 @@ internal fun WatchPartyCodePill(code: String, onClick: () -> Unit, modifier: Mod
             .background(WatchPartyColors.chromeFill)
             .border(1.dp, WatchPartyColors.chromeBorder, CircleShape)
             .clickable(role = Role.Button, onClick = onClick)
-            .clearAndSetSemantics { contentDescription = "Party code ${code.toList().joinToString(" ")}. Invite friends" }
+            .clearAndSetSemantics { contentDescription = description }
             .padding(horizontal = (size * 0.75f).dp, vertical = (size * 0.4f).dp),
     ) {
         Text(
@@ -273,19 +281,20 @@ internal fun WatchPartySeat(member: RoomMember, state: WatchPartySeatState, size
     val ring = size * 1.14f
     val ready = state == WatchPartySeatState.Ready || state == WatchPartySeatState.Watching
     val away = state == WatchPartySeatState.Away
-    val name = watchPartyMemberName(member)
+    val name = watchPartyDisplayName(member.displayName)
     val status = watchPartySeatStatus(state)
+    val you = stringResource(CommonR.string.watchParty_seat_youLower)
+    val hostWord = stringResource(CommonR.string.watchParty_seat_a11yHost)
+    val stateWord = when (state) {
+        WatchPartySeatState.Ready -> stringResource(CommonR.string.watchParty_seat_a11yReady)
+        WatchPartySeatState.Watching -> stringResource(CommonR.string.watchParty_seat_a11yWatching)
+        else -> status.orEmpty()
+    }
     val description = buildList {
         add(name)
-        if (member.isSelf) add("you")
-        if (member.isHost) add("host")
-        add(
-            when (state) {
-                WatchPartySeatState.Ready -> "ready"
-                WatchPartySeatState.Watching -> "watching"
-                else -> status.orEmpty()
-            },
-        )
+        if (member.isSelf) add(you)
+        if (member.isHost) add(hostWord)
+        add(stateWord)
     }.filter { it.isNotBlank() }.joinToString(", ")
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -311,7 +320,7 @@ internal fun WatchPartySeat(member: RoomMember, state: WatchPartySeatState, size
             SeatRing(state = state, modifier = Modifier.size(ring))
             if (member.isHost) {
                 Text(
-                    "HOST",
+                    stringResource(CommonR.string.watchParty_seat_hostTag),
                     fontSize = 8.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp,
@@ -353,7 +362,7 @@ internal fun WatchPartySeat(member: RoomMember, state: WatchPartySeatState, size
                 buildAnnotatedString {
                     append(name)
                     if (member.isSelf) {
-                        withStyle(SpanStyle(color = SiloSecondaryText, fontWeight = FontWeight.Normal)) { append(" · you") }
+                        withStyle(SpanStyle(color = SiloSecondaryText, fontWeight = FontWeight.Normal)) { append(" · $you") }
                     }
                 },
                 fontSize = (size.value * 0.19f).sp,
@@ -404,6 +413,7 @@ private fun SeatRing(state: WatchPartySeatState, modifier: Modifier) {
 /** The dashed "+" seat that opens the invitation. */
 @Composable
 private fun WatchPartyInviteSeat(onClick: () -> Unit, size: Dp = WatchPartyMetrics.seat) {
+    val inviteFriends = stringResource(CommonR.string.watchParty_invite_friends)
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(size * 0.11f),
@@ -411,7 +421,7 @@ private fun WatchPartyInviteSeat(onClick: () -> Unit, size: Dp = WatchPartyMetri
             .width(size * 1.4f)
             .clip(RoundedCornerShape(12.dp))
             .clickable(role = Role.Button, onClick = onClick)
-            .clearAndSetSemantics { contentDescription = "Invite friends" },
+            .clearAndSetSemantics { contentDescription = inviteFriends },
     ) {
         Box(
             contentAlignment = Alignment.Center,
@@ -422,7 +432,7 @@ private fun WatchPartyInviteSeat(onClick: () -> Unit, size: Dp = WatchPartyMetri
         ) {
             Icon(Icons.Filled.Add, contentDescription = null, tint = SiloSecondaryText, modifier = Modifier.size(size * 0.4f))
         }
-        Text("Invite", fontSize = (size.value * 0.19f).sp, fontWeight = FontWeight.Medium, color = SiloSecondaryText)
+        Text(stringResource(CommonR.string.watchParty_seat_invite), fontSize = (size.value * 0.19f).sp, fontWeight = FontWeight.Medium, color = SiloSecondaryText)
     }
 }
 
@@ -437,7 +447,7 @@ internal fun WatchPartySeatsRow(
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(seatSize * 0.25f)) {
         Row(horizontalArrangement = Arrangement.spacedBy(seatSize * 0.2f), verticalAlignment = Alignment.CenterVertically) {
-            WatchPartyEyebrow("Here now")
+            WatchPartyEyebrow(stringResource(CommonR.string.watchParty_seats_hereNow))
             Text(
                 watchPartyPresenceSummary(members, phase),
                 fontSize = WatchPartyMetrics.CAPTION.sp,

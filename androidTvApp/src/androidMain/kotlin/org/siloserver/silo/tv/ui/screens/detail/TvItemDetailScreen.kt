@@ -2,7 +2,7 @@ package org.siloserver.silo.tv.ui.screens.detail
 
 import org.siloserver.silo.common.i18n.getStringWithNames
 import org.siloserver.silo.common.i18n.localizedResources
-import org.siloserver.silo.common.i18n.asString
+import org.siloserver.silo.common.i18n.text
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -377,7 +377,7 @@ fun TvItemDetailScreen(
             modifier = Modifier.background(MaterialTheme.colorScheme.background),
         )
         state.error != null && state.detail == null -> TvErrorScreen(
-            message = state.error!!.asString(),
+            message = state.error!!.text(),
             onRetry = viewModel::loadAll,
             modifier = Modifier.background(MaterialTheme.colorScheme.background),
         )

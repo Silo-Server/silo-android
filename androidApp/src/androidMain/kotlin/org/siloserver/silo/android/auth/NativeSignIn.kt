@@ -9,6 +9,9 @@ import java.security.SecureRandom
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlinx.serialization.Serializable
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.uiText
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.SiloAuthUnavailableException
 import org.siloserver.silo.network.canonicalHttpOrigin
@@ -317,6 +320,37 @@ object NativeSignInMessages {
             NETWORK -> "Network error. Check your connection and try again."
             NO_BROWSER -> "No browser is available to sign in with $provider."
             else -> "Sign-in with $provider failed. Try again."
+        }
+    }
+
+    /**
+     * [forReason] from the translation catalog, for screens that resolve text
+     * in composition (phone sign-in). [forReason] keeps the English for
+     * Sign-in settings until that screen converts; keep the two in step.
+     */
+    fun text(reason: String?, providerName: String? = null): UiText {
+        val provider: Any = providerName?.trim()?.takeIf { it.isNotEmpty() }
+            ?: uiText(CommonR.string.tvSignIn_providerFallback)
+        return when (reason) {
+            "not_permitted" -> uiText(CommonR.string.signIn_provider_notPermitted, provider)
+            "email_in_use" -> uiText(CommonR.string.tvSignIn_error_emailInUse, provider)
+            "identity_linked_elsewhere" -> uiText(CommonR.string.tvSignIn_error_identityLinkedElsewhere, provider)
+            "account_disabled" -> uiText(CommonR.string.signIn_provider_accountDisabled)
+            "provider_unavailable" -> uiText(CommonR.string.signIn_provider_unavailable, provider)
+            "state_invalid" -> uiText(CommonR.string.signIn_provider_stateInvalid)
+            "session_expired" -> uiText(CommonR.string.signIn_provider_sessionExpired)
+            "already_linked" -> uiText(CommonR.string.signIn_provider_alreadyLinked, provider)
+            "password_expired" -> uiText(CommonR.string.signIn_provider_passwordExpired, provider)
+            "login_failed" -> uiText(CommonR.string.signIn_provider_failed, provider)
+            ACCOUNT_REQUIRED -> uiText(CommonR.string.tvSignIn_error_accountRequired)
+            WRONG_SERVER, ISSUER_MISMATCH -> uiText(CommonR.string.signIn_provider_differentServer)
+            ACCOUNT_CHANGED -> uiText(CommonR.string.signIn_provider_accountChanged)
+            PERMISSION_DENIED -> uiText(CommonR.string.signIn_provider_permissionDenied)
+            RATE_LIMITED -> uiText(CommonR.string.tvSignIn_error_rateLimited)
+            UPDATE_REQUIRED -> uiText(CommonR.string.signIn_provider_updateRequired)
+            NETWORK -> uiText(CommonR.string.signIn_provider_network)
+            NO_BROWSER -> uiText(CommonR.string.signIn_provider_noBrowser, provider)
+            else -> uiText(CommonR.string.signIn_provider_failed, provider)
         }
     }
 

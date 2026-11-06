@@ -1,7 +1,7 @@
 package org.siloserver.silo.android.ui.screens.detail
 
 import org.siloserver.silo.common.i18n.localizedResources
-import org.siloserver.silo.common.i18n.asString
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.catalog.parentPoster
@@ -276,7 +276,7 @@ fun ItemDetailScreen(
     }
     LaunchedEffect(Unit) {
         viewModel.downloadFailureMessages.collect { failure ->
-            Toast.makeText(context, failure.asString(context), Toast.LENGTH_LONG).show()
+            Toast.makeText(context, failure.text(context), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -441,7 +441,7 @@ fun ItemDetailScreen(
 
             branch == "error" -> {
                 ErrorView(
-                    message = state.error?.asString() ?: stringResource(CommonR.string.status_errorGeneric),
+                    message = state.error?.text() ?: stringResource(CommonR.string.status_errorGeneric),
                     onRetry = { viewModel.loadDetail() },
                 )
             }

@@ -1,6 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.libraries
 
-import org.siloserver.silo.common.i18n.asString
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.background
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -54,7 +54,7 @@ fun TvLibrariesScreen(
             modifier = Modifier.background(MaterialTheme.colorScheme.background),
         )
         state.error != null && state.libraries.isEmpty() -> TvErrorScreen(
-            message = state.error!!.asString(),
+            message = state.error!!.text(),
             onRetry = viewModel::load,
             modifier = Modifier.background(MaterialTheme.colorScheme.background),
         )

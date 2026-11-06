@@ -1,7 +1,7 @@
 package org.siloserver.silo.android.ui.screens.collections
 
 import org.siloserver.silo.common.i18n.UiText
-import org.siloserver.silo.common.i18n.asString
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.common.i18n.detailedErrorText
 import androidx.compose.foundation.background
@@ -110,7 +110,7 @@ class LibraryCollectionsViewModel(
                 it.copy(
                     isLoading = false,
                     isRefreshing = false,
-                    error = UiText.Resource(CommonR.string.collections_error_missingLibrary),
+                    error = UiText.Res(CommonR.string.collections_error_missingLibrary),
                 )
             }
             return
@@ -233,7 +233,7 @@ fun LibraryCollectionsScreen(
             }
             state.error != null && state.isEmpty -> {
                 ErrorView(
-                    message = state.error?.asString() ?: stringResource(CommonR.string.catalog_error_unknown),
+                    message = state.error?.text() ?: stringResource(CommonR.string.catalog_error_unknown),
                     onRetry = viewModel::loadCollections,
                     modifier = Modifier.padding(padding),
                 )

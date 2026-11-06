@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.settings
 
 import android.app.Application
 import androidx.lifecycle.viewModelScope
+import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -18,8 +19,12 @@ import org.siloserver.silo.android.auth.InMemoryPendingNativeSignInStore
 import org.siloserver.silo.android.auth.NativeSignInCompleter
 import org.siloserver.silo.android.auth.NativeSignInCoordinator
 import org.siloserver.silo.android.auth.PendingNativeSignIn
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.siloserver.silo.android.ui.screens.auth.passwordLoginMessage
 import org.siloserver.silo.android.ui.screens.auth.networkSignInMessage
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.model.auth.AccountIdentities
 import org.siloserver.silo.model.auth.AccountIdentity
 import org.siloserver.silo.model.auth.AccountIdentityLinkTicket
@@ -62,6 +67,14 @@ private fun SettingsText.text(): String = resolve(RuntimeEnvironment.getApplicat
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, sdk = [28])
 class SignInSettingsTest {
+    private val resources = ApplicationProvider.getApplicationContext<Application>().resources
+
+    /** The sign-in screen's text in English (the screen also isolates names in right-to-left). */
+    private fun UiText.inEnglish(): String = when (this) {
+        is UiText.Raw -> text
+        is UiText.Res -> resources.getString(id, *args.map { if (it is UiText) it.inEnglish() else it }.toTypedArray())
+    }
+
     private val local = SignInProvider("local", "Silo account", SignInProvider.Mode.Credentials, true, null, null, null)
     private val ldap = SignInProvider("plugin:6:ldap", "Directory", SignInProvider.Mode.Credentials, false, null, "6", null)
     private val oidc = SignInProvider(
@@ -117,8 +130,8 @@ class SignInSettingsTest {
         assertEquals("Open this server at its Tailscale address to connect Tailscale.", texts[1])
         assertEquals("Tailscale doesn't allow this device on this server.", texts[3])
         // The network refusals read as they do on the sign-in screen.
-        assertEquals(networkSignInMessage(ApiResult.Error(403, "not_permitted", ""), "Tailscale"), texts[3])
-        assertEquals(networkSignInMessage(ApiResult.Error(404, "not_found", ""), "Tailscale"), texts[7])
+        assertEquals(networkSignInMessage(ApiResult.Error(403, "not_permitted", ""), "Tailscale").inEnglish(), texts[3])
+        assertEquals(networkSignInMessage(ApiResult.Error(404, "not_found", ""), "Tailscale").inEnglish(), texts[7])
         // Shared refusals read as in the other links.
         assertEquals(SignInSettingsViewModel.directoryLinkMessage(ApiResult.Error(409, "identity_linked_elsewhere", ""), "Tailscale").text(), texts[5])
     }
@@ -274,15 +287,15 @@ class SignInSettingsTest {
     fun passwordLoginNamesLocalLoginDisabled() {
         assertEquals(
             "Password sign-in is turned off on this server. Sign in with Keycloak instead.",
-            passwordLoginMessage(ApiResult.Error(403, "local_login_disabled", ""), "Keycloak"),
+            passwordLoginMessage(ApiResult.Error(403, "local_login_disabled", ""), "Keycloak").inEnglish(),
         )
         assertEquals(
             "Password sign-in is turned off on this server.",
-            passwordLoginMessage(ApiResult.Error(403, "local_login_disabled", "")),
+            passwordLoginMessage(ApiResult.Error(403, "local_login_disabled", "")).inEnglish(),
         )
-        assertEquals("Invalid username or password", passwordLoginMessage(ApiResult.Error(401, "invalid_credentials", "")))
-        assertTrue(passwordLoginMessage(ApiResult.Error(403, "password_expired", "")).contains("expired"))
-        assertTrue(passwordLoginMessage(ApiResult.Error(503, "provider_unavailable", "")).contains("can't be reached"))
+        assertEquals("Invalid username or password", passwordLoginMessage(ApiResult.Error(401, "invalid_credentials", "")).inEnglish())
+        assertTrue(passwordLoginMessage(ApiResult.Error(403, "password_expired", "")).inEnglish().contains("expired"))
+        assertTrue(passwordLoginMessage(ApiResult.Error(503, "provider_unavailable", "")).inEnglish().contains("can't be reached"))
     }
 }
 

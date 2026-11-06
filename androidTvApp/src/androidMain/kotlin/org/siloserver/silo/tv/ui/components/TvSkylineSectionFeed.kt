@@ -966,6 +966,7 @@ fun TvSkylineSectionFeed(
             TvFocusMarquee(
                 content = marquee.content,
                 detailLine = marquee.enrichment?.detailLine,
+                airDate = marquee.enrichment?.airDate,
                 translation = rememberTvMarqueeTranslation(
                     item = marquee.content?.source,
                     autoTranslate = isFeaturedMarqueeContent(marquee.content, rows),

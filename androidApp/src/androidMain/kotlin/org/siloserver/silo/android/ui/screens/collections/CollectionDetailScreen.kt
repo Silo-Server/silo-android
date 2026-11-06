@@ -1,6 +1,6 @@
 package org.siloserver.silo.android.ui.screens.collections
 
-import org.siloserver.silo.common.i18n.asString
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -100,7 +100,7 @@ fun CollectionDetailScreen(
             }
             state.error != null -> {
                 ErrorView(
-                    message = state.error?.asString() ?: stringResource(CommonR.string.catalog_error_unknown),
+                    message = state.error?.text() ?: stringResource(CommonR.string.catalog_error_unknown),
                     onRetry = viewModel::refresh,
                     modifier = Modifier.padding(padding),
                 )

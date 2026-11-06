@@ -4,8 +4,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.koin.core.context.GlobalContext
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.network.ServerRegistry
 
 /**
@@ -40,19 +43,21 @@ fun TvSignOutDialog(
     val offerRemoveServer = targetServerId != null && accounts.count { it.serverId == targetServerId } <= 1
     TvDialog(
         title = tvSignOutTitle(account, server),
-        message = if (offerRemoveServer) TV_SIGN_OUT_OR_REMOVE_MESSAGE else TV_SIGN_OUT_MESSAGE,
+        message = stringResource(
+            if (offerRemoveServer) CommonR.string.shell_signOut_messageTvRemoveServer else CommonR.string.shell_signOut_messageTv,
+        ),
         onDismissRequest = onDismiss,
         // Wide enough for the third label to sit on the same row.
         width = if (offerRemoveServer) 640.dp else TvDialogDefaults.Width,
         actions = listOfNotNull(
-            TvDialogAction(label = "Cancel", onClick = onDismiss),
+            TvDialogAction(label = stringResource(CommonR.string.common_cancel), onClick = onDismiss),
             TvDialogAction(
-                label = "Sign Out",
+                label = stringResource(CommonR.string.shell_signOut_confirm),
                 onClick = { onSignOut(false) },
                 style = TvDialogActionStyle.Destructive,
             ),
             TvDialogAction(
-                label = "Sign Out & Remove Server",
+                label = stringResource(CommonR.string.shell_signOut_confirmRemoveServer),
                 onClick = { onSignOut(true) },
                 style = TvDialogActionStyle.Destructive,
             ).takeIf { offerRemoveServer },
@@ -61,17 +66,11 @@ fun TvSignOutDialog(
     )
 }
 
-private const val TV_SIGN_OUT_MESSAGE =
-    "This account's profiles and settings leave this TV. The server stays saved, so you can sign in again."
-
-private const val TV_SIGN_OUT_OR_REMOVE_MESSAGE =
-    "This account's profiles and settings leave this TV. Sign Out keeps the server saved, so you can " +
-        "sign in again; Sign Out & Remove Server removes it too."
-
 /** "Sign out of alex on Home?", dropping whichever part is unknown. */
+@Composable
 internal fun tvSignOutTitle(account: String?, server: String?): String = when {
-    account != null && server != null -> "Sign out of $account on $server?"
-    account != null -> "Sign out of $account?"
-    server != null -> "Sign out of $server?"
-    else -> "Sign Out?"
+    account != null && server != null -> stringResourceWithNames(CommonR.string.shell_signOut_titleNamed, account, server)
+    account != null -> stringResourceWithNames(CommonR.string.shell_signOut_titleAccount, account)
+    server != null -> stringResourceWithNames(CommonR.string.shell_signOut_titleServer, server)
+    else -> stringResource(CommonR.string.shell_signOut_titleUnnamed)
 }

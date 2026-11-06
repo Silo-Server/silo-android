@@ -1,0 +1,69 @@
+package org.siloserver.silo.common.watchparty
+
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.LayoutDirection
+import org.siloserver.silo.common.R
+
+/*
+ * Watch Party text both apps build the same way. Each is resolved in
+ * composition, so it follows an in-place language change.
+ */
+
+/**
+ * "Alex", "Alex and Sam", "Alex, Sam, and Kim", "Alex, Sam, and 3 others".
+ * In a right-to-left interface each name of a list is wrapped in Unicode
+ * isolates, as `stringResourceWithNames` does.
+ */
+@Composable
+fun watchPartyNameList(names: List<String>): String {
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val shown = if (rtl && names.size > 1) names.map { "\u2068$it\u2069" } else names
+    return when (shown.size) {
+        0 -> ""
+        1 -> shown[0]
+        2 -> stringResource(R.string.watchParty_names_ofTwo, shown[0], shown[1])
+        3 -> stringResource(R.string.watchParty_names_ofThree, shown[0], shown[1], shown[2])
+        else -> pluralStringResource(R.plurals.watchParty_names_ofMore, shown.size - 2, shown[0], shown[1], shown.size - 2)
+    }
+}
+
+/** A member's display name, or "Someone" when the server sent none. */
+@Composable
+fun watchPartyDisplayName(displayName: String): String =
+    displayName.ifBlank { stringResource(R.string.watchParty_member_someone) }
+
+/** "2h 35m" or "48m". */
+@Composable
+fun watchPartyRuntimeText(minutes: Int): String =
+    if (minutes >= 60) {
+        stringResource(R.string.catalog_runtimeHoursMinutes, (minutes / 60).toString(), (minutes % 60).toString())
+    } else {
+        stringResource(R.string.overlays_runtimeMinutes, minutes.toString())
+    }
+
+/** "S1 · E2". */
+@Composable
+fun watchPartyEpisodeLine(season: Int, episode: Int): String =
+    stringResource(R.string.watchParty_episodes_line, season.toString(), episode.toString())
+
+/** "S1:E2", the staged episode's short code. */
+@Composable
+fun watchPartyEpisodeCode(season: Int, episode: Int): String =
+    stringResource(R.string.watchParty_facts_episodeCode, season.toString(), episode.toString())
+
+/** A member's watch state on the picker's confirmation page: "Watched", "In progress · Watchlist", "No viewing history". */
+@Composable
+fun watchPartyHistoryLabel(watched: Boolean?, inProgress: Boolean, onWatchlist: Boolean): String {
+    watched ?: return stringResource(R.string.watchParty_whoSeen_noHistory)
+    val label = stringResource(
+        when {
+            watched -> R.string.watchParty_whoSeen_watched
+            inProgress -> R.string.watchParty_whoSeen_inProgress
+            else -> R.string.watchParty_whoSeen_notWatched
+        },
+    )
+    return if (onWatchlist) stringResource(R.string.watchParty_whoSeen_watchlist, label) else label
+}

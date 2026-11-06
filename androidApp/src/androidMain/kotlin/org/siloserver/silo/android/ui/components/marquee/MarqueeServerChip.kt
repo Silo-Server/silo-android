@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components.marquee
 
+import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
@@ -54,6 +56,7 @@ fun MarqueeServerChip(
 ) {
     var expanded by remember { mutableStateOf(false) }
     val interaction = remember { MutableInteractionSource() }
+    val chipDescription = stringResourceWithNames(CommonR.string.shell_marquee_serverChip, name)
     Box {
         Row(
             modifier = Modifier
@@ -67,7 +70,7 @@ fun MarqueeServerChip(
                 }
                 .marqueePressHaptic(interaction)
                 .alpha(if (enabled) 1f else 0.45f)
-                .semantics { contentDescription = "$name, server. Double-tap to change." }
+                .semantics { contentDescription = chipDescription }
                 .padding(start = 6.dp, end = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,

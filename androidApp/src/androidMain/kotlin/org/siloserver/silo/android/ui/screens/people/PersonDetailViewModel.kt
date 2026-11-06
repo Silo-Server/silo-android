@@ -134,7 +134,7 @@ class PersonDetailViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = UiText.Resource(CommonR.string.catalog_error_network),
+                            error = UiText.Res(CommonR.string.catalog_error_network),
                         )
                     }
                 }
@@ -211,7 +211,7 @@ class PersonDetailViewModel(
                     _uiState.update {
                         it.copy(
                             isLoadingItems = false,
-                            pagingError = UiText.Resource(CommonR.string.catalog_error_network),
+                            pagingError = UiText.Res(CommonR.string.catalog_error_network),
                         )
                     }
                 }

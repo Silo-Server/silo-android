@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
@@ -38,7 +40,7 @@ fun BoxSetCard(
         width = width,
         detailBackdropUrl = boxSet.backdropUrl,
         detailBackdropThumbhash = boxSet.backdropThumbhash,
-        badge = "Box set",
+        badge = stringResource(CommonR.string.shell_card_boxSet),
         cornerLabel = boxSetFilmCount(boxSet.movieCount),
         sleeves = BoxSetSleeves,
         modifier = modifier,

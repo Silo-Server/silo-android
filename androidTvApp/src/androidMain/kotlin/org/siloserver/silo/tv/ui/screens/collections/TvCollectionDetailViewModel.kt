@@ -97,7 +97,7 @@ class TvCollectionDetailViewModel(
                     it.copy(isDeleting = false, deleteError = r.errorText(CommonR.string.collections_error_deleteFailed))
                 }
                 is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(isDeleting = false, deleteError = UiText.Resource(CommonR.string.catalog_error_networkShort))
+                    it.copy(isDeleting = false, deleteError = UiText.Res(CommonR.string.catalog_error_networkShort))
                 }
             }
         }

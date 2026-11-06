@@ -1,12 +1,26 @@
 package org.siloserver.silo.common.ui
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.siloserver.silo.common.R
 import org.siloserver.silo.model.catalog.CrewMember
 import org.siloserver.silo.model.catalog.ItemDetail
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 class DirectorCreditTest {
+    private val resources = ApplicationProvider.getApplicationContext<Application>().resources
+
+    /** [movieDirectorCredit] in English, outside composition. */
+    private fun creditInEnglish(detail: ItemDetail): String? =
+        movieDirectorNames(detail)?.let { resources.getString(R.string.detail_directedBy, it.joinToString(", ")) }
+
     @Test
     fun movieCreditMatchesExactDirectorJobAndCleansNames() {
         val detail = ItemDetail(
@@ -22,7 +36,7 @@ class DirectorCreditTest {
             ),
         )
 
-        assertEquals("Directed by Alice, Bob", movieDirectorCredit(detail))
+        assertEquals("Directed by Alice, Bob", creditInEnglish(detail))
     }
 
     @Test
@@ -36,13 +50,13 @@ class DirectorCreditTest {
             },
         )
 
-        assertEquals("Directed by One, Two, Three", movieDirectorCredit(detail))
+        assertEquals("Directed by One, Two, Three", creditInEnglish(detail))
     }
 
     @Test
     fun movieCreditIsAbsentForNonMoviesOrMissingDirectors() {
         assertNull(
-            movieDirectorCredit(
+            creditInEnglish(
                 ItemDetail(
                     contentId = "episode-1",
                     type = "episode",
@@ -52,7 +66,7 @@ class DirectorCreditTest {
             ),
         )
         assertNull(
-            movieDirectorCredit(
+            creditInEnglish(
                 ItemDetail(
                     contentId = "movie-3",
                     type = "movie",

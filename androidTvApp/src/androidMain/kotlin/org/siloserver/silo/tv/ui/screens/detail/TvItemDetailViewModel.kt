@@ -849,7 +849,7 @@ class TvItemDetailViewModel(
                             it.copy(
                                 isLoading = false,
                                 detail = null,
-                                error = UiText.Resource(CommonR.string.detail_error_notOnTv),
+                                error = UiText.Res(CommonR.string.detail_error_notOnTv),
                             )
                         }
                         return@launch
@@ -899,7 +899,7 @@ class TvItemDetailViewModel(
                     )
                 }
                 is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(isLoading = false, error = UiText.Resource(CommonR.string.catalog_error_network))
+                    it.copy(isLoading = false, error = UiText.Res(CommonR.string.catalog_error_network))
                 }
             }
         }

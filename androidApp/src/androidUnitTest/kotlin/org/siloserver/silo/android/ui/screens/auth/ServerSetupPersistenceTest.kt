@@ -1,7 +1,10 @@
 package org.siloserver.silo.android.ui.screens.auth
 
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -39,12 +42,25 @@ import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.repository.AuthRepository
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 @OptIn(ExperimentalCoroutinesApi::class)
 class ServerSetupPersistenceTest {
+    private val resources = ApplicationProvider.getApplicationContext<Application>().resources
+
+    /** The sign-in screen's text in English (the screen also isolates names in right-to-left). */
+    private fun UiText.inEnglish(): String = when (this) {
+        is UiText.Raw -> text
+        is UiText.Res -> resources.getString(id, *args.map { if (it is UiText) it.inEnglish() else it }.toTypedArray())
+    }
+
     private val dispatcher = StandardTestDispatcher()
 
     @BeforeTest
@@ -201,7 +217,7 @@ class ServerSetupPersistenceTest {
 
         assertEquals(emptyList(), tokenManager.serverUrlWrites)
         assertNull(viewModel.uiState.value.navigateTo)
-        assertEquals("Could not safely identify this HTTP server.", viewModel.uiState.value.error)
+        assertEquals("Could not safely identify this HTTP server.", viewModel.uiState.value.error?.inEnglish())
     }
 
     @Test
@@ -269,7 +285,7 @@ class ServerSetupPersistenceTest {
         awaitSettled(viewModel)
 
         assertNull(viewModel.uiState.value.error)
-        assertEquals("Could not reach a Silo server at that address.", viewModel.uiState.value.discoveryError)
+        assertEquals("Could not reach a Silo server at that address.", viewModel.uiState.value.discoveryError?.inEnglish())
         assertEquals(emptyList(), tokenManager.serverUrlWrites)
     }
 

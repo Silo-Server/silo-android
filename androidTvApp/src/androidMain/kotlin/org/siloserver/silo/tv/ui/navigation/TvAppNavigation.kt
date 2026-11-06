@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.navigation
 
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.tv.ui.screens.boxset.TvBoxSetScreen
 import androidx.compose.foundation.layout.fillMaxWidth
 import android.net.Uri
@@ -2163,7 +2165,10 @@ fun TvAppNavigation(
             message = notice.message,
             onDismissRequest = notice.onDismiss,
             actions = listOf(
-                org.siloserver.silo.tv.ui.components.TvDialogAction(label = "OK", onClick = notice.onDismiss),
+                org.siloserver.silo.tv.ui.components.TvDialogAction(
+                    label = stringResource(CommonR.string.shell_notice_ok),
+                    onClick = notice.onDismiss,
+                ),
                 org.siloserver.silo.tv.ui.components.TvDialogAction(
                     label = notice.actionLabel,
                     onClick = notice.onAction,

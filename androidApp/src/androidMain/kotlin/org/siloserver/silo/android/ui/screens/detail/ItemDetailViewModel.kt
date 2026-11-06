@@ -354,7 +354,7 @@ class ItemDetailViewModel(
         if (result !is ApiResult.Success) {
             _downloadFailureMessages.emit(
                 if (result is ApiResult.Error && result.error == MISSING_SERIES_ERROR) {
-                    UiText.Resource(CommonR.string.detail_error_episodeMissingSeries)
+                    UiText.Res(CommonR.string.detail_error_episodeMissingSeries)
                 } else {
                     result.errorText(CommonR.string.detail_error_downloadStart)
                 },
@@ -552,7 +552,7 @@ class ItemDetailViewModel(
                     _uiState.update { state ->
                         state.copy(
                             isLoading = false,
-                            error = UiText.Resource(CommonR.string.catalog_error_network),
+                            error = UiText.Res(CommonR.string.catalog_error_network),
                             // Offline, the episode may still be cached when its series is not.
                             episodeFallbackContentId = initialEpisodeContentId.takeIf { state.detail == null },
                         )

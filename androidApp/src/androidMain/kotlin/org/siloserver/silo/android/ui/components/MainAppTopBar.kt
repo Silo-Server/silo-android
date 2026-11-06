@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -106,7 +108,7 @@ fun SiloWordmark(
 ) {
     androidx.compose.foundation.Image(
         painter = painterResource(id = R.drawable.silo_wordmark),
-        contentDescription = "Silo",
+        contentDescription = stringResource(CommonR.string.app_name),
         contentScale = ContentScale.Fit,
         modifier = modifier
             .width(width)

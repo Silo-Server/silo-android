@@ -47,6 +47,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,6 +65,8 @@ import androidx.tv.material3.Glow
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.model.watchtogether.GuestControlPolicy
 import org.siloserver.silo.model.watchtogether.MemberRole
@@ -228,7 +232,7 @@ internal fun TvWatchPartyRoomView(
                     .padding(top = if (voting) 30.dp else TvPartyMetrics.headerTop),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(text = "Watch Party", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = SiloOnSurface)
+                Text(text = stringResource(CommonR.string.watchParty_title), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = SiloOnSurface)
                 Spacer(modifier = Modifier.width(10.dp))
                 TvPartyConnectionDot(tone = tone, text = connectionText)
                 Spacer(modifier = Modifier.weight(1f))
@@ -391,7 +395,7 @@ private fun HeroText(
     val selected = !room.selectedContentId.isNullOrBlank()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         TvPartyEyebrow(hero.eyebrow)
-        val title = hero.title ?: staged?.title ?: "Loading title…"
+        val title = hero.title ?: staged?.title ?: stringResource(CommonR.string.watchParty_hero_loading)
         val size = if (!hero.isVoteQuestion && hero.title == null && title.length > LONG_TITLE_CHARS) titleSize * 0.8f else titleSize
         Text(
             text = title,
@@ -459,36 +463,37 @@ private fun PrimaryButton(
 ) {
     when (primary) {
         WatchPartyPrimaryAction.ChooseTitle -> TvPartyButton(
-            label = if (hasSelection) "Change title" else "Choose a title",
+            label = stringResource(if (hasSelection) CommonR.string.watchParty_button_changeTitle else CommonR.string.watchParty_button_chooseTitle),
             onClick = actions.onChooseTitle,
             state = TvControlState.transient(eligibility.canStage),
             modifier = modifier,
         )
         is WatchPartyPrimaryAction.Start -> TvPartyButton(
-            label = primary.title?.let { "Start $it" } ?: "Start for everyone",
+            label = primary.title?.let { stringResourceWithNames(CommonR.string.watchParty_button_startWinner, it) }
+                ?: stringResource(CommonR.string.watchParty_button_startForEveryone),
             icon = Icons.Filled.PlayArrow,
             onClick = actions.onStart,
             state = startState,
             modifier = modifier.widthIn(max = 380.dp),
         )
         WatchPartyPrimaryAction.WaitingForVotes -> TvPartyButton(
-            label = "Suggest a title",
+            label = stringResource(CommonR.string.watchParty_button_suggestTitle),
             icon = Icons.Filled.Add,
             onClick = actions.onSuggest,
             state = TvControlState.transient(eligibility.canSuggest),
             modifier = modifier,
         )
         is WatchPartyPrimaryAction.Ready -> TvPartyButton(
-            label = if (primary.isReady) "You're ready" else "I'm ready",
+            label = stringResource(if (primary.isReady) CommonR.string.watchParty_button_youreReady else CommonR.string.watchParty_button_imReady),
             icon = if (primary.isReady) Icons.Filled.Check else Icons.Filled.CheckCircle,
             kind = if (primary.isReady) TvPartyButtonKind.Outlined else TvPartyButtonKind.Primary,
-            trailing = if (primary.isReady) "select to undo" else null,
+            trailing = if (primary.isReady) stringResource(CommonR.string.watchParty_button_selectToUndo) else null,
             onClick = { actions.onReady(!primary.isReady) },
             state = TvControlState.transient(eligibility.canLobbyReady && connected),
             modifier = modifier,
         )
         WatchPartyPrimaryAction.ReturnToPlayback -> TvPartyButton(
-            label = "Return to playback",
+            label = stringResource(CommonR.string.watchParty_button_returnToPlayback),
             icon = Icons.Filled.PlayArrow,
             onClick = actions.onReturnToPlayback,
             modifier = modifier,
@@ -507,14 +512,20 @@ private fun SecondaryButton(
 ) {
     when (secondary) {
         WatchPartySecondaryAction.ChangeTitle -> TvPartyButton(
-            label = "Change title",
+            label = stringResource(CommonR.string.watchParty_button_changeTitle),
             kind = TvPartyButtonKind.Secondary,
             onClick = actions.onChooseTitle,
             state = TvControlState.transient(eligibility.canStage),
             modifier = modifier,
         )
         WatchPartySecondaryAction.Suggest -> TvPartyButton(
-            label = if (primary is WatchPartyPrimaryAction.Start) "Suggest" else "Suggest a title",
+            label = stringResource(
+                if (primary is WatchPartyPrimaryAction.Start) {
+                    CommonR.string.watchParty_button_suggest
+                } else {
+                    CommonR.string.watchParty_button_suggestTitle
+                },
+            ),
             icon = Icons.Filled.Add,
             kind = TvPartyButtonKind.Secondary,
             onClick = actions.onSuggest,
@@ -582,9 +593,9 @@ private fun VoteBadge(count: Int, isLeader: Boolean) {
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         val color = if (isLeader) Color.Black else SiloOnSurface
-        Text(text = "$count", fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = color)
+        Text(text = count.toString(), fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = color)
         Text(
-            text = if (count == 1) "VOTE" else "VOTES",
+            text = pluralStringResource(CommonR.plurals.watchParty_ballot_votesLabel, count),
             fontSize = TvPartyMetrics.caption,
             fontWeight = FontWeight.SemiBold,
             letterSpacing = 0.8.sp,
@@ -612,10 +623,10 @@ private fun TvPartyHostPickSuggestions(
     val manages = room.isManagedBySelf
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TvPartyEyebrow("Suggestions · ${suggestions.size}")
+            TvPartyEyebrow(stringResource(CommonR.string.watchParty_strip_titleCount, suggestions.size))
             Spacer(modifier = Modifier.weight(1f).width(12.dp))
             Text(
-                text = if (manages) "Queue one to put it up next." else "The host decides what plays.",
+                text = stringResource(if (manages) CommonR.string.watchParty_strip_manager else CommonR.string.watchParty_strip_guest),
                 fontSize = TvPartyMetrics.caption,
                 color = SiloSecondaryText,
                 maxLines = 1,
@@ -654,7 +665,7 @@ private fun TvPartyHostPickSuggestions(
 @Composable
 private fun UpNextBadge() {
     Text(
-        text = "UP NEXT",
+        text = stringResource(CommonR.string.watchParty_suggestion_upNextBadge),
         fontSize = TvPartyMetrics.caption,
         fontWeight = FontWeight.Bold,
         letterSpacing = 0.8.sp,
@@ -741,7 +752,7 @@ private fun TvPartySuggestionCard(
                             .background(SiloOnSurface, CircleShape),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Filled.Check, contentDescription = "Your vote", tint = Color.Black, modifier = Modifier.size(14.dp))
+                        Icon(Icons.Filled.Check, contentDescription = stringResource(CommonR.string.watchParty_ballot_yourVote), tint = Color.Black, modifier = Modifier.size(14.dp))
                     }
                 }
             }
@@ -756,7 +767,8 @@ private fun TvPartySuggestionCard(
                 overflow = TextOverflow.Ellipsis,
             )
             if (showSubtitle) {
-                val line = suggestion.note.takeIf { it.isNotBlank() }?.let { "“$it”" } ?: suggestion.subtitle.ifBlank { " " }
+                val line = suggestion.note.takeIf { it.isNotBlank() }?.let { stringResource(CommonR.string.watchParty_ballot_note, it) }
+                    ?: suggestion.subtitle.ifBlank { " " }
                 Text(text = line, fontSize = TvPartyMetrics.caption, color = SiloSecondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
@@ -811,15 +823,21 @@ private fun TvPartySuggestCard(
                 }
                 Icon(
                     imageVector = Icons.Filled.Add,
-                    contentDescription = "Suggest a title",
+                    contentDescription = stringResource(CommonR.string.watchParty_button_suggestTitle),
                     tint = if (isFocused) SiloOnSurface else SiloSecondaryText,
                     modifier = Modifier.size(34.dp),
                 )
             }
         }
         Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            Text(text = "Suggest a title", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = SiloSecondaryText, maxLines = 1)
-            Text(text = "Anyone can add one", fontSize = TvPartyMetrics.caption, color = SiloSecondaryText.copy(alpha = 0.7f), maxLines = 1)
+            Text(
+                text = stringResource(CommonR.string.watchParty_button_suggestTitle),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = SiloSecondaryText,
+                maxLines = 1,
+            )
+            Text(text = stringResource(CommonR.string.watchParty_ballot_addCaption), fontSize = TvPartyMetrics.caption, color = SiloSecondaryText.copy(alpha = 0.7f), maxLines = 1)
         }
     }
 }
@@ -844,39 +862,39 @@ internal fun TvWatchPartyOptionsOverlay(
     onLeave: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    TvPartyMenuOverlay(title = "Party options", onDismiss = onDismiss) {
+    TvPartyMenuOverlay(title = stringResource(CommonR.string.watchParty_options_title), onDismiss = onDismiss) {
         if (room.isManagedBySelf) {
             if (room.phase == RoomPhase.Lobby && features?.selectionModeSwitch == true) {
                 val vote = room.selectionMode == RoomSelectionMode.Vote
                 TvPartyOptionRow(
-                    title = "Who chooses",
-                    value = if (vote) "Everyone votes" else "Host chooses",
+                    title = stringResource(CommonR.string.watchParty_options_whoChooses),
+                    value = stringResource(if (vote) CommonR.string.watchParty_options_everyoneVotes else CommonR.string.watchParty_options_hostChooses),
                     state = TvControlState.transient(eligibility.canSwitchMode),
                     onClick = { onSetMode(if (vote) RoomSelectionMode.HostPick else RoomSelectionMode.Vote) },
                 )
             }
             val guestsPlay = room.guestControlPolicy == GuestControlPolicy.GuestPlayPause
             TvPartyOptionRow(
-                title = "Playback controls",
-                value = if (guestsPlay) "Guests can play and pause" else "Host only",
+                title = stringResource(CommonR.string.watchParty_options_playbackControls),
+                value = stringResource(if (guestsPlay) CommonR.string.watchParty_options_guestsPlayPause else CommonR.string.watchParty_options_hostOnly),
                 state = TvControlState.transient(eligibility.canSetPolicy),
                 onClick = { onSetPolicy(if (guestsPlay) GuestControlPolicy.HostOnly else GuestControlPolicy.GuestPlayPause) },
             )
             if (room.phase == RoomPhase.Playing && features?.stopPlayback == true) {
                 TvPartyOptionRow(
-                    title = "Return everyone to lobby",
+                    title = stringResource(CommonR.string.watchParty_options_returnToLobby),
                     state = TvControlState.transient(eligibility.canStop),
                     onClick = onStopPlayback,
                 )
             }
             TvPartyOptionRow(
-                title = "End party for everyone",
+                title = stringResource(CommonR.string.watchParty_options_end),
                 destructive = true,
                 state = TvControlState.transient(eligibility.canEnd),
                 onClick = onEnd,
             )
         }
-        TvPartyOptionRow(title = "Leave party", destructive = true, onClick = onLeave)
+        TvPartyOptionRow(title = stringResource(CommonR.string.watchParty_options_leave), destructive = true, onClick = onLeave)
     }
 }
 
@@ -924,16 +942,16 @@ internal fun TvWatchPartyInvitePage(
                     verticalArrangement = Arrangement.spacedBy(18.dp),
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        TvPartyEyebrow("Invite friends")
+                        TvPartyEyebrow(stringResource(CommonR.string.watchParty_invite_friends))
                         Text(
-                            text = "Join with this code",
+                            text = stringResource(CommonR.string.watchParty_invite_title),
                             fontSize = 40.sp,
                             lineHeight = 46.sp,
                             fontWeight = FontWeight.Bold,
                             color = SiloOnSurface,
                         )
                         Text(
-                            text = "Anyone with a profile on this Silo server can enter it from Watch Party.",
+                            text = stringResource(CommonR.string.watchParty_invite_body),
                             fontSize = TvPartyMetrics.body,
                             lineHeight = 21.sp,
                             color = SiloSecondaryText,
@@ -950,13 +968,13 @@ internal fun TvWatchPartyInvitePage(
                     )
                     if (inviteUrl != null) {
                         Text(
-                            text = "Or scan to open the invitation on a phone.",
+                            text = stringResource(CommonR.string.watchParty_invite_scan),
                             fontSize = TvPartyMetrics.caption,
                             color = SiloSecondaryText,
                         )
                     }
                     TvPartyButton(
-                        label = "Done",
+                        label = stringResource(CommonR.string.common_done),
                         kind = TvPartyButtonKind.Secondary,
                         onClick = onDismiss,
                         modifier = Modifier.focusRequester(doneFocus),

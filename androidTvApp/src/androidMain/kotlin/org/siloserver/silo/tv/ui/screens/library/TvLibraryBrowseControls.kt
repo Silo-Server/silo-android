@@ -2,7 +2,7 @@ package org.siloserver.silo.tv.ui.screens.library
 
 import org.siloserver.silo.common.i18n.uppercaseForUi
 import org.siloserver.silo.common.i18n.errorText
-import org.siloserver.silo.common.i18n.asString
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.i18n.localizedResources
 import androidx.compose.foundation.BorderStroke
@@ -807,7 +807,7 @@ private sealed interface FacetSearchNote {
 private fun FacetSearchNote.text(): String = when (this) {
     FacetSearchNote.Searching -> stringResource(CommonR.string.filters_searching)
     FacetSearchNote.MoreMatches -> stringResource(CommonR.string.filters_moreMatches)
-    is FacetSearchNote.Failed -> message.asString()
+    is FacetSearchNote.Failed -> message.text()
 }
 
 // ============================================================================

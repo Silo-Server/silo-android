@@ -554,7 +554,7 @@ class TvLibraryDetailViewModel(
             if (run != recommendedGeneration || !kotlinx.coroutines.currentCoroutineContext().isActive) return@launch
             if (owner == null) {
                 loadedRecommended = false
-                _uiState.update { it.copy(sections = emptyList(), recommendedLoading = false, recommendedError = UiText.Resource(CommonR.string.library_error_signInForSections)) }
+                _uiState.update { it.copy(sections = emptyList(), recommendedLoading = false, recommendedError = UiText.Res(CommonR.string.library_error_signInForSections)) }
                 return@launch
             }
             suspend fun mayPublish(): Boolean {
@@ -642,7 +642,7 @@ class TvLibraryDetailViewModel(
                     sections = scoped.map { it.section }.visibleOnTv(),
                     recommendedLoading = false,
                     recommendedError = if (scoped.any { it.incomplete }) {
-                        UiText.Resource(CommonR.string.library_error_someShelvesForType)
+                        UiText.Res(CommonR.string.library_error_someShelvesForType)
                     } else {
                         null
                     },

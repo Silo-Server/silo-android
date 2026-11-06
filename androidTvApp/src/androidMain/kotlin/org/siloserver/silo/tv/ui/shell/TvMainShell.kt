@@ -1,6 +1,8 @@
 package org.siloserver.silo.tv.ui.shell
 
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.sectionTitle
 import org.siloserver.silo.model.catalog.CatalogBoxSet
 import org.siloserver.silo.model.catalog.boxSetCard
@@ -686,7 +688,7 @@ fun TvMainShell(
             ""
         }
         value = TvAccountState(
-            displayName = activeProfile?.name ?: user?.username ?: "Profile",
+            displayName = activeProfile?.name ?: user?.username,
             // Ref + presigned URL travel together; the shell re-fetches this on
             // every profile switch / server change, which is also what hands the
             // avatar a freshly signed URL.
@@ -1873,7 +1875,7 @@ private fun TvLibraryTypeContent(
         // of flashing the empty-state message.
         if (emptyConfirmed) {
             TvCatalogEmptyState(
-                message = "No ${type.title} libraries available for this profile.",
+                message = stringResource(type.noLibrariesRes),
                 modifier = Modifier
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background),
@@ -2089,18 +2091,18 @@ private fun TvProfileDropdown(
         ProfileDropdownDivider()
 
         ProfileDropdownRow(
-            label = "Switch Profile",
+            label = stringResource(CommonR.string.menu_switchProfile),
             icon = Icons.Filled.People,
             focusRequester = firstFocus,
             onClick = onSwitchProfile,
         )
-        ProfileDropdownRow(label = "History", icon = Icons.Filled.History, onClick = onHistory)
+        ProfileDropdownRow(label = stringResource(CommonR.string.menu_history), icon = Icons.Filled.History, onClick = onHistory)
         if (showRequests) {
-            ProfileDropdownRow(label = "Requests", icon = Icons.Filled.Inbox, onClick = onRequests)
+            ProfileDropdownRow(label = stringResource(CommonR.string.menu_requests), icon = Icons.Filled.Inbox, onClick = onRequests)
         }
         if (showWatchParty) {
             ProfileDropdownRow(
-                label = "Watch Party",
+                label = stringResource(CommonR.string.menu_profileMenu_watchParty),
                 icon = Icons.Filled.People,
                 onClick = onWatchParty,
             )
@@ -2108,10 +2110,10 @@ private fun TvProfileDropdown(
 
         ProfileDropdownDivider()
 
-        ProfileDropdownRow(label = "Settings", icon = Icons.Filled.Settings, onClick = onSettings)
-        ProfileDropdownRow(label = "Change Account", icon = Icons.Filled.SwitchAccount, onClick = onChangeAccount)
+        ProfileDropdownRow(label = stringResource(CommonR.string.menu_settings), icon = Icons.Filled.Settings, onClick = onSettings)
+        ProfileDropdownRow(label = stringResource(CommonR.string.menu_changeAccount), icon = Icons.Filled.SwitchAccount, onClick = onChangeAccount)
         ProfileDropdownRow(
-            label = "Sign Out",
+            label = stringResource(CommonR.string.menu_signOut),
             icon = Icons.AutoMirrored.Filled.Logout,
             onClick = onSignOut,
         )
@@ -2121,8 +2123,9 @@ private fun TvProfileDropdown(
 /** Avatar + display name + subtitle + server name header (tvOS §5.8). */
 @Composable
 private fun ProfileDropdownHeader(accountState: TvAccountState) {
-    val avatarText = remember(accountState.avatar, accountState.displayName) {
-        profileAvatarDisplayText(accountState.avatar, accountState.displayName)
+    val displayName = accountState.shownName()
+    val avatarText = remember(accountState.avatar, displayName) {
+        profileAvatarDisplayText(accountState.avatar, displayName)
     }
     val avatarImage = rememberProfileAvatarImage(accountState.avatar)
     Row(
@@ -2146,7 +2149,7 @@ private fun ProfileDropdownHeader(accountState: TvAccountState) {
                 ThumbhashImage(
                     url = avatarImage.url,
                     thumbhash = null,
-                    contentDescription = accountState.displayName,
+                    contentDescription = displayName,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
                     transparent = true,
@@ -2163,7 +2166,7 @@ private fun ProfileDropdownHeader(accountState: TvAccountState) {
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = accountState.displayName,
+                text = displayName,
                 color = SiloOnSurface,
                 fontWeight = FontWeight.SemiBold,
                 style = MaterialTheme.typography.titleMedium.copy(
@@ -2231,7 +2234,7 @@ private fun TvServerOfflinePill(
         ),
     ) {
         Text(
-            text = "Offline mode - select to retry",
+            text = stringResource(CommonR.string.shell_offline_selectToRetry),
             modifier = Modifier.padding(horizontal = 22.dp, vertical = 10.dp),
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,

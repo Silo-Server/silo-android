@@ -1,7 +1,7 @@
 package org.siloserver.silo.android.ui.screens.people
 
 import org.siloserver.silo.common.i18n.UiText
-import org.siloserver.silo.common.i18n.asString
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -104,7 +104,7 @@ fun PersonDetailScreen(
             }
             state.error != null && state.person == null -> {
                 ErrorView(
-                    message = state.error?.asString() ?: stringResource(CommonR.string.status_errorGeneric),
+                    message = state.error?.text() ?: stringResource(CommonR.string.status_errorGeneric),
                     onRetry = { viewModel.reload() },
                 )
             }
@@ -498,7 +498,7 @@ private fun PagingFooter(
         when {
             isLoading -> CircularProgressIndicator(color = SiloOnSurface)
             error != null -> Text(
-                text = error.asString(),
+                text = error.text(),
                 color = SiloSecondaryText,
                 modifier = Modifier.clickable(onClick = onRetry),
             )

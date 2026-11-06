@@ -14,28 +14,51 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.isTimeout
 
 /**
- * Text a view model hands its screen without holding a Context: the server's
- * own words, or a catalog string the screen resolves in the interface
- * language, so the text follows a language change.
+ * Text a view model hands its screen, resolved in composition so it follows
+ * an in-place language change: a catalog string with its arguments, or text
+ * that arrives already worded (the server's message, a shared-module notice).
  */
 sealed interface UiText {
-    /** Shown as is: the server's message, or text built in `shared`. */
-    data class Verbatim(val text: String) : UiText
+    /**
+     * A catalog string. Each of [args] is a [String] (a name, address or
+     * server text, isolated in a right-to-left interface), another [UiText]
+     * (resolved first), or a number, in the order its placeholders are declared.
+     */
+    data class Res(@StringRes val id: Int, val args: List<Any> = emptyList()) : UiText
 
-    /** A catalog string and its format arguments. */
-    data class Resource(@StringRes val id: Int, val args: List<Any> = emptyList()) : UiText
+    /** Text that arrives already worded. */
+    data class Raw(val text: String) : UiText
+
+    companion object {
+        /** The server's [message] when it sent one, otherwise [fallback]. */
+        fun serverOr(message: String, @StringRes fallback: Int): UiText =
+            if (message.isBlank()) Res(fallback) else Raw(message)
+    }
 }
+
+/** [UiText] for a catalog string. */
+fun uiText(@StringRes id: Int, vararg args: Any): UiText = UiText.Res(id, args.toList())
 
 @Composable
-fun UiText.asString(): String = when (this) {
-    is UiText.Verbatim -> text
-    is UiText.Resource -> stringResource(id, *args.toTypedArray())
+fun UiText.text(): String = when (this) {
+    is UiText.Res -> when {
+        args.isEmpty() -> stringResource(id)
+        args.all { it is String || it is UiText } ->
+            stringResourceWithNames(id, *args.map { if (it is UiText) it.text() else it as String }.toTypedArray())
+        else -> stringResource(id, *args.map { if (it is UiText) it.text() else it }.toTypedArray())
+    }
+    is UiText.Raw -> text
 }
 
-/** [asString] outside composition, such as for a toast. */
-fun UiText.asString(context: Context): String = when (this) {
-    is UiText.Verbatim -> text
-    is UiText.Resource -> context.getString(id, *args.toTypedArray())
+/** [text] outside composition, such as for a toast. */
+fun UiText.text(context: Context): String = when (this) {
+    is UiText.Res -> when {
+        args.isEmpty() -> context.getString(id)
+        args.all { it is String || it is UiText } ->
+            context.getStringWithNames(id, *args.map { if (it is UiText) it.text(context) else it as String }.toTypedArray())
+        else -> context.getString(id, *args.map { if (it is UiText) it.text(context) else it }.toTypedArray())
+    }
+    is UiText.Raw -> text
 }
 
 /**
@@ -44,16 +67,16 @@ fun UiText.asString(context: Context): String = when (this) {
  * request the server didn't answer.
  */
 fun ApiResult<*>.errorText(@StringRes fallback: Int): UiText = when (this) {
-    is ApiResult.Success -> UiText.Resource(fallback)
-    is ApiResult.Error -> if (message.isBlank()) UiText.Resource(fallback) else UiText.Verbatim(message)
+    is ApiResult.Success -> UiText.Res(fallback)
+    is ApiResult.Error -> UiText.serverOr(message, fallback)
     is ApiResult.NetworkError ->
-        UiText.Resource(if (isTimeout) R.string.catalog_error_timeout else R.string.catalog_error_network)
+        UiText.Res(if (isTimeout) R.string.catalog_error_timeout else R.string.catalog_error_network)
 }
 
 /** "Network error: <cause>", for loads that show the system's reason. */
 fun ApiResult.NetworkError.detailedErrorText(): UiText =
-    exception.message?.let { UiText.Resource(R.string.catalog_error_networkDetail, listOf(it)) }
-        ?: UiText.Resource(R.string.catalog_error_networkUnknown)
+    exception.message?.let { UiText.Res(R.string.catalog_error_networkDetail, listOf(it)) }
+        ?: UiText.Res(R.string.catalog_error_networkUnknown)
 
 /**
  * The app's resources, for catalog text built outside `stringResource` (helpers
