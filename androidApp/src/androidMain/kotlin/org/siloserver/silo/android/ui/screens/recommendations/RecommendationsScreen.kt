@@ -50,6 +50,7 @@ import org.siloserver.silo.android.ui.screens.personal.rememberPersonalListContr
 import org.siloserver.silo.viewmodel.PersonalListUiState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -62,10 +63,8 @@ import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrol
 import org.siloserver.silo.common.diagnostics.DiagnosticsListLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSurface
-import org.siloserver.silo.android.ui.theme.SiloOnOpaqueControl
-import org.siloserver.silo.android.ui.theme.SiloOpaqueControl
-import org.siloserver.silo.android.ui.theme.SiloOpaqueControlBorder
-import org.siloserver.silo.android.ui.theme.SiloOpaqueControlSelected
+import org.siloserver.silo.android.ui.theme.SiloBackground
+import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.screens.personal.currentQuery
 
@@ -355,7 +354,8 @@ private fun SavedListGrid(
 /**
  * Watchlist / Favorites pill row. Mirrors iOS `SavedShortcutsRow` (phone):
  * HStack spacing 12, capsule pills 40 tall with 15 horizontal padding, a
- * 1.5pt white-30% border, and a 14sp-semibold title with a 13sp-semibold icon.
+ * 1.5pt white border (30%, 70% when selected), and a 14sp-semibold title with
+ * a 13sp-semibold icon.
  */
 @Composable
 private fun SavedShortcutsRow(
@@ -398,10 +398,12 @@ private fun SavedShortcutPill(
         onClick = onClick,
         shape = CircleShape,
         contentPadding = PaddingValues(horizontal = 15.dp),
-        border = BorderStroke(1.dp, SiloOpaqueControlBorder),
+        // iOS SavedShortcutButtonBody: only the chosen list gets the solid
+        // capsule, so a row with nothing chosen reads as options.
+        border = BorderStroke(1.5.dp, Color.White.copy(alpha = if (selected) 0.70f else 0.30f)),
         colors = ButtonDefaults.outlinedButtonColors(
-            contentColor = SiloOnOpaqueControl,
-            containerColor = if (selected) SiloOpaqueControlSelected else SiloOpaqueControl,
+            contentColor = if (selected) SiloBackground else SiloOnSurface,
+            containerColor = if (selected) SiloOnSurface.copy(alpha = 0.96f) else Color.Transparent,
         ),
         modifier = Modifier.height(40.dp),
     ) {

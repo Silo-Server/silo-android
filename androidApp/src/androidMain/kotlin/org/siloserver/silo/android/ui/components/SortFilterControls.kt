@@ -140,7 +140,7 @@ fun SortFilterControlsRow(
     }
 }
 
-/** Same capsule as the For You saved-list pills, brightened when active. */
+/** Light opaque capsule for the sort and filter controls, brightened when active. */
 @Composable
 private fun ControlPill(
     icon: ImageVector,
