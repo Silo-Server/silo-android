@@ -35,7 +35,32 @@ internal data class PushInstallation(
      * Any newer generation supersedes it.
      */
     val retirement: PushRetirement? = null,
-) { override fun toString() = "PushInstallation(<redacted>)" }
+    /**
+     * This record's generation was allocated by an app that knows the server records
+     * the caller's login session only when it applies a new generation, never on a
+     * replay. False only on a record an older app version wrote, whose registration
+     * may have no login session on the server: it gets one newer generation.
+     */
+    val loginSessionBound: Boolean = false,
+) {
+    /**
+     * A settled registration from before [loginSessionBound]. Never one the server
+     * refused, one being removed, or one whose login is on its way out.
+     */
+    val needsLoginSessionBinding: Boolean
+        get() = !loginSessionBound && acknowledged && refusal == null && !ownerLeaving && intent.registration != null
+
+    /**
+     * The server delivers to this registration: it confirmed it, or confirmed the same
+     * registration before a rebinding still uncertain, which keeps that [receipt] and
+     * changes nothing it delivers whether or not it landed. Every other pending intent
+     * starts with no receipt.
+     */
+    val deliversPushes: Boolean
+        get() = refusal == null && intent.registration != null && (acknowledged || receipt != null)
+
+    override fun toString() = "PushInstallation(<redacted>)"
+}
 
 /** A queued retirement of [generation], first queued at [queuedAtMs] (epoch milliseconds). */
 @Serializable

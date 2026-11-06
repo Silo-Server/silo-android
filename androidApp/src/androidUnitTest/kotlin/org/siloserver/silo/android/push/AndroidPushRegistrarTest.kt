@@ -88,6 +88,119 @@ class AndroidPushRegistrarTest {
     }
     private fun registrar(provider: AndroidPushTokenProvider=object:AndroidPushTokenProvider { override suspend fun token()=token }) =
         AndroidPushRegistrar(provider,PushRegistrationRepository(api),{"device"},authorities,store,{proof})
+    /** Makes the stored records look as an app version from before login-session binding left them. */
+    private fun upgradedFromOlderApp() { store.entries=store.entries.map { it.copy(loginSessionBound=false) } }
+    @Test fun anUpgradedInstallRegistersOnceAtANewerGenerationThenStops()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        assertIs<ApiResult.Success<*>>(registrar().registerIfAvailable())
+        assertEquals(listOf(1L,2L),generations); assertEquals(setOf(proof),keys.toSet())
+        // Neither this launch nor one after a process restart sends it again.
+        registrar().registerIfAvailable(); registrar().registerIfAvailable()
+        assertEquals(listOf(1L,2L),generations)
+    }
+    @Test fun anUpgradedInstallGivesEachOtherSavedServerItsOwnLoginOnce()=runTest {
+        val cabin=DurableLoginAuthority("login-cabin",AuthScopeSnapshot.savedLogin("cabin","https://cabin.invalid","cabin-profile","cabin-pin",5))
+        val r=registrar(); r.registerToken(token); r.registerToken(token,cabin.also { owner=it })
+        owner=DurableLoginAuthority("login", AuthScopeSnapshot("server","profile","https://example.invalid","pin",identityGeneration=1))
+        upgradedFromOlderApp(); generations.clear()
+        val next=registrar(); next.registerOtherServersIfBehind()
+        assertEquals(2L,store.entries.single { it.intent.serverId=="cabin" }.generation)
+        assertEquals("cabin",store.entries.single { it.generation==2L }.intent.serverId); assertEquals(listOf(2L),generations)
+        next.registerOtherServersIfBehind(); assertEquals(listOf(2L),generations)
+    }
+    @Test fun aRebindThatFailsIsRetriedExactlyAcrossRestartsUntilItLands()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        uncertain=true; registrar().registerIfAvailable()
+        uncertain=false; failCode=503; registrar().registerIfAvailable(); failCode=null
+        assertFalse(store.entries.single().acknowledged); assertNull(store.entries.single().refusal)
+        registrar().registerIfAvailable(); registrar().registerIfAvailable()
+        assertEquals(listOf(1L,2L,2L,2L),generations); assertTrue(store.entries.single().acknowledged)
+    }
+    @Test fun aRebindAllocatesNothingWhileTheServerCannotTakeIt()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        available=false; registrar().registerIfAvailable()
+        assertEquals(listOf(1L),generations); assertEquals(1L,store.entries.single().generation)
+        assertTrue(store.entries.single().needsLoginSessionBinding, "the once is not used up")
+        available=true; registrar().registerIfAvailable(); assertEquals(listOf(1L,2L),generations)
+    }
+    @Test fun aRemovedRegistrationIsNeverRebound()=runTest {
+        val r=registrar(); r.registerToken(token); r.unregisterDevice("server"); upgradedFromOlderApp()
+        generations.clear(); registrar().registerOtherServersIfBehind()
+        owner=owner.copy(scope=owner.scope.copy(serverId="elsewhere")); registrar().registerOtherServersIfBehind()
+        assertEquals(emptyList(),generations); assertNull(store.entries.single().intent.registration)
+    }
+    @Test fun aSignedOutServerIsNeverRebound()=runTest {
+        val cabin=DurableLoginAuthority("login-cabin",AuthScopeSnapshot.savedLogin("cabin","https://cabin.invalid","cabin-profile","cabin-pin",5))
+        val r=registrar(); r.registerToken(token,cabin.also { owner=it }); upgradedFromOlderApp()
+        owner=DurableLoginAuthority("login", AuthScopeSnapshot("server","profile","https://example.invalid","pin",identityGeneration=1))
+        savedLogins.remove("cabin"); generations.clear()
+        registrar().registerOtherServersIfBehind()
+        assertEquals(emptyList(),generations); assertEquals(1L,store.entries.single().generation)
+    }
+    @Test fun aLoginOnItsWayOutIsNotRebound()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        store.entries=store.entries.map { it.copy(ownerLeaving=true) }
+        registrar().registerIfAvailable()
+        assertEquals(listOf(1L),generations)
+    }
+    @Test fun aRefusedRegistrationIsNotRebound()=runTest {
+        failCode=409; registrar().registerToken(token); failCode=null; upgradedFromOlderApp()
+        registrar().registerIfAvailable(); assertEquals(listOf(1L),generations)
+    }
+    @Test fun anAccountSwitchAfterTheUpgradeTakesOneGenerationNotTwo()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        owner=owner.copy(loginId="next",scope=owner.scope.copy(identityGeneration=2))
+        val r=registrar(); r.registerIfAvailable(); r.registerIfAvailable()
+        assertEquals(listOf(1L,2L),generations); assertEquals("next",store.entries.single().intent.loginId)
+    }
+    @Test fun aRotatedTokenAfterTheUpgradeAlsoCountsAsTheRebind()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        val rotated="n".repeat(80)
+        val r=registrar(object:AndroidPushTokenProvider { override suspend fun token()=rotated })
+        r.registerIfAvailable(); r.registerIfAvailable()
+        assertEquals(listOf(1L,2L),generations)
+    }
+    @Test fun aLoginReplacedDuringAnUncertainRebindCannotReplayIt()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        uncertain=true; registrar().registerIfAvailable(); uncertain=false
+        owner=owner.copy(loginId="next",scope=owner.scope.copy(identityGeneration=2))
+        assertIs<ApiResult.Error>(registrar().registerIfAvailable())
+        assertEquals(listOf(1L,2L),generations); assertEquals("login",store.entries.single().intent.loginId)
+    }
+    @Test fun aSignOutDuringAnUncertainRebindSettlesItThenRemoves()=runTest {
+        val r=registrar(); r.registerToken(token); upgradedFromOlderApp()
+        uncertain=true; registrar().registerIfAvailable(); uncertain=false
+        assertIs<ApiResult.Success<Unit>>(registrar().unregisterDevice("server").result)
+        assertEquals(listOf(1L,2L,2L,3L),generations); assertNull(store.entries.single().intent.registration)
+    }
+    @Test fun theNextLoginSupersedesARebindThatSignOutCouldNotSettle()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        uncertain=true; val r=registrar(); r.registerIfAvailable()
+        assertFalse(r.unregisterDevice("server").result is ApiResult.Success); uncertain=false
+        owner=owner.copy(loginId="next",scope=owner.scope.copy(identityGeneration=2))
+        assertIs<ApiResult.Success<*>>(r.registerIfAvailable())
+        assertEquals(listOf(1L,2L,2L,3L),generations); assertEquals("next",store.entries.single().intent.loginId)
+    }
+    @Test fun aRebindUnderWayKeepsTheReceiptOfTheRegistrationItReplaces()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        val before=store.entries.single().receipt
+        uncertain=true; registrar().registerIfAvailable(); uncertain=false
+        assertEquals(before,store.entries.single().receipt); assertTrue(store.entries.single().deliversPushes)
+        registrar().registerIfAvailable()
+        assertEquals("2",store.entries.single().receipt?.generation)
+    }
+    @Test fun aFirstRegistrationThatFailsIsNotReadableYet()=runTest {
+        uncertain=true; registrar().registerToken(token)
+        assertFalse(store.entries.single().deliversPushes)
+    }
+    @Test fun recordsAnOlderAppWroteNeedOneRebindAndNewOnesDoNot()=runTest {
+        registrar().registerToken(token)
+        val written=SiloJson.encodeToString(store.entries.single())
+        assertFalse(SiloJson.decodeFromString<PushInstallation>(written).needsLoginSessionBinding)
+        val older=written.replace(Regex(""",?"loginSessionBound":true"""),"")
+        assertFalse(older.contains("loginSessionBound"))
+        assertTrue(SiloJson.decodeFromString<PushInstallation>(older).needsLoginSessionBinding)
+    }
     @Test fun unchangedIntentDoesNotAdvanceAndChangedTokenRemovalAndLoginKeepProof() = runTest {
         val r=registrar()
         assertIs<ApiResult.Success<*>>(r.registerToken(token)); r.registerToken(token)

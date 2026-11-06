@@ -118,7 +118,8 @@ class AndroidPushRegistrar internal constructor(
     /**
      * Brings every saved server but the active one up to the current FCM token,
      * as the login and profile each was registered for: whatever a rotation ran
-     * out of time for, or left uncertain, is finished here.
+     * out of time for, or left uncertain, is finished here, as is a registration
+     * still to be bound to its login session.
      */
     suspend fun registerOtherServersIfBehind() {
         val token = tokenProvider.token()?.trim()?.takeIf { it.isNotEmpty() } ?: return
@@ -131,7 +132,7 @@ class AndroidPushRegistrar internal constructor(
         val behind = installations().filter {
             val registration = it.intent.registration
             it.deviceId == device && it.intent.serverId != exceptServerId && it.refusal == null &&
-                registration != null && (registration.token != token || !it.acknowledged)
+                registration != null && (registration.token != token || !it.acknowledged || it.needsLoginSessionBinding)
         }
         for (installation in behind) {
             withTimeoutOrNull(PUSH_WORK_BUDGET_MS) { registerAsRegisteredOwner(installation, token) }
@@ -536,6 +537,10 @@ class AndroidPushRegistrar internal constructor(
             val supersedesUncertainty = request != null && previous != null && !previous.acknowledged &&
                 (previous.intent.registration == null || previous.ownerLeaving || handsOver)
             val reconciling = previous != null && !previous.acknowledged && previous.intent != intent && !supersedesUncertainty
+            // The same registration again, at the newer generation that makes the server
+            // record this login session: it ignores the session on a replay. Once per
+            // record, and only from here, so ordering and durability are the usual ones.
+            val rebinding = previous != null && previous.needsLoginSessionBinding && previous.intent == intent
             previous?.let {
                 check(it.generation > 0 && it.key.matches(Regex("[A-Za-z0-9_-]{43}")))
                 if (it.acknowledged && it.intent.registration != null) {
@@ -550,15 +555,16 @@ class AndroidPushRegistrar internal constructor(
                         it.intent.profileId != intent.profileId || it.intent.profileToken != intent.profileToken)) {
                     return failure("push_previous_intent_uncertain")
                 }
-                if (it.acknowledged && it.intent == intent) {
+                if (it.acknowledged && it.intent == intent && !rebinding) {
                     if (it.ownerLeaving) clearOwnerLeaving(serverUrl, device, it.generation)
                     return ApiResult.Success(it.receipt)
                 }
             }
-            val entry = if (previous != null && (previous.intent == intent || reconciling)) previous else {
+            val entry = if (previous != null && !rebinding && (previous.intent == intent || reconciling)) previous else {
                 if (previous?.generation == Long.MAX_VALUE) return failure("push_generation_exhausted")
-                PushInstallation(owner.scope.serverUrl, device, previous?.key ?: newKey(),
-                    (previous?.generation ?: 0) + 1, intent)
+                val generation = (previous?.generation ?: 0) + 1
+                if (rebinding) previous.copy(generation = generation, acknowledged = false, loginSessionBound = true)
+                else PushInstallation(owner.scope.serverUrl, device, previous?.key ?: newKey(), generation, intent, loginSessionBound = true)
             }
             check(entry.key.matches(Regex("[A-Za-z0-9_-]{43}")))
             if (!current(owner)) return failure("push_authority_changed")

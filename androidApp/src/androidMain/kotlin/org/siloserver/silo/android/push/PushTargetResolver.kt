@@ -53,8 +53,7 @@ internal class PushTargetResolver(
         fun PushInstallation.identity() = receipt?.serverId ?: entry()?.verifiedServerId?.takeIf { it.isNotBlank() }
 
         val registered = installations().filter {
-            it.acknowledged && it.refusal == null && it.intent.registration != null &&
-                it.intent.profileId == issuer.profileId && it.entry() != null
+            it.deliversPushes && it.intent.profileId == issuer.profileId && it.entry() != null
         }
         // Every claim is counted, so ask the servers that have made none yet
         // too: otherwise another server's claim would stand in for theirs.
