@@ -42,6 +42,26 @@ class CatalogSourceTest {
      */
     private val convertedDirectories = listOf(
         "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/pairing",
+        // Playback and media consumption.
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/player",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/audiobook",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/book",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/reader",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/cast",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/downloads",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/downloads",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/player",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/audiobook",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/cast",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/cast",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/player",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/pip",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/audiobook",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/ebook",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/cast",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/downloads",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/overlays",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/thememusic",
     )
 
     @Test
