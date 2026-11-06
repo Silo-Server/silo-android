@@ -6,8 +6,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.TimerOff
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.player.SleepTimerState
 
 /**
@@ -35,23 +38,28 @@ fun SleepTimerSheet(
 
     PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
         PlayerPanelHeader(
-            title = "Sleep timer",
+            title = stringResource(CommonR.string.player_sleepTimer_title),
             onClose = { controller.dismiss() },
             onBack = onBack?.let { back -> { controller.dismiss(then = back) } },
-            backDescription = "Back to settings",
+            backDescription = stringResource(CommonR.string.player_menu_backToSettings),
         )
         PlayerMenuScrollColumn(horizontalPadding = 12.dp) {
             if (activeState is SleepTimerState.Active) {
-                PlayerFootnote("Pausing in ${formatRemainingDetailed(activeState.remainingSeconds)}")
+                PlayerFootnote(
+                    stringResource(
+                        CommonR.string.player_sleepTimer_pausingIn,
+                        formatRemainingDetailed(activeState.remainingSeconds),
+                    ),
+                )
             }
             Spacer(Modifier.height(8.dp))
             PlayerGroup {
-                PRESETS.forEachIndexed { index, preset ->
+                PRESET_MINUTES.forEachIndexed { index, minutes ->
                     PlayerCheckRow(
-                        label = preset.label,
-                        selected = preset.minutes == defaultMinutes,
+                        label = formatDuration(minutes * 60),
+                        selected = minutes == defaultMinutes,
                         onClick = {
-                            onStart(preset.minutes)
+                            onStart(minutes)
                             controller.dismiss()
                         },
                         separator = index > 0,
@@ -63,7 +71,7 @@ fun SleepTimerSheet(
                 PlayerGroup {
                     PlayerActionRow(
                         icon = Icons.Rounded.TimerOff,
-                        label = "Cancel timer",
+                        label = stringResource(CommonR.string.player_sleepTimer_cancel),
                         tint = PlayerChrome.Stop,
                         onClick = {
                             onCancel()
@@ -77,15 +85,18 @@ fun SleepTimerSheet(
     }
 }
 
-private data class Preset(val minutes: Int, val label: String)
+private val PRESET_MINUTES = listOf(15, 30, 45, 60, 90)
 
-private val PRESETS = listOf(
-    Preset(15, "15 minutes"),
-    Preset(30, "30 minutes"),
-    Preset(45, "45 minutes"),
-    Preset(60, "1 hour"),
-    Preset(90, "1 hour 30 minutes"),
-)
+/** A preset's length in words: "45 minutes", "1 hour", "1 hour 30 minutes". */
+@Composable
+private fun formatDuration(seconds: Int): String {
+    val hours = seconds / 3600
+    val minutes = seconds % 3600 / 60
+    return listOfNotNull(
+        hours.takeIf { it > 0 }?.let { pluralStringResource(CommonR.plurals.player_sleepTimer_hours, it, it) },
+        minutes.takeIf { it > 0 }?.let { pluralStringResource(CommonR.plurals.player_sleepTimer_minutes, it, it) },
+    ).joinToString(" ")
+}
 
 /**
  * Compact remaining-time format for chips: "3m", "45s", "1m 12s".
@@ -104,15 +115,16 @@ internal fun formatRemaining(seconds: Int): String {
 /**
  * Verbose form used for the "Pausing in …" line while the menu is open.
  */
+@Composable
 private fun formatRemainingDetailed(seconds: Int): String {
     val safe = seconds.coerceAtLeast(0)
     val m = safe / 60
     val s = safe % 60
+    val minutes = pluralStringResource(CommonR.plurals.player_sleepTimer_minutes, m, m)
+    val secondsLabel = pluralStringResource(CommonR.plurals.player_sleepTimer_seconds, s, s)
     return when {
-        m == 0 -> "$s seconds"
-        s == 0 && m == 1 -> "1 minute"
-        s == 0 -> "$m minutes"
-        m == 1 -> "1 minute $s seconds"
-        else -> "$m minutes $s seconds"
+        m == 0 -> secondsLabel
+        s == 0 -> minutes
+        else -> "$minutes $secondsLabel"
     }
 }

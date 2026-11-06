@@ -59,6 +59,10 @@ import androidx.compose.ui.platform.LocalDensity
 import org.siloserver.silo.android.ui.screens.detail.HeaderSettledDp
 import org.siloserver.silo.android.ui.screens.detail.LocalDetailScrollState
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.pluralStringResource
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 
 /**
  * Phone book detail. Tall cover on the left (2:3 like a movie poster
@@ -87,6 +91,7 @@ internal fun bookDetailPrimaryAction(
     else -> BookDetailPrimaryAction.None
 }
 
+@Composable
 private fun bookDetailPrimaryActionLabel(
     selectedVersion: FileVersion?,
     canReadSelectedVersion: Boolean,
@@ -100,12 +105,12 @@ private fun bookDetailPrimaryActionLabel(
         canOpenExternal = canOpenExternal,
     )
 ) {
-    BookDetailPrimaryAction.ReadInApp -> "Read"
-    BookDetailPrimaryAction.OpenExternally -> "Open in Reader"
+    BookDetailPrimaryAction.ReadInApp -> stringResource(CommonR.string.reader_book_read)
+    BookDetailPrimaryAction.OpenExternally -> stringResource(CommonR.string.reader_book_openInReader)
     BookDetailPrimaryAction.None -> when {
-        selectedVersion == null -> "Unavailable"
-        !canReadSelectedVersion && !isDownloaded -> "Download to Open"
-        else -> "Open from Downloads"
+        selectedVersion == null -> stringResource(CommonR.string.audiobook_detail_unavailable)
+        !canReadSelectedVersion && !isDownloaded -> stringResource(CommonR.string.reader_book_downloadToOpen)
+        else -> stringResource(CommonR.string.reader_book_openFromDownloads)
     }
 }
 
@@ -201,7 +206,7 @@ fun BookDetailContent(
                 )
                 author?.takeIf { it.isNotBlank() }?.let { authorName ->
                     Text(
-                        text = "by $authorName",
+                        text = stringResourceWithNames(CommonR.string.reader_book_byAuthor, authorName),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -214,7 +219,12 @@ fun BookDetailContent(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     FormatBadge(format)
-                    meta?.pageCount?.let { Text("· $it pages", style = MaterialTheme.typography.labelMedium) }
+                    meta?.pageCount?.let {
+                        Text(
+                            "· " + pluralStringResource(CommonR.plurals.reader_book_pageCount, it, it, it.toString()),
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
                 }
                 publisher?.takeIf { it.isNotBlank() }?.let { publisherName ->
                     Text(
@@ -227,7 +237,7 @@ fun BookDetailContent(
                 }
                 ebook?.series?.name?.takeIf { it.isNotBlank() }?.let { seriesName ->
                     Text(
-                        text = "Series: $seriesName",
+                        text = stringResourceWithNames(CommonR.string.reader_book_series, seriesName),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -273,10 +283,10 @@ fun BookDetailContent(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         when {
-                            isDownloaded -> "Downloaded"
-                            downloadProgress != null -> "Cancel Download"
-                            canDownloadSelectedVersion -> "Download"
-                            else -> "Download Unavailable"
+                            isDownloaded -> stringResource(CommonR.string.audiobook_detail_downloaded)
+                            downloadProgress != null -> stringResource(CommonR.string.audiobook_detail_cancelDownload)
+                            canDownloadSelectedVersion -> stringResource(CommonR.string.audiobook_detail_download)
+                            else -> stringResource(CommonR.string.audiobook_detail_downloadUnavailable)
                         },
                     )
                 }
@@ -289,18 +299,26 @@ fun BookDetailContent(
                         icon = Icons.Filled.FavoriteBorder,
                         activeIcon = Icons.Filled.Favorite,
                         isActive = isFavorite,
-                        contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
+                        contentDescription = if (isFavorite) {
+                            stringResource(CommonR.string.audiobook_detail_favoriteRemove)
+                        } else {
+                            stringResource(CommonR.string.audiobook_detail_favoriteAdd)
+                        },
                         onClick = onFavoriteClick,
                         activeTint = Color(0xFFEF5350),
-                        label = "Favorite",
+                        label = stringResource(CommonR.string.audiobook_detail_favorite),
                     )
                     CircleActionButton(
                         icon = Icons.Filled.BookmarkBorder,
                         activeIcon = Icons.Filled.Bookmark,
                         isActive = isInWatchlist,
-                        contentDescription = if (isInWatchlist) "Remove from watchlist" else "Add to watchlist",
+                        contentDescription = if (isInWatchlist) {
+                            stringResource(CommonR.string.detail_watchlistRemove)
+                        } else {
+                            stringResource(CommonR.string.detail_watchlistAdd)
+                        },
                         onClick = onWatchlistClick,
-                        label = "Watchlist",
+                        label = stringResource(CommonR.string.detail_watchlist),
                     )
                 }
                 downloadProgress?.let { progress ->
@@ -312,7 +330,7 @@ fun BookDetailContent(
                 if (selectedVersion != null && !canReadSelectedVersion) {
                     Text(
                         text = selectedFormatSupport?.reason
-                            ?: "This format can be downloaded in its original file format and opened from Downloads or another reader.",
+                            ?: stringResource(CommonR.string.reader_book_downloadOnlyNote),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -327,7 +345,7 @@ fun BookDetailContent(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Versions",
+                        text = stringResource(CommonR.string.reader_book_versions),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -356,7 +374,7 @@ fun BookDetailContent(
                                 modifier = Modifier.weight(1f),
                             )
                             Text(
-                                text = "file ${version.fileId}",
+                                text = stringResource(CommonR.string.reader_book_fileId, version.fileId.toString()),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -370,7 +388,7 @@ fun BookDetailContent(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "About",
+                        text = stringResource(CommonR.string.reader_book_about),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -389,7 +407,7 @@ fun BookDetailContent(
             ?.let { related ->
             item {
                 Text(
-                    text = "Also by this author",
+                    text = stringResource(CommonR.string.reader_book_alsoByAuthor),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )

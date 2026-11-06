@@ -25,6 +25,8 @@ import org.siloserver.silo.common.downloads.DownloadOpenTarget
 import org.siloserver.silo.common.ebook.ReaderEngineKind
 import org.siloserver.silo.common.ebook.ReaderSection
 import org.siloserver.silo.model.ebook.EbookReadMode
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 @Composable
 fun ReaderEngineHost(
@@ -42,11 +44,11 @@ fun ReaderEngineHost(
     val showExternalReadingPanel = shouldShowExternalReadingPanel(state)
 
     when {
-        state.isLoading -> CenteredReaderMessage("Loading book...", onToggleChrome = onToggleChrome)
+        state.isLoading -> CenteredReaderMessage(stringResource(CommonR.string.reader_loading), onToggleChrome = onToggleChrome)
         showExternalReadingPanel -> ExternalReadingPanel(state = state, onToggleChrome = onToggleChrome)
-        state.error != null -> CenteredReaderMessage(state.error, onToggleChrome = onToggleChrome)
+        state.error != null -> CenteredReaderMessage(state.errorText(), onToggleChrome = onToggleChrome)
         fileUrl.isNullOrBlank() -> CenteredReaderMessage(
-            "No file available for this book.",
+            stringResource(CommonR.string.reader_error_noFile),
             onToggleChrome = onToggleChrome,
         )
         else -> when (engineKind) {
@@ -81,7 +83,10 @@ fun ReaderEngineHost(
                 onPageCountKnown = onPageCountKnown,
                 onToggleChrome = onToggleChrome,
             )
-            ReaderEngineKind.External -> CenteredReaderMessage("Reader unavailable.", onToggleChrome = onToggleChrome)
+            ReaderEngineKind.External -> CenteredReaderMessage(
+                stringResource(CommonR.string.reader_error_unavailable),
+                onToggleChrome = onToggleChrome,
+            )
         }
     }
 }
@@ -105,7 +110,8 @@ private fun ExternalReadingPanel(
         )
     }
     val formatLabel = state.formatDisplayName.ifBlank { state.format.displayName }
-    val titleLabel = state.title.ifBlank { target?.displayName ?: "This file" }
+    val thisFileLabel = stringResource(CommonR.string.reader_external_thisFile)
+    val titleLabel = state.title.ifBlank { target?.displayName ?: thisFileLabel }
 
     Column(
         modifier = Modifier
@@ -129,7 +135,7 @@ private fun ExternalReadingPanel(
             modifier = Modifier.padding(top = 8.dp),
         )
         Text(
-            text = state.error ?: "Open this original file with a dedicated reader app.",
+            text = state.errorText() ?: stringResource(CommonR.string.reader_external_hint),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -140,13 +146,21 @@ private fun ExternalReadingPanel(
             onClick = {
                 val openTarget = target ?: return@Button
                 if (!openDownloadTargetInExternalApp(context, openTarget)) {
-                    Toast.makeText(context, "No app found to open this file.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, context.getString(CommonR.string.reader_external_noApp), Toast.LENGTH_LONG).show()
                 }
             },
         ) {
-            Text("Open with another reader")
+            Text(stringResource(CommonR.string.reader_external_open))
         }
     }
+}
+
+/** The error to show: translated when the view model wrote it, else the
+ *  server or exception text as is. */
+@Composable
+private fun ReaderUiState.errorText(): String? {
+    val error = error ?: return null
+    return errorRes?.let { stringResource(it) } ?: error
 }
 
 @Composable
@@ -161,7 +175,7 @@ private fun CenteredReaderMessage(
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = message ?: "Reader unavailable.",
+            text = message ?: stringResource(CommonR.string.reader_error_unavailable),
             textAlign = TextAlign.Center,
             fontWeight = FontWeight.Medium,
             modifier = Modifier.padding(32.dp),

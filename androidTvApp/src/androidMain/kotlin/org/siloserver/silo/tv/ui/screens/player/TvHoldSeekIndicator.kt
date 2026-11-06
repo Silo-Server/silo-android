@@ -31,11 +31,13 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Floating chip shown during a hold-to-seek session. Mirrors the iOS
@@ -109,7 +111,7 @@ fun TvHoldSeekIndicator(
                     horizontalArrangement = Arrangement.spacedBy(9.dp),
                 ) {
                     Text(
-                        text = formatRate(rate),
+                        text = if (rate == 0) stringResource(CommonR.string.player_seek_paused) else formatRate(rate),
                         color = Color.White,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Black,
@@ -146,7 +148,7 @@ fun TvHoldSeekIndicator(
 
             // Hint row.
             Text(
-                text = "← → speed  ·  ◉ play  ·  ↩ cancel",
+                text = stringResource(CommonR.string.player_seek_holdHint),
                 color = Color.White.copy(alpha = 0.55f),
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
@@ -155,8 +157,8 @@ fun TvHoldSeekIndicator(
     }
 }
 
+/** The signed scan rate, such as "-4×"; a paused scan (0) shows its catalog word instead. */
 private fun formatRate(rate: Int): String {
-    if (rate == 0) return "Paused"
     val sign = if (rate < 0) "-" else ""
     return "$sign${kotlin.math.abs(rate)}×"
 }

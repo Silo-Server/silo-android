@@ -40,15 +40,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.subtitles.SubtitleAiJobKind
+import org.siloserver.silo.model.subtitles.SubtitleAiQuota
 
 private val WarnAmber = Color(0xFFEAB308)
 private val ErrorRed = Color(0xFFEF4444)
@@ -111,7 +115,7 @@ fun AiTranslateSheet(
 
     PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight, compact = true) {
         PlayerSheetHeader(
-            title = "Translate with AI",
+            title = stringResource(CommonR.string.player_aiTranslate_title),
             onBack = back,
             onDismiss = { controller.dismiss() },
         )
@@ -130,9 +134,11 @@ fun AiTranslateSheet(
                             progress = { activeJob.progress.toFloat().coerceIn(0f, 1f) },
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        val progressNote = activeJob.progressMessage.takeIf { it.isNotBlank() }
+                            ?: tools.activeJobNote?.text()
                         Text(
-                            text = "${(activeJob.progress * 100).toInt()}%" +
-                                (activeJob.progressMessage.takeIf { it.isNotBlank() }?.let { " — $it" } ?: ""),
+                            text = "${(activeJob.progress * 100).toInt()}%" + // i18n-ignore
+                                (progressNote?.let { " — $it" } ?: ""),
                             color = Color.White.copy(alpha = 0.7f),
                             fontSize = 13.sp,
                             modifier = Modifier.padding(top = 8.dp),
@@ -141,15 +147,14 @@ fun AiTranslateSheet(
                             onClick = onCancelJob,
                             modifier = Modifier.padding(top = 12.dp),
                         ) {
-                            Text("Cancel")
+                            Text(stringResource(CommonR.string.common_cancel))
                         }
                     }
                 }
 
                 !canTranslate && !canTranscribe -> {
                     Text(
-                        text = "AI subtitle generation isn't available for this file — " +
-                            "there are no translatable subtitle tracks and audio transcription is not enabled.",
+                        text = stringResource(CommonR.string.player_aiTranslate_unavailableForFile),
                         color = Color.White.copy(alpha = 0.6f),
                         fontSize = 14.sp,
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
@@ -163,14 +168,14 @@ fun AiTranslateSheet(
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            ModeTab("From subtitles", mode == AiMode.Subtitles) { mode = AiMode.Subtitles }
-                            ModeTab("From audio", mode == AiMode.Audio) { mode = AiMode.Audio }
+                            ModeTab(stringResource(CommonR.string.player_aiTranslate_fromSubtitles), mode == AiMode.Subtitles) { mode = AiMode.Subtitles }
+                            ModeTab(stringResource(CommonR.string.player_aiTranslate_fromAudio), mode == AiMode.Audio) { mode = AiMode.Audio }
                         }
                     }
 
                     if (mode == AiMode.Subtitles) {
                         PickerRow(
-                            label = "Source track",
+                            label = stringResource(CommonR.string.player_aiTranslate_sourceTrack),
                             options = sourceTracks.map { sub ->
                                 listOfNotNull(
                                     sub.label?.takeIf { it.isNotBlank() },
@@ -182,7 +187,7 @@ fun AiTranslateSheet(
                         )
                     } else {
                         PickerRow(
-                            label = "Audio track",
+                            label = stringResource(CommonR.string.player_aiTranslate_audioTrack),
                             options = audioTracks.map { track ->
                                 listOfNotNull(
                                     LanguageNames.displayName(track.language),
@@ -197,7 +202,7 @@ fun AiTranslateSheet(
 
                     if (mode == AiMode.Subtitles || canTranslateTranscript) {
                         PickerRow(
-                            label = "Target language",
+                            label = stringResource(CommonR.string.player_aiTranslate_targetLanguage),
                             options = LanguageNames.dropdownOptions.map { it.second },
                             selected = LanguageNames.dropdownOptions
                                 .indexOfFirst { it.first == targetLanguage }
@@ -206,7 +211,7 @@ fun AiTranslateSheet(
                         )
                     } else {
                         Text(
-                            text = TRANSCRIBE_ONLY_NOTE,
+                            text = stringResource(CommonR.string.player_aiTranslate_transcribeOnly),
                             color = Color.White.copy(alpha = 0.6f),
                             fontSize = 13.sp,
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
@@ -215,7 +220,7 @@ fun AiTranslateSheet(
 
                     if (mode == AiMode.Audio && quota != null) {
                         Text(
-                            text = quotaLineText(quota),
+                            text = quotaLine(quota),
                             color = if (quotaExhausted) WarnAmber else Color.White.copy(alpha = 0.5f),
                             fontSize = 13.sp,
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
@@ -224,7 +229,7 @@ fun AiTranslateSheet(
 
                     tools.translateError?.let { error ->
                         Text(
-                            text = error,
+                            text = error.text(),
                             color = ErrorRed,
                             fontSize = 13.sp,
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
@@ -272,7 +277,15 @@ fun AiTranslateSheet(
                                 color = PlayerChrome.Ink,
                             )
                         } else {
-                            Text(if (mode == AiMode.Audio) "Generate" else "Translate")
+                            Text(
+                                stringResource(
+                                    if (mode == AiMode.Audio) {
+                                        CommonR.string.player_aiTranslate_generate
+                                    } else {
+                                        CommonR.string.player_aiTranslate_translate
+                                    },
+                                ),
+                            )
                         }
                     }
                 }
@@ -281,6 +294,14 @@ fun AiTranslateSheet(
             Spacer(modifier = Modifier.height(12.dp))
         }
     }
+}
+
+/** [quotaLineText] in the current app language, refreshed when the configuration changes. */
+@Composable
+private fun quotaLine(quota: SubtitleAiQuota): String {
+    // Not remembered: the Resources instance stays the same across an
+    // in-place language change, so it can't key a cache.
+    return quotaLineText(quota, LocalResources.current)
 }
 
 @Composable
@@ -334,7 +355,7 @@ private fun PickerRow(
                 )
                 Icon(
                     imageVector = Icons.Filled.ArrowDropDown,
-                    contentDescription = "Choose $label",
+                    contentDescription = stringResource(CommonR.string.player_aiTranslate_choose, label),
                     tint = Color.White.copy(alpha = 0.7f),
                 )
             }

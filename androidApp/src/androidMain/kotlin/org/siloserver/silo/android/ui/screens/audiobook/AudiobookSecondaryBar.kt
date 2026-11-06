@@ -26,6 +26,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Secondary control row beneath the transport: speed chip, sleep chip, and a
@@ -55,7 +57,7 @@ fun AudiobookSecondaryBar(
         ChipButton(icon = Icons.Filled.Replay, label = skipLabel, onClick = onSkipClick)
         ChipButton(icon = Icons.Filled.Bedtime, label = sleepLabel, onClick = onSleepClick)
         if (showChapters) {
-            ChipButton(icon = Icons.AutoMirrored.Filled.List, label = "Chapters", onClick = onChaptersClick)
+            ChipButton(icon = Icons.AutoMirrored.Filled.List, label = stringResource(CommonR.string.audiobook_chapters_open), onClick = onChaptersClick)
         }
     }
 }

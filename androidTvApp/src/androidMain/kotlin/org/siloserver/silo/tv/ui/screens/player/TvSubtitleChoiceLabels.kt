@@ -1,5 +1,10 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import android.content.res.Resources
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.ui.platform.LocalResources
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.player.aiSubtitleKind
 import org.siloserver.silo.player.aiSubtitleSourceLabel
@@ -7,12 +12,21 @@ import org.siloserver.silo.player.trackLanguageDisplayName
 import java.util.Locale
 
 /**
+ * The current [Resources] for the label builders below, which also run
+ * outside composition (picker rows built on Select). Taking them from
+ * [LocalResources] recomposes the caller when the app language changes.
+ */
+@Composable
+@ReadOnlyComposable
+internal fun tvLabelResources(): Resources = LocalResources.current
+
+/**
  * Human labels for mounted subtitle rows, using the same identity hierarchy
  * as the detail-page selector. Release filenames and runtime-only labels such
  * as "Server subtitle" stay available for identity/matching, but are never
  * presented to the user.
  */
-internal fun subtitleChoiceLabel(row: PlayerSubtitleInfo, position: Int): String {
+internal fun subtitleChoiceLabel(row: PlayerSubtitleInfo, position: Int, resources: Resources): String {
     // trackLanguageDisplayName handles ISO 639-2/B codes ("ger","fre","dut")
     // that Locale(code) alone cannot; fall back to the uppercased raw code.
     val language = row.language?.trim()?.takeIf { it.isNotBlank() }
@@ -30,16 +44,16 @@ internal fun subtitleChoiceLabel(row: PlayerSubtitleInfo, position: Int): String
         language == null -> aiSubtitleSourceLabel(rawLabel)
         else -> null
     }
-    val base = language ?: title ?: "Track ${position + 1}"
+    val base = language ?: title ?: resources.getString(CommonR.string.options_track, (position + 1).toString())
     val detail = buildList {
         aiKind?.let { add(it.displayName) }
         if (title != null && title != base) add(title)
         if (format != null) add(format)
-        if (row.forced == true) add("Forced")
-        if (row.isDefault == true) add("Default")
+        if (row.forced == true) add(resources.getString(CommonR.string.detail_trackForced))
+        if (row.isDefault == true) add(resources.getString(CommonR.string.detail_trackDefault))
         when (row.catalogSource ?: row.source) {
-            "external" -> add("External")
-            "downloaded" -> add("Downloaded")
+            "external" -> add(resources.getString(CommonR.string.detail_trackExternal))
+            "downloaded" -> add(resources.getString(CommonR.string.player_tracks_sourceDownloaded))
         }
     }
     return if (detail.isEmpty()) base else "$base — ${detail.joinToString(" · ")}"
@@ -93,14 +107,15 @@ private val SUBTITLE_FILENAME_SUFFIXES = listOf(
  * server identity strings and the old fallback was a bare uppercased ISO
  * code, so pickers build from language + codec + channel layout instead.
  */
-internal fun audioChoiceLabel(entry: PlayerTrackEntry, position: Int): String {
+internal fun audioChoiceLabel(entry: PlayerTrackEntry, position: Int, resources: Resources): String {
     val language = entry.language?.trim()?.takeIf { it.isNotBlank() }
         ?.let { trackLanguageDisplayName(it) ?: it.uppercase(Locale.US) }
     val codec = audioFormatShortName(entry.codecOrMime)
-    val layout = audioChannelLayoutLabel(entry.channelCount)
+    val layout = audioChannelLayoutLabel(entry.channelCount, resources)
     val parts = listOfNotNull(language, codec, layout)
     if (parts.isEmpty()) {
-        return entry.displayLabel.trim().takeIf { it.isNotBlank() } ?: "Track ${position + 1}"
+        return entry.displayLabel.trim().takeIf { it.isNotBlank() }
+            ?: resources.getString(CommonR.string.options_track, (position + 1).toString())
     }
     val qualifier = meaningfulAudioTrackTitle(
         displayLabel = entry.displayLabel,
@@ -109,6 +124,7 @@ internal fun audioChoiceLabel(entry: PlayerTrackEntry, position: Int): String {
         rawCodecOrMime = entry.codecOrMime,
         codec = codec,
         layout = layout,
+        serverLayout = AUDIO_LAYOUT_TOKENS[entry.channelCount],
     )
     return buildString {
         append(parts.joinToString(" "))
@@ -123,6 +139,9 @@ internal fun meaningfulAudioTrackTitle(
     rawCodecOrMime: String?,
     codec: String?,
     layout: String?,
+    // The English layout word servers put in track titles, stripped even when
+    // [layout] is translated.
+    serverLayout: String? = null,
 ): String? {
     val original = displayLabel.trim().takeIf { it.isNotBlank() } ?: return null
     val lower = original.lowercase(Locale.US)
@@ -145,6 +164,7 @@ internal fun meaningfulAudioTrackTitle(
         codec,
         rawCodecOrMime?.substringAfterLast('/')?.trim(),
         layout,
+        serverLayout,
     )
         .filter { it.isNotBlank() }
         .distinctBy { it.lowercase(Locale.US) }
@@ -204,10 +224,12 @@ internal fun audioFormatShortName(codecOrMime: String?): String? =
     }
 
 /** Channel count → familiar layout name. */
-internal fun audioChannelLayoutLabel(channelCount: Int): String? = when {
+private val AUDIO_LAYOUT_TOKENS = mapOf(1 to "Mono", 2 to "Stereo")
+
+internal fun audioChannelLayoutLabel(channelCount: Int, resources: Resources): String? = when {
     channelCount <= 0 -> null
-    channelCount == 1 -> "Mono"
-    channelCount == 2 -> "Stereo"
+    channelCount == 1 -> resources.getString(CommonR.string.detail_mono)
+    channelCount == 2 -> resources.getString(CommonR.string.detail_stereo)
     channelCount == 6 -> "5.1"
     channelCount == 8 -> "7.1"
     else -> "${channelCount}ch"

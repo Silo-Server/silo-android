@@ -27,6 +27,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.common.player.AudiobookSettingsStore
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Skip-interval picker bottom sheet. Lets the user set how far the
@@ -66,9 +68,9 @@ fun AudiobookSkipIntervalSheet(
                 .fillMaxWidth(),
         ) {
             val note = when {
-                !editable -> "Checking whether this server stores skip intervals for your profile…"
-                profileWide -> "Applies to audiobooks on every device signed in to this profile."
-                else -> "Saved on this device only."
+                !editable -> stringResource(CommonR.string.audiobook_skipInterval_checkingPhone)
+                profileWide -> stringResource(CommonR.string.audiobook_skipInterval_profileWidePhone)
+                else -> stringResource(CommonR.string.audiobook_skipInterval_deviceOnlyPhone)
             }
             Text(
                 text = note,
@@ -85,14 +87,14 @@ fun AudiobookSkipIntervalSheet(
             }
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "Skip back",
+                text = stringResource(CommonR.string.audiobook_skipInterval_back),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(modifier = Modifier.height(12.dp))
             choices.forEach { seconds ->
                 IntervalRow(
-                    label = "${seconds}s",
+                    label = stringResource(CommonR.string.audiobook_skip_secondsShort, seconds),
                     selected = skipBackSeconds == seconds,
                     enabled = editable,
                     onClick = { onSkipBackSelected(seconds) },
@@ -101,14 +103,14 @@ fun AudiobookSkipIntervalSheet(
 
             Spacer(modifier = Modifier.height(20.dp))
             Text(
-                text = "Skip forward",
+                text = stringResource(CommonR.string.audiobook_skipInterval_forward),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(modifier = Modifier.height(12.dp))
             choices.forEach { seconds ->
                 IntervalRow(
-                    label = "${seconds}s",
+                    label = stringResource(CommonR.string.audiobook_skip_secondsShort, seconds),
                     selected = skipForwardSeconds == seconds,
                     enabled = editable,
                     onClick = { onSkipForwardSelected(seconds) },
@@ -149,7 +151,7 @@ private fun IntervalRow(
         if (selected) {
             Icon(
                 imageVector = Icons.Filled.Check,
-                contentDescription = "Selected",
+                contentDescription = stringResource(CommonR.string.player_menu_selected),
                 tint = MaterialTheme.colorScheme.onPrimaryContainer,
             )
         }

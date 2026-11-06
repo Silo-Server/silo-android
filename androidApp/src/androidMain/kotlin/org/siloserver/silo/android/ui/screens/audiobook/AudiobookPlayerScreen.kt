@@ -35,6 +35,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -43,6 +45,7 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import org.siloserver.silo.android.ui.util.rememberDominantColor
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.player.AudiobookPlayerViewModel
 import org.siloserver.silo.common.player.SiloPlaybackService
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -50,6 +53,8 @@ import org.siloserver.silo.android.ui.theme.SiloBackground
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.delay
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.player.errorText
+import org.siloserver.silo.common.player.skipIntervalErrorText
 
 /**
  * Dedicated audiobook player UI. Big square cover up top, then title /
@@ -258,7 +263,7 @@ fun AudiobookPlayerScreen(
                 ) {
                     Icon(
                         Icons.Filled.KeyboardArrowDown,
-                        contentDescription = "Minimize Player",
+                        contentDescription = stringResource(CommonR.string.audiobook_player_minimize),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -269,7 +274,7 @@ fun AudiobookPlayerScreen(
                 ) {
                     Icon(
                         Icons.Filled.Bookmark,
-                        contentDescription = "Bookmarks",
+                        contentDescription = stringResource(CommonR.string.audiobook_bookmarks_open),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -332,9 +337,11 @@ fun AudiobookPlayerScreen(
             var showSkipSheet by remember { mutableStateOf(false) }
             var showChaptersSheet by remember { mutableStateOf(false) }
             AudiobookSecondaryBar(
-                speedLabel = "${formatSpeed(state.playbackSpeed)}x",
-                sleepLabel = state.sleepTimerMinutesLeft?.let { "$it min" } ?: "Sleep",
-                skipLabel = "${state.skipBackSeconds}s",
+                speedLabel = stringResource(CommonR.string.audiobook_speed_value, formatSpeed(state.playbackSpeed)),
+                sleepLabel = state.sleepTimerMinutesLeft
+                    ?.let { pluralStringResource(CommonR.plurals.audiobook_sleepTimer_minutesShort, it, it) }
+                    ?: stringResource(CommonR.string.audiobook_sleepTimer_button),
+                skipLabel = stringResource(CommonR.string.audiobook_skip_secondsShort, state.skipBackSeconds),
                 onSpeedClick = { showSpeedSheet = true },
                 onSleepClick = { showSleepSheet = true },
                 onSkipClick = { showSkipSheet = true },
@@ -363,7 +370,7 @@ fun AudiobookPlayerScreen(
                     choices = state.skipIntervalChoices,
                     profileWide = state.skipIntervalsProfileWide,
                     editable = state.skipIntervalsEditable,
-                    errorMessage = state.skipIntervalError,
+                    errorMessage = state.skipIntervalErrorText(),
                 )
             }
             if (showSleepSheet) {
@@ -390,7 +397,7 @@ fun AudiobookPlayerScreen(
             state.overview?.takeIf { it.isNotBlank() }?.let { overview ->
                 Spacer(modifier = Modifier.height(28.dp))
                 Text(
-                    text = "About",
+                    text = stringResource(CommonR.string.audiobook_about_title),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -406,10 +413,10 @@ fun AudiobookPlayerScreen(
             // Loading / error states.
             if (state.isLoading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Loading audiobook…")
+                    Text(stringResource(CommonR.string.audiobook_player_loading))
                 }
             }
-            state.error?.let { err ->
+            state.errorText()?.let { err ->
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(text = err, color = MaterialTheme.colorScheme.error)
             }

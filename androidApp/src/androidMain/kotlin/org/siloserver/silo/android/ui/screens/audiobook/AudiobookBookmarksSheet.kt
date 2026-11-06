@@ -28,10 +28,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.util.formatClockTime
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.audiobook.AudiobookBookmark
 
 /**
@@ -57,7 +59,7 @@ fun AudiobookBookmarksSheet(
         Column(modifier = Modifier.padding(24.dp).fillMaxWidth()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "Bookmarks",
+                    text = stringResource(CommonR.string.audiobook_bookmarks_title),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
@@ -79,7 +81,7 @@ fun AudiobookBookmarksSheet(
                     )
                     Spacer(modifier = Modifier.padding(start = 6.dp))
                     Text(
-                        text = "Bookmark here",
+                        text = stringResource(CommonR.string.audiobook_bookmarks_add),
                         color = MaterialTheme.colorScheme.onPrimary,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
@@ -100,7 +102,7 @@ fun AudiobookBookmarksSheet(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "No bookmarks yet — tap \"Bookmark here\" to drop one.",
+                        text = stringResource(CommonR.string.audiobook_bookmarks_emptyTouch),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -168,7 +170,7 @@ private fun BookmarkRow(
         IconButton(onClick = onDelete) {
             Icon(
                 imageVector = Icons.Filled.Delete,
-                contentDescription = "Delete bookmark",
+                contentDescription = stringResource(CommonR.string.audiobook_bookmarks_delete),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

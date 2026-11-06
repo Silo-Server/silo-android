@@ -42,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -52,6 +53,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.player.videoViewportBounds
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
@@ -108,7 +111,7 @@ fun PlayerNextUpScreen(
                             modifier = Modifier.size(14.dp),
                         )
                         Text(
-                            text = "Shuffling $scope",
+                            text = stringResourceWithNames(CommonR.string.upNext_shuffling, scope),
                             color = Color.White.copy(alpha = 0.75f),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -118,12 +121,15 @@ fun PlayerNextUpScreen(
                     }
                 }
                 Text(
-                    text = when {
-                        nextEpisode == null -> "FINISHED"
-                        shuffle != null -> "UP NEXT AT RANDOM"
-                        videoEnded -> "PLAYING NEXT"
-                        else -> "UP NEXT"
-                    },
+                    // The heading is shown in capitals, as before.
+                    text = stringResource(
+                        when {
+                            nextEpisode == null -> CommonR.string.upNext_headingFinished
+                            shuffle != null -> CommonR.string.upNext_headingShuffle
+                            videoEnded -> CommonR.string.upNext_headingEnded
+                            else -> CommonR.string.upNext_heading
+                        },
+                    ).uppercase(),
                     color = Color.White.copy(alpha = 0.52f),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -145,7 +151,7 @@ fun PlayerNextUpScreen(
                     }
                     if (nextEpisode.isEpisode) {
                         Text(
-                            text = nextEpisode.label,
+                            text = nextEpisodeLabel(nextEpisode),
                             color = Color.White,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -155,7 +161,7 @@ fun PlayerNextUpScreen(
                     }
                     if (nextEpisode.runtimeMinutes > 0) {
                         Text(
-                            text = "${nextEpisode.runtimeMinutes} min",
+                            text = stringResource(CommonR.string.catalog_runtimeMinutes, nextEpisode.runtimeMinutes.toString()),
                             color = Color.White.copy(alpha = 0.62f),
                             fontSize = 13.sp,
                         )
@@ -173,7 +179,7 @@ fun PlayerNextUpScreen(
                         )
                     }
                 } else {
-                    Text("End of playback", color = Color.White, fontSize = 17.sp)
+                    Text(stringResource(CommonR.string.upNext_endOfPlayback), color = Color.White, fontSize = 17.sp)
                 }
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp, panelAlignment),
@@ -196,11 +202,11 @@ fun PlayerNextUpScreen(
                     }
                 }
                 shuffle?.message?.let { message ->
-                    Text(message, color = Color(0xFFFFB4AB), fontSize = 13.sp)
+                    Text(stringResource(message), color = Color(0xFFFFB4AB), fontSize = 13.sp)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Auto-play is ${if (autoPlayEnabled) "On" else "Off"}",
+                        text = stringResource(if (autoPlayEnabled) CommonR.string.upNext_autoPlayOn else CommonR.string.upNext_autoPlayOff),
                         color = Color.White.copy(alpha = 0.54f),
                         fontSize = 12.sp,
                         modifier = Modifier.clip(CircleShape).clickable(onClick = onToggleAutoPlay)
@@ -209,7 +215,7 @@ fun PlayerNextUpScreen(
                     if (shuffle != null) {
                         Text("·", color = Color.White.copy(alpha = 0.54f), fontSize = 12.sp)
                         Text(
-                            text = "Stop shuffling",
+                            text = stringResource(CommonR.string.upNext_stopShuffling),
                             color = Color.White.copy(alpha = 0.54f),
                             fontSize = 12.sp,
                             modifier = Modifier.clip(CircleShape).clickable(onClick = onStopShuffling)
@@ -218,7 +224,7 @@ fun PlayerNextUpScreen(
                     }
                 }
                 if (!compactTabletop && onDeckItems.isNotEmpty()) {
-                    Text("On Deck", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(CommonR.string.upNext_onDeck), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     val onDeckState = rememberLazyListState()
                     DeferImagePresentationWhileScrolling(onDeckState) {
                         LazyRow(state = onDeckState, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -301,7 +307,7 @@ private fun NextUpActionButtons(
                 modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Play Now")
+            Text(stringResource(CommonR.string.upNext_playNow))
         }
     }
     if (pickAnother != null) {
@@ -317,7 +323,7 @@ private fun NextUpActionButtons(
                 modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Pick Another", color = Color.White)
+            Text(stringResource(CommonR.string.upNext_pickAnother), color = Color.White)
         }
     }
     if (!videoEnded) {
@@ -325,7 +331,7 @@ private fun NextUpActionButtons(
             onClick = onKeepWatching,
             modifier = modifier,
         ) {
-            Text("Keep Watching", color = Color.White)
+            Text(stringResource(CommonR.string.upNext_keepWatching), color = Color.White)
         }
     }
     OutlinedButton(
@@ -338,7 +344,7 @@ private fun NextUpActionButtons(
             tint = Color.White,
             modifier = Modifier.size(18.dp),
         )
-        Text("Back", color = Color.White)
+        Text(stringResource(CommonR.string.common_back), color = Color.White)
     }
 }
 
@@ -392,7 +398,7 @@ private fun OnDeckCard(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        item.subtitle?.let { subtitle ->
+        (item.episodeLine?.let { onDeckEpisodeText(it) } ?: item.subtitle)?.let { subtitle ->
             Text(
                 text = subtitle,
                 color = Color.White.copy(alpha = 0.8f),
@@ -446,4 +452,18 @@ private fun CountdownRing(
             fontWeight = FontWeight.SemiBold,
         )
     }
+}
+
+/** "S2·E4 — Title" under an On Deck card's title. */
+@Composable
+private fun onDeckEpisodeText(line: PlayerViewModel.OnDeckEpisodeLine): String {
+    val code = stringResource(CommonR.string.upNext_episodeCode, line.season.toString(), line.episode.toString())
+    return code + (line.title?.let { " — $it" } ?: "")
+}
+
+/** "S2·E4 — Title", the next episode's line on the card. */
+@Composable
+private fun nextEpisodeLabel(episode: PlayerViewModel.NextEpisodeInfo): String {
+    val code = stringResource(CommonR.string.upNext_episodeCode, episode.seasonNumber.toString(), episode.episodeNumber.toString())
+    return code + (episode.title?.let { " — $it" } ?: "")
 }

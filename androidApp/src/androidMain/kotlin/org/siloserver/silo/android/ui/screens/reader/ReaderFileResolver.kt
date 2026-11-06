@@ -1,5 +1,9 @@
 package org.siloserver.silo.android.ui.screens.reader
 
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.runtime.Composable
+
 internal enum class ReaderRequestKind {
     File,
     Content,
@@ -30,9 +34,10 @@ internal fun readerRequestKind(url: String, serverUrl: String): ReaderRequestKin
     }
 }
 
+@Composable
 internal fun readerLoadErrorMessage(throwable: Throwable): String =
-    throwable.message?.takeIf { it.isNotBlank() }?.let { "Could not open book: $it" }
-        ?: "Could not open this book."
+    throwable.message?.takeIf { it.isNotBlank() }?.let { stringResource(CommonR.string.reader_error_openFailedDetail, it) }
+        ?: stringResource(CommonR.string.reader_error_openFailed)
 
 internal inline fun <T> readerLoadResult(block: () -> T): Result<T> =
     runCatching(block)

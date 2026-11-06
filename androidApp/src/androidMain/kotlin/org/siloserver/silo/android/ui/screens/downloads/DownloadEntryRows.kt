@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.downloads
 
+import androidx.compose.ui.platform.LocalConfiguration
 import org.siloserver.silo.android.ui.util.formatBytes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -36,11 +37,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.common.ui.components.SpoilerImage
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
@@ -100,11 +105,12 @@ internal fun downloadRowAction(item: DownloadItem): DownloadRowAction {
 internal fun downloadExternalOpenAvailable(item: DownloadItem): Boolean =
     item.isComplete && !item.localUri.isNullOrBlank()
 
+@Composable
 private fun downloadRowActionLabel(action: DownloadRowAction): String =
     when (action) {
-        DownloadRowAction.ReadInApp -> "Read"
-        DownloadRowAction.OpenInAppPlayer -> "Play"
-        DownloadRowAction.OpenExternally -> "Open"
+        DownloadRowAction.ReadInApp -> stringResource(CommonR.string.downloads_action_read)
+        DownloadRowAction.OpenInAppPlayer -> stringResource(CommonR.string.common_play)
+        DownloadRowAction.OpenExternally -> stringResource(CommonR.string.downloads_action_open)
         DownloadRowAction.None -> ""
     }
 
@@ -194,7 +200,9 @@ private fun SelectableEntryRow(
     ) {
         Icon(
             imageVector = if (selected) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
-            contentDescription = if (selected) "Selected" else "Not selected",
+            contentDescription = stringResource(
+                if (selected) CommonR.string.downloads_select_selected else CommonR.string.downloads_select_notSelected,
+            ),
             tint = if (selected) {
                 MaterialTheme.colorScheme.primary
             } else {
@@ -300,7 +308,13 @@ private fun SectionHeaderRow(
                 fontSize = 12.sp,
             )
             Text(
-                text = "${section.itemCount} item${if (section.itemCount == 1) "" else "s"} · ${formatBytes(section.totalBytesUsed)}",
+                text = pluralStringResource(
+                    CommonR.plurals.downloads_section_summary,
+                    section.itemCount,
+                    section.itemCount,
+                    formatBytes(section.totalBytesUsed),
+                    section.itemCount.toString(),
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -308,7 +322,7 @@ private fun SectionHeaderRow(
         IconButton(onClick = onDeleteSection, enabled = deleteEnabled) {
             Icon(
                 imageVector = Icons.Default.Delete,
-                contentDescription = "Delete all in ${section.displayName}",
+                contentDescription = stringResource(CommonR.string.downloads_section_deleteAll, section.displayName),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -389,6 +403,7 @@ private fun SingleRow(
                         status = item.status,
                         progress = item.progress,
                         isMissingLocal = item.isMissingLocal,
+                        labels = downloadStatusLabels(),
                     ),
                     style = MaterialTheme.typography.labelSmall,
                     color = if (isProblemStatus) {
@@ -425,7 +440,7 @@ private fun SingleRow(
                     }
                     if (showExternalAction) {
                         TextButton(onClick = onOpenExternalDownload) {
-                            Text("Open")
+                            Text(stringResource(CommonR.string.downloads_action_open))
                         }
                     }
                 }
@@ -434,7 +449,7 @@ private fun SingleRow(
         IconButton(onClick = onDeleteClick) {
             Icon(
                 imageVector = Icons.Default.Delete,
-                contentDescription = "Remove download",
+                contentDescription = stringResource(CommonR.string.downloads_entry_remove),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -462,8 +477,8 @@ private fun ExpandableAggregateRow(
     var expanded by remember(entry.id) { mutableStateOf(false) }
     Column(modifier = modifier.fillMaxWidth()) {
         AggregateRow(
-            title = entry.title,
-            subtitle = entry.subtitle ?: "",
+            title = downloadEntryTitle(entry),
+            subtitle = downloadEntrySubtitle(entry),
             totalBytesUsed = entry.totalBytesUsed,
             progress = entry.progress,
             isComplete = entry.isComplete,
@@ -490,6 +505,41 @@ private fun ExpandableAggregateRow(
             }
         }
     }
+}
+
+/** An aggregate row's title: "Season N", the series (or "Series" when no download named it), else the entry's own. */
+@Composable
+private fun downloadEntryTitle(entry: DownloadEntry): String = when (entry) {
+    is DownloadEntry.Season -> stringResource(CommonR.string.downloads_entry_season, entry.seasonNumber)
+    is DownloadEntry.Series -> entry.title.ifEmpty { stringResource(CommonR.string.downloads_entry_seriesFallback) }
+    else -> entry.title
+}
+
+/** An aggregate row's "N of M episodes" / "N of M books" progress line. */
+@Composable
+private fun downloadEntrySubtitle(entry: DownloadEntry): String = when (entry) {
+    is DownloadEntry.Season -> pluralStringResource(
+        CommonR.plurals.downloads_entry_episodesDone,
+        entry.episodes.size,
+        entry.episodes.size,
+        entry.completedCount,
+        entry.episodes.size.toString(),
+    )
+    is DownloadEntry.Series -> pluralStringResource(
+        CommonR.plurals.downloads_entry_episodesDone,
+        entry.totalEpisodes,
+        entry.totalEpisodes,
+        entry.completedEpisodes,
+        entry.totalEpisodes.toString(),
+    )
+    is DownloadEntry.Author -> pluralStringResource(
+        CommonR.plurals.downloads_entry_booksDone,
+        entry.books.size,
+        entry.books.size,
+        entry.completedCount,
+        entry.books.size.toString(),
+    )
+    is DownloadEntry.Single -> entry.subtitle.orEmpty()
 }
 
 /**
@@ -570,41 +620,75 @@ private fun AggregateRow(
                 } else {
                     Icons.AutoMirrored.Filled.KeyboardArrowRight
                 },
-                contentDescription = if (expanded) "Collapse" else "Expand",
+                contentDescription = stringResource(
+                    if (expanded) CommonR.string.downloads_entry_collapse else CommonR.string.downloads_entry_expand,
+                ),
                 tint = MaterialTheme.colorScheme.onSurface,
             )
         }
         IconButton(onClick = onDelete) {
             Icon(
                 imageVector = Icons.Default.Delete,
-                contentDescription = "Remove all under $title",
+                contentDescription = stringResource(CommonR.string.downloads_entry_removeAll, title),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
 }
 
+/** A download row's status wording; [downloadStatusLabels] gives the catalog's. */
+internal class DownloadStatusLabels(
+    val missingFile: String,
+    val preparing: String,
+    val queued: String,
+    val downloading: String,
+    /** "Downloading · 42%" from the percent already formatted, such as "42". */
+    val downloadingPercent: (String) -> String,
+    val ready: String,
+    val failed: String,
+    val cancelled: String,
+    val needsAttention: String,
+)
+
+@Composable
+internal fun downloadStatusLabels(): DownloadStatusLabels {
+    val resources = LocalResources.current
+    // Built once per configuration, not once per row recomposition.
+    return remember(LocalConfiguration.current) { DownloadStatusLabels(
+        missingFile = resources.getString(CommonR.string.downloads_status_missingFile),
+        preparing = resources.getString(CommonR.string.downloads_status_preparing),
+        queued = resources.getString(CommonR.string.downloads_status_queued),
+        downloading = resources.getString(CommonR.string.downloads_status_downloading),
+        downloadingPercent = { percent -> resources.getString(CommonR.string.downloads_status_downloadingPercent, percent) },
+        ready = resources.getString(CommonR.string.downloads_status_ready),
+        failed = resources.getString(CommonR.string.downloads_status_failed),
+        cancelled = resources.getString(CommonR.string.downloads_status_cancelled),
+        needsAttention = resources.getString(CommonR.string.downloads_status_needsAttention),
+    ) }
+}
+
 internal fun downloadStatusLabel(
     status: DownloadStatus,
     progress: Float,
     isMissingLocal: Boolean = false,
+    labels: DownloadStatusLabels,
 ): String =
     if (isMissingLocal) {
-        "Missing file"
+        labels.missingFile
     } else when (status) {
         // Early transcode lifecycle (issue #20): the server is building the
         // artifact, then it is ready to fetch — both read as "getting ready".
-        DownloadStatus.Preparing -> "Preparing…"
-        DownloadStatus.Ready -> "Queued"
-        DownloadStatus.Queued -> "Queued"
+        DownloadStatus.Preparing -> labels.preparing
+        DownloadStatus.Ready -> labels.queued
+        DownloadStatus.Queued -> labels.queued
         DownloadStatus.Downloading -> {
             val percent = (progress.coerceIn(0f, 1f) * 100).toInt()
-            if (percent > 0) "Downloading · $percent%" else "Downloading"
+            if (percent > 0) labels.downloadingPercent("$percent") else labels.downloading
         }
-        DownloadStatus.Completed -> "Ready"
-        DownloadStatus.Failed -> "Failed"
-        DownloadStatus.Cancelled -> "Cancelled"
-        DownloadStatus.Unknown -> "Needs attention"
+        DownloadStatus.Completed -> labels.ready
+        DownloadStatus.Failed -> labels.failed
+        DownloadStatus.Cancelled -> labels.cancelled
+        DownloadStatus.Unknown -> labels.needsAttention
     }
 
 private fun DownloadStatus.isProblemStatus(isMissingLocal: Boolean = false): Boolean =

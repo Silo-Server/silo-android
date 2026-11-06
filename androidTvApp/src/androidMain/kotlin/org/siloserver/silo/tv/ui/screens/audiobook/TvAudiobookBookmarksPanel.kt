@@ -40,6 +40,8 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.model.audiobook.AudiobookBookmark
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * TV audiobook Bookmarks overlay. Mirrors the phone's bookmarks sheet over the
@@ -60,13 +62,13 @@ fun TvAudiobookBookmarksPanel(
     val addFocus = remember { FocusRequester() }
 
     TvAudiobookOverlayScaffold(
-        title = "Bookmarks",
+        title = stringResource(CommonR.string.audiobook_bookmarks_title),
         initialFocus = addFocus,
         modifier = modifier,
         onAcquisitionFailed = onFocusAcquisitionFailed,
     ) {
         BookmarkActionRow(
-            label = "Bookmark here",
+            label = stringResource(CommonR.string.audiobook_bookmarks_add),
             focusRequester = addFocus,
             onSelect = onAddCurrent,
         )
@@ -75,14 +77,14 @@ fun TvAudiobookBookmarksPanel(
 
         if (bookmarks.isEmpty()) {
             Text(
-                text = "No bookmarks yet. Use \"Bookmark here\" to save your place.",
+                text = stringResource(CommonR.string.audiobook_bookmarks_emptyRemote),
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.White.copy(alpha = 0.6f),
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             )
         } else {
             Text(
-                text = "OK jumps · hold OK to delete",
+                text = stringResource(CommonR.string.audiobook_bookmarks_remoteHint),
                 style = MaterialTheme.typography.labelMedium,
                 color = Color.White.copy(alpha = 0.5f),
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
@@ -111,10 +113,11 @@ fun TvAudiobookBookmarksPanel(
     }
 }
 
+@Composable
 private fun bookmarkLabel(bookmark: AudiobookBookmark): String =
     bookmark.note?.takeIf { it.isNotBlank() }
         ?: bookmark.chapterTitle?.takeIf { it.isNotBlank() }
-        ?: "Bookmark"
+        ?: stringResource(CommonR.string.audiobook_bookmarks_fallbackLabel)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -142,7 +145,7 @@ private fun BookmarkActionRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "+  $label",
+            text = "+  $label", // i18n-ignore
             style = MaterialTheme.typography.bodyLarge,
             fontWeight = FontWeight.SemiBold,
             color = if (isFocused) Color.Black else Color.White,

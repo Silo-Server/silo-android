@@ -15,6 +15,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.URI
 import java.security.MessageDigest
+import org.siloserver.silo.common.R as CommonR
 
 /** Server marks a failed Kindle->EPUB conversion with this header on the raw
  *  fallback body, so the reader must not cache it as the converted format. */
@@ -106,7 +107,7 @@ internal suspend fun resolveReaderFile(
     val remote = readerRequestKind(url, serverUrl) == ReaderRequestKind.Remote
     suspend fun checkScope() {
         if (remote && (scope == null || !scope.isSameIdentityAs(tokenManager?.snapshotCurrentScope())))
-            throw IOException("The reader's account or profile changed")
+            throw IOException(context.getString(CommonR.string.reader_error_accountChanged))
     }
     checkScope()
     when (readerRequestKind(url, serverUrl)) {
@@ -148,7 +149,7 @@ internal suspend fun resolveReaderFile(
             // Kindle->EPUB conversion serves the raw original with this header on
             // failure. Never cache that body as the expected (EPUB) format.
             if (resp.header(EBOOK_CONVERSION_HEADER) == EBOOK_CONVERSION_FAILED) {
-                error("Server could not convert this book for in-app reading")
+                error(context.getString(CommonR.string.reader_error_conversionFailed))
             }
             val body = resp.body ?: error("Empty body fetching reader file")
             validateReaderDeclaredLength(body.contentLength())

@@ -63,6 +63,7 @@ class VideoPlaybackSessionCoordinator(
                     message = result.message,
                     diagnosticsCode = result.diagnosticsCode,
                     terminalReason = result.terminalReason,
+                    messageRes = result.messageRes,
                 )
             }
             is VideoPlaybackStartResult.ServerUnreachable -> {
