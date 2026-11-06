@@ -86,17 +86,25 @@ class AppLanguageStore(
     /**
      * An unsent choice. [profileWide] (the picker) saves the profile's value and
      * clears this device's; otherwise (system settings) this device's value.
-     * [tag] "" is Match device.
+     * [profileSaved] records that the profile's value already landed, so a retry
+     * only clears the device's and can't overwrite a newer choice made
+     * elsewhere. [tag] "" is Match device.
      */
-    private data class Pending(val profileWide: Boolean, val tag: String) {
-        fun encode() = (if (profileWide) PROFILE else DEVICE) + tag
+    private data class Pending(val profileWide: Boolean, val tag: String, val profileSaved: Boolean = false) {
+        fun encode() = when {
+            profileSaved -> PROFILE_SAVED
+            profileWide -> PROFILE
+            else -> DEVICE
+        } + tag
 
         companion object {
             const val PROFILE = "profile:"
+            const val PROFILE_SAVED = "profile-saved:"
             const val DEVICE = "device:"
 
             fun decode(raw: String?): Pending? = when {
                 raw == null -> null
+                raw.startsWith(PROFILE_SAVED) -> Pending(true, raw.removePrefix(PROFILE_SAVED), profileSaved = true)
                 raw.startsWith(PROFILE) -> Pending(true, raw.removePrefix(PROFILE))
                 raw.startsWith(DEVICE) -> Pending(false, raw.removePrefix(DEVICE))
                 else -> null
@@ -147,24 +155,30 @@ class AppLanguageStore(
             is ApiResult.NetworkError -> return
         }
         if (supported) flushPending(identity, authority)
-        var value: String? = null
-        if (supported) {
-            // A save that lands during the read makes the answer stale: read again.
-            for (attempt in 1..READ_ATTEMPTS) {
-                val readStartedAt = writes
-                value = when (val result = repository.getEffectiveValues(listOf(AppLanguage.KEY), authority = authority)) {
+        // A save that lands during the read makes the answer stale: read again.
+        // The check and the publish share the lock that save bookkeeping takes.
+        for (attempt in 1..READ_ATTEMPTS) {
+            val readStartedAt = writes
+            val value = if (!supported) {
+                null
+            } else {
+                when (val result = repository.getEffectiveValues(listOf(AppLanguage.KEY), authority = authority)) {
                     is ApiResult.Success ->
                         runCatching { result.data[AppLanguage.KEY]?.value?.jsonPrimitive?.contentOrNull }.getOrNull()
                     is ApiResult.Error, is ApiResult.NetworkError -> return
                 }
-                if (writes == readStartedAt) break
-                if (attempt == READ_ATTEMPTS) return
             }
+            val published = lock.withLock {
+                if (currentIdentity() != identity) return
+                if (writes != readStartedAt) return@withLock false
+                known = Known(identity, authority, supported, value)
+                // An older server can't hold a queued choice.
+                if (!supported && readPending(identity) != null) dropLocked(identity)
+                true
+            }
+            if (published) break
+            if (attempt == READ_ATTEMPTS) return
         }
-        if (currentIdentity() != identity) return
-        known = Known(identity, authority, supported, value)
-        // An older server can't hold a queued choice.
-        if (!supported) lock.withLock { if (readPending(identity) != null) dropLocked(identity) }
         reconcile()
     }
 
@@ -181,10 +195,12 @@ class AppLanguageStore(
      */
     fun choose(activity: Activity, tag: String?) {
         foreground = WeakReference(activity)
+        // The profile the picker was showing; a switch before this runs drops the pick.
+        val shownFor = known?.identity ?: return
         scope.launch {
             val chosen = tag.orEmpty()
             val identity = lock.withLock {
-                val identity = currentIdentity() ?: return@launch
+                val identity = currentIdentity()?.takeIf { it == shownFor } ?: return@launch
                 val decision = AppLocaleReconciler.choose(chosen, AppLocales.current(appContext), readLedger())
                 applyLocked(decision, identity, Pending(profileWide = true, tag = chosen))
                 publish(identity)
@@ -255,21 +271,37 @@ class AppLanguageStore(
             val raw = prefs.getString(PENDING_PREFIX + identity, null) ?: return
             val pending = Pending.decode(raw) ?: return
             val value = if (pending.tag.isEmpty()) JsonNull else JsonPrimitive(pending.tag)
+            var sent = raw
             val result = if (pending.profileWide) {
-                when (val saved = repository.setProfileValue(AppLanguage.KEY, value, authority)) {
-                    is ApiResult.Success -> repository.clearProfileDeviceValue(AppLanguage.KEY, authority)
-                    is ApiResult.Error -> saved
-                    is ApiResult.NetworkError -> saved
+                val saved = if (pending.profileSaved) {
+                    ApiResult.Success(Unit)
+                } else {
+                    when (val put = repository.setProfileValue(AppLanguage.KEY, value, authority)) {
+                        is ApiResult.Success -> {
+                            // Recorded, so a failed clear below retries only the clear.
+                            val next = pending.copy(profileSaved = true).encode()
+                            lock.withLock {
+                                if (prefs.getString(PENDING_PREFIX + identity, null) == raw) {
+                                    prefs.edit(commit = true) { putString(PENDING_PREFIX + identity, next) }
+                                    sent = next
+                                }
+                            }
+                            ApiResult.Success(Unit)
+                        }
+                        is ApiResult.Error -> put
+                        is ApiResult.NetworkError -> put
+                    }
                 }
+                if (saved is ApiResult.Success) repository.clearProfileDeviceValue(AppLanguage.KEY, authority) else saved
             } else {
                 repository.setProfileDeviceValue(AppLanguage.KEY, value, authority)
             }
             when (result) {
                 is ApiResult.Success -> {
-                    writes += 1
-                    known = known?.let { if (it.identity == identity) it.copy(value = pending.tag.ifEmpty { null }) else it }
                     lock.withLock {
-                        if (prefs.getString(PENDING_PREFIX + identity, null) == raw) {
+                        writes += 1
+                        known = known?.let { if (it.identity == identity) it.copy(value = pending.tag.ifEmpty { null }) else it }
+                        if (prefs.getString(PENDING_PREFIX + identity, null) == sent) {
                             prefs.edit(commit = true) { remove(PENDING_PREFIX + identity) }
                         }
                     }
@@ -283,7 +315,7 @@ class AppLanguageStore(
                 } else {
                     // Refused for good, unless a newer choice replaced it meanwhile.
                     lock.withLock {
-                        val unchanged = prefs.getString(PENDING_PREFIX + identity, null) == raw
+                        val unchanged = prefs.getString(PENDING_PREFIX + identity, null) == sent
                         if (unchanged) dropLocked(identity)
                         unchanged
                     }
