@@ -10,6 +10,7 @@ import org.siloserver.silo.model.subtitles.SubtitleAiJobsResponse
 import org.siloserver.silo.model.subtitles.SubtitleAiJobStatus
 import org.siloserver.silo.model.subtitles.SubtitleAiQuota
 import org.siloserver.silo.model.subtitles.SubtitleAiStatus
+import org.siloserver.silo.model.subtitles.SubtitleProviderStatus
 import org.siloserver.silo.model.subtitles.SubtitleDownloadRequest
 import org.siloserver.silo.model.subtitles.SubtitleDownloadResponse
 import org.siloserver.silo.model.subtitles.SubtitleSearchRequest
@@ -84,6 +85,8 @@ class SubtitlesRepository(
 
     override suspend fun resetTiming(mediaFileId: Int, key: String): ApiResult<SubtitleSyncState> =
         sync?.setTiming(mediaFileId, key, SubtitleTiming()) ?: syncUnavailable
+
+    suspend fun providerStatus(): ApiResult<SubtitleProviderStatus> = api.providerStatus()
 
     suspend fun aiStatus(): ApiResult<SubtitleAiStatus> = api.aiStatus()
 
