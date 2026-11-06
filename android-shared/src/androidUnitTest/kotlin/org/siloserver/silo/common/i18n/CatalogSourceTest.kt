@@ -148,16 +148,22 @@ class CatalogSourceTest {
             SiloLogAttribute.Text("route")
             Icon(Icons.Default.Close, contentDescription = "Close")
             Icon(Icons.Default.Close, contentDescription = null)
+            Modifier.semantics { contentDescription = "${'$'}label, ${'$'}{value.text}" }
+            Text("${'$'}{count} items")
         """.trimIndent()
-        assertEquals(listOf(1, 2, 5, 11), hardcodedText(source))
+        assertEquals(listOf(1, 2, 5, 11, 14), hardcodedText(source))
     }
 
     private fun names(xml: String): Set<String> =
         Regex("""<(?:string|plurals) name="([^"]+)"""").findAll(xml).map { it.groupValues[1] }.toSet()
 
-    /** 1-based lines that pass a literal with a letter to `Text(`, `text =` or `contentDescription =`. */
+    /**
+     * 1-based lines that pass a literal with a letter outside its templates to
+     * `Text(`, `text =` or `contentDescription =`.
+     */
     private fun hardcodedText(source: String): List<Int> =
         LITERAL.findAll(source)
+            .filter { match -> INTERPOLATION.replace(match.groupValues[1], "").any(Char::isLetter) }
             .map { match -> source.substring(0, match.range.first).count { it == '\n' } + 1 }
             .filter { line -> "// i18n-ignore" !in source.lines()[line - 1] }
             .distinct()
@@ -165,6 +171,10 @@ class CatalogSourceTest {
 
     private companion object {
         // `(?<![.\w])` skips qualified calls such as `SiloLogAttribute.Text("…")`, which are log fields.
-        val LITERAL = Regex("""(?:(?<![.\w])Text\(\s*|\b(?:text|contentDescription)\s*=\s*)"(?=[^"\n]*\p{L})""")
+        val LITERAL = Regex("""(?:(?<![.\w])Text\(\s*|\b(?:text|contentDescription)\s*=\s*)"([^"\n]*)""")
+
+        // `$name` and `${…}` templates. A literal whose letters all sit in them
+        // ("$label, $value") only joins text that was already translated.
+        val INTERPOLATION = Regex("""\$\{[^}]*\}|\$\w+""")
     }
 }
