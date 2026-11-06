@@ -1404,6 +1404,8 @@ class TvPlayerViewModel(
         val pendingSubtitleIdentity: SubtitleIdentity? = null,
         val subtitleApplying: Boolean = false,
         val subtitleFailureMessage: String? = null,
+        /** The catalog string for [subtitleFailureMessage] when a shared producer named one. */
+        val subtitleFailureRes: TvPlayerErrorRes? = null,
         /** Distinguishes two failures that happen to read the same. */
         val subtitleFailureId: Long = 0L,
         // Dialog visibility — owned here so HUD rows can request them and
@@ -3183,7 +3185,7 @@ class TvPlayerViewModel(
                                 messageRes = result.messageRes,
                             )
                         } else if (preserveCurrentPlaybackOnFailure) {
-                            failReplacementLoad(result.message)
+                            failReplacementLoad(result.message, result.messageRes)
                         } else {
                             fail(result.message, result.messageRes)
                         }
@@ -3239,8 +3241,8 @@ class TvPlayerViewModel(
      * A replacement load (a version switch) failed and the current version
      * keeps playing: the viewer's pick was refused.
      */
-    private fun failReplacementLoad(message: String) {
-        _uiState.update { failTvReplacementLoad(it, message) }
+    private fun failReplacementLoad(message: String, @StringRes messageRes: Int? = null) {
+        _uiState.update { failTvReplacementLoad(it, message, messageRes) }
         bufferingPicks.refused(lastVersionPick)
     }
 

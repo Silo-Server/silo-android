@@ -55,7 +55,7 @@ internal fun quotaLineText(quota: SubtitleAiQuota, resources: Resources): String
         resources.getQuantityString(
             CommonR.plurals.player_aiTranslate_quotaLeftWindow,
             quota.limit,
-            quota.remaining,
+            quota.remaining.toString(),
             quota.limit,
             window,
             quota.limit.toString(),

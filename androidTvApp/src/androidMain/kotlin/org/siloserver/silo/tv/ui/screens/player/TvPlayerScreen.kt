@@ -1484,7 +1484,10 @@ fun TvPlayerScreen(
     // they were equally silent.
     LaunchedEffect(state.subtitleFailureId) {
         val message = state.subtitleFailureMessage ?: return@LaunchedEffect
-        Toast.makeText(context, context.resources.tvPlayerMessage(message), Toast.LENGTH_SHORT).show()
+        // A catalog string a shared producer named, only while it still belongs to this message.
+        val text = state.subtitleFailureRes?.takeIf { it.message == message }?.let { context.getString(it.res) }
+            ?: context.resources.tvPlayerMessage(message)
+        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
         viewModel.onSubtitleFailureShown(state.subtitleFailureId)
     }
 
