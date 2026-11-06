@@ -34,21 +34,7 @@ internal fun TvDescriptionTranslationSection(
             enabled = false,
             modifier = modifier,
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
-                    strokeWidth = 2.dp,
-                    color = Color.White,
-                )
-                Text(
-                    text = "Translating description…",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = Color.White.copy(alpha = 0.75f),
-                )
-            }
+            TvTranslatingDescriptionLabel()
         }
         DescriptionTranslationPhase.Failed -> androidx.tv.material3.Button(
             onClick = onTranslate,
@@ -62,6 +48,31 @@ internal fun TvDescriptionTranslationSection(
         ) {
             Text("Translate description")
         }
+    }
+}
+
+/**
+ * Passive "Translating description…" progress. A series page shows it bare for
+ * the focused episode, whose season job runs on its own and offers no button,
+ * so it adds no D-pad stop.
+ */
+@Composable
+internal fun TvTranslatingDescriptionLabel(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(16.dp),
+            strokeWidth = 2.dp,
+            color = Color.White,
+        )
+        Text(
+            text = "Translating description…",
+            style = MaterialTheme.typography.labelLarge,
+            color = Color.White.copy(alpha = 0.75f),
+        )
     }
 }
 

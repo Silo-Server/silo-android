@@ -55,6 +55,41 @@ class DescriptionTranslationControllerTest {
         )
 
         assertEquals(DescriptionTranslationPhase.Failed, controller.phase.value)
+        assertEquals(null, controller.translatingContentId.value)
+        // The failed item stays named so it can offer a retry.
+        assertEquals("movie-1", controller.runningContentId.value)
+    }
+
+    @Test
+    fun aThrowingAuthorityCaptureDoesNotStrandTheTranslation() = runTest {
+        val api = object : MetadataAiApi {
+            override suspend fun status(): ApiResult<MetadataAiStatus> =
+                ApiResult.NetworkError(IllegalStateException("not used"))
+
+            override suspend fun translateDescription(
+                contentId: String,
+                targetLanguage: String,
+                scope: org.siloserver.silo.network.AuthScopeSnapshot?,
+            ): ApiResult<org.siloserver.silo.model.metadata.MetadataTranslationJob> =
+                ApiResult.NetworkError(IllegalStateException("not used"))
+
+            override suspend fun captureAuthority(): org.siloserver.silo.network.AuthScopeSnapshot? =
+                throw IllegalStateException("token store unavailable")
+        }
+        val controller = DescriptionTranslationController(
+            repository = MetadataAiRepository(api),
+            delayMs = { },
+        )
+
+        controller.translate(
+            contentId = "season-1",
+            targetLanguage = "nl",
+            refetchPendingLanguage = { null },
+            onTranslated = { },
+        )
+
+        assertEquals(DescriptionTranslationPhase.Failed, controller.phase.value)
+        assertEquals(null, controller.translatingContentId.value)
     }
 
     @Test
@@ -134,6 +169,7 @@ class DescriptionTranslationControllerTest {
         )
         var seenWhilePolling: String? = null
         var phaseWhilePolling: DescriptionTranslationPhase? = null
+        var translatingWhilePolling: String? = null
 
         assertEquals(null, controller.runningContentId.value)
         controller.translate(
@@ -142,6 +178,7 @@ class DescriptionTranslationControllerTest {
             refetchPendingLanguage = {
                 seenWhilePolling = controller.runningContentId.value
                 phaseWhilePolling = controller.phase.value
+                translatingWhilePolling = controller.translatingContentId.value
                 null
             },
             onTranslated = { },
@@ -150,6 +187,8 @@ class DescriptionTranslationControllerTest {
         assertEquals("movie-1", seenWhilePolling)
         assertEquals(DescriptionTranslationPhase.Translating, phaseWhilePolling)
         assertEquals(DescriptionTranslationPhase.Idle, controller.phase.value)
+        assertEquals("movie-1", translatingWhilePolling)
+        assertEquals(null, controller.translatingContentId.value)
     }
 
     @Test

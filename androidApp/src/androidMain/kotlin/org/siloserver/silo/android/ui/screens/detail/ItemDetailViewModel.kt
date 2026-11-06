@@ -257,6 +257,7 @@ class ItemDetailViewModel(
         repository = metadataAiRepository,
         delayMs = { kotlinx.coroutines.delay(it) },
     )
+    val translatingSeasonContentId: StateFlow<String?> = episodeTranslation.translatingContentId
 
     init {
         viewModelScope.launch {
