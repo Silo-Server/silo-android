@@ -62,6 +62,8 @@ object OverlayDataExtractor {
             studio = firstNonEmpty(item.studios),
             network = firstNonEmpty(item.networks),
             showStatus = item.showStatus,
+            availabilityHave = item.availability?.have,
+            availabilityTotal = item.availability?.total,
         )
     }
 
@@ -85,6 +87,8 @@ object OverlayDataExtractor {
             studio = firstNonEmpty(item.studios),
             network = firstNonEmpty(item.networks),
             showStatus = item.showStatus,
+            availabilityHave = item.availability?.have,
+            availabilityTotal = item.availability?.total,
         )
     }
 
@@ -105,6 +109,8 @@ object OverlayDataExtractor {
             studio = firstNonEmpty(detail.studios),
             network = firstNonEmpty(detail.networks),
             showStatus = detail.showStatus,
+            availabilityHave = detail.availability?.have,
+            availabilityTotal = detail.availability?.total,
         )
     }
 

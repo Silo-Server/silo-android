@@ -213,6 +213,24 @@ class OverlayDataExtractorTest {
     }
 
     @Test
+    fun browseItem_carriesAvailability() {
+        val item = json.decodeFromString(
+            BrowseItem.serializer(),
+            """
+                {
+                  "content_id": "series-1",
+                  "type": "series",
+                  "title": "Show",
+                  "availability": { "have": 2, "total": 3 }
+                }
+            """.trimIndent(),
+        )
+        val data = OverlayDataExtractor.fromBrowseItem(item)
+        assertEquals(2, data.availabilityHave)
+        assertEquals(3, data.availabilityTotal)
+    }
+
+    @Test
     fun fromSectionItem_routesSummaryAndMetadata() {
         val item = SectionItem(
             contentId = "section-1",
