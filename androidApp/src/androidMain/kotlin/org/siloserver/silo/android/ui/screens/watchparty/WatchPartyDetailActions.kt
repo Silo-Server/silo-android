@@ -24,6 +24,7 @@ import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.getStringWithNames
 import org.siloserver.silo.model.feature.WatchPartyExposure
 import org.siloserver.silo.model.watchtogether.AddSuggestionRequest
 import org.siloserver.silo.model.watchtogether.MemberRole
@@ -55,7 +56,7 @@ class DetailPartyMessage internal constructor(
     private val result: ApiResult<*>? = null,
 ) {
     fun text(context: Context): String {
-        val text = if (title == null) context.getString(message) else context.getString(message, title)
+        val text = if (title == null) context.getString(message) else context.getStringWithNames(message, title)
         return result?.let { watchPartyErrorMessage(it, text) } ?: text
     }
 }

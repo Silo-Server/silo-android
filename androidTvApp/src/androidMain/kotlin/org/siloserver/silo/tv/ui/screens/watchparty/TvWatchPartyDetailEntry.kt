@@ -21,6 +21,7 @@ import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.getStringWithNames
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.feature.WatchPartyExposure
 import org.siloserver.silo.model.watchtogether.MemberRole
@@ -243,7 +244,7 @@ private fun DetailStageRunner(
         if (staged != null && staged.roomId == request.roomId && staged.selectedContentId == request.item.contentId) {
             Toast.makeText(
                 context,
-                context.getString(CommonR.string.watchParty_toast_added, request.item.title),
+                context.getStringWithNames(CommonR.string.watchParty_toast_added, request.item.title),
                 Toast.LENGTH_SHORT,
             ).show()
             latestNavigate(WatchPartyDestination.Lobby(request.roomId))
@@ -275,7 +276,7 @@ private fun DetailSuggestRunner(entry: TvWatchPartyDetailEntry, request: TvDetai
         if (added != null) {
             Toast.makeText(
                 context,
-                context.getString(CommonR.string.watchParty_toast_suggested, request.item.title),
+                context.getStringWithNames(CommonR.string.watchParty_toast_suggested, request.item.title),
                 Toast.LENGTH_SHORT,
             ).show()
         }
@@ -314,7 +315,7 @@ private fun DetailSelectRunner(
                 context,
                 watchPartyErrorMessage(
                     result,
-                    context.getString(CommonR.string.watchParty_error_switchPartyTo, request.item.title),
+                    context.getStringWithNames(CommonR.string.watchParty_error_switchPartyTo, request.item.title),
                 ),
                 Toast.LENGTH_LONG,
             ).show()
