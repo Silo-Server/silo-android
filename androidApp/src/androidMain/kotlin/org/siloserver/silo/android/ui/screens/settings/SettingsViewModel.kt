@@ -46,15 +46,18 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.settings.SettingsSaveError
+import androidx.annotation.StringRes
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Subtitle display mode. [wire] is the `playback.subtitle_mode` enum member
  * the settings contract declares — the labels are display only.
  */
-enum class SubtitleMode(val label: String, val wire: String) {
-    OFF("Off", "off"),
-    AUTO("Auto", "auto"),
-    ALWAYS("Always", "always");
+enum class SubtitleMode(@StringRes val label: Int, val wire: String) {
+    OFF(CommonR.string.settingsManifest_playback_subtitle_mode_option_off, "off"),
+    AUTO(CommonR.string.settingsManifest_playback_subtitle_mode_option_auto, "auto"),
+    ALWAYS(CommonR.string.settings_subtitles_mode_always, "always");
 
     companion object {
         fun fromWire(value: String?): SubtitleMode =
@@ -168,7 +171,7 @@ data class SettingsUiState(
     /** Spoiler protection for unwatched episodes; toggles show only when supported. */
     val episodeSpoilers: EpisodeSpoilerState = EpisodeSpoilerState(),
     /** Why the last spoiler switch change wasn't saved. */
-    val episodeSpoilerSaveError: String? = null,
+    val episodeSpoilerSaveError: SettingsSaveError? = null,
 
     // Notifications (in-app). Section is hidden entirely unless the server
     // reports in-app notifications are enabled AND preferences load.

@@ -41,7 +41,8 @@ data class TvChangeAccountUiState(
     val groups: List<AccountServerGroup> = emptyList(),
     /** [groups] reflects the registry (until then it is only the empty default). */
     val loaded: Boolean = false,
-    val error: String? = null,
+    /** Switching to the chosen account failed (Roku's accounts.error.change). */
+    val changeFailed: Boolean = false,
     val navigation: TvChangeAccountNavigation? = null,
 )
 
@@ -140,7 +141,7 @@ class TvChangeAccountViewModel(
     }
 
     private fun navigate(navigation: TvChangeAccountNavigation) {
-        _uiState.update { it.copy(navigation = navigation, error = null) }
+        _uiState.update { it.copy(navigation = navigation, changeFailed = false) }
     }
 
     private fun change(block: suspend () -> Unit) {
@@ -165,11 +166,11 @@ class TvChangeAccountViewModel(
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            _uiState.update { it.copy(error = CHANGE_FAILED) }
+            _uiState.update { it.copy(changeFailed = true) }
             return false
         }
         if (!isActive(serverId, accountId)) {
-            _uiState.update { it.copy(error = CHANGE_FAILED) }
+            _uiState.update { it.copy(changeFailed = true) }
             return false
         }
         if (accountId != null) {
@@ -182,10 +183,5 @@ class TvChangeAccountViewModel(
             }
         }
         return true
-    }
-
-    private companion object {
-        // Roku's accounts.error.change.
-        const val CHANGE_FAILED = "Couldn't change to that account. Try again."
     }
 }

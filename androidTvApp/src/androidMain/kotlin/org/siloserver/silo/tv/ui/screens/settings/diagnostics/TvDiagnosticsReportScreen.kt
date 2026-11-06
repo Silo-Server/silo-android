@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -23,6 +24,11 @@ import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
 import org.siloserver.silo.common.diagnostics.DiagnosticsDestinationKind
 import org.siloserver.silo.common.diagnostics.DiagnosticsUploadDecision
+import org.siloserver.silo.common.diagnostics.diagnosticsReportStateLabel
+import org.siloserver.silo.common.diagnostics.diagnosticsSizeLabel
+import org.siloserver.silo.common.diagnostics.diagnosticsUploadNotice
+import org.siloserver.silo.common.diagnostics.diagnosticsUploadStatusLabel
+import org.siloserver.silo.common.R as CommonR
 
 @Composable
 fun TvDiagnosticsReportScreen(
@@ -36,30 +42,32 @@ fun TvDiagnosticsReportScreen(
     var uploading by remember { mutableStateOf(false) }
     var sentShortId by remember { mutableStateOf<String?>(null) }
     var sentState by remember { mutableStateOf("processing") }
-    var uploadNotice by remember { mutableStateOf<String?>(null) }
+    var uploadNotice by remember { mutableStateOf<DiagnosticsUploadDecision?>(null) }
     var uploadNoticeIsError by remember { mutableStateOf(true) }
     BackHandler(onBack = onBack)
-    TvDiagnosticsPage(title = "Report details") {
+    TvDiagnosticsPage(title = stringResource(CommonR.string.diagnostics_report_title)) {
         val shortId = sentShortId
         if (shortId != null) {
             // Successful sends delete the local report, so this renders before
             // the null-report fallback — otherwise success reads as data loss.
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text("Report sent", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-                TvReportLine("Reference ID", shortId)
-                TvReportLine("Processing state", sentState.replace('_', ' '))
+                Text(stringResource(CommonR.string.diagnostics_report_sent), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+                TvReportLine(stringResource(CommonR.string.diagnostics_report_referenceId), shortId)
+                TvReportLine(
+                    stringResource(CommonR.string.diagnostics_report_processingState),
+                    diagnosticsReportStateLabel(sentState),
+                )
                 Text(
-                    "The report was removed from this device after the destination accepted a copy. " +
-                        "Share the reference ID with Silo Diagnostics or your server admin.",
+                    stringResource(CommonR.string.diagnostics_report_sentBody),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                TvDiagnosticsAction(label = "Done", onClick = onBack)
+                TvDiagnosticsAction(label = stringResource(CommonR.string.common_done), onClick = onBack)
             }
         } else if (report == null) {
             if (uploading) {
-                Text("Sending report…")
+                Text(stringResource(CommonR.string.diagnostics_report_sending))
             } else {
-                Text("This report is no longer on this device.")
+                Text(stringResource(CommonR.string.diagnostics_report_gone))
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -68,24 +76,38 @@ fun TvDiagnosticsReportScreen(
                     Text(report.capturedAt, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 item {
-                    TvReportLine("Evidence", tvFormatBytes(report.evidenceBytes))
                     TvReportLine(
-                        "Destination",
+                        stringResource(CommonR.string.diagnostics_report_evidence),
+                        diagnosticsSizeLabel(report.evidenceBytes),
+                    )
+                    TvReportLine(
+                        stringResource(CommonR.string.diagnostics_row_destination),
                         if (report.destinationKind == DiagnosticsDestinationKind.HOSTED) {
-                            "Silo Diagnostics"
+                            stringResource(CommonR.string.diagnostics_destination_hosted)
                         } else {
                             report.destinationServerInstanceId
                         },
                     )
                     if (report.destinationKind == DiagnosticsDestinationKind.SELF_HOSTED) {
-                        TvReportLine("Captured profile", report.capturedProfileId ?: "Account scoped")
+                        TvReportLine(
+                            stringResource(CommonR.string.diagnostics_report_capturedProfile),
+                            report.capturedProfileId ?: stringResource(CommonR.string.diagnostics_report_accountScoped),
+                        )
                     }
-                    TvReportLine("Expires", tvFormatDate(report.expiresAtEpochMs))
-                    TvReportLine("Upload state", report.uploadStatus.name.lowercase().replace('_', ' '))
-                    report.uploadErrorCode?.let { TvReportLine("Last error", it) }
+                    TvReportLine(
+                        stringResource(CommonR.string.diagnostics_report_expires),
+                        tvFormatDate(report.expiresAtEpochMs),
+                    )
+                    TvReportLine(
+                        stringResource(CommonR.string.diagnostics_report_uploadState),
+                        diagnosticsUploadStatusLabel(report.uploadStatus),
+                    )
+                    report.uploadErrorCode?.let {
+                        TvReportLine(stringResource(CommonR.string.diagnostics_report_lastError), it)
+                    }
                 }
                 item {
-                    TvDiagnosticsSection("ARCHIVE ENTRIES") {
+                    TvDiagnosticsSection(stringResource(CommonR.string.diagnostics_report_archiveEntriesHeader)) {
                         report.archiveEntries.forEach { entry ->
                             Text(entry, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(vertical = 3.dp))
                         }
@@ -95,13 +117,13 @@ fun TvDiagnosticsReportScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         if (uploading) {
                             Text(
-                                "Sending report…",
+                                stringResource(CommonR.string.diagnostics_report_sending),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        uploadNotice?.let { notice ->
+                        uploadNotice?.let { decision ->
                             Text(
-                                notice,
+                                diagnosticsUploadNotice(decision),
                                 color = if (uploadNoticeIsError) {
                                     MaterialTheme.colorScheme.error
                                 } else {
@@ -111,7 +133,13 @@ fun TvDiagnosticsReportScreen(
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             TvDiagnosticsAction(
-                                label = if (uploading) "Sending…" else "Send",
+                                label = stringResource(
+                                    if (uploading) {
+                                        CommonR.string.settings_diagnostics_sending
+                                    } else {
+                                        CommonR.string.diagnostics_consent_confirm
+                                    },
+                                ),
                                 enabled = state.availability == DiagnosticsAvailabilityUi.AVAILABLE && !uploading,
                                 onClick = {
                                     uploading = true
@@ -125,11 +153,11 @@ fun TvDiagnosticsReportScreen(
                                             }
                                             is DiagnosticsUploadDecision.HostedProcessing -> {
                                                 uploadNoticeIsError = false
-                                                uploadNotice = tvUploadKeptMessage(decision)
+                                                uploadNotice = decision
                                             }
                                             else -> {
                                                 uploadNoticeIsError = true
-                                                uploadNotice = tvUploadKeptMessage(decision)
+                                                uploadNotice = decision
                                             }
                                         }
                                     }
@@ -137,7 +165,7 @@ fun TvDiagnosticsReportScreen(
                                 modifier = Modifier.weight(1f),
                             )
                             TvDiagnosticsAction(
-                                label = "Delete",
+                                label = stringResource(CommonR.string.diagnostics_erase_confirm),
                                 enabled = !uploading,
                                 onClick = { confirmDelete = true },
                                 modifier = Modifier.weight(1f),
@@ -150,14 +178,15 @@ fun TvDiagnosticsReportScreen(
     }
     if (confirmDelete && report != null) {
         TvDiagnosticsConfirmation(
-            title = "Delete this report?",
-            message = if (report.destinationKind == DiagnosticsDestinationKind.HOSTED) {
-                "The local evidence will be removed from this device. If this report was already submitted, " +
-                    "its copy in Silo Diagnostics will also be permanently deleted."
-            } else {
-                "The local evidence will be permanently removed from this device."
-            },
-            confirmLabel = "Delete",
+            title = stringResource(CommonR.string.diagnostics_report_deleteTitle),
+            message = stringResource(
+                if (report.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                    CommonR.string.diagnostics_report_deleteHostedBody
+                } else {
+                    CommonR.string.diagnostics_report_deleteLocalBody
+                },
+            ),
+            confirmLabel = stringResource(CommonR.string.diagnostics_erase_confirm),
             onConfirm = {
                 confirmDelete = false
                 viewModel.delete(report.id, onBack)
@@ -165,27 +194,6 @@ fun TvDiagnosticsReportScreen(
             onDismiss = { confirmDelete = false },
         )
     }
-}
-
-internal fun tvUploadKeptMessage(decision: DiagnosticsUploadDecision): String = when (decision) {
-    DiagnosticsUploadDecision.KeptUncertain -> "The server may have received this report. It has been kept on this device and will not be sent again."
-    is DiagnosticsUploadDecision.Uploaded -> "" // handled by the caller
-    is DiagnosticsUploadDecision.HostedProcessing ->
-        "Report ${decision.shortId} was accepted and is still processing. It will be checked again automatically."
-    DiagnosticsUploadDecision.KeptRetryable ->
-        "The upload didn't go through. The report stays on this device to try again later."
-    DiagnosticsUploadDecision.KeptIdentityChanged ->
-        "Sign-in changed during the upload. The report stays on this device."
-    DiagnosticsUploadDecision.KeptTooLarge ->
-        "This report is larger than the server accepts."
-    DiagnosticsUploadDecision.KeptServerUpdateRequired ->
-        "Your server needs an update to accept this report."
-    DiagnosticsUploadDecision.KeptUnavailable ->
-        "Diagnostics uploads aren't available right now. The report stays on this device."
-    DiagnosticsUploadDecision.KeptInvalid ->
-        "This report couldn't be read and can't be sent."
-    DiagnosticsUploadDecision.KeptConsentReviewRequired ->
-        "The server's consent notice changed. Review it and send again."
 }
 
 @Composable

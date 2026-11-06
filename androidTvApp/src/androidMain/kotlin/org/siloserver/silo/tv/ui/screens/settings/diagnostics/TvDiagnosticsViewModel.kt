@@ -1,10 +1,18 @@
 package org.siloserver.silo.tv.ui.screens.settings.diagnostics
 
+import androidx.annotation.StringRes
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
 import org.siloserver.silo.common.diagnostics.DiagnosticsConsentMode
 import org.siloserver.silo.common.diagnostics.DiagnosticsDestinationKind
 import org.siloserver.silo.common.diagnostics.DiagnosticsPrompt
 import org.siloserver.silo.common.diagnostics.DiagnosticsUiState
+import org.siloserver.silo.common.diagnostics.diagnosticsAvailabilityTitle
+import org.siloserver.silo.common.diagnostics.diagnosticsConsentTitle
+import org.siloserver.silo.common.diagnostics.diagnosticsReportTypeTitle
+import org.siloserver.silo.common.R as CommonR
 
 typealias TvDiagnosticsViewModel = org.siloserver.silo.common.diagnostics.DiagnosticsViewModel
 
@@ -51,14 +59,9 @@ fun tvDiagnosticsScreenModel(state: DiagnosticsUiState): TvDiagnosticsScreenMode
 // ---------------------------------------------------------------------------
 
 /** tvOS `DiagnosticsFeatureState.title` parity. */
-internal fun tvDiagnosticsStatusTitle(availability: DiagnosticsAvailabilityUi): String =
-    when (availability) {
-        DiagnosticsAvailabilityUi.AVAILABLE -> "Available"
-        DiagnosticsAvailabilityUi.DISABLED -> "Disabled by server"
-        DiagnosticsAvailabilityUi.STORAGE_UNAVAILABLE -> "Storage unavailable"
-        DiagnosticsAvailabilityUi.OFFLINE -> "Offline"
-        DiagnosticsAvailabilityUi.INELIGIBLE -> "Unavailable"
-    }
+@StringRes
+internal fun tvDiagnosticsStatusTitle(availability: DiagnosticsAvailabilityUi): Int =
+    diagnosticsAvailabilityTitle(availability)
 
 /** The two destinations, in the order the picker offers them. */
 internal val TvDiagnosticsDestinations: List<DiagnosticsDestinationKind> = listOf(
@@ -66,28 +69,32 @@ internal val TvDiagnosticsDestinations: List<DiagnosticsDestinationKind> = listO
     DiagnosticsDestinationKind.SELF_HOSTED,
 )
 
-internal fun tvDiagnosticsDestinationTitle(kind: DiagnosticsDestinationKind): String = when (kind) {
-    DiagnosticsDestinationKind.HOSTED -> "Silo Diagnostics"
-    DiagnosticsDestinationKind.SELF_HOSTED -> "This Silo server"
+@StringRes
+internal fun tvDiagnosticsDestinationTitle(kind: DiagnosticsDestinationKind): Int = when (kind) {
+    DiagnosticsDestinationKind.HOSTED -> CommonR.string.diagnostics_destination_hosted
+    DiagnosticsDestinationKind.SELF_HOSTED -> CommonR.string.diagnostics_destination_thisServer
 }
 
 /**
- * tvOS `model.destinationServerName`: the hosted collector is named outright,
- * a self-hosted destination reads as the connected server.
+ * tvOS `model.destinationServerName`: the connected server's name for a
+ * self-hosted destination, or null where the destination's title stands in
+ * (the hosted collector is named outright; an unnamed server must not render
+ * an empty value row).
  */
-internal fun tvDiagnosticsDestinationName(
+internal fun tvDiagnosticsDestinationServerName(
     kind: DiagnosticsDestinationKind,
     serverName: String,
-): String = when (kind) {
-    DiagnosticsDestinationKind.HOSTED -> "Silo Diagnostics"
-    DiagnosticsDestinationKind.SELF_HOSTED -> serverName.ifBlank { "This Silo server" }
+): String? = when (kind) {
+    DiagnosticsDestinationKind.HOSTED -> null
+    DiagnosticsDestinationKind.SELF_HOSTED -> serverName.ifBlank { null }
 }
 
-internal fun tvDiagnosticsConsentTitle(mode: DiagnosticsConsentMode): String = when (mode) {
-    DiagnosticsConsentMode.ASK -> "Ask"
-    DiagnosticsConsentMode.ALWAYS -> "Always"
-    DiagnosticsConsentMode.NEVER -> "Never"
-}
+@Composable
+internal fun tvDiagnosticsDestinationName(kind: DiagnosticsDestinationKind, serverName: String): String =
+    tvDiagnosticsDestinationServerName(kind, serverName) ?: stringResource(tvDiagnosticsDestinationTitle(kind))
+
+@StringRes
+internal fun tvDiagnosticsConsentTitle(mode: DiagnosticsConsentMode): Int = diagnosticsConsentTitle(mode)
 
 /**
  * "Always" only exists where the destination can accept an unattended upload.
@@ -113,33 +120,37 @@ internal fun tvDiagnosticsEffectiveConsent(
     }
 
 /** tvOS interpolates the count into the section header. */
-internal fun tvDiagnosticsPendingHeader(count: Int): String = "Pending Reports ($count)"
+@Composable
+internal fun tvDiagnosticsPendingHeader(count: Int): String =
+    stringResource(CommonR.string.diagnostics_section_pending, count)
 
 /**
  * tvOS `typeTitle(for:)` parity — the wire enum is not a label. Android carries
  * two extra cases (ANR, NATIVE_CRASH) that Apple folds into the same titles.
  */
+@StringRes
 internal fun tvDiagnosticsReportTypeTitle(
     type: org.siloserver.silo.model.diagnostics.DiagnosticsReportType,
-): String = when (type) {
-    org.siloserver.silo.model.diagnostics.DiagnosticsReportType.CRASH,
-    org.siloserver.silo.model.diagnostics.DiagnosticsReportType.NATIVE_CRASH,
-    -> "Crash"
-    org.siloserver.silo.model.diagnostics.DiagnosticsReportType.HANG,
-    org.siloserver.silo.model.diagnostics.DiagnosticsReportType.ANR,
-    -> "Not Responding"
-    org.siloserver.silo.model.diagnostics.DiagnosticsReportType.ABNORMAL_EXIT -> "Unclean Shutdown"
-    org.siloserver.silo.model.diagnostics.DiagnosticsReportType.MANUAL -> "Manual Report"
+): Int = diagnosticsReportTypeTitle(type)
+
+/**
+ * Whole days left before a pending report expires, rounded up; 0 once it has.
+ * tvOS "Expires <relative>" — whole days, because a TV is read from a sofa.
+ */
+internal fun tvDiagnosticsExpiryDays(expiresAtEpochMs: Long, nowEpochMs: Long): Int {
+    val remainingMs = expiresAtEpochMs - nowEpochMs
+    if (remainingMs <= 0L) return 0
+    return ((remainingMs + MILLIS_PER_DAY - 1) / MILLIS_PER_DAY).toInt()
 }
 
-/** tvOS "Expires <relative>" — whole days, because a TV is read from a sofa. */
+/** "Expires in 3 days", or "Expired". */
+@Composable
 internal fun tvDiagnosticsExpiryLabel(expiresAtEpochMs: Long, nowEpochMs: Long): String {
-    val remainingMs = expiresAtEpochMs - nowEpochMs
-    if (remainingMs <= 0L) return "Expired"
-    val days = ((remainingMs + MILLIS_PER_DAY - 1) / MILLIS_PER_DAY).toInt()
-    return when (days) {
-        1 -> "Expires in 1 day"
-        else -> "Expires in $days days"
+    val days = tvDiagnosticsExpiryDays(expiresAtEpochMs, nowEpochMs)
+    return if (days <= 0) {
+        stringResource(CommonR.string.diagnostics_report_expired)
+    } else {
+        pluralStringResource(CommonR.plurals.diagnostics_report_expiresIn, days, days)
     }
 }
 
