@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Debug builds only: the App language picker's own strings, so the switch
-     can be checked before the generated translation catalog ships Spanish.
-     Release builds ship English alone until then. -->
-<resources>
-    <string name="settings_app_language_title">Idioma de la app</string>
-    <string name="settings_app_language_match_device">Igual que el dispositivo</string>
-    <string name="settings_app_language_footer">El idioma de los menús y botones de Silo para este perfil, en todos sus dispositivos. Los idiomas de audio, subtítulos y metadatos son ajustes aparte.</string>
-</resources>

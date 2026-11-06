@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.multiplatform)
@@ -13,6 +15,14 @@ plugins {
 if (file("google-services.json").isFile) {
     apply(plugin = "com.google.gms.google-services")
 }
+
+// The languages this app ships: the ones the generated catalog has
+// translations for (scripts/sync-translations writes the list). Packaging only
+// those also keeps library translations (Media3, AppCompat) out of an app
+// whose own text is English, and keeps generateLocaleConfig to the same list.
+val siloLocaleFilters = Properties()
+    .apply { rootProject.file("android-shared/silo-locales.properties").reader().use(::load) }
+    .getProperty("phone").orEmpty().split(',').map(String::trim).filter(String::isNotEmpty)
 
 // How a build reaches a device: Google Play, an APK from a GitHub release, or a
 // local debug build. Validated so a typo can't reach the server as a header value.
@@ -213,6 +223,7 @@ android {
     // (Settings → Apps → Silo → Language). Reads res/resources.properties.
     androidResources {
         generateLocaleConfig = true
+        localeFilters += siloLocaleFilters
     }
     buildFeatures {
         compose = true
@@ -273,6 +284,12 @@ android {
         abi {
             enableSplit = true
         }
+        // Every shipped language stays in the base split: the app applies a
+        // profile's language itself, and before Android 13 nothing would
+        // download a language split the device's own languages didn't need.
+        language {
+            enableSplit = false
+        }
     }
     // Per-ABI APKs for sideload QA (one per arch + a universal). Matches
     // the device-matrix QA procedure in
@@ -321,6 +338,7 @@ android {
         // Without this, none of android-shared is examined.
         checkDependencies = true
         baseline = file("lint-baseline.xml")
+        lintConfig = rootProject.file("lint.xml")
         abortOnError = true
         fatal += setOf("NewApi", "InlinedApi")
         // Translations arrive per language and may lag English; a missing

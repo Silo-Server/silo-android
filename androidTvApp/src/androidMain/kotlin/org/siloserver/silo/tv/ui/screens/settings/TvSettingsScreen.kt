@@ -130,7 +130,6 @@ import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
 import org.siloserver.silo.model.settings.pointSize
 import org.siloserver.silo.tv.BuildConfig
-import org.siloserver.silo.tv.R
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvPrivacyPolicyDialog
 import org.siloserver.silo.common.ui.components.ProfileAvatarRef
@@ -1269,12 +1268,12 @@ private fun TvPlaybackSettingsPane(
                 // Intros. Hidden against a server without the setting.
                 if (state.bufferingQualityModeSupported) {
                     SettingsValueRow(
-                        label = stringResource(CommonR.string.settings_buffering_quality_title),
+                        label = stringResource(CommonR.string.settings_bufferingQuality_title),
                         value = stringResource(bufferingQualityModeLabel(state.bufferingQualityMode)),
                         onClick = { activePicker = PlaybackPicker.BufferingQualityMode },
                         focusRequester = bufferingQualityFocus,
                     )
-                    SettingsFooterText(text = stringResource(CommonR.string.settings_buffering_quality_description))
+                    SettingsFooterText(text = stringResource(CommonR.string.settings_bufferingQuality_description))
                 }
                 state.learnedLimit.shownIn(state.bufferingQualityMode)?.let { limit ->
                     // Leaves once the reset lands, so, as with a switch's "Use
@@ -1282,14 +1281,14 @@ private fun TvPlaybackSettingsPane(
                     // rather than lost.
                     SettingsValueRow(
                         label = learnedLimitLabel(limit),
-                        value = stringResource(CommonR.string.settings_learned_limit_reset),
+                        value = stringResource(CommonR.string.settings_learnedLimit_reset),
                         onClick = {
                             bufferingQualityFocus.requestFocus()
                             onResetLearnedLimit()
                         },
                     )
                     if (state.learnedLimitResetFailed) {
-                        SettingsFooterText(text = stringResource(CommonR.string.settings_learned_limit_reset_failed))
+                        SettingsFooterText(text = stringResource(CommonR.string.settings_learnedLimit_resetFailed))
                     }
                 }
                 SettingsValueRow(
@@ -1599,7 +1598,7 @@ private fun TvPlaybackSettingsPane(
                 state.bufferingQualityMode.wireValue,
             )
             TvSettingsPickerSheet(
-                title = stringResource(CommonR.string.settings_buffering_quality_title),
+                title = stringResource(CommonR.string.settings_bufferingQuality_title),
                 options = options,
                 selectedId = selectedId,
                 onSelect = { id ->
@@ -2323,9 +2322,9 @@ private enum class PlaybackPicker {
 /** The label each intro-skip mode is offered under. The copy is fixed by the contract. */
 @StringRes
 private fun introSkipModeLabel(mode: IntroSkipMode): Int = when (mode) {
-    IntroSkipMode.NEVER -> R.string.settings_intro_skip_never
-    IntroSkipMode.ASK -> R.string.settings_intro_skip_ask
-    IntroSkipMode.ALWAYS -> R.string.settings_intro_skip_always
+    IntroSkipMode.NEVER -> CommonR.string.settings_introSkip_never
+    IntroSkipMode.ASK -> CommonR.string.settings_introSkip_ask
+    IntroSkipMode.ALWAYS -> CommonR.string.settings_introSkip_always
 }
 
 private enum class SubtitlePicker {
@@ -3164,8 +3163,8 @@ private fun TvAppLanguageSettingsGroup(store: AppLanguageStore) {
     if (!state.supported) return
     val activity = LocalActivity.current ?: return
     var showPicker by remember { mutableStateOf(false) }
-    val title = stringResource(CommonR.string.settings_app_language_title)
-    val options = appLanguageOptions(stringResource(CommonR.string.settings_app_language_match_device), state)
+    val title = stringResource(CommonR.string.settings_control_appLanguage)
+    val options = appLanguageOptions(stringResource(CommonR.string.settings_appLanguage_matchDevice), state)
     val selectedId = state.choice.orEmpty()
     SettingsGroup(title = title) {
         SettingsValueRow(
@@ -3173,7 +3172,7 @@ private fun TvAppLanguageSettingsGroup(store: AppLanguageStore) {
             value = options.firstOrNull { it.id == selectedId }?.label.orEmpty(),
             onClick = { showPicker = true },
         )
-        SettingsFooterText(text = stringResource(CommonR.string.settings_app_language_footer))
+        SettingsFooterText(text = stringResource(CommonR.string.android_settings_appLanguageFooter))
     }
     if (showPicker) {
         TvSettingsPickerSheet(

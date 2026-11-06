@@ -5,7 +5,6 @@ import org.siloserver.silo.android.ui.components.SiloDialog
 import org.siloserver.silo.android.ui.components.SiloDialogActionStyle
 import org.siloserver.silo.android.ui.components.boldFormat
 import org.siloserver.silo.android.ui.components.downloadsSentence
-import org.siloserver.silo.android.R
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.animation.animateContentSize
@@ -75,6 +74,7 @@ import org.siloserver.silo.android.ui.components.marquee.MarqueeServerChip
 import org.siloserver.silo.android.ui.components.marquee.MarqueeStage
 import org.siloserver.silo.android.ui.components.marquee.MarqueeTextField
 import org.siloserver.silo.android.ui.components.marquee.MarqueeTopBarSpacer
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.marquee.marqueeShake
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeScene
@@ -160,31 +160,31 @@ fun LoginScreen(
     val announced = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
 
     state.replacePrompt?.let { prompt ->
-        val downloads = downloadsSentence(R.string.account_sign_out_downloads, prompt.downloads)
+        val downloads = downloadsSentence(CommonR.string.account_signOut_downloads, prompt.downloads)
         SiloDialog(
-            title = stringResource(R.string.login_replace_title, prompt.expiredUsername),
+            title = stringResource(CommonR.string.loginReplace_title, prompt.expiredUsername),
             // Back or a scrim tap mid-Replace must not pick "Keep both".
             onDismissRequest = { if (!state.isLoading) viewModel.onKeepExpired() },
             actions = listOf(
                 SiloDialogAction(
-                    stringResource(R.string.login_replace_confirm),
+                    stringResource(CommonR.string.loginReplace_confirm),
                     viewModel::onReplaceExpired,
                     SiloDialogActionStyle.Destructive,
                     enabled = !state.isLoading,
                 ),
                 SiloDialogAction(
-                    stringResource(R.string.login_replace_keep),
+                    stringResource(CommonR.string.loginReplace_keep),
                     viewModel::onKeepExpired,
                     enabled = !state.isLoading,
                 ),
             ),
         ) {
-            val body = boldFormat(stringResource(R.string.login_replace_body), prompt.newUsername, prompt.expiredUsername)
+            val body = boldFormat(stringResource(CommonR.string.loginReplace_body), prompt.newUsername, prompt.expiredUsername)
             Column {
                 Text(if (downloads == null) body else body + AnnotatedString(" $downloads"))
                 if (prompt.replaceFailed) {
                     MarqueeErrorText(
-                        stringResource(R.string.login_replace_failed, prompt.expiredUsername),
+                        stringResource(CommonR.string.loginReplace_failed, prompt.expiredUsername),
                         Modifier.padding(top = 8.dp).then(announced),
                     )
                 }

@@ -19,11 +19,11 @@ internal fun AppLanguageSettingsSection(store: AppLanguageStore) {
     val state by store.state.collectAsState()
     if (!state.supported) return
     val activity = LocalActivity.current ?: return
-    val title = stringResource(CommonR.string.settings_app_language_title)
-    val options = appLanguageOptions(stringResource(CommonR.string.settings_app_language_match_device), state)
+    val title = stringResource(CommonR.string.settings_control_appLanguage)
+    val options = appLanguageOptions(stringResource(CommonR.string.settings_appLanguage_matchDevice), state)
     val selected = options.firstOrNull { it.id == state.choice.orEmpty() } ?: options.first()
 
-    SettingsSection(title = title, footer = stringResource(CommonR.string.settings_app_language_footer)) {
+    SettingsSection(title = title, footer = stringResource(CommonR.string.android_settings_appLanguageFooter)) {
         SettingsDropdownRow(
             label = title,
             value = selected.label,

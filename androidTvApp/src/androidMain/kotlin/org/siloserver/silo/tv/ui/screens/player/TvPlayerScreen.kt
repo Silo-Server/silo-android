@@ -2710,9 +2710,9 @@ fun TvPlayerScreen(
 
         val bufferingPlayerNotice = when (bufferingNoticeKind) {
             BufferingQualityNotice.LOWERED ->
-                PlayerNotice(stringResource(R.string.buffering_quality_lowered), NoticeTone.Info)
+                PlayerNotice(stringResource(CommonR.string.bufferingQuality_lowered), NoticeTone.Info)
             BufferingQualityNotice.CANT_LOWER ->
-                PlayerNotice(stringResource(R.string.buffering_quality_cant_lower), NoticeTone.Info)
+                PlayerNotice(stringResource(CommonR.string.bufferingQuality_cantLower), NoticeTone.Info)
             null -> null
         }
         TvPlayerOverlays(
@@ -3340,7 +3340,7 @@ private fun TvQuickSubtitlePicker(
 ) {
     val checkedRow = presentation.rows.firstOrNull { row -> row.checked }
     val focusedRow = presentation.rows.firstOrNull { row -> row.focused }
-    val unsupportedFormat = stringResource(CommonR.string.subtitle_track_unsupported_format)
+    val unsupportedFormat = stringResource(CommonR.string.subtitle_trackUnsupportedFormat)
     val options = presentation.rows.map { row ->
         HudPickerOption(
             id = row.stableId,
@@ -4458,7 +4458,7 @@ private fun TvPlayerOverlays(
                 ) {
                     if (manualSkipTarget != null) {
                         TvMarkerSkipPill(
-                            label = stringResource(if (manualSkipTarget.kind == ManualMarkerKind.Recap) R.string.marker_skip_recap else R.string.marker_skip_credits),
+                            label = stringResource(if (manualSkipTarget.kind == ManualMarkerKind.Recap) CommonR.string.marker_skipRecap else CommonR.string.marker_skipCredits),
                             onSelect = onManualMarkerSelect,
                         )
                     }

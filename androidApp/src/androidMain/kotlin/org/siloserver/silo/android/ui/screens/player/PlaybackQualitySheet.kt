@@ -7,7 +7,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import org.siloserver.silo.android.R
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.PlaybackQualityOption
 import org.siloserver.silo.model.playback.activePlaybackQualityId
@@ -64,7 +64,7 @@ fun PlaybackQualitySheet(
             }
             Spacer(Modifier.height(8.dp))
             PlayerGroup {
-                val autoLimitedLabel = stringResource(R.string.buffering_quality_auto_limited)
+                val autoLimitedLabel = stringResource(CommonR.string.bufferingQuality_autoLimited)
                 options.forEachIndexed { index, option ->
                     PlayerCheckRow(
                         label = if (autoLimitedAfterBuffering && option.id == PLAYBACK_QUALITY_AUTO) {

@@ -1,3 +1,4 @@
+import java.util.Properties
 import com.android.build.api.variant.HasHostTestsBuilder
 import com.android.build.api.variant.HostTestBuilder
 
@@ -11,6 +12,11 @@ plugins {
     // run — first launches otherwise JIT the Home feed while the user browses.
     alias(libs.plugins.androidx.baselineprofile)
 }
+
+// The languages this app ships (see androidApp's build.gradle.kts).
+val siloLocaleFilters = Properties()
+    .apply { rootProject.file("android-shared/silo-locales.properties").reader().use(::load) }
+    .getProperty("tv").orEmpty().split(',').map(String::trim).filter(String::isNotEmpty)
 
 // See androidApp's build.gradle.kts for the channel rationale.
 val siloReleaseChannels = listOf("release", "sideload", "dev")
@@ -196,6 +202,7 @@ android {
     // (Settings → Apps → Silo → Language). Reads res/resources.properties.
     androidResources {
         generateLocaleConfig = true
+        localeFilters += siloLocaleFilters
     }
     buildFeatures {
         compose = true
@@ -252,6 +259,10 @@ android {
         abi {
             enableSplit = true
         }
+        // See androidApp's build.gradle.kts.
+        language {
+            enableSplit = false
+        }
     }
     splits {
         abi {
@@ -297,6 +308,7 @@ android {
         // Without this, none of android-shared is examined.
         checkDependencies = true
         baseline = file("lint-baseline.xml")
+        lintConfig = rootProject.file("lint.xml")
         abortOnError = true
         fatal += setOf("NewApi", "InlinedApi")
         // Translations arrive per language and may lag English; a missing

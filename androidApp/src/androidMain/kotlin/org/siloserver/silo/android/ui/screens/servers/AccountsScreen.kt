@@ -30,10 +30,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.marquee.MarqueeServerMark
 import org.siloserver.silo.common.ui.marquee.ServerBrandingLoader
 import org.siloserver.silo.common.ui.marquee.rememberSignInServer
-import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.components.SignOutConfirmDialog
 import org.siloserver.silo.android.ui.components.SiloDialog
 import org.siloserver.silo.android.ui.components.SiloDialogAction
@@ -80,7 +80,7 @@ fun AccountsScreen(
         onSwitched(destination)
     }
 
-    SettingsPageScaffold(title = stringResource(R.string.accounts_title), onBackClick = onBack) {
+    SettingsPageScaffold(title = stringResource(CommonR.string.accounts_title), onBackClick = onBack) {
         state.servers.forEach { server ->
             item(key = "server-${server.id}") {
                 Column {
@@ -95,14 +95,14 @@ fun AccountsScreen(
                         state.accountsOn(server.id).forEach { account ->
                             SettingsNavigationRow(
                                 label = account.displayName(),
-                                description = stringResource(R.string.account_sign_in_again).takeIf { account.needsSignIn },
+                                description = stringResource(CommonR.string.account_signInAgain).takeIf { account.needsSignIn },
                                 value = accountSummary(account, state.downloads[account.localAccountId]),
                                 onClick = { onOpenAccount(account.localAccountId) },
                                 enabled = !state.isWorking,
                             )
                         }
                         SettingsNavigationRow(
-                            label = stringResource(R.string.accounts_add_account, server.displayName),
+                            label = stringResource(CommonR.string.accounts_addAccountOnServer, server.displayName),
                             icon = Icons.Filled.Add,
                             onClick = { viewModel.onAddAccount(server.id) },
                             showChevron = false,
@@ -115,7 +115,7 @@ fun AccountsScreen(
         item(key = "add-server") {
             SettingsSectionCard {
                 SettingsNavigationRow(
-                    label = stringResource(R.string.accounts_add_server),
+                    label = stringResource(CommonR.string.accounts_addAServer),
                     icon = Icons.Filled.Add,
                     onClick = onAddServer,
                     showChevron = false,
@@ -140,21 +140,21 @@ fun AccountsScreen(
         val accounts = state.accountsOn(target.id)
         val total = accounts.mapNotNull { state.downloads[it.localAccountId] }
             .fold(DownloadSummary(0, 0L)) { sum, next -> DownloadSummary(sum.count + next.count, sum.totalBytes + next.totalBytes) }
-        val downloads = downloadsSentence(R.string.accounts_remove_downloads, total)
-        val body = boldFormat(stringResource(R.string.accounts_remove_body), target.displayName)
+        val downloads = downloadsSentence(CommonR.string.accounts_remove_downloads, total)
+        val body = boldFormat(stringResource(CommonR.string.accounts_remove_body), target.displayName)
         SiloDialog(
-            title = stringResource(R.string.accounts_remove_title, target.displayName),
+            title = stringResource(CommonR.string.accounts_remove_title, target.displayName),
             onDismissRequest = { removeTarget = null },
             actions = listOf(
                 SiloDialogAction(
-                    stringResource(R.string.accounts_remove_server),
+                    stringResource(CommonR.string.accounts_remove_server),
                     {
                         viewModel.onRemove(target.id)
                         removeTarget = null
                     },
                     SiloDialogActionStyle.Destructive,
                 ),
-                SiloDialogAction(stringResource(R.string.action_cancel), { removeTarget = null }),
+                SiloDialogAction(stringResource(CommonR.string.common_cancel), { removeTarget = null }),
             ),
         ) {
             Text(if (downloads == null) body else body + AnnotatedString(" $downloads"))
@@ -164,11 +164,11 @@ fun AccountsScreen(
     state.removeFailedServerId?.let { failedId ->
         val name = state.servers.firstOrNull { it.id == failedId }?.displayName.orEmpty()
         SiloDialog(
-            title = stringResource(R.string.accounts_remove_failed_title, name),
+            title = stringResource(CommonR.string.accounts_remove_failedTitle, name),
             onDismissRequest = viewModel::onRemoveFailureConsumed,
-            actions = listOf(SiloDialogAction(stringResource(R.string.action_done), viewModel::onRemoveFailureConsumed)),
+            actions = listOf(SiloDialogAction(stringResource(CommonR.string.common_done), viewModel::onRemoveFailureConsumed)),
         ) {
-            Text(stringResource(R.string.accounts_remove_failed_body))
+            Text(stringResource(CommonR.string.accounts_remove_failedBody))
         }
     }
 }
@@ -211,13 +211,13 @@ fun AccountDetailScreen(
     SettingsPageScaffold(title = account.displayName(), onBackClick = onBack) {
         item(key = "account") {
             SettingsSection(title = null) {
-                SettingsNavigationRow(label = stringResource(R.string.account_username), value = account.username ?: "—")
-                SettingsNavigationRow(label = stringResource(R.string.account_server), value = server?.displayName)
+                SettingsNavigationRow(label = stringResource(CommonR.string.account_username), value = account.username ?: "—")
+                SettingsNavigationRow(label = stringResource(CommonR.string.account_server), value = server?.displayName)
             }
         }
         if (account.cachedProfiles.isNotEmpty()) {
             item(key = "profiles") {
-                SettingsSection(title = stringResource(R.string.account_profiles)) {
+                SettingsSection(title = stringResource(CommonR.string.account_profiles)) {
                     account.cachedProfiles.forEach { profile -> SettingsNavigationRow(label = profile.name) }
                 }
             }
@@ -225,13 +225,13 @@ fun AccountDetailScreen(
         item(key = "downloads") {
             SettingsSection(title = null) {
                 SettingsNavigationRow(
-                    label = stringResource(R.string.account_downloads),
+                    label = stringResource(CommonR.string.account_downloads),
                     value = if (summary == null || summary.count <= 0) {
-                        stringResource(R.string.account_downloads_none)
+                        stringResource(CommonR.string.account_downloads_none)
                     } else {
                         stringResource(
-                            R.string.account_downloads_value,
-                            pluralStringResource(R.plurals.account_downloads_count, summary.count, summary.count),
+                            CommonR.string.account_downloads_value,
+                            pluralStringResource(CommonR.plurals.account_downloads_count, summary.count, summary.count),
                             formatBytes(summary.totalBytes),
                         )
                     },
@@ -240,9 +240,9 @@ fun AccountDetailScreen(
         }
         if (account.needsSignIn) {
             item(key = "sign-in-again") {
-                SettingsSection(title = null, footer = stringResource(R.string.account_needs_sign_in_footer)) {
+                SettingsSection(title = null, footer = stringResource(CommonR.string.account_needsSignInFooter)) {
                     SettingsNavigationRow(
-                        label = stringResource(R.string.account_sign_in_again),
+                        label = stringResource(CommonR.string.account_signInAgain),
                         onClick = { viewModel.onSignInAgain(account.localAccountId) },
                         enabled = !state.isWorking,
                     )
@@ -252,7 +252,7 @@ fun AccountDetailScreen(
         item(key = "sign-out") {
             SettingsSectionCard {
                 SettingsButtonRow(
-                    label = stringResource(R.string.account_sign_out),
+                    label = stringResource(CommonR.string.common_signOut),
                     onClick = { confirmSignOut = true },
                     enabled = !state.isWorking,
                 )
@@ -281,10 +281,10 @@ private fun AccountEntry.displayName(): String =
 private fun accountSummary(account: AccountEntry, downloads: DownloadSummary?): String? {
     val parts = listOfNotNull(
         account.cachedProfiles.size.takeIf { it > 0 }?.let {
-            pluralStringResource(R.plurals.account_profiles_count, it, it)
+            pluralStringResource(CommonR.plurals.account_profiles_count, it, it)
         },
         downloads?.count?.takeIf { it > 0 }?.let {
-            pluralStringResource(R.plurals.account_downloads_count, it, it)
+            pluralStringResource(CommonR.plurals.account_downloads_count, it, it)
         },
     )
     return parts.joinToString(" · ").ifEmpty { null }
@@ -346,10 +346,10 @@ private fun ServerHeader(
             )
         }
         TextButton(onClick = onRename, enabled = enabled) {
-            Text(stringResource(R.string.accounts_rename), color = SiloOnSurface)
+            Text(stringResource(CommonR.string.accounts_rename), color = SiloOnSurface)
         }
         TextButton(onClick = onRemove, enabled = enabled) {
-            Text(stringResource(R.string.accounts_remove_server), color = SiloDestructive)
+            Text(stringResource(CommonR.string.accounts_remove_server), color = SiloDestructive)
         }
     }
 }

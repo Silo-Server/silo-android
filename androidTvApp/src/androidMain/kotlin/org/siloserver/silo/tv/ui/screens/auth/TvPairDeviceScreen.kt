@@ -22,7 +22,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
-import org.siloserver.silo.tv.R
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.viewmodel.DevicePairingError
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -317,15 +317,15 @@ private fun DetailRow(label: String, value: String) {
 
 @Composable
 private fun DevicePairingError.message(): String = when (this) {
-    DevicePairingError.EnterCode -> stringResource(R.string.tv_pair_error_enter_code)
-    DevicePairingError.SignInFirst -> stringResource(R.string.tv_pair_error_sign_in_first)
-    DevicePairingError.NotFound -> stringResource(R.string.tv_pair_error_not_found)
-    is DevicePairingError.NotFoundOn -> stringResource(R.string.tv_pair_error_not_found_on, serverName)
-    DevicePairingError.Expired -> stringResource(R.string.tv_pair_error_expired)
-    DevicePairingError.AlreadySignedIn -> stringResource(R.string.tv_pair_error_already_signed_in)
-    DevicePairingError.Declined -> stringResource(R.string.tv_pair_error_declined)
-    DevicePairingError.Canceled -> stringResource(R.string.tv_pair_error_canceled)
-    DevicePairingError.Network -> stringResource(R.string.tv_pair_error_network)
-    DevicePairingError.ProviderUnavailable -> stringResource(R.string.tv_pair_error_provider_unavailable)
-    is DevicePairingError.Server -> message ?: stringResource(R.string.tv_pair_error_generic)
+    DevicePairingError.EnterCode -> stringResource(CommonR.string.tvPair_error_enterCode)
+    DevicePairingError.SignInFirst -> stringResource(CommonR.string.tvPair_error_signInFirst)
+    DevicePairingError.NotFound -> stringResource(CommonR.string.tvPair_error_notFound)
+    is DevicePairingError.NotFoundOn -> stringResource(CommonR.string.tvPair_error_notFoundOn, serverName)
+    DevicePairingError.Expired -> stringResource(CommonR.string.tvPair_error_expired)
+    DevicePairingError.AlreadySignedIn -> stringResource(CommonR.string.tvPair_error_alreadySignedIn)
+    DevicePairingError.Declined -> stringResource(CommonR.string.tvPair_error_declined)
+    DevicePairingError.Canceled -> stringResource(CommonR.string.tvPair_error_canceled)
+    DevicePairingError.Network -> stringResource(CommonR.string.tvPair_error_network)
+    DevicePairingError.ProviderUnavailable -> stringResource(CommonR.string.tvPair_error_providerUnavailable)
+    is DevicePairingError.Server -> message ?: stringResource(CommonR.string.tvPair_error_generic)
 }

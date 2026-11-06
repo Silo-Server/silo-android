@@ -24,7 +24,7 @@ internal fun TvConnectionSettingsGroup(state: ConnectionSpeedUiState, onTestSpee
     SettingsGroup(title = stringResource(R.string.settings_connection_title)) {
         if (state.skipped != null) {
             SettingsInfoRow(label = stringResource(R.string.settings_connection_speed), value = "")
-            SettingsFooterText(text = stringResource(R.string.settings_connection_skipped_metered))
+            SettingsFooterText(text = stringResource(R.string.settings_connection_skippedMetered))
         } else {
             // Stays enabled while a test runs, so focus never drops off it; a
             // second press is ignored.

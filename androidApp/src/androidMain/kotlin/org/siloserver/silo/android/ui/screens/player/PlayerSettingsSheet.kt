@@ -11,7 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import org.siloserver.silo.android.R
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.player.PlayerStatsSnapshot
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.common.settings.LetterboxExpansion
@@ -170,7 +170,7 @@ fun PlayerSettingsSheet(
                     PlayerSectionHeader("This session")
                     PlayerGroup {
                         PlayerValueRow(
-                            label = stringResource(R.string.settings_intro_skip_title),
+                            label = stringResource(CommonR.string.settings_introSkip_title),
                             value = introSkipLabel(introSkipMode),
                             onClick = { routeOrdinal = SettingsRoute.SkipIntros.ordinal },
                         )
@@ -244,9 +244,9 @@ fun PlayerSettingsSheet(
 
                 SettingsRoute.SkipIntros -> {
                     val labels = listOf(
-                        IntroSkipMode.NEVER to stringResource(R.string.settings_intro_skip_never),
-                        IntroSkipMode.ASK to stringResource(R.string.settings_intro_skip_ask),
-                        IntroSkipMode.ALWAYS to stringResource(R.string.settings_intro_skip_always),
+                        IntroSkipMode.NEVER to stringResource(CommonR.string.settings_introSkip_never),
+                        IntroSkipMode.ASK to stringResource(CommonR.string.settings_introSkip_ask),
+                        IntroSkipMode.ALWAYS to stringResource(CommonR.string.settings_introSkip_always),
                     )
                     ChoiceGroup(
                         options = labels,
@@ -332,9 +332,9 @@ private fun letterboxExpansionLabel(value: String): String = when (value) {
 
 @Composable
 private fun introSkipLabel(mode: IntroSkipMode): String = when (mode) {
-    IntroSkipMode.NEVER -> stringResource(R.string.settings_intro_skip_never)
-    IntroSkipMode.ASK -> stringResource(R.string.settings_intro_skip_ask)
-    IntroSkipMode.ALWAYS -> stringResource(R.string.settings_intro_skip_always)
+    IntroSkipMode.NEVER -> stringResource(CommonR.string.settings_introSkip_never)
+    IntroSkipMode.ASK -> stringResource(CommonR.string.settings_introSkip_ask)
+    IntroSkipMode.ALWAYS -> stringResource(CommonR.string.settings_introSkip_always)
 }
 
 private fun formatSleepTimerSubtitle(state: SleepTimerState): String = when (state) {

@@ -56,6 +56,7 @@ import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.discovery.DiscoveredServer
 import org.siloserver.silo.common.discovery.LanServerDiscovery
 import org.siloserver.silo.common.pairing.PairingAdvertisement
@@ -67,7 +68,6 @@ import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeScene
 import org.siloserver.silo.common.ui.marquee.ServerBranding
 import org.siloserver.silo.common.ui.marquee.SignInHandoff
-import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.components.TvHideStockImeOnDispose
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeBody
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButton
@@ -299,7 +299,7 @@ private fun PhoneFirst(
         accessory = { TvMarqueeStatusChip(rememberTvName(), icon = Icons.Outlined.Tv) },
         copy = {
             TvMarqueeStatusChip(
-                stringResource(R.string.tv_setup_phone_looking),
+                stringResource(CommonR.string.tvSetup_phoneLooking),
                 showsSpinner = true,
                 modifier = Modifier.padding(bottom = 18.dp),
             )

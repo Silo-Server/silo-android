@@ -122,7 +122,6 @@ import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.playback.SubtitleTimingActions
-import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.components.tvDialogSurface
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvFocusLog
@@ -568,7 +567,7 @@ internal fun TvPlayerHud(
                     HudTab.Stats -> HudPaneViewport { HudStatsPane(stats) }
                     HudTab.Video -> HudVideoPane(
                         videoQualities = if (autoQualityLimited) {
-                            val limitedAuto = stringResource(R.string.buffering_quality_auto_limited)
+                            val limitedAuto = stringResource(CommonR.string.bufferingQuality_autoLimited)
                             videoQualities.map { option ->
                                 if (option.id == PLAYBACK_QUALITY_AUTO) option.copy(label = limitedAuto) else option
                             }
@@ -1296,7 +1295,7 @@ private fun HudVideoPane(
                 // the same one-press shape as the rows around it, without
                 // a picker sheet over the picture. Settings has the list.
                 HudFocusedSettingRow(
-                    label = stringResource(R.string.settings_intro_skip_title),
+                    label = stringResource(CommonR.string.settings_introSkip_title),
                     value = stringResource(introSkipModeLabel(introSkipMode)),
                     enabled = enabled,
                     showsChevron = false,
@@ -1994,7 +1993,7 @@ private fun HudSubtitleTrackRow(
     val isFocused by interactionSource.collectIsFocusedAsState()
     val colors = hudRowColors(focused = isFocused, current = row.checked)
     val parts = remember(row.label) { tvSubtitleRowParts(row.label) }
-    val unsupportedFormat = stringResource(CommonR.string.subtitle_track_unsupported_format)
+    val unsupportedFormat = stringResource(CommonR.string.subtitle_trackUnsupportedFormat)
     // The AI kind leads so it survives the detail's ellipsis.
     val detail = listOfNotNull(
         parts.aiKind,
@@ -3016,9 +3015,9 @@ private fun formatTime(seconds: Double): String {
 /** The label each intro-skip mode is offered under; the copy is contract-fixed. */
 @StringRes
 private fun introSkipModeLabel(mode: IntroSkipMode): Int = when (mode) {
-    IntroSkipMode.NEVER -> R.string.settings_intro_skip_never
-    IntroSkipMode.ASK -> R.string.settings_intro_skip_ask
-    IntroSkipMode.ALWAYS -> R.string.settings_intro_skip_always
+    IntroSkipMode.NEVER -> CommonR.string.settings_introSkip_never
+    IntroSkipMode.ASK -> CommonR.string.settings_introSkip_ask
+    IntroSkipMode.ALWAYS -> CommonR.string.settings_introSkip_always
 }
 
 /** Declaration order, wrapping: never -> ask -> always -> never. */
