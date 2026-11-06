@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.player.NoticeTone
 import org.siloserver.silo.common.player.PlayerNotice
+import org.siloserver.silo.common.player.text
 import org.siloserver.silo.common.ui.components.rememberNoticeCountdownFill
 import org.siloserver.silo.domain.player.BufferingQualityController
 import org.siloserver.silo.domain.player.BufferingQualityPill
@@ -165,7 +166,7 @@ private fun TvNoticePill(notice: PlayerNotice) {
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = notice.message,
+                text = notice.text(),
                 color = Color.White,
                 fontSize = 18.sp,
                 lineHeight = 24.sp,

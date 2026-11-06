@@ -2,6 +2,7 @@
 
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsSeekEvent
 import org.siloserver.silo.common.player.AudioOutputPath
@@ -16,6 +17,7 @@ import org.siloserver.silo.common.player.SubDiag
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
 import org.siloserver.silo.common.player.canSwitchSubtitleInPlace
 import org.siloserver.silo.common.player.withInPlaceAdoption
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.tv.data.preferences.PlaybackQuality
@@ -78,7 +80,9 @@ import org.siloserver.silo.common.player.video.captureEpisodeSubtitleIntent
 import org.siloserver.silo.common.player.video.resolveAudioSelectionAcrossVersions
 import org.siloserver.silo.common.player.normalizedSubtitleCodecFamily
 import org.siloserver.silo.common.player.video.VideoPlayerUiState
+import org.siloserver.silo.common.player.video.SERVER_TERMINAL_FALLBACK_MESSAGE
 import org.siloserver.silo.common.player.video.serverTerminalUserMessage
+import org.siloserver.silo.common.player.video.terminalUserMessageRes
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.common.player.BufferingQualityPlayerAdapter
@@ -691,10 +695,120 @@ enum class VideoFillMode {
 }
 
 /** The in-player notice for an AI subtitle job that failed out of sight. */
-internal fun aiFailureNotice(message: String): String = "AI subtitles failed. $message"
+internal fun aiFailureNotice(message: String): String = TvPlayerErrors.AI_SUBTITLES_FAILED_PREFIX + message
+
+/**
+ * English of the errors and notices this player writes itself (this view
+ * model and [TvVideoPlaybackStarter]). State keeps the English, which the
+ * logs, the adb debug hook and source tests read; [res] and [prefixed] map it
+ * to the catalog when the screen shows it (see `tvPlayerMessageText`). Text
+ * from the server or the shared module has no entry and shows as it is.
+ */
+/** A catalog string for one exact [message] held in [TvPlayerViewModel.UiState.error]. */
+data class TvPlayerErrorRes(val message: String, @StringRes val res: Int)
+
+internal object TvPlayerErrors {
+    const val SERVER_UNREACHABLE = "Can't reach server — check your connection."
+    const val PLAYBACK_FAILED = "Playback failed. Please try again."
+    const val SEEK_FAILED = "Couldn't seek. Please try again."
+    const val RECOVERY_UNSUPPORTED = "This Silo server must be updated to support playback recovery."
+    const val STOPPED_RESPONDING = "Playback stopped responding. Press Back and try again."
+    const val SEEK_UNSUPPORTED = "This Silo server does not support reliable seeking."
+    const val SEEK_CHANGED_VERSION = "Seek recovery tried to change the selected media version."
+
+    // Written as literals at their `fail(...)` calls, which source tests pin.
+    const val NO_SESSION = "Playback start returned no session."
+    const val PUBLICATION_UNCONFIRMED = "Playback publication could not be confirmed."
+
+    // TvVideoPlaybackStarter.
+    const val METADATA_NEEDS_PROFILE = "Playback metadata needs an authenticated profile."
+    const val NO_VERSIONS = "No playable versions available"
+    const val WATCH_PARTY_VERSION_UNAVAILABLE = "The Watch Party's version of this title isn't available to this profile."
+    const val NO_PROFILE = "No active profile selected"
+    const val NOT_AUTHENTICATED = "Not authenticated"
+    const val VIEWER_CHANGED_BEFORE_ADMISSION = "The metadata viewer changed before playback admission."
+    const val SERVER_UPGRADE_MEDIA3 = "This Silo server must be updated to support the Media3 playback protocol."
+    const val VIEWER_CHANGED_AFTER_ADMISSION = "The metadata viewer changed after playback admission."
+    const val WATCH_PARTY_VERSION_MISMATCH = "The server offered a different version than the Watch Party's."
+    const val SUPERSEDED = "Playback start was superseded."
+    const val VIEWER_CHANGED_DURING_ADOPTION = "The metadata viewer changed during playback adoption."
+    const val LOAD_FAILED_PREFIX = "Failed to load content: "
+    const val NETWORK_PREFIX = "Network error: "
+    const val START_FAILED_PREFIX = "Failed to start playback: "
+    const val UNEXPECTED_PREFIX = "Unexpected error: "
+
+    // Notices (the remote-message toast).
+    const val AI_SUBTITLES_FAILED_PREFIX = "AI subtitles failed. "
+
+    // Subtitle search and AI subtitle state, shown by the subtitle dialogs.
+    const val SUBTITLE_SEARCH_FAILED = "Subtitle search failed"
+    const val SUBTITLE_DOWNLOAD_FAILED = "Subtitle download failed"
+    const val SUBTITLE_DOWNLOADED_NOT_REFRESHED = "Downloaded, but the subtitle list could not be refreshed."
+    const val SUBTITLE_SIGN_IN_REQUIRED = "Sign in before starting subtitle processing."
+    const val TRANSLATION_FAILED = "Translation failed"
+    const val TRANSLATED_NOT_REFRESHED = "Translated, but the subtitle list could not be refreshed."
+    const val PROCESSING_IN_BACKGROUND = "Processing in background"
+
+    @StringRes
+    fun res(english: String): Int? = when (english) {
+        SERVER_UNREACHABLE -> CommonR.string.player_error_serverUnreachable
+        PLAYBACK_FAILED -> CommonR.string.player_error_playbackFailed
+        SEEK_FAILED -> CommonR.string.player_error_seekFailed
+        RECOVERY_UNSUPPORTED -> CommonR.string.player_error_recoveryUnsupported
+        STOPPED_RESPONDING -> CommonR.string.player_error_stoppedResponding
+        SEEK_UNSUPPORTED -> CommonR.string.player_error_seekUnsupported
+        SEEK_CHANGED_VERSION -> CommonR.string.player_error_seekChangedVersion
+        NO_SESSION -> CommonR.string.player_error_noSession
+        PUBLICATION_UNCONFIRMED -> CommonR.string.player_error_publicationUnconfirmed
+        METADATA_NEEDS_PROFILE -> CommonR.string.player_error_metadataNeedsProfile
+        NO_VERSIONS -> CommonR.string.player_error_noVersions
+        WATCH_PARTY_VERSION_UNAVAILABLE -> CommonR.string.player_watchParty_versionUnavailable
+        NO_PROFILE -> CommonR.string.player_error_noProfile
+        NOT_AUTHENTICATED -> CommonR.string.player_error_notAuthenticated
+        VIEWER_CHANGED_BEFORE_ADMISSION -> CommonR.string.player_error_viewerChangedBeforeAdmission
+        SERVER_UPGRADE_MEDIA3 -> CommonR.string.player_error_serverUpgradeMedia3
+        VIEWER_CHANGED_AFTER_ADMISSION -> CommonR.string.player_error_viewerChangedAfterAdmission
+        WATCH_PARTY_VERSION_MISMATCH -> CommonR.string.player_watchParty_versionMismatch
+        SUPERSEDED -> CommonR.string.player_error_superseded
+        VIEWER_CHANGED_DURING_ADOPTION -> CommonR.string.player_error_viewerChangedDuringAdoption
+        TvPlayerViewModel.SHUFFLE_CONTINUE_FAILED -> CommonR.string.upNext_shuffleContinueFailed
+        TvPlayerViewModel.SHUFFLE_PICK_FAILED -> CommonR.string.upNext_pickAnotherFailed
+        TV_WATCH_PARTY_LAUNCH_REFUSAL -> CommonR.string.player_watchParty_launchRefusal
+        SUBTITLE_SEARCH_FAILED -> CommonR.string.player_subtitleTools_searchFailed
+        SUBTITLE_DOWNLOAD_FAILED -> CommonR.string.player_subtitleTools_downloadFailed
+        SUBTITLE_DOWNLOADED_NOT_REFRESHED -> CommonR.string.player_subtitleTools_downloadedNotRefreshed
+        SUBTITLE_SIGN_IN_REQUIRED -> CommonR.string.player_subtitleTools_signInRequired
+        TRANSLATION_FAILED -> CommonR.string.player_subtitleTools_translationFailed
+        TRANSLATED_NOT_REFRESHED -> CommonR.string.player_subtitleTools_translatedNotRefreshed
+        PROCESSING_IN_BACKGROUND -> CommonR.string.player_subtitleTools_processingInBackground
+        // The shared terminal fallback, for paths that keep only the English (a replacement-load toast).
+        SERVER_TERMINAL_FALLBACK_MESSAGE -> CommonR.string.player_error_playbackUnavailable
+        else -> null
+    }
+
+    /** A message built as a fixed prefix and a detail: the catalog id for it and the detail. */
+    fun prefixed(english: String): Pair<Int, String>? {
+        val prefix = PREFIXES.keys.firstOrNull { english.startsWith(it) } ?: return null
+        return PREFIXES.getValue(prefix) to english.removePrefix(prefix)
+    }
+
+    private val PREFIXES = mapOf(
+        LOAD_FAILED_PREFIX to CommonR.string.player_error_loadFailed,
+        NETWORK_PREFIX to CommonR.string.player_error_network,
+        START_FAILED_PREFIX to CommonR.string.player_error_startFailed,
+        UNEXPECTED_PREFIX to CommonR.string.player_error_unexpected,
+        AI_SUBTITLES_FAILED_PREFIX to CommonR.string.player_notice_aiSubtitlesFailed,
+    )
+}
 
 /** A transient remote "display_message"; [id] makes repeats re-trigger the toast. */
-data class RemoteMessage(val id: Long, val text: String, val durationMs: Long = 5_000L)
+data class RemoteMessage(
+    val id: Long,
+    val text: String,
+    val durationMs: Long = 5_000L,
+    /** When set, the toast shows this catalog string; [text] keeps the English. */
+    @StringRes val textRes: Int? = null,
+)
 
 /** The resolved next episode for auto-advance / "Up next". */
 data class NextEpisodeState(
@@ -859,8 +973,7 @@ class TvPlayerViewModel(
 
     companion object {
         private const val TAG = "TvPlayerViewModel"
-        const val SERVER_UNREACHABLE_MESSAGE =
-            "Can't reach server — check your connection."
+        const val SERVER_UNREACHABLE_MESSAGE = TvPlayerErrors.SERVER_UNREACHABLE
         // A transient network blip retries the same route this many times before
         // demoting to a server transcode (resets once playback progresses).
         private const val MAX_TRANSIENT_NETWORK_RETRIES = 1
@@ -868,8 +981,8 @@ class TvPlayerViewModel(
         private const val SERVER_CHECK_TIMEOUT_MS = 10_000L
         // Error screens say what happened in plain words; the request URL and
         // the library's exception text go to the log only.
-        private const val PLAYBACK_FAILED_MESSAGE = "Playback failed. Please try again."
-        private const val SEEK_FAILED_MESSAGE = "Couldn't seek. Please try again."
+        private const val PLAYBACK_FAILED_MESSAGE = TvPlayerErrors.PLAYBACK_FAILED
+        private const val SEEK_FAILED_MESSAGE = TvPlayerErrors.SEEK_FAILED
         private const val SEEK_SETTLE_DEADLINE_MS = 15_000L
         /** How long a Dolby Vision toggle may claim "Applying…" before the cue gives up. */
         private const val OUTPUT_SWITCH_FEEDBACK_TIMEOUT_MS = 20_000L
@@ -1173,6 +1286,8 @@ class TvPlayerViewModel(
     data class UiState(
         val isLoading: Boolean = true,
         val error: String? = null,
+        /** The catalog string a shared producer named for [error]; shown only while [error] still matches. */
+        val errorRes: TvPlayerErrorRes? = null,
         val contentId: String = "",
         /**
          * Distinct "Can't reach server" state (issue #33): when true, [error]
@@ -2052,6 +2167,7 @@ class TvPlayerViewModel(
                         if (current.error == null) {
                             current.copy(
                                 error = state.message,
+                                errorRes = state.messageRes?.let { TvPlayerErrorRes(state.message, it) },
                                 showNextUp = false,
                                 isNextUpTransitioning = false,
                             )
@@ -3064,11 +3180,12 @@ class TvPlayerViewModel(
                                 fileId = requestRoom.fileId,
                                 reason = refusalReason,
                                 message = result.message,
+                                messageRes = result.messageRes,
                             )
                         } else if (preserveCurrentPlaybackOnFailure) {
                             failReplacementLoad(result.message)
                         } else {
-                            fail(result.message)
+                            fail(result.message, result.messageRes)
                         }
                     }
                     is VideoPlayerUiState.ServerUnreachable -> {
@@ -3176,12 +3293,13 @@ class TvPlayerViewModel(
         )
     }
 
-    private fun fail(message: String) {
+    private fun fail(message: String, @StringRes messageRes: Int? = null) {
         nextUpTransitionGate.cancel()
         _uiState.update {
             it.copy(
                 isLoading = false,
                 error = message,
+                errorRes = messageRes?.let { res -> TvPlayerErrorRes(message, res) },
                 showNextUp = false,
                 isNextUpTransitioning = false,
             )
@@ -3526,6 +3644,7 @@ class TvPlayerViewModel(
                         }
                         val failedSessionId = state.sessionId ?: return@launch
                         val terminalMessage = serverTerminalUserMessage(decision.message)
+                        val terminalMessageRes = terminalUserMessageRes(decision)
                         cancelPendingCatalogSubtitle()
                         val terminalStillCurrent = sessionLifecycle.stopTerminalSessionIfCurrent(
                             expectedSessionId = failedSessionId,
@@ -3544,6 +3663,9 @@ class TvPlayerViewModel(
                                 // In a Watch Party the room decides first
                                 // whether everyone moves to another source.
                                 error = terminalMessage.takeIf { refusalContext == null },
+                                errorRes = terminalMessageRes
+                                    ?.takeIf { refusalContext == null }
+                                    ?.let { res -> TvPlayerErrorRes(terminalMessage, res) },
                                 isLoading = refusalContext != null,
                                 isBuffering = false,
                                 isPlaying = false,
@@ -3561,6 +3683,7 @@ class TvPlayerViewModel(
                                 fileId = fileId,
                                 reason = decision.reason,
                                 message = terminalMessage,
+                                messageRes = terminalMessageRes,
                             )
                         }
                     }
@@ -3572,7 +3695,7 @@ class TvPlayerViewModel(
                         }
                         _uiState.update {
                             it.copy(
-                                error = "This Silo server must be updated to support playback recovery.",
+                                error = TvPlayerErrors.RECOVERY_UNSUPPORTED,
                                 isLoading = false,
                                 isBuffering = false,
                             )
@@ -4160,7 +4283,7 @@ class TvPlayerViewModel(
     fun onPlaybackRecoveryExhausted() {
         _uiState.update {
             if (it.error != null) it else it.copy(
-                error = "Playback stopped responding. Press Back and try again.",
+                error = TvPlayerErrors.STOPPED_RESPONDING,
             )
         }
     }
@@ -4489,7 +4612,7 @@ class TvPlayerViewModel(
                             )
                             VideoSessionStartV3.ServerUpgradeRequired -> handleSeekRecoveryFailure(
                                 request,
-                                "This Silo server does not support reliable seeking.",
+                                TvPlayerErrors.SEEK_UNSUPPORTED,
                             )
                         }
                     }
@@ -4498,7 +4621,7 @@ class TvPlayerViewModel(
                         if (result.error == "seek_reanchor_not_supported") {
                             handleSeekRecoveryFailure(
                                 request,
-                                "This Silo server does not support reliable seeking.",
+                                TvPlayerErrors.SEEK_UNSUPPORTED,
                             )
                         } else {
                             performPinnedSeekFailureRecovery(
@@ -4562,14 +4685,14 @@ class TvPlayerViewModel(
                     }
                     VideoSessionStartV3.ServerUpgradeRequired -> handleSeekRecoveryFailure(
                         request,
-                        "This Silo server does not support reliable seeking.",
+                        TvPlayerErrors.SEEK_UNSUPPORTED,
                     )
                 }
             }
             is ApiResult.Error -> {
                 if (!isCurrentSeekRecovery(request)) return
                 val message = if (result.error == "seek_reanchor_not_supported") {
-                    "This Silo server does not support reliable seeking."
+                    TvPlayerErrors.SEEK_UNSUPPORTED
                 } else {
                     SEEK_FAILED_MESSAGE.also { Log.w(TAG, "Seek recovery failed: ${result.message}") }
                 }
@@ -4596,7 +4719,7 @@ class TvPlayerViewModel(
         if (actualFileId != expectedFileId) {
             handleSeekRecoveryFailure(
                 request,
-                "Seek recovery tried to change the selected media version.",
+                TvPlayerErrors.SEEK_CHANGED_VERSION,
             )
             return
         }
@@ -4915,19 +5038,19 @@ class TvPlayerViewModel(
                 if (roomContext?.selectionRevision == refusal.context.selectionRevision &&
                     _uiState.value.streamUrl == null && _uiState.value.error == null
                 ) {
-                    fail(refusal.message)
+                    fail(refusal.message, refusal.messageRes)
                 }
             }
             return
         }
         if (roomContext?.selectionRevision != refusal.context.selectionRevision) return
-        fail(refusal.message)
+        fail(refusal.message, refusal.messageRes)
     }
 
     /** A short in-player message (Watch Party notices share the remote-message toast). */
-    fun showPlayerMessage(text: String, durationMs: Long = 5_000L) {
+    fun showPlayerMessage(text: String, durationMs: Long = 5_000L, @StringRes textRes: Int? = null) {
         if (text.isBlank()) return
-        _remoteMessage.value = RemoteMessage(++remoteMessageCounter, text, durationMs)
+        _remoteMessage.value = RemoteMessage(++remoteMessageCounter, text, durationMs, textRes)
     }
 
     private fun roomSeekPending(state: UiState): Boolean =
@@ -6846,7 +6969,7 @@ class TvPlayerViewModel(
                 // No capability probe exists — "no providers configured" arrives
                 // here as a plain server error; surface its text verbatim.
                 is ApiResult.Error, is ApiResult.NetworkError -> _subtitleSearch.update {
-                    it.copy(isSearching = false, error = r.errorMessage("Subtitle search failed"))
+                    it.copy(isSearching = false, error = r.errorMessage(TvPlayerErrors.SUBTITLE_SEARCH_FAILED))
                 }
             }
         }
@@ -6890,13 +7013,13 @@ class TvPlayerViewModel(
                             // back — say so rather than closing as a success.
                             it.copy(
                                 downloadingResultId = null,
-                                error = "Downloaded, but the subtitle list could not be refreshed.",
+                                error = TvPlayerErrors.SUBTITLE_DOWNLOADED_NOT_REFRESHED,
                             )
                         }
                     }
                 }
                 is ApiResult.Error, is ApiResult.NetworkError -> _subtitleSearch.update {
-                    it.copy(downloadingResultId = null, error = r.errorMessage("Subtitle download failed"))
+                    it.copy(downloadingResultId = null, error = r.errorMessage(TvPlayerErrors.SUBTITLE_DOWNLOAD_FAILED))
                 }
             }
         }
@@ -7113,7 +7236,7 @@ class TvPlayerViewModel(
         aiJobPollJob?.cancel()
         aiJobPollJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             val owner = subtitlesRepository.captureJobAuthority() ?: run {
-                _aiTranslate.update { it.copy(phase = AiJobPhase.Failed("Sign in before starting subtitle processing.")) }
+                _aiTranslate.update { it.copy(phase = AiJobPhase.Failed(TvPlayerErrors.SUBTITLE_SIGN_IN_REQUIRED)) }
                 return@launch
             }
             fun samePlayback() = generation == contentLoadGeneration && _uiState.value.mediaFileId == mediaFileId && _uiState.value.sessionId == state.sessionId
@@ -7135,20 +7258,20 @@ class TvPlayerViewModel(
             if (!ownsRequest()) return@launch
             val job = when (r) {
                 is ApiResult.Success -> r.data.job.let { job ->
-                    if (!r.data.liveDeliveryAttached && job.progressMessage.isBlank()) job.copy(progressMessage = "Processing in background") else job
+                    if (!r.data.liveDeliveryAttached && job.progressMessage.isBlank()) job.copy(progressMessage = TvPlayerErrors.PROCESSING_IN_BACKGROUND) else job
                 }
                 is ApiResult.Error -> {
                     // 429 = quota exhausted → refresh quota so the dialog
                     // flips to the exhausted state; 503 = engine unconfigured.
                     if (r.code == 429) refreshAiQuota()
                     _aiTranslate.update {
-                        it.copy(phase = AiJobPhase.Failed(r.errorMessage("Translation failed")))
+                        it.copy(phase = AiJobPhase.Failed(r.errorMessage(TvPlayerErrors.TRANSLATION_FAILED)))
                     }
                     return@launch
                 }
                 is ApiResult.NetworkError -> {
                     _aiTranslate.update {
-                        it.copy(phase = AiJobPhase.Failed(r.errorMessage("Translation failed")))
+                        it.copy(phase = AiJobPhase.Failed(r.errorMessage(TvPlayerErrors.TRANSLATION_FAILED)))
                     }
                     return@launch
                 }
@@ -7187,14 +7310,14 @@ class TvPlayerViewModel(
                         } else {
                             it.copy(
                                 phase = AiJobPhase.Failed(
-                                    "Translated, but the subtitle list could not be refreshed.",
+                                    TvPlayerErrors.TRANSLATED_NOT_REFRESHED,
                                 ),
                             )
                         }
                     }
                 }
                 is SubtitlesRepository.SubtitleJobOutcome.Failed -> {
-                    val message = outcome.message ?: "Translation failed"
+                    val message = outcome.message ?: TvPlayerErrors.TRANSLATION_FAILED
                     _aiTranslate.update { it.copy(phase = AiJobPhase.Failed(message)) }
                     // The dialog may have been closed while the job ran; a reason
                     // is a full sentence, so it stays up long enough to read on a TV.

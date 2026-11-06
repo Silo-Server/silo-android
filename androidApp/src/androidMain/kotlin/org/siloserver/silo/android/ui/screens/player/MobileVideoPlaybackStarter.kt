@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.settings.reconcileStart
 import org.siloserver.silo.common.settings.audioResetToAutoPending
 import android.util.Log
@@ -18,7 +19,9 @@ import org.siloserver.silo.common.player.video.VideoPlaybackStartResult
 import org.siloserver.silo.common.player.video.VideoPlaybackStarter
 import org.siloserver.silo.common.player.video.PlaybackDiagnosticsCode
 import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
+import org.siloserver.silo.common.player.video.SERVER_TERMINAL_FALLBACK_MESSAGE
 import org.siloserver.silo.common.player.video.serverTerminalUserMessage
+import org.siloserver.silo.common.player.video.terminalUserMessageRes
 import org.siloserver.silo.common.player.video.shouldReachServerForPlayback
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
@@ -174,7 +177,7 @@ internal class MobileVideoPlaybackStarter(
             return VideoPlaybackStartResult.ServerUnreachable(request.contentId)
         }
         val expectedMetadataOwner = catalogRepository.captureWatchAuthority()
-            ?: return failure(request.contentId, "identity_unavailable: Playback metadata needs an authenticated profile.", diagnosticsCode = PlaybackDiagnosticsCode.NOT_AUTHENTICATED)
+            ?: return failure(request.contentId, MobilePlayerStartErrors.IDENTITY_UNAVAILABLE + MobilePlayerStartErrors.METADATA_NEEDS_PROFILE, diagnosticsCode = PlaybackDiagnosticsCode.NOT_AUTHENTICATED)
         suspend fun ownerCurrent(): Boolean {
             val valid = catalogRepository.isWatchAuthorityCurrent(expectedMetadataOwner)
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
@@ -201,12 +204,12 @@ internal class MobileVideoPlaybackStarter(
                 }
                 is ApiResult.Error -> return failure(
                     request.contentId,
-                    "Failed to load content: ${r.message}",
+                    MobilePlayerStartErrors.LOAD_FAILED_PREFIX + r.message,
                     diagnosticsCode = PlaybackDiagnosticsCode.CATALOG,
                 )
                 is ApiResult.NetworkError -> return failure(
                     request.contentId,
-                    "Network error: ${r.exception.message}",
+                    MobilePlayerStartErrors.NETWORK_PREFIX + r.exception.message,
                     r.exception,
                     PlaybackDiagnosticsCode.NETWORK,
                 )
@@ -214,7 +217,7 @@ internal class MobileVideoPlaybackStarter(
             if (watchDetail.versions.isEmpty()) {
                 return failure(
                     request.contentId,
-                    "No playable versions available",
+                    MobilePlayerStartErrors.NO_VERSIONS,
                     diagnosticsCode = PlaybackDiagnosticsCode.NO_VERSIONS,
                 )
             }
@@ -265,7 +268,7 @@ internal class MobileVideoPlaybackStarter(
                 watchDetail.versions.firstOrNull { it.fileId == room.fileId }
                     ?: return failure(
                         request.contentId,
-                        "The Watch Party's version of this title isn't available to this profile.",
+                        MobilePlayerStartErrors.WATCH_PARTY_VERSION_UNAVAILABLE,
                         diagnosticsCode = PlaybackDiagnosticsCode.NO_VERSIONS,
                     )
             } else {
@@ -321,7 +324,7 @@ internal class MobileVideoPlaybackStarter(
             val profileId = activeProfile?.id ?: profileRepository.getActiveProfileId()
                 ?: return failure(
                     request.contentId,
-                    "No active profile selected",
+                    MobilePlayerStartErrors.NO_PROFILE,
                     diagnosticsCode = PlaybackDiagnosticsCode.NO_ACTIVE_PROFILE,
                 )
             val preferredAudioLanguage = configuredAudioLanguage
@@ -329,7 +332,7 @@ internal class MobileVideoPlaybackStarter(
             val accessToken = playbackSessionManager.getAccessToken()
                 ?: return failure(
                     request.contentId,
-                    "Not authenticated",
+                    MobilePlayerStartErrors.NOT_AUTHENTICATED,
                     diagnosticsCode = PlaybackDiagnosticsCode.NOT_AUTHENTICATED,
                 )
             val dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()
@@ -379,7 +382,7 @@ internal class MobileVideoPlaybackStarter(
             )
 
             if (!ownerCurrent() || profileId != expectedMetadataOwner.profileId || serverUrl != expectedMetadataOwner.serverUrl)
-                return failure(request.contentId, "identity_changed: The metadata viewer changed before playback admission.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
+                return failure(request.contentId, MobilePlayerStartErrors.IDENTITY_CHANGED + MobilePlayerStartErrors.VIEWER_CHANGED_BEFORE_ADMISSION, diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
             // Watch Party playback stays on the saved address, admission included.
             val allowsLocalRoute = request.roomId.isNullOrBlank() && room == null
             val v3Start = when (
@@ -416,12 +419,12 @@ internal class MobileVideoPlaybackStarter(
                 is ApiResult.Success -> r.data
                 is ApiResult.Error -> return failure(
                     request.contentId,
-                    "Failed to start playback: ${r.message}",
+                    MobilePlayerStartErrors.START_FAILED_PREFIX + r.message,
                     diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST,
                 )
                 is ApiResult.NetworkError -> return failure(
                     request.contentId,
-                    "Network error: ${r.exception.message}",
+                    MobilePlayerStartErrors.NETWORK_PREFIX + r.exception.message,
                     r.exception,
                     PlaybackDiagnosticsCode.NETWORK,
                 )
@@ -433,10 +436,11 @@ internal class MobileVideoPlaybackStarter(
                     serverTerminalUserMessage(v3Start.message),
                     diagnosticsCode = PlaybackDiagnosticsCode.serverTerminal(v3Start.reason),
                     terminalReason = v3Start.reason,
+                    messageRes = terminalUserMessageRes(v3Start),
                 )
                 VideoSessionStartV3.ServerUpgradeRequired -> return failure(
                     request.contentId,
-                    "This Silo server must be updated to support the Media3 playback protocol.",
+                    MobilePlayerStartErrors.SERVER_UPGRADE_MEDIA3,
                     diagnosticsCode = PlaybackDiagnosticsCode.SERVER_UPGRADE_REQUIRED,
                 )
             }
@@ -446,7 +450,7 @@ internal class MobileVideoPlaybackStarter(
             if (!ownerCurrent()) {
                 stopAllocatedButUnpublishedSession(allocatedButUnpublishedSessionId)
                 allocatedButUnpublishedSessionId = null
-                return failure(request.contentId, "identity_changed: The metadata viewer changed after playback admission.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
+                return failure(request.contentId, MobilePlayerStartErrors.IDENTITY_CHANGED + MobilePlayerStartErrors.VIEWER_CHANGED_AFTER_ADMISSION, diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
             }
             val effectiveFileId = resolved.mediaFileId.takeIf { it > 0 }
                 ?: readyV3.plan.effectiveMediaFileId
@@ -456,7 +460,7 @@ internal class MobileVideoPlaybackStarter(
                 allocatedButUnpublishedSessionId = null
                 return failure(
                     request.contentId,
-                    "The server offered a different version than the Watch Party's.",
+                    MobilePlayerStartErrors.WATCH_PARTY_VERSION_MISMATCH,
                     diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST,
                 )
             }
@@ -512,7 +516,7 @@ internal class MobileVideoPlaybackStarter(
                 allocatedButUnpublishedSessionId = null
                 return failure(
                     request.contentId,
-                    "Playback start was superseded.",
+                    MobilePlayerStartErrors.SUPERSEDED,
                     diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST,
                 )
             }
@@ -521,7 +525,7 @@ internal class MobileVideoPlaybackStarter(
             if (!ownerCurrent()) {
                 stopAllocatedButUnpublishedSession(allocatedButUnpublishedSessionId, lifecycleAdopted)
                 allocatedButUnpublishedSessionId = null
-                return failure(request.contentId, "identity_changed: The metadata viewer changed during playback adoption.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
+                return failure(request.contentId, MobilePlayerStartErrors.IDENTITY_CHANGED + MobilePlayerStartErrors.VIEWER_CHANGED_DURING_ADOPTION, diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
             }
             val result = VideoPlaybackStartResult.Ready(
                 contentId = request.contentId,
@@ -600,7 +604,7 @@ internal class MobileVideoPlaybackStarter(
         } catch (e: Exception) {
             stopAllocatedButUnpublishedSession(allocatedButUnpublishedSessionId, lifecycleAdopted)
             Log.e(TAG, "Error loading content", e)
-            failure(request.contentId, "Unexpected error: ${e.message}", e, PlaybackDiagnosticsCode.UNEXPECTED)
+            failure(request.contentId, MobilePlayerStartErrors.UNEXPECTED_PREFIX + e.message, e, PlaybackDiagnosticsCode.UNEXPECTED)
         }
     }
 
@@ -623,6 +627,7 @@ internal class MobileVideoPlaybackStarter(
         cause: Throwable? = null,
         diagnosticsCode: PlaybackDiagnosticsCode? = null,
         terminalReason: String? = null,
+        @androidx.annotation.StringRes messageRes: Int? = null,
     ): VideoPlaybackStartResult.Error {
         // Log the throwable here instead of stashing it on the (unread) result —
         // the message already carries the human-facing detail.
@@ -632,6 +637,7 @@ internal class MobileVideoPlaybackStarter(
             message = message,
             diagnosticsCode = diagnosticsCode,
             terminalReason = terminalReason,
+            messageRes = messageRes,
         )
     }
 
@@ -646,5 +652,63 @@ internal class MobileVideoPlaybackStarter(
 
     private companion object {
         const val TAG = "MobileVideoPlaybackStarter"
+    }
+}
+
+/**
+ * The starter's failure messages. They travel as English text through the
+ * shared start result; [message] turns them back into catalog messages for
+ * the error screen, and passes anything else (a server's message) through.
+ */
+internal object MobilePlayerStartErrors {
+    // Codes some messages start with, shown as written.
+    const val IDENTITY_UNAVAILABLE = "identity_unavailable: "
+    const val IDENTITY_CHANGED = "identity_changed: "
+
+    const val METADATA_NEEDS_PROFILE = "Playback metadata needs an authenticated profile."
+    const val NO_VERSIONS = "No playable versions available"
+    const val WATCH_PARTY_VERSION_UNAVAILABLE = "The Watch Party's version of this title isn't available to this profile."
+    const val NO_PROFILE = "No active profile selected"
+    const val NOT_AUTHENTICATED = "Not authenticated"
+    const val VIEWER_CHANGED_BEFORE_ADMISSION = "The metadata viewer changed before playback admission."
+    const val SERVER_UPGRADE_MEDIA3 = "This Silo server must be updated to support the Media3 playback protocol."
+    const val VIEWER_CHANGED_AFTER_ADMISSION = "The metadata viewer changed after playback admission."
+    const val WATCH_PARTY_VERSION_MISMATCH = "The server offered a different version than the Watch Party's."
+    const val SUPERSEDED = "Playback start was superseded."
+    const val VIEWER_CHANGED_DURING_ADOPTION = "The metadata viewer changed during playback adoption."
+    const val LOAD_FAILED_PREFIX = "Failed to load content: "
+    const val NETWORK_PREFIX = "Network error: "
+    const val START_FAILED_PREFIX = "Failed to start playback: "
+    const val UNEXPECTED_PREFIX = "Unexpected error: "
+
+    private val fixed = mapOf(
+        METADATA_NEEDS_PROFILE to CommonR.string.player_error_metadataNeedsProfile,
+        NO_VERSIONS to CommonR.string.player_error_noVersions,
+        WATCH_PARTY_VERSION_UNAVAILABLE to CommonR.string.player_watchParty_versionUnavailable,
+        NO_PROFILE to CommonR.string.player_error_noProfile,
+        NOT_AUTHENTICATED to CommonR.string.player_error_notAuthenticated,
+        VIEWER_CHANGED_BEFORE_ADMISSION to CommonR.string.player_error_viewerChangedBeforeAdmission,
+        SERVER_UPGRADE_MEDIA3 to CommonR.string.player_error_serverUpgradeMedia3,
+        VIEWER_CHANGED_AFTER_ADMISSION to CommonR.string.player_error_viewerChangedAfterAdmission,
+        WATCH_PARTY_VERSION_MISMATCH to CommonR.string.player_watchParty_versionMismatch,
+        SUPERSEDED to CommonR.string.player_error_superseded,
+        SERVER_TERMINAL_FALLBACK_MESSAGE to CommonR.string.player_error_playbackUnavailable,
+        VIEWER_CHANGED_DURING_ADOPTION to CommonR.string.player_error_viewerChangedDuringAdoption,
+    )
+    private val prefixed = listOf(
+        LOAD_FAILED_PREFIX to CommonR.string.player_error_loadFailed,
+        NETWORK_PREFIX to CommonR.string.player_error_network,
+        START_FAILED_PREFIX to CommonR.string.player_error_startFailed,
+        UNEXPECTED_PREFIX to CommonR.string.player_error_unexpected,
+    )
+
+    fun message(text: String): PlayerMessage {
+        val code = listOf(IDENTITY_UNAVAILABLE, IDENTITY_CHANGED).firstOrNull(text::startsWith)
+        val body = code?.let { text.removePrefix(it) } ?: text
+        val res = fixed[body]?.let { PlayerMessage.Res(it) }
+            ?: prefixed.firstOrNull { (prefix, _) -> body.startsWith(prefix) }
+                ?.let { (prefix, id) -> PlayerMessage.Res(id, listOf(body.removePrefix(prefix))) }
+            ?: return PlayerMessage.Raw(text)
+        return if (code != null) PlayerMessage.Coded(code, res) else res
     }
 }

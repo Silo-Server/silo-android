@@ -59,6 +59,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
@@ -74,6 +76,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Transport controls over the video, after iOS `MobilePlayerControls`:
@@ -375,7 +378,7 @@ private fun PlayerTopBar(
     ) {
         PlayerIconDisc(
             icon = Icons.AutoMirrored.Rounded.ArrowBack,
-            contentDescription = "Back",
+            contentDescription = stringResource(CommonR.string.common_back),
             onClick = onBack,
         )
         Column(
@@ -402,7 +405,7 @@ private fun PlayerTopBar(
         if (pictureInPictureAvailable) {
             PlayerIconDisc(
                 icon = Icons.Rounded.PictureInPictureAlt,
-                contentDescription = "Picture in picture",
+                contentDescription = stringResource(CommonR.string.player_controls_pictureInPicture),
                 onClick = onEnterPictureInPicture,
             )
         }
@@ -410,7 +413,13 @@ private fun PlayerTopBar(
         if (orientationLockSupported) {
             PlayerIconDisc(
                 icon = if (isOrientationLocked) Icons.Rounded.ScreenLockRotation else Icons.Rounded.ScreenRotation,
-                contentDescription = if (isOrientationLocked) "Landscape locked" else "Rotate freely",
+                contentDescription = stringResource(
+                    if (isOrientationLocked) {
+                        CommonR.string.player_controls_landscapeLocked
+                    } else {
+                        CommonR.string.player_orientation_rotateFreely
+                    },
+                ),
                 onClick = onToggleOrientationLock,
             )
         }
@@ -446,7 +455,7 @@ private fun PlayerTransportControls(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         PlayerDisc(
-            contentDescription = "Skip back $skipBackSeconds seconds",
+            contentDescription = pluralStringResource(CommonR.plurals.player_controls_skipBack, skipBackSeconds, skipBackSeconds),
             onClick = onSkipBackward,
             size = 54.dp,
             enabled = seekEnabled,
@@ -462,14 +471,14 @@ private fun PlayerTransportControls(
         // While loading, the spinner stands where the disc was; the slot still
         // plays or pauses, so a stall never takes the control away.
         PlayerDisc(
-            contentDescription = if (showPlay) "Play" else "Pause",
+            contentDescription = stringResource(if (showPlay) CommonR.string.player_controls_play else CommonR.string.player_controls_pause),
             onClick = onPlayPause,
             size = 70.dp,
             enabled = playPauseEnabled,
             fill = if (isLoading) Color.Transparent else PlayerChrome.Paper,
             contentColor = PlayerChrome.Ink,
             stroke = Color.Transparent,
-            stateDescription = "Loading".takeIf { isLoading },
+            stateDescription = stringResource(CommonR.string.common_loading).takeIf { isLoading },
         ) {
             if (isLoading) {
                 PlayerLoadingSpinner()
@@ -486,7 +495,7 @@ private fun PlayerTransportControls(
             }
         }
         PlayerDisc(
-            contentDescription = "Skip forward $skipForwardSeconds seconds",
+            contentDescription = pluralStringResource(CommonR.plurals.player_controls_skipForward, skipForwardSeconds, skipForwardSeconds),
             onClick = onSkipForward,
             size = 54.dp,
             enabled = seekEnabled,
@@ -539,7 +548,7 @@ private fun PlayerActionPillRow(
             ) {
                 PlayerActionPill(
                     icon = Icons.Rounded.Subtitles,
-                    label = "Audio & Subtitles",
+                    label = stringResource(CommonR.string.player_tracks_title),
                     value = tracksValue.takeIf { density == ActionPillDensity.Full },
                     compact = density == ActionPillDensity.Icons,
                     enabled = hasTracks,
@@ -549,7 +558,7 @@ private fun PlayerActionPillRow(
                 if (hasChapters) {
                     PlayerActionPill(
                         icon = Icons.AutoMirrored.Rounded.FormatListBulleted,
-                        label = "Chapters",
+                        label = stringResource(CommonR.string.options_chapters),
                         value = chapterValue.takeIf { density == ActionPillDensity.Full },
                         compact = density == ActionPillDensity.Icons,
                         onClick = onOpenChapters,
@@ -560,7 +569,7 @@ private fun PlayerActionPillRow(
             if (hasQualityMenu) {
                 PlayerActionPill(
                     icon = Icons.Rounded.Tune,
-                    label = "Quality",
+                    label = stringResource(CommonR.string.options_quality),
                     value = qualityValue.takeIf { density != ActionPillDensity.Icons },
                     compact = density == ActionPillDensity.Icons,
                     onClick = onOpenQuality,
@@ -568,7 +577,7 @@ private fun PlayerActionPillRow(
             }
             PlayerIconDisc(
                 icon = Icons.Rounded.MoreHoriz,
-                contentDescription = "Playback settings",
+                contentDescription = stringResource(CommonR.string.player_controls_settings),
                 onClick = onOpenSettings,
                 size = 36.dp,
                 iconSize = 21.dp,
@@ -593,7 +602,7 @@ private fun TabletopUtilityRow(
     val brightnessControl: @Composable (Modifier) -> Unit = { modifier ->
         TabletopSliderControl(
             icon = Icons.Rounded.Brightness6,
-            contentDescription = "Player brightness",
+            contentDescription = stringResource(CommonR.string.player_controls_brightness),
             value = brightnessFraction,
             onValueChange = onSetBrightness,
             modifier = modifier,
@@ -635,7 +644,7 @@ private fun TabletopUtilityRow(
     ) {
         TabletopSliderControl(
             icon = Icons.AutoMirrored.Rounded.VolumeUp,
-            contentDescription = "Media volume",
+            contentDescription = stringResource(CommonR.string.player_controls_volume),
             value = volumeFraction,
             onValueChange = { fraction ->
                 volumeFraction = fraction
@@ -658,7 +667,7 @@ private fun TabletopUtilityRow(
         nextEpisode?.let { episode ->
             TabletopActionButton(
                 icon = Icons.Rounded.SkipNext,
-                label = "Next S${episode.seasonNumber}·E${episode.episodeNumber}",
+                label = stringResource(CommonR.string.player_controls_nextEpisode, episode.seasonNumber, episode.episodeNumber),
                 onClick = onPlayNextEpisode,
             )
         }
@@ -731,6 +740,6 @@ private fun TabletopActionButton(
 internal fun nextTabletopPlaybackSpeed(current: Double): Double =
     listOf(1.0, 1.25, 1.5, 2.0).firstOrNull { it > current + 0.001 } ?: 1.0
 
-internal fun playbackSpeedLabel(speed: Double): String {
-    return "${formatPlaybackSpeed(speed)}× Speed"
-}
+@Composable
+internal fun playbackSpeedLabel(speed: Double): String =
+    stringResource(CommonR.string.player_controls_speedButton, formatPlaybackSpeed(speed))

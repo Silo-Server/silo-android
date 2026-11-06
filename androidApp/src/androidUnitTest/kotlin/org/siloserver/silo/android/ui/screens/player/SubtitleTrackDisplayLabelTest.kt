@@ -58,6 +58,7 @@ class SubtitleTrackDisplayLabelTest {
         fun chips(label: String, language: String) = subtitleTrackPresentation(
             PlayerSubtitleInfo(index = 3, language = language, codec = "srt", label = label, forced = null, url = "/s.vtt"),
             index = 3,
+            strings = testTrackLabelStrings,
         ).chips
 
         assertEquals(listOf("AI Translation"), chips("English → German (AI) (translated)", "de"))
@@ -78,6 +79,7 @@ class SubtitleTrackDisplayLabelTest {
         fun title(label: String) = subtitleTrackPresentation(
             PlayerSubtitleInfo(index = 0, language = null, codec = "srt", label = label, forced = null, url = "/s.vtt"),
             index = 0,
+            strings = testTrackLabelStrings,
         ).title
 
         assertEquals("English → German", title("English → German (AI) (translated)"))
@@ -85,3 +87,18 @@ class SubtitleTrackDisplayLabelTest {
         assertEquals("English → Portuguese (Brazil)", title("English → Portuguese (Brazil) (AI) (translated)"))
     }
 }
+
+/** Track label words for tests that build presentations outside composition. */
+internal val testTrackLabelStrings = TrackLabelStrings(
+    audioNumbered = { "Audio $it" },
+    subtitleNumbered = { "Subtitle $it" },
+    default = "Default",
+    forced = "Forced",
+    sdh = "SDH",
+    embedded = "Embedded",
+    external = "External",
+    downloaded = "Downloaded",
+    server = "Server",
+    mono = "Mono",
+    stereo = "Stereo",
+)

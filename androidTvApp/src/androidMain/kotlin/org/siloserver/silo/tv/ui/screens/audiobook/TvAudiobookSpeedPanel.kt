@@ -31,6 +31,8 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlin.math.abs
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 private val SPEED_PRESETS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f)
 private const val SPEED_STEP = 0.05f
@@ -53,7 +55,7 @@ fun TvAudiobookSpeedPanel(
     val focusRequester = remember { FocusRequester() }
 
     TvAudiobookOverlayScaffold(
-        title = "Speed",
+        title = stringResource(CommonR.string.player_settings_speed),
         initialFocus = focusRequester,
         modifier = modifier,
         onAcquisitionFailed = onFocusAcquisitionFailed,
@@ -70,7 +72,7 @@ fun TvAudiobookSpeedPanel(
                 focusRequester = focusRequester,
             )
             TvAudiobookOverlayRow(
-                label = "Set ${formatSpeedLabel(currentSpeed)} as default",
+                label = stringResource(CommonR.string.audiobook_speed_setDefault, formatSpeedLabel(currentSpeed)),
                 isCurrent = false,
                 onSelect = { onSetDefault(currentSpeed) },
                 modifier = Modifier.fillMaxWidth(),
@@ -118,7 +120,7 @@ private fun SpeedFineAdjustRow(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("Fine adjust", style = MaterialTheme.typography.bodyLarge, color = fg, modifier = Modifier.weight(1f))
+        Text(stringResource(CommonR.string.audiobook_speed_fineAdjust), style = MaterialTheme.typography.bodyLarge, color = fg, modifier = Modifier.weight(1f))
         Text("◀", style = MaterialTheme.typography.bodyLarge, color = fg.copy(alpha = 0.7f))
         Spacer(Modifier.width(16.dp))
         Text(formatSpeedLabel(speed), style = MaterialTheme.typography.bodyLarge, color = fg)

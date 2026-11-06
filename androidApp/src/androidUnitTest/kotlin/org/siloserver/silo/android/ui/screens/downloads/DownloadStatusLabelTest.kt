@@ -5,6 +5,18 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class DownloadStatusLabelTest {
+    /** The catalog's English (downloads.status.*), as the app's resources give it. */
+    private val english = DownloadStatusLabels(
+        missingFile = "Missing file",
+        preparing = "Preparing…",
+        queued = "Queued",
+        downloading = "Downloading",
+        downloadingPercent = { percent -> "Downloading · $percent%" },
+        ready = "Ready",
+        failed = "Failed",
+        cancelled = "Cancelled",
+        needsAttention = "Needs attention",
+    )
 
     @Test
     fun localCompletionIsReadyDespiteServerAdmissionStatus() {
@@ -14,7 +26,7 @@ class DownloadStatusLabelTest {
             val progress = downloadItemDisplayProgress(status, rawProgress = 0f, hasLocalMedia = true)
             assertEquals(true, state.isComplete)
             assertEquals(1f, progress)
-            assertEquals("Ready", downloadStatusLabel(status, progress))
+            assertEquals("Ready", downloadStatusLabel(status, progress, labels = english))
         }
     }
 
@@ -23,7 +35,7 @@ class DownloadStatusLabelTest {
         val status = downloadItemDisplayStatus(DownloadStatus.Completed, DownloadStatus.Ready)
         val state = downloadItemFileState(status, hasLocalMedia = false)
         assertEquals(false, state.isComplete)
-        assertEquals("Missing file", downloadStatusLabel(status, 0f, isMissingLocal = state.isMissingLocal))
+        assertEquals("Missing file", downloadStatusLabel(status, 0f, isMissingLocal = state.isMissingLocal, labels = english))
     }
 
     @Test
@@ -44,22 +56,22 @@ class DownloadStatusLabelTest {
 
     @Test
     fun queuedWithNoBytesShowsQueued() {
-        assertEquals("Queued", downloadStatusLabel(DownloadStatus.Queued, progress = 0f))
+        assertEquals("Queued", downloadStatusLabel(DownloadStatus.Queued, progress = 0f, labels = english))
     }
 
     @Test
     fun downloadingWithNoBytesShowsDownloading() {
-        assertEquals("Downloading", downloadStatusLabel(DownloadStatus.Downloading, progress = 0f))
+        assertEquals("Downloading", downloadStatusLabel(DownloadStatus.Downloading, progress = 0f, labels = english))
     }
 
     @Test
     fun downloadingWithProgressShowsPercentage() {
-        assertEquals("Downloading · 42%", downloadStatusLabel(DownloadStatus.Downloading, progress = 0.42f))
+        assertEquals("Downloading · 42%", downloadStatusLabel(DownloadStatus.Downloading, progress = 0.42f, labels = english))
     }
 
     @Test
     fun completedShowsReady() {
-        assertEquals("Ready", downloadStatusLabel(DownloadStatus.Completed, progress = 1f))
+        assertEquals("Ready", downloadStatusLabel(DownloadStatus.Completed, progress = 1f, labels = english))
     }
 
     @Test
@@ -70,6 +82,7 @@ class DownloadStatusLabelTest {
                 status = DownloadStatus.Completed,
                 progress = 1f,
                 isMissingLocal = true,
+                labels = english,
             ),
         )
     }
@@ -132,16 +145,16 @@ class DownloadStatusLabelTest {
 
     @Test
     fun failedShowsFailed() {
-        assertEquals("Failed", downloadStatusLabel(DownloadStatus.Failed, progress = 0.18f))
+        assertEquals("Failed", downloadStatusLabel(DownloadStatus.Failed, progress = 0.18f, labels = english))
     }
 
     @Test
     fun cancelledShowsCancelled() {
-        assertEquals("Cancelled", downloadStatusLabel(DownloadStatus.Cancelled, progress = 0.18f))
+        assertEquals("Cancelled", downloadStatusLabel(DownloadStatus.Cancelled, progress = 0.18f, labels = english))
     }
 
     @Test
     fun unknownShowsNeedsAttention() {
-        assertEquals("Needs attention", downloadStatusLabel(DownloadStatus.Unknown, progress = 0f))
+        assertEquals("Needs attention", downloadStatusLabel(DownloadStatus.Unknown, progress = 0f, labels = english))
     }
 }

@@ -54,13 +54,10 @@ fun PlaybackQualitySheet(
     val controller = rememberPlayerMenuController(onDismiss)
 
     PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
-        PlayerPanelHeader(title = "Quality", onClose = { controller.dismiss() })
+        PlayerPanelHeader(title = stringResource(CommonR.string.options_quality), onClose = { controller.dismiss() })
         PlayerMenuScrollColumn(horizontalPadding = 12.dp) {
             if (inRoom) {
-                PlayerFootnote(
-                    "Watch Party keeps everyone on the same version. " +
-                        "You can adjust your streaming quality below.",
-                )
+                PlayerFootnote(stringResource(CommonR.string.player_quality_roomNote))
             }
             Spacer(Modifier.height(8.dp))
             PlayerGroup {

@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
@@ -40,8 +43,6 @@ import org.siloserver.silo.tv.ui.focus.TvRestoreFocusOnModalDismiss
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.focus.tvModalFocusBoundary
 import org.siloserver.silo.tv.ui.screens.watchparty.PARTY_KEY_OPTIONS
-import org.siloserver.silo.tv.ui.screens.watchparty.TV_WATCH_PARTY_HOST_AWAY_NOTE
-import org.siloserver.silo.tv.ui.screens.watchparty.TV_WATCH_PARTY_HOST_LEAVE_NOTE
 import org.siloserver.silo.tv.ui.screens.watchparty.TvPartyNotice
 import org.siloserver.silo.tv.ui.screens.watchparty.TvPartyRoomActions
 import org.siloserver.silo.tv.ui.screens.watchparty.TvWatchPartyConfirmDialog
@@ -102,7 +103,7 @@ internal fun TvWatchPartyPlayerOverlays(
                     if (result !is ApiResult.Success) {
                         Toast.makeText(
                             context,
-                            watchPartyErrorMessage(result, "Couldn't stop playback."),
+                            watchPartyErrorMessage(result, context.getString(CommonR.string.player_watchParty_stopFailed)),
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
@@ -178,24 +179,32 @@ private fun TvWatchPartyStatusOverlay(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (reconnect != null) TvPartyNotice(title = reconnect)
-            if (hostAway) TvPartyNotice(title = "The host disconnected", detail = TV_WATCH_PARTY_HOST_AWAY_NOTE)
+            if (hostAway) {
+                TvPartyNotice(
+                    title = stringResource(CommonR.string.player_watchParty_hostDisconnected),
+                    detail = stringResource(CommonR.string.player_watchParty_hostAwayNote),
+                )
+            }
             if (catchingUp) {
                 TvPartyNotice(
-                    title = "Catching up to the party",
-                    detail = "The party kept playing".takeIf { room?.selfIgnoreWait == true },
+                    title = stringResource(CommonR.string.player_watchParty_catchingUp),
+                    detail = stringResource(CommonR.string.player_watchParty_keptPlaying)
+                        .takeIf { room?.selfIgnoreWait == true },
                 )
             }
             if (waitingFor != null) {
                 TvPartyNotice(
                     title = if (waitingFor.isEmpty()) {
-                        "Syncing playback"
+                        stringResource(CommonR.string.player_watchParty_syncing)
                     } else {
-                        "Syncing playback · Waiting for ${tvWatchPartyNameList(waitingFor)}"
+                        stringResourceWithNames(CommonR.string.player_watchParty_syncingWaitingFor, tvWatchPartyNameList(waitingFor))
                     },
                 )
             }
             if (leftBehind.isNotEmpty()) {
-                TvPartyNotice(title = "Continuing without ${tvWatchPartyNameList(leftBehind)}")
+                TvPartyNotice(
+                    title = stringResourceWithNames(CommonR.string.player_watchParty_continuingWithout, tvWatchPartyNameList(leftBehind)),
+                )
             }
         }
     }
@@ -314,7 +323,7 @@ private fun TvWatchPartyPanel(
                     if (result !is ApiResult.Success) {
                         Toast.makeText(
                             context,
-                            watchPartyErrorMessage(result, "Couldn't change who can play and pause."),
+                            watchPartyErrorMessage(result, context.getString(CommonR.string.player_watchParty_policyFailed)),
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
@@ -347,9 +356,9 @@ private fun TvWatchPartyPanel(
     }
     if (confirmEnd) {
         TvWatchPartyConfirmDialog(
-            title = "End this party for everyone?",
-            message = "Playback stops for everyone and the party closes.",
-            confirmLabel = "End party",
+            title = stringResource(CommonR.string.watchParty_end_confirmTitle),
+            message = stringResource(CommonR.string.player_watchParty_endMessage),
+            confirmLabel = stringResource(CommonR.string.player_watchParty_endConfirm),
             destructive = true,
             onConfirm = {
                 confirmEnd = false
@@ -360,9 +369,9 @@ private fun TvWatchPartyPanel(
     }
     if (confirmLeave) {
         TvWatchPartyConfirmDialog(
-            title = "Leave the party?",
-            message = TV_WATCH_PARTY_HOST_LEAVE_NOTE,
-            confirmLabel = "Leave party",
+            title = stringResource(CommonR.string.player_watchParty_leaveTitle),
+            message = stringResource(CommonR.string.player_watchParty_hostLeaveNote),
+            confirmLabel = stringResource(CommonR.string.watchParty_options_leave),
             destructive = true,
             onConfirm = {
                 confirmLeave = false

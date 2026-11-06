@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.cast
 
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -38,9 +39,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
+import org.siloserver.silo.common.R as CommonR
 import coil3.compose.AsyncImage
 
 /**
@@ -85,7 +89,7 @@ fun SiloCastOverlay(
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
+                contentDescription = stringResource(CommonR.string.common_back),
                 tint = Color.White,
             )
         }
@@ -114,7 +118,8 @@ fun SiloCastOverlay(
             )
 
             Text(
-                text = "Casting to ${castState.deviceName ?: "device"}",
+                text = castState.deviceName?.let { stringResourceWithNames(CommonR.string.cast_overlay_castingTo, it) }
+                    ?: stringResource(CommonR.string.cast_overlay_castingToDevice),
                 color = Color.White,
                 textAlign = TextAlign.Center,
             )
@@ -151,7 +156,7 @@ fun SiloCastOverlay(
                 val shownPosition = scrubFraction?.let { it.toDouble() * castState.duration }
                     ?: castState.position
                 Text(
-                    text = "${formatTime(shownPosition)} / ${formatTime(castState.duration)}",
+                    text = "${formatTime(shownPosition)} / ${formatTime(castState.duration)}", // i18n-ignore
                     color = Color.White.copy(alpha = 0.7f),
                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                 )
@@ -168,7 +173,7 @@ fun SiloCastOverlay(
                     SeekIntervalIcon(
                         forward = false,
                         seconds = skipBackSeconds,
-                        contentDescription = "Back $skipBackSeconds seconds",
+                        contentDescription = pluralStringResource(CommonR.plurals.player_skip_back, skipBackSeconds, skipBackSeconds),
                         tint = Color.White,
                         modifier = Modifier.size(32.dp),
                     )
@@ -177,7 +182,7 @@ fun SiloCastOverlay(
                 IconButton(onClick = onPlayPause, modifier = Modifier.size(64.dp)) {
                     Icon(
                         imageVector = if (castState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (castState.isPlaying) "Pause" else "Play",
+                        contentDescription = stringResource(if (castState.isPlaying) CommonR.string.player_controls_pause else CommonR.string.common_play),
                         tint = Color.White,
                         modifier = Modifier.size(48.dp),
                     )
@@ -187,7 +192,7 @@ fun SiloCastOverlay(
                     SeekIntervalIcon(
                         forward = true,
                         seconds = skipForwardSeconds,
-                        contentDescription = "Forward $skipForwardSeconds seconds",
+                        contentDescription = pluralStringResource(CommonR.plurals.player_skip_forward, skipForwardSeconds, skipForwardSeconds),
                         tint = Color.White,
                         modifier = Modifier.size(32.dp),
                     )
@@ -204,7 +209,7 @@ fun SiloCastOverlay(
                 IconButton(onClick = onStopCasting) {
                     Icon(
                         imageVector = Icons.Default.Close,
-                        contentDescription = "Stop casting",
+                        contentDescription = stringResource(CommonR.string.cast_stopCasting),
                         tint = Color.White,
                         modifier = Modifier.size(28.dp),
                     )

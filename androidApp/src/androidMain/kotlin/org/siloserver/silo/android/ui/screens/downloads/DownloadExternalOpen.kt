@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.downloads.DownloadOpenTarget
 import java.io.File
 
@@ -20,7 +21,7 @@ internal fun openDownloadInExternalApp(context: Context, item: DownloadItem): Bo
 internal fun openDownloadTargetInExternalApp(context: Context, target: DownloadOpenTarget): Boolean {
     val intent = externalDownloadOpenIntent(context, target)
     return runCatching {
-        context.startActivity(Intent.createChooser(intent, "Open with"))
+        context.startActivity(Intent.createChooser(intent, context.getString(CommonR.string.downloads_action_openWith)))
         true
     }.getOrDefault(false)
 }
