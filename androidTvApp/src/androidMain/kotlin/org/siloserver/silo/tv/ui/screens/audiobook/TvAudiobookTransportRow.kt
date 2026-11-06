@@ -43,6 +43,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
 import org.siloserver.silo.tv.ui.focus.tvFocusSuppressed
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.pluralStringResource
 
 /**
  * Five-button audiobook transport, D-pad navigable. Mirrors the video player's
@@ -77,7 +80,7 @@ fun TvAudiobookTransportRow(
     ) {
         TransportIconButton(
             icon = Icons.Filled.SkipPrevious,
-            description = "Previous chapter",
+            description = stringResource(CommonR.string.audiobook_transport_previousChapterTv),
             enabled = chaptersEnabled,
             focusSuppressed = focusSuppressed,
             buttonSize = buttonSize,
@@ -86,14 +89,18 @@ fun TvAudiobookTransportRow(
         TransportIconButton(
             icon = null,
             seekGlyph = false to skipBackSeconds,
-            description = "Skip back $skipBackSeconds seconds",
+            description = pluralStringResource(CommonR.plurals.player_audio_skipBack, skipBackSeconds, skipBackSeconds),
             focusSuppressed = focusSuppressed,
             buttonSize = buttonSize,
             onClick = onSkipBack,
         )
         TransportIconButton(
             icon = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-            description = if (isPlaying) "Pause" else "Play",
+            description = if (isPlaying) {
+                stringResource(CommonR.string.player_audio_pause)
+            } else {
+                stringResource(CommonR.string.player_audio_play)
+            },
             isPrimary = true,
             focusRequester = playPauseFocus,
             focusSuppressed = focusSuppressed,
@@ -105,14 +112,14 @@ fun TvAudiobookTransportRow(
         TransportIconButton(
             icon = null,
             seekGlyph = true to skipForwardSeconds,
-            description = "Skip forward $skipForwardSeconds seconds",
+            description = pluralStringResource(CommonR.plurals.player_audio_skipForward, skipForwardSeconds, skipForwardSeconds),
             focusSuppressed = focusSuppressed,
             buttonSize = buttonSize,
             onClick = onSkipForward,
         )
         TransportIconButton(
             icon = Icons.Filled.SkipNext,
-            description = "Next chapter",
+            description = stringResource(CommonR.string.audiobook_transport_nextChapterTv),
             enabled = chaptersEnabled,
             focusSuppressed = focusSuppressed,
             buttonSize = buttonSize,

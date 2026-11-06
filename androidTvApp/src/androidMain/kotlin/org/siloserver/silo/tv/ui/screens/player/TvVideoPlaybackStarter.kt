@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import androidx.annotation.StringRes
 import org.siloserver.silo.common.settings.reconcileStart
 import org.siloserver.silo.common.settings.audioResetToAutoPending
 import android.util.Log
@@ -26,6 +27,7 @@ import org.siloserver.silo.common.player.video.resolveEpisodeAudioIntent
 import org.siloserver.silo.common.player.video.resolveEpisodeSubtitleIntent
 import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
 import org.siloserver.silo.common.player.video.serverTerminalUserMessage
+import org.siloserver.silo.common.player.video.terminalUserMessageRes
 import org.siloserver.silo.common.player.video.shouldReachServerForPlayback
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
@@ -75,7 +77,7 @@ class TvVideoPlaybackStarter(
             return VideoPlaybackStartResult.ServerUnreachable(request.contentId)
         }
         val expectedMetadataOwner = catalogRepository.captureWatchAuthority()
-            ?: return failure(request.contentId, "Playback metadata needs an authenticated profile.", diagnosticsCode = PlaybackDiagnosticsCode.NOT_AUTHENTICATED)
+            ?: return failure(request.contentId, TvPlayerErrors.METADATA_NEEDS_PROFILE, diagnosticsCode = PlaybackDiagnosticsCode.NOT_AUTHENTICATED)
         suspend fun ownerCurrent(): Boolean {
             val valid = catalogRepository.isWatchAuthorityCurrent(expectedMetadataOwner)
             currentCoroutineContext().ensureActive()
@@ -102,12 +104,12 @@ class TvVideoPlaybackStarter(
                 }
                 is ApiResult.Error -> return failure(
                     request.contentId,
-                    "Failed to load content: ${r.message}",
+                    TvPlayerErrors.LOAD_FAILED_PREFIX + r.message,
                     diagnosticsCode = PlaybackDiagnosticsCode.CATALOG,
                 )
                 is ApiResult.NetworkError -> return failure(
                     request.contentId,
-                    "Network error: ${r.exception.message}",
+                    TvPlayerErrors.NETWORK_PREFIX + r.exception.message,
                     r.exception,
                     PlaybackDiagnosticsCode.NETWORK,
                 )
@@ -115,7 +117,7 @@ class TvVideoPlaybackStarter(
             if (watchDetail.versions.isEmpty()) {
                 return failure(
                     request.contentId,
-                    "No playable versions available",
+                    TvPlayerErrors.NO_VERSIONS,
                     diagnosticsCode = PlaybackDiagnosticsCode.NO_VERSIONS,
                 )
             }
@@ -134,7 +136,7 @@ class TvVideoPlaybackStarter(
             if (room != null && watchDetail.versions.none { it.fileId == room.fileId }) {
                 return failure(
                     request.contentId,
-                    "The Watch Party's version of this title isn't available to this profile.",
+                    TvPlayerErrors.WATCH_PARTY_VERSION_UNAVAILABLE,
                     diagnosticsCode = PlaybackDiagnosticsCode.NO_VERSIONS,
                 )
             }
@@ -160,7 +162,7 @@ class TvVideoPlaybackStarter(
             val profileId = activeProfile?.id ?: profileRepository.getActiveProfileId()
                 ?: return failure(
                     request.contentId,
-                    "No active profile selected",
+                    TvPlayerErrors.NO_PROFILE,
                     diagnosticsCode = PlaybackDiagnosticsCode.NO_ACTIVE_PROFILE,
                 )
             val configuredAudioLanguage = playerSettingsStore.audioLanguageFlow
@@ -184,7 +186,7 @@ class TvVideoPlaybackStarter(
             val accessToken = playbackSessionManager.getAccessToken()
                 ?: return failure(
                     request.contentId,
-                    "Not authenticated",
+                    TvPlayerErrors.NOT_AUTHENTICATED,
                     diagnosticsCode = PlaybackDiagnosticsCode.NOT_AUTHENTICATED,
                 )
 
@@ -244,7 +246,7 @@ class TvVideoPlaybackStarter(
 
             val maxBitrateKbps = playerSettingsStore.maxBitrateKbpsFlow.first()
             if (!ownerCurrent() || profileId != expectedMetadataOwner.profileId || serverUrl != expectedMetadataOwner.serverUrl) {
-                return failure(request.contentId, "The metadata viewer changed before playback admission.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
+                return failure(request.contentId, TvPlayerErrors.VIEWER_CHANGED_BEFORE_ADMISSION, diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
             }
             val v3Start = when (
                 val r = playbackSessionManager.startVideoSessionV3(
@@ -276,12 +278,12 @@ class TvVideoPlaybackStarter(
                 is ApiResult.Success -> r.data
                 is ApiResult.Error -> return failure(
                     request.contentId,
-                    "Failed to start playback: ${r.message}",
+                    TvPlayerErrors.START_FAILED_PREFIX + r.message,
                     diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST,
                 )
                 is ApiResult.NetworkError -> return failure(
                     request.contentId,
-                    "Network error: ${r.exception.message}",
+                    TvPlayerErrors.NETWORK_PREFIX + r.exception.message,
                     r.exception,
                     PlaybackDiagnosticsCode.NETWORK,
                 )
@@ -293,10 +295,11 @@ class TvVideoPlaybackStarter(
                     serverTerminalUserMessage(v3Start.message),
                     diagnosticsCode = PlaybackDiagnosticsCode.serverTerminal(v3Start.reason),
                     terminalReason = v3Start.reason,
+                    messageRes = terminalUserMessageRes(v3Start),
                 )
                 VideoSessionStartV3.ServerUpgradeRequired -> return failure(
                     request.contentId,
-                    "This Silo server must be updated to support the Media3 playback protocol.",
+                    TvPlayerErrors.SERVER_UPGRADE_MEDIA3,
                     diagnosticsCode = PlaybackDiagnosticsCode.SERVER_UPGRADE_REQUIRED,
                 )
             }
@@ -305,7 +308,7 @@ class TvVideoPlaybackStarter(
             if (!ownerCurrent()) {
                 discardUnpublishedSession(unpublishedSessionId, lifecycleAdopted)
                 unpublishedSessionId = null
-                return failure(request.contentId, "The metadata viewer changed after playback admission.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
+                return failure(request.contentId, TvPlayerErrors.VIEWER_CHANGED_AFTER_ADMISSION, diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
             }
             val effectiveFileId = resolved.mediaFileId.takeIf { it > 0 }
                 ?: readyV3.plan.effectiveMediaFileId
@@ -315,7 +318,7 @@ class TvVideoPlaybackStarter(
                 unpublishedSessionId = null
                 return failure(
                     request.contentId,
-                    "The server offered a different version than the Watch Party's.",
+                    TvPlayerErrors.WATCH_PARTY_VERSION_MISMATCH,
                     diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST,
                 )
             }
@@ -380,7 +383,7 @@ class TvVideoPlaybackStarter(
                 unpublishedSessionId = null
                 return failure(
                     request.contentId,
-                    "Playback start was superseded.",
+                    TvPlayerErrors.SUPERSEDED,
                     diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST,
                 )
             }
@@ -389,7 +392,7 @@ class TvVideoPlaybackStarter(
             if (!ownerCurrent()) {
                 discardUnpublishedSession(unpublishedSessionId, lifecycleAdopted)
                 unpublishedSessionId = null
-                return failure(request.contentId, "The metadata viewer changed during playback adoption.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
+                return failure(request.contentId, TvPlayerErrors.VIEWER_CHANGED_DURING_ADOPTION, diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
             }
             val result = VideoPlaybackStartResult.Ready(
                 contentId = request.contentId,
@@ -457,7 +460,7 @@ class TvVideoPlaybackStarter(
         } catch (e: Exception) {
             discardUnpublishedSession(unpublishedSessionId, lifecycleAdopted)
             Log.e(TAG, "Error loading content", e)
-            failure(request.contentId, "Unexpected error: ${e.message}", e, PlaybackDiagnosticsCode.UNEXPECTED)
+            failure(request.contentId, TvPlayerErrors.UNEXPECTED_PREFIX + e.message, e, PlaybackDiagnosticsCode.UNEXPECTED)
         }
     }
 
@@ -486,6 +489,7 @@ class TvVideoPlaybackStarter(
         cause: Throwable? = null,
         diagnosticsCode: PlaybackDiagnosticsCode? = null,
         terminalReason: String? = null,
+        @StringRes messageRes: Int? = null,
     ): VideoPlaybackStartResult.Error {
         // Log the throwable here instead of stashing it on the (unread) result —
         // the message already carries the human-facing detail.
@@ -495,6 +499,7 @@ class TvVideoPlaybackStarter(
             message = message,
             diagnosticsCode = diagnosticsCode,
             terminalReason = terminalReason,
+            messageRes = messageRes,
         )
     }
 

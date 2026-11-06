@@ -27,6 +27,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.layout.resolveAudiobookTransportLayout
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.pluralStringResource
 
 /**
  * Five-control audiobook transport: prev-chapter · skip-back · play/pause ·
@@ -81,7 +84,7 @@ fun AudiobookTransport(
                 ) {
                     Icon(
                         Icons.Filled.SkipPrevious,
-                        contentDescription = "Previous Chapter",
+                        contentDescription = stringResource(CommonR.string.audiobook_transport_previousChapter),
                         tint = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.size(24.dp),
                     )
@@ -95,7 +98,7 @@ fun AudiobookTransport(
                 SeekIntervalIcon(
                     forward = false,
                     seconds = skipBackSeconds,
-                    contentDescription = "Back $skipBackSeconds seconds",
+                    contentDescription = pluralStringResource(CommonR.plurals.player_skip_back, skipBackSeconds, skipBackSeconds),
                     tint = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(32.dp),
                 )
@@ -116,7 +119,11 @@ fun AudiobookTransport(
             ) {
                 Icon(
                     imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (isPlaying) "Pause" else "Play",
+                    contentDescription = if (isPlaying) {
+                        stringResource(CommonR.string.player_audio_pause)
+                    } else {
+                        stringResource(CommonR.string.player_audio_play)
+                    },
                     tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(32.dp),
                 )
@@ -129,7 +136,7 @@ fun AudiobookTransport(
                 SeekIntervalIcon(
                     forward = true,
                     seconds = skipForwardSeconds,
-                    contentDescription = "Forward $skipForwardSeconds seconds",
+                    contentDescription = pluralStringResource(CommonR.plurals.player_skip_forward, skipForwardSeconds, skipForwardSeconds),
                     tint = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(32.dp),
                 )
@@ -142,7 +149,7 @@ fun AudiobookTransport(
                 ) {
                     Icon(
                         Icons.Filled.SkipNext,
-                        contentDescription = "Next Chapter",
+                        contentDescription = stringResource(CommonR.string.audiobook_transport_nextChapter),
                         tint = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.size(24.dp),
                     )

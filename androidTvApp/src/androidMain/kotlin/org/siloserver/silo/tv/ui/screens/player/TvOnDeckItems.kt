@@ -11,6 +11,7 @@ data class TvOnDeckItem(
     /** The section item's type, so a pick opens the right player (audiobooks too). */
     val type: String,
     val title: String,
+    /** The episode's title for an episode (shown after its [seasonNumber]·[episodeNumber] code), else the year. */
     val subtitle: String?,
     val artUrl: String?,
     val artThumbhash: String?,
@@ -22,6 +23,8 @@ data class TvOnDeckItem(
     /** An episode's series backdrop for the full-screen Up Next background; never a still. */
     val seriesBackdropUrl: String? = null,
     val seriesBackdropThumbhash: String? = null,
+    val seasonNumber: Int? = null,
+    val episodeNumber: Int? = null,
 )
 
 /**
@@ -53,12 +56,12 @@ internal fun List<ResolvedSection>.toTvOnDeckItems(contentId: String, seriesId: 
                 type = item.type,
                 title = item.seriesTitle ?: item.title,
                 subtitle = when {
-                    item.seasonNumber != null && item.episodeNumber != null ->
-                        "S${item.seasonNumber}·E${item.episodeNumber}" +
-                            (item.title.takeIf { it.isNotBlank() }?.let { " — $it" } ?: "")
+                    item.seasonNumber != null && item.episodeNumber != null -> item.title.takeIf { it.isNotBlank() }
                     item.year > 0 -> item.year.toString()
                     else -> null
                 },
+                seasonNumber = item.seasonNumber.takeIf { item.episodeNumber != null },
+                episodeNumber = item.episodeNumber.takeIf { item.seasonNumber != null },
                 artUrl = item.backdropUrl,
                 artThumbhash = item.backdropThumbhash,
                 progressFraction = progress,

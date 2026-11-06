@@ -19,9 +19,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * App-wide Google Cast mini controller, shown on every screen except the
@@ -66,13 +69,13 @@ fun GoogleCastMiniBar(
                     .padding(horizontal = 12.dp),
             ) {
                 Text(
-                    text = castState.title.ifBlank { "Casting" },
+                    text = castState.title.ifBlank { stringResource(CommonR.string.cast_miniBar_casting) },
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = castState.deviceName ?: "Chromecast",
+                    text = castState.deviceName ?: "Chromecast", // i18n-ignore
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -83,21 +86,21 @@ fun GoogleCastMiniBar(
                 SeekIntervalIcon(
                     forward = false,
                     seconds = skipBackSeconds,
-                    contentDescription = "Back $skipBackSeconds seconds",
+                    contentDescription = pluralStringResource(CommonR.plurals.player_skip_back, skipBackSeconds, skipBackSeconds),
                     modifier = Modifier.size(24.dp),
                 )
             }
             IconButton(onClick = onPlayPause) {
                 Icon(
                     imageVector = if (castState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (castState.isPlaying) "Pause" else "Play",
+                    contentDescription = stringResource(if (castState.isPlaying) CommonR.string.player_controls_pause else CommonR.string.common_play),
                 )
             }
             IconButton(onClick = onSkipForward) {
                 SeekIntervalIcon(
                     forward = true,
                     seconds = skipForwardSeconds,
-                    contentDescription = "Forward $skipForwardSeconds seconds",
+                    contentDescription = pluralStringResource(CommonR.plurals.player_skip_forward, skipForwardSeconds, skipForwardSeconds),
                     modifier = Modifier.size(24.dp),
                 )
             }
@@ -109,7 +112,7 @@ fun GoogleCastMiniBar(
             IconButton(onClick = onStop) {
                 Icon(
                     imageVector = Icons.Default.Close,
-                    contentDescription = "Stop casting",
+                    contentDescription = stringResource(CommonR.string.cast_stopCasting),
                 )
             }
         }

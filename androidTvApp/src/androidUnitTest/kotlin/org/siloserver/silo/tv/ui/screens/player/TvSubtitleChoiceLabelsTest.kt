@@ -1,10 +1,25 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import android.app.Application
+import android.content.res.Resources
+import androidx.test.core.app.ApplicationProvider
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class TvSubtitleChoiceLabelsTest {
+    // The label builders read their words from the app's resources (English here).
+    private val resources: Resources
+        get() = ApplicationProvider.getApplicationContext<Application>().resources
+
+    private fun subtitleChoiceLabel(row: PlayerSubtitleInfo, position: Int): String =
+        org.siloserver.silo.tv.ui.screens.player.subtitleChoiceLabel(row, position, resources)
+
     private fun row(
         index: Int = 0,
         language: String? = null,
@@ -139,7 +154,19 @@ class TvSubtitleChoiceLabelsTest {
     }
 }
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class TvAudioChoiceLabelsTest {
+    // The label builders read their words from the app's resources (English here).
+    private val resources: Resources
+        get() = ApplicationProvider.getApplicationContext<Application>().resources
+
+    private fun subtitleChoiceLabel(row: PlayerSubtitleInfo, position: Int): String =
+        org.siloserver.silo.tv.ui.screens.player.subtitleChoiceLabel(row, position, resources)
+
+    private fun audioChoiceLabel(entry: PlayerTrackEntry, position: Int): String =
+        org.siloserver.silo.tv.ui.screens.player.audioChoiceLabel(entry, position, resources)
+
     private fun audio(
         language: String? = null,
         codecOrMime: String? = null,

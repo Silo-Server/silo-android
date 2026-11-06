@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.cast
 
+import android.content.res.Resources
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.cast.SiloCastCloseReason
 import org.siloserver.silo.cast.SiloCastPlaybackRequest
 import org.siloserver.silo.model.catalog.FileVersion
@@ -71,16 +73,61 @@ data class SiloCastReplaceConsent(
 /**
  * A launch waiting for the user to agree to replace what the TV plays. Asked
  * either by the phone before sending a different title to an engaged TV, or by
- * the TV when another profile's title is on screen.
+ * the TV when another profile's title is on screen. The wording is resolved
+ * when the prompt is drawn ([message], [confirmLabel]).
  */
 data class SiloCastPendingReplace(
     val target: SiloCastTarget,
     val request: SiloCastLaunchRequest,
-    val message: String,
-    val confirmLabel: String,
+    val prompt: SiloCastReplaceReason,
     /** Consent sent with the launch once the user agrees. */
     val consent: SiloCastReplaceConsent,
-)
+) {
+    fun message(text: SiloCastReplaceText): String = when (prompt) {
+        is SiloCastReplaceReason.FromTv ->
+            SiloCastReplacePrompt.tvMessage(prompt.nowPlaying, target.name, prompt.fallbackMessage, text)
+        is SiloCastReplaceReason.BeforeSending -> text.tvIsPlaying(target.name, prompt.currentTitle)
+    }
+
+    fun confirmLabel(text: SiloCastReplaceText): String = when (prompt) {
+        is SiloCastReplaceReason.FromTv -> text.replace
+        is SiloCastReplaceReason.BeforeSending -> text.playOn(target.name)
+    }
+}
+
+/** Who asked to confirm the replacement, with what the prompt names. */
+sealed interface SiloCastReplaceReason {
+    /** The TV refused the handoff; [fallbackMessage] is its own text when it sent no summary. */
+    data class FromTv(val nowPlaying: SiloCastNowPlayingSummary?, val fallbackMessage: SiloCastText?) : SiloCastReplaceReason
+
+    /** The phone asks before sending a title over [currentTitle]. */
+    data class BeforeSending(val currentTitle: String) : SiloCastReplaceReason
+}
+
+/** The replace prompt's wording; the remote supplies the catalog's ([SiloCastResourceReplaceText]). */
+interface SiloCastReplaceText {
+    val replace: String
+    fun resolve(text: SiloCastText): String
+    fun playOn(tv: String): String
+    fun tvIsPlaying(tv: String, title: String): String
+    fun someoneWatchingSomething(tv: String): String
+    fun someoneWatching(title: String, tv: String): String
+    fun profileWatching(profile: String, title: String, tv: String): String
+}
+
+class SiloCastResourceReplaceText(private val resources: Resources) : SiloCastReplaceText {
+    override val replace: String get() = resources.getString(CommonR.string.cast_replace_confirm)
+    override fun resolve(text: SiloCastText): String = text.resolve(resources)
+    override fun playOn(tv: String): String = resources.getString(CommonR.string.cast_replace_playOn, tv)
+    override fun tvIsPlaying(tv: String, title: String): String =
+        resources.getString(CommonR.string.cast_replace_tvIsPlaying, tv, title)
+    override fun someoneWatchingSomething(tv: String): String =
+        resources.getString(CommonR.string.cast_replace_someoneWatchingSomething, tv)
+    override fun someoneWatching(title: String, tv: String): String =
+        resources.getString(CommonR.string.cast_replace_someoneWatching, title, tv)
+    override fun profileWatching(profile: String, title: String, tv: String): String =
+        resources.getString(CommonR.string.cast_replace_profileWatching, profile, title, tv)
+}
 
 object SiloCastReplacePrompt {
     /** The TV refused the handoff because another profile's title is on screen. */
@@ -88,12 +135,11 @@ object SiloCastReplacePrompt {
         target: SiloCastTarget,
         request: SiloCastLaunchRequest,
         nowPlaying: SiloCastNowPlayingSummary?,
-        fallbackMessage: String?,
+        fallbackMessage: SiloCastText?,
     ): SiloCastPendingReplace = SiloCastPendingReplace(
         target = target,
         request = request,
-        message = tvMessage(nowPlaying, target.name, fallbackMessage),
-        confirmLabel = "Replace",
+        prompt = SiloCastReplaceReason.FromTv(nowPlaying, fallbackMessage),
         consent = SiloCastReplaceConsent(contentId = nowPlaying?.contentId),
     )
 
@@ -106,8 +152,7 @@ object SiloCastReplacePrompt {
     ): SiloCastPendingReplace = SiloCastPendingReplace(
         target = target,
         request = request,
-        message = "${target.name} is playing $currentTitle. Playing this will stop it.",
-        confirmLabel = "Play on ${target.name}",
+        prompt = SiloCastReplaceReason.BeforeSending(currentTitle),
         consent = SiloCastReplaceConsent(contentId = currentContentId),
     )
 
@@ -116,13 +161,18 @@ object SiloCastReplacePrompt {
         !playingContentId.isNullOrEmpty() && playingContentId != contentId
 
     /** The same sentence silo-apple builds from the TV's summary. */
-    fun tvMessage(nowPlaying: SiloCastNowPlayingSummary?, tvName: String, fallbackMessage: String?): String {
-        if (nowPlaying == null) return fallbackMessage ?: "Someone is watching something on $tvName. Play yours instead?"
-        val who = nowPlaying.profileName ?: "Someone"
+    fun tvMessage(
+        nowPlaying: SiloCastNowPlayingSummary?,
+        tvName: String,
+        fallbackMessage: SiloCastText?,
+        text: SiloCastReplaceText,
+    ): String {
+        if (nowPlaying == null) return fallbackMessage?.let(text::resolve) ?: text.someoneWatchingSomething(tvName)
         val what = listOfNotNull(nowPlaying.subtitle, nowPlaying.title)
             .filter { it.isNotEmpty() }
             .joinToString(" · ")
-        return "$who is watching $what on $tvName. Play yours instead?"
+        return nowPlaying.profileName?.let { text.profileWatching(it, what, tvName) }
+            ?: text.someoneWatching(what, tvName)
     }
 }
 

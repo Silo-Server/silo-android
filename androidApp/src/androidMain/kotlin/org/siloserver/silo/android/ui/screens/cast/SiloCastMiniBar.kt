@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.cast
 
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -33,11 +34,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.cast.SiloCastArtwork
 import org.siloserver.silo.android.cast.SiloCastController
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 
 /**
@@ -73,7 +76,7 @@ fun SiloCastMiniBar(
     val playback = state.playbackState
     val launch = state.launch
     val isIdle = playback?.contentId.isNullOrEmpty()
-    val targetName = state.connectedTarget?.name ?: "Silo TV"
+    val targetName = state.connectedTarget?.name ?: SILO_TV_NAME
     // Keep the bar up through a reconnect (with a spinner) instead of having
     // it vanish and pop back; hide it while an auto-resume probe is still
     // unconfirmed so idle TVs never surface a phantom session.
@@ -119,10 +122,10 @@ fun SiloCastMiniBar(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         when {
-                            state.isReconnecting -> "Reconnecting…"
-                            launch != null -> artwork.title ?: "Starting playback"
-                            isIdle -> "Connected"
-                            else -> playback?.title ?: "Connected"
+                            state.isReconnecting -> stringResource(CommonR.string.cast_reconnecting)
+                            launch != null -> artwork.title ?: stringResource(CommonR.string.cast_startingPlayback)
+                            isIdle -> stringResource(CommonR.string.cast_miniBar_connected)
+                            else -> playback?.title ?: stringResource(CommonR.string.cast_miniBar_connected)
                         },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -130,10 +133,10 @@ fun SiloCastMiniBar(
                     )
                     Text(
                         when {
-                            state.isReconnecting -> "to $targetName"
-                            launch != null -> "Starting on $targetName…"
-                            isIdle -> "to $targetName"
-                            else -> "Playing on $targetName"
+                            state.isReconnecting -> stringResourceWithNames(CommonR.string.cast_miniBar_toTv, targetName)
+                            launch != null -> stringResourceWithNames(CommonR.string.cast_startingOn, targetName)
+                            isIdle -> stringResourceWithNames(CommonR.string.cast_miniBar_toTv, targetName)
+                            else -> stringResourceWithNames(CommonR.string.cast_playingOn, targetName)
                         },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -153,7 +156,9 @@ fun SiloCastMiniBar(
                     IconButton(onClick = { controller.setPlaying(playback?.isPlaying != true) }) {
                         Icon(
                             if (playback?.isPlaying == true) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                            contentDescription = if (playback?.isPlaying == true) "Pause" else "Play",
+                            contentDescription = stringResource(
+                                if (playback?.isPlaying == true) CommonR.string.player_controls_pause else CommonR.string.common_play,
+                            ),
                         )
                     }
                 }
@@ -189,3 +194,6 @@ private fun MiniBarThumb(posterUrl: String?, thumbhash: String?, width: Dp, heig
         }
     }
 }
+
+/** The name a TV goes by before it reports its own; a product name, not translated. */
+internal const val SILO_TV_NAME = "Silo TV"

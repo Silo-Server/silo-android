@@ -49,6 +49,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import org.koin.compose.koinInject
 import java.io.File
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * PDF renderer backed by Android's [android.graphics.pdf.PdfRenderer]
@@ -138,7 +140,7 @@ fun PdfReader(
                 .toggleChromeOnTap(onToggleChrome),
             contentAlignment = Alignment.Center,
         ) {
-            Text("Empty PDF")
+            Text(stringResource(CommonR.string.reader_pdf_empty))
         }
         return
     }
@@ -266,7 +268,7 @@ private fun PdfPage(
                 onSuccess = { bmp ->
                     Image(
                         bitmap = bmp.asImageBitmap(),
-                        contentDescription = "Page ${pageIndex + 1}",
+                        contentDescription = stringResource(CommonR.string.reader_pageNumber, pageIndex + 1),
                         modifier = Modifier
                             .fillMaxSize()
                             .aspectRatio(bmp.width.toFloat() / bmp.height.toFloat())

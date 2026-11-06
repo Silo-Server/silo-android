@@ -129,16 +129,6 @@ class TvSiloCastReceiver(
         /** Other non-passive controllers waiting besides [controllerName]. */
         val otherControllerCount: Int = 0,
     ) {
-        val controllerLabel: String
-            get() {
-                val name = controllerName?.takeIf { it.isNotBlank() } ?: "phone"
-                return when {
-                    otherControllerCount <= 0 -> name
-                    otherControllerCount == 1 -> "$name and 1 other device"
-                    else -> "$name and $otherControllerCount other devices"
-                }
-            }
-
         data class Preparing(val title: String?)
     }
 

@@ -1,8 +1,10 @@
 package org.siloserver.silo.android.ui.screens.reader
 
+import androidx.annotation.StringRes
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.downloads.OfflineMedia
 import org.siloserver.silo.common.downloads.OfflineMediaResolver
 import org.siloserver.silo.common.downloads.DownloadEnqueuer
@@ -72,9 +74,32 @@ data class ReaderUiState(
      *  null when there is no pending jump. Consumed via [consumeJump]. */
     val pendingJumpLocation: String? = null,
     val isSyncing: Boolean = false,
-    val syncError: String? = null,
+    /** Catalog message for the bottom chrome; resolved in [ReaderShell]. */
+    @StringRes val syncError: Int? = null,
+    /** English, or server/exception text; show it with [errorText]. */
     val error: String? = null,
-)
+) {
+    /** Catalog id for [error] when the view model wrote it, else null. */
+    @get:StringRes
+    val errorRes: Int?
+        get() = error?.let(ReaderErrors::res)
+}
+
+/** The view model's own [ReaderUiState.error] messages, kept in English in
+ *  state (tests and logs) and mapped to the catalog for display. */
+internal object ReaderErrors {
+    const val NO_SUPPORTED_FILE = "No supported ebook file is available."
+    const val DOWNLOAD_FOR_EXTERNAL = "Download this original to open it with another reader."
+    const val UNSUPPORTED_FORMAT = "This file is not a supported reading format."
+
+    @StringRes
+    fun res(english: String): Int? = when (english) {
+        NO_SUPPORTED_FILE -> CommonR.string.reader_error_noSupportedFile
+        DOWNLOAD_FOR_EXTERNAL -> CommonR.string.reader_error_downloadForExternal
+        UNSUPPORTED_FORMAT -> CommonR.string.reader_error_unsupportedFormat
+        else -> null
+    }
+}
 
 private data class InitialReaderState(
     val currentPage: Int? = null,
@@ -131,7 +156,7 @@ class ReaderViewModel(
                                 isLoading = false,
                                 title = d.title,
                                 author = d.ebook?.authorNames ?: d.book?.author,
-                                error = "No supported ebook file is available.",
+                                error = ReaderErrors.NO_SUPPORTED_FILE,
                             )
                         }
                         return@launch
@@ -169,7 +194,7 @@ class ReaderViewModel(
                         target.support.readMode == EbookReadMode.ExternalOnly &&
                         offlineMedia == null
                     ) {
-                        "Download this original to open it with another reader."
+                        ReaderErrors.DOWNLOAD_FOR_EXTERNAL
                     } else {
                         null
                     }
@@ -219,7 +244,7 @@ class ReaderViewModel(
             val message = if (candidates.isEmpty()) {
                 error
             } else {
-                "This file is not a supported reading format."
+                ReaderErrors.UNSUPPORTED_FORMAT
             }
             _uiState.update { it.copy(isLoading = false, error = message) }
             return
@@ -295,7 +320,7 @@ class ReaderViewModel(
                         bookmark.toAnnotation().copy(etag = bookmark.deleteETag), authority.scope)
                     if (deletion is ApiResult.Success || (deletion is ApiResult.Error && deletion.code == 404))
                         bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, accountId, profileId, contentId, bookmark.id) }
-                    else _uiState.update { it.copy(syncError = "Bookmark deletion needs a reload before retrying.") }
+                    else _uiState.update { it.copy(syncError = CommonR.string.reader_sync_bookmarkDeleteNeedsReload) }
                     continue
                 }
                 when (val result = ebookReaderRepository.createBookmark(contentId, bookmark.id, bookmark.location, authority.scope)) {
@@ -304,7 +329,7 @@ class ReaderViewModel(
                         receipts += result.data
                         bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, accountId, profileId, contentId, bookmark.id) }
                     }
-                    else -> _uiState.update { it.copy(syncError = "Some bookmarks are local. Reopen the reader to retry sync.") }
+                    else -> _uiState.update { it.copy(syncError = CommonR.string.reader_sync_bookmarksLocal) }
                 }
             }
             val annotations = ebookReaderRepository.listAnnotations(contentId, authority.scope)
@@ -314,7 +339,7 @@ class ReaderViewModel(
                 .map { it.toAnnotation() }
             val remote = if (annotations is ApiResult.Success) annotations.data.items else receipts
             if (annotations !is ApiResult.Success)
-                _uiState.update { it.copy(syncError = "Bookmarks could not load completely. Reopen the reader to retry.") }
+                _uiState.update { it.copy(syncError = CommonR.string.reader_sync_bookmarksIncomplete) }
             bookmarks = (remaining + remote.filter { it.kind == "bookmark" }).associateBy { it.id }.values.toList()
         }
 
@@ -368,7 +393,7 @@ class ReaderViewModel(
                     org.siloserver.silo.network.SiloJson.decodeFromJsonElement(ReaderDisplaySettings.serializer(), remote).normalized()
                 }.getOrElse { local }
             }
-        } else _uiState.update { it.copy(syncError = "Reader settings are local. Server settings could not be loaded.") }
+        } else _uiState.update { it.copy(syncError = CommonR.string.reader_sync_settingsLoadFailed) }
         return if (displayRevision == revision) local else _uiState.value.displaySettings
     }
 
@@ -468,7 +493,7 @@ class ReaderViewModel(
                     if (authority != null) userItemStatePort.recordEbookProgress(authority,
                         contentId, fileId, location, progressPercent, eventTimeMs)
                     else if (ebookAuthorities == null) userItemStatePort.recordEbookProgress(contentId, fileId, location, progressPercent)
-                    else _uiState.update { it.copy(syncError = "Reading progress needs a saved account and profile.") }
+                    else _uiState.update { it.copy(syncError = CommonR.string.reader_sync_progressNeedsAccount) }
                 }
             }
         }
@@ -522,13 +547,13 @@ class ReaderViewModel(
                 localStateStore.writeDisplaySettings(serverId, accountId, profileId, normalized)
             }
             if (session == null && ebookV2 != null) {
-                _uiState.update { it.copy(syncError = "Reader settings are local. Reopen the reader to load server settings.") }
+                _uiState.update { it.copy(syncError = CommonR.string.reader_sync_settingsNotLoaded) }
             }
             if (authority != null && authority == ebookAuthorities?.snapshotDurableLoginAuthority() && session != null) {
                 val value = org.siloserver.silo.network.SiloJson.encodeToJsonElement(ReaderDisplaySettings.serializer(), normalized)
                 val result = session.saveAndroidDisplay(value as kotlinx.serialization.json.JsonObject)
                 if (authority == ebookAuthorities?.snapshotDurableLoginAuthority() && result !is ApiResult.Success)
-                    _uiState.update { it.copy(syncError = "Reader settings are saved locally. Reopen the reader before retrying server sync.") }
+                    _uiState.update { it.copy(syncError = CommonR.string.reader_sync_settingsSavedLocally) }
             }
         }
     }
@@ -552,7 +577,7 @@ class ReaderViewModel(
         viewModelScope.launch {
             annotationMutex.withLock {
                 if (authority == null || authority != ebookAuthorities?.snapshotDurableLoginAuthority()) {
-                    _uiState.update { it.copy(syncError = "Bookmarks need a saved account and profile.") }
+                    _uiState.update { it.copy(syncError = CommonR.string.reader_sync_bookmarksNeedAccount) }
                     return@withLock
                 }
                 val (serverId, accountId, profileId) = resolveScope()
@@ -561,7 +586,7 @@ class ReaderViewModel(
                         loginId = authority.loginId, origin = authority.scope.serverUrl) }
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
-                    _uiState.update { it.copy(syncError = "Bookmark could not be saved locally.") }
+                    _uiState.update { it.copy(syncError = CommonR.string.reader_sync_bookmarkSaveFailed) }
                     null
                 } ?: return@withLock
                 _uiState.update { it.copy(bookmarks = it.bookmarks + local.toAnnotation(), syncError = null) }
@@ -570,7 +595,7 @@ class ReaderViewModel(
                 if (result is ApiResult.Success) {
                     bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, accountId, profileId, contentId, local.id) }
                     _uiState.update { it.copy(bookmarks = it.bookmarks.filterNot { b -> b.id == local.id } + result.data) }
-                } else _uiState.update { it.copy(syncError = "Bookmark is local. Reopen the reader to retry sync.") }
+                } else _uiState.update { it.copy(syncError = CommonR.string.reader_sync_bookmarkLocal) }
             }
         }
     }
@@ -580,7 +605,7 @@ class ReaderViewModel(
         viewModelScope.launch {
             annotationMutex.withLock {
                 if (authority == null || authority != ebookAuthorities?.snapshotDurableLoginAuthority()) {
-                    _uiState.update { it.copy(syncError = "Bookmark deletion needs the original account and profile.") }
+                    _uiState.update { it.copy(syncError = CommonR.string.reader_sync_bookmarkDeleteNeedsAccount) }
                     return@withLock
                 }
                 val (serverId, accountId, profileId) = resolveScope()
@@ -590,7 +615,7 @@ class ReaderViewModel(
                 val remote = if (pending?.loginId == authority.loginId && pending.origin == authority.scope.serverUrl && pending.deleteETag == null) {
                     val replay = ebookReaderRepository.createBookmark(contentId, pending.id, pending.location, authority.scope)
                     if (replay !is ApiResult.Success) {
-                        _uiState.update { it.copy(syncError = "Bookmark could not be resolved for deletion. Reopen the reader to retry.") }
+                        _uiState.update { it.copy(syncError = CommonR.string.reader_sync_bookmarkDeleteUnresolved) }
                         return@withLock
                     }
                     replay.data
@@ -600,7 +625,7 @@ class ReaderViewModel(
                 if (!localOnly) {
                     val tag = remote.etag
                     if (tag.isNullOrBlank()) {
-                        _uiState.update { it.copy(syncError = "Reopen the reader to load this bookmark before deleting it.") }
+                        _uiState.update { it.copy(syncError = CommonR.string.reader_sync_bookmarkDeleteNotLoaded) }
                         return@withLock
                     }
                     val saved = try {
@@ -608,7 +633,7 @@ class ReaderViewModel(
                             remote.id, remote.location ?: bookmark.location.orEmpty(), authority.loginId, authority.scope.serverUrl, tag) }
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) throw e
-                        _uiState.update { it.copy(syncError = "Bookmark deletion could not be saved locally.") }
+                        _uiState.update { it.copy(syncError = CommonR.string.reader_sync_bookmarkDeleteSaveFailed) }
                         null
                     } ?: return@withLock
                 }
@@ -618,7 +643,7 @@ class ReaderViewModel(
                 if (result is ApiResult.Success || (result is ApiResult.Error && result.code == 404)) {
                     bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, accountId, profileId, contentId, bookmark.id) }
                     _uiState.update { it.copy(bookmarks = it.bookmarks.filterNot { b -> b.id == bookmark.id }, syncError = null) }
-                } else _uiState.update { it.copy(syncError = "Bookmark was kept. Reopen the reader to reload before deleting again.") }
+                } else _uiState.update { it.copy(syncError = CommonR.string.reader_sync_bookmarkKept) }
             }
         }
     }

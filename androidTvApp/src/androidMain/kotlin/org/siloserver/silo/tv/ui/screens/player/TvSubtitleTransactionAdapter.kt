@@ -14,6 +14,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import androidx.annotation.StringRes
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.player.PlaybackQualityPair
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
@@ -121,7 +123,7 @@ internal fun TvSubtitleStageRequest.toManagerStageInput(): ApiResult<TvSubtitleM
         return ApiResult.Error(
             code = 409,
             error = "stale_output_route_context",
-            message = "The playback context does not match the requested output route.",
+            message = TvSubtitleFailure.StaleOutputContext.english,
         )
     }
     return ApiResult.Success(
@@ -1387,7 +1389,7 @@ internal class TvSubtitleTransactionAdapter(
             is ApiResult.Error -> fail(requested.generation, staged.message)
             is ApiResult.NetworkError -> fail(
                 requested.generation,
-                staged.exception.message ?: "Subtitle selection failed.",
+                staged.exception.message ?: TvSubtitleFailure.SelectionFailed.english,
             )
         }
     }
@@ -1465,7 +1467,7 @@ internal class TvSubtitleTransactionAdapter(
                     settlement.phase = PublicationSettlementPhase.RollingBack
                     val rolledBack = abandonCommittedPlayback(committed.data)
                     if (!rolledBack) {
-                        failureMessage = "Playback publication could not be rolled back."
+                        failureMessage = TvSubtitleFailure.RollbackFailed.english
                         publish()
                         finishSettlement(settlement, false)
                         return
@@ -1541,7 +1543,7 @@ internal class TvSubtitleTransactionAdapter(
                         }
                     }
                     is AdoptionOutcome.Failed -> {
-                        val message = "Subtitle playback adoption failed."
+                        val message = TvSubtitleFailure.AdoptionFailed.english
                         if (rollbackCommittedPlayback(playback, restoreUi = false)) {
                             commitInFlight = false
                             finishFailedCommit(requested.generation, message)
@@ -1579,7 +1581,7 @@ internal class TvSubtitleTransactionAdapter(
                 if (finishAwaitingCommitWithoutPublication()) return
                 finishFailedCommit(
                     generation = requested.generation,
-                    message = committed.exception.message ?: "Subtitle selection failed.",
+                    message = committed.exception.message ?: TvSubtitleFailure.SelectionFailed.english,
                 )
             }
         }
@@ -1607,7 +1609,7 @@ internal class TvSubtitleTransactionAdapter(
                 settlement.phase = PublicationSettlementPhase.RollingBack
                 finishSettlement(settlement, false)
             }
-        failureMessage = "Playback publication could not be rolled back."
+        failureMessage = TvSubtitleFailure.RollbackFailed.english
         publish()
     }
 
@@ -1913,7 +1915,7 @@ internal class TvSubtitleTransactionAdapter(
             }
             settlement.phase = PublicationSettlementPhase.Compensating
             if (!rollbackCommittedPlayback(playback, restoreUi = true)) {
-                failureMessage = "Playback publication could not be rolled back."
+                failureMessage = TvSubtitleFailure.RollbackFailed.english
                 publish()
                 finishSettlement(settlement, false)
                 return@launch
@@ -1925,7 +1927,7 @@ internal class TvSubtitleTransactionAdapter(
                 return@launch
             }
             restoreRollbackOwner(compensatedOwner)
-            failureMessage = "The selected subtitle could not be mounted."
+            failureMessage = TvSubtitleFailure.NotMounted.english
             drainSettledPublication(
                 owner = compensatedOwner,
                 confirmed = false,
@@ -1959,7 +1961,7 @@ internal class TvSubtitleTransactionAdapter(
                 return@launch
             }
             if (!settled) {
-                failureMessage = "Playback publication could not be rolled back."
+                failureMessage = TvSubtitleFailure.RollbackFailed.english
                 publish()
                 finishSettlement(settlement, false)
                 return@launch
@@ -1996,13 +1998,13 @@ internal class TvSubtitleTransactionAdapter(
                 return@launch
             }
             if (!rolledBack) {
-                failureMessage = "Playback publication could not be rolled back."
+                failureMessage = TvSubtitleFailure.RollbackFailed.english
                 publish()
                 finishSettlement(settlement, false)
                 return@launch
             }
             restoreRollbackOwner(currentOwner)
-            failureMessage = "The selected subtitle could not be mounted."
+            failureMessage = TvSubtitleFailure.NotMounted.english
             drainSettledPublication(
                 owner = currentOwner,
                 confirmed = false,
@@ -2366,7 +2368,7 @@ internal class TvSubtitleTransactionAdapter(
                     if (rollback.await() && failedContentGeneration == contentGeneration &&
                         failedIntentGeneration == subtitleIntentGeneration
                     ) {
-                        failureMessage = "Embedded subtitles couldn't load. Retrying with a sidecar."
+                        failureMessage = TvSubtitleFailure.EmbeddedRetrying.english
                         publish()
                         requestSidecar()
                     }
@@ -2380,7 +2382,7 @@ internal class TvSubtitleTransactionAdapter(
                     )
                 }
                 invalidateLocalMount()
-                failureMessage = "Embedded subtitles couldn't load. Retrying with a sidecar."
+                failureMessage = TvSubtitleFailure.EmbeddedRetrying.english
                 publish()
                 requestSidecar()
             }
@@ -2395,7 +2397,7 @@ internal class TvSubtitleTransactionAdapter(
         // there is no selected subtitle to report as failed.
         val restoringOff = ownedRestore && pendingLocalRestore?.identity == SubtitleIdentity.Off
         invalidateLocalMount()
-        if (!restoringOff) failureMessage = "The selected subtitle could not be mounted."
+        if (!restoringOff) failureMessage = TvSubtitleFailure.NotMounted.english
         publish()
     }
 
@@ -2645,7 +2647,7 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
         val handle = candidate.managerHandle ?: return ApiResult.Error(
             code = 409,
             error = "missing_staged_subtitle_handle",
-            message = "The staged subtitle candidate no longer has a commit handle.",
+            message = TvSubtitleFailure.MissingCommitHandle.english,
         )
         return when (
             val result = manager.commitStagedVideoReplan(
@@ -2736,22 +2738,22 @@ private fun TvStagedSubtitleCandidate.validationFailure(
     expectedOutputRouteGeneration: Long,
 ): String? {
     if (outputRouteGeneration != expectedOutputRouteGeneration) {
-        return "The candidate was planned for a stale output route."
+        return TvSubtitleFailure.StaleOutputRoute.english
     }
     if (requested.qualityPreferenceSpecified &&
         qualityPreference != requested.qualityPreference
     ) {
-        return "The candidate did not preserve the requested quality."
+        return TvSubtitleFailure.QualityNotPreserved.english
     }
     val sameFile = effectiveMediaFileId == null || effectiveMediaFileId == requestedMediaFileId
     if (sameFile && requested.audioPreferenceSpecified &&
         selectedAudioIndex != requested.audioTrackIndex
     ) {
-        return "The candidate did not select the requested audio track."
+        return TvSubtitleFailure.AudioNotSelected.english
     }
     if (!sameFile) {
         val returnedIdentity = selectedSubtitleIdentity
-            ?: return "The adapted candidate omitted its selected subtitle identity."
+            ?: return TvSubtitleFailure.AdaptedIdentityMissing.english
         return validationFailure(returnedIdentity)
     }
     if (selectedSubtitleIdentity is SubtitleIdentity.Embedded &&
@@ -2764,11 +2766,11 @@ private fun TvStagedSubtitleCandidate.validationFailure(
         is SubtitleIdentity.LocalMedia3,
         -> when {
             (selectedSubtitleIndex ?: -1) != expectedSubtitleIndex ->
-                "The candidate did not preserve the mounted subtitle."
+                TvSubtitleFailure.MountedNotPreserved.english
             expectedSubtitleIndex < 0 && subtitleMode != PlaybackSubtitleModeV3.OFF ->
-                "The candidate did not keep server subtitles off for the client-mounted subtitle."
+                TvSubtitleFailure.ServerSubtitlesNotOff.english
             subtitleMode == PlaybackSubtitleModeV3.BURN_IN ->
-                "The candidate unexpectedly burned in the mounted subtitle."
+                TvSubtitleFailure.MountedBurnedIn.english
             else -> null
         }
         else -> validationFailure(requested.identity)
@@ -2818,31 +2820,31 @@ private fun TvStagedSubtitleCandidate.validationFailure(
     ) {
         null
     } else {
-        "The candidate did not keep subtitles off."
+        TvSubtitleFailure.SubtitlesNotOff.english
     }
     is SubtitleIdentity.ServerSidecar -> when {
         selectedSubtitleIndex != identity.serverIndex ->
-            "The candidate did not select the requested subtitle."
+            TvSubtitleFailure.SubtitleNotSelected.english
         subtitleMode != PlaybackSubtitleModeV3.RENDER &&
             subtitleMode != PlaybackSubtitleModeV3.CONVERT ->
-            "The candidate did not render the requested sidecar."
-        !hasSidecar -> "The candidate omitted the requested subtitle sidecar."
+            TvSubtitleFailure.SidecarNotRendered.english
+        !hasSidecar -> TvSubtitleFailure.SidecarMissing.english
         else -> null
     }
     is SubtitleIdentity.ServerBurnIn -> when {
         selectedSubtitleIndex != identity.serverIndex ->
-            "The candidate did not select the requested subtitle."
+            TvSubtitleFailure.SubtitleNotSelected.english
         subtitleMode != PlaybackSubtitleModeV3.BURN_IN ->
-            "The candidate did not burn in the requested subtitle."
+            TvSubtitleFailure.NotBurnedIn.english
         else -> null
     }
     is SubtitleIdentity.Embedded -> if (
         selectedSubtitleIndex == identity.serverIndex &&
         identity.matchesServerSelectedPlan(subtitleMode, hasSidecar)
-    ) null else "The candidate omitted the exact embedded subtitle."
+    ) null else TvSubtitleFailure.EmbeddedMissing.english
     is SubtitleIdentity.Downloaded,
     is SubtitleIdentity.LocalMedia3,
-    -> "A local subtitle identity unexpectedly reached staged validation."
+    -> TvSubtitleFailure.LocalReachedValidation.english
 }
 
 private fun TvSubtitleCommittedPlayback.withRebasedDownloads(
@@ -2881,4 +2883,107 @@ private fun TvSubtitleCommittedPlayback.withRebasedDownloads(
     return copy(
         subtitleTracks = authoritative + downloaded.filterNot { it.index in authoritativeIndexes },
     )
+}
+
+/**
+ * The subtitle-change failures this adapter writes itself. [english] is what
+ * [TvSubtitleTransactionSnapshot.failureMessage] carries (logs, tests); [message]
+ * is the same text in the app language, for the toast.
+ */
+internal enum class TvSubtitleFailure(val english: String, @StringRes val message: Int) {
+    SelectionFailed(
+        "Subtitle selection failed.",
+        CommonR.string.player_subtitles_failure_selectionFailed,
+    ),
+    AdoptionFailed(
+        "Subtitle playback adoption failed.",
+        CommonR.string.player_subtitles_failure_adoptionFailed,
+    ),
+    RollbackFailed(
+        "Playback publication could not be rolled back.",
+        CommonR.string.player_subtitles_failure_rollbackFailed,
+    ),
+    NotMounted(
+        "The selected subtitle could not be mounted.",
+        CommonR.string.player_subtitles_failure_notMounted,
+    ),
+    EmbeddedRetrying(
+        "Embedded subtitles couldn't load. Retrying with a sidecar.",
+        CommonR.string.player_subtitles_failure_embeddedRetrying,
+    ),
+    StaleOutputContext(
+        "The playback context does not match the requested output route.",
+        CommonR.string.player_subtitles_failure_staleOutputContext,
+    ),
+    MissingCommitHandle(
+        "The staged subtitle candidate no longer has a commit handle.",
+        CommonR.string.player_subtitles_failure_missingCommitHandle,
+    ),
+    StaleOutputRoute(
+        "The candidate was planned for a stale output route.",
+        CommonR.string.player_subtitles_failure_staleOutputRoute,
+    ),
+    QualityNotPreserved(
+        "The candidate did not preserve the requested quality.",
+        CommonR.string.player_subtitles_failure_qualityNotPreserved,
+    ),
+    AudioNotSelected(
+        "The candidate did not select the requested audio track.",
+        CommonR.string.player_subtitles_failure_audioNotSelected,
+    ),
+    AdaptedIdentityMissing(
+        "The adapted candidate omitted its selected subtitle identity.",
+        CommonR.string.player_subtitles_failure_adaptedIdentityMissing,
+    ),
+    MountedNotPreserved(
+        "The candidate did not preserve the mounted subtitle.",
+        CommonR.string.player_subtitles_failure_mountedNotPreserved,
+    ),
+    ServerSubtitlesNotOff(
+        "The candidate did not keep server subtitles off for the client-mounted subtitle.",
+        CommonR.string.player_subtitles_failure_serverSubtitlesNotOff,
+    ),
+    MountedBurnedIn(
+        "The candidate unexpectedly burned in the mounted subtitle.",
+        CommonR.string.player_subtitles_failure_mountedBurnedIn,
+    ),
+    SubtitlesNotOff(
+        "The candidate did not keep subtitles off.",
+        CommonR.string.player_subtitles_failure_subtitlesNotOff,
+    ),
+    SubtitleNotSelected(
+        "The candidate did not select the requested subtitle.",
+        CommonR.string.player_subtitles_failure_subtitleNotSelected,
+    ),
+    SidecarNotRendered(
+        "The candidate did not render the requested sidecar.",
+        CommonR.string.player_subtitles_failure_sidecarNotRendered,
+    ),
+    SidecarMissing(
+        "The candidate omitted the requested subtitle sidecar.",
+        CommonR.string.player_subtitles_failure_sidecarMissing,
+    ),
+    NotBurnedIn(
+        "The candidate did not burn in the requested subtitle.",
+        CommonR.string.player_subtitles_failure_notBurnedIn,
+    ),
+    EmbeddedMissing(
+        "The candidate omitted the exact embedded subtitle.",
+        CommonR.string.player_subtitles_failure_embeddedMissing,
+    ),
+    LocalReachedValidation(
+        "A local subtitle identity unexpectedly reached staged validation.",
+        CommonR.string.player_subtitles_failure_localReachedValidation,
+    ),
+    ;
+
+    companion object {
+        /**
+         * The app-language text for a [TvSubtitleTransactionSnapshot.failureMessage],
+         * or null when the message came from the server or an exception.
+         */
+        @StringRes
+        fun messageFor(failureMessage: String): Int? =
+            entries.firstOrNull { it.english == failureMessage }?.message
+    }
 }

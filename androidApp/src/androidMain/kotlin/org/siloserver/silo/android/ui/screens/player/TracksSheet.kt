@@ -74,14 +74,15 @@ fun TracksSheet(
     }
     var showTiming by rememberSaveable { mutableStateOf(false) }
     val tab = TracksTab.entries[tabOrdinal]
+    val trackStrings = trackLabelStrings()
 
     PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
         if (showTiming && timingActions != null) {
             PlayerPanelHeader(
-                title = "Timing",
+                title = stringResource(CommonR.string.player_tracks_timing),
                 onClose = { controller.dismiss() },
                 onBack = { showTiming = false },
-                backDescription = "Back to Audio & Subtitles",
+                backDescription = stringResource(CommonR.string.player_tracks_backToTracks),
             )
             PlayerMenuScrollColumn(horizontalPadding = 12.dp) {
                 Spacer(Modifier.height(8.dp))
@@ -94,12 +95,12 @@ fun TracksSheet(
             return@PlayerMenu
         }
 
-        PlayerPanelHeader(title = "Audio & Subtitles", onClose = { controller.dismiss() })
+        PlayerPanelHeader(title = stringResource(CommonR.string.player_tracks_title), onClose = { controller.dismiss() })
         if (audioTracks.isNotEmpty()) {
             PlayerSegmentedControl(
                 segments = listOf(
-                    PlayerSegment("Subtitles", subtitles.size),
-                    PlayerSegment("Audio", audioTracks.size),
+                    PlayerSegment(stringResource(CommonR.string.player_tracks_subtitles), subtitles.size),
+                    PlayerSegment(stringResource(CommonR.string.player_tracks_audio), audioTracks.size),
                 ),
                 selectedIndex = tab.ordinal,
                 onSelect = { tabOrdinal = it },
@@ -111,7 +112,7 @@ fun TracksSheet(
             TracksTab.Subtitles -> {
                 PlayerMenuScrollColumn {
                     PlayerTrackRow(
-                        title = "Off",
+                        title = stringResource(CommonR.string.player_tracks_subtitlesOff),
                         selected = selectedSubtitleIndex == -1,
                         onClick = { choose { onSelectSubtitle(-1) } },
                     )
@@ -120,7 +121,7 @@ fun TracksSheet(
                         // A track no route can show stays listed, disabled, so
                         // the rows keep their places and the viewer sees why.
                         val status = if (subtitle.unplayable) unsupportedFormat else subtitleStatus(subtitle)
-                        val presentation = subtitleTrackPresentation(subtitle, index, status)
+                        val presentation = subtitleTrackPresentation(subtitle, index, trackStrings, status)
                         PlayerTrackRow(
                             title = presentation.title,
                             chips = presentation.chips,
@@ -142,7 +143,7 @@ fun TracksSheet(
                         if (showSearchAction) {
                             PlayerFooterButton(
                                 icon = Icons.Rounded.Search,
-                                label = "Find more",
+                                label = stringResource(CommonR.string.player_tracks_findMore),
                                 onClick = { controller.dismiss(then = onSearchSubtitles) },
                                 modifier = Modifier.weight(1f),
                             )
@@ -150,7 +151,7 @@ fun TracksSheet(
                         if (showTranslateAction) {
                             PlayerFooterButton(
                                 icon = Icons.Rounded.AutoAwesome,
-                                label = "Translate",
+                                label = stringResource(CommonR.string.player_tracks_translate),
                                 onClick = { controller.dismiss(then = onTranslateWithAi) },
                                 modifier = Modifier.weight(1f),
                             )
@@ -158,7 +159,7 @@ fun TracksSheet(
                         if (timingActions != null) {
                             PlayerFooterButton(
                                 icon = Icons.Rounded.Schedule,
-                                label = "Timing",
+                                label = stringResource(CommonR.string.player_tracks_timing),
                                 onClick = { showTiming = true },
                                 modifier = Modifier.weight(1f),
                             )
@@ -168,7 +169,7 @@ fun TracksSheet(
             }
             TracksTab.Audio -> PlayerMenuScrollColumn {
                 audioTracks.forEachIndexed { index, track ->
-                    val presentation = audioTrackPresentation(track, index)
+                    val presentation = audioTrackPresentation(track, index, trackStrings)
                     PlayerTrackRow(
                         title = presentation.title,
                         detail = presentation.detail,
@@ -203,7 +204,9 @@ private fun SubtitleTimingGroup(
             if (actions.canSync) {
                 PlayerActionRow(
                     icon = Icons.Rounded.Sync,
-                    label = if (actions.inProgress) "Syncing…" else "Sync to audio",
+                    label = stringResource(
+                        if (actions.inProgress) CommonR.string.player_tracks_syncing else CommonR.string.player_tracks_syncToAudio,
+                    ),
                     onClick = onSync,
                     enabled = actions.actionsEnabled,
                 )
@@ -211,7 +214,7 @@ private fun SubtitleTimingGroup(
             if (actions.canReset) {
                 PlayerActionRow(
                     icon = Icons.Rounded.Restore,
-                    label = "Reset timing",
+                    label = stringResource(CommonR.string.player_tracks_resetTiming),
                     onClick = onReset,
                     enabled = actions.actionsEnabled,
                     separator = actions.canSync,

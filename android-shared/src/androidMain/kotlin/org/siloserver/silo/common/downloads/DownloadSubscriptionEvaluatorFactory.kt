@@ -62,7 +62,8 @@ private suspend fun enqueueCandidate(
 
     when (result) {
         is ApiResult.Success -> Unit
-        is ApiResult.Error -> error(result.message ?: result.error ?: "Download enqueue failed (${result.code})")
+        // The worker stores this text, so it takes the detail: the server's or the English (never a translation).
+        is ApiResult.Error -> error(result.detail)
         is ApiResult.NetworkError -> throw result.exception
     }
 }
@@ -83,14 +84,14 @@ private class CatalogDownloadSubscriptionCandidateProvider(
     private suspend fun seriesCandidates(subscription: DownloadSubscription): List<DownloadSubscriptionCandidate> {
         val seasons = when (val result = catalogRepository.getSeasons(subscription.targetId)) {
             is ApiResult.Success -> result.data.seasons
-            is ApiResult.Error -> error(result.message ?: result.error ?: "Could not load seasons")
+            is ApiResult.Error -> error(result.detail)
             is ApiResult.NetworkError -> throw result.exception
         }
 
         return seasons.flatMap { season ->
             val episodes = when (val result = catalogRepository.getEpisodes(subscription.targetId, season.seasonNumber)) {
                 is ApiResult.Success -> result.data.episodes
-                is ApiResult.Error -> error(result.message ?: result.error ?: "Could not load episodes")
+                is ApiResult.Error -> error(result.detail)
                 is ApiResult.NetworkError -> throw result.exception
             }
             episodes.mapNotNull { episode ->
@@ -113,7 +114,7 @@ private class CatalogDownloadSubscriptionCandidateProvider(
     private suspend fun seasonCandidates(subscription: DownloadSubscription): List<DownloadSubscriptionCandidate> {
         val episodes = when (val result = catalogRepository.getItemEpisodes(subscription.targetId)) {
             is ApiResult.Success -> result.data.episodes
-            is ApiResult.Error -> error(result.message ?: result.error ?: "Could not load season episodes")
+            is ApiResult.Error -> error(result.detail)
             is ApiResult.NetworkError -> throw result.exception
         }
         return episodes.mapNotNull { episode ->
