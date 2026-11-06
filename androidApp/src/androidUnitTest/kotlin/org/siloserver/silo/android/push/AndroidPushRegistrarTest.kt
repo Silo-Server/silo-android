@@ -148,6 +148,12 @@ class AndroidPushRegistrarTest {
         registrar().registerOtherServersIfBehind(); registrar().registerOtherServersIfBehind()
         assertEquals(1,capabilityChecks)
     }
+    @Test fun aSavedServerThatHangsIsAskedAtMostDaily()=runTest {
+        savedServerAwaitingBinding()
+        onAvailable={ awaitCancellation() }; capabilityChecks=0
+        registrar().registerOtherServersIfBehind(); registrar().registerOtherServersIfBehind()
+        assertEquals(1,capabilityChecks)
+    }
     @Test fun aClockThatMovedBackDoesNotStrandARebind()=runTest {
         savedServerAwaitingBinding()
         bindsSession=false; registrar().registerOtherServersIfBehind()
