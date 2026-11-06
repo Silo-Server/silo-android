@@ -7,7 +7,13 @@ import kotlinx.serialization.Serializable
 
 sealed class ApiResult<out T> {
     data class Success<T>(val data: T) : ApiResult<T>()
-    data class Error(val code: Int, val error: String, val message: String) : ApiResult<Nothing>()
+    /**
+     * [message] is the text a screen shows. For a v2 problem it is the
+     * server's `detail`, translated when the interface isn't English (see
+     * [org.siloserver.silo.network.apiv2.ProblemText]); [detail] keeps the
+     * server's own text for code that must recognise it.
+     */
+    data class Error(val code: Int, val error: String, val message: String, val detail: String = message) : ApiResult<Nothing>()
     data class NetworkError(val exception: Throwable) : ApiResult<Nothing>()
 }
 

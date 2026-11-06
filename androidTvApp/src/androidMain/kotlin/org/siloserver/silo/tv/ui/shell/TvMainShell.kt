@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.shell
 
+import androidx.compose.ui.platform.LocalContext
+import org.siloserver.silo.common.i18n.sectionTitle
 import org.siloserver.silo.model.catalog.CatalogBoxSet
 import org.siloserver.silo.model.catalog.boxSetCard
 import androidx.activity.compose.BackHandler
@@ -558,17 +560,18 @@ fun TvMainShell(
     // A row's full page is an outer route like a detail page, so it takes the
     // same hand-back: Home's feed restores focus to the row's "Explore all"
     // card, and a library's feed does the same through its own return target.
+    val context = LocalContext.current
     val openHomeSection: (org.siloserver.silo.model.section.ResolvedSection) -> Unit = { section ->
         restoreContentAfterDetail = true
         detailReturnRoot = TvMainRoute.Home.route
         suppressFeedRefreshAfterDetail = true
-        onOpenSectionBrowse(section.id, section.title, null, null)
+        onOpenSectionBrowse(section.id, context.sectionTitle(section), null, null)
     }
     val openLibrarySection: (org.siloserver.silo.model.section.ResolvedSection, Int, String?) -> Unit =
         { section, libraryId, mediaScope ->
             restoreContentAfterDetail = true
             detailReturnRoot = null
-            onOpenSectionBrowse(section.id, section.title, libraryId, mediaScope)
+            onOpenSectionBrowse(section.id, context.sectionTitle(section), libraryId, mediaScope)
         }
     var contentUpFallback by remember { mutableStateOf<((Boolean) -> Boolean)?>(null) }
     // Feeds that registered the up-fallback slot, were superseded by a newer

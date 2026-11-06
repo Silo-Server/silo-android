@@ -48,6 +48,7 @@ import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.SiloTopBar
+import org.siloserver.silo.common.i18n.sectionTitle
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.ProfileRepository
@@ -169,6 +170,7 @@ private fun HomeSectionReorderList(
                 preferences.isVisible(section.id, profileId)
             }
             val isDragging = draggingId == section.id
+            val title = sectionTitle(section)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -185,11 +187,11 @@ private fun HomeSectionReorderList(
                 ) {
                     Icon(
                         imageVector = if (isVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
-                        contentDescription = if (isVisible) "Hide ${section.title}" else "Show ${section.title}",
+                        contentDescription = if (isVisible) "Hide $title" else "Show $title",
                     )
                 }
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(text = section.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+                    Text(text = title, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
                     Text(
                         text = if (section.items.size == 1) "1 item" else "${section.items.size} items",
                         style = MaterialTheme.typography.bodySmall,
@@ -240,7 +242,7 @@ private fun HomeSectionReorderList(
                         },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Filled.DragHandle, contentDescription = "Reorder ${section.title}")
+                    Icon(Icons.Filled.DragHandle, contentDescription = "Reorder $title")
                 }
             }
         }

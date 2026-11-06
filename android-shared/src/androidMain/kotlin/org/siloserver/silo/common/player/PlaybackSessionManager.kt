@@ -3161,5 +3161,5 @@ open class PlaybackSessionManager(
 internal fun ApiResult<*>.isPlaybackSessionMissingError(): Boolean {
     val error = this as? ApiResult.Error ?: return false
     return error.code == 404 &&
-        (error.error == "playback_session_not_found" || error.message == "Playback session not found")
+        (error.error == "playback_session_not_found" || error.detail == "Playback session not found")
 }

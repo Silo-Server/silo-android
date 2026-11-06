@@ -31,6 +31,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -69,6 +70,7 @@ import org.siloserver.silo.android.ui.screens.libraries.LibrariesSelectorSheet
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesViewModel
 import org.siloserver.silo.android.ui.screens.recommendations.ForYouList
 import org.siloserver.silo.android.ui.screens.recommendations.RecommendationsScreen
+import org.siloserver.silo.common.i18n.sectionTitle
 import org.siloserver.silo.viewmodel.RecommendationsViewModel
 import org.siloserver.silo.android.ui.screens.recommendations.headerTitle
 import org.siloserver.silo.android.ui.screens.watchparty.WatchPartySoloGuardDialog
@@ -104,6 +106,7 @@ fun MainScreen(
     navController: NavHostController,
     currentTab: Tab,
 ) {
+    val context = LocalContext.current
     val headerViewModel = koinViewModel<MainHeaderViewModel>()
     val headerState by headerViewModel.uiState.collectAsState()
     val siloCastController: SiloCastController = koinInject()
@@ -461,7 +464,7 @@ fun MainScreen(
                                 playVideo(contentId, resumePositionSeconds = resumePositionSeconds)
                             },
                             onExploreSection = { section ->
-                                navController.navigate(Route.SectionBrowse(section.id, section.title).route)
+                                navController.navigate(Route.SectionBrowse(section.id, context.sectionTitle(section)).route)
                             },
                             viewModel = homeViewModel,
                             activeProfile = headerState.activeProfile,
@@ -496,7 +499,7 @@ fun MainScreen(
                             },
                             onExploreSection = { section, libraryId, mediaScope ->
                                 navController.navigate(
-                                    Route.SectionBrowse(section.id, section.title, libraryId, mediaScope).route,
+                                    Route.SectionBrowse(section.id, context.sectionTitle(section), libraryId, mediaScope).route,
                                 )
                             },
                             viewModel = requireNotNull(librariesViewModel),
