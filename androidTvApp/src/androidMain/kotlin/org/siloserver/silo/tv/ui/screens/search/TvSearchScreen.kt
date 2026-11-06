@@ -311,9 +311,13 @@ fun TvSearchScreen(
         // the ordinary path, which blanks the row before refetching: a viewer
         // would watch it empty and refill, and a return restoration would lose
         // the card it was aiming at partway through.
+        //
+        // A search still loading for this exact query counts as answered too.
+        // A spoken query is set and submitted in the same moment, so this
+        // effect starts while that search is in flight; searching again here
+        // would cancel it and start over.
         val alreadyAnswered = requestState.submittedQuery == query &&
             requestState.mediaType == requestMediaType &&
-            !requestState.isLoading &&
             requestState.error == null
         // Nothing to do: the answer on screen is for this exact query. Staleness
         // after a return is handled by the restoration effect, which is the only
