@@ -62,6 +62,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.R
@@ -672,8 +673,8 @@ data class TvAccountState(
     val displayName: String? = null,
     /** Avatar ref + server-resolved URL, kept together so neither is lost. */
     val avatar: ProfileAvatarRef = ProfileAvatarRef.None,
-    /** Secondary line under the name in the dropdown header (role / username). */
-    val subtitle: String = "",
+    /** Secondary line under the name in the dropdown header (role / username); null shows none. */
+    val subtitle: UiText? = null,
     /** Active server display name, shown in the dropdown header. */
     val serverName: String = "",
 )
