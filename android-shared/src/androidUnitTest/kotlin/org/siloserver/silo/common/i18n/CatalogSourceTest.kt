@@ -62,7 +62,6 @@ class CatalogSourceTest {
         "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/browse",
         "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/calendar",
         "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/collections",
-        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/detail",
         "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/home",
         "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/libraries",
         "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/library",

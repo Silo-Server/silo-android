@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.i18n
 
+import android.content.res.Resources
+import android.view.View
 import androidx.annotation.PluralsRes
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
@@ -33,4 +35,10 @@ fun pluralStringResourceWithNames(@PluralsRes id: Int, count: Int, vararg names:
 private fun isolated(names: Array<out String>): Array<String> {
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     return names.map { if (rtl) "\u2068$it\u2069" else it }.toTypedArray()
+}
+
+/** [stringResourceWithNames] outside composition, for helpers that take [Resources]. */
+fun Resources.getStringWithNames(@StringRes id: Int, vararg names: String): String {
+    val rtl = configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+    return getString(id, *names.map { if (rtl) "\u2068$it\u2069" else it }.toTypedArray())
 }

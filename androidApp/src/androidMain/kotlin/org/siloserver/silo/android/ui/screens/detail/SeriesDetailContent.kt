@@ -400,7 +400,7 @@ fun SeriesDetailContent(
                                 SiloDropdownMenuItem(
                                     text = {
                                         Text(
-                                            stringResource(
+                                            stringResourceWithNames(
                                                 if (seasonWatched) {
                                                     CommonR.string.detail_more_markNamedSeasonUnwatched
                                                 } else {

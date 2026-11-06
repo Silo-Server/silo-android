@@ -1262,6 +1262,7 @@ private fun audiobookGroupSubtitle(group: AudiobookGroup): String? {
             CommonR.plurals.library_audiobookGroup_inProgress,
             group.inProgressCount,
             group.inProgressCount,
+            group.inProgressCount.toString(),
         )
     }
     return parts.takeIf { it.isNotEmpty() }?.joinToString(" • ")
