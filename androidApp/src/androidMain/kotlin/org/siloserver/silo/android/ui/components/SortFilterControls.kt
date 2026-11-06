@@ -35,10 +35,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.siloserver.silo.android.ui.theme.SiloOnOpaqueControl
-import org.siloserver.silo.android.ui.theme.SiloOpaqueControl
-import org.siloserver.silo.android.ui.theme.SiloOpaqueControlBorder
-import org.siloserver.silo.android.ui.theme.SiloOpaqueControlSelected
+import org.siloserver.silo.android.ui.theme.SiloDetailActionControl
+import org.siloserver.silo.android.ui.theme.SiloDetailActionControlActive
+import org.siloserver.silo.android.ui.theme.SiloOnSurface
+import org.siloserver.silo.android.ui.theme.SiloOutline
 
 /** One entry in the sort dropdown. [selectedLabel] (e.g. "Title · A–Z") shows while active. */
 data class SortMenuOption(
@@ -140,7 +140,11 @@ fun SortFilterControlsRow(
     }
 }
 
-/** Light opaque capsule for the sort and filter controls, brightened when active. */
+/**
+ * Translucent capsule with light content for the sort and filter controls,
+ * standing in for iOS `controlChip`'s glass. Brightened when [active], but
+ * never the solid light capsule that marks a chosen option.
+ */
 @Composable
 private fun ControlPill(
     icon: ImageVector,
@@ -153,10 +157,10 @@ private fun ControlPill(
         onClick = onClick,
         shape = CircleShape,
         contentPadding = PaddingValues(horizontal = 12.dp),
-        border = BorderStroke(1.dp, SiloOpaqueControlBorder),
+        border = BorderStroke(1.dp, SiloOutline),
         colors = ButtonDefaults.outlinedButtonColors(
-            contentColor = SiloOnOpaqueControl,
-            containerColor = if (active) SiloOpaqueControlSelected else SiloOpaqueControl,
+            contentColor = SiloOnSurface,
+            containerColor = if (active) SiloDetailActionControlActive else SiloDetailActionControl,
         ),
         modifier = Modifier.height(34.dp),
     ) {
