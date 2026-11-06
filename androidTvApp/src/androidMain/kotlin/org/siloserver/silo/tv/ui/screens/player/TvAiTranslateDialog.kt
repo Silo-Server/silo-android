@@ -329,7 +329,7 @@ fun TvAiTranslateDialog(
                                         pluralStringResource(
                                             CommonR.plurals.player_aiTranslate_quotaLeftPeriod,
                                             q.limit,
-                                            q.remaining,
+                                            q.remaining.toString(),
                                             q.limit,
                                             period,
                                             q.limit.toString(),

@@ -522,21 +522,21 @@ private fun downloadEntrySubtitle(entry: DownloadEntry): String = when (entry) {
         CommonR.plurals.downloads_entry_episodesDone,
         entry.episodes.size,
         entry.episodes.size,
-        entry.completedCount,
+        entry.completedCount.toString(),
         entry.episodes.size.toString(),
     )
     is DownloadEntry.Series -> pluralStringResource(
         CommonR.plurals.downloads_entry_episodesDone,
         entry.totalEpisodes,
         entry.totalEpisodes,
-        entry.completedEpisodes,
+        entry.completedEpisodes.toString(),
         entry.totalEpisodes.toString(),
     )
     is DownloadEntry.Author -> pluralStringResource(
         CommonR.plurals.downloads_entry_booksDone,
         entry.books.size,
         entry.books.size,
-        entry.completedCount,
+        entry.completedCount.toString(),
         entry.books.size.toString(),
     )
     is DownloadEntry.Single -> entry.subtitle.orEmpty()
