@@ -563,8 +563,7 @@ private fun SectionItem.shelfTitle(showProgress: Boolean): String {
 
 private fun SectionItem.shelfSubtitle(showProgress: Boolean): String? {
     if (showProgress) {
-        val tag = tvEpisodeTag(seasonNumber, episodeNumber)
-        return listOfNotNull(tag, title.takeIf { it.isNotBlank() }).joinToString(" • ").ifBlank { null }
+        return tvEpisodeTitleLine(seasonNumber, episodeNumber, title)
     }
     return when {
         year > 0 && genres.isNotEmpty() -> "${year} • ${genres.first()}"

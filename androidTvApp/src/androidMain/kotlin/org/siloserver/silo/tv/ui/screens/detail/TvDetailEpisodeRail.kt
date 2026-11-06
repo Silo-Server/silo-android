@@ -57,6 +57,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.LayoutDirection
@@ -75,6 +76,7 @@ import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
 import org.siloserver.silo.tv.ui.components.TvMediaCardContextMenu
+import org.siloserver.silo.tv.ui.components.bidiIsolated
 import org.siloserver.silo.tv.ui.components.tvEpisodeCardWidth
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
@@ -497,7 +499,9 @@ private fun TvDetailEpisodeCard(
         // episode is marked by its still's border, as on tvOS. The card
         // recomposes on every frame of its focus animation, so the text is built
         // once per episode.
-        val title = remember(episode) { EpisodeCardCaption.title(episode) }
+        val title = remember(episode) {
+            EpisodeCardCaption.title(episode.copy(title = episode.title?.trim()?.let(::bidiIsolated)))
+        }
         val metadata = remember(episode) {
             EpisodeCardCaption.metadata(
                 airDate = abbreviatedEpisodeDate(episode.airDate),
@@ -561,6 +565,7 @@ private val SeriesCaptionTitleStyle = TextStyle(
     fontSize = 11.5.sp,
     lineHeight = 14.sp,
     fontWeight = FontWeight.SemiBold,
+    textDirection = TextDirection.Content,
 )
 private val SeriesCaptionMetadataStyle = TextStyle(
     fontFamily = InterFamily,
@@ -573,6 +578,7 @@ private val CaptionTitleStyle = TextStyle(
     fontSize = 18.sp,
     lineHeight = 22.sp,
     fontWeight = FontWeight.SemiBold,
+    textDirection = TextDirection.Content,
 )
 private val CaptionMetadataStyle = TextStyle(
     fontFamily = InterFamily,
@@ -585,6 +591,7 @@ private val CaptionOverviewStyle = TextStyle(
     fontSize = 16.sp,
     lineHeight = 20.sp,
     fontWeight = FontWeight.Normal,
+    textDirection = TextDirection.Content,
 )
 
 // Shared with the hero facts row (tvOS parity), so the card dates agree with it.
