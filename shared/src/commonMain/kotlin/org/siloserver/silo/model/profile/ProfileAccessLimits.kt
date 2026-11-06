@@ -182,7 +182,8 @@ sealed interface AssignableLibraries {
     companion object {
         fun from(result: ApiResult<List<UserLibrary>>): AssignableLibraries = when (result) {
             is ApiResult.Success -> Loaded(result.data.sortedBy { it.sortOrder })
-            else -> Failed(result.errorTextOrNull())
+            // The server's reason ends the sentence, so trailing whitespace goes, as before.
+            else -> Failed(result.errorTextOrNull()?.let { if (it is UiText.Raw) UiText.Raw(it.text.trimEnd()) else it })
         }
     }
 }
