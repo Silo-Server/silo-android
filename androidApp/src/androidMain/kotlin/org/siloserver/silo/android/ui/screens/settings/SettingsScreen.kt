@@ -132,26 +132,26 @@ fun SettingsScreen(
     val versionLabel = clientVersionLabel(BuildConfig.VERSION_NAME, BuildConfig.BUILD_NUMBER)
     val serverLabel = state.serverName.ifBlank { serverHost(state.serverUrl) ?: stringResource(CommonR.string.settings_overview_notConnected) }
     val showDiagnostics = shouldShowDiagnosticsEntry(diagnosticsState) &&
-        search.matches(*searchTerms(CommonR.string.settings_search_terms_diagnostics))
+        search.matches(*searchTerms(CommonR.string.settings_search_terms_diagnostics, "diagnostics", "support", "reports", "debug", "crash"))
 
-    val matchesInterface = search.matches(*searchTerms(CommonR.string.settings_search_terms_interface))
-    val matchesNotifications = state.notificationsAvailable && search.matches(*searchTerms(CommonR.string.settings_search_terms_notifications))
-    val matchesProfileSelection = search.matches(*searchTerms(CommonR.string.settings_search_terms_profileSelection))
-    val matchesPlayback = search.matches(*searchTerms(CommonR.string.settings_search_terms_playback))
-    val matchesSubtitles = search.matches(*searchTerms(CommonR.string.settings_search_terms_subtitles))
-    val matchesDownloads = search.matches(*searchTerms(CommonR.string.settings_search_terms_downloads))
-    val matchesWatchlist = search.matches(*searchTerms(CommonR.string.settings_search_terms_watchlist))
-    val matchesFavorites = search.matches(*searchTerms(CommonR.string.settings_search_terms_favorites))
-    val matchesHistory = search.matches(*searchTerms(CommonR.string.settings_search_terms_history))
-    val matchesCollections = search.matches(*searchTerms(CommonR.string.settings_search_terms_collections))
-    val matchesServer = search.matches(*searchTerms(CommonR.string.settings_search_terms_server), serverLabel)
-    val matchesPairDevice = search.matches(*searchTerms(CommonR.string.settings_search_terms_pairDevice))
+    val matchesInterface = search.matches(*searchTerms(CommonR.string.settings_search_terms_interface, "interface", "appearance", "cards", "posters", "home", "sections", "title art", "logos", "language"))
+    val matchesNotifications = state.notificationsAvailable && search.matches(*searchTerms(CommonR.string.settings_search_terms_notifications, "notifications", "alerts", "favorites", "watchlist", "continue watching", "next up"))
+    val matchesProfileSelection = search.matches(*searchTerms(CommonR.string.settings_search_terms_profileSelection, "profile selection", "profiles", "who's watching", "launch", "pin"))
+    val matchesPlayback = search.matches(*searchTerms(CommonR.string.settings_search_terms_playback, "playback", "quality", "resolution", "bitrate", "cellular", "mobile data", "audio", "dolby vision", "picture-in-picture", "episodes", "next up", "skip", "intros", "credits", "rewind", "still watching", "skip interval", "audiobooks", "spoilers", "unwatched", "blur", "descriptions"))
+    val matchesSubtitles = search.matches(*searchTerms(CommonR.string.settings_search_terms_subtitles, "subtitles", "captions", "language", "behavior", "appearance", "forced", "metadata"))
+    val matchesDownloads = search.matches(*searchTerms(CommonR.string.settings_search_terms_downloads, "downloads", "offline", "quality", "wi-fi", "cleanup", "storage"))
+    val matchesWatchlist = search.matches(*searchTerms(CommonR.string.settings_search_terms_watchlist, "library", "watchlist"))
+    val matchesFavorites = search.matches(*searchTerms(CommonR.string.settings_search_terms_favorites, "library", "favorites"))
+    val matchesHistory = search.matches(*searchTerms(CommonR.string.settings_search_terms_history, "library", "history", "watch history"))
+    val matchesCollections = search.matches(*searchTerms(CommonR.string.settings_search_terms_collections, "library", "collections"))
+    val matchesServer = search.matches(*searchTerms(CommonR.string.settings_search_terms_server, "server", "connection", "accounts"), serverLabel)
+    val matchesPairDevice = search.matches(*searchTerms(CommonR.string.settings_search_terms_pairDevice, "connection", "pair", "device", "tv", "link", "sign in"))
     // External sign-in (OIDC/LDAP): shown only on servers that have it.
     val matchesSignIn = signInState.visible &&
-        search.matches(*searchTerms(CommonR.string.settings_search_terms_signIn))
-    val matchesExperimental = search.matches(*searchTerms(CommonR.string.settings_search_terms_experimental))
-    val matchesAbout = search.matches(*searchTerms(CommonR.string.settings_search_terms_about), versionLabel)
-    val matchesSignOut = search.matches(*searchTerms(CommonR.string.settings_search_terms_signOut))
+        search.matches(*searchTerms(CommonR.string.settings_search_terms_signIn, "sign-in", "sign in", "account", "provider", "connect", "disconnect", "sso"))
+    val matchesExperimental = search.matches(*searchTerms(CommonR.string.settings_search_terms_experimental, "experimental", "beta", "testing", "audiobooks", "navigation", "watch party", "party"))
+    val matchesAbout = search.matches(*searchTerms(CommonR.string.settings_search_terms_about, "about", "version", "privacy", "policy", "information"), versionLabel)
+    val matchesSignOut = search.matches(*searchTerms(CommonR.string.settings_search_terms_signOut, "sign out", "account"))
 
     val hasResults = matchesInterface || matchesNotifications || matchesProfileSelection || matchesPlayback || matchesSubtitles ||
         matchesDownloads || matchesWatchlist || matchesFavorites || matchesHistory || matchesCollections ||
@@ -442,12 +442,15 @@ private fun serverHost(serverUrl: String): String? {
 }
 
 /**
- * A row's search keywords: one catalog message listing them, comma-separated,
- * so each language can offer the words its speakers would type.
+ * A row's search keywords: the [english] ones, which always match (they are
+ * matching data and stay English in every language), plus the catalog
+ * message's comma-separated words for the app language.
  */
 @Composable
-private fun searchTerms(@StringRes id: Int): Array<String> =
-    stringResource(id).split(',').map { it.trim() }.filter { it.isNotEmpty() }.toTypedArray()
+private fun searchTerms(@StringRes id: Int, vararg english: String): Array<String> =
+    (english.asList() + stringResource(id).split(',').map { it.trim() }.filter { it.isNotEmpty() })
+        .distinct()
+        .toTypedArray()
 
 /** The Diagnostics row's value, in the Apple apps' wording; none when diagnostics can't apply. */
 @Composable
