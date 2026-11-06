@@ -214,7 +214,7 @@ class DownloadEnqueuer(
                 subtitle = ep?.let {
                     episodeTag(it.seasonNumber, it.episodeNumber) +
                         (it.title?.takeIf { t -> t.isNotBlank() }?.let { t -> " · $t" } ?: "")
-                } ?: "Series episode",
+                } ?: UNKNOWN_EPISODE_SUBTITLE,
                 posterUrl = posterUrl,
                 posterThumbhash = seriesDetail?.posterThumbhash,
                 posterIsEpisodeStill = false,
@@ -603,6 +603,9 @@ class DownloadEnqueuer(
          * catalog's word in its place.
          */
         const val UNKNOWN_SERIES_TITLE = "Series"
+
+        /** Saved as an episode's subtitle when its numbers are unknown; shown like [UNKNOWN_SERIES_TITLE]. */
+        const val UNKNOWN_EPISODE_SUBTITLE = "Series episode"
 
         private const val WORK_VISIBILITY_GRACE_MS = 5_000L
     }
