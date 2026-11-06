@@ -4,7 +4,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.res.stringResource
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 
@@ -22,19 +24,18 @@ internal fun ThemeMusicSettingsSection(store: PlayerSettingsStore) {
     fun overridden(key: String) = PlaybackSettingsKeys.hasDeviceOverride(overrides, key)
 
     SettingsSection(
-        title = "Theme Music",
-        footer = "Play a title's theme music while its page is open, when the server has one. " +
-            "Loop repeats it until you leave the page.",
+        title = stringResource(CommonR.string.settings_section_themeMusic),
+        footer = stringResource(CommonR.string.settings_themeMusic_footer),
     ) {
         ProfileLayeredSwitchRow(
-            label = "Theme Music",
+            label = stringResource(CommonR.string.settings_themeMusic_enabled),
             checked = enabled,
             overridden = overridden(PlaybackSettingsKeys.ThemeMusicEnabled),
             onCheckedChange = { scope.launch { store.setThemeMusicEnabled(it) } },
             onUseProfileSetting = { scope.launch { store.resetDeviceSetting(PlaybackSettingsKeys.ThemeMusicEnabled) } },
         )
         ProfileLayeredSwitchRow(
-            label = "Loop Theme Music",
+            label = stringResource(CommonR.string.settings_control_themeMusicLoop),
             checked = loop,
             overridden = overridden(PlaybackSettingsKeys.ThemeMusicLoop),
             onCheckedChange = { scope.launch { store.setThemeMusicLoop(it) } },

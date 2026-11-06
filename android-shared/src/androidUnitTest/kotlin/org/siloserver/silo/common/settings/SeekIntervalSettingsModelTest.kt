@@ -57,12 +57,12 @@ class SeekIntervalSettingsModelTest {
 
         model.select(SeekMedia.Audiobook, SeekDirection.Back, 15)
 
-        assertTrue(model.state.value.saveErrorFor(SeekMedia.Audiobook) != null)
-        assertNull(model.state.value.saveErrorFor(SeekMedia.Video))
+        assertTrue(model.state.value.saveErrorOf(SeekMedia.Audiobook) != null)
+        assertNull(model.state.value.saveErrorOf(SeekMedia.Video))
 
         store.saveFailure = null
         model.select(SeekMedia.Audiobook, SeekDirection.Back, 15)
-        assertNull(model.state.value.saveErrorFor(SeekMedia.Audiobook))
+        assertNull(model.state.value.saveErrorOf(SeekMedia.Audiobook))
     }
 
     @Test
@@ -78,7 +78,11 @@ class SeekIntervalSettingsModelTest {
 
             val model = SeekIntervalSettingsModel(FakeSeekIntervalStore(supported), legacy, backgroundScope)
             assertTrue(model.state.value.showLegacyImport)
-            assertEquals("Skip back 15s, skip forward 60s", model.state.value.legacyAudiobookSummary)
+            // The summary ("Skip back 15s, skip forward 60s") names these values.
+            assertEquals(
+                mapOf(SeekDirection.Back to 15, SeekDirection.Forward to 60),
+                model.state.value.legacyAudiobook.importable,
+            )
 
             // Nothing stored on the device: nothing to offer.
             legacy.value = LegacyAudiobookIntervals()
@@ -105,9 +109,15 @@ class SeekIntervalSettingsModelTest {
         model.importLegacyAudiobook()
 
         assertEquals(listOf(legacy), store.imports)
+        // Shown as "Skip back imported (15s). Skip forward (60s) failed: Server error."
         assertEquals(
-            "Skip back imported (15s). Skip forward (60s) failed: Server error.",
-            model.state.value.importMessage,
+            SeekImportMessage.Result(
+                SeekImportResult(
+                    back = SeekImportOutcome.Imported(15),
+                    forward = SeekImportOutcome.Failed(60, "Server error"),
+                ),
+            ),
+            model.state.value.importOutcome,
         )
         assertFalse(model.state.value.importInProgress)
     }

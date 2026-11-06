@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.auth
 
+import androidx.annotation.StringRes
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -19,8 +20,8 @@ import org.siloserver.silo.tv.ui.screens.servers.TvServerSwitchDestination
 
 /** How a sign-out ended. Each one is handed to the navigator once. */
 sealed interface TvSignOutResult {
-    /** Go to [destination]; [notice] says what didn't work, when something didn't. */
-    data class SignedOut(val destination: TvServerSwitchDestination, val notice: String? = null) : TvSignOutResult
+    /** Go to [destination]; [notice] (a string resource) says what didn't work, when something didn't. */
+    data class SignedOut(val destination: TvServerSwitchDestination, @StringRes val notice: Int? = null) : TvSignOutResult
 
     /** Nobody was signed out; stay where you are and show [message]. */
     data class Refused(val message: String) : TvSignOutResult

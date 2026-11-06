@@ -140,7 +140,7 @@ class TitleArtStoreTest {
 
         assertTrue(store.state.value.showTitleArt)
         // Settings shows the failure under the switches until a save succeeds.
-        assertEquals("Couldn't save title art: Server error", store.saveError.value)
+        assertEquals(SettingsSaveError.TitleArt("Server error"), store.saveError.value)
 
         server.failPuts = false
         store.setShowTitleArt(false)
@@ -326,7 +326,7 @@ class TitleArtStoreTest {
         assertEquals(listOf("put profile true"), server.calls)
         assertNull(server.profileValue)
         assertEquals(TitleArtPreference(showTitleArt = true, appliesToAllDevices = false), store.state.value.preference)
-        assertEquals("Couldn't save title art: Server error", store.saveError.value)
+        assertEquals(SettingsSaveError.TitleArt("Server error"), store.saveError.value)
 
         // A new change after the failure goes through normally.
         server.failPuts = false
@@ -508,7 +508,7 @@ class TitleArtStoreTest {
 
         assertTrue(server.calls.isEmpty())
         assertEquals(
-            DefaultTitleArtStore.saveErrorText(DefaultTitleArtStore.IDENTITY_CHANGED),
+            SettingsSaveError.TitleArt(detail = null, identityChanged = true),
             store.saveError.value,
         )
     }

@@ -42,6 +42,12 @@ class CatalogSourceTest {
      */
     private val convertedDirectories = listOf(
         "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/pairing",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/servers",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/settings",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/servers",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/settings",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/diagnostics",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/settings",
     )
 
     @Test
@@ -66,6 +72,7 @@ class CatalogSourceTest {
             Text("•")
             Text("Silo") // i18n-ignore
             Text(text = title)
+            SiloLogAttribute.Text("route")
         """.trimIndent()
         assertEquals(listOf(1, 2, 5), hardcodedText(source))
     }
@@ -82,6 +89,7 @@ class CatalogSourceTest {
             .toList()
 
     private companion object {
-        val LITERAL = Regex("""(?:\bText\(\s*|\btext\s*=\s*)"(?=[^"\n]*\p{L})""")
+        // `(?<![.\w])` skips qualified calls such as `SiloLogAttribute.Text("…")`, which are log fields.
+        val LITERAL = Regex("""(?:(?<![.\w])Text\(\s*|\btext\s*=\s*)"(?=[^"\n]*\p{L})""")
     }
 }

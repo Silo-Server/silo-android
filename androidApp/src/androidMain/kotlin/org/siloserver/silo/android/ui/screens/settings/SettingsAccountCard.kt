@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -31,6 +32,8 @@ import org.siloserver.silo.android.ui.theme.SettingsTextStyles
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceVariant
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.model.profile.Profile
@@ -55,22 +58,24 @@ fun SettingsAccountCard(
 ) {
     val name = profile?.name?.takeIf { it.isNotBlank() }
         ?: user?.username?.takeIf { it.isNotBlank() }
-        ?: "Switch Profile"
+        ?: stringResource(CommonR.string.settings_profile)
     val username = user?.username?.takeIf { it.isNotBlank() }
     val subtitle = when {
-        username != null && username != name && serverHost != null -> "$username · $serverHost"
+        username != null && username != name && serverHost != null ->
+            stringResourceWithNames(CommonR.string.settings_account_userAtServer, username, serverHost)
         serverHost != null -> serverHost
         username != null && username != name -> username
-        else -> "Tap to switch profile"
+        else -> stringResource(CommonR.string.settings_account_tapToSwitch)
     }
     val isAdministrator = user?.role.equals("admin", ignoreCase = true)
+    val switchLabel = stringResource(CommonR.string.settings_account_switchProfile)
 
     SettingsSectionCard(modifier = modifier) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = SettingsDimens.overviewRowMinHeight)
-                .clickable(role = Role.Button, onClickLabel = "Switch profile", onClick = onClick)
+                .clickable(role = Role.Button, onClickLabel = switchLabel, onClick = onClick)
                 .padding(horizontal = SettingsDimens.rowHorizontalPadding, vertical = SettingsDimens.rowVerticalPadding),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -122,7 +127,7 @@ fun SettingsAccountCard(
             if (isAdministrator) {
                 Spacer(modifier = Modifier.width(SettingsDimens.rowTrailingGap))
                 Text(
-                    text = "Admin",
+                    text = stringResource(CommonR.string.settings_account_admin),
                     style = SettingsTextStyles.badge,
                     color = SiloSecondaryText,
                     modifier = Modifier

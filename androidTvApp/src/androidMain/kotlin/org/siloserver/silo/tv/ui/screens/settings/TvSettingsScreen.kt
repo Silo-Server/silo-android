@@ -62,6 +62,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import org.siloserver.silo.common.i18n.AppLanguageStore
 import org.siloserver.silo.common.i18n.appLanguageOptions
+import org.siloserver.silo.common.settings.profileLaunchDescription
+import org.siloserver.silo.common.settings.profileLaunchTitle
 import org.siloserver.silo.common.settings.SeekIntervalSettingsModel
 import org.siloserver.silo.common.settings.SeekIntervalSettingsUiState
 import org.siloserver.silo.model.settings.SeekDirection
@@ -89,6 +91,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -151,6 +154,7 @@ import org.siloserver.silo.common.watchparty.WatchPartyExperiment
 import org.siloserver.silo.viewmodel.HomeViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.settings.text
 
 /**
  * TV Settings — a tvOS-style split rail/detail surface modeled on
@@ -364,39 +368,39 @@ fun TvSettingsScreen(
  * twin; MonitorHeart is the nearest "check the patient" glyph.
  */
 internal enum class TvSettingsCategory(
-    val title: String,
-    val railDescription: String,
-    val blurb: String,
+    @StringRes val title: Int,
+    @StringRes val railDescription: Int,
+    @StringRes val blurb: Int,
     val icon: ImageVector,
 ) {
     General(
-        title = "General",
-        railDescription = "App and navigation",
-        blurb = "App-level options for this Android TV.",
+        title = CommonR.string.settings_general,
+        railDescription = CommonR.string.settings_rail_general,
+        blurb = CommonR.string.settings_blurb_general,
         icon = Icons.Outlined.Settings,
     ),
     Playback(
-        title = "Playback",
-        railDescription = "Quality and episodes",
-        blurb = "Streaming quality and episode behavior for this Android TV.",
+        title = CommonR.string.settings_playback,
+        railDescription = CommonR.string.settings_railDescription_playback,
+        blurb = CommonR.string.settings_blurb_playback,
         icon = Icons.Outlined.SmartDisplay,
     ),
     Subtitles(
-        title = "Subtitles",
-        railDescription = "Language and appearance",
-        blurb = "Language, behavior, and on-screen appearance.",
+        title = CommonR.string.settings_subtitles,
+        railDescription = CommonR.string.settings_rail_subtitles,
+        blurb = CommonR.string.settings_blurb_subtitles,
         icon = Icons.Outlined.ClosedCaption,
     ),
     Diagnostics(
-        title = "Diagnostics",
-        railDescription = "Reports and support",
-        blurb = "Review and send diagnostics to this Silo server.",
+        title = CommonR.string.settings_diagnostics,
+        railDescription = CommonR.string.settings_rail_diagnostics,
+        blurb = CommonR.string.settings_blurb_diagnostics,
         icon = Icons.Outlined.MonitorHeart,
     ),
     Server(
-        title = "Server",
-        railDescription = "Connection and version",
-        blurb = "The Silo server this Android TV is connected to.",
+        title = CommonR.string.settings_category_server,
+        railDescription = CommonR.string.settings_rail_server,
+        blurb = CommonR.string.settings_blurb_server,
         icon = Icons.Outlined.Dns,
     ),
 }
@@ -628,7 +632,7 @@ private fun SettingsRail(
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Text(
-            text = "Settings",
+            text = stringResource(CommonR.string.settings_title),
             style = MaterialTheme.typography.displayMedium.copy(fontSize = 24.sp, lineHeight = 29.sp),
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onBackground,
@@ -659,14 +663,14 @@ private fun SettingsRail(
         }
         Spacer(modifier = Modifier.weight(1f))
         SettingsRailActionRow(
-            label = "Sign Out",
+            label = stringResource(CommonR.string.settings_signOut),
             icon = Icons.AutoMirrored.Filled.Logout,
             onClick = onRequestSignOut,
             destructive = true,
             onFocused = { railActionHasFocus = true },
         )
         Text(
-            text = "Silo ${clientVersionLabel(BuildConfig.VERSION_NAME, BuildConfig.BUILD_NUMBER)}",
+            text = "Silo ${clientVersionLabel(BuildConfig.VERSION_NAME, BuildConfig.BUILD_NUMBER)}", // i18n-ignore
             style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             modifier = Modifier.padding(start = 12.dp, top = 6.dp),
@@ -740,7 +744,7 @@ private fun SettingsRailCategoryRow(
                 // One line each: the row is a fixed height, so a wrapped
                 // description at a large font scale would be cut off mid-line.
                 Text(
-                    text = category.title,
+                    text = stringResource(category.title),
                     style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp, lineHeight = 18.sp),
                     fontWeight = FontWeight.Medium,
                     color = foreground,
@@ -749,7 +753,7 @@ private fun SettingsRailCategoryRow(
                 )
                 // TV text keeps its 14sp floor, a little above tvOS's 16pt.
                 Text(
-                    text = category.railDescription,
+                    text = stringResource(category.railDescription),
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 17.sp),
                     color = foreground.copy(alpha = 0.62f),
                     maxLines = 1,
@@ -973,7 +977,11 @@ private fun SettingsDetailPane(
  */
 @Composable
 private fun SettingsPaneHeader(category: TvSettingsCategory) {
-    SettingsPaneHeader(icon = category.icon, title = category.title, blurb = category.blurb)
+    SettingsPaneHeader(
+        icon = category.icon,
+        title = stringResource(category.title),
+        blurb = stringResource(category.blurb),
+    )
 }
 
 /** The pane header for a settings page outside the rail (Settings › Accounts). */
@@ -1044,14 +1052,14 @@ private fun TvGeneralSettingsPane(
         item {
             // tvOS General → PROFILE AT LAUNCH. Device-wide and never synced,
             // so it reads the same whichever profile is active.
-            SettingsGroup(title = "Profile at Launch") {
+            SettingsGroup(title = stringResource(CommonR.string.settings_section_profileLaunch)) {
                 SettingsValueRow(
-                    label = "Profile Selection",
-                    value = state.profileLaunchBehavior.title,
+                    label = stringResource(CommonR.string.settings_control_profileSelection),
+                    value = stringResource(profileLaunchTitle(state.profileLaunchBehavior)),
                     onClick = { showProfileLaunchPicker = true },
                     focusRequester = firstFocusRequester,
                 )
-                SettingsFooterText(text = state.profileLaunchBehavior.description(PROFILE_LAUNCH_DEVICE))
+                SettingsFooterText(text = stringResource(profileLaunchDescription(state.profileLaunchBehavior, CommonR.string.settings_profileLaunch_automatic_detailAndroidTv)))
             }
         }
         item {
@@ -1060,14 +1068,14 @@ private fun TvGeneralSettingsPane(
         item {
             // Device-local, server/profile-specific visibility and order for
             // the populated rows returned by Home, matching tvOS General.
-            SettingsGroup(title = "Home Sections") {
+            SettingsGroup(title = stringResource(CommonR.string.settings_homeSections_title)) {
                 SettingsValueRow(
-                    label = "Home Sections",
+                    label = stringResource(CommonR.string.settings_homeSections_title),
                     value = "",
                     onClick = { showHomeSectionsEditor = true },
                 )
                 SettingsFooterText(
-                    text = "Choose which Home rows are visible and edit the order in which they appear on this Android TV.",
+                    text = stringResource(CommonR.string.settings_homeSections_description),
                 )
             }
         }
@@ -1076,31 +1084,31 @@ private fun TvGeneralSettingsPane(
             // server-driven `ui.card_presentation` setting. Unknown support
             // (offline probe) keeps the controls up over the cached value;
             // only a confirmed too-old server hides them.
-            SettingsGroup(title = "Cards & Posters") {
+            SettingsGroup(title = stringResource(CommonR.string.settings_cards_title)) {
                 if (state.cardPresentationSupport == CardPresentationSupport.Unsupported) {
                     SettingsFooterText(
-                        text = "Update your Silo server to customize media cards.",
+                        text = stringResource(CommonR.string.settings_cards_unsupported),
                     )
                 } else {
                     SettingsValueRow(
-                        label = "Poster Size",
+                        label = stringResource(CommonR.string.settings_cards_posterSize),
                         value = state.cardPresentation.posterSize.displayName,
                         onClick = { showPosterSizePicker = true },
                     )
                     SettingsToggleRow(
-                        label = "Only This Device",
+                        label = stringResource(CommonR.string.settings_cards_onlyThisDevice),
                         checked = state.cardPresentationSource ==
                             CardPresentationSource.DeviceOverride,
                         onCheckedChange = onCardPresentationDeviceOnlyChanged,
                     )
                     if (state.cardPresentationSource == CardPresentationSource.ClientFamily) {
                         SettingsActionRow(
-                            label = "Use Profile Default",
+                            label = stringResource(CommonR.string.settings_cards_useProfileDefault),
                             onClick = onUseProfileCardDefault,
                         )
                     }
                     SettingsFooterText(
-                        text = "Poster size syncs with other TVs on this profile unless Only This Device is on.",
+                        text = stringResource(CommonR.string.settings_cards_footer),
                     )
                 }
             }
@@ -1115,14 +1123,14 @@ private fun TvGeneralSettingsPane(
             // tvOS TVGeneralSettingsPane TOP MENU parity: the Audiobooks tab
             // is opt-in (hidden by default) even when the server has an
             // audiobook library.
-            SettingsGroup(title = "Top Menu") {
+            SettingsGroup(title = stringResource(CommonR.string.settings_topMenu_title)) {
                 SettingsToggleRow(
-                    label = "Show Audiobooks",
+                    label = stringResource(CommonR.string.settings_experimental_showAudiobooks),
                     checked = state.showAudiobooksTab,
                     onCheckedChange = onShowAudiobooksTabChanged,
                 )
                 SettingsFooterText(
-                    text = "Adds an Audiobooks tab to the top menu when your server has an audiobook library. Hidden by default.",
+                    text = stringResource(CommonR.string.settings_topMenu_footer),
                 )
             }
         }
@@ -1140,7 +1148,7 @@ private fun TvGeneralSettingsPane(
 
     if (showPosterSizePicker) {
         TvSettingsPickerSheet(
-            title = "Poster Size",
+            title = stringResource(CommonR.string.settings_cards_posterSize),
             options = CardPosterSize.entries.map { PickerOption(it.raw, it.displayName) },
             selectedId = state.cardPresentation.posterSize.raw,
             onSelect = { id ->
@@ -1155,9 +1163,13 @@ private fun TvGeneralSettingsPane(
 
     if (showProfileLaunchPicker) {
         TvSettingsPickerSheet(
-            title = "Profile Selection",
+            title = stringResource(CommonR.string.settings_control_profileSelection),
             options = ProfileLaunchBehavior.entries.map {
-                PickerOption(it.raw, it.title, detail = it.description(PROFILE_LAUNCH_DEVICE))
+                PickerOption(
+                    it.raw,
+                    stringResource(profileLaunchTitle(it)),
+                    detail = stringResource(profileLaunchDescription(it, CommonR.string.settings_profileLaunch_automatic_detailAndroidTv)),
+                )
             },
             selectedId = state.profileLaunchBehavior.raw,
             onSelect = { id ->
@@ -1176,11 +1188,16 @@ private fun TvGeneralSettingsPane(
     }
 }
 
+/** The subtitle behavior's name, the same words as the phone's. */
+@StringRes
+private fun subtitleModeLabel(mode: SubtitleMode): Int = when (mode) {
+    SubtitleMode.Off -> CommonR.string.settingsManifest_playback_subtitle_mode_option_off
+    SubtitleMode.Auto -> CommonR.string.settingsManifest_playback_subtitle_mode_option_auto
+    SubtitleMode.Always -> CommonR.string.settings_subtitles_mode_always
+}
+
 /** Picker id for the Maximum Bitrate sheet's "No limit" row (never on the wire). */
 private const val NoBitrateLimitId = "no_limit"
-
-/** How Profile Selection's descriptions name this device. */
-private const val PROFILE_LAUNCH_DEVICE = "this Android TV"
 
 @Composable
 private fun TvPlaybackSettingsPane(
@@ -1217,9 +1234,10 @@ private fun TvPlaybackSettingsPane(
     fun overridden(key: String) = PlaybackSettingsKeys.hasDeviceOverride(state.deviceOverrides, key)
     // "Use profile setting" leads every profile-layered picker and is the
     // checked choice while the device has no value of its own.
+    val useProfileOption = UseProfileSettingsCopy.option
     fun profileLayered(key: String, options: List<PickerOption>, selectedId: String) =
         Pair(
-            listOf(PickerOption(UseProfileSettingId, UseProfileSettingsCopy.OPTION)) + options,
+            listOf(PickerOption(UseProfileSettingId, useProfileOption)) + options,
             if (overridden(key)) selectedId else UseProfileSettingId,
         )
     // A switch's "Use Profile Setting" row leaves once used, so focus is
@@ -1249,15 +1267,15 @@ private fun TvPlaybackSettingsPane(
         contentPadding = PaddingValues(bottom = Spacing.xxxl),
     ) {
         item {
-            SettingsGroup(title = "Streaming") {
+            SettingsGroup(title = stringResource(CommonR.string.settings_section_streaming)) {
                 SettingsValueRow(
-                    label = "Resolution",
+                    label = stringResource(CommonR.string.settings_control_resolution),
                     value = QualityChoices.resolutionLabel(state.qualityResolution),
                     onClick = { activePicker = PlaybackPicker.Resolution },
                     focusRequester = firstFocusRequester,
                 )
                 SettingsValueRow(
-                    label = "Maximum Bitrate",
+                    label = stringResource(CommonR.string.settings_control_bitrate),
                     value = QualityChoices.bitrateLabel(state.maxBitrateKbps),
                     onClick = { activePicker = PlaybackPicker.MaxBitrate },
                     // Takes the learned-limit row's focus when the buffering row is hidden.
@@ -1292,7 +1310,7 @@ private fun TvPlaybackSettingsPane(
                     }
                 }
                 SettingsValueRow(
-                    label = "Audio Language",
+                    label = stringResource(CommonR.string.settings_control_audioLanguage),
                     value = LanguageOptions.label(
                         state.audioLanguage,
                         SettingKeys.PLAYBACK_AUDIO_LANGUAGE,
@@ -1304,31 +1322,31 @@ private fun TvPlaybackSettingsPane(
                 // narrower Profile 7 fallback nested under it — the P7 row
                 // only shows while Dolby Vision is on, as on Apple TV.
                 SettingsToggleRow(
-                    label = "Dolby Vision",
+                    label = stringResource(CommonR.string.settingsManifest_player_dolby_vision_enabled_label),
                     checked = state.dolbyVisionEnabled,
                     onCheckedChange = onDolbyVisionEnabledChanged,
                 )
                 if (state.dolbyVisionEnabled) {
                     SettingsToggleRow(
-                        label = "Profile 7 HDR10 Fallback",
+                        label = stringResource(CommonR.string.settings_video_dvProfile7Fallback),
                         checked = state.dvProfile7HDR10Fallback,
                         onCheckedChange = onDvProfile7HDR10FallbackChanged,
                     )
                 }
                 SettingsToggleRow(
-                    label = "Match Content Frame Rate",
+                    label = stringResource(CommonR.string.settings_video_matchFrameRate),
                     checked = state.matchContentFrameRate,
                     onCheckedChange = onMatchContentFrameRateChanged,
                 )
                 SettingsToggleRow(
-                    label = "Force HDR Passthrough",
+                    label = stringResource(CommonR.string.settings_video_forceHdrPassthrough),
                     checked = state.forceHdrPassthrough,
                     onCheckedChange = onForceHdrPassthroughChanged,
                 )
                 // Android TV only: tvOS composites its own letterbox, so the
                 // Apple pane has no counterpart (silo-android#475).
                 SettingsToggleRow(
-                    label = "True Black Bars",
+                    label = stringResource(CommonR.string.settings_video_trueBlackBars),
                     checked = state.trueBlackBars,
                     onCheckedChange = onTrueBlackBarsChanged,
                 )
@@ -1336,14 +1354,10 @@ private fun TvPlaybackSettingsPane(
                 // for Force HDR Passthrough. The True Black Bars sentence is
                 // Android TV's own.
                 SettingsFooterText(
-                    text = QualityChoices.description(state.qualityResolution, state.maxBitrateKbps) +
-                        " Force HDR Passthrough allows HDR playback when this TV doesn't report " +
-                        "support. It does not force the HDMI output into HDR; Android may still convert " +
-                        "the picture to SDR. Enable it only if you've confirmed your TV supports the " +
-                        "source format. Unsupported formats may produce a black screen or incorrect colors." +
-                        " True Black Bars stops Silo from drawing the bars around the picture during " +
-                        "playback. Try it if they look grey in HDR or Dolby Vision, and turn it off again " +
-                        "if they get lighter or show a thin line.",
+                    text = stringResource(
+                        CommonR.string.settings_streaming_footer,
+                        QualityChoices.description(state.qualityResolution, state.maxBitrateKbps),
+                    ),
                 )
             }
         }
@@ -1357,16 +1371,16 @@ private fun TvPlaybackSettingsPane(
             }
         }
         item {
-            SettingsGroup(title = "Episodes") {
+            SettingsGroup(title = stringResource(CommonR.string.settings_section_episodes)) {
                 SettingsToggleRow(
-                    label = "Auto-Play Next Episode",
+                    label = stringResource(CommonR.string.settings_control_autoplay),
                     checked = state.autoPlayNext,
                     onCheckedChange = onAutoPlayNextChanged,
                     focusRequester = autoPlayNextFocus,
                 )
                 if (overridden(PlaybackSettingsKeys.AutoPlayNext)) {
                     UseProfileSettingRow(
-                        setting = "Auto-Play Next Episode",
+                        setting = stringResource(CommonR.string.settings_control_autoplay),
                         onClick = {
                             autoPlayNextFocus.requestFocus()
                             onUseProfileSetting(PlaybackSettingsKeys.AutoPlayNext)
@@ -1374,7 +1388,7 @@ private fun TvPlaybackSettingsPane(
                     )
                 }
                 SettingsValueRow(
-                    label = "Show Next Up",
+                    label = stringResource(CommonR.string.settings_nextUp_title),
                     value = nextUpPromptLabel(state.nextUpPromptSeconds),
                     onClick = { activePicker = PlaybackPicker.NextUpPrompt },
                 )
@@ -1382,19 +1396,19 @@ private fun TvPlaybackSettingsPane(
                 // is a select and TV has no segmented control, so this uses the
                 // same value row + picker sheet every other enum here does.
                 SettingsValueRow(
-                    label = "Skip Intros",
+                    label = stringResource(CommonR.string.settings_control_intros),
                     value = stringResource(introSkipModeLabel(state.introSkipMode)),
                     onClick = { activePicker = PlaybackPicker.IntroSkipMode },
                 )
                 SettingsToggleRow(
-                    label = "Skip Credits",
+                    label = stringResource(CommonR.string.settings_control_credits),
                     checked = state.autoSkipCredits,
                     onCheckedChange = onAutoSkipCreditsChanged,
                     focusRequester = skipCreditsFocus,
                 )
                 if (overridden(PlaybackSettingsKeys.AutoSkipCredits)) {
                     UseProfileSettingRow(
-                        setting = "Skip Credits",
+                        setting = stringResource(CommonR.string.settings_control_credits),
                         onClick = {
                             skipCreditsFocus.requestFocus()
                             onUseProfileSetting(PlaybackSettingsKeys.AutoSkipCredits)
@@ -1402,20 +1416,18 @@ private fun TvPlaybackSettingsPane(
                     )
                 }
                 SettingsValueRow(
-                    label = "Rewind on Resume",
+                    label = stringResource(CommonR.string.settings_resumeRewind_title),
                     value = resumeRewindLabel(state.resumeRewindSeconds),
                     onClick = { activePicker = PlaybackPicker.ResumeRewind },
                 )
                 SettingsValueRow(
-                    label = "Still Watching Prompt",
+                    label = stringResource(CommonR.string.settings_stillWatching_title),
                     value = passOutThresholdLabel(state.passOutThreshold),
                     onClick = { activePicker = PlaybackPicker.PassOutThreshold },
                     focusRequester = seekFallbackFocus,
                 )
                 SettingsFooterText(
-                    text = "Rewind on Resume skips back when you return to a partly watched title. Still " +
-                        "Watching Prompt sets how many episodes play in a row before Silo asks whether " +
-                        "you're still watching.",
+                    text = stringResource(CommonR.string.settings_episodes_footer),
                 )
             }
         }
@@ -1424,22 +1436,21 @@ private fun TvPlaybackSettingsPane(
                 // Spoiler protection (see EpisodeSpoilers.MIN_CONTRACT_REVISION). Profile-wide, so
                 // the footer says it follows the profile to other devices.
                 // Hidden on servers that do not know the keys.
-                SettingsGroup(title = "Spoilers") {
+                SettingsGroup(title = stringResource(CommonR.string.settings_section_spoilers)) {
                     SettingsToggleRow(
-                        label = "Blur unwatched episode images",
+                        label = stringResource(CommonR.string.settingsManifest_catalog_hide_unwatched_episode_images_label),
                         checked = state.episodeSpoilers.hideImages,
                         onCheckedChange = onHideUnwatchedEpisodeImagesChanged,
                     )
                     SettingsToggleRow(
-                        label = "Hide unwatched episode descriptions",
+                        label = stringResource(CommonR.string.settingsManifest_catalog_hide_unwatched_episode_overviews_label),
                         checked = state.episodeSpoilers.hideOverviews,
                         onCheckedChange = onHideUnwatchedEpisodeOverviewsChanged,
                     )
                     SettingsFooterText(
-                        text = "Applies to episodes you have not started, on every device " +
-                            "that uses this profile.",
+                        text = stringResource(CommonR.string.settings_spoilers_footer),
                     )
-                    state.episodeSpoilerSaveError?.let { SettingsFooterText(text = it) }
+                    state.episodeSpoilerSaveError?.let { SettingsFooterText(text = it.text()) }
                 }
             }
         }
@@ -1466,13 +1477,13 @@ private fun TvPlaybackSettingsPane(
             }
         }
         item {
-            SettingsGroup(title = "Reset") {
+            SettingsGroup(title = stringResource(CommonR.string.settings_section_reset)) {
                 SettingsActionRow(
-                    label = UseProfileSettingsCopy.RESET_ALL_ROW,
+                    label = UseProfileSettingsCopy.resetAllRow,
                     onClick = { confirmingReset = true },
                     destructive = true,
                 )
-                SettingsFooterText(text = UseProfileSettingsCopy.FOOTER)
+                SettingsFooterText(text = UseProfileSettingsCopy.footer)
             }
         }
     }
@@ -1485,7 +1496,7 @@ private fun TvPlaybackSettingsPane(
                 QualityPresets.normalizeResolution(state.qualityResolution),
             )
             TvSettingsPickerSheet(
-                title = "Resolution",
+                title = stringResource(CommonR.string.settings_control_resolution),
                 options = options,
                 selectedId = selectedId,
                 onSelect = { id ->
@@ -1510,7 +1521,7 @@ private fun TvPlaybackSettingsPane(
                 state.maxBitrateKbps?.toString() ?: NoBitrateLimitId,
             )
             TvSettingsPickerSheet(
-                title = "Maximum Bitrate",
+                title = stringResource(CommonR.string.settings_control_bitrate),
                 options = options,
                 selectedId = selectedId,
                 onSelect = { id ->
@@ -1531,7 +1542,7 @@ private fun TvPlaybackSettingsPane(
                 state.audioLanguage,
             )
             TvSettingsPickerSheet(
-                title = "Audio Language",
+                title = stringResource(CommonR.string.settings_control_audioLanguage),
                 options = options,
                 selectedId = selectedId,
                 onSelect = { id ->
@@ -1552,7 +1563,7 @@ private fun TvPlaybackSettingsPane(
                 state.nextUpPromptSeconds.toString(),
             )
             TvSettingsPickerSheet(
-                title = "Show Next Up",
+                title = stringResource(CommonR.string.settings_nextUp_title),
                 options = options,
                 selectedId = selectedId,
                 onSelect = { id ->
@@ -1575,7 +1586,7 @@ private fun TvPlaybackSettingsPane(
                 state.introSkipMode.wireValue,
             )
             TvSettingsPickerSheet(
-                title = "Skip Intros",
+                title = stringResource(CommonR.string.settings_control_intros),
                 options = options,
                 selectedId = selectedId,
                 onSelect = { id ->
@@ -1614,7 +1625,7 @@ private fun TvPlaybackSettingsPane(
             )
         }
         PlaybackPicker.ResumeRewind -> TvSettingsPickerSheet(
-            title = "Rewind on Resume",
+            title = stringResource(CommonR.string.settings_resumeRewind_title),
             options = ResumeRewindOptions.map { PickerOption(it.toString(), resumeRewindLabel(it)) },
             selectedId = state.resumeRewindSeconds.toString(),
             onSelect = { id ->
@@ -1624,7 +1635,7 @@ private fun TvPlaybackSettingsPane(
             onDismiss = { activePicker = null },
         )
         PlaybackPicker.PassOutThreshold -> TvSettingsPickerSheet(
-            title = "Still Watching Prompt",
+            title = stringResource(CommonR.string.settings_stillWatching_title),
             options = PassOutThresholdOptions.map { PickerOption(it.toString(), passOutThresholdLabel(it)) },
             selectedId = state.passOutThreshold.toString(),
             onSelect = { id ->
@@ -1641,7 +1652,7 @@ private fun TvPlaybackSettingsPane(
         val (media, direction) = openSeekPicker
         val pair = if (media == SeekMedia.Video) seekState.video else seekState.audiobook
         TvSettingsPickerSheet(
-            title = seekIntervalGroupTitle(media) + " " + seekDirectionLabel(direction),
+            title = stringResource(seekIntervalPickerTitle(media, direction)),
             options = seekState.choices.map { PickerOption(it.toString(), SeekIntervals.label(it)) },
             selectedId = pair.seconds(direction).toString(),
             onSelect = { id ->
@@ -1654,9 +1665,9 @@ private fun TvPlaybackSettingsPane(
 
     if (confirmingReset) {
         TvSettingsConfirmDialog(
-            title = UseProfileSettingsCopy.CONFIRM_TITLE,
-            message = UseProfileSettingsCopy.CONFIRM_MESSAGE,
-            confirmLabel = UseProfileSettingsCopy.CONFIRM_BUTTON,
+            title = UseProfileSettingsCopy.confirmTitle,
+            message = UseProfileSettingsCopy.confirmMessage,
+            confirmLabel = UseProfileSettingsCopy.confirmButton,
             onConfirm = {
                 confirmingReset = false
                 onResetPlaybackOverrides()
@@ -1678,20 +1689,35 @@ private const val UseProfileSettingId = "use_profile_setting"
 private fun UseProfileSettingRow(setting: String, onClick: () -> Unit) {
     val description = UseProfileSettingsCopy.rowDescription(setting)
     SettingsActionRow(
-        label = UseProfileSettingsCopy.ROW,
+        label = UseProfileSettingsCopy.row,
         onClick = onClick,
         modifier = Modifier.semantics { contentDescription = description },
     )
 }
 
-private fun seekIntervalGroupTitle(media: SeekMedia): String = when (media) {
-    SeekMedia.Video -> "Video"
-    SeekMedia.Audiobook -> "Audiobooks"
+@StringRes
+private fun seekIntervalGroupTitle(media: SeekMedia): Int = when (media) {
+    SeekMedia.Video -> CommonR.string.settings_section_video
+    SeekMedia.Audiobook -> CommonR.string.settings_section_audiobooks
 }
 
-private fun seekDirectionLabel(direction: SeekDirection): String = when (direction) {
-    SeekDirection.Back -> "Skip Back"
-    SeekDirection.Forward -> "Skip Forward"
+@StringRes
+private fun seekDirectionLabel(direction: SeekDirection): Int = when (direction) {
+    SeekDirection.Back -> CommonR.string.settings_control_skipBack
+    SeekDirection.Forward -> CommonR.string.settings_control_skipForward
+}
+
+/** "Video Skip Back", "Audiobooks Skip Forward": the skip-interval picker's title. */
+@StringRes
+private fun seekIntervalPickerTitle(media: SeekMedia, direction: SeekDirection): Int = when (media) {
+    SeekMedia.Video -> when (direction) {
+        SeekDirection.Back -> CommonR.string.settings_skipIntervals_picker_videoBack
+        SeekDirection.Forward -> CommonR.string.settings_skipIntervals_picker_videoForward
+    }
+    SeekMedia.Audiobook -> when (direction) {
+        SeekDirection.Back -> CommonR.string.settings_skipIntervals_picker_audiobookBack
+        SeekDirection.Forward -> CommonR.string.settings_skipIntervals_picker_audiobookForward
+    }
 }
 
 /**
@@ -1754,34 +1780,26 @@ private fun TvSeekIntervalGroup(
     }
     val trackHandoff = Modifier.onFocusChanged { if (it.isFocused) handoffLanded = true }
 
-    SettingsGroup(title = seekIntervalGroupTitle(media)) {
+    SettingsGroup(title = stringResource(seekIntervalGroupTitle(media))) {
         when (state.support) {
             SeekIntervalSupport.Unsupported -> SettingsFooterText(
                 text = when (media) {
-                    SeekMedia.Video ->
-                        "This server uses fixed skip intervals for video. Update the server to choose " +
-                            "them for this profile."
-                    SeekMedia.Audiobook ->
-                        "This server does not sync skip intervals. Set them from the audiobook player; " +
-                            "they stay on this TV."
+                    SeekMedia.Video -> stringResource(CommonR.string.settings_skipIntervals_unsupportedVideo)
+                    SeekMedia.Audiobook -> stringResource(CommonR.string.settings_skipIntervals_unsupportedAudiobook)
                 },
             )
             SeekIntervalSupport.Unknown -> SettingsFooterText(
-                text = "Checking whether this server stores skip intervals for this profile…",
+                text = stringResource(CommonR.string.settings_skipIntervals_checking),
             )
             SeekIntervalSupport.Unavailable -> {
                 SettingsFooterText(
                     text = when (media) {
-                        SeekMedia.Video ->
-                            "Couldn't check whether this server stores skip intervals for this profile. " +
-                                "Players use the standard intervals until it answers."
-                        SeekMedia.Audiobook ->
-                            "Couldn't check whether this server stores skip intervals for this profile. " +
-                                "Until it answers, intervals set in the audiobook player stay on this TV."
+                        SeekMedia.Video -> stringResource(CommonR.string.settings_skipIntervals_unavailableVideo)
+                        SeekMedia.Audiobook -> stringResource(CommonR.string.settings_skipIntervals_unavailableAudiobook)
                     },
                 )
                 SettingsActionRow(
-                    label = "Try Again",
+                    label = stringResource(CommonR.string.settings_skipIntervals_tryAgain),
                     onClick = onRetry,
                     modifier = trackActionFocus(SeekGroupAction.Retry) { latestShowRetry },
                 )
@@ -1790,7 +1808,7 @@ private fun TvSeekIntervalGroup(
                 val pair = if (media == SeekMedia.Video) state.video else state.audiobook
                 SeekDirection.entries.forEach { direction ->
                     SettingsValueRow(
-                        label = seekDirectionLabel(direction),
+                        label = stringResource(seekDirectionLabel(direction)),
                         value = SeekIntervals.label(pair.seconds(direction)),
                         onClick = { onOpenPicker(direction) },
                         focusRequester = if (direction == SeekDirection.Back) firstRowFocus else null,
@@ -1801,20 +1819,22 @@ private fun TvSeekIntervalGroup(
                     // Stays enabled while importing so it keeps focus; the model
                     // ignores a second press until the first import finishes.
                     SettingsActionRow(
-                        label = if (state.importInProgress) "Importing…" else "Use This TV's Audiobook Intervals",
+                        label = if (state.importInProgress) {
+                            stringResource(CommonR.string.settings_skipIntervals_importing)
+                        } else {
+                            stringResource(CommonR.string.settings_skipIntervals_importThisTv)
+                        },
                         onClick = onImportLegacyAudiobook,
                         modifier = trackActionFocus(SeekGroupAction.Import) { latestShowImport },
                     )
-                    SettingsFooterText(text = "${state.legacyAudiobookSummary}. Uploads them to this profile.")
+                    SettingsFooterText(
+                        text = stringResource(CommonR.string.settings_skipIntervals_importFooter, state.legacyAudiobookSummary),
+                    )
                 }
                 SettingsFooterText(
                     text = when (media) {
-                        SeekMedia.Video ->
-                            "Used by left and right presses on the remote and the on-screen skip buttons. " +
-                                "Applies to every device signed in to this profile."
-                        SeekMedia.Audiobook ->
-                            "Used by the audiobook player's skip buttons. Applies to every device signed " +
-                                "in to this profile."
+                        SeekMedia.Video -> stringResource(CommonR.string.settings_skipIntervals_footerVideo)
+                        SeekMedia.Audiobook -> stringResource(CommonR.string.settings_skipIntervals_footerAudiobook)
                     },
                 )
                 state.saveErrorFor(media)?.let { SettingsFooterText(text = it) }
@@ -1881,9 +1901,9 @@ private fun TvSubtitleSettingsPane(
         contentPadding = PaddingValues(bottom = Spacing.xxxl),
     ) {
         item {
-            SettingsGroup(title = "Profile") {
+            SettingsGroup(title = stringResource(CommonR.string.settings_subtitles_profile)) {
                 SettingsValueRow(
-                    label = "Language",
+                    label = stringResource(CommonR.string.settings_control_language),
                     value = LanguageOptions.label(
                         state.subtitleLanguage,
                         SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE,
@@ -1892,27 +1912,26 @@ private fun TvSubtitleSettingsPane(
                     focusRequester = firstFocusRequester,
                 )
                 SettingsValueRow(
-                    label = "Behavior",
-                    value = state.subtitleMode.label,
+                    label = stringResource(CommonR.string.settings_control_behavior),
+                    value = stringResource(subtitleModeLabel(state.subtitleMode)),
                     onClick = { activePicker = SubtitlePicker.Mode },
                 )
                 SettingsToggleRow(
-                    label = "Show Forced Subtitles",
+                    label = stringResource(CommonR.string.settings_control_forced),
                     checked = state.showForcedSubtitles,
                     onCheckedChange = onShowForcedSubtitlesChanged,
                 )
                 SettingsFooterText(
-                    text = "Used to pick a matching track when one is available. Forced subtitles cover " +
-                        "foreign-language dialogue even when subtitles are off or set to auto.",
+                    text = stringResource(CommonR.string.settings_subtitles_languageFooter),
                 )
             }
         }
         if (metadataLanguageEnabled) {
             item {
                 // The footer is the settings contract's own description of the key.
-                SettingsGroup(title = "Metadata") {
+                SettingsGroup(title = stringResource(CommonR.string.settings_section_metadata)) {
                     SettingsValueRow(
-                        label = "Metadata Language",
+                        label = stringResource(CommonR.string.settings_control_metadataLanguage),
                         value = LanguageOptions.label(
                             state.metadataLanguage,
                             SettingKeys.CATALOG_METADATA_LANGUAGE,
@@ -1920,83 +1939,83 @@ private fun TvSubtitleSettingsPane(
                         onClick = { activePicker = SubtitlePicker.MetadataLanguage },
                     )
                     SettingsFooterText(
-                        text = "Fallback language Silo prefers for titles, descriptions, and artwork.",
+                        text = stringResource(CommonR.string.settingsManifest_catalog_metadata_language_description),
                     )
                 }
             }
         }
         item {
-            SettingsGroup(title = "Appearance") {
+            SettingsGroup(title = stringResource(CommonR.string.settings_section_appearance)) {
                 TvSettingsSubtitlePreview(state.effectiveSubtitleAppearance)
                 SettingsToggleRow(
                     // tvOS parity: appearance follows the OS captioning
                     // settings while this is on.
-                    label = "Use Device Settings",
+                    label = stringResource(CommonR.string.settings_subtitles_useDeviceSettings),
                     checked = state.subtitleMatchesDevice,
                     onCheckedChange = onSubtitleMatchesDeviceChanged,
                 )
                 // Appearance is a profile preference; this keeps a separate
                 // one (and subtitle timing) for this TV only.
                 SettingsToggleRow(
-                    label = "Only on This Device",
+                    label = stringResource(CommonR.string.settings_subtitles_onlyOnThisDevice),
                     checked = state.subtitleUsesDeviceOverride,
                     onCheckedChange = onSubtitleDeviceOverrideEnabledChanged,
                 )
                 SettingsNestedGroup(enabled = true) {
                     SettingsValueRow(
-                        label = "Font Size",
+                        label = stringResource(CommonR.string.settings_subtitles_fontSize),
                         value = TvSubtitleAppearanceOptions.fontSizeLabel(appearance.fontSize),
                         onClick = { activePicker = SubtitlePicker.FontSize },
                     )
                     SettingsValueRow(
-                        label = "Font Family",
+                        label = stringResource(CommonR.string.settings_subtitles_fontFamily),
                         value = TvSubtitleAppearanceOptions.fontFamilyLabel(appearance.fontFamily),
                         onClick = { activePicker = SubtitlePicker.FontFamily },
                     )
                     SettingsValueRow(
-                        label = "Font Color",
+                        label = stringResource(CommonR.string.settings_subtitles_fontColor),
                         value = TvSubtitleAppearanceOptions.fontColorLabel(appearance.fontColor),
                         onClick = { activePicker = SubtitlePicker.FontColor },
                     )
                     if (state.subtitleTextOpacitySupported) {
                         SettingsValueRow(
-                            label = "Text Opacity",
-                            value = "${appearance.textOpacity}%",
+                            label = stringResource(CommonR.string.settings_subtitles_textOpacity),
+                            value = stringResource(CommonR.string.settings_subtitles_percent, appearance.textOpacity),
                             onClick = { activePicker = SubtitlePicker.TextOpacity },
                             )
                     }
                     SettingsToggleRow(
-                        label = "Text Outline",
+                        label = stringResource(CommonR.string.settings_subtitles_textOutline),
                         checked = appearance.textOutline,
                         onCheckedChange = onSubtitleTextOutlineChanged,
                     )
                     SettingsValueRow(
-                        label = "Outline Color",
+                        label = stringResource(CommonR.string.settings_subtitles_outlineColor),
                         value = TvSubtitleAppearanceOptions.outlineColorLabel(appearance.textOutlineColor),
                         onClick = { activePicker = SubtitlePicker.OutlineColor },
                     )
                     SettingsValueRow(
-                        label = "Background Style",
+                        label = stringResource(CommonR.string.settings_subtitles_backgroundStyle),
                         value = TvSubtitleAppearanceOptions.backgroundStyleLabel(appearance.backgroundStyle),
                         onClick = { activePicker = SubtitlePicker.BackgroundStyle },
                     )
                     SettingsValueRow(
-                        label = "Background Opacity",
-                        value = "${appearance.backgroundOpacity}%",
+                        label = stringResource(CommonR.string.settings_subtitles_backgroundOpacity),
+                        value = stringResource(CommonR.string.settings_subtitles_percent, appearance.backgroundOpacity),
                         onClick = { activePicker = SubtitlePicker.BackgroundOpacity },
                     )
                     SettingsValueRow(
-                        label = "Background Color",
+                        label = stringResource(CommonR.string.settings_subtitles_backgroundColor),
                         value = TvSubtitleAppearanceOptions.backgroundColorLabel(appearance.backgroundColor),
                         onClick = { activePicker = SubtitlePicker.BackgroundColor },
                     )
                     SettingsValueRow(
-                        label = "Position",
+                        label = stringResource(CommonR.string.settings_subtitles_position),
                         value = TvSubtitleAppearanceOptions.positionLabel(appearance.position),
                         onClick = { activePicker = SubtitlePicker.Position },
                     )
                     SettingsActionRow(
-                        label = "Reset Appearance",
+                        label = stringResource(CommonR.string.settings_subtitles_resetAppearance),
                         onClick = { showResetConfirmation = true },
                         destructive = true,
                     )
@@ -2006,9 +2025,9 @@ private fun TvSubtitleSettingsPane(
         item {
             SettingsFooterText(
                 text = if (state.subtitleUsesDeviceOverride) {
-                    "Only on this device."
+                    stringResource(CommonR.string.settings_subtitles_scopeDevice)
                 } else {
-                    "Saved for this profile on all devices."
+                    stringResource(CommonR.string.settings_subtitles_scopeProfile)
                 },
             )
         }
@@ -2016,8 +2035,8 @@ private fun TvSubtitleSettingsPane(
 
     when (activePicker) {
         SubtitlePicker.Mode -> TvSettingsPickerSheet(
-            title = "Behavior",
-            options = SubtitleMode.values().map { PickerOption(it.name, it.label) },
+            title = stringResource(CommonR.string.settings_control_behavior),
+            options = SubtitleMode.values().map { PickerOption(it.name, stringResource(subtitleModeLabel(it))) },
             selectedId = state.subtitleMode.name,
             onSelect = { id ->
                 SubtitleMode.values().firstOrNull { it.name == id }?.let(onSubtitleModeChanged)
@@ -2026,21 +2045,21 @@ private fun TvSubtitleSettingsPane(
             onDismiss = { activePicker = null },
         )
         SubtitlePicker.Language -> TvSettingsPickerSheet(
-            title = "Language",
+            title = stringResource(CommonR.string.settings_control_language),
             options = subtitleLanguages.map { PickerOption(it.first, it.second) },
             selectedId = state.subtitleLanguage,
             onSelect = { onSubtitleLanguageChanged(it); activePicker = null },
             onDismiss = { activePicker = null },
         )
         SubtitlePicker.MetadataLanguage -> TvSettingsPickerSheet(
-            title = "Metadata Language",
+            title = stringResource(CommonR.string.settings_control_metadataLanguage),
             options = metadataLanguages.map { PickerOption(it.first, it.second) },
             selectedId = state.metadataLanguage,
             onSelect = { onMetadataLanguageChanged(it); activePicker = null },
             onDismiss = { activePicker = null },
         )
         SubtitlePicker.FontSize -> TvSettingsPickerSheet(
-            title = "Font Size",
+            title = stringResource(CommonR.string.settings_subtitles_fontSize),
             options = TvSubtitleAppearanceOptions.FONT_SIZES.map { PickerOption(it.first.name, it.second) },
             selectedId = appearance.fontSize.name,
             onSelect = { id ->
@@ -2052,7 +2071,7 @@ private fun TvSubtitleSettingsPane(
             onDismiss = { activePicker = null },
         )
         SubtitlePicker.FontFamily -> TvSettingsPickerSheet(
-            title = "Font Family",
+            title = stringResource(CommonR.string.settings_subtitles_fontFamily),
             options = TvSubtitleAppearanceOptions.FONT_FAMILIES.map { PickerOption(it.first, it.second) },
             selectedId = appearance.fontFamily,
             onSelect = { id ->
@@ -2064,7 +2083,7 @@ private fun TvSubtitleSettingsPane(
             onDismiss = { activePicker = null },
         )
         SubtitlePicker.FontColor -> TvSettingsPickerSheet(
-            title = "Font Color",
+            title = stringResource(CommonR.string.settings_subtitles_fontColor),
             options = TvSubtitleAppearanceOptions.FONT_COLORS.map { PickerOption(it.first, it.second) },
             selectedId = appearance.fontColor.lowercase(),
             onSelect = { id ->
@@ -2074,11 +2093,11 @@ private fun TvSubtitleSettingsPane(
             onDismiss = { activePicker = null },
         )
         SubtitlePicker.TextOpacity -> TvSettingsPickerSheet(
-            title = "Text Opacity",
+            title = stringResource(CommonR.string.settings_subtitles_textOpacity),
             options = TvSubtitleAppearanceOptions.percentOptions(
                 TvSubtitleAppearanceOptions.TEXT_OPACITY_PERCENT_STEPS,
                 appearance.textOpacity,
-            ).map { PickerOption(it.toString(), "$it%") },
+            ).map { PickerOption(it.toString(), stringResource(CommonR.string.settings_subtitles_percent, it)) },
             selectedId = appearance.textOpacity.toString(),
             onSelect = { id ->
                 id.toIntOrNull()?.let { onSubtitleTextOpacityChanged(it) }
@@ -2087,7 +2106,7 @@ private fun TvSubtitleSettingsPane(
             onDismiss = { activePicker = null },
         )
         SubtitlePicker.OutlineColor -> TvSettingsPickerSheet(
-            title = "Outline Color",
+            title = stringResource(CommonR.string.settings_subtitles_outlineColor),
             options = TvSubtitleAppearanceOptions.OUTLINE_COLORS.map { PickerOption(it.first, it.second) },
             selectedId = appearance.textOutlineColor.lowercase(),
             onSelect = { id ->
@@ -2097,7 +2116,7 @@ private fun TvSubtitleSettingsPane(
             onDismiss = { activePicker = null },
         )
         SubtitlePicker.BackgroundStyle -> TvSettingsPickerSheet(
-            title = "Background Style",
+            title = stringResource(CommonR.string.settings_subtitles_backgroundStyle),
             options = TvSubtitleAppearanceOptions.BACKGROUND_STYLES.map { PickerOption(it.first.name, it.second) },
             selectedId = appearance.backgroundStyle.name,
             onSelect = { id ->
@@ -2109,11 +2128,11 @@ private fun TvSubtitleSettingsPane(
             onDismiss = { activePicker = null },
         )
         SubtitlePicker.BackgroundOpacity -> TvSettingsPickerSheet(
-            title = "Background Opacity",
+            title = stringResource(CommonR.string.settings_subtitles_backgroundOpacity),
             options = TvSubtitleAppearanceOptions.percentOptions(
                 TvSubtitleAppearanceOptions.OPACITY_PERCENT_STEPS,
                 appearance.backgroundOpacity,
-            ).map { PickerOption(it.toString(), "$it%") },
+            ).map { PickerOption(it.toString(), stringResource(CommonR.string.settings_subtitles_percent, it)) },
             selectedId = appearance.backgroundOpacity.toString(),
             onSelect = { id ->
                 id.toIntOrNull()?.let { onSubtitleBackgroundOpacityChanged(it) }
@@ -2122,7 +2141,7 @@ private fun TvSubtitleSettingsPane(
             onDismiss = { activePicker = null },
         )
         SubtitlePicker.BackgroundColor -> TvSettingsPickerSheet(
-            title = "Background Color",
+            title = stringResource(CommonR.string.settings_subtitles_backgroundColor),
             options = TvSubtitleAppearanceOptions.BACKGROUND_COLORS.map { PickerOption(it.first, it.second) },
             selectedId = appearance.backgroundColor.lowercase(),
             onSelect = { id ->
@@ -2132,7 +2151,7 @@ private fun TvSubtitleSettingsPane(
             onDismiss = { activePicker = null },
         )
         SubtitlePicker.Position -> TvSettingsPickerSheet(
-            title = "Position",
+            title = stringResource(CommonR.string.settings_subtitles_position),
             options = TvSubtitleAppearanceOptions.POSITIONS.map { PickerOption(it.first.name, it.second) },
             selectedId = appearance.position.name,
             onSelect = { id ->
@@ -2148,9 +2167,9 @@ private fun TvSubtitleSettingsPane(
 
     if (showResetConfirmation) {
         TvSettingsConfirmDialog(
-            title = "Reset subtitle appearance?",
-            message = "This restores every subtitle appearance option to its default.",
-            confirmLabel = "Reset",
+            title = stringResource(CommonR.string.settings_subtitles_resetTitle),
+            message = stringResource(CommonR.string.settings_subtitles_resetMessage),
+            confirmLabel = stringResource(CommonR.string.settings_subtitles_resetConfirm),
             onConfirm = {
                 showResetConfirmation = false
                 onResetSubtitleAppearance()
@@ -2164,6 +2183,7 @@ private fun TvSubtitleSettingsPane(
 @Composable
 private fun TvSettingsSubtitlePreview(appearance: SubtitleAppearance) {
     val safe = appearance.sanitized()
+    val previewText = stringResource(CommonR.string.settings_subtitles_preview)
     val alignment = when (safe.position) {
         SubtitlePositionPreset.Top -> Alignment.TopCenter
         SubtitlePositionPreset.LowerThird -> Alignment.BottomCenter
@@ -2218,7 +2238,7 @@ private fun TvSettingsSubtitlePreview(appearance: SubtitleAppearance) {
             if (showOutline) {
                 listOf(-1 to -1, -1 to 1, 1 to -1, 1 to 1).forEach { (x, y) ->
                     Text(
-                        text = SubtitlePreviewText,
+                        text = previewText,
                         color = outline,
                         fontFamily = fontFamily,
                         fontSize = fontSize,
@@ -2228,7 +2248,7 @@ private fun TvSettingsSubtitlePreview(appearance: SubtitleAppearance) {
                 }
             }
             Text(
-                text = SubtitlePreviewText,
+                text = previewText,
                 color = foreground,
                 fontFamily = fontFamily,
                 fontSize = fontSize,
@@ -2251,18 +2271,18 @@ private fun TvServerSettingsPane(
         contentPadding = PaddingValues(bottom = Spacing.xxxl),
     ) {
         item {
-            SettingsGroup(title = "Active Server") {
+            SettingsGroup(title = stringResource(CommonR.string.settings_activeServer_title)) {
                 SettingsInfoRow(
-                    label = "Server",
-                    value = state.serverName.ifBlank { "Not configured" },
+                    label = stringResource(CommonR.string.settings_activeServer_server),
+                    value = state.serverName.ifBlank { stringResource(CommonR.string.settings_activeServer_notConfigured) },
                 )
                 if (state.serverUrl.isNotBlank() && state.serverName != state.serverUrl) {
-                    SettingsInfoRow(label = "Address", value = state.serverUrl, singleLine = false)
+                    SettingsInfoRow(label = stringResource(CommonR.string.settings_activeServer_address), value = state.serverUrl, singleLine = false)
                 }
                 // Settings › Accounts: every saved server and its accounts
                 // (multi-account spec §4.5), where the server list was.
                 SettingsActionRow(
-                    label = "Accounts",
+                    label = stringResource(CommonR.string.accounts_title),
                     onClick = onManageServers,
                     focusRequester = firstFocusRequester,
                 )
@@ -2272,16 +2292,16 @@ private fun TvServerSettingsPane(
         // Reports" drill-in to a route outside the shell. It is its own
         // category now (tvOS parity), so nothing here points at it.
         item {
-            SettingsGroup(title = "About") {
+            SettingsGroup(title = stringResource(CommonR.string.settings_about_title)) {
                 // Same "1.0.0 (5)" form as the phone About row, so a TV support
                 // report names the build the server's admin Activity page shows.
                 SettingsInfoRow(
-                    label = "App Version",
+                    label = stringResource(CommonR.string.settings_about_appVersion),
                     value = clientVersionLabel(BuildConfig.VERSION_NAME, BuildConfig.BUILD_NUMBER),
                 )
                 // tvOS About: the policy as a QR code, for a device with a browser.
                 SettingsActionRow(
-                    label = "Privacy Policy",
+                    label = stringResource(CommonR.string.settings_about_privacyPolicy),
                     onClick = { showPrivacyPolicy = true },
                 )
             }
@@ -2293,8 +2313,6 @@ private fun TvServerSettingsPane(
     }
 }
 
-private const val SubtitlePreviewText = "Subtitles will look like this"
-
 private fun settingsHexColor(value: String): Color = runCatching {
     val normalized = value.trim().removePrefix("#")
     Color(0xFF000000.toInt() or (normalized.toLong(16).toInt() and 0x00FFFFFF))
@@ -2302,10 +2320,11 @@ private fun settingsHexColor(value: String): Color = runCatching {
 
 // tvOS `accountSubtitle` parity: "Administrator" for admins, else the
 // username, else a generic signed-in line.
+@Composable
 private fun accountSubtitle(state: TvSettingsViewModel.UiState): String {
     val role = state.user?.role?.trim().orEmpty()
-    if (role.equals("admin", ignoreCase = true)) return "Administrator"
-    return state.user?.username?.takeIf { it.isNotBlank() } ?: "Signed in"
+    if (role.equals("admin", ignoreCase = true)) return stringResource(CommonR.string.settings_account_administrator)
+    return state.user?.username?.takeIf { it.isNotBlank() } ?: stringResource(CommonR.string.settings_account_signedIn)
 }
 
 private enum class PlaybackPicker {
@@ -2421,7 +2440,7 @@ fun TvSettingsPickerSheet(
                             color = Color.White,
                         )
                         Text(
-                            text = "Choose an option",
+                            text = stringResource(CommonR.string.settings_picker_chooseOption),
                             style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
                             color = Color.White.copy(alpha = 0.6f),
                         )
@@ -2441,7 +2460,7 @@ fun TvSettingsPickerSheet(
                             modifier = Modifier.size(14.dp),
                         )
                         Text(
-                            text = "Back to close",
+                            text = stringResource(CommonR.string.settings_picker_backToClose),
                             style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
                             color = Color.White.copy(alpha = 0.6f),
                         )
@@ -2567,7 +2586,7 @@ internal fun TvSettingsConfirmDialog(
         message = message,
         onDismissRequest = onDismiss,
         actions = listOf(
-            TvDialogAction(label = "Cancel", onClick = onDismiss),
+            TvDialogAction(label = stringResource(CommonR.string.common_cancel), onClick = onDismiss),
             TvDialogAction(
                 label = confirmLabel,
                 onClick = onConfirm,
@@ -2583,14 +2602,14 @@ private fun TvExperimentalSettingsGroup(
     watchPartyExperiment: WatchPartyExperiment = koinInject(),
 ) {
     val watchPartyEnabled by watchPartyExperiment.enabled.collectAsState()
-    SettingsGroup(title = "Experimental") {
+    SettingsGroup(title = stringResource(CommonR.string.settings_experimental_title)) {
         SettingsToggleRow(
-            label = "Watch Party",
+            label = stringResource(CommonR.string.watchParty_title),
             checked = watchPartyEnabled,
             onCheckedChange = watchPartyExperiment::setEnabled,
         )
         SettingsFooterText(
-            text = "Try Watch Party before it's finished. Turning it off leaves any party you're in.",
+            text = stringResource(CommonR.string.settings_experimental_watchPartyFooter),
         )
     }
 }
@@ -2955,7 +2974,7 @@ internal fun SettingsToggleRow(
             // tvOS TVSettingsToggleRow: the state reads as text — semibold and
             // near-opaque when on, faded when off. No accent color.
             Text(
-                text = if (checked) "On" else "Off",
+                text = if (checked) stringResource(CommonR.string.settings_on) else stringResource(CommonR.string.settings_off),
                 style = SettingsRowTextStyle(),
                 fontWeight = if (checked) FontWeight.SemiBold else FontWeight.Normal,
                 color = (if (isFocused) FocusedContent else Color.White)
@@ -3049,17 +3068,19 @@ private val PassOutThresholdOptions = listOf(0, 2, 3, 4, 5)
 // Up-Next prompt timing (seconds before end; 0 = at end). Mirrors tvOS.
 private val NextUpPromptOptions = listOf(0, 10, 30, 60, 120)
 
+@Composable
 private fun resumeRewindLabel(seconds: Int): String =
-    if (seconds <= 0) "Off" else "${seconds}s"
+    if (seconds <= 0) stringResource(CommonR.string.settings_off) else stringResource(CommonR.string.settings_resumeRewind_seconds, seconds)
 
+@Composable
 private fun passOutThresholdLabel(count: Int): String =
-    if (count <= 0) "Off" else "$count"
+    if (count <= 0) stringResource(CommonR.string.settings_off) else "$count"
 
+@Composable
 private fun nextUpPromptLabel(seconds: Int): String = when {
-    seconds <= 0 -> "At end"
-    seconds < 60 -> "$seconds seconds before end"
-    seconds == 60 -> "1 minute before end"
-    else -> "${seconds / 60} minutes before end"
+    seconds <= 0 -> stringResource(CommonR.string.settings_nextUp_atEnd)
+    seconds < 60 -> pluralStringResource(CommonR.plurals.settings_nextUp_secondsBeforeEnd, seconds, seconds)
+    else -> (seconds / 60).let { pluralStringResource(CommonR.plurals.settings_nextUp_minutesBeforeEnd, it, it) }
 }
 
 /**
@@ -3076,16 +3097,16 @@ private fun TvThemeMusicSettingsGroup(store: PlayerSettingsStore) {
     val enabledFocus = remember { FocusRequester() }
     val loopFocus = remember { FocusRequester() }
     fun overridden(key: String) = PlaybackSettingsKeys.hasDeviceOverride(overrides, key)
-    SettingsGroup(title = "Theme Music") {
+    SettingsGroup(title = stringResource(CommonR.string.settings_section_themeMusic)) {
         SettingsToggleRow(
-            label = "Theme Music",
+            label = stringResource(CommonR.string.settings_section_themeMusic),
             checked = enabled,
             onCheckedChange = { scope.launch { store.setThemeMusicEnabled(it) } },
             focusRequester = enabledFocus,
         )
         if (overridden(PlaybackSettingsKeys.ThemeMusicEnabled)) {
             UseProfileSettingRow(
-                setting = "Theme Music",
+                setting = stringResource(CommonR.string.settings_section_themeMusic),
                 onClick = {
                     enabledFocus.requestFocus()
                     scope.launch { store.resetDeviceSetting(PlaybackSettingsKeys.ThemeMusicEnabled) }
@@ -3093,14 +3114,14 @@ private fun TvThemeMusicSettingsGroup(store: PlayerSettingsStore) {
             )
         }
         SettingsToggleRow(
-            label = "Loop Theme Music",
+            label = stringResource(CommonR.string.settings_control_themeMusicLoop),
             checked = loop,
             onCheckedChange = { scope.launch { store.setThemeMusicLoop(it) } },
             focusRequester = loopFocus,
         )
         if (overridden(PlaybackSettingsKeys.ThemeMusicLoop)) {
             UseProfileSettingRow(
-                setting = "Loop Theme Music",
+                setting = stringResource(CommonR.string.settings_control_themeMusicLoop),
                 onClick = {
                     loopFocus.requestFocus()
                     scope.launch { store.resetDeviceSetting(PlaybackSettingsKeys.ThemeMusicLoop) }
@@ -3108,8 +3129,7 @@ private fun TvThemeMusicSettingsGroup(store: PlayerSettingsStore) {
             )
         }
         SettingsFooterText(
-            text = "Play a title's theme music while its page is open, when the server has one. " +
-                "Loop repeats it until you leave the page.",
+            text = stringResource(CommonR.string.settings_themeMusic_footer),
         )
     }
 }
@@ -3124,31 +3144,28 @@ private fun TvTitleArtSettingsGroup(store: TitleArtStore) {
     val state by store.state.collectAsState()
     val saveError by store.saveError.collectAsState()
     if (!state.isSupported) return
-    SettingsGroup(title = "Title Pages") {
+    SettingsGroup(title = stringResource(CommonR.string.settings_titleArt_title)) {
         SettingsToggleRow(
-            label = "Show title art",
+            label = stringResource(CommonR.string.settingsManifest_ui_title_art_label),
             checked = state.showTitleArt,
             onCheckedChange = store::setShowTitleArt,
             enabled = state.canEdit,
         )
-        SettingsFooterText(text = "Use logo artwork as the title when available.")
+        SettingsFooterText(text = stringResource(CommonR.string.settings_titleArt_footer))
         SettingsToggleRow(
-            label = "Apply to all devices",
+            label = stringResource(CommonR.string.settings_titleArt_applyToAll),
             checked = state.appliesToAllDevices,
             onCheckedChange = store::setAppliesToAllDevices,
             enabled = state.canEdit,
         )
         SettingsFooterText(
-            text = if (state.appliesToAllDevices) {
-                "On: every device on this profile uses this choice. Title art is " +
-                    "${if (state.showTitleArt) "on" else "off"} on every device signed into " +
-                    "this profile. Changing it here changes it everywhere. Turn off " +
-                    "\u201CApply to all devices\u201D to choose for this TV only."
-            } else {
-                "Off: only affects this TV. Your other devices keep their own setting."
+            text = when {
+                !state.appliesToAllDevices -> stringResource(CommonR.string.settings_titleArt_thisTvOnly)
+                state.showTitleArt -> stringResource(CommonR.string.settings_titleArt_allDevicesShown)
+                else -> stringResource(CommonR.string.settings_titleArt_allDevicesHidden)
             },
         )
-        saveError?.let { SettingsFooterText(text = it) }
+        saveError?.let { SettingsFooterText(text = it.text()) }
     }
 }
 

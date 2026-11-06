@@ -29,6 +29,8 @@ import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -41,6 +43,7 @@ import org.siloserver.silo.common.diagnostics.DiagnosticsConsentMode
 import org.siloserver.silo.common.diagnostics.DiagnosticsDestinationKind
 import org.siloserver.silo.common.diagnostics.DiagnosticsUiState
 import org.siloserver.silo.common.diagnostics.TimedCaptureStatus
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.tv.ui.components.TvDialogDefaults
 import org.siloserver.silo.tv.ui.components.tvDialogSurface
 import org.siloserver.silo.tv.ui.focus.TvControlState
@@ -164,13 +167,13 @@ internal fun TvDiagnosticsSettingsPane(
         contentPadding = PaddingValues(bottom = Spacing.xxxl),
     ) {
         item {
-            SettingsGroup(title = "Feature State") {
+            SettingsGroup(title = stringResource(CommonR.string.diagnostics_section_featureState)) {
                 SettingsInfoRow(
-                    label = "Status",
-                    value = tvDiagnosticsStatusTitle(state.availability),
+                    label = stringResource(CommonR.string.diagnostics_row_status),
+                    value = stringResource(tvDiagnosticsStatusTitle(state.availability)),
                 )
                 SettingsInfoRow(
-                    label = "Destination",
+                    label = stringResource(CommonR.string.diagnostics_row_destination),
                     value = tvDiagnosticsDestinationName(state.destinationKind, serverName),
                 )
             }
@@ -180,11 +183,14 @@ internal fun TvDiagnosticsSettingsPane(
                 if (state.pending.isEmpty()) {
                     // tvOS shows the empty state outright. Omitting the section
                     // left a clean device with no sign it had been checked.
-                    SettingsInfoRow(label = "Reports", value = "None")
+                    SettingsInfoRow(
+                        label = stringResource(CommonR.string.diagnostics_row_reports),
+                        value = stringResource(CommonR.string.settings_diagnostics_none),
+                    )
                 } else {
                     state.pending.forEachIndexed { index, report ->
                         SettingsValueRow(
-                            label = tvDiagnosticsReportTypeTitle(report.type),
+                            label = stringResource(tvDiagnosticsReportTypeTitle(report.type)),
                             value = tvFormatShortDateTime(report.capturedAtEpochMs) +
                                 " · " + tvDiagnosticsExpiryLabel(report.expiresAtEpochMs, now),
                             onClick = { onReportSelected(report.id) },
@@ -202,10 +208,10 @@ internal fun TvDiagnosticsSettingsPane(
             }
         }
         item {
-            SettingsGroup(title = "Capture") {
+            SettingsGroup(title = stringResource(CommonR.string.diagnostics_section_capture)) {
                 SettingsValueRow(
-                    label = "Send Reports To",
-                    value = tvDiagnosticsDestinationTitle(state.destinationKind),
+                    label = stringResource(CommonR.string.diagnostics_row_sendReportsTo),
+                    value = stringResource(tvDiagnosticsDestinationTitle(state.destinationKind)),
                     onClick = { activePicker = TvDiagnosticsPicker.Destination },
                     focusRequester = if (pendingOwnsFirstFocus) null else firstFocusRequester,
                     // The pane's first focus stop with no pending report, so it
@@ -221,7 +227,7 @@ internal fun TvDiagnosticsSettingsPane(
                 // apply: structural, i.e. out of the focus graph rather than a
                 // dead D-pad stop (see TvControlEnablement).
                 SettingsToggleRow(
-                    label = "Debug Logging",
+                    label = stringResource(CommonR.string.diagnostics_row_debugLogging),
                     checked = state.debugLogging,
                     onCheckedChange = onSetDebugLogging,
                     enabled = debugLoggingApplies,
@@ -230,8 +236,8 @@ internal fun TvDiagnosticsSettingsPane(
                         .dimWhenDisabled(debugLoggingApplies),
                 )
                 SettingsValueRow(
-                    label = "Crash Reports",
-                    value = tvDiagnosticsConsentTitle(effectiveConsent),
+                    label = stringResource(CommonR.string.diagnostics_row_crashReports),
+                    value = stringResource(tvDiagnosticsConsentTitle(effectiveConsent)),
                     onClick = { activePicker = TvDiagnosticsPicker.Consent },
                     // Last focus stop before the privacy text it qualifies, so
                     // it shows that text instead of leaving it to be flown past
@@ -243,15 +249,14 @@ internal fun TvDiagnosticsSettingsPane(
                 )
                 SettingsFooterText(
                     text = if (state.destinationKind == DiagnosticsDestinationKind.HOSTED) {
-                        "Reports include the Silo app version and build, Android version, device model, " +
-                            "crash details, and diagnostic logs you review. A pseudonymous installation " +
-                            "credential is not linked to an account on your self-hosted server. Username, " +
-                            "email, profile, server address, and playback session IDs are omitted. Reports " +
-                            "are never sent automatically and may be retained for up to " +
-                            "${state.retentionDays} days. Full policy: $PRIVACY_POLICY_URL"
+                        pluralStringResource(
+                            CommonR.plurals.diagnostics_capture_hostedFooterTv,
+                            state.retentionDays,
+                            state.retentionDays,
+                            PRIVACY_POLICY_URL,
+                        )
                     } else {
-                        "Crash report consent is tied to this server account. Debug logging is a " +
-                            "setting for this Android TV."
+                        stringResource(CommonR.string.diagnostics_capture_selfHostedFooterTv)
                     },
                     modifier = Modifier.onSizeChanged { privacyFooterPx = it.height },
                 )
@@ -261,19 +266,19 @@ internal fun TvDiagnosticsSettingsPane(
                     // neither be activated nor copied. Keep the action row the
                     // hosted consent surface used to have.
                     SettingsActionRow(
-                        label = "Privacy Policy",
+                        label = stringResource(CommonR.string.settings_about_privacyPolicy),
                         onClick = { showPrivacyPolicy = true },
                     )
                 }
             }
         }
         item {
-            SettingsGroup(title = "Manual Report") {
+            SettingsGroup(title = stringResource(CommonR.string.diagnostics_section_manualReport)) {
                 // Availability can come back (the server reconnects), so these
                 // stay in the focus graph — transient, not structural. They
                 // only have to *look* dead, which they previously did not.
                 SettingsActionRow(
-                    label = "Send Diagnostics Now",
+                    label = stringResource(CommonR.string.settings_diagnostics_send),
                     onClick = onCaptureNow,
                     enabled = model.canCapture && !capturing,
                     modifier = Modifier
@@ -285,8 +290,7 @@ internal fun TvDiagnosticsSettingsPane(
                 )
                 if (!state.debugLogging) {
                     SettingsFooterText(
-                        text = "Debug logging is off. This report contains only the last few minutes " +
-                            "of basic logs.",
+                        text = stringResource(CommonR.string.diagnostics_send_debugOffFooterTv),
                         modifier = Modifier.onSizeChanged { manualFooterPx = it.height },
                     )
                 }
@@ -296,11 +300,14 @@ internal fun TvDiagnosticsSettingsPane(
         // because both are "capture something now" actions, which is also what
         // keeps the control sections contiguous.
         item {
-            SettingsGroup(title = "Timed Capture") {
+            SettingsGroup(title = stringResource(CommonR.string.diagnostics_section_timedCapture)) {
                 if (capturing) {
-                    SettingsActionRow(label = "Stop & Review", onClick = onStopTimedCapture)
                     SettingsActionRow(
-                        label = "Cancel Capture",
+                        label = stringResource(CommonR.string.diagnostics_capture_stopReview),
+                        onClick = onStopTimedCapture,
+                    )
+                    SettingsActionRow(
+                        label = stringResource(CommonR.string.diagnostics_capture_cancel),
                         onClick = onCancelTimedCapture,
                         destructive = true,
                         modifier = Modifier.tvRevealsListContext(viewportPx, belowPx = viewportPx),
@@ -309,11 +316,11 @@ internal fun TvDiagnosticsSettingsPane(
                     // CAPTURE and MANUAL REPORT. Above the buttons this one was
                     // pushed off screen by the reveal that shows SENT HISTORY.
                     SettingsFooterText(
-                        text = "Capture is running. Reproduce the issue, then stop to review.",
+                        text = stringResource(CommonR.string.diagnostics_capture_runningFooterTv),
                     )
                 } else {
                     SettingsActionRow(
-                        label = "Start Diagnostic Capture",
+                        label = stringResource(CommonR.string.diagnostics_capture_start),
                         onClick = onStartTimedCapture,
                         enabled = model.canCapture,
                         // The pane's last focus stop in every state, so it owns
@@ -323,15 +330,18 @@ internal fun TvDiagnosticsSettingsPane(
                             .dimWhenDisabled(model.canCapture),
                     )
                     SettingsFooterText(
-                        text = "Records logs until you stop it, then opens the report for review.",
+                        text = stringResource(CommonR.string.diagnostics_capture_startFooterTv),
                     )
                 }
             }
         }
         item {
-            SettingsGroup(title = "Sent History") {
+            SettingsGroup(title = stringResource(CommonR.string.diagnostics_section_sentHistory)) {
                 if (state.sentHistory.isEmpty()) {
-                    SettingsInfoRow(label = "Reports", value = "None")
+                    SettingsInfoRow(
+                        label = stringResource(CommonR.string.diagnostics_row_reports),
+                        value = stringResource(CommonR.string.settings_diagnostics_none),
+                    )
                 } else {
                     state.sentHistory.take(TvDiagnosticsSentHistoryLimit).forEach { sent ->
                         SettingsInfoRow(
@@ -340,8 +350,7 @@ internal fun TvDiagnosticsSettingsPane(
                         )
                     }
                     SettingsFooterText(
-                        text = "Sent reports are removed from this device once the destination has a " +
-                            "copy. Use the reference ID when asking for help.",
+                        text = stringResource(CommonR.string.diagnostics_sentHistory_footerTv),
                     )
                 }
             }
@@ -350,9 +359,9 @@ internal fun TvDiagnosticsSettingsPane(
 
     when (activePicker) {
         TvDiagnosticsPicker.Destination -> TvSettingsPickerSheet(
-            title = "Send Reports To",
+            title = stringResource(CommonR.string.diagnostics_row_sendReportsTo),
             options = TvDiagnosticsDestinations.map {
-                PickerOption(it.name, tvDiagnosticsDestinationTitle(it))
+                PickerOption(it.name, stringResource(tvDiagnosticsDestinationTitle(it)))
             },
             selectedId = state.destinationKind.name,
             onSelect = { id ->
@@ -362,9 +371,9 @@ internal fun TvDiagnosticsSettingsPane(
             onDismiss = { activePicker = null },
         )
         TvDiagnosticsPicker.Consent -> TvSettingsPickerSheet(
-            title = "Crash Reports",
+            title = stringResource(CommonR.string.diagnostics_row_crashReports),
             options = tvDiagnosticsConsentOptions(state.allowsAutomaticUpload).map {
-                PickerOption(it.name, tvDiagnosticsConsentTitle(it))
+                PickerOption(it.name, stringResource(tvDiagnosticsConsentTitle(it)))
             },
             selectedId = effectiveConsent.name,
             onSelect = { id ->
@@ -384,9 +393,9 @@ internal fun TvDiagnosticsSettingsPane(
 
     if (confirmAlways && state.allowsAutomaticUpload) {
         TvSettingsConfirmDialog(
-            title = "Always send crash reports?",
-            message = "Future eligible reports may upload automatically until you change this setting.",
-            confirmLabel = "Always send",
+            title = stringResource(CommonR.string.diagnostics_alwaysSend_title),
+            message = stringResource(CommonR.string.diagnostics_alwaysSend_tvBody),
+            confirmLabel = stringResource(CommonR.string.diagnostics_alwaysSend_action),
             destructive = false,
             onConfirm = {
                 confirmAlways = false
@@ -436,10 +445,9 @@ internal fun TvPrivacyPolicyDialog(onDismiss: () -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text(text = "Privacy Policy", style = TvPlayerType.DialogTitle)
+                Text(text = stringResource(CommonR.string.diagnostics_privacyPolicy_title), style = TvPlayerType.DialogTitle)
                 Text(
-                    text = "Scan this code with your phone, or type the address below, to read " +
-                        "the full policy.",
+                    text = stringResource(CommonR.string.diagnostics_privacyPolicy_scan),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -451,7 +459,7 @@ internal fun TvPrivacyPolicyDialog(onDismiss: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 SettingsActionRow(
-                    label = "Done",
+                    label = stringResource(CommonR.string.common_done),
                     onClick = onDismiss,
                     focusRequester = closeFocus,
                 )
