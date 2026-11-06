@@ -2,13 +2,16 @@ package org.siloserver.silo.model.settings
 
 import org.siloserver.silo.model.settings.AppLocaleReconciler.Decision
 import org.siloserver.silo.model.settings.AppLocaleReconciler.Ledger
-import org.siloserver.silo.model.settings.AppLocaleReconciler.reconcile
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 /** "" = follow the device. The shipped list is `en`, `es`. */
 class AppLocaleReconcilerTest {
+    private val shipped = listOf("en", "es")
+
+    private fun reconcile(current: String, override: String?, ledger: Ledger?) =
+        AppLocaleReconciler.reconcile(current, override, ledger, shipped)
 
     @Test fun firstRunOnlyObserves() =
         assertEquals(Decision(null, Ledger("", null)), reconcile("", null, null))
@@ -62,16 +65,24 @@ class AppLocaleReconcilerTest {
     }
 
     @Test fun pseudoLocaleIsNeverWrittenBack() =
-        assertEquals(Decision(null, Ledger("ar-XB", null)), reconcile("ar-XB", null, Ledger("", null)))
+        assertEquals(Decision(null, Ledger("ar-XB", null, kept = true)), reconcile("ar-XB", null, Ledger("", null)))
 
     @Test fun aSystemListIsJudgedByTheTagThatWouldBeSaved() {
         // fr first: saving it would leave the profile with a language the app can't show.
-        assertEquals(Decision(null, Ledger("fr,es", null)), reconcile("fr,es", null, Ledger("es", "")))
+        assertEquals(Decision(null, Ledger("fr,es", null, kept = true)), reconcile("fr,es", null, Ledger("es", "")))
         assertEquals(Decision(null, Ledger("es,fr", ""), writeBack = "es"), reconcile("es,fr", null, Ledger("", null)))
     }
 
     @Test fun unshippedSystemChoiceIsNotWrittenBack() =
-        assertEquals(Decision(null, Ledger("fr", null)), reconcile("fr", null, Ledger("", null)))
+        assertEquals(Decision(null, Ledger("fr", null, kept = true)), reconcile("fr", null, Ledger("", null)))
+
+    @Test fun anUnsavedSystemChoiceOutlastsTheProfilesOverride() {
+        val kept = reconcile("ar-XB", "es", Ledger("es", "")).ledger
+        // The next pass for the same profile still leaves it alone.
+        assertEquals(Decision(null, kept), reconcile("ar-XB", "es", kept))
+        // Once the caller releases it (next profile), the override applies again.
+        assertEquals(Decision("es", Ledger("es", "ar-XB")), reconcile("ar-XB", "es", kept.copy(kept = false)))
+    }
 
     @Test fun interruptedApplyIsRetriedRatherThanReadAsAUserReset() =
         // Crash after the ledger recorded es but before the platform took it.
@@ -122,6 +133,11 @@ class AppLanguageMatchTest {
         assertNull(match("ar-XB"))
         assertNull(match("it"))
         assertNull(match(""))
+    }
+
+    @Test fun pseudoLocalesAreRecognised() {
+        assertEquals(true, AppLanguage.isPseudo("ar-XB"))
+        assertEquals(false, AppLanguage.isPseudo("ar"))
     }
 
     @Test fun aListMatchesItsFirstMatchableEntry() =

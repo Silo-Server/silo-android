@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Temporary: the App language picker's own strings, so Spanish visibly
-     applies before the generated translation catalog replaces this file. -->
+<!-- Debug builds only: the App language picker's own strings, so the switch
+     can be checked before the generated translation catalog ships Spanish.
+     Release builds ship English alone until then. -->
 <resources>
     <string name="settings_app_language_title">Idioma de la app</string>
     <string name="settings_app_language_match_device">Igual que el dispositivo</string>

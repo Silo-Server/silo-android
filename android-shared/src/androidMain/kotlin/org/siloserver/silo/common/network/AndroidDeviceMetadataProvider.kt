@@ -47,7 +47,7 @@ class AndroidDeviceMetadataProvider(
             clientChannel = buildIdentity.reportedChannel,
             clientFamily = cachedClientFamily,
             // Read per request so it follows a language change at once.
-            acceptLanguage = AppLocales.appliedTag(),
+            acceptLanguage = AppLocales.appliedTag(context),
         )
     }
 

@@ -20,7 +20,7 @@ internal fun AppLanguageSettingsSection(store: AppLanguageStore) {
     if (!state.supported) return
     val activity = LocalActivity.current ?: return
     val title = stringResource(CommonR.string.settings_app_language_title)
-    val options = appLanguageOptions(stringResource(CommonR.string.settings_app_language_match_device), state.choice)
+    val options = appLanguageOptions(stringResource(CommonR.string.settings_app_language_match_device), state)
     val selected = options.firstOrNull { it.id == state.choice.orEmpty() } ?: options.first()
 
     SettingsSection(title = title, footer = stringResource(CommonR.string.settings_app_language_footer)) {

@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.i18n
 
+import android.annotation.SuppressLint
 import android.app.LocaleManager
 import android.content.Context
 import android.content.res.Configuration
@@ -9,6 +10,7 @@ import android.os.LocaleList
 import androidx.annotation.RequiresApi
 import androidx.core.content.edit
 import org.siloserver.silo.model.settings.AppLanguage
+import org.xmlpull.v1.XmlPullParser
 
 /**
  * The per-app language, read and set the way this app can: the framework
@@ -102,8 +104,40 @@ object AppLocales {
      * The default locale list already carries the per-app value on 13+, and
      * [wrap] sets the default locale before 13.
      */
-    fun appliedTag(): String =
-        AppLanguage.match(LocaleList.getDefault().toLanguageTags().split(',')) ?: AppLanguage.SHIPPED.first()
+    fun appliedTag(context: Context): String =
+        AppLanguage.match(LocaleList.getDefault().toLanguageTags().split(','), shipped(context)) ?: AppLanguage.DEFAULT
+
+    @Volatile private var shippedCache: List<String>? = null
+
+    /**
+     * The languages this build ships: its generated localeConfig (the
+     * languages it has resources for), without pseudo-locales. A language
+     * counts once its translations ship, and debug-only resources count only
+     * in debug builds.
+     */
+    fun shipped(context: Context): List<String> = shippedCache ?: readLocaleConfig(context).also { shippedCache = it }
+
+    // AGP generates this resource into each app; android-shared can't see the
+    // apps' R classes, so it is looked up by name.
+    @SuppressLint("DiscouragedApi")
+    private fun readLocaleConfig(context: Context): List<String> {
+        val res = context.applicationContext.resources
+        val id = res.getIdentifier("_generated_res_locale_config", "xml", context.packageName)
+        val tags = if (id == 0) emptyList() else runCatching {
+            res.getXml(id).use { parser ->
+                buildList {
+                    while (parser.next() != XmlPullParser.END_DOCUMENT) {
+                        if (parser.eventType == XmlPullParser.START_TAG && parser.name == "locale") {
+                            parser.getAttributeValue(ANDROID_NS, "name")?.let(::add)
+                        }
+                    }
+                }
+            }
+        }.getOrDefault(emptyList())
+        return (listOf(AppLanguage.DEFAULT) + tags.filterNot(AppLanguage::isPseudo)).distinct()
+    }
+
+    private const val ANDROID_NS = "http://schemas.android.com/apk/res/android"
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     private fun localeManager(context: Context): LocaleManager =

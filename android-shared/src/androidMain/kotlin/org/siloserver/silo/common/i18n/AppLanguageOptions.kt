@@ -1,6 +1,5 @@
 package org.siloserver.silo.common.i18n
 
-import org.siloserver.silo.model.settings.AppLanguage
 import java.util.Locale
 
 /** One row of the App language picker; [id] "" is Match device. */
@@ -11,8 +10,9 @@ data class AppLanguageOption(val id: String, val label: String)
  * this build doesn't ship stays listed and selected under its own name,
  * so the picker never shows it as Match device and re-saving keeps it.
  */
-fun appLanguageOptions(matchDeviceLabel: String, choice: String?): List<AppLanguageOption> {
-    val tags = AppLanguage.SHIPPED + listOfNotNull(choice?.takeIf { it !in AppLanguage.SHIPPED })
+fun appLanguageOptions(matchDeviceLabel: String, state: AppLanguageState): List<AppLanguageOption> {
+    val choice = state.choice
+    val tags = state.languages + listOfNotNull(choice?.takeIf { it !in state.languages })
     return listOf(AppLanguageOption("", matchDeviceLabel)) + tags.map { AppLanguageOption(it, endonym(it)) }
 }
 
