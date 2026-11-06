@@ -17,6 +17,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import org.siloserver.silo.common.settings.isTransientSettingsWrite
 import org.siloserver.silo.common.store.AccountScopedKeys
 import org.siloserver.silo.model.settings.AppLanguage
 import org.siloserver.silo.model.settings.AppLocaleReconciler
@@ -42,21 +43,24 @@ data class AppLanguageState(
 
 /**
  * Applies the active profile's `ui.app_language` to the per-app language, for
- * both the phone and TV apps. On Android 13+ the profile's value and the
- * system per-app language are one knob: a language picked in system settings
- * is saved as this device's value for the active profile.
+ * both the phone and TV apps.
  *
+ * - The in-app picker ([choose]) saves the profile's value, which follows the
+ *   person to every device, and clears this device's own value.
+ * - On Android 13+ the per-app language in system settings is the same knob on
+ *   this device: a change made there is saved as this device's value for the
+ *   active profile.
  * - Refreshes on a server/account/profile change, on foreground and on
- *   reconnect (`ServerDrivenConfigRefresher`), then reconciles.
- * - [check] runs from each activity's `onStart` and `onConfigurationChanged`,
- *   so a change made in system settings is seen even while the activity stays
- *   started (picture-in-picture, split screen), and before the server answers.
- * - A user choice, from system settings or [choose], is queued per profile in
- *   preferences (unlike `ServerSettingsFlusher`'s in-memory queue, it must
- *   survive process death) and retried until the server takes it. While it
- *   waits it is that profile's value, so a stale server answer can't re-apply
- *   over it. A choice the server can't store (an older server, a rejected
- *   value) is kept as the device's own language until the next profile.
+ *   reconnect (`ServerDrivenConfigRefresher`), then reconciles. [check] runs
+ *   from each activity's `onStart` and `onConfigurationChanged`, so a system
+ *   change is seen even while the activity stays started (picture-in-picture,
+ *   split screen), and before the server answers.
+ * - Each choice is queued per profile in preferences (unlike
+ *   `ServerSettingsFlusher`'s in-memory queue, it must survive process death)
+ *   and sent in order until it lands; a newer choice replaces an unsent one.
+ *   While it waits it is that profile's value, so a stale server answer can't
+ *   re-apply over it. A save the server refuses for good is dropped with the
+ *   ledger, so the profile's value applies again.
  * - Before sign-in, and while the active profile's value is unknown and the
  *   system value hasn't changed, the app changes nothing: the platform keeps
  *   the language last applied.
@@ -79,6 +83,27 @@ class AppLanguageStore(
         val value: String?,
     )
 
+    /**
+     * An unsent choice. [profileWide] (the picker) saves the profile's value and
+     * clears this device's; otherwise (system settings) this device's value.
+     * [tag] "" is Match device.
+     */
+    private data class Pending(val profileWide: Boolean, val tag: String) {
+        fun encode() = (if (profileWide) PROFILE else DEVICE) + tag
+
+        companion object {
+            const val PROFILE = "profile:"
+            const val DEVICE = "device:"
+
+            fun decode(raw: String?): Pending? = when {
+                raw == null -> null
+                raw.startsWith(PROFILE) -> Pending(true, raw.removePrefix(PROFILE))
+                raw.startsWith(DEVICE) -> Pending(false, raw.removePrefix(DEVICE))
+                else -> null
+            }
+        }
+    }
+
     private val appContext = context.applicationContext
     private val prefs: SharedPreferences = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val shipped: List<String> by lazy { AppLocales.shipped(appContext) }
@@ -86,7 +111,7 @@ class AppLanguageStore(
     /** Guards the ledger, the pending values and every apply. */
     private val lock = Mutex()
 
-    /** One PUT at a time, so they reach the server in the order chosen. */
+    /** One save at a time, so they reach the server in the order chosen. */
     private val flushLock = Mutex()
 
     private val _state = MutableStateFlow(AppLanguageState())
@@ -94,7 +119,7 @@ class AppLanguageStore(
 
     @Volatile private var known: Known? = null
 
-    /** Bumped by every write that lands; a read that began before one is stale. */
+    /** Bumped by every save that lands; a read that began before one is stale. */
     @Volatile private var writes = 0L
 
     /** Before 13 an apply only lands through a recreation of this activity. */
@@ -106,8 +131,6 @@ class AppLanguageStore(
             identityChanges.collectLatest {
                 known = null
                 _state.value = AppLanguageState(languages = shipped)
-                // A system value kept unsaved belonged to the previous profile.
-                lock.withLock { readLedger()?.takeIf { it.kept }?.let { commit(it.copy(kept = false)) } }
                 refresh()
             }
         }
@@ -126,7 +149,7 @@ class AppLanguageStore(
         if (supported) flushPending(identity, authority)
         var value: String? = null
         if (supported) {
-            // A write that lands during the read makes the answer stale: read again.
+            // A save that lands during the read makes the answer stale: read again.
             for (attempt in 1..READ_ATTEMPTS) {
                 val readStartedAt = writes
                 value = when (val result = repository.getEffectiveValues(listOf(AppLanguage.KEY), authority = authority)) {
@@ -140,7 +163,8 @@ class AppLanguageStore(
         }
         if (currentIdentity() != identity) return
         known = Known(identity, authority, supported, value)
-        if (!supported) lock.withLock { readPending(identity)?.let { disownLocked(identity, it) } }
+        // An older server can't hold a queued choice.
+        if (!supported) lock.withLock { if (readPending(identity) != null) dropLocked(identity) }
         reconcile()
     }
 
@@ -152,8 +176,8 @@ class AppLanguageStore(
     }
 
     /**
-     * The picker: sets this device's language for the active profile ([tag]
-     * null is Match device). It applies at once and saves in the background.
+     * The picker: sets the active profile's language ([tag] null is Match
+     * device). It applies at once and saves in the background.
      */
     fun choose(activity: Activity, tag: String?) {
         foreground = WeakReference(activity)
@@ -162,7 +186,7 @@ class AppLanguageStore(
             val identity = lock.withLock {
                 val identity = currentIdentity() ?: return@launch
                 val decision = AppLocaleReconciler.choose(chosen, AppLocales.current(appContext), readLedger())
-                applyLocked(decision, identity, pending = chosen)
+                applyLocked(decision, identity, Pending(profileWide = true, tag = chosen))
                 publish(identity)
                 identity
             }
@@ -180,7 +204,7 @@ class AppLanguageStore(
             val userChanged = ledger != null && !ledger.applying && current != ledger.observed
             // Without the profile's value only a user change can be acted on.
             if (known == null && pending == null && !userChanged) return
-            val stored = if (pending != null) pending.ifEmpty { null } else known?.value
+            val stored = if (pending != null) pending.tag.ifEmpty { null } else known?.value
             val decision = AppLocaleReconciler.reconcile(
                 current = current,
                 override = stored?.let { AppLanguage.match(it, shipped) },
@@ -190,9 +214,9 @@ class AppLanguageStore(
             val writeBack = decision.writeBack
             when {
                 writeBack == null -> applyLocked(decision, identity)
-                // An older server can't hold it: keep it as the device's own.
-                known?.supported == false -> applyLocked(decision.copy(ledger = disowned(decision.ledger)), identity)
-                else -> applyLocked(decision, identity, pending = writeBack)
+                // An older server can't hold it: as if refused.
+                known?.supported == false -> dropLocked(identity)
+                else -> applyLocked(decision, identity, Pending(profileWide = false, tag = writeBack))
             }
             publish(identity)
             identity.takeIf { writeBack != null && known?.supported != false }
@@ -201,12 +225,12 @@ class AppLanguageStore(
     }
 
     /**
-     * Commits the ledger together with the profile's [pending] value (when
+     * Commits the ledger together with the profile's [pending] choice (when
      * given), so a crash can't leave one without the other. An apply is
      * recorded as in flight first, so a crash mid-apply is not read as a user
      * choice.
      */
-    private fun applyLocked(decision: AppLocaleReconciler.Decision, identity: String, pending: String? = null) {
+    private fun applyLocked(decision: AppLocaleReconciler.Decision, identity: String, pending: Pending? = null) {
         val tags = decision.apply ?: return commit(decision.ledger, identity, pending)
         commit(decision.ledger.copy(applying = true), identity, pending)
         val recreate = AppLocales.apply(appContext, tags)
@@ -214,38 +238,60 @@ class AppLanguageStore(
         if (recreate) foreground?.get()?.let { activity -> activity.runOnUiThread { activity.recreate() } }
     }
 
-    /** The server can't store [tag] for this profile: drop it and keep the device's value as is. */
-    private fun disownLocked(identity: String, tag: String) {
-        val ledger = readLedger()
-        val kept = if (ledger != null && ledger.observed.substringBefore(',') == tag) disowned(ledger) else ledger
-        prefs.edit(commit = true) {
-            if (kept != null) putLedger(kept)
-            remove(PENDING_PREFIX + identity)
-        }
+    /**
+     * Drops the profile's unsent choice and the ledger: the system value
+     * becomes the user's own, and the profile's value applies over it.
+     */
+    private fun dropLocked(identity: String) = prefs.edit(commit = true) {
+        remove(KEY_OBSERVED)
+        remove(KEY_BASELINE)
+        remove(KEY_APPLYING)
+        remove(PENDING_PREFIX + identity)
     }
-
-    private fun disowned(ledger: Ledger) = ledger.copy(baseline = null, kept = true)
 
     private suspend fun flushPending(identity: String, authority: AuthScopeSnapshot?) {
         if (authority == null) return
-        flushLock.withLock {
-            val pending = readPending(identity) ?: return
-            val value = if (pending.isEmpty()) JsonNull else JsonPrimitive(pending)
-            when (val result = repository.setProfileDeviceValue(AppLanguage.KEY, value, authority)) {
+        val refused = flushLock.withLock {
+            val raw = prefs.getString(PENDING_PREFIX + identity, null) ?: return
+            val pending = Pending.decode(raw) ?: return
+            val value = if (pending.tag.isEmpty()) JsonNull else JsonPrimitive(pending.tag)
+            val result = if (pending.profileWide) {
+                when (val saved = repository.setProfileValue(AppLanguage.KEY, value, authority)) {
+                    is ApiResult.Success -> repository.clearProfileDeviceValue(AppLanguage.KEY, authority)
+                    is ApiResult.Error -> saved
+                    is ApiResult.NetworkError -> saved
+                }
+            } else {
+                repository.setProfileDeviceValue(AppLanguage.KEY, value, authority)
+            }
+            when (result) {
                 is ApiResult.Success -> {
                     writes += 1
-                    known = known?.let { if (it.identity == identity) it.copy(value = pending.ifEmpty { null }) else it }
+                    known = known?.let { if (it.identity == identity) it.copy(value = pending.tag.ifEmpty { null }) else it }
                     lock.withLock {
-                        if (readPending(identity) == pending) prefs.edit(commit = true) { remove(PENDING_PREFIX + identity) }
+                        if (prefs.getString(PENDING_PREFIX + identity, null) == raw) {
+                            prefs.edit(commit = true) { remove(PENDING_PREFIX + identity) }
+                        }
+                    }
+                    false
+                }
+                // Not sent: another profile is active now. It goes when this one is back.
+                is ApiResult.Error -> if (result.code == 0 && result.error == IDENTITY_CHANGED) {
+                    false
+                } else if (isTransientSettingsWrite(result.code)) {
+                    false
+                } else {
+                    // Refused for good, unless a newer choice replaced it meanwhile.
+                    lock.withLock {
+                        val unchanged = prefs.getString(PENDING_PREFIX + identity, null) == raw
+                        if (unchanged) dropLocked(identity)
+                        unchanged
                     }
                 }
-                // A value the server refuses will never land; keep retrying only transient failures.
-                is ApiResult.Error -> if (result.code in REJECTED) {
-                    lock.withLock { if (readPending(identity) == pending) disownLocked(identity, pending) }
-                }
-                is ApiResult.NetworkError -> Unit
+                is ApiResult.NetworkError -> false
             }
         }
+        if (refused) reconcile()
     }
 
     private suspend fun authorityFor(identity: String): AuthScopeSnapshot? =
@@ -257,7 +303,7 @@ class AppLanguageStore(
         val pending = readPending(identity)
         _state.value = AppLanguageState(
             supported = known?.supported == true,
-            choice = if (pending != null) pending.ifEmpty { null } else known?.value,
+            choice = if (pending != null) pending.tag.ifEmpty { null } else known?.value,
             languages = shipped,
         )
     }
@@ -268,23 +314,17 @@ class AppLanguageStore(
             observed = observed,
             baseline = prefs.getString(KEY_BASELINE, null),
             applying = prefs.getBoolean(KEY_APPLYING, false),
-            kept = prefs.getBoolean(KEY_KEPT, false),
         )
     }
 
-    private fun commit(ledger: Ledger, identity: String? = null, pending: String? = null) = prefs.edit(commit = true) {
-        putLedger(ledger)
-        if (identity != null && pending != null) putString(PENDING_PREFIX + identity, pending)
-    }
-
-    private fun SharedPreferences.Editor.putLedger(ledger: Ledger) {
+    private fun commit(ledger: Ledger, identity: String? = null, pending: Pending? = null) = prefs.edit(commit = true) {
         putString(KEY_OBSERVED, ledger.observed)
         if (ledger.baseline == null) remove(KEY_BASELINE) else putString(KEY_BASELINE, ledger.baseline)
         putBoolean(KEY_APPLYING, ledger.applying)
-        putBoolean(KEY_KEPT, ledger.kept)
+        if (identity != null && pending != null) putString(PENDING_PREFIX + identity, pending.encode())
     }
 
-    private fun readPending(identity: String): String? = prefs.getString(PENDING_PREFIX + identity, null)
+    private fun readPending(identity: String): Pending? = Pending.decode(prefs.getString(PENDING_PREFIX + identity, null))
 
     private suspend fun currentIdentity(): String? = AccountScopedKeys.readStable(getActiveAccountId) { accountId ->
         val profileId = getActiveProfileId()?.takeIf { it.isNotBlank() } ?: return@readStable null
@@ -303,9 +343,8 @@ class AppLanguageStore(
         const val KEY_OBSERVED = "ledger_observed"
         const val KEY_BASELINE = "ledger_baseline"
         const val KEY_APPLYING = "ledger_applying"
-        const val KEY_KEPT = "ledger_kept"
-        const val PENDING_PREFIX = "pending_device_value|"
+        const val PENDING_PREFIX = "pending|"
+        const val IDENTITY_CHANGED = "identity_changed"
         const val READ_ATTEMPTS = 3
-        val REJECTED = setOf(400, 404, 422)
     }
 }

@@ -84,12 +84,13 @@ object AppLanguage {
  * - A profile without an override gets the baseline back, if the app still
  *   owns the value; otherwise the app touches nothing.
  * - A system value that differs from [Ledger.observed] is a choice the user
- *   made in Settings → Apps → Silo → Language. It is never overwritten: when it
- *   is "follow device" or a shipped language it is written back as this
- *   device's value for the active profile, and from then on it is that
- *   profile's override like any other ([choose]). Any other value (a
- *   pseudo-locale, or one the server can't store) is [Ledger.kept] until the
- *   next profile becomes active.
+ *   made in Settings → Apps → Silo → Language. When it is "follow device" or a
+ *   shipped language it is written back as this device's value for the active
+ *   profile, and from then on it is that profile's override like any other
+ *   ([choose]). Any other value (a pseudo-locale) can't be saved: it becomes
+ *   the user's own value, the profile's value applies over it, and it is
+ *   restored for a profile without one. The caller treats a write-back the
+ *   server refuses the same way, by clearing the ledger.
  *
  * Tags are `LocaleList.toLanguageTags()` strings; "" means follow the device.
  */
@@ -102,16 +103,8 @@ object AppLocaleReconciler {
      * @property applying set while an apply is in flight. A ledger left like
      *   this by a crash means the system may still hold the old value, which
      *   is not a user choice.
-     * @property kept the user's own system value that couldn't be saved to the
-     *   profile; no override replaces it until the caller clears this on the
-     *   next profile activation.
      */
-    data class Ledger(
-        val observed: String,
-        val baseline: String?,
-        val applying: Boolean = false,
-        val kept: Boolean = false,
-    )
+    data class Ledger(val observed: String, val baseline: String?, val applying: Boolean = false)
 
     /**
      * @property apply tags to set as the per-app language, or null for no call.
@@ -134,12 +127,11 @@ object AppLocaleReconciler {
         if (!prior.applying && current != prior.observed) {
             // Only the first tag is saved, so only the first tag decides.
             val eligible = current.isEmpty() || AppLanguage.match(current.substringBefore(','), shipped) != null
-            // A pseudo-locale or a language this build lacks: kept, unsaved.
-            if (!eligible) return Decision(apply = null, ledger = Ledger(observed = current, baseline = null, kept = true))
+            // A pseudo-locale or a language this build lacks: the user's own value.
+            if (!eligible) return reconcile(current, override, ledger = null, shipped = shipped)
             // The platform already holds it, so there is nothing to apply.
             return choose(current, before = prior.observed, ledger = prior).copy(apply = null)
         }
-        if (prior.kept && !prior.applying) return Decision(apply = null, ledger = prior)
         // After an interrupted apply, aim at what the ledger recorded rather
         // than at what the platform still reports.
         val aim = prior.observed
@@ -154,11 +146,11 @@ object AppLocaleReconciler {
     }
 
     /**
-     * The user chose [chosen] for the active profile on this device (the
-     * picker, or system settings). It becomes that profile's device value, so
-     * the next profile without an override gets the earlier value back, as
-     * after any override. Match device ("") follows the device and owns
-     * nothing.
+     * The user chose [chosen] for the active profile (the picker, or system
+     * settings). It becomes that profile's value, so the next profile without
+     * one gets the earlier value back, as after any override. Match device
+     * ("") clears the app's own value rather than restoring that earlier one,
+     * and owns nothing.
      *
      * @param before the system value just before the choice.
      */

@@ -72,5 +72,5 @@
          language. -->
     <string name="settings_app_language_title">App language</string>
     <string name="settings_app_language_match_device">Match device</string>
-    <string name="settings_app_language_footer">The language of Silo’s menus and buttons on this device. Audio, subtitle and metadata languages are separate settings.</string>
+    <string name="settings_app_language_footer">The language of Silo’s menus and buttons for this profile, on every device. Audio, subtitle and metadata languages are separate settings.</string>
 </resources>

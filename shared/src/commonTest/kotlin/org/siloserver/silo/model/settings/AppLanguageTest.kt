@@ -65,23 +65,23 @@ class AppLocaleReconcilerTest {
     }
 
     @Test fun pseudoLocaleIsNeverWrittenBack() =
-        assertEquals(Decision(null, Ledger("ar-XB", null, kept = true)), reconcile("ar-XB", null, Ledger("", null)))
+        assertEquals(Decision(null, Ledger("ar-XB", null)), reconcile("ar-XB", null, Ledger("", null)))
 
     @Test fun aSystemListIsJudgedByTheTagThatWouldBeSaved() {
         // fr first: saving it would leave the profile with a language the app can't show.
-        assertEquals(Decision(null, Ledger("fr,es", null, kept = true)), reconcile("fr,es", null, Ledger("es", "")))
+        assertEquals(Decision(null, Ledger("fr,es", null)), reconcile("fr,es", null, Ledger("es", "")))
         assertEquals(Decision(null, Ledger("es,fr", ""), writeBack = "es"), reconcile("es,fr", null, Ledger("", null)))
     }
 
     @Test fun unshippedSystemChoiceIsNotWrittenBack() =
-        assertEquals(Decision(null, Ledger("fr", null, kept = true)), reconcile("fr", null, Ledger("", null)))
+        assertEquals(Decision(null, Ledger("fr", null)), reconcile("fr", null, Ledger("", null)))
 
-    @Test fun anUnsavedSystemChoiceOutlastsTheProfilesOverride() {
-        val kept = reconcile("ar-XB", "es", Ledger("es", "")).ledger
-        // The next pass for the same profile still leaves it alone.
-        assertEquals(Decision(null, kept), reconcile("ar-XB", "es", kept))
-        // Once the caller releases it (next profile), the override applies again.
-        assertEquals(Decision("es", Ledger("es", "ar-XB")), reconcile("ar-XB", "es", kept.copy(kept = false)))
+    @Test fun anUnsavedSystemChoiceGivesWayToTheProfileAndComesBackAfter() {
+        // es applied for the profile; the user then set the pseudo-locale ar-XB.
+        val applied = reconcile("ar-XB", "es", Ledger("es", ""))
+        assertEquals(Decision("es", Ledger("es", "ar-XB")), applied)
+        // A profile without a value gets the user's ar-XB back.
+        assertEquals(Decision("ar-XB", Ledger("ar-XB", null)), reconcile("es", null, applied.ledger))
     }
 
     @Test fun interruptedApplyIsRetriedRatherThanReadAsAUserReset() =
