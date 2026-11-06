@@ -24,13 +24,14 @@ internal fun AppLanguageSettingsSection(store: AppLanguageStore) {
     val selected = options.firstOrNull { it.id == state.choice.orEmpty() } ?: options.first()
 
     SettingsSection(title = title, footer = stringResource(CommonR.string.android_settings_appLanguageFooter)) {
-        SettingsDropdownRow(
+        SettingsIndexedDropdownRow(
             label = title,
             value = selected.label,
             options = options.map { it.label },
-            onOptionSelected = { label ->
-                options.firstOrNull { it.label == label }
-                    ?.takeIf { it != selected }
+            selectedIndex = options.indexOf(selected),
+            onIndexSelected = { index ->
+                options[index]
+                    .takeIf { it != selected }
                     ?.let { store.choose(activity, it.id.ifEmpty { null }) }
             },
         )

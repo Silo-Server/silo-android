@@ -82,7 +82,7 @@ interface TitleArtStore {
      * title art: Server error". Cleared by the next successful save, a fresh
      * read when Settings opens, and an identity change.
      */
-    val saveError: StateFlow<String?>
+    val saveError: StateFlow<SettingsSaveError?>
 
     /** Idempotent first load; seeds from the last-known answer first. */
     suspend fun hydrateIfNeeded()
@@ -136,9 +136,9 @@ class DefaultTitleArtStore private constructor(
     )
 
     private val _state = MutableStateFlow(TitleArtState())
-    private val _saveError = MutableStateFlow<String?>(null)
+    private val _saveError = MutableStateFlow<SettingsSaveError?>(null)
     override val state: StateFlow<TitleArtState> = _state.asStateFlow()
-    override val saveError: StateFlow<String?> = _saveError.asStateFlow()
+    override val saveError: StateFlow<SettingsSaveError?> = _saveError.asStateFlow()
 
     private val lock = Any()
 
@@ -389,7 +389,7 @@ class DefaultTitleArtStore private constructor(
                         result.resolved != null
                     }
                     is TitleArtController.WriteResult.Failed -> {
-                        _saveError.value = saveErrorText(result.message)
+                        _saveError.value = saveError(result.message)
                         // Every change queued behind this one was built on its
                         // unsaved state (which scope to write, which value to
                         // carry). Drop them all, show the confirmed state, and
@@ -445,11 +445,15 @@ class DefaultTitleArtStore private constructor(
 
     internal companion object {
         const val PREFS_NAME = "silo_title_art"
+        /** A write's failure when the profile changed under it; shown as a translated reason, never as this text. */
         const val IDENTITY_CHANGED = "The acting account or profile changed."
 
-        /** Same wording as the skip-interval save error. */
-        fun saveErrorText(message: String?): String =
-            "Couldn't save title art" + (message?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ".")
+        /** A failed write as shown (same wording as the skip-interval save error). */
+        fun saveError(message: String?): SettingsSaveError =
+            SettingsSaveError.TitleArt(
+                detail = message?.takeIf { it.isNotBlank() && it != IDENTITY_CHANGED },
+                identityChanged = message == IDENTITY_CHANGED,
+            )
 
         /** The cache key for this snapshot's server, account and profile; null without a profile. */
         private fun AuthScopeSnapshot.cacheIdentity(): String? =

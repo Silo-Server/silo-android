@@ -1,11 +1,15 @@
 package org.siloserver.silo.android.ui.screens.settings
 
+import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.settings.TitleArtState
 import org.siloserver.silo.common.settings.TitleArtStore
+import org.siloserver.silo.common.settings.text
 
 /**
  * "Show title art" and its "Apply to all devices" companion, as the Title
@@ -20,32 +24,34 @@ internal fun TitleArtSettingsSection(store: TitleArtStore) {
     val saveError by store.saveError.collectAsState()
     if (!state.isSupported) return
 
-    val device = if (LocalConfiguration.current.smallestScreenWidthDp >= 600) "tablet" else "phone"
+    val tablet = LocalConfiguration.current.smallestScreenWidthDp >= 600
     SettingsSection(
-        title = "Title Pages",
-        footer = "Use logo artwork as the title when available. " + titleArtScopeFooter(state, device),
+        title = stringResource(CommonR.string.settings_titleArt_title),
+        footer = stringResource(titleArtFooter(state, tablet)),
     ) {
         SettingsSwitchRow(
-            label = "Show title art",
+            label = stringResource(CommonR.string.settingsManifest_ui_title_art_label),
             checked = state.showTitleArt,
             onCheckedChange = store::setShowTitleArt,
             enabled = state.canEdit,
         )
         SettingsSwitchRow(
-            label = "Apply to all devices",
+            label = stringResource(CommonR.string.settings_titleArt_applyToAll),
             checked = state.appliesToAllDevices,
             onCheckedChange = store::setAppliesToAllDevices,
             enabled = state.canEdit,
         )
-        saveError?.let { SettingsProse(body = it) }
+        saveError?.let { SettingsProse(body = it.text()) }
     }
 }
 
-internal fun titleArtScopeFooter(state: TitleArtState, device: String): String =
-    if (state.appliesToAllDevices) {
-        "Title art is ${if (state.showTitleArt) "on" else "off"} on every device signed into " +
-            "this profile. Changing it here changes it everywhere. Turn off “Apply to all " +
-            "devices” to choose for this $device only."
-    } else {
-        "This choice only affects this $device. Your other devices keep their own setting."
-    }
+/** The footer for where the choice applies, naming this device a phone or a [tablet]. */
+@StringRes
+internal fun titleArtFooter(state: TitleArtState, tablet: Boolean): Int = when {
+    !state.appliesToAllDevices ->
+        if (tablet) CommonR.string.settings_titleArt_footer_thisTablet else CommonR.string.settings_titleArt_footer_thisPhone
+    state.showTitleArt ->
+        if (tablet) CommonR.string.settings_titleArt_footer_allOnTablet else CommonR.string.settings_titleArt_footer_allOnPhone
+    else ->
+        if (tablet) CommonR.string.settings_titleArt_footer_allOffTablet else CommonR.string.settings_titleArt_footer_allOffPhone
+}

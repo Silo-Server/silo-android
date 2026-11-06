@@ -24,12 +24,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.server.AccountEntry
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.tv.ui.components.TvDialog
@@ -124,8 +128,8 @@ fun TvAccountsScreen(
     ) {
         SettingsPaneHeader(
             icon = Icons.Outlined.Dns,
-            title = "Accounts",
-            blurb = "Servers and the accounts signed in to them on this TV.",
+            title = stringResource(CommonR.string.accounts_title),
+            blurb = stringResource(CommonR.string.servers_accounts_blurb),
         )
         LazyColumn(
             modifier = Modifier.fillMaxWidth(),
@@ -143,27 +147,27 @@ fun TvAccountsScreen(
                         modifier = focus,
                     )
                     is AccountsRow.AddAccount -> SettingsActionRow(
-                        label = "Add an account on ${row.server.displayName}",
+                        label = stringResourceWithNames(CommonR.string.accounts_addAccountOnServer, row.server.displayName),
                         onClick = { viewModel.onAddAccount(row.server.id) },
                         modifier = focus,
                     )
                     is AccountsRow.Rename -> SettingsValueRow(
-                        label = "Rename Server",
+                        label = stringResource(CommonR.string.settings_accounts_rename),
                         value = serverHost(row.server.url),
                         onClick = { renameServer = row.server },
                     )
                     is AccountsRow.Remove -> SettingsActionRow(
-                        label = "Remove Server",
+                        label = stringResource(CommonR.string.settings_accounts_remove),
                         onClick = { confirmRemove = row.server },
                         destructive = true,
                     )
                     AccountsRow.AddServer -> SettingsActionRow(
-                        label = "Add a server",
+                        label = stringResource(CommonR.string.accounts_addAServer),
                         onClick = onAddServer,
                         modifier = focus.padding(top = 10.dp),
                     )
                     AccountsRow.Footer -> SettingsFooterText(
-                        text = "Signing out of an account removes it and its settings from this TV. Its server stays saved.",
+                        text = stringResource(CommonR.string.servers_accounts_footer),
                         modifier = Modifier.padding(top = 10.dp),
                     )
                 }
@@ -179,14 +183,14 @@ fun TvAccountsScreen(
             onDismissRequest = { openAccount = null },
             actions = listOf(
                 TvDialogAction(
-                    label = "Sign in again",
+                    label = stringResource(CommonR.string.account_signInAgain),
                     onClick = {
                         openAccount = null
                         viewModel.onSignInAgain(account)
                     },
                 ),
                 TvDialogAction(
-                    label = "Sign Out",
+                    label = stringResource(CommonR.string.settings_signOut),
                     onClick = {
                         openAccount = null
                         confirmSignOut = account
@@ -199,7 +203,7 @@ fun TvAccountsScreen(
 
     confirmSignOut?.let { account ->
         TvSignOutDialog(
-            accountName = account.username?.takeIf { it.isNotBlank() } ?: "this account",
+            accountName = account.username?.takeIf { it.isNotBlank() } ?: stringResource(CommonR.string.servers_thisAccount),
             serverName = serverName(account.serverId),
             serverId = account.serverId,
             onSignOut = { removeServer ->
@@ -212,9 +216,9 @@ fun TvAccountsScreen(
 
     renameServer?.let { server ->
         TvTextInputDialog(
-            title = "Rename Server",
-            label = "Name",
-            confirmLabel = "Rename",
+            title = stringResource(CommonR.string.settings_accounts_rename),
+            label = stringResource(CommonR.string.servers_rename_name),
+            confirmLabel = stringResource(CommonR.string.accounts_rename),
             initialValue = server.displayName,
             // Blank goes back to the name the server gives itself.
             allowBlank = true,
@@ -228,12 +232,12 @@ fun TvAccountsScreen(
 
     confirmRemove?.let { server ->
         TvOptionDialog(
-            title = "Remove ${server.displayName}?",
+            title = stringResourceWithNames(CommonR.string.accounts_remove_title, server.displayName),
             options = listOf(
                 TvDialogOption(
                     key = "confirm",
-                    title = "Remove server",
-                    subtitle = "Signs out of every account on this server and removes it from this TV.",
+                    title = stringResource(CommonR.string.accounts_remove_server),
+                    subtitle = stringResource(CommonR.string.servers_remove_optionDetail),
                     onClick = {
                         confirmRemove = null
                         viewModel.onRemoveServer(server.id)
@@ -241,7 +245,7 @@ fun TvAccountsScreen(
                 ),
                 TvDialogOption(
                     key = "cancel",
-                    title = "Cancel",
+                    title = stringResource(CommonR.string.common_cancel),
                     onClick = { confirmRemove = null },
                 ),
             ),
@@ -296,31 +300,39 @@ private fun accountsRows(servers: List<TvAccountsServer>): List<AccountsRow> = b
 }
 
 /** Management screens say "Account", never "User" (spec §2). */
-private fun AccountEntry.displayName(): String = username?.takeIf { it.isNotBlank() } ?: "Account"
-
-private fun profileCount(count: Int): String = if (count == 1) "1 profile" else "$count profiles"
+@Composable
+private fun AccountEntry.displayName(): String =
+    username?.takeIf { it.isNotBlank() } ?: stringResource(CommonR.string.settings_accounts_account)
 
 /**
  * "2 profiles", "1 profile", or "Sign in again" (Roku `accountValue`), led by
  * "Current" on the open account so the list shows which one is in use.
  */
+@Composable
 private fun accountValue(account: AccountEntry, current: Boolean): String {
-    if (account.needsSignIn) return "Sign in again"
-    val profiles = account.cachedProfiles.takeIf { it.isNotEmpty() }?.let { profileCount(it.size) }
-    return listOfNotNull("Current".takeIf { current }, profiles).joinToString(" · ")
+    if (account.needsSignIn) return stringResource(CommonR.string.account_signInAgain)
+    val profiles = account.cachedProfiles.size.takeIf { it > 0 }?.let {
+        pluralStringResource(CommonR.plurals.account_profiles_count, it, it)
+    }
+    val currentLabel = stringResource(CommonR.string.changeAccount_current)
+    return listOfNotNull(currentLabel.takeIf { current }, profiles).joinToString(" · ")
 }
 
 /** The address without its scheme, as Rename Server's value shows it. */
 private fun serverHost(url: String): String = url.substringAfter("://").trimEnd('/')
 
-private fun accountPageMessage(account: AccountEntry, serverName: String): String = buildString {
-    append(serverName)
+@Composable
+private fun accountPageMessage(account: AccountEntry, serverName: String): String {
     val profiles = account.cachedProfiles
-    if (profiles.isNotEmpty()) {
-        append("\n").append(profileCount(profiles.size)).append(": ")
-        append(profiles.joinToString(", ") { it.name })
+    val profileLine = profiles.takeIf { it.isNotEmpty() }?.let {
+        pluralStringResource(CommonR.plurals.servers_accountPage_profiles, it.size, it.size, it.joinToString(", ") { profile -> profile.name })
     }
-    if (account.needsSignIn) append("\nThis account needs to sign in again.")
+    val signInLine = stringResource(CommonR.string.servers_accountPage_needsSignIn).takeIf { account.needsSignIn }
+    return buildString {
+        append(serverName)
+        if (profileLine != null) append("\n").append(profileLine)
+        if (signInLine != null) append("\n").append(signInLine)
+    }
 }
 
 /** A server's name above its rows, as a settings group header. */

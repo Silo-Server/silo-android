@@ -1,5 +1,10 @@
 package org.siloserver.silo.common.settings
 
+import androidx.annotation.StringRes
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R
+
 /**
  * The words for going back to the profile's playback settings, shared by the
  * phone and TV settings so the two say the same thing.
@@ -10,42 +15,44 @@ object UseProfileSettingsCopy {
      * and the action under such a switch. Choosing it clears this device's
      * value.
      */
-    const val OPTION = "Use profile setting"
+    val option: String
+        @Composable get() = stringResource(R.string.settings_useProfile)
 
     /** The row that does it for one switch. */
-    const val ROW = "Use Profile Setting"
+    val row: String
+        @Composable get() = stringResource(R.string.settings_profileSettings_useRow)
 
     /** The row that does it for every playback setting at once. */
-    const val RESET_ALL_ROW = "Use Profile Settings"
+    val resetAllRow: String
+        @Composable get() = stringResource(R.string.settings_profileSettings_useAll)
 
-    const val CONFIRM_TITLE = "Use your profile's settings on this device?"
+    val confirmTitle: String
+        @Composable get() = stringResource(R.string.settings_profileSettings_confirmTitle)
 
     // Truthful about the local-only settings (picture-in-picture, Force HDR
     // Passthrough, rewind on resume…): they have no profile value, so the
     // action returns them to their defaults.
-    const val CONFIRM_MESSAGE =
-        "This removes the settings changed on this device. Settings that only apply to this " +
-            "device go back to their defaults."
+    val confirmMessage: String
+        @Composable get() = stringResource(R.string.settings_profileSettings_confirmMessage)
 
-    const val CONFIRM_BUTTON = "Use Profile Settings"
+    val confirmButton: String
+        @Composable get() = stringResource(R.string.settings_profileSettings_useAll)
 
-    const val FOOTER =
-        "Goes back to your profile's playback settings on this device. Settings that only apply " +
-            "to this device go back to their defaults."
+    val footer: String
+        @Composable get() = stringResource(R.string.settings_profileSettings_footer)
 
     /** Accessibility label for the row under [setting]'s switch. */
-    fun rowDescription(setting: String): String = "Use profile setting for $setting"
+    @Composable
+    fun rowDescription(setting: String): String = stringResource(R.string.settings_profileSettings_rowDescription, setting)
 
     /**
-     * The notice after the reset. [landed] is false whenever the server's
-     * answer didn't confirm it: offline, a refused delete, or a profile switch
-     * mid-reset. The queue is in memory and drops what it can't retry, so the
-     * text promises nothing about later; running the reset again is safe.
+     * The notice after the reset, as a string resource (for a toast). [landed]
+     * is false whenever the server's answer didn't confirm it: offline, a
+     * refused delete, or a profile switch mid-reset. The queue is in memory
+     * and drops what it can't retry, so the text promises nothing about
+     * later; running the reset again is safe.
      */
-    fun notice(landed: Boolean): String =
-        if (landed) {
-            "Now using your profile's settings."
-        } else {
-            "Couldn't confirm the change with the server. Try again later."
-        }
+    @StringRes
+    fun notice(landed: Boolean): Int =
+        if (landed) R.string.settings_profileSettings_landed else R.string.settings_profileSettings_notConfirmed
 }
