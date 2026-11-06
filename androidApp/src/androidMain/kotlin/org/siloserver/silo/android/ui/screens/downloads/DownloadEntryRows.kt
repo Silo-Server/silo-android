@@ -342,8 +342,9 @@ private fun SingleRow(
     val ebookDetail = if (item.mediaType == DownloadMediaType.Ebook) {
         listOfNotNull(item.displayName, item.container?.uppercase()).joinToString(" · ")
     } else {
-        item.subtitle
+        storedDownloadSubtitle(item.subtitle)
     }
+    val title = storedDownloadTitle(item.title, item.mediaType)
     val rowAction = downloadRowAction(item)
     val canOpenExternally = downloadExternalOpenAvailable(item)
     val showPrimaryAction = rowAction != DownloadRowAction.None
@@ -367,7 +368,7 @@ private fun SingleRow(
             url = item.posterUrl,
             thumbhash = item.posterThumbhash,
             hidden = downloadItemHidesArtwork(item, LocalEpisodeSpoilerPrefs.current),
-            contentDescription = item.title,
+            contentDescription = title,
             modifier = Modifier
                 .width(56.dp)
                 .aspectRatio(2f / 3f)
@@ -376,7 +377,7 @@ private fun SingleRow(
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = item.title,
+                text = title,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 2,
@@ -508,16 +509,12 @@ private fun ExpandableAggregateRow(
     }
 }
 
-/**
- * An aggregate row's title: "Season N", the series, else the entry's own. A
- * series no download named, or saved under the stored English placeholder,
- * shows the catalog's "Series".
- */
+/** An aggregate row's title: "Season N", the series, else the entry's own. */
 @Composable
 private fun downloadEntryTitle(entry: DownloadEntry): String = when (entry) {
     is DownloadEntry.Season -> stringResource(CommonR.string.downloads_entry_season, entry.seasonNumber)
-    is DownloadEntry.Series -> entry.title.takeUnless { it.isEmpty() || it == DownloadEnqueuer.UNKNOWN_SERIES_TITLE }
-        ?: stringResource(CommonR.string.downloads_entry_seriesFallback)
+    // Empty when no download named the series.
+    is DownloadEntry.Series -> storedDownloadTitle(entry.title.ifEmpty { DownloadEnqueuer.UNKNOWN_SERIES_TITLE }, DownloadMediaType.TvShow)
     else -> entry.title
 }
 
@@ -545,8 +542,25 @@ private fun downloadEntrySubtitle(entry: DownloadEntry): String = when (entry) {
         entry.completedCount.toString(),
         entry.books.size.toString(),
     )
-    is DownloadEntry.Single -> entry.subtitle.orEmpty()
+    is DownloadEntry.Single -> storedDownloadSubtitle(entry.subtitle).orEmpty()
 }
+
+/**
+ * A title saved with a download, as shown. The English placeholders a series
+ * download is saved under when its title or numbers are unknown are stored
+ * data, so they stay English there and show as the catalog's words here.
+ */
+@Composable
+private fun storedDownloadTitle(stored: String, mediaType: DownloadMediaType): String =
+    if (mediaType == DownloadMediaType.TvShow && stored == DownloadEnqueuer.UNKNOWN_SERIES_TITLE) {
+        stringResource(CommonR.string.downloads_entry_seriesFallback)
+    } else {
+        stored
+    }
+
+@Composable
+private fun storedDownloadSubtitle(stored: String?): String? =
+    if (stored == DownloadEnqueuer.UNKNOWN_EPISODE_SUBTITLE) stringResource(CommonR.string.downloads_entry_episodeFallback) else stored
 
 /**
  * Common chrome for the Series + Season aggregate rows: poster, title,
