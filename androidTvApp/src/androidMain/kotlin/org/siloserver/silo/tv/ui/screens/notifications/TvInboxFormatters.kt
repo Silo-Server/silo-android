@@ -49,7 +49,11 @@ internal fun tvInboxCardModel(row: NotificationRow, now: Instant): TvInboxCardMo
 
     val sxey = row.seasonNumber?.let { s -> row.episodeNumber?.let { e -> "S${s}E$e" } }
     val subtitle = if (isEpisode) {
-        listOfNotNull(sxey, episodeTitle?.let(::bidiIsolated)).joinToString(" • ").takeIf { it.isNotBlank() }
+        when {
+            sxey == null -> episodeTitle
+            episodeTitle == null -> sxey
+            else -> "$sxey • ${bidiIsolated(episodeTitle)}"
+        }
     } else {
         episodeTitle ?: seriesTitle
     }

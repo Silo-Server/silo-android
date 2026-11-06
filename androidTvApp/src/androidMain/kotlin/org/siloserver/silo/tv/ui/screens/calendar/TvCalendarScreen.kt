@@ -1668,7 +1668,7 @@ private fun cardSubtitle(item: CalendarItem): String? {
         if (season != null && episode != null) {
             parts.add("S$season · E$episode")
         }
-        item.episodeTitle?.takeIf { it.isNotBlank() }?.let { parts.add(bidiIsolated(it)) }
+        item.episodeTitle?.takeIf { it.isNotBlank() }?.let { parts.add(if (parts.isEmpty()) it else bidiIsolated(it)) }
     }
     if (item.type == CalendarItemType.Movie) {
         parts.add("Movie")
