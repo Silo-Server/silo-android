@@ -399,25 +399,10 @@ fun SettingsNotificationsScreen(viewModel: SettingsViewModel, onBackClick: () ->
             item(key = "topics") {
                 SettingsSection(
                     title = "Notify Me About",
-                    footer = "Favorites and Next Up cover new episodes of series you follow. Watchlist covers " +
-                        "titles that become available. Continue Watching covers titles you started but " +
-                        "haven't finished.",
+                    footer = "Next Up tells you when a new episode becomes the next one to watch in a series " +
+                        "you're following. Titles you requested or added to your watchlist notify you when " +
+                        "they arrive.",
                 ) {
-                    SettingsSwitchRow(
-                        label = "Favorites",
-                        checked = state.notifyFavorites,
-                        onCheckedChange = viewModel::setNotifyFavorites,
-                    )
-                    SettingsSwitchRow(
-                        label = "Watchlist",
-                        checked = state.notifyWatchlist,
-                        onCheckedChange = viewModel::setNotifyWatchlist,
-                    )
-                    SettingsSwitchRow(
-                        label = "Continue Watching",
-                        checked = state.notifyContinueWatching,
-                        onCheckedChange = viewModel::setNotifyContinueWatching,
-                    )
                     SettingsSwitchRow(
                         label = "Next Up",
                         checked = state.notifyNextUp,

@@ -29,27 +29,35 @@ internal data class InboxCardModel(
  * instant for the relative-time label (injected for deterministic tests).
  *
  * Episode rows render as a rich card (poster + series title + SxEy/episode
- * subtitle); every other type — including unrecognized ones — renders a
- * posterless fallback card with a friendly type label.
+ * subtitle); every other type renders a posterless fallback card.
+ * `watchlist.available` names the arrived title; the rest — including
+ * unrecognized types — use a friendly type label.
  */
 internal fun inboxCardModel(row: NotificationRow, now: Instant): InboxCardModel {
     val isEpisode = row.type == NotificationType.EpisodeAvailable
+    val isWatchlist = row.type == NotificationType.WatchlistAvailable
     val seriesTitle = row.seriesTitle.ifBlank { null }
     val episodeTitle = row.episodeTitle.ifBlank { null }
     val posterUrl = row.posterUrl.ifBlank { null }
     val posterThumbhash = row.posterThumbhash.ifBlank { null }
 
     val sxey = row.seasonNumber?.let { s -> row.episodeNumber?.let { e -> "S${s}E$e" } }
-    val subtitle = if (isEpisode) {
-        listOfNotNull(sxey, episodeTitle).joinToString(" • ").takeIf { it.isNotBlank() }
-    } else {
-        episodeTitle ?: seriesTitle
+    val subtitle = when {
+        isEpisode -> listOfNotNull(sxey, episodeTitle).joinToString(" • ").takeIf { it.isNotBlank() }
+        // The title already names the arrived item.
+        isWatchlist -> null
+        else -> episodeTitle ?: seriesTitle
+    }
+    val title = when {
+        isEpisode -> seriesTitle ?: "New episode available"
+        isWatchlist -> watchlistAvailableTitle(seriesTitle)
+        else -> fallbackTitleForType(row.rawType)
     }
 
     return InboxCardModel(
         id = row.id,
         isRich = isEpisode && (posterUrl != null || seriesTitle != null),
-        title = if (isEpisode) (seriesTitle ?: "New episode available") else fallbackTitleForType(row.rawType),
+        title = title,
         subtitle = subtitle,
         posterUrl = posterUrl,
         posterThumbhash = posterThumbhash,
@@ -58,6 +66,10 @@ internal fun inboxCardModel(row: NotificationRow, now: Instant): InboxCardModel 
         targetContentId = row.seriesId ?: row.episodeId ?: row.libraryId?.toString(),
     )
 }
+
+/** Title for a `watchlist.available` row; [seriesTitle] names the arrived movie or series. */
+internal fun watchlistAvailableTitle(seriesTitle: String?): String =
+    seriesTitle?.let { "$it is now available" } ?: "A title on your watchlist is now available"
 
 /** Friendly label for a wire `type` string, with a generic fallback. */
 internal fun fallbackTitleForType(type: String): String = when (type) {

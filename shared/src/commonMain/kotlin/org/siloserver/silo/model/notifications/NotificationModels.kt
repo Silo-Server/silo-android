@@ -17,16 +17,19 @@ import kotlinx.serialization.json.booleanOrNull
 enum class NotificationType {
     EpisodeAvailable,
     RequestFulfilled,
+    WatchlistAvailable,
     Unknown,
     ;
 
     companion object {
         const val EpisodeAvailableWire = "episode.available"
         const val RequestFulfilledWire = "request.fulfilled"
+        const val WatchlistAvailableWire = "watchlist.available"
 
         fun fromWire(wire: String): NotificationType = when (wire) {
             EpisodeAvailableWire -> EpisodeAvailable
             RequestFulfilledWire -> RequestFulfilled
+            WatchlistAvailableWire -> WatchlistAvailable
             else -> Unknown
         }
     }
@@ -143,9 +146,6 @@ data class WsTicketResponse(
 data class NotificationPreferences(
     @SerialName("profile_id") val profileId: String = "",
     val enabled: Boolean = true,
-    @SerialName("notify_favorites") val notifyFavorites: Boolean = true,
-    @SerialName("notify_watchlist") val notifyWatchlist: Boolean = true,
-    @SerialName("notify_continue_watching") val notifyContinueWatching: Boolean = true,
     @SerialName("notify_next_up") val notifyNextUp: Boolean = true,
 )
 
@@ -157,9 +157,6 @@ data class NotificationPreferences(
 @Serializable
 data class NotificationPreferencesUpdate(
     val enabled: Boolean? = null,
-    @SerialName("notify_favorites") val notifyFavorites: Boolean? = null,
-    @SerialName("notify_watchlist") val notifyWatchlist: Boolean? = null,
-    @SerialName("notify_continue_watching") val notifyContinueWatching: Boolean? = null,
     @SerialName("notify_next_up") val notifyNextUp: Boolean? = null,
 )
 

@@ -85,6 +85,21 @@ class InboxFormattersTest {
     }
 
     @Test
+    fun watchlistAvailableNamesTheArrivedTitleAndOpensIt() {
+        val model = inboxCardModel(
+            row(rawType = "watchlist.available", seriesId = "movie-1", seriesTitle = "Dune"),
+            now,
+        )
+        assertFalse(model.isRich)
+        assertEquals("Dune is now available", model.title)
+        assertEquals(null, model.subtitle)
+        assertEquals("movie-1", model.targetContentId)
+
+        val untitled = inboxCardModel(row(rawType = "watchlist.available", seriesId = "movie-1"), now)
+        assertEquals("A title on your watchlist is now available", untitled.title)
+    }
+
+    @Test
     fun knownNonEpisodeTypesGetFriendlyTitles() {
         assertEquals("Request fulfilled", fallbackTitleForType("request.fulfilled"))
         assertEquals("Webhook disabled", fallbackTitleForType("webhook.auto_disabled"))
