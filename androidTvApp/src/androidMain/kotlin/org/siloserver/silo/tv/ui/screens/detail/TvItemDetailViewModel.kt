@@ -90,7 +90,8 @@ data class TvItemDetailUiState(
     val isTogglingWatchlist: Boolean = false,
     val isTogglingWatched: Boolean = false,
     val userRating: Int? = null,
-    val isTogglingRating: Boolean = false,
+    val ratingFailureMessage: String? = null,
+    val isSavingRating: Boolean = false,
     // Series navigation (only relevant when detail.type == "series").
     val seasons: List<Season> = emptyList(),
     val selectedSeason: Int? = null,
@@ -584,6 +585,24 @@ class TvItemDetailViewModel(
         }
         projected
     }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, TvItemDetailUiState())
+    private val ratings = org.siloserver.silo.domain.TitleRatingController(
+        itemId = contentId,
+        personalData = personalDataRepository,
+        scope = viewModelScope,
+        onSaved = { catalogRepository.recordUserRating(contentId, it) },
+    ).also { controller ->
+        viewModelScope.launch {
+            controller.state.collect { rating ->
+                _uiState.update {
+                    it.copy(
+                        userRating = rating.rating,
+                        ratingFailureMessage = rating.failureMessage,
+                        isSavingRating = rating.isSaving,
+                    )
+                }
+            }
+        }
+    }
 
     private val descriptionTranslation =
         org.siloserver.silo.metadata.DescriptionTranslationController(
@@ -738,13 +757,14 @@ class TvItemDetailViewModel(
     }
 
     private suspend fun seedCachedDetail() {
+        val ratingRead = ratings.beginRead()
         val cached = catalogRepository.getCachedItemDetail(contentId, libraryId = libraryId)?.let { withLocalProgress(it) } ?: return
         if (isTvHiddenMediaType(cached.type)) return
+        ratings.adoptRead(ratingRead, cached.userRating)
         _uiState.update {
             it.copy(
                 isLoading = true,
                 detail = cached,
-                userRating = cached.userRating,
                 isWatched = cached.userData?.played == true,
                 error = null,
             )
@@ -832,6 +852,7 @@ class TvItemDetailViewModel(
         detailLoadJob = viewModelScope.launch {
             val similarOwner = recommendationRepository?.captureSimilarAuthority()
             trackChoiceOwner = catalogRepository.captureWatchAuthority()
+            val ratingRead = ratings.beginRead()
             when (val result = catalogRepository.getItemDetail(contentId, libraryId = libraryId, joinWarmup = !afterAccessChange)) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
@@ -845,12 +866,12 @@ class TvItemDetailViewModel(
                         }
                         return@launch
                     }
+                    ratings.adoptRead(ratingRead, detail.userRating)
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             detail = detail,
                             seasonsLoading = detail.type.lowercase() == "series" || it.seasonsLoading,
-                            userRating = detail.userRating,
                             isWatched = detail.userData?.played == true,
                             error = null,
                         )
@@ -1099,6 +1120,7 @@ class TvItemDetailViewModel(
             if (overlaid != current) {
                 _uiState.update { it.copy(detail = overlaid) }
             }
+            val ratingRead = ratings.beginRead()
             when (val result = catalogRepository.getItemDetail(
                 contentId,
                 libraryId = libraryId,
@@ -1109,10 +1131,10 @@ class TvItemDetailViewModel(
                     val detail = withLocalProgress(result.data)
                         .let { refreshed -> playbackReturn?.let(refreshed::withPlaybackReturn) ?: refreshed }
                     if (!isTvHiddenMediaType(detail.type)) {
+                        ratings.adoptRead(ratingRead, detail.userRating)
                         _uiState.update {
                             it.copy(
                                 detail = detail,
-                                userRating = detail.userRating,
                                 isWatched = detail.userData?.played == true,
                             )
                         }
@@ -1176,16 +1198,11 @@ class TvItemDetailViewModel(
     }
 
     private var watchedMutationOwner: org.siloserver.silo.repository.port.PersonalWriteIntent? = null
-    private var ratingMutationOwner: org.siloserver.silo.repository.port.PersonalWriteIntent? = null
 
     private fun releaseInvalidatedPersonalMutations(generation: Long) {
         if (watchedMutationOwner?.identityGeneration?.let { it < generation } == true) {
             watchedMutationOwner = null
             _uiState.update { it.copy(isTogglingWatched = false) }
-        }
-        if (ratingMutationOwner?.identityGeneration?.let { it < generation } == true) {
-            ratingMutationOwner = null
-            _uiState.update { it.copy(isTogglingRating = false) }
         }
     }
 
@@ -1394,62 +1411,12 @@ class TvItemDetailViewModel(
         }
     }
 
-    fun onSetRating(stars: Int) {
-        val current = _uiState.value
-        if (current.isTogglingRating) return
-        val target = stars.coerceIn(1, 5)
-        val previous = current.userRating
-        _uiState.update { it.copy(isTogglingRating = true, userRating = target) }
-        val writeIntent = personalDataRepository.beginRating(contentId, target)
-        ratingMutationOwner = writeIntent
-        viewModelScope.launch {
-            try {
-                val result = personalDataRepository.performPersonalWrite(writeIntent)
-                if (!personalDataRepository.isCurrent(writeIntent)) return@launch
-                if (result !is ApiResult.Success) {
-                    // Roll back on error.
-                    _uiState.update {
-                        it.copy(isTogglingRating = false, userRating = previous)
-                    }
-                } else {
-                    _uiState.update { it.copy(isTogglingRating = false) }
-                }
-            } finally {
-                if (ratingMutationOwner == writeIntent) {
-                    ratingMutationOwner = null
-                    _uiState.update { it.copy(isTogglingRating = false) }
-                }
-            }
-        }
+    /** Saves the viewer's stars for this title, or clears them for null. */
+    fun onSetRating(stars: Int?) {
+        ratings.set(stars)
     }
 
-    fun onClearRating() {
-        val current = _uiState.value
-        if (current.isTogglingRating) return
-        val previous = current.userRating ?: return
-        _uiState.update { it.copy(isTogglingRating = true, userRating = null) }
-        val writeIntent = personalDataRepository.beginRating(contentId, null)
-        ratingMutationOwner = writeIntent
-        viewModelScope.launch {
-            try {
-                val result = personalDataRepository.performPersonalWrite(writeIntent)
-                if (!personalDataRepository.isCurrent(writeIntent)) return@launch
-                if (result !is ApiResult.Success) {
-                    // Roll back on error.
-                    _uiState.update {
-                        it.copy(isTogglingRating = false, userRating = previous)
-                    }
-                } else {
-                    _uiState.update { it.copy(isTogglingRating = false) }
-                }
-            } finally {
-                if (ratingMutationOwner == writeIntent) {
-                    ratingMutationOwner = null
-                    _uiState.update { it.copy(isTogglingRating = false) }
-                }
-            }
-        }
-    }
+    fun onDismissRatingFailure() = ratings.dismissFailure()
 
     fun onVersionSelected(fileId: Int?) {
         // Track indexes are file-specific; clear them so a stale index can't

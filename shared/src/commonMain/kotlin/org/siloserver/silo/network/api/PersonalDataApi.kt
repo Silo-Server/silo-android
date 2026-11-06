@@ -3,6 +3,7 @@ package org.siloserver.silo.network.api
 import io.ktor.client.*
 import io.ktor.client.request.*
 import io.ktor.http.*
+import kotlinx.serialization.Serializable
 import org.siloserver.silo.model.personal.*
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
@@ -18,6 +19,9 @@ import org.siloserver.silo.network.apiv2.UserLibrariesV2
 import org.siloserver.silo.network.apiv2.identityChanged
 import org.siloserver.silo.network.apiv2.ownedV2Call
 import org.siloserver.silo.network.apiv2.safeApiV2Call
+
+@Serializable
+private data class RatingEntryV2(val rating: Int)
 
 class PersonalDataApi(
     private val client: HttpClient,
@@ -47,6 +51,20 @@ class PersonalDataApi(
         if (scope != tokenManager.snapshotCurrentScope())
             return identityChanged()
         return result
+    }
+
+    /**
+     * The profile's stored stars for an item, null when it hasn't rated it. A
+     * rating write with an unknown outcome is settled with this read, never by
+     * sending the write again.
+     */
+    suspend fun getRating(itemId: String): ApiResult<Int?> {
+        val scope = tokenManager?.snapshotCurrentScope()
+        if (tokenManager != null && scope == null) return identityChanged()
+        val result = ownedV2Call<RatingEntryV2, Int?>(apiV2Gate, tokenManager, scope, OwnerPolicy.PROFILE, HttpStatusCode.OK, { owner ->
+            client.get("/api/v2/ratings/${itemId.encodeURLPathPart()}") { owner?.let { authScope(it) }; requireSiloAuth() }
+        }) { it.rating }
+        return if (result is ApiResult.Error && result.code == 404 && result.error == "not_found") ApiResult.Success(null) else result
     }
 
     // --- User Libraries ---

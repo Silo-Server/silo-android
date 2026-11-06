@@ -72,6 +72,10 @@ fun MovieDetailContent(
     onOpenBoxSet: (org.siloserver.silo.model.catalog.CatalogBoxSet) -> Unit = {},
     onBoxSetMovieClick: (contentId: String, libraryId: String) -> Unit = { _, _ -> },
     isFavorite: Boolean,
+    userRating: Int?,
+    isSavingRating: Boolean,
+    // Null on a page whose item can't be rated.
+    onSetRating: ((Int?) -> Unit)?,
     isInWatchlist: Boolean,
     selectedVersionIndex: Int,
     isAutoVersion: Boolean,
@@ -234,6 +238,9 @@ fun MovieDetailContent(
                     onToggleFavorite = onFavoriteClick,
                     onToggleWatchlist = onWatchlistClick,
                     onToggleWatched = onToggleWatched,
+                    userRating = userRating,
+                    isSavingRating = isSavingRating,
+                    onSetRating = onSetRating,
                     overflow = if (hasOverflow) {
                         { dismiss ->
                             if (onSeriesClick != null) {

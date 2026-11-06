@@ -275,6 +275,16 @@ fun ItemDetailScreen(
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
         }
     }
+    state.ratingFailureMessage?.let { message ->
+        org.siloserver.silo.android.ui.components.SiloDialog(
+            title = org.siloserver.silo.domain.TitleRatingController.FAILURE_TITLE,
+            message = message,
+            onDismissRequest = viewModel::dismissRatingFailure,
+            actions = listOf(
+                org.siloserver.silo.android.ui.components.SiloDialogAction(label = "OK", onClick = viewModel::dismissRatingFailure),
+            ),
+        )
+    }
 
     val downloadStorage: DownloadStorage = koinInject()
     val serverRegistry: ServerRegistry = koinInject()
@@ -757,6 +767,9 @@ fun ItemDetailScreen(
                             episodes = state.episodes,
                             episodesBySeason = state.episodesBySeason,
                             isLoadingEpisodes = state.isLoadingEpisodes,
+                            userRating = state.userRating,
+                            isSavingRating = state.isSavingRating,
+                            onSetRating = viewModel::setRating,
                             isFavorite = state.isFavorite,
                             isInWatchlist = state.isInWatchlist,
                             nextEpisodeLabel = nextEpisodeLabel,
@@ -999,6 +1012,9 @@ fun ItemDetailScreen(
                             onOpenBoxSet = { boxSet -> onBoxSetClick(boxSet.id, boxSet.libraryId) },
                             onBoxSetMovieClick = onBoxSetMovieClick,
                             portraitArtwork = portraitArtwork,
+                            userRating = state.userRating,
+                            isSavingRating = state.isSavingRating,
+                            onSetRating = if (detail.type == "movie") viewModel::setRating else null,
                             isFavorite = state.isFavorite,
                             isInWatchlist = state.isInWatchlist,
                             selectedVersionIndex = videoDisplayVersionIndex,

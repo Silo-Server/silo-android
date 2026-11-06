@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.common.ui.UserStarColor
+import org.siloserver.silo.domain.UserStarRating
 import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
@@ -38,6 +40,8 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PlayArrow
@@ -56,6 +60,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
@@ -1197,9 +1202,12 @@ fun CircleActionButton(
     activeTint: Color = Color.White,
     label: String,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     Column(
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier
+            .clickable(enabled = enabled, onClick = onClick)
+            .alpha(if (enabled) 1f else 0.5f),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -1352,8 +1360,13 @@ fun HeroActionStack(
     // resuming immediately, matching iOS. Null → the button plays directly.
     onPlayFromBeginning: (() -> Unit)? = null,
     resumeStoppedAtLabel: String? = null,
+    userRating: Int? = null,
+    isSavingRating: Boolean = false,
+    // Null leaves the control out, for a page whose item can't be rated.
+    onSetRating: ((Int?) -> Unit)? = null,
 ) {
     var showResumeDialog by remember { mutableStateOf(false) }
+    var showRatingSheet by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -1396,6 +1409,19 @@ fun HeroActionStack(
                 label = "Watched",
                 modifier = Modifier.weight(1f),
             )
+            if (onSetRating != null) {
+                CircleActionButton(
+                    icon = Icons.Filled.StarBorder,
+                    activeIcon = Icons.Filled.Star,
+                    isActive = userRating != null,
+                    contentDescription = UserStarRating.accessibilityLabel(userRating),
+                    onClick = { showRatingSheet = true },
+                    activeTint = UserStarColor,
+                    label = UserStarRating.caption(userRating),
+                    modifier = Modifier.weight(1f),
+                    enabled = !isSavingRating,
+                )
+            }
             if (downloadSlot != null) {
                 Column(
                     modifier = Modifier.weight(1f),
@@ -1425,6 +1451,17 @@ fun HeroActionStack(
                 onClick = onVersionClick,
             )
         }
+    }
+
+    if (showRatingSheet && onSetRating != null) {
+        RatingSheet(
+            currentRating = userRating,
+            onPick = { picked ->
+                showRatingSheet = false
+                onSetRating(picked)
+            },
+            onDismiss = { showRatingSheet = false },
+        )
     }
 
     if (showResumeDialog && onPlayFromBeginning != null) {

@@ -94,35 +94,37 @@ class TvPersonalMutationOwnershipTest {
         try {
             f.vm.onSetRating(4)
             val rating = f.request()
-            assertTrue(f.vm.uiState.value.isTogglingRating)
             f.vm.onToggleWatched() // The unresolved-item gate rejects this different field.
             f.state { !it.isTogglingWatched }
             rating.complete(HttpStatusCode.ServiceUnavailable)
-            f.state { !it.isTogglingRating }
+            f.request().complete(HttpStatusCode.ServiceUnavailable) // The read-back.
+            f.state { it.ratingFailureMessage != null }
             assertNull(f.vm.uiState.value.userRating)
             assertEquals(1, f.port.pending.size)
         } finally { f.close(); Dispatchers.resetMain() }
     }
 
-    @Test fun clearRatingInvalidationReleasesOnlyItsOwnBusyState() = runTest {
+    @Test fun aClearFromTheOldProfileCannotFailTheNewProfilesSave() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val f = Fixture()
         try {
             f.vm.onSetRating(4)
+            val firstJob = f.vm.viewModelScope.coroutineContext.job.children.last()
             f.request().complete(HttpStatusCode.NoContent)
-            f.state { !it.isTogglingRating && it.userRating == 4 }
-            f.vm.onClearRating()
+            withContext(Dispatchers.IO) { withTimeout(5_000) { firstJob.join() } }
+            f.vm.onSetRating(null)
             val oldJob = f.vm.viewModelScope.coroutineContext.job.children.last()
             val old = f.request()
             f.changeProfile()
-            f.state { !it.isTogglingRating }
             f.vm.onSetRating(2)
             val newer = f.request()
             old.complete(HttpStatusCode.ServiceUnavailable)
             withContext(Dispatchers.IO) { withTimeout(5_000) { oldJob.join() } }
-            assertTrue(f.vm.uiState.value.isTogglingRating)
+            assertEquals(2, f.vm.uiState.value.userRating)
+            assertNull(f.vm.uiState.value.ratingFailureMessage)
             newer.complete(HttpStatusCode.ServiceUnavailable)
-            f.state { !it.isTogglingRating }
+            f.request().complete(HttpStatusCode.ServiceUnavailable) // The read-back.
+            f.state { it.ratingFailureMessage != null }
         } finally { f.close(); Dispatchers.resetMain() }
     }
 }

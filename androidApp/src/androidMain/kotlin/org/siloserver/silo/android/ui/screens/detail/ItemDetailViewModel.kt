@@ -118,6 +118,8 @@ data class ItemDetailUiState(
     val isFavorite: Boolean = false,
     val isInWatchlist: Boolean = false,
     val userRating: Int? = null,
+    val ratingFailureMessage: String? = null,
+    val isSavingRating: Boolean = false,
     val error: String? = null,
     val selectedVersionIndex: Int = 0,
     val selectedAudioIndex: Int = 0,
@@ -207,6 +209,24 @@ class ItemDetailViewModel(
         }
         projected
     }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, _uiState.value)
+    private val ratings = org.siloserver.silo.domain.TitleRatingController(
+        itemId = contentId,
+        personalData = personalDataRepository,
+        scope = viewModelScope,
+        onSaved = { catalogRepository.recordUserRating(contentId, it) },
+    ).also { controller ->
+        viewModelScope.launch {
+            controller.state.collect { rating ->
+                _uiState.update {
+                    it.copy(
+                        userRating = rating.rating,
+                        ratingFailureMessage = rating.failureMessage,
+                        isSavingRating = rating.isSaving,
+                    )
+                }
+            }
+        }
+    }
     private var episodeLoadJob: Job? = null
     private var selectedEpisodeLoadJob: Job? = null
     private var allEpisodeFileIdsJob: Job? = null
@@ -475,6 +495,7 @@ class ItemDetailViewModel(
             // Start the live request immediately. The durable cache read can
             // still paint an instant first frame, but it no longer delays the
             // network request that supplies fresh movie/series metadata.
+            val ratingRead = ratings.beginRead()
             val liveDetail = async {
                 catalogRepository.getItemDetail(contentId, libraryId = libraryId, joinWarmup = !afterAccessChange)
             }
@@ -483,11 +504,11 @@ class ItemDetailViewModel(
             when (val result = liveDetail.await()) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
+                    ratings.adoptRead(ratingRead, detail.userRating)
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             detail = detail,
-                            userRating = detail.userRating,
                             error = null,
                         )
                     }
@@ -634,6 +655,7 @@ class ItemDetailViewModel(
             if (overlaid != current) {
                 _uiState.update { it.copy(detail = overlaid) }
             }
+            val ratingRead = ratings.beginRead()
             when (val result = catalogRepository.getItemDetail(
                 contentId,
                 libraryId = libraryId,
@@ -642,12 +664,8 @@ class ItemDetailViewModel(
             )) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
-                    _uiState.update {
-                        it.copy(
-                            detail = detail,
-                            userRating = detail.userRating,
-                        )
-                    }
+                    ratings.adoptRead(ratingRead, detail.userRating)
+                    _uiState.update { it.copy(detail = detail) }
                 }
                 is ApiResult.Error -> if (showRefusal && dropsDetailOn(result)) {
                     _uiState.update {
@@ -684,12 +702,13 @@ class ItemDetailViewModel(
     }
 
     private suspend fun seedCachedDetail() {
+        val ratingRead = ratings.beginRead()
         val cached = catalogRepository.getCachedItemDetail(contentId, libraryId = libraryId)?.let { withLocalProgress(it) } ?: return
+        ratings.adoptRead(ratingRead, cached.userRating)
         _uiState.update {
             it.copy(
                 isLoading = true,
                 detail = cached,
-                userRating = cached.userRating,
                 error = null,
             )
         }
@@ -1236,50 +1255,12 @@ class ItemDetailViewModel(
         viewModelScope.launch { personalDataRepository.memberships.perform(intent) }
     }
 
-    /**
-     * Sets the user's star rating, clamped to 1..5. Mirrors the
-     * [toggleFavorite] optimistic-update pattern: update state, call the
-     * repository, revert on any non-Success result.
-     */
-    fun setRating(stars: Int) {
-        val target = stars.coerceIn(1, 5)
-        val writeIntent = personalDataRepository.beginRating(contentId, target)
-        viewModelScope.launch {
-            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
-            val previous = _uiState.value.userRating
-            // Optimistic update
-            _uiState.update { it.copy(userRating = target) }
-            val writeResult = personalDataRepository.performPersonalWrite(writeIntent)
-            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
-            when (writeResult) {
-                is ApiResult.Success -> { /* already updated */ }
-                else -> {
-                    // Revert on failure
-                    _uiState.update { it.copy(userRating = previous) }
-                }
-            }
-        }
+    /** Saves the viewer's stars for this title, or clears them for null. */
+    fun setRating(stars: Int?) {
+        ratings.set(stars)
     }
 
-    /** Removes the user's rating with optimistic update + revert on failure. */
-    fun clearRating() {
-        val writeIntent = personalDataRepository.beginRating(contentId, null)
-        viewModelScope.launch {
-            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
-            val previous = _uiState.value.userRating ?: return@launch
-            // Optimistic update
-            _uiState.update { it.copy(userRating = null) }
-            val writeResult = personalDataRepository.performPersonalWrite(writeIntent)
-            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
-            when (writeResult) {
-                is ApiResult.Success -> { /* already updated */ }
-                else -> {
-                    // Revert on failure
-                    _uiState.update { it.copy(userRating = previous) }
-                }
-            }
-        }
-    }
+    fun dismissRatingFailure() = ratings.dismissFailure()
 
     fun selectVersion(index: Int) {
         _uiState.update {
