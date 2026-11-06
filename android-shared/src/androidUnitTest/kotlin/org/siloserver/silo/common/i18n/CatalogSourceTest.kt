@@ -60,6 +60,7 @@ class CatalogSourceTest {
         "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/ui/components",
         "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/ui/marquee",
         "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/watchparty",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/cast",
         "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/downloads",
         "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/home",
         "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/notifications",
