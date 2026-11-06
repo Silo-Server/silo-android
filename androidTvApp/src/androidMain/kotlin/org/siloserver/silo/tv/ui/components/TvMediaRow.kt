@@ -43,6 +43,7 @@ import org.siloserver.silo.tv.ui.util.tvArtworkAspectRatioForMediaType
 import org.siloserver.silo.common.diagnostics.DiagnosticsKeyAnomalyLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsKeyCollection
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
+import org.siloserver.silo.common.i18n.isRightToLeftText
 
 /** Visual style of cards inside a [TvMediaRow]. */
 enum class TvRowStyle { Poster, Backdrop }
@@ -430,7 +431,7 @@ fun TvMediaRow(
                         imageThumbhash = rowItem.backdropThumbhash,
                         subtitle = rowItem.shelfEpisodeTag
                             ?.let { tag ->
-                                listOfNotNull(tag.resolved(), rowItem.shelfSubtitle?.let { bidiIsolated(it) })
+                                listOfNotNull(tag.resolved(), rowItem.shelfSubtitle?.let { bidiIsolated(it, isRightToLeftText()) })
                                     .joinToString(" • ")
                             }
                             ?: rowItem.shelfSubtitle,

@@ -99,6 +99,7 @@ import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.i18n.localizedResources
 import androidx.compose.ui.platform.LocalConfiguration
 import java.util.Locale
+import org.siloserver.silo.common.i18n.isRightToLeftText
 
 /** Includes the still, the two-line caption, and vertical rail padding from the first frame. */
 @Composable
@@ -579,10 +580,13 @@ private fun TvDetailEpisodeCard(
         // once per episode.
         val resources = localizedResources()
         val configuration = LocalConfiguration.current
-        val title = remember(episode, configuration) {
-            EpisodeCardCaption.title(episode.copy(title = episode.title?.trim()?.let(::bidiIsolated))).text(resources)
-        }
         val dateLocale = currentFormatLocale()
+        // A right-to-left interface isolates the title as a catalog placeholder (D28).
+        val rtl = isRightToLeftText()
+        val title = remember(episode, configuration) {
+            val episodeForCaption = if (rtl) episode else episode.copy(title = episode.title?.trim()?.let { bidiIsolated(it, false) })
+            EpisodeCardCaption.title(episodeForCaption).text(resources)
+        }
         val metadata = remember(episode, configuration, dateLocale) {
             EpisodeCardCaption.metadata(
                 airDate = abbreviatedEpisodeDate(episode.airDate, dateLocale),
