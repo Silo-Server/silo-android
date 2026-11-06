@@ -1,6 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.library
 
-import org.siloserver.silo.common.i18n.asString
+import org.siloserver.silo.common.i18n.text
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -140,7 +140,7 @@ fun TvLibraryCollectionDetailScreen(
         // pills away exactly when the viewer needs them to undo the query
         // that is failing — Retry only repeats it (Codex).
         if (state.error != null) {
-            TvErrorScreen(message = state.error!!.asString(), onRetry = viewModel::retry)
+            TvErrorScreen(message = state.error!!.text(), onRetry = viewModel::retry)
         } else TvCatalogGrid(
             items = state.items,
             isLoading = state.isLoading || state.isLoadingMore,
@@ -171,7 +171,7 @@ fun TvLibraryCollectionDetailScreen(
             emptyState = {
                 val error = state.error
                 if (error != null) {
-                    TvErrorScreen(message = error.asString(), onRetry = viewModel::retry)
+                    TvErrorScreen(message = error.text(), onRetry = viewModel::retry)
                 } else {
                     TvCatalogEmptyState(
                         message = if (state.facetSelection.hasActiveFilters) {

@@ -1,5 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.notifications
 
+import android.content.res.Resources
+import androidx.annotation.StringRes
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.notifications.NotificationRow
 import org.siloserver.silo.model.notifications.NotificationType
 import java.time.Instant
@@ -20,14 +23,46 @@ import org.siloserver.silo.tv.ui.components.bidiIsolated
  * so the pure helpers are duplicated here intentionally. A future cleanup should
  * hoist these into `commonMain` (or `android-shared`) and delete both copies.
  */
+/**
+ * Card text, resolved when the card is drawn ([resolve]) so it follows an
+ * in-place app language change. Mirrors the phone's `InboxText`.
+ */
+internal sealed interface TvInboxText {
+    /** Server text shown as is: a title, or a type word derived from the wire type. */
+    data class Plain(val text: String) : TvInboxText
+
+    /** A catalog string with its arguments. */
+    data class Resource(@StringRes val id: Int, val args: List<Any> = emptyList()) : TvInboxText
+
+    /** "S1E4 • The One": the episode tag (when both numbers are known) and its title. */
+    data class Episode(val season: Int?, val episode: Int?, val title: String?) : TvInboxText
+
+    /** An absolute "MMM d" date, for a row older than a week. */
+    data class Date(val instant: Instant) : TvInboxText
+}
+
+internal fun TvInboxText.resolve(resources: Resources): String = when (this) {
+    is TvInboxText.Plain -> text
+    is TvInboxText.Resource -> resources.getString(id, *args.toTypedArray())
+    is TvInboxText.Episode -> {
+        val tag = season?.let { s -> episode?.let { e -> resources.getString(CommonR.string.catalog_episodeTag, s.toString(), e.toString()) } }
+        when {
+            tag == null -> title.orEmpty()
+            title == null -> tag
+            else -> "$tag • ${bidiIsolated(title)}"
+        }
+    }
+    is TvInboxText.Date -> formatAbsoluteDate(instant)
+}
+
 internal data class TvInboxCardModel(
     val id: String,
     val isRich: Boolean,
-    val title: String,
-    val subtitle: String?,
+    val title: TvInboxText,
+    val subtitle: TvInboxText?,
     val posterUrl: String?,
     val posterThumbhash: String?,
-    val relativeTime: String,
+    val relativeTime: TvInboxText?,
     val isUnread: Boolean,
     val targetContentId: String?,
 )
@@ -47,21 +82,21 @@ internal fun tvInboxCardModel(row: NotificationRow, now: Instant): TvInboxCardMo
     val posterUrl = row.posterUrl.ifBlank { null }
     val posterThumbhash = row.posterThumbhash.ifBlank { null }
 
-    val sxey = row.seasonNumber?.let { s -> row.episodeNumber?.let { e -> "S${s}E$e" } }
+    val hasTag = row.seasonNumber != null && row.episodeNumber != null
     val subtitle = if (isEpisode) {
-        when {
-            sxey == null -> episodeTitle
-            episodeTitle == null -> sxey
-            else -> "$sxey • ${bidiIsolated(episodeTitle)}"
-        }
+        TvInboxText.Episode(row.seasonNumber, row.episodeNumber, episodeTitle).takeIf { hasTag || episodeTitle != null }
     } else {
-        episodeTitle ?: seriesTitle
+        (episodeTitle ?: seriesTitle)?.let(TvInboxText::Plain)
     }
 
     return TvInboxCardModel(
         id = row.id,
         isRich = isEpisode && (posterUrl != null || seriesTitle != null),
-        title = if (isEpisode) (seriesTitle ?: "New episode available") else fallbackTitleForType(row.rawType),
+        title = if (isEpisode) {
+            seriesTitle?.let(TvInboxText::Plain) ?: TvInboxText.Resource(CommonR.string.notifications_type_newEpisode)
+        } else {
+            fallbackTitleForType(row.rawType)
+        },
         subtitle = subtitle,
         posterUrl = posterUrl,
         posterThumbhash = posterThumbhash,
@@ -72,29 +107,31 @@ internal fun tvInboxCardModel(row: NotificationRow, now: Instant): TvInboxCardMo
 }
 
 /** Friendly label for a wire `type` string, with a generic fallback. */
-internal fun fallbackTitleForType(type: String): String = when (type) {
-    "request.fulfilled" -> "Request fulfilled"
-    "webhook.auto_disabled" -> "Webhook disabled"
+internal fun fallbackTitleForType(type: String): TvInboxText = when (type) {
+    "request.fulfilled" -> TvInboxText.Resource(CommonR.string.notifications_type_requestFulfilled)
+    "webhook.auto_disabled" -> TvInboxText.Resource(CommonR.string.notifications_type_webhookDisabled)
     else -> type.substringBefore('.')
         .replace('_', ' ')
         .replaceFirstChar { it.uppercase() }
-        .ifBlank { "Notification" }
+        .takeIf { it.isNotBlank() }
+        ?.let(TvInboxText::Plain)
+        ?: TvInboxText.Resource(CommonR.string.notifications_type_generic)
 }
 
 /**
  * Relative-time label keyed off the row's ISO-8601 `created_at`. Buckets to
  * now/m/h/d up to a week, then an absolute "MMM d" date. Unparseable or future
- * timestamps degrade gracefully ("now" / empty).
+ * timestamps degrade gracefully ("now" / null).
  */
-internal fun relativeTime(createdAtIso: String, now: Instant): String {
-    val createdAt = parseInstantOrNull(createdAtIso) ?: return ""
+internal fun relativeTime(createdAtIso: String, now: Instant): TvInboxText? {
+    val createdAt = parseInstantOrNull(createdAtIso) ?: return null
     val delta = (now.epochSecond - createdAt.epochSecond).coerceAtLeast(0)
     return when {
-        delta < 60 -> "now"
-        delta < 3_600 -> "${delta / 60}m"
-        delta < 86_400 -> "${delta / 3_600}h"
-        delta < 7 * 86_400 -> "${delta / 86_400}d"
-        else -> formatAbsoluteDate(createdAt)
+        delta < 60 -> TvInboxText.Resource(CommonR.string.notifications_age_now)
+        delta < 3_600 -> TvInboxText.Resource(CommonR.string.notifications_age_minutes, listOf((delta / 60).toInt()))
+        delta < 86_400 -> TvInboxText.Resource(CommonR.string.notifications_age_hours, listOf((delta / 3_600).toInt()))
+        delta < 7 * 86_400 -> TvInboxText.Resource(CommonR.string.notifications_age_days, listOf((delta / 86_400).toInt()))
+        else -> TvInboxText.Date(createdAt)
     }
 }
 

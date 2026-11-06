@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.navigation
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -2234,7 +2236,7 @@ fun AppNavigation(
                     onClick = notice.onAction,
                     style = org.siloserver.silo.android.ui.components.SiloDialogActionStyle.Primary,
                 ),
-                org.siloserver.silo.android.ui.components.SiloDialogAction(label = "OK", onClick = notice.onDismiss),
+                org.siloserver.silo.android.ui.components.SiloDialogAction(label = stringResource(CommonR.string.shell_notice_ok), onClick = notice.onDismiss),
             ),
         )
     }

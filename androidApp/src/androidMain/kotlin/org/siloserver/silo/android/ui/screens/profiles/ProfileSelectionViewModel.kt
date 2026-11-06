@@ -2,6 +2,8 @@ package org.siloserver.silo.android.ui.screens.profiles
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.model.auth.isPasswordChangeRequired
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.authorizedProfileToken
@@ -32,14 +34,14 @@ data class ProfileSelectionUiState(
     val profiles: List<Profile> = emptyList(),
     val canManageProfiles: Boolean = false,
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val isManageMode: Boolean = false,
     /** Non-null when a PIN-protected profile was tapped and the dialog should show. */
     val pinDialogProfile: Profile? = null,
     /** The open PIN prompt is the primary profile's, unlocking manage mode rather than selecting it. */
     val pinForManagement: Boolean = false,
     val pinIsVerifying: Boolean = false,
-    val pinError: String? = null,
+    val pinError: UiText? = null,
     /** Bumped on each rejected PIN so the dots shake and the entry clears. */
     val pinErrorCount: Int = 0,
     /** The signed-in account's username, shown under the title; null until read. */
@@ -324,14 +326,14 @@ class ProfileSelectionViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = result.message.ifBlank { "Failed to load profiles" },
+                            error = UiText.serverOr(result.message, CommonR.string.profiles_error_loadFailed),
                         )
                     }
                 }
 
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(isLoading = false, error = "Network error. Please try again.")
+                        it.copy(isLoading = false, error = UiText.Res(CommonR.string.profiles_error_network))
                     }
                 }
             }
@@ -376,7 +378,7 @@ class ProfileSelectionViewModel(
     private fun enterManageMode(thenAdd: Boolean) {
         val primary = _uiState.value.profiles.householdPrimary()
         if (primary == null) {
-            _uiState.update { it.copy(error = "Couldn't find the primary profile needed to manage profiles.") }
+            _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_noPrimary)) }
             return
         }
         pinAttempt++
@@ -482,7 +484,7 @@ class ProfileSelectionViewModel(
                         selectProfile(profile.id, token, scope)
                     } else {
                         _uiState.update {
-                            it.copy(pinIsVerifying = false, pinError = "Wrong PIN. Try again.", pinErrorCount = it.pinErrorCount + 1)
+                            it.copy(pinIsVerifying = false, pinError = UiText.Res(CommonR.string.pin_wrong), pinErrorCount = it.pinErrorCount + 1)
                         }
                     }
                 }
@@ -491,7 +493,7 @@ class ProfileSelectionViewModel(
                     _uiState.update {
                         it.copy(
                             pinIsVerifying = false,
-                            pinError = result.message.ifBlank { "Verification failed" },
+                            pinError = UiText.serverOr(result.message, CommonR.string.pin_error_verification),
                             pinErrorCount = it.pinErrorCount + 1,
                         )
                     }
@@ -499,7 +501,7 @@ class ProfileSelectionViewModel(
 
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(pinIsVerifying = false, pinError = "Network error", pinErrorCount = it.pinErrorCount + 1)
+                        it.copy(pinIsVerifying = false, pinError = UiText.Res(CommonR.string.profiles_error_networkShort), pinErrorCount = it.pinErrorCount + 1)
                     }
                 }
             }
@@ -548,12 +550,12 @@ class ProfileSelectionViewModel(
                 }
                 is ApiResult.Error -> {
                     _uiState.update {
-                        it.copy(error = result.message.ifBlank { "Failed to delete profile" })
+                        it.copy(error = UiText.serverOr(result.message, CommonR.string.profiles_error_deleteFailed))
                     }
                     loadProfiles(clearError = false)
                 }
                 is ApiResult.NetworkError -> {
-                    _uiState.update { it.copy(error = "Network error") }
+                    _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_networkShort)) }
                 }
             }
         }

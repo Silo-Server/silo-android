@@ -41,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -50,6 +51,8 @@ import org.siloserver.silo.android.ui.screens.auth.AuthErrorBanner
 import org.siloserver.silo.android.ui.screens.auth.SiloButton
 import org.siloserver.silo.android.ui.screens.auth.SiloTextField
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 
 /**
@@ -82,7 +85,7 @@ fun CreateProfileScreen(
         TopAppBar(
             title = {
                 Text(
-                    text = "New Profile",
+                    text = stringResource(CommonR.string.newProfile_title),
                     fontWeight = FontWeight.SemiBold,
                     color = AuthColors.OnBackground,
                 )
@@ -91,7 +94,7 @@ fun CreateProfileScreen(
                 IconButton(onClick = onNavigateBack) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
+                        contentDescription = stringResource(CommonR.string.common_back),
                         tint = AuthColors.OnBackground,
                     )
                 }
@@ -109,12 +112,12 @@ fun CreateProfileScreen(
                 .padding(horizontal = 24.dp),
         ) {
             state.error?.let { error ->
-                AuthErrorBanner(message = error)
+                AuthErrorBanner(message = error.text())
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
             // -- Avatar selection --
-            SectionHeader("Avatar")
+            SectionHeader(stringResource(CommonR.string.profiles_form_avatar))
 
             // Preview
             ProfileAvatar(
@@ -146,17 +149,17 @@ fun CreateProfileScreen(
             SiloTextField(
                 value = state.name,
                 onValueChange = viewModel::onNameChanged,
-                label = "Profile Name",
+                label = stringResource(CommonR.string.profiles_form_name),
             )
 
             Spacer(modifier = Modifier.height(24.dp))
 
             // -- Child profile toggle --
             SwitchRow(
-                label = "Child Profile",
+                label = stringResource(CommonR.string.newProfile_child),
                 checked = state.access.isChild,
                 onCheckedChange = viewModel::onChildToggled,
-                subtitle = "Fills in kid-friendly limits below",
+                subtitle = stringResource(CommonR.string.profiles_form_childDetail),
             )
 
             // -- Rating ceiling + library allowlist (every profile, as on the web) --
@@ -174,7 +177,7 @@ fun CreateProfileScreen(
 
             // -- PIN toggle + entry --
             SwitchRow(
-                label = "Require PIN",
+                label = stringResource(CommonR.string.profiles_form_requirePin),
                 checked = state.pinEnabled,
                 onCheckedChange = viewModel::onPinToggled,
             )
@@ -184,7 +187,7 @@ fun CreateProfileScreen(
                 SiloTextField(
                     value = state.pin,
                     onValueChange = viewModel::onPinChanged,
-                    label = "4-Digit PIN",
+                    label = stringResource(CommonR.string.profiles_form_pin),
                     keyboardType = KeyboardType.NumberPassword,
                 )
             }
@@ -193,18 +196,21 @@ fun CreateProfileScreen(
 
             // -- Subtitle mode --
             DropdownField(
-                label = "Subtitles",
-                selected = state.subtitleMode?.replace("_", " ")
-                    ?.replaceFirstChar { it.uppercaseChar() }
-                    ?: "Off",
+                label = stringResource(CommonR.string.profiles_form_subtitles),
+                selected = subtitleModeLabel(
+                    state.subtitleMode?.replace("_", " ")
+                        ?.replaceFirstChar { it.uppercaseChar() }
+                        ?: "Off",
+                ),
                 options = SUBTITLE_MODES,
+                optionLabel = { subtitleModeLabel(it) },
                 onSelected = viewModel::onSubtitleModeSelected,
             )
 
             Spacer(modifier = Modifier.height(32.dp))
 
             SiloButton(
-                text = "Create Profile",
+                text = stringResource(CommonR.string.newProfile_create),
                 onClick = viewModel::onCreateClick,
                 isLoading = state.isLoading,
             )
@@ -275,6 +281,7 @@ internal fun DropdownField(
     selected: String,
     options: List<String>,
     onSelected: (String) -> Unit,
+    optionLabel: @Composable (String) -> String = { it },
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -311,7 +318,7 @@ internal fun DropdownField(
         ) {
             options.forEach { option ->
                 SiloDropdownMenuItem(
-                    text = { Text(option) },
+                    text = { Text(optionLabel(option)) },
                     onClick = {
                         onSelected(option)
                         expanded = false
@@ -321,3 +328,23 @@ internal fun DropdownField(
         }
     }
 }
+
+/**
+ * A [SUBTITLE_MODES] entry as the form shows it, or the selected value derived
+ * from the stored mode. That derivation turns `forced_only` into "Forced only",
+ * which the menu spells "Forced Only", so it has its own string.
+ */
+@Composable
+internal fun subtitleModeLabel(mode: String): String = when (mode) {
+    "Off" -> stringResource(CommonR.string.profiles_subtitleMode_off)
+    "Default" -> stringResource(CommonR.string.profiles_subtitleMode_default)
+    "Always" -> stringResource(CommonR.string.profiles_subtitleMode_always)
+    "Forced Only" -> stringResource(CommonR.string.profiles_subtitleMode_forcedOnly)
+    "Forced only" -> stringResource(CommonR.string.profiles_subtitleMode_forcedOnlySelected)
+    else -> mode
+}
+
+/** A [QUALITY_OPTIONS] entry as the form shows it; resolutions stay as written. */
+@Composable
+internal fun qualityOptionLabel(option: String): String =
+    if (option == "Auto") stringResource(CommonR.string.profiles_quality_auto) else option

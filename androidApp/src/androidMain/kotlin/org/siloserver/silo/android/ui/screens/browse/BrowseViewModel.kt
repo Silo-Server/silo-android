@@ -275,7 +275,7 @@ class BrowseViewModel(
                         it.copy(
                             isLoading = false,
                             isLoadingMore = false,
-                            error = UiText.Resource(CommonR.string.catalog_error_network),
+                            error = UiText.Res(CommonR.string.catalog_error_network),
                         )
                     }
                 }

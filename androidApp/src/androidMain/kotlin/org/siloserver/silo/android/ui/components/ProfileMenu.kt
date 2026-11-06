@@ -100,7 +100,7 @@ fun ProfileMenu(
         }
         if (onRequestsClick != null) {
             SiloMenuItem(
-                label = "Requests",
+                label = stringResource(CommonR.string.menu_requests),
                 icon = Icons.Rounded.Inbox,
                 onClick = {
                     onDismissRequest()
@@ -110,7 +110,7 @@ fun ProfileMenu(
         }
         if (onWatchPartyClick != null) {
             SiloMenuItem(
-                label = "Watch Party",
+                label = stringResource(CommonR.string.menu_profileMenu_watchParty),
                 icon = Icons.Rounded.Groups,
                 onClick = {
                     onDismissRequest()
@@ -119,7 +119,7 @@ fun ProfileMenu(
             )
         }
         SiloMenuItem(
-            label = "Settings",
+            label = stringResource(CommonR.string.menu_settings),
             icon = Icons.Rounded.Settings,
             showDivider = hasFeatureGroup,
             onClick = {
@@ -128,7 +128,7 @@ fun ProfileMenu(
             },
         )
         SiloMenuItem(
-            label = "Switch profile",
+            label = stringResource(CommonR.string.menu_profileMenu_switchProfile),
             icon = Icons.Rounded.SwitchAccount,
             onClick = {
                 onDismissRequest()
@@ -144,7 +144,7 @@ fun ProfileMenu(
             },
         )
         SiloMenuItem(
-            label = "Sign out",
+            label = stringResource(CommonR.string.common_signOut),
             icon = Icons.AutoMirrored.Rounded.Logout,
             destructive = true,
             showDivider = true,

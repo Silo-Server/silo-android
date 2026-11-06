@@ -1,6 +1,11 @@
 package org.siloserver.silo.tv.ui.shell
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import org.siloserver.silo.model.personal.UserLibrary
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -11,7 +16,11 @@ import kotlin.test.assertTrue
  * strings (from the shared [org.siloserver.silo.model.navigation] sets) under
  * the right tab — the Android mirror of tvOS `TVLibraryTabType.matches`.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 class TvLibraryTabTypeTest {
+    private val resources = ApplicationProvider.getApplicationContext<Application>().resources
+
 
     @Test
     fun `mixed libraries are reachable from both video tabs only`() {
@@ -62,8 +71,8 @@ class TvLibraryTabTypeTest {
 
     @Test
     fun `tab metadata is populated`() {
-        assertEquals("Movies", TvLibraryTabType.Movies.title)
-        assertEquals("SERIES LIBRARIES", TvLibraryTabType.Series.librariesHeader)
+        assertEquals("Movies", resources.getString(TvLibraryTabType.Movies.titleRes))
+        assertEquals("SERIES LIBRARIES", resources.getString(TvLibraryTabType.Series.librariesHeaderRes))
         // Every tab resolves a distinct, non-null icon vector.
         assertEquals(
             TvLibraryTabType.entries.size,

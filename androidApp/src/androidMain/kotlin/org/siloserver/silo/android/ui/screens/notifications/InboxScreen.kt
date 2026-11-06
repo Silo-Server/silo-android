@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.notifications
 
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +42,8 @@ import androidx.compose.runtime.LaunchedEffect
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.LoadingIndicator
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.repository.NotificationsRepository
@@ -110,12 +113,12 @@ fun InboxScreen(
     Scaffold(
         topBar = {
             SiloTopBar(
-                title = "Notifications",
+                title = stringResource(CommonR.string.notifications_inbox_title),
                 onBackClick = onBackClick,
                 actions = {
                     if (unreadCount > 0) {
                         TextButton(onClick = { scope.launch { repository.markAllRead() } }) {
-                            Text("Mark all read")
+                            Text(stringResource(CommonR.string.notifications_inbox_markAllRead))
                         }
                     }
                 },
@@ -131,11 +134,11 @@ fun InboxScreen(
             when {
                 isRefreshing && cards.isEmpty() -> LoadingIndicator()
                 error != null && cards.isEmpty() -> TextButton(onClick = { scope.launch { doRefresh() } }) {
-                    Text("${error} Retry")
+                    Text(stringResource(CommonR.string.notifications_inbox_errorRetry, error.orEmpty()))
                 }
                 cards.isEmpty() -> EmptyStateView(
-                    title = "You're all caught up",
-                    subtitle = "New episode and request notifications will show up here.",
+                    title = stringResource(CommonR.string.notifications_inbox_emptyTitle),
+                    subtitle = stringResource(CommonR.string.notifications_inbox_emptyBody),
                 )
                 else -> DeferImagePresentationWhileScrolling(listState) {
                 LazyColumn(
@@ -145,7 +148,7 @@ fun InboxScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     if (error != null) item(key = "inbox-error") {
-                        TextButton(onClick = { scope.launch { doRefresh() } }) { Text("${error} Retry") }
+                        TextButton(onClick = { scope.launch { doRefresh() } }) { Text(stringResource(CommonR.string.notifications_inbox_errorRetry, error.orEmpty())) }
                     }
                     items(cards, key = { it.id }) { card ->
                         InboxCard(
@@ -184,6 +187,10 @@ private fun InboxCard(
     card: InboxCardModel,
     onClick: () -> Unit,
 ) {
+    val resources = LocalResources.current
+    val title = card.title.resolve(resources)
+    val subtitle = card.subtitle?.resolve(resources)
+    val relativeTime = card.relativeTime?.resolve(resources).orEmpty()
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(14.dp),
@@ -201,7 +208,7 @@ private fun InboxCard(
                 ThumbhashImage(
                     url = card.posterUrl,
                     thumbhash = card.posterThumbhash,
-                    contentDescription = card.title,
+                    contentDescription = title,
                     modifier = Modifier
                         .width(48.dp)
                         .height(72.dp)
@@ -213,13 +220,13 @@ private fun InboxCard(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = card.title,
+                    text = title,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = if (card.isUnread) FontWeight.SemiBold else FontWeight.Normal,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                card.subtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
+                subtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
                     Text(
                         text = subtitle,
                         style = MaterialTheme.typography.bodySmall,
@@ -233,9 +240,9 @@ private fun InboxCard(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                if (card.relativeTime.isNotBlank()) {
+                if (relativeTime.isNotBlank()) {
                     Text(
-                        text = card.relativeTime,
+                        text = relativeTime,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

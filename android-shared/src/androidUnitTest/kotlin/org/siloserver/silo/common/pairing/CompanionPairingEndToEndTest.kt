@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.pairing
 
+import android.app.Application
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,6 +27,9 @@ import java.net.ServerSocket
 import java.security.MessageDigest
 import java.util.Base64
 import kotlin.test.AfterTest
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -41,6 +45,8 @@ import kotlin.test.assertTrue
  * ([RecordingAuthPort]) are fakes. Two emulators can't see each other's NSD,
  * so this is the protocol-level end-to-end check.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 class CompanionPairingEndToEndTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -213,8 +219,8 @@ class CompanionPairingEndToEndTest {
         val completed = assertIs<CompanionPairingResult.Completed>(run.phone)
         assertEquals(3, completed.serverCount)
         assertEquals(
-            listOf(CompanionTargetOutcome("Home", "sam", "Living Room couldn't finish signing in to Home.")),
-            completed.failures,
+            listOf(EnglishOutcome("Home", "sam", "Living Room couldn't finish signing in to Home.")),
+            completed.failures.map { it.inEnglish() },
         )
         assertEquals(1, run.compared.size)
         assertEquals(listOf("alex", "alex", "sam"), fake.approvals.map { it.username })
@@ -241,8 +247,8 @@ class CompanionPairingEndToEndTest {
         val completed = assertIs<CompanionPairingResult.Completed>(run.phone)
         assertEquals(3, completed.serverCount)
         assertEquals(
-            listOf(CompanionTargetOutcome("Lake House", "sam", "Lake House couldn't approve the sign-in. Try again.")),
-            completed.failures,
+            listOf(EnglishOutcome("Lake House", "sam", "Lake House couldn't approve the sign-in. Try again.")),
+            completed.failures.map { it.inEnglish() },
         )
         assertEquals(3, assertIs<PairingReceiverStatus.Completed>(run.tvEnd).accounts.size)
         // The unapproved request was withdrawn when the session ended.

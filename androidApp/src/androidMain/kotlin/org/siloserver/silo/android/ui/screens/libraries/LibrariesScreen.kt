@@ -1,7 +1,7 @@
 package org.siloserver.silo.android.ui.screens.libraries
 
 import org.siloserver.silo.common.i18n.UiText
-import org.siloserver.silo.common.i18n.asString
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.common.i18n.detailedErrorText
 import androidx.compose.animation.core.animateFloatAsState
@@ -649,7 +649,7 @@ class LibrariesViewModel(
             if (!isRecommendedRequestCurrent(requestGeneration, libraryId)) return@launch
             if (owner == null) {
                 recommendedLoadedLibraryId = null
-                _uiState.update { it.copy(isLoadingSections = false, sections = emptyList(), sectionsError = UiText.Resource(CommonR.string.library_error_signInForSections)) }
+                _uiState.update { it.copy(isLoadingSections = false, sections = emptyList(), sectionsError = UiText.Res(CommonR.string.library_error_signInForSections)) }
                 return@launch
             }
             val result = sectionRepository.getLibrarySections(libraryId, owner)
@@ -685,7 +685,7 @@ class LibrariesViewModel(
                                 isLoadingSections = false,
                                 sections = scoped.map { it.section }.filter { it.items.isNotEmpty() },
                                 sectionsError = if (scoped.any { it.incomplete }) {
-                                    UiText.Resource(CommonR.string.library_error_someShelves)
+                                    UiText.Res(CommonR.string.library_error_someShelves)
                                 } else {
                                     null
                                 },
@@ -1115,7 +1115,7 @@ fun LibrariesScreen(
                     }
                     state.librariesError != null && state.libraries.isEmpty() -> {
                         ErrorView(
-                            message = state.librariesError?.asString() ?: stringResource(CommonR.string.library_error_loadLibraries),
+                            message = state.librariesError?.text() ?: stringResource(CommonR.string.library_error_loadLibraries),
                             onRetry = viewModel::refresh,
                             modifier = Modifier.fillMaxSize().padding(top = topInset),
                         )
@@ -1238,7 +1238,7 @@ private fun RecommendedTabContent(
         }
         state.sectionsError != null && state.sections.isEmpty() -> {
             ErrorView(
-                message = state.sectionsError?.asString() ?: stringResource(CommonR.string.library_error_loadRecommendations),
+                message = state.sectionsError?.text() ?: stringResource(CommonR.string.library_error_loadRecommendations),
                 onRetry = onRetry,
                 modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
@@ -1270,7 +1270,7 @@ private fun RecommendedTabContent(
                 state.sectionsError?.let { sectionsError ->
                     item(key = "scope-load-error") {
                         Column(Modifier.padding(horizontal = 16.dp)) {
-                            Text(sectionsError.asString(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(sectionsError.text(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                             TextButton(onClick = onRetry) { Text(stringResource(CommonR.string.common_retry)) }
                         }
                     }
@@ -1368,7 +1368,7 @@ private fun BrowseTabContent(
                 Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {
                     Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { controlsHeader() }
                     ErrorView(
-                        message = state.catalogError?.asString() ?: stringResource(CommonR.string.library_error_loadCatalog),
+                        message = state.catalogError?.text() ?: stringResource(CommonR.string.library_error_loadCatalog),
                         onRetry = onRetry,
                         modifier = Modifier.weight(1f),
                     )
@@ -1492,7 +1492,7 @@ private fun CollectionsTabContent(
         }
         state.collectionsError != null && state.collections.isEmpty() -> {
             ErrorView(
-                message = state.collectionsError?.asString() ?: stringResource(CommonR.string.collections_error_loadCollections),
+                message = state.collectionsError?.text() ?: stringResource(CommonR.string.collections_error_loadCollections),
                 onRetry = onRetry,
                 modifier = Modifier.fillMaxSize().padding(top = topInset),
             )

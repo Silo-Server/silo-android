@@ -1,6 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.people
 
-import org.siloserver.silo.common.i18n.asString
+import org.siloserver.silo.common.i18n.text
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -123,7 +123,7 @@ fun TvPersonDetailScreen(
                 modifier = Modifier.background(MaterialTheme.colorScheme.background),
             )
             state.error != null && state.person == null -> TvErrorScreen(
-                message = state.error!!.asString(),
+                message = state.error!!.text(),
                 onRetry = viewModel::reload,
                 modifier = Modifier.background(MaterialTheme.colorScheme.background),
             )
@@ -179,7 +179,7 @@ private fun TvPersonDetailContent(
         itemIds = state.items.map { it.contentId },
         hasMore = state.hasMore,
         isLoadingMore = state.isLoadingItems,
-        errorMessage = state.pagingError?.asString(),
+        errorMessage = state.pagingError?.text(),
         surfaceKey = "person-${person.id}-${state.selectedFilter.name}",
         onLoadMore = onLoadMore,
         // The header is one full-span slot ahead of the posters, so the grid's
@@ -297,7 +297,7 @@ private fun TvPersonDetailContent(
                     )
                     state.pagingError?.let { error ->
                         Text(
-                            text = error.asString(),
+                            text = error.text(),
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontSize = 14.sp,
                                 lineHeight = 17.sp,

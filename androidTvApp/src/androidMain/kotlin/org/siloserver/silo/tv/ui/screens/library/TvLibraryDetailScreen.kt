@@ -1,6 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.library
 
-import org.siloserver.silo.common.i18n.asString
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.model.section.ResolvedSection
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -312,7 +312,7 @@ private fun RecommendedTab(
         }
         state.recommendedError != null && state.sections.isEmpty() -> {
             TvErrorScreen(
-                message = state.recommendedError.asString(),
+                message = state.recommendedError.text(),
                 onRetry = onRetry,
                 modifier = Modifier.padding(
                     start = Spacing.safeArea,
@@ -346,7 +346,7 @@ private fun RecommendedTab(
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(message.asString(), modifier = Modifier.weight(1f))
+                        Text(message.text(), modifier = Modifier.weight(1f))
                         Button(onClick = onRetry) { Text(stringResource(CommonR.string.common_retry)) }
                     }
                 }
@@ -400,7 +400,7 @@ private fun LibraryTab(
         itemIds = state.browseItems.map { it.contentId },
         hasMore = state.browseHasMore,
         isLoadingMore = state.browseLoadingMore,
-        errorMessage = state.browseError?.asString(),
+        errorMessage = state.browseError?.text(),
         surfaceKey = state.selectedTab.name,
         onLoadMore = onLoadMore,
         // Headers occupy full-span slots ahead of the cards, so the grid's own
@@ -421,7 +421,7 @@ private fun LibraryTab(
         // also overwrites the saved state.
         val canClearFilters = showBrowseControls && state.browseFilter.facetSelection.canReset
         TvErrorScreen(
-            message = state.browseError.asString(),
+            message = state.browseError.text(),
             onRetry = onRetry,
             secondaryActionLabel = stringResource(CommonR.string.library_clearFilters).takeIf { canClearFilters },
             onSecondaryAction = { onFacetSelectionApplied(TvCatalogFacetSelection()) }.takeIf { canClearFilters },
@@ -807,7 +807,7 @@ private fun AudiobookGroupsTab(
                 }
                 state.audiobookGroupsError != null -> {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "error") {
-                        TvErrorScreen(message = state.audiobookGroupsError.asString(), onRetry = onRetry)
+                        TvErrorScreen(message = state.audiobookGroupsError.text(), onRetry = onRetry)
                     }
                 }
                 state.audiobookGroups.isEmpty() -> {
@@ -1104,7 +1104,7 @@ private fun CollectionsTab(
                 }
                 state.collectionsError != null && state.collections.isEmpty() -> {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "error") {
-                        TvErrorScreen(message = state.collectionsError.asString(), onRetry = onRetry)
+                        TvErrorScreen(message = state.collectionsError.text(), onRetry = onRetry)
                     }
                 }
                 state.collections.isEmpty() -> {

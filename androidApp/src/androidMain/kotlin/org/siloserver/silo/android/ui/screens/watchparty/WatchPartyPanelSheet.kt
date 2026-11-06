@@ -10,10 +10,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.watchtogether.GuestControlPolicy
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
@@ -48,6 +50,7 @@ internal fun WatchPartyPanelSheet(
     val personalVotesKnown by repository.personalVotesKnown.collectAsState()
     val connection by repository.connectionState.collectAsState()
     val context = LocalContext.current
+    val policyError = stringResource(CommonR.string.watchParty_error_policy)
     val scope = rememberCoroutineScope()
     val isHost = room?.selfRole == MemberRole.Host
     var inviteOpen by rememberSaveable { mutableStateOf(false) }
@@ -80,7 +83,7 @@ internal fun WatchPartyPanelSheet(
                 if (result !is ApiResult.Success) {
                     Toast.makeText(
                         context,
-                        watchPartyErrorMessage(result, "Couldn't change who can play and pause."),
+                        watchPartyErrorMessage(result, policyError),
                         Toast.LENGTH_SHORT,
                     ).show()
                 }

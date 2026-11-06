@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -116,7 +118,11 @@ fun SortFilterControlsRow(
 
         ControlPill(
             icon = Icons.Filled.FilterList,
-            label = if (filterCount > 0) "Filter · $filterCount" else "Filter",
+            label = if (filterCount > 0) {
+                stringResource(CommonR.string.shell_sortFilter_filterCount, filterCount)
+            } else {
+                stringResource(CommonR.string.library_filterPill)
+            },
             active = filterCount > 0,
             onClick = onOpenFilters,
         )
@@ -131,7 +137,7 @@ fun SortFilterControlsRow(
             ) {
                 Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Reset", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(CommonR.string.shell_sortFilter_reset), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }
         }
 

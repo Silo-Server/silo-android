@@ -1,6 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.browse
 
-import org.siloserver.silo.common.i18n.asString
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -140,7 +140,7 @@ fun TvBrowseScreen(
                     ),
                 )
                 TvErrorScreen(
-                    message = state.error?.asString().orEmpty(),
+                    message = state.error?.text().orEmpty(),
                     onRetry = viewModel::retry,
                     modifier = Modifier.padding(
                         start = Spacing.safeArea,

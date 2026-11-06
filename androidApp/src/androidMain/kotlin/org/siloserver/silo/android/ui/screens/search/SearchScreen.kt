@@ -1,6 +1,6 @@
 package org.siloserver.silo.android.ui.screens.search
 
-import org.siloserver.silo.common.i18n.asString
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.model.catalog.CatalogBoxSet
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -263,7 +263,7 @@ fun SearchScreen(
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = state.error?.asString().orEmpty(),
+                                text = state.error?.text().orEmpty(),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center,

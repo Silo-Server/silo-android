@@ -8,11 +8,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.stringResource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.watchtogether.RoomSession
@@ -42,9 +44,9 @@ internal fun rememberWatchPartyReconnectNotice(disconnected: Boolean, since: Lon
 @Composable
 internal fun WatchPartyEndDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
     SiloConfirmDialog(
-        title = "End the party for everyone?",
-        body = "Everyone leaves the Watch Party, and it can't be rejoined.",
-        confirmLabel = "End party",
+        title = stringResource(CommonR.string.watchParty_end_titleEveryone),
+        body = stringResource(CommonR.string.watchParty_end_body),
+        confirmLabel = stringResource(CommonR.string.watchParty_end_button),
         onConfirm = onConfirm,
         onDismiss = onDismiss,
     )
@@ -54,9 +56,9 @@ internal fun WatchPartyEndDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
 @Composable
 internal fun WatchPartyHostLeaveDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
     SiloConfirmDialog(
-        title = "Leave the party?",
-        body = "You're the host. The party ends for everyone two minutes after you leave, unless you rejoin.",
-        confirmLabel = "Leave",
+        title = stringResource(CommonR.string.watchParty_leave_title),
+        body = stringResource(CommonR.string.watchParty_leave_hostBody),
+        confirmLabel = stringResource(CommonR.string.watchParty_leave_confirm),
         onConfirm = onConfirm,
         onDismiss = onDismiss,
     )
@@ -108,13 +110,13 @@ fun rememberWatchPartySoloGuard(): WatchPartySoloGuard {
 fun WatchPartySoloGuardDialog(guard: WatchPartySoloGuard) {
     if (guard.pending == null) return
     SiloConfirmDialog(
-        title = "Leave the Watch Party to play this?",
+        title = stringResource(CommonR.string.watchParty_soloGuard_title),
         body = if (guard.pendingFromHost) {
-            "You're the host. The party ends for everyone two minutes after you leave, unless you rejoin."
+            stringResource(CommonR.string.watchParty_leave_hostBody)
         } else {
-            "You'll leave the party and play this on your own."
+            stringResource(CommonR.string.watchParty_soloGuard_guestBody)
         },
-        confirmLabel = "Leave and play",
+        confirmLabel = stringResource(CommonR.string.watchParty_soloGuard_confirm),
         onConfirm = guard::leaveAndRun,
         onDismiss = { guard.pending = null },
     )

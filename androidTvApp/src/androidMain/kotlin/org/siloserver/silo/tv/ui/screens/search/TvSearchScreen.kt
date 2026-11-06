@@ -1,7 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.search
 
 import org.siloserver.silo.common.i18n.UiText
-import org.siloserver.silo.common.i18n.asString
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
@@ -854,7 +854,7 @@ fun TvSearchScreen(
                     state.isLoading -> Box(modifier = Modifier.height(64.dp))
                     state.error != null -> SearchFeedbackMessage(
                         title = stringResource(CommonR.string.search_error),
-                        body = state.error?.asString().orEmpty(),
+                        body = state.error?.text().orEmpty(),
                         actionLabel = stringResource(CommonR.string.common_tryAgain),
                         actionFocusRequester = feedbackActionFocusRequester,
                         actionUpFocusRequester = if (state.people.isNotEmpty()) {

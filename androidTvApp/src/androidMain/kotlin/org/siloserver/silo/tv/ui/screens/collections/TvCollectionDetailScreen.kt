@@ -1,6 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.collections
 
-import org.siloserver.silo.common.i18n.asString
+import org.siloserver.silo.common.i18n.text
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
@@ -72,7 +72,7 @@ fun TvCollectionDetailScreen(
         itemIds = state.items.map { it.contentId },
         hasMore = state.hasMore,
         isLoadingMore = state.isLoadingMore,
-        errorMessage = state.error?.asString(),
+        errorMessage = state.error?.text(),
         surfaceKey = collectionId,
         onLoadMore = viewModel::loadMore,
         scrollToItem = { itemIndex -> gridState.scrollToItem(itemIndex) },
@@ -115,7 +115,7 @@ fun TvCollectionDetailScreen(
         when {
             state.isLoading && state.items.isEmpty() -> TvLoadingScreen()
             state.error != null -> TvErrorScreen(
-                message = state.error!!.asString(),
+                message = state.error!!.text(),
                 onRetry = viewModel::retry,
             )
             else -> TvCatalogGrid(

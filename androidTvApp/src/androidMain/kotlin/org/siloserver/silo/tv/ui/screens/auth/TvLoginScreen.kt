@@ -75,6 +75,7 @@ import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.pairing.PairingReceiver
 import org.siloserver.silo.common.pairing.PairingReceiverStatus
 import org.siloserver.silo.common.pairing.TvPairingAdvertiser
@@ -405,15 +406,16 @@ fun TvLoginScreen(
                     TvMarqueeCard {
                         TvMarqueeCardSymbol(Icons.Outlined.Lan)
                         Text(
-                            "No code needed",
+                            stringResource(CommonR.string.tvSignIn_network_noCodeTitle),
                             color = MarqueeColors.Ink,
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(top = 17.dp),
                         )
                         TvMarqueeBody(
-                            "This TV reached $displayName through ${network?.provider?.displayName ?: "its network"}, " +
-                                "which knows who it belongs to.",
+                            network?.provider?.displayName?.let { provider ->
+                                stringResourceWithNames(CommonR.string.tvSignIn_network_noCodeBody, displayName, provider)
+                            } ?: stringResourceWithNames(CommonR.string.tvSignIn_network_noCodeBodyGeneric, displayName),
                             size = 14.sp,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.padding(top = 7.dp),
@@ -434,7 +436,7 @@ fun TvLoginScreen(
                             modifier = Modifier.padding(top = 16.dp),
                         )
                         Text(
-                            "Or sign in with your phone",
+                            stringResource(CommonR.string.tvSignIn_network_orPhone),
                             color = MarqueeColors.InkTertiary,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
@@ -447,9 +449,11 @@ fun TvLoginScreen(
                         if (device.status == TvSignInStatus.Denied) {
                             stringResource(CommonR.string.tvSignIn_declinedLead)
                         } else {
-                            "Scan the code with your phone's camera, or go to " +
-                                (activate.ifBlank { "your server's /activate page" }) +
-                                " and enter it. Approve on your phone and this TV signs in by itself."
+                            if (activate.isBlank()) {
+                                stringResource(CommonR.string.tvSignIn_leadNoPage)
+                            } else {
+                                stringResourceWithNames(CommonR.string.tvSignIn_lead, activate)
+                            }
                         },
                         modifier = Modifier.padding(top = if (network == null) 13.dp else 6.dp),
                     )
@@ -850,12 +854,12 @@ private fun PasswordScreen(
         copy = {
             Column {
                 notices()
-                TvMarqueeHeadline("Sign in with\na password", Modifier.padding(top = 22.dp))
+                TvMarqueeHeadline(stringResource(CommonR.string.signIn_headline), Modifier.padding(top = 22.dp))
                 TvMarqueeBody(
                     if (passwordOnly && network == null) {
                         stringResource(CommonR.string.tvSignIn_passwordOnly)
                     } else {
-                        "Use your $serverName username and password."
+                        stringResourceWithNames(CommonR.string.signIn_body, serverName)
                     },
                     modifier = Modifier.padding(top = 11.dp),
                 )
@@ -918,12 +922,15 @@ private fun PasswordScreen(
                                 modifier = Modifier.semantics { contentType = ContentType.Password },
                             )
                         }
+                        val toggleDescription = stringResource(
+                            if (passwordVisible) CommonR.string.tvSignIn_form_hidePassword else CommonR.string.tvSignIn_form_showPassword,
+                        )
                         TvMarqueeButton(
                             onClick = { passwordVisible = !passwordVisible },
                             kind = TvMarqueeButtonKind.Glass,
                             enabled = !state.signingIn,
                             modifier = Modifier.semantics {
-                                contentDescription = if (passwordVisible) "Hide password" else "Show password"
+                                contentDescription = toggleDescription
                             },
                         ) { ink ->
                             Icon(
@@ -1001,9 +1008,9 @@ private fun PasswordScreen(
         card = {
             TvUsePhoneCard(
                 if (passwordOnly) {
-                    "Signed in to Silo on your phone? Open it on the same Wi‑Fi and it can sign this TV in for you."
+                    stringResource(CommonR.string.tvSignIn_form_phoneCardPasswordOnly)
                 } else {
-                    "Choose \"Use your phone instead\" to scan a code and approve on your phone. Nothing to type with the remote."
+                    stringResource(CommonR.string.tvSignIn_form_phoneCard)
                 },
             )
         },

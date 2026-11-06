@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.i18n
 
+import android.content.Context
 import android.content.res.Resources
 import android.view.View
 import androidx.annotation.PluralsRes
@@ -42,3 +43,11 @@ fun Resources.getStringWithNames(@StringRes id: Int, vararg names: String): Stri
     val rtl = configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
     return getString(id, *names.map { if (rtl) "\u2068$it\u2069" else it }.toTypedArray())
 }
+
+/**
+ * [Context.getString] for a message whose arguments are titles or names, for
+ * text built outside composition (a toast). Isolates them as
+ * [stringResourceWithNames] does, in a right-to-left interface only.
+ */
+fun Context.getStringWithNames(@StringRes id: Int, vararg names: String): String =
+    resources.getStringWithNames(id, *names)

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.viewmodel.DevicePairingError
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -142,15 +143,15 @@ fun TvPairDeviceScreen(
             verticalArrangement = Arrangement.Center,
         ) {
             Text(
-                text = "Pair Device",
+                text = stringResource(CommonR.string.tvPair_title),
                 style = MaterialTheme.typography.displaySmall,
                 color = MaterialTheme.colorScheme.onBackground,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = state.lookup?.deviceName?.let { "Approve sign-in for $it" }
-                    ?: "Approve a sign-in request from another device.",
+                text = state.lookup?.deviceName?.let { stringResourceWithNames(CommonR.string.tvPair_subtitleNamed, it) }
+                    ?: stringResource(CommonR.string.tvPair_subtitle),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -181,14 +182,14 @@ fun TvPairDeviceScreen(
                 )
                 if (error == DevicePairingError.SignInFirst) {
                     Spacer(Modifier.height(12.dp))
-                    Button(onClick = onSignIn) { Text("Sign In") }
+                    Button(onClick = onSignIn) { Text(stringResource(CommonR.string.common_signIn)) }
                 }
             }
 
             state.completedStatus?.let { status ->
                 Spacer(Modifier.height(18.dp))
                 Text(
-                    text = if (status == "approved") "Device approved." else "Device denied.",
+                    text = stringResource(if (status == "approved") CommonR.string.tvPair_approved else CommonR.string.tvPair_denied),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground,
                     textAlign = TextAlign.Center,
@@ -206,7 +207,7 @@ fun TvPairDeviceScreen(
                         ) {
                             Icon(Icons.Default.Edit, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Enter code")
+                            Text(stringResource(CommonR.string.tvPair_enterCode))
                         }
                     }
                     Button(
@@ -218,7 +219,7 @@ fun TvPairDeviceScreen(
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text(if (state.isLoading) "Checking…" else "Check")
+                        Text(stringResource(if (state.isLoading) CommonR.string.tvPair_checking else CommonR.string.tvPair_check))
                     }
                 }
 
@@ -232,7 +233,7 @@ fun TvPairDeviceScreen(
                     ) {
                         Icon(Icons.Default.Close, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Deny")
+                        Text(stringResource(CommonR.string.tvPair_deny))
                     }
                     Button(
                         onClick = { decisionState.perform(viewModel::approve) },
@@ -243,7 +244,7 @@ fun TvPairDeviceScreen(
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text(if (state.isSubmitting) "Approving…" else "Approve")
+                        Text(stringResource(if (state.isSubmitting) CommonR.string.tvPair_approving else CommonR.string.tvPair_approve))
                     }
                 }
             } else {
@@ -251,7 +252,7 @@ fun TvPairDeviceScreen(
                     onClick = onDone,
                     modifier = Modifier.focusRequester(doneFocus),
                 ) {
-                    Text("Done")
+                    Text(stringResource(CommonR.string.common_done))
                 }
             }
         }
@@ -259,9 +260,9 @@ fun TvPairDeviceScreen(
 
     if (showCodeEntry) {
         TvTextInputDialog(
-            title = "Enter code",
-            label = "Code shown on the other device",
-            confirmLabel = "Look up",
+            title = stringResource(CommonR.string.tvPair_enterCode),
+            label = stringResource(CommonR.string.tvPair_codeField),
+            confirmLabel = stringResource(CommonR.string.tvPair_lookUp),
             initialValue = state.code,
             onConfirm = { entered ->
                 viewModel.onCodeChanged(entered)
@@ -280,12 +281,12 @@ private fun PairingDetails(lookup: DeviceLoginLookupResponse) {
     // The code the other device shows, grouped 4+4; the match words are no
     // longer shown anywhere.
     DetailRow(
-        label = "Code",
+        label = stringResource(CommonR.string.tvPair_detail_code),
         value = lookup.userCode?.let(org.siloserver.silo.model.auth.DeviceCodeFormat::display).orEmpty(),
     )
-    DetailRow(label = "Device", value = lookup.deviceName.orEmpty())
-    DetailRow(label = "Platform", value = lookup.devicePlatform.orEmpty())
-    lookup.ipAddressHint?.takeIf { it.isNotBlank() }?.let { DetailRow(label = "IP", value = it) }
+    DetailRow(label = stringResource(CommonR.string.tvPair_detail_device), value = lookup.deviceName.orEmpty())
+    DetailRow(label = stringResource(CommonR.string.tvPair_detail_platform), value = lookup.devicePlatform.orEmpty())
+    lookup.ipAddressHint?.takeIf { it.isNotBlank() }?.let { DetailRow(label = stringResource(CommonR.string.tvPair_detail_ip), value = it) }
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

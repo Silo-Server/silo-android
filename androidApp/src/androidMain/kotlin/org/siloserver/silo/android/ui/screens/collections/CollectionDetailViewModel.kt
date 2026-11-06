@@ -126,7 +126,7 @@ class CollectionDetailViewModel(
                 }
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(isLoading = false, error = UiText.Resource(CommonR.string.catalog_error_networkPleaseCheck))
+                        it.copy(isLoading = false, error = UiText.Res(CommonR.string.catalog_error_networkPleaseCheck))
                     }
                 }
             }
