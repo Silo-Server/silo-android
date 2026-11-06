@@ -63,13 +63,19 @@ class TitleRatingControllerTest {
         return Server(client, calls)
     }
 
-    private fun controller(server: Server, scope: CoroutineScope, saved: MutableList<Int?> = mutableListOf(), barrier: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier()): TitleRatingController {
+    private fun controller(
+        server: Server,
+        scope: CoroutineScope,
+        saved: MutableList<Int?> = mutableListOf(),
+        barrier: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
+        onSaved: suspend (Int?) -> Unit = { saved += it },
+    ): TitleRatingController {
         val identity = Identity()
         return TitleRatingController(
             itemId = "item",
             personalData = PersonalDataRepository(PersonalDataApi(server.client, tokenManager = identity), Journal(identity), identityTransitions = barrier),
             scope = scope,
-            onSaved = { saved += it },
+            onSaved = onSaved,
         )
     }
 
@@ -116,7 +122,7 @@ class TitleRatingControllerTest {
     }
 
     @Test fun aRefusedSavePutsTheOldRatingBackAndSaysSo() = runTest {
-        val server = server { respond("", HttpStatusCode.InternalServerError) }
+        val server = server { respond("", HttpStatusCode.Forbidden) }
         val saved = mutableListOf<Int?>()
         val ratings = controller(server, backgroundScope, saved)
         ratings.adoptRead(ratings.beginRead(), 3)
@@ -277,5 +283,46 @@ class TitleRatingControllerTest {
         save.join()
 
         assertEquals(listOf<Int?>(4), saved)
+    }
+
+    @Test fun leavingThePageBeforeTheSaveStartsStillSendsIt() = runTest {
+        val saved = mutableListOf<Int?>()
+        val server = server()
+        val page = CoroutineScope(backgroundScope.coroutineContext + Job())
+        val ratings = controller(server, page, saved)
+
+        val save = assertNotNull(ratings.set(4))
+        page.cancel()
+        save.join()
+
+        assertEquals(listOf("PUT"), server.calls)
+        assertEquals(listOf<Int?>(4), saved)
+        assertFalse(ratings.state.value.isSaving)
+    }
+
+    @Test fun aGatewayErrorIsCheckedAgainstTheServerBeforeSayingItFailed() = runTest {
+        val server = server { request ->
+            if (request.method.value == "PUT") respond("", HttpStatusCode.BadGateway)
+            else rating(4)
+        }
+        val saved = mutableListOf<Int?>()
+        val ratings = controller(server, backgroundScope, saved)
+
+        assertNotNull(ratings.set(4)).join()
+
+        assertEquals(listOf("PUT", "GET"), server.calls)
+        assertEquals(4, ratings.state.value.rating)
+        assertNull(ratings.state.value.failureMessage)
+        assertEquals(listOf<Int?>(4), saved)
+    }
+
+    @Test fun aFailedOfflineCopyDoesNotDisturbASavedRating() = runTest {
+        val ratings = controller(server(), backgroundScope, onSaved = { throw IllegalStateException("disk full") })
+
+        assertNotNull(ratings.set(4)).join()
+
+        assertEquals(4, ratings.state.value.rating)
+        assertNull(ratings.state.value.failureMessage)
+        assertFalse(ratings.state.value.isSaving)
     }
 }

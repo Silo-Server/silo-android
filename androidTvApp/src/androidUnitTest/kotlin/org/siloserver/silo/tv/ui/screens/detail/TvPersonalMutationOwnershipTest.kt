@@ -97,6 +97,7 @@ class TvPersonalMutationOwnershipTest {
             f.vm.onToggleWatched() // The unresolved-item gate rejects this different field.
             f.state { !it.isTogglingWatched }
             rating.complete(HttpStatusCode.ServiceUnavailable)
+            f.request().complete(HttpStatusCode.ServiceUnavailable) // The read-back.
             f.state { it.ratingFailureMessage != null }
             assertNull(f.vm.uiState.value.userRating)
             assertEquals(1, f.port.pending.size)
@@ -122,6 +123,7 @@ class TvPersonalMutationOwnershipTest {
             assertEquals(2, f.vm.uiState.value.userRating)
             assertNull(f.vm.uiState.value.ratingFailureMessage)
             newer.complete(HttpStatusCode.ServiceUnavailable)
+            f.request().complete(HttpStatusCode.ServiceUnavailable) // The read-back.
             f.state { it.ratingFailureMessage != null }
         } finally { f.close(); Dispatchers.resetMain() }
     }

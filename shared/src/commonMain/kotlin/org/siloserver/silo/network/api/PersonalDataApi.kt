@@ -55,7 +55,7 @@ class PersonalDataApi(
 
     /**
      * The profile's stored stars for an item, null when it hasn't rated it. A
-     * lost reply to a rating write is settled with this read, never by
+     * rating write with an unknown outcome is settled with this read, never by
      * sending the write again.
      */
     suspend fun getRating(itemId: String): ApiResult<Int?> {

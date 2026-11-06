@@ -1,6 +1,8 @@
 package org.siloserver.silo.domain
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,8 +33,8 @@ data class TitleRatingState(
  * back new picks during a save, and one that still arrives is dropped. A save
  * finishes even if the viewer leaves the page, though a failure then has no
  * screen to show on. A refused save restores the
- * earlier rating. A save whose reply was lost is never sent again: the stored
- * rating is read back instead. Only a read that overlapped no save may change
+ * earlier rating. A save whose outcome is unknown is never sent again: the
+ * stored rating is read back instead. Only a read that overlapped no save may change
  * the rating.
  *
  * Call from the scope's single thread.
@@ -71,15 +73,19 @@ class TitleRatingController(
         saving = intent
         revision++
         _state.update { it.copy(rating = rating, failureMessage = null, isSaving = true) }
-        return scope.launch {
+        // Undispatched so leaving the page can't cancel the save before it starts.
+        return scope.launch(start = CoroutineStart.UNDISPATCHED) {
             withContext(NonCancellable) {
                 try {
                     val result = personalData.performPersonalWrite(intent)
                     if (!personalData.isCurrent(intent)) return@withContext
                     when (result) {
-                        is ApiResult.Success -> onSaved(rating)
-                        is ApiResult.Error -> fail(previous, NOT_SAVED_MESSAGE)
-                        is ApiResult.NetworkError -> settleLostReply(intent, rating, previous)
+                        is ApiResult.Success -> recordSaved(rating)
+                        // A gateway can report 5xx for a save the server finished.
+                        is ApiResult.Error ->
+                            if (result.code >= 500) settleUnknownOutcome(intent, rating, previous)
+                            else fail(previous, NOT_SAVED_MESSAGE)
+                        is ApiResult.NetworkError -> settleUnknownOutcome(intent, rating, previous)
                     }
                 } finally {
                     if (saving == intent) {
@@ -100,15 +106,24 @@ class TitleRatingController(
     /** A save left over from another profile or server no longer holds this page. */
     private fun isSaving() = saving?.let(personalData::isCurrent) == true
 
-    private suspend fun settleLostReply(intent: PersonalWriteIntent, target: Int?, previous: Int?) {
+    private suspend fun settleUnknownOutcome(intent: PersonalWriteIntent, target: Int?, previous: Int?) {
         val stored = personalData.readRating(itemId)
         if (!personalData.isCurrent(intent)) return
         when (stored) {
             is ApiResult.Success -> {
                 if (stored.data != target) fail(stored.data, NOT_SAVED_MESSAGE)
-                onSaved(stored.data)
+                recordSaved(stored.data)
             }
             else -> fail(previous, UNCONFIRMED_MESSAGE)
+        }
+    }
+
+    /** The server has the rating, so a failed offline copy only waits for the next load. */
+    private suspend fun recordSaved(rating: Int?) {
+        try {
+            onSaved(rating)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
         }
     }
 
@@ -120,6 +135,6 @@ class TitleRatingController(
         const val FAILURE_TITLE = "Couldn't Save Rating"
         const val NOT_SAVED_MESSAGE = "Your rating wasn't changed. Try again."
         const val UNCONFIRMED_MESSAGE =
-            "The server didn't confirm the change, so your rating may not be up to date. Check your connection and try again."
+            "The server didn't confirm the change, so your rating may not be up to date. Try again."
     }
 }

@@ -267,8 +267,8 @@ class CatalogRepository(
     suspend fun recordUserRating(contentId: String, rating: Int?) {
         val requestIdentityGeneration = identityTransitions.generation.value
         val requestLanguageRevision = currentLanguageRevision
-        val cached = getCachedItemDetail(contentId) ?: return
         writeLocalizedCache(requestIdentityGeneration, requestLanguageRevision) { cacheWriteLease ->
+            val cached = catalogCache.getCachedItemDetail(contentId) ?: return@writeLocalizedCache
             catalogCache.cacheItemDetail(contentId, cached.copy(userRating = rating), cacheWriteLease)
         }
     }
