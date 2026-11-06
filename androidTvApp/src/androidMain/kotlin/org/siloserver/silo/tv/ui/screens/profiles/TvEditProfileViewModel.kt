@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.model.profile.AssignableLibraries
-import org.siloserver.silo.model.profile.CHOOSE_A_LIBRARY_MESSAGE
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.ProfileAccessLimits
 import org.siloserver.silo.model.profile.UpdateProfileRequest
@@ -19,6 +18,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.model.profile.CHOOSE_A_LIBRARY_TEXT
 
 /**
  * Mirrors the phone app's `EditProfileViewModel`. Loads an existing profile by
@@ -227,7 +228,7 @@ class TvEditProfileViewModel(
             return
         }
         if (current.access.needsLibrary(loadedAccess, current.libraries.ids)) {
-            _uiState.update { it.copy(error = UiText.Raw(CHOOSE_A_LIBRARY_MESSAGE)) }
+            _uiState.update { it.copy(error = CHOOSE_A_LIBRARY_TEXT) }
             return
         }
 
@@ -264,7 +265,7 @@ class TvEditProfileViewModel(
                     _uiState.update {
                         it.copy(
                             isSaving = false,
-                            error = UiText.serverOr(result.message, CommonR.string.profiles_error_updateFailed),
+                            error = result.errorText(CommonR.string.profiles_error_updateFailed),
                         )
                     }
                 }

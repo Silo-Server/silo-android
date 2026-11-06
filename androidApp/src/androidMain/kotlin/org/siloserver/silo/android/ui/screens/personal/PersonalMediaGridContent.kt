@@ -68,6 +68,7 @@ import org.siloserver.silo.viewmodel.WatchlistViewModel
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.navigation.LocalHeroSourceHandoff
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 private enum class PersonalMediaType(
     @StringRes val label: Int,
@@ -246,7 +247,7 @@ private fun PersonalMediaGridContent(
             Column(modifier = modifier.padding(contentPadding)) {
                 header?.let { Box(modifier = Modifier.padding(16.dp)) { it(state) } }
                 ErrorView(
-                    message = state.error ?: stringResource(CommonR.string.catalog_error_unknown),
+                    message = state.error?.text() ?: stringResource(CommonR.string.catalog_error_unknown),
                     onRetry = onRetry,
                     modifier = Modifier.weight(1f),
                 )

@@ -96,6 +96,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.i18n.text
 
 private data class SeriesWarmTarget(
     val seriesId: String,
@@ -334,7 +335,7 @@ fun HomeScreen(
         when {
             state.isLoading && regularSections.isEmpty() -> HomeLoadingSkeleton()
             state.error != null && regularSections.isEmpty() -> ErrorView(
-                message = state.error ?: stringResource(CommonR.string.status_errorGeneric),
+                message = state.error?.text() ?: stringResource(CommonR.string.status_errorGeneric),
                 onRetry = { viewModel.loadSections() },
             )
             regularSections.isEmpty() -> {

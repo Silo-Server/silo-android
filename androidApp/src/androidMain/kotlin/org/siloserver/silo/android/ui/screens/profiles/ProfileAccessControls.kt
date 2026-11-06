@@ -40,8 +40,9 @@ import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.screens.auth.AuthColors
 import org.siloserver.silo.android.ui.screens.libraries.libraryIcon
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.model.personal.UserLibrary
-import org.siloserver.silo.model.profile.ANY_RATING_LABEL
+import org.siloserver.silo.model.profile.ANY_RATING_TEXT
 import org.siloserver.silo.model.profile.AssignableLibraries
 import org.siloserver.silo.model.profile.ProfileAccessLimits
 import org.siloserver.silo.model.profile.contentRatingOptions
@@ -79,7 +80,7 @@ internal fun ProfileAccessControls(
             onSelected = onContentRatingSelected,
         )
         Spacer(modifier = Modifier.height(10.dp))
-        HintText(ratingCeilingCaption(access.maxContentRating))
+        HintText(ratingCeilingCaption(access.maxContentRating).text())
 
         HorizontalDivider(
             color = AuthColors.FieldBorder,
@@ -109,7 +110,7 @@ internal fun ProfileAccessControls(
                 }
 
                 is AssignableLibraries.Failed -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) { HintText(libraries.text) }
+                    Column(modifier = Modifier.weight(1f)) { HintText(libraries.text.text()) }
                     TextButton(onClick = onRetryLibraries, enabled = !libraries.retrying) {
                         Text(stringResource(CommonR.string.profiles_access_retry), color = AuthColors.Primary)
                     }
@@ -182,7 +183,7 @@ private fun RatingLadder(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = rating ?: ANY_RATING_LABEL,
+                    text = rating ?: ANY_RATING_TEXT.text(),
                     fontSize = 12.sp,
                     fontWeight = if (isCeiling) FontWeight.SemiBold else FontWeight.Medium,
                     color = when {

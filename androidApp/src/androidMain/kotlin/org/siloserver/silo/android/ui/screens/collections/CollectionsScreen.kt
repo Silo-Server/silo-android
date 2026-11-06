@@ -45,6 +45,7 @@ import org.siloserver.silo.model.personal.Collection
 import org.siloserver.silo.viewmodel.CollectionSection
 import org.siloserver.silo.viewmodel.CollectionsViewModel
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,7 +72,7 @@ fun CollectionsScreen(
             }
             state.error != null && state.collections.isEmpty() && state.groups.isEmpty() -> {
                 ErrorView(
-                    message = state.error ?: stringResource(CommonR.string.catalog_error_unknown),
+                    message = state.error?.text() ?: stringResource(CommonR.string.catalog_error_unknown),
                     onRetry = viewModel::loadCollections,
                     modifier = Modifier.padding(padding),
                 )

@@ -90,6 +90,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.calendar.localDisplayAirTime
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.calendar.calendarBadgeLabel
@@ -1178,7 +1179,7 @@ private fun CalendarList(
             state.error != null -> item(key = "calendar-error") {
                 Box(modifier = Modifier.fillParentMaxHeight()) {
                     CalendarMessage(
-                        title = state.error ?: stringResource(CommonR.string.calendar_error_loadFailed),
+                        title = state.error?.text() ?: stringResource(CommonR.string.calendar_error_loadFailed),
                         subtitle = stringResource(CommonR.string.calendar_error_tryAnotherWeek),
                         actions = listOf(CalendarAction(stringResource(CommonR.string.states_refresh), onRefresh)),
                         onActionFocused = clearControlFocusZone,

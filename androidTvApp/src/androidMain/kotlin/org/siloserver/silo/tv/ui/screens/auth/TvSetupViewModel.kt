@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.errorText
 
 data class TvSetupUiState(
     val username: String = "",
@@ -63,7 +64,7 @@ class TvSetupViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = UiText.serverOr(result.message, CommonR.string.setup_error_failed),
+                            error = result.errorText(CommonR.string.setup_error_failed),
                         )
                     }
                 }

@@ -2,6 +2,8 @@ package org.siloserver.silo.network.apiv2
 
 import io.ktor.client.HttpClient
 import io.ktor.client.request.*
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.network.*
 
 /** One server history page per request; empty pages can still have continuation. */
@@ -30,7 +32,7 @@ class HistoryV2Api(
                 val next = page.nextCursor
                 if (page.hasMore && (next.isNullOrBlank() || next in continuation?.seenCursors.orEmpty()) ||
                     !page.hasMore && !next.isNullOrBlank()) {
-                    return invalidCursor("The server returned invalid history pagination. Reload history.")
+                    return invalidCursor("The server returned invalid history pagination. Reload history.", SharedString.HistoryInvalidPagination)
                 }
                 val seen = continuation?.seenContentIds.orEmpty().toMutableSet()
                 val items = result.data.items.filter { seen.add(it.item.contentId) }
@@ -39,10 +41,11 @@ class HistoryV2Api(
                 ApiResult.Success(HistoryPageV2(items, following))
             }
             is ApiResult.Error -> if (result.error == "invalid_cursor")
-                result.copy(message = "History changed or expired. Reload history.") else result
+                result.copy(message = "History changed or expired. Reload history.", text = UiText.Key(SharedString.HistoryExpired)) else result
             is ApiResult.NetworkError -> result
         }
     }
 
-    private fun invalidCursor(message: String) = ApiResult.Error(0, "invalid_cursor", message)
+    private fun invalidCursor(message: String, text: SharedString? = null) =
+        ApiResult.Error(0, "invalid_cursor", message, text = text?.let { UiText.Key(it) })
 }

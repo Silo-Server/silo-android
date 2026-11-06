@@ -8,6 +8,7 @@ import org.siloserver.silo.model.auth.PASSWORD_CHANGE_REQUIRED
 import org.siloserver.silo.model.auth.PASSWORD_CHANGE_REQUIRED_MESSAGE
 import org.siloserver.silo.network.*
 import kotlin.test.*
+import org.siloserver.silo.model.auth.PASSWORD_CHANGE_REQUIRED_TEXT
 
 /** Server text the catalog can translate: section title keys and problem details. */
 class ServerTextV2Test {
@@ -69,5 +70,6 @@ class ServerTextV2Test {
         val body = """{"type":"https://siloserver.org/docs/api/v2/problems/$PASSWORD_CHANGE_REQUIRED","title":"t","status":403,"detail":"x"}"""
         val error = withServer(body, HttpStatusCode.Forbidden) { it.section("a", owner) } as ApiResult.Error
         assertEquals(PASSWORD_CHANGE_REQUIRED_MESSAGE, error.message)
+        assertEquals(PASSWORD_CHANGE_REQUIRED_TEXT, error.text)
     }
 }

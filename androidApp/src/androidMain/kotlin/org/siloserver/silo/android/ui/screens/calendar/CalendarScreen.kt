@@ -96,6 +96,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 // iOS SiloTheme tokens (phone).
 private val CornerRadius = 8.dp
@@ -212,7 +213,7 @@ fun CalendarScreen(
                     when {
                         state.error != null && !state.hasAnyItems -> item(key = "error") {
                             ErrorView(
-                                message = state.error ?: stringResource(CommonR.string.status_errorGeneric),
+                                message = state.error?.text() ?: stringResource(CommonR.string.status_errorGeneric),
                                 onRetry = viewModel::load,
                                 modifier = Modifier.fillMaxWidth().padding(vertical = LargePadding),
                             )

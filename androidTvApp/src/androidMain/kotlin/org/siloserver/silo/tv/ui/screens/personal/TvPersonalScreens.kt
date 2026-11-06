@@ -64,6 +64,7 @@ import org.siloserver.silo.viewmodel.PersonalListUiState
 import org.siloserver.silo.viewmodel.PersonalListViewModel
 import org.siloserver.silo.viewmodel.WatchlistViewModel
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Favorites / Watchlist / History screens all share the same `6-column grid
@@ -338,7 +339,7 @@ private fun PersonalGrid(
         // outgoing list still contains the target at a position the incoming
         // one will not agree with.
         isReplacingContent = state.isRefreshing || state.isLoading,
-        errorMessage = state.error,
+        errorMessage = state.error?.text(),
         surfaceKey = surfaceKey,
         onLoadMore = onLoadMore,
         // The controls occupy a spanning grid item ahead of the cards, so an
@@ -408,7 +409,7 @@ private fun PersonalGrid(
             // repeats it. The controlled lists render the failure inside the
             // grid instead (Codex).
             historyWholeSurfaceState && state.error != null -> TvErrorScreen(
-                message = state.error ?: "",
+                message = state.error?.text().orEmpty(),
                 onRetry = onRetry,
             )
             historyWholeSurfaceState -> EmptyState(message = emptyMessage, icon = icon)
@@ -465,7 +466,7 @@ private fun PersonalGrid(
                     emptyState = {
                         val error = state.error
                         if (error != null) {
-                            TvErrorScreen(message = error, onRetry = onRetry)
+                            TvErrorScreen(message = error.text(), onRetry = onRetry)
                         } else {
                             EmptyState(
                                 message = if (controlsState?.facetSelection?.hasActiveFilters == true) {
@@ -578,7 +579,7 @@ private fun PersonalInlineGrid(
                 // reachable so a rejected filter can be changed (Codex).
                 val error = state.error
                 if (error != null) {
-                    TvErrorScreen(message = error, onRetry = onRetry)
+                    TvErrorScreen(message = error.text(), onRetry = onRetry)
                 } else {
                     EmptyState(
                         message = if (controlsState.facetSelection.hasActiveFilters) {

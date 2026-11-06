@@ -66,6 +66,7 @@ import org.siloserver.silo.tv.ui.theme.sectionEyebrow
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import java.time.Instant
+import org.siloserver.silo.common.i18n.text
 
 /**
  * TV notifications inbox: a focusable, D-pad-traversable newest-first list of
@@ -203,7 +204,7 @@ fun TvInboxScreen(
 
         if (error != null) {
             Card(onClick = { scope.launch { repository.refresh() } }) {
-                Text(stringResource(CommonR.string.notifications_inbox_errorRetry, error.orEmpty()), modifier = Modifier.padding(16.dp))
+                Text(stringResource(CommonR.string.notifications_inbox_errorRetry, error?.text?.text().orEmpty()), modifier = Modifier.padding(16.dp))
             }
         }
         when {

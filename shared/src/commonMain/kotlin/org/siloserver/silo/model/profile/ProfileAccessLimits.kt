@@ -1,8 +1,10 @@
 package org.siloserver.silo.model.profile
 
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorTextOrNull
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.errorMessage
 
 /** The ceiling Child fills in when no rating was chosen, as on iOS and the web. */
 const val DEFAULT_CHILD_CONTENT_RATING = "PG"
@@ -78,7 +80,7 @@ data class ProfileAccessLimits(
 }
 
 /** Form error shown while [ProfileAccessLimits.needsLibrary] holds. */
-const val CHOOSE_A_LIBRARY_MESSAGE = "Select at least one library for this profile."
+val CHOOSE_A_LIBRARY_TEXT: UiText = UiText.Key(SharedString.ProfileChooseLibrary)
 
 /** A new profile's access members. Create omits what it doesn't set. */
 fun CreateProfileRequest.withAccessLimits(limits: ProfileAccessLimits): CreateProfileRequest {
@@ -130,7 +132,7 @@ fun contentRatingOptions(known: List<String>, current: String?): List<String> =
     if (current == null || current in known) known else listOf(current) + known
 
 /** The rating ladder's last step: no ceiling (a null rating). */
-const val ANY_RATING_LABEL = "Any"
+val ANY_RATING_TEXT: UiText = UiText.Key(SharedString.ProfileAnyRating)
 
 /**
  * Whether [rating] sits under [ceiling] on the [known] scale, so the rating
@@ -145,11 +147,11 @@ fun ratingIsUnderCeiling(rating: String, ceiling: String?, known: List<String>):
 }
 
 /** The line under the rating ladder that says what the ceiling allows. */
-fun ratingCeilingCaption(ceiling: String?): String =
+fun ratingCeilingCaption(ceiling: String?): UiText =
     if (ceiling == null) {
-        "Can watch titles of any rating."
+        UiText.Key(SharedString.ProfileCeilingAny)
     } else {
-        "Can watch titles rated $ceiling and below."
+        UiText.Key(SharedString.ProfileCeiling, listOf(ceiling))
     }
 
 /** The libraries a profile form can assign, as the form shows them. */
@@ -162,10 +164,13 @@ sealed interface AssignableLibraries {
     /**
      * A failed read, kept apart from an empty list so the form never says there
      * is nothing to assign when it couldn't ask. [retrying] keeps the failure
-     * (and its focused Try Again) on screen while a retry runs.
+     * (and its focused Try Again) on screen while a retry runs. [reason] is
+     * the server's message or the network error; null when there is none.
      */
-    data class Failed(val message: String, val retrying: Boolean = false) : AssignableLibraries {
-        val text: String get() = "Couldn't load libraries. $message".trim()
+    data class Failed(val reason: UiText?, val retrying: Boolean = false) : AssignableLibraries {
+        val text: UiText
+            get() = reason?.let { UiText.Key(SharedString.ProfileLibrariesFailedReason, listOf(it)) }
+                ?: UiText.Key(SharedString.ProfileLibrariesFailed)
     }
 
     /** The state to show while a (re)load runs. */
@@ -177,7 +182,7 @@ sealed interface AssignableLibraries {
     companion object {
         fun from(result: ApiResult<List<UserLibrary>>): AssignableLibraries = when (result) {
             is ApiResult.Success -> Loaded(result.data.sortedBy { it.sortOrder })
-            else -> Failed(result.errorMessage(""))
+            else -> Failed(result.errorTextOrNull())
         }
     }
 }

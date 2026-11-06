@@ -1,6 +1,8 @@
 package org.siloserver.silo.model.server
 
 import kotlinx.serialization.Serializable
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 
 /**
  * What the app has learned about a saved server's native API contract.
@@ -24,8 +26,11 @@ enum class ServerContract {
     UPDATE_REQUIRED;
 
     companion object {
-        /** The one user-facing message for [UPDATE_REQUIRED]. */
+        /** The one message for [UPDATE_REQUIRED], in English for logs. */
         const val UPDATE_REQUIRED_MESSAGE: String =
             "This server runs an older Silo release that this app no longer supports. Update the server, then try again."
+
+        /** What a screen shows for [UPDATE_REQUIRED]. */
+        val UPDATE_REQUIRED_TEXT: UiText = UiText.Key(SharedString.ServerUpdateRequired)
     }
 }

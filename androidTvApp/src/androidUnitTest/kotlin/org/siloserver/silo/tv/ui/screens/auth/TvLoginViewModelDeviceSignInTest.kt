@@ -70,6 +70,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.siloserver.silo.common.i18n.UiText
 
 /**
  * The TV sign-in panel's device-code behavior: #421 (no silent "Loading"
@@ -720,7 +721,7 @@ class TvLoginViewModelDeviceSignInTest {
         assertEquals(TvLoginError.ProviderUnavailable, error(503, "provider_unavailable"))
         assertEquals(TvLoginError.RateLimited, error(429, ""))
         assertEquals(TvLoginError.IdentityChanged, error(0, "identity_changed"))
-        assertEquals(TvLoginError.Server("raw"), error(500, "internal"))
+        assertEquals(TvLoginError.Server(UiText.Raw("raw")), error(500, "internal"))
     }
 
     private fun TestScope.viewModel(

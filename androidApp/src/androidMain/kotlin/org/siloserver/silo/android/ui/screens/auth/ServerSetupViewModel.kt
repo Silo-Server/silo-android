@@ -169,7 +169,7 @@ class ServerSetupViewModel(
                 // server is reported as update-server, never retried on v1.
                 val probe = probeContract(candidate)
                 if (probe is ApiV2ProbeResult.UpdateServer) {
-                    fail(UiText.Raw(ServerContract.UPDATE_REQUIRED_MESSAGE), found)
+                    fail(ServerContract.UPDATE_REQUIRED_TEXT, found)
                     return@launch
                 }
                 // Anything else the probe said (V2, a transient failure, or a

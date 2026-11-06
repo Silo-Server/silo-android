@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.common.ui.marquee.SignInHandoff
 import org.siloserver.silo.model.auth.isPasswordChangeRequired
 import org.siloserver.silo.model.profile.Profile
@@ -341,7 +342,7 @@ class TvProfileSelectionViewModel(
                     // replaced, so the cached grid is not offered either.
                     _uiState.update { it.copy(isLoading = false, error = TV_PASSWORD_CHANGE_REQUIRED_MESSAGE) }
                 } else {
-                    showCachedProfiles(scope, UiText.serverOr(result.message, CommonR.string.profiles_error_loadFailed))
+                    showCachedProfiles(scope, result.errorText(CommonR.string.profiles_error_loadFailed))
                 }
                 is ApiResult.NetworkError -> showCachedProfiles(scope, UiText.Res(CommonR.string.profiles_error_network))
             }
@@ -560,7 +561,7 @@ class TvProfileSelectionViewModel(
                 is ApiResult.Error -> _uiState.update {
                     it.copy(
                         isVerifyingPin = false,
-                        pinError = UiText.serverOr(r.message, CommonR.string.pin_error_incorrect),
+                        pinError = r.errorText(CommonR.string.pin_error_incorrect),
                     )
                 }
                 is ApiResult.NetworkError -> _uiState.update {
@@ -661,7 +662,7 @@ class TvProfileSelectionViewModel(
                     it.copy(
                         isDeleting = false,
                         deleteCandidate = null,
-                        error = UiText.serverOr(result.message, CommonR.string.profiles_error_deleteFailed),
+                        error = result.errorText(CommonR.string.profiles_error_deleteFailed),
                     )
                 }
                 is ApiResult.NetworkError -> _uiState.update {

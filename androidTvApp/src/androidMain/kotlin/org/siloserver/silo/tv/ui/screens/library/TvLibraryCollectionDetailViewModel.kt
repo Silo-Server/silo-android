@@ -213,7 +213,7 @@ class TvLibraryCollectionDetailViewModel(
                         )
                     }
                 }
-                is ApiResult.Error -> return ApiResult.Error(result.code, result.error, result.message)
+                is ApiResult.Error -> return result
                 is ApiResult.NetworkError -> return ApiResult.NetworkError(result.exception)
             }
         }

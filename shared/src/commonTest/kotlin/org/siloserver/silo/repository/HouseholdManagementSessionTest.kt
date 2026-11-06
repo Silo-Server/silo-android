@@ -15,6 +15,8 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 
 class HouseholdManagementSessionTest {
     private val primary = Profile(id = "1", name = "Parent", isPrimary = true, hasPin = true)
@@ -43,7 +45,7 @@ class HouseholdManagementSessionTest {
         assertEquals(primary, assertNotNull(session.reverify.value).profile)
         session.submitPin("0000")
         runCurrent()
-        assertEquals("Wrong PIN. Try again.", session.reverify.value?.error)
+        assertEquals(UiText.Key(SharedString.PinWrong), session.reverify.value?.error)
         session.submitPin("1234")
         runCurrent()
         assertIs<ApiResult.Success<Unit>>(result.await())

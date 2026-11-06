@@ -12,6 +12,7 @@ import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.i18n.uiText
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.model.auth.InvitationLookupResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.requiresApproval
@@ -198,7 +199,7 @@ class InviteClaimViewModel(
                     it.copy(isSubmitting = false, invitationInvalid = invalid,
                         acceptanceUncertain = uncertain,
                         error = if (uncertain) uiText(CommonR.string.account_invite_error_unconfirmed)
-                            else UiText.serverOr(result.message, CommonR.string.account_invite_error_failed))
+                            else result.errorText(CommonR.string.account_invite_error_failed))
                 }
             }
             is ApiResult.NetworkError -> _uiState.update {

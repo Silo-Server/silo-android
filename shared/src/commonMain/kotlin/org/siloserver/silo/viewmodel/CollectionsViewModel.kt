@@ -13,6 +13,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 
 /**
  * A flat rendering item — either a named group header or the anonymous
@@ -34,7 +37,7 @@ data class CollectionsUiState(
     val sections: List<CollectionSection> = emptyList(),
     val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
 )
 
 /**
@@ -119,14 +122,14 @@ class CollectionsViewModel(
                 it.copy(
                     isLoading = false,
                     isRefreshing = false,
-                    error = if (!refreshing) result.message.ifBlank { "Failed to load collections" } else it.error,
+                    error = if (!refreshing) result.errorText(SharedString.CollectionsLoadFailed) else it.error,
                 )
             }
             is ApiResult.NetworkError -> _uiState.update {
                 it.copy(
                     isLoading = false,
                     isRefreshing = false,
-                    error = if (!refreshing) "Network error. Please check your connection." else it.error,
+                    error = if (!refreshing) UiText.Key(SharedString.NetworkErrorPleaseCheck) else it.error,
                 )
             }
         }

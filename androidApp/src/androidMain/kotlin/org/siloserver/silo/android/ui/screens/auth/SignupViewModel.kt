@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.errorText
 
 data class SignupUiState(
     val username: String = "",
@@ -76,7 +77,7 @@ class SignupViewModel(
                     val message = when (result.code) {
                         409 -> uiText(CommonR.string.account_create_error_taken)
                         403 -> uiText(CommonR.string.account_create_error_inviteInvalid)
-                        else -> UiText.serverOr(result.message, CommonR.string.account_create_error_failed)
+                        else -> result.errorText(CommonR.string.account_create_error_failed)
                     }
                     _uiState.update { it.copy(isLoading = false, error = message) }
                 }

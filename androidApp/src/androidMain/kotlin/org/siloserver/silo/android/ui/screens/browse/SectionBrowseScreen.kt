@@ -28,6 +28,7 @@ import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.LoadingIndicator
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.viewmodel.SectionBrowseArgs
 import org.siloserver.silo.viewmodel.SectionBrowseViewModel
@@ -62,7 +63,7 @@ fun SectionBrowseScreen(
             )
             state.isLoading && state.items.isEmpty() -> LoadingIndicator(modifier = contentModifier)
             state.error != null -> ErrorView(
-                message = state.error ?: stringResource(CommonR.string.rowPage_loadFailed),
+                message = state.error?.text() ?: stringResource(CommonR.string.rowPage_loadFailed),
                 onRetry = viewModel::retry,
                 modifier = contentModifier,
             )

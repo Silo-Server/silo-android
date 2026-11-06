@@ -37,7 +37,7 @@ fun pluralStringResourceWithNames(@PluralsRes id: Int, count: Int, vararg names:
 private fun isolated(names: Array<out String>): Array<String> =
     isolated(names, rtl = LocalLayoutDirection.current == LayoutDirection.Rtl)
 
-private fun isolated(names: Array<out String>, rtl: Boolean): Array<String> =
+internal fun isolated(names: Array<out String>, rtl: Boolean): Array<String> =
     names.map { if (rtl) "\u2068$it\u2069" else it }.toTypedArray()
 
 /** [stringResourceWithNames] outside composition, for helpers that take [Resources]. */

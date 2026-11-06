@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.common.ui.marquee.SignInHandoff
 import org.siloserver.silo.model.server.CachedProfile
 import org.siloserver.silo.network.ServerRegistry
@@ -326,7 +327,7 @@ class ProfileSelectionViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = UiText.serverOr(result.message, CommonR.string.profiles_error_loadFailed),
+                            error = result.errorText(CommonR.string.profiles_error_loadFailed),
                         )
                     }
                 }
@@ -493,7 +494,7 @@ class ProfileSelectionViewModel(
                     _uiState.update {
                         it.copy(
                             pinIsVerifying = false,
-                            pinError = UiText.serverOr(result.message, CommonR.string.pin_error_verification),
+                            pinError = result.errorText(CommonR.string.pin_error_verification),
                             pinErrorCount = it.pinErrorCount + 1,
                         )
                     }
@@ -550,7 +551,7 @@ class ProfileSelectionViewModel(
                 }
                 is ApiResult.Error -> {
                     _uiState.update {
-                        it.copy(error = UiText.serverOr(result.message, CommonR.string.profiles_error_deleteFailed))
+                        it.copy(error = result.errorText(CommonR.string.profiles_error_deleteFailed))
                     }
                     loadProfiles(clearError = false)
                 }

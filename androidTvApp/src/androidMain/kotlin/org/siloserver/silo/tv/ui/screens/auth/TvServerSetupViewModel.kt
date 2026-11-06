@@ -316,7 +316,7 @@ internal suspend fun probeTvServerSetupCandidates(
         val probe = probeContract(candidate)
         if (probe is ApiV2ProbeResult.UpdateServer) {
             return TvServerSetupProbeResult.Failure(
-                message = UiText.Raw(ServerContract.UPDATE_REQUIRED_MESSAGE),
+                message = ServerContract.UPDATE_REQUIRED_TEXT,
             )
         }
         // Anything else the probe said (V2, a transient failure, or a timeout)

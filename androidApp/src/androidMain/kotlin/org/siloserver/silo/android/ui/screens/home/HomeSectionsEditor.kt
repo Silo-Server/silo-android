@@ -53,6 +53,7 @@ import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.sectionTitle
 import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.ProfileRepository
@@ -120,7 +121,7 @@ fun HomeSectionsEditor(onDismiss: () -> Unit) {
                         contentAlignment = Alignment.Center,
                     ) { CircularProgressIndicator() }
                     state.error != null && rows.isEmpty() -> ErrorView(
-                        message = state.error ?: stringResource(CommonR.string.home_editor_loadFailed),
+                        message = state.error?.text() ?: stringResource(CommonR.string.home_editor_loadFailed),
                         onRetry = viewModel::loadSections,
                     )
                     rows.isEmpty() -> EmptyStateView(

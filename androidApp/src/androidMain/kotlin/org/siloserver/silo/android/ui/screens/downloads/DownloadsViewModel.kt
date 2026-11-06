@@ -54,6 +54,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.network.isTimeout
 
 /**
  * Leaf row in the Downloads tab. Movies / ebooks / audiobooks / single
@@ -301,16 +304,21 @@ sealed interface DownloadsText {
 
     data class Verbatim(val text: String) : DownloadsText
 
+    /** Text the shared module names, such as an app-built error's [ApiResult.Error.text]. */
+    data class Shared(val text: UiText) : DownloadsText
+
     fun resolve(resources: Resources): String = when (this) {
         is Res -> resources.getString(id, *args.toTypedArray())
         is Verbatim -> text
+        is Shared -> text.text(resources)
     }
 }
 
 /** As [errorMessage]: the server's message, the network copy, else [fallback] with [args]. */
 private fun ApiResult<*>.downloadsError(@StringRes fallback: Int, vararg args: Any): DownloadsText = when (this) {
-    is ApiResult.Error -> if (message.isBlank()) DownloadsText.Res(fallback, args.toList()) else DownloadsText.Verbatim(message)
-    is ApiResult.NetworkError -> DownloadsText.Verbatim(errorMessage(""))
+    is ApiResult.Error -> text?.let(DownloadsText::Shared)
+        ?: if (message.isBlank()) DownloadsText.Res(fallback, args.toList()) else DownloadsText.Verbatim(message)
+    is ApiResult.NetworkError -> DownloadsText.Res(if (isTimeout) CommonR.string.catalog_error_timeout else CommonR.string.catalog_error_network)
     is ApiResult.Success -> DownloadsText.Res(fallback, args.toList())
 }
 

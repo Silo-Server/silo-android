@@ -16,12 +16,13 @@ import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.withWatched
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.MembershipActions
 import org.siloserver.silo.repository.port.MembershipPort
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.common.i18n.text
 
 /**
  * TV-side counterpart to
@@ -122,7 +123,7 @@ fun MediaActionsCoordinator.tvCardActions(
 // The menu has already closed, so without this the rollback is the only sign
 // that the write failed.
 private fun showWatchedWriteFailed(context: Context, watched: Boolean, result: ApiResult<*>) {
-    val detail = result.errorMessage(context.getString(CommonR.string.shell_card_markFailedRetry))
+    val detail = result.errorText(CommonR.string.shell_card_markFailedRetry).text(context)
     Toast.makeText(
         context,
         context.getString(
