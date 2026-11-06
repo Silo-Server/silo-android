@@ -19,7 +19,7 @@ fun appLanguageOptions(
     val choice = state.choice
     val tags = state.languages + listOfNotNull(choice?.takeIf { it !in state.languages })
     return listOf(AppLanguageOption("", matchDeviceLabel)) + tags.map { AppLanguageOption(it, endonym(it)) } +
-        pseudoLocales.map { AppLanguageOption(it, it) }
+        pseudoLocales.filterNot { it in tags }.map { AppLanguageOption(it, it) }
 }
 
 /** "Español", "Português (Brasil)", "中文 (简体)". */
