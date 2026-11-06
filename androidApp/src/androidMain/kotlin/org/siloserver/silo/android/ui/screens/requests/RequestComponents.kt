@@ -46,6 +46,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -57,6 +58,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.android.ui.components.skeleton
 import org.siloserver.silo.android.ui.theme.SiloNavPillBorder
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
@@ -336,7 +338,7 @@ internal fun RequestsSectionHeader(
         }
         if (trailing != null && onTrailingClick != null) {
             Text(
-                text = "$trailing ›",
+                text = "$trailing ›", // i18n-ignore: a translated label and a chevron
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
                 color = SiloSecondaryText,
@@ -379,7 +381,7 @@ internal fun RequestsLargeTitleBar(
                 .background(SiloOverlayPillSurface)
                 .border(1.dp, SiloNavPillBorder, CircleShape),
         ) {
-            Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+            Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(CommonR.string.common_back), tint = Color.White)
         }
         Text(
             text = title,
@@ -424,12 +426,12 @@ internal fun RequestsSearchField(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
-        placeholder = { Text("Search movies & series", color = SiloSecondaryText) },
+        placeholder = { Text(stringResource(CommonR.string.requests_search_placeholder), color = SiloSecondaryText) },
         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = SiloSecondaryText) },
         trailingIcon = if (query.isNotEmpty()) {
             {
                 IconButton(onClick = { onQueryChange("") }) {
-                    Icon(Icons.Filled.Close, contentDescription = "Clear search", tint = SiloSecondaryText)
+                    Icon(Icons.Filled.Close, contentDescription = stringResource(CommonR.string.requests_search_clear), tint = SiloSecondaryText)
                 }
             }
         } else {

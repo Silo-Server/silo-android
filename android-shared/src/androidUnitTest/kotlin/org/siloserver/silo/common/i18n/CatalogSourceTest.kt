@@ -41,7 +41,33 @@ class CatalogSourceTest {
      * out (brand names, symbols).
      */
     private val convertedDirectories = listOf(
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/lan",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/pairing",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/requests",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/startup",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/ui/components",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/ui/marquee",
+        "android-shared/src/androidMain/kotlin/org/siloserver/silo/common/watchparty",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/notifications",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/profiles",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/push",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/components",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/layout",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/navigation",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/notifications",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/onboarding",
         "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/pairing",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/profiles",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/requests",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/auth",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/profiles",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/components",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/navigation",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/auth",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/notifications",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/profiles",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/requests",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/shell",
     )
 
     @Test

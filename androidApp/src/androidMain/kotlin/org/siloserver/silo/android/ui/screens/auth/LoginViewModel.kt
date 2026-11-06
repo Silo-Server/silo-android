@@ -8,7 +8,10 @@ import org.siloserver.silo.android.auth.NativeSignInProtocol
 import org.siloserver.silo.android.auth.NativeSignInPurpose
 import org.siloserver.silo.android.auth.NativeSignInResult
 import org.siloserver.silo.android.auth.NativeSignInStart
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.downloads.DownloadSummary
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.uiText
 import org.siloserver.silo.model.auth.NetworkSignInFailure
 import org.siloserver.silo.model.auth.PasswordLoginFailure
 import org.siloserver.silo.model.auth.SignInOptions
@@ -33,7 +36,7 @@ data class LoginUiState(
     val password: String = "",
     val serverHostLabel: String? = null,
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val signupEnabled: Boolean = false,
     val loginSuccess: Boolean = false,
     /** Null while the server's sign-in options load. */
@@ -80,8 +83,10 @@ data class LoginUiState(
  * [downloads] (spec §4.4); keeping leaves both saved.
  */
 data class ReplaceExpiredPrompt(
-    val expiredUsername: String,
-    val newUsername: String,
+    /** Null when the expired account has no username; the screen says "your account". */
+    val expiredUsername: String?,
+    /** Null when the new account's username isn't known; the screen says "another account". */
+    val newUsername: String?,
     val downloads: DownloadSummary?,
     /** "Replace" didn't sign out of the expired account; it is still saved. */
     val replaceFailed: Boolean = false,
@@ -176,11 +181,11 @@ class LoginViewModel(
         if (_uiState.value.signInBusy) return
         val current = _uiState.value
         if (current.username.isBlank()) {
-            _uiState.update { it.copy(error = "Username is required") }
+            _uiState.update { it.copy(error = uiText(CommonR.string.tvSignIn_error_usernameRequired)) }
             return
         }
         if (current.password.isBlank()) {
-            _uiState.update { it.copy(error = "Password is required") }
+            _uiState.update { it.copy(error = uiText(CommonR.string.tvSignIn_error_passwordRequired)) }
             return
         }
 
@@ -207,7 +212,7 @@ class LoginViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = "Network error. Please check your connection.",
+                            error = uiText(CommonR.string.signIn_error_networkConnection),
                         )
                     }
                 }
@@ -245,7 +250,7 @@ class LoginViewModel(
                     it.copy(networkSignInBusy = false, error = networkSignInMessage(result, provider.displayName))
                 }
                 is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(networkSignInBusy = false, error = "Network error. Please check your connection.")
+                    it.copy(networkSignInBusy = false, error = uiText(CommonR.string.signIn_error_networkConnection))
                 }
             }
         }
@@ -271,7 +276,7 @@ class LoginViewModel(
                 _uiState.update {
                     it.copy(
                         providerBusy = null,
-                        error = "Couldn't confirm this server's identity. Check your connection and try again.",
+                        error = uiText(CommonR.string.signIn_error_identityUnconfirmed),
                     )
                 }
                 return@launch
@@ -292,7 +297,7 @@ class LoginViewModel(
                 is NativeSignInStart.Open -> _uiState.update { it.copy(browserLaunch = start.url) }
                 is NativeSignInStart.Refused -> {
                     autoStartInFlight = false
-                    _uiState.update { it.copy(providerBusy = null, error = start.message) }
+                    _uiState.update { it.copy(providerBusy = null, error = NativeSignInMessages.text(start.reason, start.providerName)) }
                 }
             }
         }
@@ -327,7 +332,7 @@ class LoginViewModel(
             state.copy(
                 browserLaunch = null,
                 providerBusy = null,
-                error = if (opened) state.error else NativeSignInMessages.forReason(NativeSignInMessages.NO_BROWSER, providerName),
+                error = if (opened) state.error else NativeSignInMessages.text(NativeSignInMessages.NO_BROWSER, providerName),
             )
         }
     }
@@ -353,7 +358,7 @@ class LoginViewModel(
             }
             is NativeSignInResult.Failed -> {
                 nativeSignIn.consume(result)
-                _uiState.update { it.copy(isLoading = false, error = result.message) }
+                _uiState.update { it.copy(isLoading = false, error = NativeSignInMessages.text(result.reason, result.providerName)) }
             }
             is NativeSignInResult.Linked -> Unit
         }
@@ -380,9 +385,9 @@ class LoginViewModel(
         _uiState.update {
             settle(it).copy(
                 replacePrompt = ReplaceExpiredPrompt(
-                    expiredUsername = expired.username?.takeIf(String::isNotBlank) ?: "your account",
+                    expiredUsername = expired.username?.takeIf(String::isNotBlank),
                     newUsername = serverRegistry.activeAccount.value?.username?.takeIf(String::isNotBlank)
-                        ?: it.username.ifBlank { "another account" },
+                        ?: it.username.takeIf(String::isNotBlank),
                     downloads = downloads,
                 ),
             )
@@ -438,23 +443,23 @@ internal fun passwordLoginMessage(
     error: ApiResult.Error,
     providerName: String? = null,
     directoryName: String? = null,
-): String =
+): UiText =
     when (PasswordLoginFailure.of(error.code, error.error)) {
-        PasswordLoginFailure.InvalidCredentials -> "Invalid username or password"
+        PasswordLoginFailure.InvalidCredentials -> uiText(CommonR.string.signIn_error_invalidCredentials)
         PasswordLoginFailure.LocalLoginDisabled -> if (providerName != null) {
-            "Password sign-in is turned off on this server. Sign in with $providerName instead."
+            uiText(CommonR.string.signIn_error_passwordOffUseProvider, providerName)
         } else {
-            "Password sign-in is turned off on this server."
+            uiText(CommonR.string.signIn_error_passwordOff)
         }
-        PasswordLoginFailure.NotPermitted -> "Your account isn't allowed to use this server."
-        PasswordLoginFailure.PasswordExpired -> "Your password has expired. Change it with your directory, then sign in again."
-        PasswordLoginFailure.AccountDisabled -> "Account is disabled"
-        PasswordLoginFailure.ProviderUnavailable -> "The sign-in service can't be reached right now. Try again later."
-        PasswordLoginFailure.EmailInUse -> NativeSignInMessages.forReason("email_in_use", directoryName)
-        PasswordLoginFailure.IdentityLinkedElsewhere -> NativeSignInMessages.forReason("identity_linked_elsewhere", directoryName)
-        PasswordLoginFailure.RateLimited -> NativeSignInMessages.forReason(NativeSignInMessages.RATE_LIMITED)
-        PasswordLoginFailure.AccountRequired -> NativeSignInMessages.forReason(NativeSignInMessages.ACCOUNT_REQUIRED)
-        PasswordLoginFailure.Other -> error.message.ifBlank { "Login failed" }
+        PasswordLoginFailure.NotPermitted -> uiText(CommonR.string.tvSignIn_error_notPermitted)
+        PasswordLoginFailure.PasswordExpired -> uiText(CommonR.string.signIn_error_passwordExpiredDirectory)
+        PasswordLoginFailure.AccountDisabled -> uiText(CommonR.string.tvSignIn_error_accountDisabled)
+        PasswordLoginFailure.ProviderUnavailable -> uiText(CommonR.string.tvSignIn_error_providerUnavailable)
+        PasswordLoginFailure.EmailInUse -> NativeSignInMessages.text("email_in_use", directoryName)
+        PasswordLoginFailure.IdentityLinkedElsewhere -> NativeSignInMessages.text("identity_linked_elsewhere", directoryName)
+        PasswordLoginFailure.RateLimited -> NativeSignInMessages.text(NativeSignInMessages.RATE_LIMITED)
+        PasswordLoginFailure.AccountRequired -> NativeSignInMessages.text(NativeSignInMessages.ACCOUNT_REQUIRED)
+        PasswordLoginFailure.Other -> UiText.serverOr(error.message, CommonR.string.tvSignIn_error_loginFailed)
     }
 
 /**
@@ -462,30 +467,30 @@ internal fun passwordLoginMessage(
  * [providerName], such as Tailscale. Refusals other operations share read as
  * they do there.
  */
-internal fun networkSignInMessage(error: ApiResult.Error, providerName: String): String =
+internal fun networkSignInMessage(error: ApiResult.Error, providerName: String): UiText =
     when (NetworkSignInFailure.of(error.code, error.error)) {
-        NetworkSignInFailure.NetworkIdentityRequired -> ProviderRefusalText.addressRequired(providerName, "sign in this way")
-        NetworkSignInFailure.NotPermitted -> ProviderRefusalText.notPermitted(providerName)
-        NetworkSignInFailure.EmailInUse ->
-            "An account with your email already exists. Sign in with your password, then connect $providerName in Settings → Sign-in."
-        NetworkSignInFailure.AccountRequired -> NativeSignInMessages.forReason(NativeSignInMessages.ACCOUNT_REQUIRED)
-        NetworkSignInFailure.AccountDisabled -> NativeSignInMessages.forReason("account_disabled")
-        NetworkSignInFailure.IdentityLinkedElsewhere -> NativeSignInMessages.forReason("identity_linked_elsewhere", providerName)
-        NetworkSignInFailure.NotFound -> ProviderRefusalText.providerGone(providerName)
-        NetworkSignInFailure.ProviderUnavailable -> NativeSignInMessages.forReason("provider_unavailable", providerName)
-        NetworkSignInFailure.RateLimited -> NativeSignInMessages.forReason(NativeSignInMessages.RATE_LIMITED)
+        NetworkSignInFailure.NetworkIdentityRequired -> uiText(CommonR.string.tvSignIn_error_networkIdentityRequired, providerName)
+        NetworkSignInFailure.NotPermitted -> uiText(CommonR.string.signIn_error_networkNotPermitted, providerName)
+        NetworkSignInFailure.EmailInUse -> uiText(CommonR.string.signIn_error_networkEmailInUse, providerName)
+        NetworkSignInFailure.AccountRequired -> NativeSignInMessages.text(NativeSignInMessages.ACCOUNT_REQUIRED)
+        NetworkSignInFailure.AccountDisabled -> NativeSignInMessages.text("account_disabled")
+        NetworkSignInFailure.IdentityLinkedElsewhere -> NativeSignInMessages.text("identity_linked_elsewhere", providerName)
+        NetworkSignInFailure.NotFound -> uiText(CommonR.string.tvSignIn_error_networkProviderGone, providerName)
+        NetworkSignInFailure.ProviderUnavailable -> NativeSignInMessages.text("provider_unavailable", providerName)
+        NetworkSignInFailure.RateLimited -> NativeSignInMessages.text(NativeSignInMessages.RATE_LIMITED)
         NetworkSignInFailure.Other -> when {
             // AuthRepository's code for a sign-in whose account or server changed underneath it.
-            error.error == "identity_changed" -> NativeSignInMessages.forReason(NativeSignInMessages.ACCOUNT_CHANGED)
+            error.error == "identity_changed" -> NativeSignInMessages.text(NativeSignInMessages.ACCOUNT_CHANGED)
             error.code == 0 && error.error == NativeSignInMessages.UPDATE_REQUIRED ->
-                NativeSignInMessages.forReason(NativeSignInMessages.UPDATE_REQUIRED)
-            else -> NativeSignInMessages.forReason("login_failed", providerName)
+                NativeSignInMessages.text(NativeSignInMessages.UPDATE_REQUIRED)
+            else -> NativeSignInMessages.text("login_failed", providerName)
         }
     }
 
 /**
- * The phone's copy for provider refusals that sign-in ("Continue as …") and
- * "Connect <provider>" in Settings share.
+ * The English copy for provider refusals that "Connect <provider>" in
+ * Settings shows. Sign-in ("Continue as …") shows the same words from the
+ * catalog ([networkSignInMessage]); this stays until Settings converts.
  */
 internal object ProviderRefusalText {
     /** `network_identity_required`: the app reached the server some other way; [toDo] is what needs that address. */

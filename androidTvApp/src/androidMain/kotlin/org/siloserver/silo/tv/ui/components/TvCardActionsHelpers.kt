@@ -10,6 +10,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.withWatched
@@ -121,10 +122,13 @@ fun MediaActionsCoordinator.tvCardActions(
 // The menu has already closed, so without this the rollback is the only sign
 // that the write failed.
 private fun showWatchedWriteFailed(context: Context, watched: Boolean, result: ApiResult<*>) {
-    val action = if (watched) "watched" else "unwatched"
+    val detail = result.errorMessage(context.getString(CommonR.string.shell_card_markFailedRetry))
     Toast.makeText(
         context,
-        "Couldn't mark as $action. ${result.errorMessage("Try again.")}",
+        context.getString(
+            if (watched) CommonR.string.shell_card_markWatchedFailed else CommonR.string.shell_card_markUnwatchedFailed,
+            detail,
+        ),
         Toast.LENGTH_LONG,
     ).show()
 }

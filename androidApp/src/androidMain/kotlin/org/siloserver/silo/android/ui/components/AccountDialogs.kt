@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.runtime.Composable
@@ -93,7 +94,7 @@ fun SignOutConfirmDialog(
     val downloads = downloadsSentence(CommonR.string.account_signOut_downloads, summary)
     val serverHasOtherAccount = accounts.any { it.serverId == targetServer && it.localAccountId != targetAccount }
     SiloDialog(
-        title = stringResource(CommonR.string.account_signOut_question, accountName, serverName),
+        title = stringResourceWithNames(CommonR.string.account_signOut_question, accountName, serverName),
         message = downloads,
         onDismissRequest = onDismiss,
         icon = Icons.AutoMirrored.Rounded.Logout,

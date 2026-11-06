@@ -23,7 +23,10 @@ import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeBody
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButton
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeErrorText
@@ -74,9 +77,9 @@ fun TvSetupScreen(
         TvMarqueeScreen(
             copyScroll = rememberTvImeAwareFormScrollState(),
             copy = {
-                TvMarqueeHeadline("Set up\nyour server")
+                TvMarqueeHeadline(stringResource(CommonR.string.setup_firstAdmin_headline))
                 TvMarqueeBody(
-                    "This server has no accounts yet. Create the first one; it becomes the admin.",
+                    stringResource(CommonR.string.setup_firstAdmin_lead),
                     modifier = Modifier.padding(top = 11.dp),
                 )
                 Column(
@@ -88,7 +91,7 @@ fun TvSetupScreen(
                             value = state.username,
                             onValueChange = viewModel::onUsernameChanged,
                             icon = Icons.Outlined.Person,
-                            placeholder = "Username",
+                            placeholder = stringResource(CommonR.string.tvSignIn_form_usernamePlaceholder),
                             enabled = !state.isLoading,
                             focusRequester = usernameFocus,
                         )
@@ -98,7 +101,7 @@ fun TvSetupScreen(
                             value = state.email,
                             onValueChange = viewModel::onEmailChanged,
                             icon = Icons.Outlined.Email,
-                            placeholder = "Email",
+                            placeholder = stringResource(CommonR.string.account_create_email),
                             keyboardType = KeyboardType.Email,
                             enabled = !state.isLoading,
                         )
@@ -108,7 +111,7 @@ fun TvSetupScreen(
                             value = state.password,
                             onValueChange = viewModel::onPasswordChanged,
                             icon = Icons.Outlined.Lock,
-                            placeholder = "Password",
+                            placeholder = stringResource(CommonR.string.tvSignIn_form_passwordPlaceholder),
                             isSecure = true,
                             imeAction = ImeAction.Done,
                             onImeAction = { if (!state.isLoading) viewModel.onCreateAccountClick() },
@@ -117,9 +120,9 @@ fun TvSetupScreen(
                         )
                     }
                 }
-                state.error?.let { TvMarqueeErrorText(it, Modifier.width(380.dp).padding(top = 8.dp)) }
+                state.error?.let { TvMarqueeErrorText(it.text(), Modifier.width(380.dp).padding(top = 8.dp)) }
                 TvMarqueeButton(
-                    text = if (state.isLoading) "Creating account…" else "Create account",
+                    text = stringResource(if (state.isLoading) CommonR.string.tvSignIn_form_creatingAccount else CommonR.string.account_create_submit),
                     onClick = viewModel::onCreateAccountClick,
                     isLoading = state.isLoading,
                     enabled = !state.isLoading,
@@ -130,14 +133,14 @@ fun TvSetupScreen(
                 TvMarqueeCard {
                     TvMarqueeCardSymbol(Icons.Outlined.AdminPanelSettings)
                     Text(
-                        "The first account",
+                        stringResource(CommonR.string.tvSignIn_setup_cardTitle),
                         color = MarqueeColors.Ink,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(top = 17.dp),
                     )
                     TvMarqueeBody(
-                        "It runs the server. Add more accounts later from the web admin.",
+                        stringResource(CommonR.string.tvSignIn_setup_cardBody),
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(top = 7.dp),
                     )

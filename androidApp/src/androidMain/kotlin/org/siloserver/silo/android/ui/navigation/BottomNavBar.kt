@@ -54,6 +54,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -61,6 +62,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import androidx.navigation.NavOptionsBuilder
+import androidx.annotation.StringRes
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.android.ui.theme.SiloNavPillBorder
 import org.siloserver.silo.android.ui.theme.SiloNavPillContent
 import org.siloserver.silo.android.ui.theme.SiloNavPillSelected
@@ -81,17 +84,17 @@ val LocalBottomChromeInset = compositionLocalOf { 0.dp }
  */
 enum class Tab(
     val route: String,
-    val label: String,
+    @StringRes val labelRes: Int,
     val icon: ImageVector,
     val selectedIcon: ImageVector,
 ) {
-    Home(Route.Home.route, "Home", Icons.Outlined.Home, Icons.Filled.Home),
-    Libraries(Route.Libraries.route, "Libraries", Icons.Outlined.GridView, Icons.Filled.GridView),
-    ForYou(Route.Recommendations.route, "For You", Icons.Outlined.AutoAwesome, Icons.Filled.AutoAwesome),
-    Calendar(Route.Calendar.route, "Calendar", Icons.Outlined.CalendarMonth, Icons.Filled.CalendarMonth),
+    Home(Route.Home.route, CommonR.string.tab_home, Icons.Outlined.Home, Icons.Filled.Home),
+    Libraries(Route.Libraries.route, CommonR.string.shell_tab_libraries, Icons.Outlined.GridView, Icons.Filled.GridView),
+    ForYou(Route.Recommendations.route, CommonR.string.topBar_forYou, Icons.Outlined.AutoAwesome, Icons.Filled.AutoAwesome),
+    Calendar(Route.Calendar.route, CommonR.string.topBar_calendar, Icons.Outlined.CalendarMonth, Icons.Filled.CalendarMonth),
     Downloads(
         Route.Downloads.route,
-        "Downloads",
+        CommonR.string.tab_downloads,
         Icons.Outlined.Download,
         Icons.Filled.Download,
     ),
@@ -379,15 +382,16 @@ private fun PillTabItem(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
     ) {
+        val label = stringResource(tab.labelRes)
         Icon(
             imageVector = if (selected) tab.selectedIcon else tab.icon,
-            contentDescription = tab.label,
+            contentDescription = label,
             tint = tint,
             modifier = Modifier.size(25.dp),
         )
         Spacer(modifier = Modifier.height(2.dp))
         Text(
-            text = tab.label,
+            text = label,
             color = tint,
             fontSize = 11.sp,
             lineHeight = 13.sp,

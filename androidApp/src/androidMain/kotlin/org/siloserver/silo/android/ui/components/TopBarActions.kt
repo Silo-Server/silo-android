@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -202,7 +204,7 @@ fun TopBarProfileMenu(
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.Person,
-                        contentDescription = "Account and menu",
+                        contentDescription = stringResource(CommonR.string.topBar_accountMenu),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -253,7 +255,7 @@ private fun TopBarRemoteControlButton(remoteControl: TopBarRemoteControl) {
         ) {
             Icon(
                 imageVector = Icons.Outlined.SettingsRemote,
-                contentDescription = "Remote Control",
+                contentDescription = stringResource(CommonR.string.topBar_remote_title),
             )
         }
         SiloDropdownMenu(
@@ -261,14 +263,14 @@ private fun TopBarRemoteControlButton(remoteControl: TopBarRemoteControl) {
             onDismissRequest = { menuExpanded = false },
         ) {
             SiloDropdownMenuItem(
-                text = { Text("Remote Control") },
+                text = { Text(stringResource(CommonR.string.topBar_remote_title)) },
                 onClick = {
                     menuExpanded = false
                     remoteControl.onOpen()
                 },
             )
             SiloDropdownMenuItem(
-                text = { Text("Choose TV") },
+                text = { Text(stringResource(CommonR.string.topBar_remote_chooseTv)) },
                 onClick = {
                     menuExpanded = false
                     remoteControl.onChooseTv()
@@ -278,7 +280,7 @@ private fun TopBarRemoteControlButton(remoteControl: TopBarRemoteControl) {
             SiloDropdownMenuItem(
                 text = {
                     Text(
-                        "Turn Off Control Mode",
+                        stringResource(CommonR.string.topBar_remote_turnOff),
                         color = MaterialTheme.colorScheme.error,
                     )
                 },
@@ -317,7 +319,7 @@ fun TabTopBarActions(
         TopBarIconButton(onClick = onSearchClick) {
             Icon(
                 imageVector = Icons.Outlined.Search,
-                contentDescription = "Search",
+                contentDescription = stringResource(CommonR.string.topBar_search),
             )
         }
         TopBarProfileMenu(

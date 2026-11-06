@@ -39,7 +39,9 @@ sealed interface NativeSignInResult {
         override val serverEntryId: String,
         /** A server `error=` reason or one of [NativeSignInMessages]' own codes. */
         val reason: String,
+        /** English, for Sign-in settings; phone sign-in shows [NativeSignInMessages.text] for [reason] and [providerName]. */
         val message: String,
+        val providerName: String? = null,
     ) : NativeSignInResult
 }
 
@@ -48,8 +50,11 @@ sealed interface NativeSignInStart {
     /** A flow is recorded; open [url] in the browser. */
     data class Open(val url: String) : NativeSignInStart
 
-    /** No flow was recorded; show [message]. */
-    data class Refused(val reason: String, val message: String) : NativeSignInStart
+    /**
+     * No flow was recorded; show [message] (English, for Sign-in settings) or
+     * [NativeSignInMessages.text] for [reason] and [providerName].
+     */
+    data class Refused(val reason: String, val message: String, val providerName: String? = null) : NativeSignInStart
 }
 
 /**
@@ -193,7 +198,7 @@ class NativeSignInCoordinator(
             prompt = prompt.takeIf { purpose == NativeSignInPurpose.SignIn },
         )
         if (serverOrigin == null || url == null) {
-            return NativeSignInStart.Refused("login_failed", NativeSignInMessages.forReason("login_failed", providerName))
+            return NativeSignInStart.Refused("login_failed", NativeSignInMessages.forReason("login_failed", providerName), providerName)
         }
         return mutex.withLock {
             flowGeneration++
@@ -312,6 +317,7 @@ class NativeSignInCoordinator(
         serverEntryId = pending.serverEntryId,
         reason = reason,
         message = NativeSignInMessages.forReason(reason, pending.providerName),
+        providerName = pending.providerName,
     )
 
     companion object {

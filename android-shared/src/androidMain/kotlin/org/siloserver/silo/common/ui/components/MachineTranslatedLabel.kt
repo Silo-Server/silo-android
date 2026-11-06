@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.TextStyle
@@ -19,9 +20,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-
-/** The words every machine-translation marker uses, shown or spoken. */
-const val MachineTranslatedDescription = "Translated by AI"
+import org.siloserver.silo.common.R
 
 /**
  * Marks text the server reports as machine-translated (the
@@ -37,8 +36,10 @@ fun MachineTranslatedLabel(
     fontSize: TextUnit = 12.sp,
     iconSize: Dp = 12.dp,
 ) {
+    // The words every machine-translation marker uses, shown or spoken.
+    val description = stringResource(R.string.detail_translation_translated)
     Row(
-        modifier = modifier.clearAndSetSemantics { contentDescription = MachineTranslatedDescription },
+        modifier = modifier.clearAndSetSemantics { contentDescription = description },
         horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -50,7 +51,7 @@ fun MachineTranslatedLabel(
         )
         if (!compact) {
             BasicText(
-                text = MachineTranslatedDescription,
+                text = description,
                 style = TextStyle(color = color, fontSize = fontSize),
                 maxLines = 1,
             )

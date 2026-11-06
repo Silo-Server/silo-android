@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.components
 
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 
@@ -315,7 +317,7 @@ fun TvCatalogGrid(
                     userState = userState.takeIf { boxSet == null },
                     progress = boxSet?.watchedFraction,
                     mediaType = if (boxSet != null) "movie" else item.type,
-                    badge = if (boxSet != null) "Box set" else null,
+                    badge = if (boxSet != null) stringResource(CommonR.string.shell_card_boxSet) else null,
                     cornerLabel = boxSet?.let { boxSetFilmCount(it.movieCount) },
                     caption = boxSet?.cardCaption(),
                     sleeves = org.siloserver.silo.tv.ui.theme.BoxSetSleeves.takeIf { boxSet != null },
@@ -398,7 +400,7 @@ private fun TvLoadMoreRetryFooter(onRetry: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = "Couldn't load more",
+                text = stringResource(CommonR.string.shell_grid_loadMoreFailed),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -406,7 +408,7 @@ private fun TvLoadMoreRetryFooter(onRetry: () -> Unit) {
                 onClick = onRetry,
                 contentPadding = PaddingValues(horizontal = 32.dp, vertical = 12.dp),
             ) {
-                Text("Retry", style = MaterialTheme.typography.labelLarge)
+                Text(stringResource(CommonR.string.common_retry), style = MaterialTheme.typography.labelLarge)
             }
         }
     }

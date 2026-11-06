@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -38,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.screens.auth.AuthColors
 import org.siloserver.silo.android.ui.screens.libraries.libraryIcon
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.model.profile.ANY_RATING_LABEL
 import org.siloserver.silo.model.profile.AssignableLibraries
@@ -70,7 +72,7 @@ internal fun ProfileAccessControls(
             .padding(16.dp)
             .animateContentSize(),
     ) {
-        PanelLabel("Maximum rating")
+        PanelLabel(stringResource(CommonR.string.profiles_access_maxRating))
         RatingLadder(
             ratings = contentRatingOptions(CONTENT_RATINGS, access.maxContentRating),
             ceiling = access.maxContentRating,
@@ -84,7 +86,7 @@ internal fun ProfileAccessControls(
             modifier = Modifier.padding(vertical = 16.dp),
         )
 
-        PanelLabel("Libraries")
+        PanelLabel(stringResource(CommonR.string.profiles_access_libraries))
         LibraryModeSwitch(
             restricted = access.libraryRestrictionsEnabled,
             onRestrictedChange = onLibraryRestrictionsToggled,
@@ -103,18 +105,18 @@ internal fun ProfileAccessControls(
                         modifier = Modifier.size(16.dp),
                     )
                     Spacer(modifier = Modifier.width(10.dp))
-                    HintText("Loading libraries…")
+                    HintText(stringResource(CommonR.string.newProfile_librariesLoading))
                 }
 
                 is AssignableLibraries.Failed -> Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) { HintText(libraries.text) }
                     TextButton(onClick = onRetryLibraries, enabled = !libraries.retrying) {
-                        Text("Try Again", color = AuthColors.Primary)
+                        Text(stringResource(CommonR.string.profiles_access_retry), color = AuthColors.Primary)
                     }
                 }
 
                 is AssignableLibraries.Loaded -> if (libraries.libraries.isEmpty()) {
-                    HintText("No libraries are available to assign.", Modifier.padding(vertical = 10.dp))
+                    HintText(stringResource(CommonR.string.newProfile_librariesEmpty), Modifier.padding(vertical = 10.dp))
                 } else {
                     Column {
                         libraries.libraries.forEach { library ->
@@ -211,7 +213,10 @@ private fun LibraryModeSwitch(
             .padding(3.dp)
             .selectableGroup(),
     ) {
-        listOf(false to "All libraries", true to "Choose libraries").forEach { (option, label) ->
+        listOf(
+            false to stringResource(CommonR.string.profiles_access_allLibraries),
+            true to stringResource(CommonR.string.profiles_access_chooseLibraries),
+        ).forEach { (option, label) ->
             val selected = option == restricted
             Box(
                 modifier = Modifier

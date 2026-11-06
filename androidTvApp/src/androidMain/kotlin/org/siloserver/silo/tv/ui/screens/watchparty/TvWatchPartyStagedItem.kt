@@ -3,7 +3,11 @@ package org.siloserver.silo.tv.ui.screens.watchparty
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.ui.res.stringResource
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.watchparty.watchPartyEpisodeCode
+import org.siloserver.silo.common.watchparty.watchPartyRuntimeText
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.watchtogether.Suggestion
 import org.siloserver.silo.network.ApiResult
@@ -89,11 +93,11 @@ internal fun rememberTvStagedPreview(
             overview = loaded.overview?.takeIf { it.isNotBlank() },
             facts = listOfNotNull(
                 loaded.year.takeIf { it > 0 && loaded.type != "episode" }?.toString(),
-                loaded.runtime.takeIf { it > 0 }?.let(::tvWatchPartyRuntime),
+                loaded.runtime.takeIf { it > 0 }?.let { watchPartyRuntimeText(it) },
             ),
             chips = listOfNotNull(
-                version?.resolution?.let(::tvWatchPartyResolutionChip),
-                "HDR".takeIf { version?.hdr == true },
+                version?.resolution?.let { tvWatchPartyResolutionChip(it, uhd = stringResource(CommonR.string.watchParty_facts_uhd)) },
+                stringResource(CommonR.string.watchParty_facts_hdr).takeIf { version?.hdr == true },
             ),
             spoilers = WatchPartySpoilers.of(loaded),
         )
@@ -109,24 +113,22 @@ internal fun rememberTvStagedPreview(
             spoilers = WatchPartySpoilers.of(suggestion),
         )
     }
-    return TvStagedPreview(title = "Loading title…", subtitle = null, posterUrl = null)
+    return TvStagedPreview(title = stringResource(CommonR.string.watchParty_hero_loading), subtitle = null, posterUrl = null)
 }
 
+@Composable
 private fun tvDetailSubtitle(detail: ItemDetail): String? = when (detail.type) {
     "episode" -> listOfNotNull(
         detail.seriesTitle?.takeIf { it.isNotBlank() },
-        detail.seasonNumber?.let { season -> detail.episodeNumber?.let { "S$season:E$it" } },
+        detail.seasonNumber?.let { season -> detail.episodeNumber?.let { watchPartyEpisodeCode(season, it) } },
     ).joinToString(" · ").ifBlank { null }
     else -> null
 }
 
-/** "2h 35m", "48m". */
-internal fun tvWatchPartyRuntime(minutes: Int): String =
-    if (minutes >= 60) "${minutes / 60}h ${minutes % 60}m" else "${minutes}m"
-
-private fun tvWatchPartyResolutionChip(resolution: String): String? = when (resolution.trim().lowercase()) {
+/** [uhd] ("4K") for a 2160p version, else the server's resolution as sent. */
+private fun tvWatchPartyResolutionChip(resolution: String, uhd: String): String? = when (resolution.trim().lowercase()) {
     "" -> null
-    "2160p", "4k", "uhd" -> "4K"
+    "2160p", "4k", "uhd" -> uhd
     else -> resolution.trim().uppercase()
 }
 

@@ -48,6 +48,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,10 +69,14 @@ import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.util.rememberDominantColor
+import android.content.res.Resources
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.requests.RequestColors
 import org.siloserver.silo.common.requests.RequestRouter
 import org.siloserver.silo.common.requests.RequestRowCopy
 import org.siloserver.silo.common.requests.rememberRequestRouter
+import org.siloserver.silo.common.requests.requestResources
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.catalog.ExternalRatings
 import org.siloserver.silo.model.catalog.ItemDetail
@@ -214,7 +219,7 @@ private fun RequestDetailContent(
                             modifier = Modifier.padding(bottom = 40.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            RequestsSectionHeader(title = "More like this")
+                            RequestsSectionHeader(title = stringResource(CommonR.string.requests_moreLikeThis))
                             RequestCardRail(items = recommendations, key = { "${it.mediaType}:${it.tmdbId}" }) { result ->
                                 RequestMediaCard(item = result, onClick = { router.openResult(result) })
                             }
@@ -250,7 +255,7 @@ private fun RequestDetailActions(
             )
         } else if (state.showsRequestHint) {
             Text(
-                text = "Not in your library yet. Your server admin reviews requests.",
+                text = stringResource(CommonR.string.requests_detail_hint),
                 fontSize = 12.sp,
                 color = SiloSecondaryText,
                 textAlign = TextAlign.Center,
@@ -263,7 +268,7 @@ private fun RequestDetailActions(
         }
         if (state.canCancel) {
             Text(
-                text = "Cancel Request",
+                text = stringResource(CommonR.string.requests_action_cancel),
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = RequestColors.Rose,
@@ -368,7 +373,7 @@ private fun RequestStatusCard(progress: RequestProgress, record: MediaRequest?) 
             .padding(16.dp),
     ) {
         Text(
-            text = "REQUEST STATUS",
+            text = stringResource(CommonR.string.requests_detail_statusHeading),
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = 1.6.sp,
@@ -407,7 +412,7 @@ private fun StepRow(step: RequestStep, progress: RequestProgress, record: MediaR
                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
                 color = if (isDone || isCurrent) SiloOnSurface else SiloOnSurface.copy(alpha = 0.45f),
             )
-            stepDetail(step, isDone, isCurrent, progress, record)?.let {
+            stepDetail(requestResources(), step, isDone, isCurrent, progress, record)?.let {
                 Text(text = it, fontSize = 12.sp, color = SiloSecondaryText)
             }
         }
@@ -438,14 +443,21 @@ private fun stepTitle(step: RequestStep, isCurrent: Boolean, progress: RequestPr
     }
 }
 
-private fun stepDetail(step: RequestStep, isDone: Boolean, isCurrent: Boolean, progress: RequestProgress, record: MediaRequest?): String? {
+private fun stepDetail(
+    resources: Resources,
+    step: RequestStep,
+    isDone: Boolean,
+    isCurrent: Boolean,
+    progress: RequestProgress,
+    record: MediaRequest?,
+): String? {
     val reason = (progress.display as? RequestDisplayState.NeedsAttention)?.reason
     return when (step) {
-        RequestStep.Requested -> RequestRowCopy.stamp(record?.createdAt)
+        RequestStep.Requested -> RequestRowCopy.stamp(resources, record?.createdAt)
         RequestStep.Approval -> when {
-            isDone -> RequestRowCopy.stamp(record?.approvedAt)
+            isDone -> RequestRowCopy.stamp(resources, record?.approvedAt)
             isCurrent && progress.display is RequestDisplayState.NeedsAttention -> requestReasonCopy(reason)
-            isCurrent -> "Waiting for your server admin"
+            isCurrent -> resources.getString(CommonR.string.requests_step_waitingForAdmin)
             else -> null
         }
         RequestStep.Download -> when {
@@ -453,7 +465,7 @@ private fun stepDetail(step: RequestStep, isDone: Boolean, isCurrent: Boolean, p
             isCurrent && progress.display is RequestDisplayState.NeedsAttention -> requestReasonCopy(reason)
             else -> record?.let { RequestTargetSummary.text(it.targets) }
         }
-        RequestStep.Library -> if (isCurrent) "Your library is picking it up" else null
+        RequestStep.Library -> if (isCurrent) resources.getString(CommonR.string.requests_step_libraryPickingUp) else null
     }
 }
 
@@ -473,9 +485,10 @@ private fun RequestMediaDetail.toHeroDetail(): ItemDetail = ItemDetail(
     ratings = listOfNotNull(ExternalRatings.tmdb(voteAverage)),
 )
 
+@Composable
 private fun RequestMediaDetail.creditText(): String? = when {
-    director.isNotBlank() -> "Directed by $director"
-    creators.isNotEmpty() -> "Created by ${creators.take(2).joinToString(", ")}"
+    director.isNotBlank() -> stringResourceWithNames(CommonR.string.detail_directedBy, director)
+    creators.isNotEmpty() -> stringResourceWithNames(CommonR.string.requests_createdBy, creators.take(2).joinToString(", "))
     else -> null
 }
 

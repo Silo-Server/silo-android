@@ -46,6 +46,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -65,6 +66,8 @@ import androidx.tv.material3.LocalTextStyle
 import androidx.tv.material3.Text
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material3.CircularProgressIndicator
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeScrim
 import org.siloserver.silo.common.ui.marquee.MarqueeScrimStyle
@@ -198,7 +201,7 @@ fun TvMarqueeScreen(
             Row(Modifier.fillMaxWidth().height(32.dp), verticalAlignment = Alignment.CenterVertically) {
                 Image(
                     painter = painterResource(R.drawable.silo_wordmark),
-                    contentDescription = "Silo",
+                    contentDescription = stringResource(CommonR.string.app_name),
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.width(75.dp),
                 )
@@ -276,9 +279,10 @@ fun TvMarqueeBody(
 /** Inline error under a control. */
 @Composable
 fun TvMarqueeErrorText(text: String, modifier: Modifier = Modifier) {
+    val spoken = stringResource(CommonR.string.shell_marquee_errorSpoken, text)
     Text(
         text,
-        modifier = modifier.clearAndSetSemantics { contentDescription = "Error: $text" },
+        modifier = modifier.clearAndSetSemantics { contentDescription = spoken },
         color = MarqueeColors.Error,
         fontSize = 14.sp,
         lineHeight = 16.sp,
@@ -331,7 +335,7 @@ fun TvUsePhoneCard(text: String) {
     TvMarqueeCard {
         TvMarqueeCardSymbol(androidx.compose.material.icons.Icons.Outlined.PhoneAndroid)
         Text(
-            "Easier with a phone",
+            stringResource(CommonR.string.shell_marquee_usePhoneTitle),
             color = MarqueeColors.Ink,
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
@@ -348,6 +352,12 @@ fun TvUsePhoneCard(text: String) {
 @Composable
 fun TvMarqueeServerCard(name: String, address: String, markUrl: String?, secure: Boolean, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(15.dp)
+    val spoken = stringResourceWithNames(
+        CommonR.string.shell_marquee_serverSpoken,
+        name,
+        address,
+        stringResource(if (secure) CommonR.string.firstRun_badge_secure else CommonR.string.firstRun_badge_http),
+    )
     Row(
         modifier
             .clip(shape)
@@ -355,7 +365,7 @@ fun TvMarqueeServerCard(name: String, address: String, markUrl: String?, secure:
             .border(1.dp, MarqueeColors.Hairline, shape)
             .padding(12.dp)
             .semantics(mergeDescendants = true) {
-                contentDescription = "$name, $address, ${if (secure) "Secure" else "HTTP"}"
+                contentDescription = spoken
             },
         horizontalArrangement = Arrangement.spacedBy(11.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -376,7 +386,7 @@ fun TvMarqueeServerCard(name: String, address: String, markUrl: String?, secure:
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                if (secure) "SECURE" else "HTTP",
+                stringResource(if (secure) CommonR.string.shell_marquee_secureBadge else CommonR.string.firstRun_badge_http),
                 color = if (warning) MarqueeColors.Warning else MarqueeColors.Ink,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -416,11 +426,12 @@ fun TvMarqueeCodeTiles(code: String, modifier: Modifier = Modifier, maxWidth: Dp
         val measured = measurer.measure(shown, style, softWrap = false, maxLines = 1).size.width
         if (measured <= widthPx) 40f else 40f * widthPx / measured
     }
+    val spoken = stringResource(CommonR.string.shell_marquee_codeSpoken, text.toList().joinToString(", "))
     // A code reads left to right in every locale.
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Text(
             shown,
-            modifier = modifier.clearAndSetSemantics { contentDescription = "Code: " + text.toList().joinToString(", ") },
+            modifier = modifier.clearAndSetSemantics { contentDescription = spoken },
             maxLines = 1,
             softWrap = false,
             style = style.copy(fontSize = fontSize.sp),

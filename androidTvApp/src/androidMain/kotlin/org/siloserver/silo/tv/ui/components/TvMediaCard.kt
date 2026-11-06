@@ -5,6 +5,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.components.BoxSetSleeveColors
 import org.siloserver.silo.common.ui.components.boxSetSleeves
 import org.siloserver.silo.common.ui.components.SpoilerImage
@@ -228,7 +230,7 @@ fun TvMediaCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Check,
-                                contentDescription = "Watched",
+                                contentDescription = stringResource(CommonR.string.shell_card_watched),
                                 tint = Color.Black,
                                 modifier = Modifier.size(watchedBadgeIconSize),
                             )

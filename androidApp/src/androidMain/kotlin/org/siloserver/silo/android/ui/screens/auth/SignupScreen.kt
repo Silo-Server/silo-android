@@ -16,6 +16,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import org.koin.compose.viewmodel.koinViewModel
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.android.ui.components.marquee.MarqueeButton
 import org.siloserver.silo.android.ui.components.marquee.MarqueeErrorHaptic
 import org.siloserver.silo.android.ui.components.marquee.MarqueeErrorText
@@ -25,6 +27,7 @@ import org.siloserver.silo.android.ui.components.marquee.MarqueeIconButton
 import org.siloserver.silo.android.ui.components.marquee.MarqueeSeparator
 import org.siloserver.silo.android.ui.components.marquee.MarqueeStage
 import org.siloserver.silo.android.ui.components.marquee.MarqueeTextField
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.ui.marquee.MarqueeScrimStyle
 
 /**
@@ -54,23 +57,23 @@ fun SignupScreen(
         onBack = onNavigateToLogin,
         blockBack = state.isLoading,
         topBar = {
-            MarqueeIconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back to sign in", onNavigateToLogin, enabled = !state.isLoading)
+            MarqueeIconButton(Icons.AutoMirrored.Filled.ArrowBack, stringResource(CommonR.string.account_backToSignIn), onNavigateToLogin, enabled = !state.isLoading)
         },
     ) {
-        MarqueeHeadline(title = "Create your\naccount", lead = "You'll need an invite code from the server's admin.")
+        MarqueeHeadline(title = stringResource(CommonR.string.account_create_headline), lead = stringResource(CommonR.string.account_create_lead))
         MarqueeFieldGroup(isError = state.error != null, modifier = Modifier.padding(top = 24.dp)) {
             MarqueeTextField(
                 value = state.username,
                 onValueChange = viewModel::onUsernameChanged,
                 icon = Icons.Outlined.Person,
-                placeholder = "Username",
+                placeholder = stringResource(CommonR.string.tvSignIn_form_usernamePlaceholder),
             )
             MarqueeSeparator()
             MarqueeTextField(
                 value = state.email,
                 onValueChange = viewModel::onEmailChanged,
                 icon = Icons.Outlined.Email,
-                placeholder = "Email",
+                placeholder = stringResource(CommonR.string.account_create_email),
                 keyboardType = KeyboardType.Email,
             )
             MarqueeSeparator()
@@ -78,7 +81,7 @@ fun SignupScreen(
                 value = state.password,
                 onValueChange = viewModel::onPasswordChanged,
                 icon = Icons.Outlined.Lock,
-                placeholder = "Password",
+                placeholder = stringResource(CommonR.string.tvSignIn_form_passwordPlaceholder),
                 isSecure = true,
             )
             MarqueeSeparator()
@@ -86,14 +89,14 @@ fun SignupScreen(
                 value = state.inviteCode,
                 onValueChange = viewModel::onInviteCodeChanged,
                 icon = Icons.Outlined.ConfirmationNumber,
-                placeholder = "Invite code",
+                placeholder = stringResource(CommonR.string.account_create_inviteCode),
                 imeAction = ImeAction.Go,
                 onImeAction = viewModel::onSignupClick,
             )
         }
-        state.error?.let { MarqueeErrorText(it, Modifier.padding(top = 10.dp)) }
+        state.error?.let { MarqueeErrorText(it.text(), Modifier.padding(top = 10.dp)) }
         MarqueeButton(
-            text = if (state.isLoading) "Creating…" else "Create account",
+            text = stringResource(if (state.isLoading) CommonR.string.account_create_creating else CommonR.string.account_create_submit),
             onClick = viewModel::onSignupClick,
             isLoading = state.isLoading,
             enabled = !state.isLoading,

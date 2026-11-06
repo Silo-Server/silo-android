@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,6 +36,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.watchtogether.RoomSelectionMode
 import org.siloserver.silo.repository.WatchPartyPendingAction
 import org.siloserver.silo.tv.ui.focus.TvControlState
@@ -159,9 +162,9 @@ fun TvWatchPartyHubScreen(
             // ---- The pitch and whatever the viewer should know --------------
             Column(modifier = Modifier.width(380.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TvPartyEyebrow("Watch Party")
+                    TvPartyEyebrow(stringResource(CommonR.string.watchParty_title))
                     Text(
-                        text = "Watch something\ntogether",
+                        text = stringResource(CommonR.string.watchParty_page_headline),
                         fontSize = TvPartyMetrics.heroTitle,
                         lineHeight = 54.sp,
                         fontWeight = FontWeight.Bold,
@@ -169,7 +172,7 @@ fun TvWatchPartyHubScreen(
                         color = SiloOnSurface,
                     )
                     Text(
-                        text = "Pick a title, share the code, and everyone's playback stays in step.",
+                        text = stringResource(CommonR.string.watchParty_page_body),
                         fontSize = TvPartyMetrics.body,
                         lineHeight = 21.sp,
                         color = SiloSecondaryText,
@@ -177,19 +180,19 @@ fun TvWatchPartyHubScreen(
                 }
                 val ended = state.ended
                 if (showEnded && ended != null && current == null) {
-                    TvPartyBanner(message = tvWatchPartyEndedMessage(ended.reason))
+                    TvPartyBanner(message = stringResource(tvWatchPartyEndedMessage(ended.reason)))
                 }
                 val error = state.error
                 when {
                     error != null && !joinOpen -> TvPartyBanner(message = error, warning = true)
                     current != null -> Unit
-                    availability == null -> TvPartyBanner(message = "Checking Watch Party support…")
+                    availability == null -> TvPartyBanner(message = stringResource(CommonR.string.watchParty_page_checking))
                     availability is WatchPartyAvailability.Unsupported ->
-                        TvPartyBanner(message = "This server doesn't support Watch Party yet.")
+                        TvPartyBanner(message = stringResource(CommonR.string.watchParty_hub_unsupported))
                     availability == WatchPartyAvailability.NotAllowed ->
-                        TvPartyBanner(message = "Watch Party is not available for this profile on this server.")
+                        TvPartyBanner(message = stringResource(CommonR.string.watchParty_page_unavailable))
                     availability is WatchPartyAvailability.ProbeFailed ->
-                        TvPartyBanner(message = "Couldn't check whether this server supports Watch Party.", warning = true)
+                        TvPartyBanner(message = stringResource(CommonR.string.watchParty_hub_probeFailed), warning = true)
                     else -> Unit
                 }
             }
@@ -199,37 +202,43 @@ fun TvWatchPartyHubScreen(
             Column(modifier = Modifier.width(320.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (current != null) {
-                        TvPartyEyebrow("Your party")
+                        TvPartyEyebrow(stringResource(CommonR.string.watchParty_hub_yourParty))
                         TvPartyButton(
-                            label = "Return to party",
+                            label = stringResource(CommonR.string.watchParty_hub_returnToParty),
                             icon = Icons.Filled.PlayArrow,
                             onClick = viewModel::returnToParty,
                             state = TvControlState.transient(!busy),
                             modifier = Modifier.defaultTarget(HubFocus.Return, returnFocus),
                         )
                         Text(
-                            text = "Party code ${tvWatchPartyDisplayCode(current.code)}",
+                            text = stringResource(CommonR.string.watchParty_partyCode, tvWatchPartyDisplayCode(current.code)),
                             fontSize = TvPartyMetrics.caption,
                             color = SiloSecondaryText,
                         )
                     } else {
-                        TvPartyEyebrow("Host")
+                        TvPartyEyebrow(stringResource(CommonR.string.watchParty_hub_hostSection))
                         if (available && !canHost) {
                             Text(
-                                text = "This server can't host a Watch Party. You can still join one.",
+                                text = stringResource(CommonR.string.watchParty_hub_cannotHost),
                                 fontSize = TvPartyMetrics.caption,
                                 color = SiloSecondaryText,
                             )
                         } else {
                             TvPartyButton(
-                                label = if (state.busy == WatchPartyPendingAction.Create) "Starting your party…" else "Start a party",
+                                label = stringResource(
+                                    if (state.busy == WatchPartyPendingAction.Create) {
+                                        CommonR.string.watchParty_hub_starting
+                                    } else {
+                                        CommonR.string.watchParty_page_start
+                                    },
+                                ),
                                 icon = Icons.Filled.Add,
                                 onClick = { viewModel.host() },
                                 state = entryState,
                                 modifier = Modifier.defaultTarget(HubFocus.Host, hostFocus),
                             )
                             TvPartyButton(
-                                label = "Start a party and let everyone vote",
+                                label = stringResource(CommonR.string.watchParty_page_startVote),
                                 kind = TvPartyButtonKind.Secondary,
                                 onClick = { viewModel.host(RoomSelectionMode.Vote) },
                                 state = entryState,
@@ -237,10 +246,10 @@ fun TvWatchPartyHubScreen(
                         }
                         if (recent != null) {
                             TvPartyButton(
-                                label = if (state.busy == WatchPartyPendingAction.Join) {
-                                    "Joining…"
-                                } else {
-                                    "Rejoin ${recent.title ?: "recent party"}"
+                                label = when {
+                                    state.busy == WatchPartyPendingAction.Join -> stringResource(CommonR.string.watchParty_code_joining)
+                                    recent.title == null -> stringResource(CommonR.string.watchParty_rejoin_recent)
+                                    else -> stringResourceWithNames(CommonR.string.watchParty_rejoin_title, recent.title.orEmpty())
                                 },
                                 icon = Icons.Filled.Refresh,
                                 kind = TvPartyButtonKind.Outlined,
@@ -251,13 +260,13 @@ fun TvWatchPartyHubScreen(
                         }
                         if (state.createRetryable) {
                             TvPartyButton(
-                                label = "Try again",
+                                label = stringResource(CommonR.string.common_tryAgain),
                                 kind = TvPartyButtonKind.Secondary,
                                 onClick = viewModel::retryCreate,
                                 state = entryState,
                             )
                             Text(
-                                text = "Finish creating the party you started.",
+                                text = stringResource(CommonR.string.watchParty_hub_finishCreating),
                                 fontSize = TvPartyMetrics.caption,
                                 color = SiloSecondaryText,
                             )
@@ -266,9 +275,9 @@ fun TvWatchPartyHubScreen(
                 }
                 if (current == null) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TvPartyEyebrow("Join")
+                        TvPartyEyebrow(stringResource(CommonR.string.watchParty_hub_joinSection))
                         TvPartyButton(
-                            label = "Join with a code",
+                            label = stringResource(CommonR.string.watchParty_page_joinWithCode),
                             kind = TvPartyButtonKind.Secondary,
                             onClick = {
                                 viewModel.clearError()
@@ -281,7 +290,7 @@ fun TvWatchPartyHubScreen(
                         )
                         if (!available) {
                             TvPartyButton(
-                                label = "Check again",
+                                label = stringResource(CommonR.string.watchParty_page_checkAgain),
                                 kind = TvPartyButtonKind.Secondary,
                                 onClick = { viewModel.refresh(force = true) },
                                 state = TvControlState.transient(availability != null),
