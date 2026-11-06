@@ -51,6 +51,8 @@ import org.siloserver.silo.viewmodel.PersonalListUiState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -405,7 +407,10 @@ private fun SavedShortcutPill(
             contentColor = if (selected) SiloBackground else SiloOnSurface,
             containerColor = if (selected) SiloOnSurface.copy(alpha = 0.96f) else Color.Transparent,
         ),
-        modifier = Modifier.height(40.dp),
+        // The colors alone don't reach TalkBack; announce the chosen list.
+        modifier = Modifier
+            .height(40.dp)
+            .semantics { this.selected = selected },
     ) {
         Icon(
             imageVector = icon,
