@@ -151,8 +151,9 @@ class CatalogSourceTest {
             Icon(Icons.Default.Close, contentDescription = null)
             Modifier.semantics { contentDescription = "${'$'}label, ${'$'}{value.text}" }
             Text("${'$'}{count} items")
+            Text("${'$'}title \"Retry\"")
         """.trimIndent()
-        assertEquals(listOf(1, 2, 5, 11, 14), hardcodedText(source))
+        assertEquals(listOf(1, 2, 5, 11, 14, 15), hardcodedText(source))
     }
 
     private fun names(xml: String): Set<String> =
@@ -172,7 +173,7 @@ class CatalogSourceTest {
 
     private companion object {
         // `(?<![.\w])` skips qualified calls such as `SiloLogAttribute.Text("…")`, which are log fields.
-        val LITERAL = Regex("""(?:(?<![.\w])Text\(\s*|\b(?:text|contentDescription)\s*=\s*)"([^"\n]*)""")
+        val LITERAL = Regex("""(?:(?<![.\w])Text\(\s*|\b(?:text|contentDescription)\s*=\s*)"((?:[^"\\\n]|\\.)*)""")
 
         // `$name` and `${…}` templates. A literal whose letters all sit in them
         // ("$label, $value") only joins text that was already translated.
