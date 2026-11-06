@@ -1,2 +1,9 @@
 android-shared/silo-locales.properties
+android-shared/src/androidMain/res/values-ar/strings_catalog.xml
+android-shared/src/androidMain/res/values-b+zh+Hans/strings_catalog.xml
+android-shared/src/androidMain/res/values-de/strings_catalog.xml
+android-shared/src/androidMain/res/values-es/strings_catalog.xml
+android-shared/src/androidMain/res/values-fr/strings_catalog.xml
+android-shared/src/androidMain/res/values-ja/strings_catalog.xml
+android-shared/src/androidMain/res/values-pt-rBR/strings_catalog.xml
 android-shared/src/androidMain/res/values/strings_catalog.xml
