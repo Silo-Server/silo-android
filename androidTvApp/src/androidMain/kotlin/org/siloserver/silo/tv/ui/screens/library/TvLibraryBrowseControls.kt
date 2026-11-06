@@ -66,6 +66,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
@@ -702,6 +703,7 @@ private fun FacetValuesScreen(
         // tvShowImeOnSelect: a plain text field keeps vertical D-pad for caret
         // moves, so focus could never reach the matches below it.
         OutlinedTextField(value = query, onValueChange = { query = it }, singleLine = true,
+            textStyle = androidx.compose.material3.LocalTextStyle.current.copy(textDirection = TextDirection.Content),
             placeholder = { androidx.compose.material3.Text("Search ${facet.title}") },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, showKeyboardOnFocus = false),
             modifier = Modifier.fillMaxWidth().tvShowImeOnSelect(),

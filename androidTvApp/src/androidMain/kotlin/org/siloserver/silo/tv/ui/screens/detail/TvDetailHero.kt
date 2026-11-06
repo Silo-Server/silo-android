@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -279,7 +280,9 @@ private fun EditorialColumn(
                             tagline = tagline.takeUnless { isCombinedSeriesEpisode },
                             collapsedMaxLines = 3,
                             dialogTitle = title,
-                            previewText = if (isCombinedSeriesEpisode) "$title · $line" else line,
+                            // The title is always isolated so the overview, not the
+                            // title, sets the paragraph direction.
+                            previewText = if (isCombinedSeriesEpisode) "\u2068$title\u2069 · $line" else line,
                         )
                     }
                 }
@@ -581,6 +584,7 @@ private val heroDisplayHero = TextStyle(
     fontSize = 42.sp,
     lineHeight = 46.sp,
     letterSpacing = 0.sp,
+    textDirection = TextDirection.Content,
     // Apple shadows the hero title (black@0.55, r16, y4) for legibility on
     // bright backdrops. Inherited by the subtitle/episode `.copy()` variants.
     shadow = Shadow(color = Color.Black.copy(alpha = 0.55f), offset = Offset(0f, 4f), blurRadius = 16f),

@@ -31,13 +31,16 @@
     <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
     <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
 
+    <!-- supportsRtl="false": the TV UI is English only, so it stays left to right in
+         right-to-left system languages, as on tvOS. Text still follows its own direction
+         (TextDirection.Content in the TV typography). Revisit when RTL translations ship. -->
     <application
         android:name=".SiloTvApplication"
         android:allowBackup="false"
         android:banner="@drawable/tv_banner"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:supportsRtl="true"
+        android:supportsRtl="false"
         android:theme="@style/Theme.SiloTv"
         android:usesCleartextTraffic="true">
 

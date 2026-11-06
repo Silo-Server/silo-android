@@ -201,10 +201,7 @@ fun TvEpisodeCard(
             // With the series on the line above, the episode number is what
             // separates two same-named episodes in a rail, so it leads.
             val secondaryLine = when {
-                seriesTitle != null -> listOfNotNull(
-                    episodeTag,
-                    title.takeIf { it.isNotBlank() },
-                ).joinToString(" \u2022 ").ifBlank { null }
+                seriesTitle != null -> tvEpisodeTitleLine(seasonNumber, episodeNumber, title)
                 episodeTag != null -> episodeTag
                 else -> year?.toString()
             }
