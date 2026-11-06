@@ -985,11 +985,8 @@ class SiloCastController(
         return null
     }
 
-    // The catalog rejects an apostrophe right after a placeholder ("{tv}'s"),
-    // so this sentence stays English until the coordinator rewords it.
-    private fun pairingChangedMessage(target: SiloCastTarget): SiloCastText = SiloCastText.Verbatim(
-        "${target.name}'s pairing code has changed. Scan the new code on its Connect a Phone screen.",
-    )
+    private fun pairingChangedMessage(target: SiloCastTarget): SiloCastText =
+        SiloCastText.Res(CommonR.string.cast_remote_error_pairingChanged, target.name)
 
     private fun openSiloOnRokuMessage(target: SiloCastTarget): SiloCastText =
         SiloCastText.Res(CommonR.string.cast_remote_error_openSiloOnRoku, target.name)
