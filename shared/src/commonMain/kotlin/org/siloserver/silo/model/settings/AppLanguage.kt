@@ -158,7 +158,11 @@ object AppLocaleReconciler {
      */
     fun choose(chosen: String, before: String, ledger: Ledger?): Decision = Decision(
         apply = chosen.takeIf { it != before },
-        ledger = Ledger(observed = chosen, baseline = if (chosen.isEmpty()) null else ledger?.baseline ?: before),
+        // A pseudo-locale (a debug check) is never worth restoring: follow the device instead.
+        ledger = Ledger(
+            observed = chosen,
+            baseline = if (chosen.isEmpty()) null else ledger?.baseline ?: before.takeUnless(AppLanguage::isPseudo) ?: "",
+        ),
         writeBack = chosen.substringBefore(','),
     )
 }

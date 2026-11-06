@@ -100,6 +100,10 @@ class AppLocaleReconcilerTest {
     @Test fun pickingAnotherLanguageKeepsTheOriginalBaseline() =
         assertEquals(Decision("en", Ledger("en", "fr"), writeBack = "en"), AppLocaleReconciler.choose("en", "es", Ledger("es", "fr")))
 
+    @Test fun pickingALanguageAfterAPseudoLocaleRestoresTheDeviceNotThePseudoLocale() =
+        // A debug en-XA check left the user's own value; another profile shouldn't get it back.
+        assertEquals(Decision("en", Ledger("en", ""), writeBack = "en"), AppLocaleReconciler.choose("en", "en-XA", Ledger("en-XA", null)))
+
     @Test fun interruptedRestoreFinishesTheRestore() =
         assertEquals(Decision("", Ledger("", null)), reconcile("es", null, Ledger("", null, applying = true)))
 }

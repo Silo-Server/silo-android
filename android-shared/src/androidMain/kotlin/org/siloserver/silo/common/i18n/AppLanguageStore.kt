@@ -119,6 +119,12 @@ class AppLanguageStore(
     /** The pseudo-locales the picker offers in debug builds ([AppLocales.pseudoLocales]). */
     val pseudoLocales: List<String> by lazy { AppLocales.pseudoLocales(appContext) }
 
+    /**
+     * The pseudo-locales the picker offers now: none while the profile has a
+     * value of its own, which would apply over them.
+     */
+    fun offeredPseudoLocales(state: AppLanguageState): List<String> = if (state.choice == null) pseudoLocales else emptyList()
+
     /** The pseudo-locale applied now, which the picker shows as selected. */
     fun appliedPseudoLocale(): String? =
         if (pseudoLocales.isEmpty()) null else AppLocales.current(appContext).takeIf { it in pseudoLocales }
@@ -210,15 +216,23 @@ class AppLanguageStore(
      */
     fun choose(activity: Activity, tag: String?) {
         foreground = WeakReference(activity)
-        if (tag != null && tag in pseudoLocales) {
-            // Debug only: applied on this device and never saved. The next
-            // check treats it as the user's own system value (see
-            // AppLocaleReconciler), so a profile without a value keeps it.
-            if (AppLocales.apply(appContext, tag)) activity.recreate()
-            return
-        }
         // The profile the picker was showing; a switch before this runs drops the pick.
         val shownFor = known?.identity ?: return
+        if (tag != null && tag in pseudoLocales) {
+            // Debug only: applied on this device and never saved. With no
+            // baseline the reconciler treats it as the user's own value, so it
+            // stays while the profile has no value of its own (the only time
+            // the picker offers it).
+            scope.launch {
+                lock.withLock {
+                    val identity = currentIdentity()?.takeIf { it == shownFor } ?: return@launch
+                    val apply = tag.takeIf { it != AppLocales.current(appContext) }
+                    applyLocked(AppLocaleReconciler.Decision(apply, Ledger(observed = tag, baseline = null)), identity)
+                    publish(identity)
+                }
+            }
+            return
+        }
         scope.launch {
             val chosen = tag.orEmpty()
             val identity = lock.withLock {
