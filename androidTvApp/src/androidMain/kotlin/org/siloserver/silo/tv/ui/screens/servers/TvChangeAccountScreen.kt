@@ -52,6 +52,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,6 +65,8 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.context.GlobalContext
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeScene
 import org.siloserver.silo.common.ui.marquee.MarqueeScrim
@@ -213,17 +217,17 @@ fun TvChangeAccountScreen(
         ) {
             Image(
                 painter = painterResource(R.drawable.silo_wordmark),
-                contentDescription = "Silo",
+                contentDescription = "Silo", // i18n-ignore
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.height(32.dp).width(63.dp),
             )
             TvMarqueeHeadline(
-                text = "Change account",
+                text = stringResource(CommonR.string.accounts_headline),
                 maxLines = 1,
                 modifier = Modifier.padding(top = 26.dp),
             )
             TvMarqueeBody(
-                text = "Choose a server, then the account to use on it.",
+                text = stringResource(CommonR.string.accounts_body),
                 modifier = Modifier.padding(top = 10.dp),
             )
             Spacer(Modifier.height(20.dp))
@@ -235,7 +239,7 @@ fun TvChangeAccountScreen(
                     footer = {
                         Spacer(Modifier.height(AddServerGap))
                         RailRow(
-                            name = "Add server",
+                            name = stringResource(CommonR.string.accounts_addServer),
                             server = null,
                             selected = false,
                             modifier = Modifier
@@ -306,9 +310,9 @@ fun TvChangeAccountScreen(
                     }
                 }
             }
-            state.error?.let {
+            if (state.changeFailed) {
                 Text(
-                    text = it,
+                    text = stringResource(CommonR.string.accounts_error_change),
                     fontSize = 14.sp,
                     color = MarqueeColors.Error,
                     modifier = Modifier.padding(top = 8.dp),
@@ -349,8 +353,8 @@ private fun ScrollingColumn(
             modifier = Modifier.fillMaxWidth().height(26.dp).padding(top = 4.dp),
             horizontalArrangement = Arrangement.Center,
         ) {
-            ScrollArrow(Icons.Filled.KeyboardArrowUp, visible = scroll.canScrollBackward, label = "More above")
-            ScrollArrow(Icons.Filled.KeyboardArrowDown, visible = scroll.canScrollForward, label = "More below")
+            ScrollArrow(Icons.Filled.KeyboardArrowUp, visible = scroll.canScrollBackward, label = stringResource(CommonR.string.servers_scroll_moreAbove))
+            ScrollArrow(Icons.Filled.KeyboardArrowDown, visible = scroll.canScrollForward, label = stringResource(CommonR.string.servers_scroll_moreBelow))
         }
     }
 }
@@ -432,16 +436,14 @@ private fun AccountCardRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val name = card.account.username?.takeIf { it.isNotBlank() } ?: "Account"
+    val name = card.account.username?.takeIf { it.isNotBlank() } ?: stringResource(CommonR.string.settings_accounts_account)
     val badge = when {
-        card.account.needsSignIn -> "Sign in again"
-        card.isCurrent -> "Current"
+        card.account.needsSignIn -> stringResource(CommonR.string.account_signInAgain)
+        card.isCurrent -> stringResource(CommonR.string.changeAccount_current)
         else -> null
     }
-    val count = when (card.profileCount) {
-        0 -> null
-        1 -> "1 profile"
-        else -> "${card.profileCount} profiles"
+    val count = card.profileCount.takeIf { it > 0 }?.let {
+        pluralStringResource(CommonR.plurals.account_profiles_count, it, it)
     }
     ServerCardSurface(
         title = name,
@@ -457,8 +459,8 @@ private fun AccountCardRow(
 @Composable
 private fun AddAccountCardRow(serverName: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     ServerCardSurface(
-        title = "Add an account",
-        subtitle = "Sign in on $serverName",
+        title = stringResource(CommonR.string.accounts_addAccount),
+        subtitle = stringResourceWithNames(CommonR.string.accounts_addAccountOn, serverName),
         initial = "+",
         onClick = onClick,
         modifier = modifier,

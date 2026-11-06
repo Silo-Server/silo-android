@@ -133,7 +133,7 @@ class EpisodeSpoilerStoreTest {
 
         assertFalse(store.state.value.hideImages)
         assertTrue(store.lastError.value != null)
-        assertEquals("Couldn't save spoiler settings: Server error", store.saveError.value)
+        assertEquals(SettingsSaveError.EpisodeSpoilers("Server error"), store.saveError.value)
 
         api.failPuts = false
         store.set(EpisodeSpoilerSetting.Images, true)

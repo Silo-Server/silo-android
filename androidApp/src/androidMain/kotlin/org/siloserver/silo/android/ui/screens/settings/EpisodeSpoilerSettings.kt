@@ -2,6 +2,10 @@ package org.siloserver.silo.android.ui.screens.settings
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.settings.SettingsSaveError
+import org.siloserver.silo.common.settings.text
 
 /**
  * Spoiler protection for unwatched episodes (see EpisodeSpoilers.MIN_CONTRACT_REVISION). Both
@@ -15,24 +19,24 @@ fun EpisodeSpoilerSettings(
     onHideImagesChanged: (Boolean) -> Unit,
     onHideOverviewsChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
-    saveError: String? = null,
+    saveError: SettingsSaveError? = null,
 ) {
-    SettingsSection(title = "Spoilers", modifier = modifier) {
+    SettingsSection(title = stringResource(CommonR.string.settings_section_spoilers), modifier = modifier) {
         SettingsSwitchRow(
-            label = "Blur unwatched episode images",
-            description = "Blur an episode's thumbnail until you start watching it, so the image does not give away the story.",
+            label = stringResource(CommonR.string.settingsManifest_catalog_hide_unwatched_episode_images_label),
+            description = stringResource(CommonR.string.settingsManifest_catalog_hide_unwatched_episode_images_description),
             checked = hideImages,
             onCheckedChange = onHideImagesChanged,
         )
         SettingsSwitchRow(
-            label = "Hide unwatched episode descriptions",
-            description = "Hide an episode's description until you start watching it.",
+            label = stringResource(CommonR.string.settingsManifest_catalog_hide_unwatched_episode_overviews_label),
+            description = stringResource(CommonR.string.settingsManifest_catalog_hide_unwatched_episode_overviews_description),
             checked = hideOverviews,
             onCheckedChange = onHideOverviewsChanged,
         )
         SettingsProse(
-            body = "Applies to episodes you have not started, on every device that uses this profile.",
+            body = stringResource(CommonR.string.settings_spoilers_footer),
         )
-        saveError?.let { SettingsProse(body = it) }
+        saveError?.let { SettingsProse(body = it.text()) }
     }
 }

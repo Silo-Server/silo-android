@@ -47,6 +47,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -68,6 +69,7 @@ import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSwitchOff
 import org.siloserver.silo.android.ui.theme.SiloSwitchOn
 import kotlin.math.ceil
+import org.siloserver.silo.common.R as CommonR
 
 // --- Shared Settings UI Components ---
 //
@@ -528,6 +530,37 @@ fun SettingsDropdownRow(
      */
     selectedOption: String = value,
 ) {
+    SettingsIndexedDropdownRow(
+        label = label,
+        value = value,
+        options = options,
+        selectedIndex = options.indexOf(selectedOption),
+        onIndexSelected = { onOptionSelected(options[it]) },
+        modifier = modifier,
+        description = description,
+        icon = icon,
+        enabled = enabled,
+    )
+}
+
+/**
+ * [SettingsDropdownRow] that reports the picked option by its position in
+ * [options] and checks [selectedIndex] (none when out of range). Callers map
+ * the position back to their value, so translated labels never have to be
+ * compared to find one.
+ */
+@Composable
+fun SettingsIndexedDropdownRow(
+    label: String,
+    value: String,
+    options: List<String>,
+    selectedIndex: Int,
+    onIndexSelected: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    description: String? = null,
+    icon: ImageVector? = null,
+    enabled: Boolean = true,
+) {
     var expanded by remember { mutableStateOf(false) }
 
     Box(modifier = modifier) {
@@ -556,12 +589,12 @@ fun SettingsDropdownRow(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
             ) {
-                options.forEach { option ->
+                options.forEachIndexed { index, option ->
                     SettingsMenuItem(
                         label = option,
-                        selected = option == selectedOption,
+                        selected = index == selectedIndex,
                         onClick = {
-                            onOptionSelected(option)
+                            onIndexSelected(index)
                             expanded = false
                         },
                     )
@@ -587,7 +620,7 @@ private fun SettingsMenuItem(label: String, selected: Boolean, onClick: () -> Un
             if (selected) {
                 Icon(
                     imageVector = Icons.Filled.Check,
-                    contentDescription = "Selected",
+                    contentDescription = stringResource(CommonR.string.settings_menu_selected),
                     tint = SiloForeground,
                     modifier = Modifier.size(SettingsDimens.menuIndicatorSize),
                 )
@@ -667,7 +700,7 @@ fun SettingsSearchField(
         Spacer(modifier = Modifier.width(SettingsDimens.rowTrailingGap))
         Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
             if (query.isEmpty()) {
-                Text(text = "Search", style = SettingsTextStyles.rowLabel, color = SiloSecondaryText)
+                Text(text = stringResource(CommonR.string.settings_search_placeholder), style = SettingsTextStyles.rowLabel, color = SiloSecondaryText)
             }
             BasicTextField(
                 value = query,
@@ -686,7 +719,7 @@ fun SettingsSearchField(
         if (query.isNotEmpty()) {
             Icon(
                 imageVector = Icons.Filled.Cancel,
-                contentDescription = "Clear search",
+                contentDescription = stringResource(CommonR.string.settings_search_clear),
                 tint = SiloSecondaryText,
                 modifier = Modifier
                     .size(SettingsDimens.menuIndicatorSize + 4.dp)

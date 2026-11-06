@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.settings
 
+import android.app.Application
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +43,10 @@ import org.siloserver.silo.network.api.ServerIdentityApi
 import org.siloserver.silo.network.api.ServerIdentityProbe
 import org.siloserver.silo.repository.ExternalSignInRepository
 import org.siloserver.silo.repository.ServerIdentityRepository
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -51,6 +56,11 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+/** The English a screen shows for [this]; the tests read messages as people see them. */
+private fun SettingsText.text(): String = resolve(RuntimeEnvironment.getApplication())
+
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 class SignInSettingsTest {
     private val local = SignInProvider("local", "Silo account", SignInProvider.Mode.Credentials, true, null, null, null)
     private val ldap = SignInProvider("plugin:6:ldap", "Directory", SignInProvider.Mode.Credentials, false, null, "6", null)
@@ -100,7 +110,7 @@ class SignInSettingsTest {
             429 to "rate_limited",
         )
         val texts = codes.map { (status, code) ->
-            SignInSettingsViewModel.networkLinkMessage(ApiResult.Error(status, code, "server detail"), "Tailscale")
+            SignInSettingsViewModel.networkLinkMessage(ApiResult.Error(status, code, "server detail"), "Tailscale").text()
         }
         assertEquals(texts.size, texts.toSet().size, texts.joinToString("\n"))
         texts.forEach { assertFalse(it.contains("server detail"), "the server's detail is never shown") }
@@ -110,13 +120,13 @@ class SignInSettingsTest {
         assertEquals(networkSignInMessage(ApiResult.Error(403, "not_permitted", ""), "Tailscale"), texts[3])
         assertEquals(networkSignInMessage(ApiResult.Error(404, "not_found", ""), "Tailscale"), texts[7])
         // Shared refusals read as in the other links.
-        assertEquals(SignInSettingsViewModel.directoryLinkMessage(ApiResult.Error(409, "identity_linked_elsewhere", ""), "Tailscale"), texts[5])
+        assertEquals(SignInSettingsViewModel.directoryLinkMessage(ApiResult.Error(409, "identity_linked_elsewhere", ""), "Tailscale").text(), texts[5])
     }
 
     @Test
     fun theNetworkPromptNamesWhoIsConnected() {
-        assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", "Alice Example", false).contains("connect Alice Example on Tailscale"))
-        assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null, false).contains("the Tailscale account this device uses"))
+        assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", "Alice Example", false).text().contains("connect Alice Example on Tailscale"))
+        assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null, false).text().contains("the Tailscale account this device uses"))
     }
 
     /**
@@ -126,15 +136,15 @@ class SignInSettingsTest {
      */
     @Test
     fun theNetworkCopyKeepsThePasswordOnlyWhereTheServerSaysSo() {
-        assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null, keepsPassword = false).contains("instead of your password"))
-        assertFalse(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null, keepsPassword = true).contains("instead of your password"))
+        assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null, keepsPassword = false).text().contains("instead of your password"))
+        assertFalse(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null, keepsPassword = true).text().contains("instead of your password"))
         assertEquals(
-            SignInSettingsViewModel.connectDescription("Tailscale"),
-            SignInSettingsViewModel.connectNetworkDescription("Tailscale", keepsPassword = false),
+            SignInSettingsViewModel.connectDescription("Tailscale").text(),
+            SignInSettingsViewModel.connectNetworkDescription("Tailscale", keepsPassword = false).text(),
         )
         assertNotEquals(
-            SignInSettingsViewModel.connectDescription("Tailscale"),
-            SignInSettingsViewModel.connectNetworkDescription("Tailscale", keepsPassword = true),
+            SignInSettingsViewModel.connectDescription("Tailscale").text(),
+            SignInSettingsViewModel.connectNetworkDescription("Tailscale", keepsPassword = true).text(),
         )
         fun keeps(served: Boolean) = SignInSettingsViewModel.sectionOf(
             true, emptyList(), listOf(local, tailscale), OAuthHandshakeCapabilities.None,
@@ -188,8 +198,8 @@ class SignInSettingsTest {
         assertEquals(true, free.canUnlink)
         assertNull(SignInSettingsViewModel.sectionOf(true, emptyList(), listOf(oidc), all, credentialsLinking = true, canUnlink = false).canUnlink)
         // With can_unlink the confirmation no longer hedges.
-        assertFalse(SignInSettingsViewModel.disconnectConfirmBody(identity, canUnlink = true).contains("another way to sign in"))
-        assertTrue(SignInSettingsViewModel.ONLY_SIGN_IN_METHOD.contains("only way to sign in"))
+        assertFalse(SignInSettingsViewModel.disconnectConfirmBody(identity, canUnlink = true).text().contains("another way to sign in"))
+        assertTrue(SignInSettingsViewModel.ONLY_SIGN_IN_METHOD.text().contains("only way to sign in"))
     }
 
     @Test
@@ -209,7 +219,7 @@ class SignInSettingsTest {
             429 to "rate_limited",
         )
         val texts = codes.map { (status, code) ->
-            SignInSettingsViewModel.directoryLinkMessage(ApiResult.Error(status, code, "server detail"), "Directory")
+            SignInSettingsViewModel.directoryLinkMessage(ApiResult.Error(status, code, "server detail"), "Directory").text()
         }
         assertEquals(texts.size, texts.toSet().size, texts.joinToString("\n"))
         texts.forEach { assertFalse(it.contains("server detail"), "the server's detail is never shown") }
@@ -224,24 +234,24 @@ class SignInSettingsTest {
     fun linkTicketAndDisconnectRefusals() {
         assertEquals(
             "That password is incorrect.",
-            SignInSettingsViewModel.linkTicketMessage(ApiResult.Error(422, DefaultExternalSignInApi.WRONG_PASSWORD, ""), "Keycloak"),
+            SignInSettingsViewModel.linkTicketMessage(ApiResult.Error(422, DefaultExternalSignInApi.WRONG_PASSWORD, ""), "Keycloak").text(),
         )
-        assertTrue(SignInSettingsViewModel.linkTicketMessage(ApiResult.Error(409, "conflict", ""), "Keycloak").contains("no password"))
-        assertTrue(SignInSettingsViewModel.linkTicketMessage(ApiResult.Error(403, "permission_denied", ""), "Keycloak").contains("session"))
+        assertTrue(SignInSettingsViewModel.linkTicketMessage(ApiResult.Error(409, "conflict", ""), "Keycloak").text().contains("no password"))
+        assertTrue(SignInSettingsViewModel.linkTicketMessage(ApiResult.Error(403, "permission_denied", ""), "Keycloak").text().contains("session"))
         assertTrue(
-            SignInSettingsViewModel.disconnectMessage(ApiResult.Error(409, "last_sign_in_method", ""), identity)
+            SignInSettingsViewModel.disconnectMessage(ApiResult.Error(409, "last_sign_in_method", ""), identity).text()
                 .contains("only way to sign in"),
         )
-        assertTrue(SignInSettingsViewModel.disconnectMessage(ApiResult.Error(404, "not_found", ""), identity).contains("already"))
+        assertTrue(SignInSettingsViewModel.disconnectMessage(ApiResult.Error(404, "not_found", ""), identity).text().contains("already"))
     }
 
     @Test
     fun connectSaysThePasswordStopsWorkingAndDisconnectDoesNotPromiseIt() {
-        assertTrue(SignInSettingsViewModel.connectDescription("Keycloak").contains("instead of your password"))
-        assertTrue(SignInSettingsViewModel.connectPrompt("Keycloak").contains("instead of your password"))
-        assertTrue(SignInSettingsViewModel.connectDirectoryDescription("Directory").contains("Directory username and password instead"))
-        assertTrue(SignInSettingsViewModel.connectDirectoryPrompt("Directory").contains("username and password instead"))
-        val body = SignInSettingsViewModel.disconnectConfirmBody(identity)
+        assertTrue(SignInSettingsViewModel.connectDescription("Keycloak").text().contains("instead of your password"))
+        assertTrue(SignInSettingsViewModel.connectPrompt("Keycloak").text().contains("instead of your password"))
+        assertTrue(SignInSettingsViewModel.connectDirectoryDescription("Directory").text().contains("Directory username and password instead"))
+        assertTrue(SignInSettingsViewModel.connectDirectoryPrompt("Directory").text().contains("username and password instead"))
+        val body = SignInSettingsViewModel.disconnectConfirmBody(identity).text()
         assertFalse(body.contains("such as your password"), body)
         assertTrue(body.contains("another way to sign in"), body)
     }
@@ -250,13 +260,13 @@ class SignInSettingsTest {
     fun sharedRefusalsReadTheSameInEveryOperation() {
         val tooMany = ApiResult.Error(429, "rate_limited", "")
         assertEquals(
-            SignInSettingsViewModel.linkTicketMessage(tooMany, "Keycloak"),
-            SignInSettingsViewModel.disconnectMessage(tooMany, identity),
+            SignInSettingsViewModel.linkTicketMessage(tooMany, "Keycloak").text(),
+            SignInSettingsViewModel.disconnectMessage(tooMany, identity).text(),
         )
         val denied = ApiResult.Error(403, "permission_denied", "")
         assertEquals(
-            SignInSettingsViewModel.linkTicketMessage(denied, "Keycloak"),
-            SignInSettingsViewModel.directoryLinkMessage(denied, "Keycloak"),
+            SignInSettingsViewModel.linkTicketMessage(denied, "Keycloak").text(),
+            SignInSettingsViewModel.directoryLinkMessage(denied, "Keycloak").text(),
         )
     }
 
@@ -278,6 +288,8 @@ class SignInSettingsTest {
 
 /** "Connect <network provider>" in the account's Sign-in settings: the password-only link. */
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 class SignInSettingsNetworkLinkTest {
     private val dispatcher = StandardTestDispatcher()
 
@@ -384,14 +396,14 @@ class SignInSettingsNetworkLinkTest {
         vm.onConnectNetwork(tailscale)
         assertEquals(tailscale, vm.uiState.value.networkPrompt)
         vm.onConfirmNetwork("")
-        assertEquals("Enter your password.", vm.uiState.value.passwordError)
+        assertEquals("Enter your password.", vm.uiState.value.passwordError?.text())
         assertTrue(api.links.isEmpty())
 
         // A wrong password keeps the prompt open to try again.
         api.linkAnswer = ApiResult.Error(422, DefaultExternalSignInApi.WRONG_PASSWORD, "")
         vm.onConfirmNetwork("wrong")
         advanceUntilIdle()
-        assertEquals("That password is incorrect.", vm.uiState.value.passwordError)
+        assertEquals("That password is incorrect.", vm.uiState.value.passwordError?.text())
         assertEquals(tailscale, vm.uiState.value.networkPrompt)
         assertEquals(false, vm.uiState.value.busy)
 
@@ -400,7 +412,7 @@ class SignInSettingsNetworkLinkTest {
         advanceUntilIdle()
         assertEquals(Triple(scope, "7", "local-pw"), api.links.last())
         assertNull(vm.uiState.value.networkPrompt)
-        assertEquals("Connected Tailscale.", vm.uiState.value.message)
+        assertEquals("Connected Tailscale.", vm.uiState.value.message?.text())
         assertEquals(listOf(linkedIdentity), vm.uiState.value.identities)
         assertNull(vm.uiState.value.network, "connected: not offered again")
         vm.viewModelScope.cancel()
@@ -424,7 +436,7 @@ class SignInSettingsNetworkLinkTest {
         vm.onConfirmNetwork("local-pw")
         advanceUntilIdle()
         assertNull(vm.uiState.value.networkPrompt)
-        assertEquals("Open this server at its Tailscale address to connect Tailscale.", vm.uiState.value.error)
+        assertEquals("Open this server at its Tailscale address to connect Tailscale.", vm.uiState.value.error?.text())
         assertTrue(vm.uiState.value.identities.isEmpty())
         vm.viewModelScope.cancel()
     }
