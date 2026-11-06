@@ -29,6 +29,7 @@ class AndroidPushRegistrar internal constructor(
     private val newKey: () -> String = {
         Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also { SecureRandom().nextBytes(it) })
     },
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     /**
      * Guards this device's installation records: each read, and each update of one
@@ -129,15 +130,24 @@ class AndroidPushRegistrar internal constructor(
     /** Each server's attempt is bounded on its own, so one that fails or stalls costs only itself. */
     private suspend fun registerOtherServers(token: String, exceptServerId: String?) {
         val device = deviceIdProvider()
+        val time = clock()
         val behind = installations().filter {
             val registration = it.intent.registration
             it.deviceId == device && it.intent.serverId != exceptServerId && it.refusal == null &&
-                registration != null && (registration.token != token || !it.acknowledged || it.needsLoginSessionBinding)
+                registration != null && (registration.token != token || !it.acknowledged || it.bindingCheckDue(time))
         }
         for (installation in behind) {
+            // Before asking: a server that cannot bind yet, or never answers, gets no
+            // request on each foreground, as it got none before binding existed.
+            if (installation.needsLoginSessionBinding) markBindingChecked(installation, time)
             withTimeoutOrNull(PUSH_WORK_BUDGET_MS) { registerAsRegisteredOwner(installation, token) }
         }
     }
+
+    private suspend fun markBindingChecked(installation: PushInstallation, time: Long) =
+        updateRecord(installation.serverUrl, installation.deviceId) { record ->
+            record?.takeIf { it.generation == installation.generation }?.copy(bindingCheckedAtMs = time) ?: record
+        }
 
     private suspend fun registerAsRegisteredOwner(behind: PushInstallation, token: String): ApiResult<PushDeviceRegisterResponse?> {
         if (token.length !in 64..512) return failure("invalid_push_token")
@@ -391,7 +401,6 @@ class AndroidPushRegistrar internal constructor(
     private val retirementFailures = ConcurrentHashMap<String, RetirementFailure>()
     /** Shared by every pass, so a foreground and a push retrying at once still send only a few. */
     private val retirementPermits = Semaphore(RETIREMENT_CONCURRENCY)
-    private val clock: () -> Long = System::currentTimeMillis
 
     /**
      * Sends [record]'s queued retirement; the caller holds that server's lock.
@@ -512,10 +521,10 @@ class AndroidPushRegistrar internal constructor(
             if (!isLatest(owner, attempt)) return failure("push_request_superseded")
             val device = request?.deviceId ?: deviceIdProvider()
             if (device.isBlank() || device.length > 128) return failure("invalid_push_device")
-            val available = repository.available(owner.scope)
-            if (available !is ApiResult.Success || !available.data) return when (available) {
-                is ApiResult.Error -> available
-                is ApiResult.NetworkError -> available
+            val capability = repository.capability(owner.scope)
+            if (capability !is ApiResult.Success || !capability.data.registrationAvailable) return when (capability) {
+                is ApiResult.Error -> capability
+                is ApiResult.NetworkError -> capability
                 else -> failure("push_registration_unavailable")
             }
             if (!current(owner)) return failure("push_authority_changed")
@@ -531,16 +540,20 @@ class AndroidPushRegistrar internal constructor(
             // the login that sent it is usually gone, as sign-out removes first and then
             // clears it. So is one another login on that server sent: the installation is
             // being handed to this account (spec §7), and the one that sent it no longer
-            // owns it. Any other uncertain registration is still replayed exactly.
+            // owns it. So is a rebinding: it repeats what the server already holds, so a
+            // new intent loses nothing by going above it. Any other uncertain registration
+            // is still replayed exactly.
             val handsOver = request != null && previous != null &&
                 previous.intent.serverId == intent.serverId && previous.intent.loginId != intent.loginId
             val supersedesUncertainty = request != null && previous != null && !previous.acknowledged &&
-                (previous.intent.registration == null || previous.ownerLeaving || handsOver)
+                (previous.intent.registration == null || previous.ownerLeaving || handsOver || previous.rebindingUnconfirmed)
             val reconciling = previous != null && !previous.acknowledged && previous.intent != intent && !supersedesUncertainty
             // The same registration again, at the newer generation that makes the server
             // record this login session: it ignores the session on a replay. Once per
             // record, and only from here, so ordering and durability are the usual ones.
-            val rebinding = previous != null && previous.needsLoginSessionBinding && previous.intent == intent
+            // A server that does not advertise binding yet is asked again later.
+            val bindsSession = capability.data.bindsLoginSession
+            val rebinding = bindsSession && previous != null && previous.needsLoginSessionBinding && previous.intent == intent
             previous?.let {
                 check(it.generation > 0 && it.key.matches(Regex("[A-Za-z0-9_-]{43}")))
                 if (it.acknowledged && it.intent.registration != null) {
@@ -564,7 +577,7 @@ class AndroidPushRegistrar internal constructor(
                 if (previous?.generation == Long.MAX_VALUE) return failure("push_generation_exhausted")
                 val generation = (previous?.generation ?: 0) + 1
                 if (rebinding) previous.copy(generation = generation, acknowledged = false, loginSessionBound = true)
-                else PushInstallation(owner.scope.serverUrl, device, previous?.key ?: newKey(), generation, intent, loginSessionBound = true)
+                else PushInstallation(owner.scope.serverUrl, device, previous?.key ?: newKey(), generation, intent, loginSessionBound = bindsSession)
             }
             check(entry.key.matches(Regex("[A-Za-z0-9_-]{43}")))
             if (!current(owner)) return failure("push_authority_changed")

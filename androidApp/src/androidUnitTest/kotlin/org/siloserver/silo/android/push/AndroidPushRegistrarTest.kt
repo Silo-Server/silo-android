@@ -51,6 +51,11 @@ class AndroidPushRegistrarTest {
     private var uncertain=false
     private var unreachableUrl: String?=null
     private var available=true
+    /** Whether the server advertises that a new generation records the login session. */
+    private var bindsSession=true
+    private var capabilityChecks=0
+    private var capabilitiesUnreachableUrl: String?=null
+    private var clockMs=1_000_000_000_000L
     private var onAvailable: suspend (AuthScopeSnapshot) -> Unit = {}
     /** The retirement route's answer: 200 retires, null is no answer. A server without the route by default. */
     private var retireStatus: Int? = 404
@@ -58,7 +63,11 @@ class AndroidPushRegistrarTest {
     private val retirements=mutableListOf<Triple<String,String,Long>>()
     private var onRetire: suspend () -> Unit = {}
     private val api=object : PushRegistrationApi {
-        override suspend fun available(owner: AuthScopeSnapshot): ApiResult<Boolean> { onAvailable(owner); return ApiResult.Success(available) }
+        override suspend fun capability(owner: AuthScopeSnapshot): ApiResult<PushRegistrationCapability> {
+            capabilityChecks++; onAvailable(owner)
+            if(owner.serverUrl==capabilitiesUnreachableUrl) return ApiResult.NetworkError(IllegalStateException("unreachable"))
+            return ApiResult.Success(PushRegistrationCapability(available,bindsSession))
+        }
         override suspend fun register(request: PushDeviceRegisterRequest,key:String,generation:Long,owner:AuthScopeSnapshot):ApiResult<PushDeviceRegisterResponse> {
             val record=store.entries.single { it.serverUrl==owner.serverUrl }
             assertEquals(generation,record.generation) // durable before dispatch
@@ -87,15 +96,62 @@ class AndroidPushRegistrarTest {
         }
     }
     private fun registrar(provider: AndroidPushTokenProvider=object:AndroidPushTokenProvider { override suspend fun token()=token }) =
-        AndroidPushRegistrar(provider,PushRegistrationRepository(api),{"device"},authorities,store,{proof})
+        AndroidPushRegistrar(provider,PushRegistrationRepository(api),{"device"},authorities,store,{proof},{clockMs})
     /** Makes the stored records look as an app version from before login-session binding left them. */
     private fun upgradedFromOlderApp() { store.entries=store.entries.map { it.copy(loginSessionBound=false) } }
+    /** Registers with the saved server "cabin" as an older app would have, then makes another server active. */
+    private suspend fun savedServerAwaitingBinding() {
+        val cabin=DurableLoginAuthority("login-cabin",AuthScopeSnapshot.savedLogin("cabin","https://cabin.invalid","cabin-profile","cabin-pin",5))
+        registrar().registerToken(token,cabin.also { owner=it }); upgradedFromOlderApp()
+        owner=DurableLoginAuthority("login", AuthScopeSnapshot("server","profile","https://example.invalid","pin",identityGeneration=1))
+    }
     @Test fun anUpgradedInstallRegistersOnceAtANewerGenerationThenStops()=runTest {
         registrar().registerToken(token); upgradedFromOlderApp()
         assertIs<ApiResult.Success<*>>(registrar().registerIfAvailable())
         assertEquals(listOf(1L,2L),generations); assertEquals(setOf(proof),keys.toSet())
         // Neither this launch nor one after a process restart sends it again.
         registrar().registerIfAvailable(); registrar().registerIfAvailable()
+        assertEquals(listOf(1L,2L),generations)
+    }
+    @Test fun aServerThatDoesNotBindSessionsDoesNotUseUpTheRebind()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        bindsSession=false; registrar().registerIfAvailable(); registrar().registerIfAvailable()
+        assertEquals(listOf(1L),generations); assertTrue(store.entries.single().needsLoginSessionBinding)
+        // That server upgrades.
+        bindsSession=true; registrar().registerIfAvailable(); registrar().registerIfAvailable()
+        assertEquals(listOf(1L,2L),generations)
+    }
+    @Test fun aFirstRegistrationOnAServerThatDoesNotBindSessionsIsReboundAfterItUpgrades()=runTest {
+        bindsSession=false; val r=registrar(); r.registerToken(token); r.registerToken(token)
+        assertEquals(listOf(1L),generations)
+        bindsSession=true; r.registerToken(token); r.registerToken(token)
+        assertEquals(listOf(1L,2L),generations)
+    }
+    @Test fun aChangeOnAServerThatDoesNotBindSessionsLeavesTheRebindOwed()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        bindsSession=false; registrar().registerToken("n".repeat(80))
+        assertEquals(listOf(1L,2L),generations); assertTrue(store.entries.single().needsLoginSessionBinding)
+    }
+    @Test fun anotherSavedServerIsAskedAboutARebindAtMostDaily()=runTest {
+        savedServerAwaitingBinding()
+        bindsSession=false; capabilityChecks=0
+        registrar().registerOtherServersIfBehind(); assertEquals(1,capabilityChecks)
+        // Not on the next foreground, nor after a process restart.
+        registrar().registerOtherServersIfBehind(); assertEquals(1,capabilityChecks)
+        clockMs+=24*60*60*1000L
+        bindsSession=true; registrar().registerOtherServersIfBehind()
+        assertEquals(2,capabilityChecks); assertEquals(listOf(1L,2L),generations)
+    }
+    @Test fun anUnreachableSavedServerIsAskedAboutARebindAtMostDaily()=runTest {
+        savedServerAwaitingBinding()
+        capabilitiesUnreachableUrl="https://cabin.invalid"; capabilityChecks=0
+        registrar().registerOtherServersIfBehind(); registrar().registerOtherServersIfBehind()
+        assertEquals(1,capabilityChecks)
+    }
+    @Test fun aClockThatMovedBackDoesNotStrandARebind()=runTest {
+        savedServerAwaitingBinding()
+        bindsSession=false; registrar().registerOtherServersIfBehind()
+        clockMs-=1_000; bindsSession=true; registrar().registerOtherServersIfBehind()
         assertEquals(listOf(1L,2L),generations)
     }
     @Test fun anUpgradedInstallGivesEachOtherSavedServerItsOwnLoginOnce()=runTest {
@@ -160,18 +216,41 @@ class AndroidPushRegistrarTest {
         r.registerIfAvailable(); r.registerIfAvailable()
         assertEquals(listOf(1L,2L),generations)
     }
-    @Test fun aLoginReplacedDuringAnUncertainRebindCannotReplayIt()=runTest {
+    @Test fun aProfileSwitchDuringAnUncertainRebindSupersedesIt()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        uncertain=true; registrar().registerIfAvailable(); uncertain=false
+        owner=owner.copy(scope=owner.scope.copy(profileId="kids",profileToken="kids-pin",identityGeneration=2))
+        assertIs<ApiResult.Success<*>>(registrar().registerIfAvailable())
+        assertEquals(listOf(1L,2L,3L),generations); assertEquals("kids",store.entries.single().intent.profileId)
+    }
+    @Test fun aLoginTakingOverDuringAnUncertainRebindSupersedesIt()=runTest {
         registrar().registerToken(token); upgradedFromOlderApp()
         uncertain=true; registrar().registerIfAvailable(); uncertain=false
         owner=owner.copy(loginId="next",scope=owner.scope.copy(identityGeneration=2))
-        assertIs<ApiResult.Error>(registrar().registerIfAvailable())
-        assertEquals(listOf(1L,2L),generations); assertEquals("login",store.entries.single().intent.loginId)
+        assertIs<ApiResult.Success<*>>(registrar().registerIfAvailable())
+        assertEquals(listOf(1L,2L,3L),generations); assertEquals("next",store.entries.single().intent.loginId)
     }
-    @Test fun aSignOutDuringAnUncertainRebindSettlesItThenRemoves()=runTest {
+    @Test fun aSignOutDuringAnUncertainRebindRemovesAboveIt()=runTest {
         val r=registrar(); r.registerToken(token); upgradedFromOlderApp()
         uncertain=true; registrar().registerIfAvailable(); uncertain=false
         assertIs<ApiResult.Success<Unit>>(registrar().unregisterDevice("server").result)
-        assertEquals(listOf(1L,2L,2L,3L),generations); assertNull(store.entries.single().intent.registration)
+        assertEquals(3L,store.entries.single().generation); assertNull(store.entries.single().intent.registration)
+        assertEquals(listOf(1L,2L),generations.filter { it<3L }); assertFalse(store.entries.single().deliversPushes)
+    }
+    @Test fun aRetirementStillQueuedIsNeverRebound()=runTest {
+        registrar().registerToken(token); upgradedFromOlderApp()
+        uncertain=true; retireStatus=null
+        registrar().unregisterDevice("server"); uncertain=false; generations.clear()
+        val queued=store.entries.single()
+        assertNotNull(queued.retirement)
+        owner=owner.copy(scope=owner.scope.copy(serverId="elsewhere")); registrar().registerOtherServersIfBehind()
+        assertEquals(emptyList(),generations); assertEquals(queued,store.entries.single())
+    }
+    @Test fun aSavedServerNowOnAnotherLoginIsNotRebound()=runTest {
+        savedServerAwaitingBinding()
+        savedLogins["cabin"]="login-other-account"; generations.clear()
+        registrar().registerOtherServersIfBehind()
+        assertEquals(emptyList(),generations); assertEquals("login-cabin",store.entries.single().intent.loginId)
     }
     @Test fun theNextLoginSupersedesARebindThatSignOutCouldNotSettle()=runTest {
         registrar().registerToken(token); upgradedFromOlderApp()
@@ -179,7 +258,7 @@ class AndroidPushRegistrarTest {
         assertFalse(r.unregisterDevice("server").result is ApiResult.Success); uncertain=false
         owner=owner.copy(loginId="next",scope=owner.scope.copy(identityGeneration=2))
         assertIs<ApiResult.Success<*>>(r.registerIfAvailable())
-        assertEquals(listOf(1L,2L,2L,3L),generations); assertEquals("next",store.entries.single().intent.loginId)
+        assertEquals(listOf(1L,2L,3L,4L),generations); assertEquals("next",store.entries.single().intent.loginId)
     }
     @Test fun aRebindUnderWayKeepsTheReceiptOfTheRegistrationItReplaces()=runTest {
         registrar().registerToken(token); upgradedFromOlderApp()
