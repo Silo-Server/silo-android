@@ -25,6 +25,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
@@ -264,6 +265,37 @@ fun TvSearchScreen(
         visibleRequestResults.isNotEmpty() ||
         state.error != null
 
+    // Submitting hands focus to the results and searches requests alongside
+    // the library. Typed and spoken queries both come through here.
+    val submitQuery: (String) -> Unit = { rawQuery ->
+        pendingSearchFocus = true
+        val query = rawQuery.trim()
+        if (requestsEnabled && query.length >= 2) {
+            requestSearchViewModel.onMediaTypeChanged(requestMediaType)
+            requestSearchViewModel.onQueryChanged(query)
+            requestSearchViewModel.search()
+        }
+        viewModel.submitSearch()
+    }
+
+    // A spoken query is a submitted query, including the focus handoff:
+    // nobody dictates a title in order to be left sitting on the search field.
+    var voiceUnavailableMessage by remember { mutableStateOf<String?>(null) }
+    val voiceSearch = rememberTvVoiceSearch(
+        prompt = "Speak a title",
+        onResult = { spoken ->
+            // The same cap typing obeys; recognised text never went through
+            // the field's own limit.
+            val query = spoken.take(TV_SEARCH_QUERY_MAX_LENGTH)
+            voiceUnavailableMessage = null
+            viewModel.onQueryChanged(query)
+            submitQuery(query)
+        },
+        onUnavailable = {
+            voiceUnavailableMessage = "Voice search isn't available on this device."
+        },
+    )
+
     LaunchedEffect(requestsEnabled, state.query, requestMediaType) {
         val query = state.query.trim()
         if (!requestsEnabled || query.length < 2) {
@@ -279,9 +311,13 @@ fun TvSearchScreen(
         // the ordinary path, which blanks the row before refetching: a viewer
         // would watch it empty and refill, and a return restoration would lose
         // the card it was aiming at partway through.
+        //
+        // A search still loading for this exact query counts as answered too.
+        // A spoken query is set and submitted in the same moment, so this
+        // effect starts while that search is in flight; searching again here
+        // would cancel it and start over.
         val alreadyAnswered = requestState.submittedQuery == query &&
             requestState.mediaType == requestMediaType &&
-            !requestState.isLoading &&
             requestState.error == null
         // Nothing to do: the answer on screen is for this exact query. Staleness
         // after a return is handled by the restoration effect, which is the only
@@ -691,17 +727,10 @@ fun TvSearchScreen(
                         viewModel.onQueryChanged("")
                         keyboardController?.show()
                     },
-                    onSearch = {
-                        pendingSearchFocus = true
-                        val query = state.query.trim()
-                        if (requestsEnabled && query.length >= 2) {
-                            requestSearchViewModel.onMediaTypeChanged(requestMediaType)
-                            requestSearchViewModel.onQueryChanged(query)
-                            requestSearchViewModel.search()
-                        }
-                        viewModel.submitSearch()
-                    },
+                    onSearch = { submitQuery(state.query) },
                     onMediaTypeChanged = viewModel::onMediaTypeChanged,
+                    voiceSearch = voiceSearch,
+                    voiceUnavailableMessage = voiceUnavailableMessage,
                     isKeyboardOpen = isKeyboardOpen,
                     onKeyboardOpenChanged = setKeyboardOpen,
                     peopleRow = {
@@ -998,6 +1027,8 @@ private fun SearchStage(
     onClearQuery: () -> Unit,
     onSearch: () -> Unit,
     onMediaTypeChanged: (TvSearchMediaType) -> Unit,
+    voiceSearch: TvVoiceSearchController,
+    voiceUnavailableMessage: String?,
     isKeyboardOpen: Boolean,
     onKeyboardOpenChanged: (Boolean) -> Unit,
     peopleRow: @Composable () -> Unit = {},
@@ -1006,7 +1037,15 @@ private fun SearchStage(
     val mediaTypes = availableMediaTypes
     val fieldShape = RoundedCornerShape(14.dp)
     val clearButtonFocusRequester = remember { FocusRequester() }
+    val voiceButtonFocusRequester = remember { FocusRequester() }
     val canClear = query.isNotEmpty()
+    val showVoice = voiceSearch.isAvailable
+    // RIGHT from the field reaches the first button beside it.
+    val fieldRightFocusRequester = when {
+        showVoice -> voiceButtonFocusRequester
+        canClear -> clearButtonFocusRequester
+        else -> null
+    }
 
     // Rendered as the grid's header item, so the grid's contentPadding already
     // provides the horizontal gutters. Insetting again here put the field and
@@ -1020,10 +1059,10 @@ private fun SearchStage(
             ),
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
     ) {
-        // Voice is the system keyboard's job: Gboard on Android TV puts a mic
-        // key on the keyboard itself, which listens through the remote. A
-        // separate on-screen mic only added a second route to the same thing
-        // and a sentence of copy to explain it.
+        // The mic sits right of the field, not left, so the field keeps its
+        // place on the page gutter in line with the chips and cards. It is
+        // needed because not every TV keyboard has a mic key, and the remote's
+        // own mic button goes to the system assistant before any app sees it.
         Row(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1104,15 +1143,15 @@ private fun SearchStage(
                                 keyboardController?.show()
                                 true
                             }
-                            // RIGHT to the clear button, taken here for the same
-                            // reason as DOWN: the read-only field would spend it
-                            // moving the caret through the query.
+                            // RIGHT to the mic or clear button, taken here for
+                            // the same reason as DOWN: the read-only field would
+                            // spend it moving the caret through the query.
                             event.type == KeyEventType.KeyDown &&
                                 event.key == Key.DirectionRight &&
                                 !isKeyboardOpen &&
-                                canClear -> {
-                                clearButtonFocusRequester.claimFocusOrReport(
-                                    target = "search_clear_button",
+                                fieldRightFocusRequester != null -> {
+                                fieldRightFocusRequester.claimFocusOrReport(
+                                    target = if (showVoice) "search_voice_button" else "search_clear_button",
                                     action = "field_right",
                                 )
                             }
@@ -1143,6 +1182,25 @@ private fun SearchStage(
                     unfocusedBorderColor = Color.White.copy(alpha = 0.12f),
                 ),
             )
+            // Hidden outright when nothing can service it: a mic that does
+            // nothing when pressed is worse than no mic.
+            if (showVoice) {
+                TvHeroToggleIconButton(
+                    selected = false,
+                    selectedContainerColor = Color.Transparent,
+                    selectedContentColor = Color.White,
+                    icon = Icons.Filled.Mic,
+                    contentDescription = "Search by voice",
+                    onClick = voiceSearch::start,
+                    modifier = Modifier
+                        .focusRequester(voiceButtonFocusRequester)
+                        .focusProperties {
+                            left = searchFieldFocusRequester
+                            if (canClear) right = clearButtonFocusRequester
+                        },
+                    downFocusRequester = firstFilterChipFocusRequester,
+                )
+            }
             if (canClear) {
                 TvHeroToggleIconButton(
                     selected = false,
@@ -1153,10 +1211,20 @@ private fun SearchStage(
                     onClick = onClearQuery,
                     modifier = Modifier
                         .focusRequester(clearButtonFocusRequester)
-                        .focusProperties { left = searchFieldFocusRequester },
+                        .focusProperties {
+                            left = if (showVoice) voiceButtonFocusRequester else searchFieldFocusRequester
+                        },
                     downFocusRequester = firstFilterChipFocusRequester,
                 )
             }
+        }
+
+        voiceUnavailableMessage?.let { message ->
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.72f),
+            )
         }
 
         LazyRow(
