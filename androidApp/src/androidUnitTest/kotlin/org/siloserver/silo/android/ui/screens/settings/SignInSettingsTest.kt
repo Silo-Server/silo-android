@@ -48,10 +48,7 @@ import org.siloserver.silo.network.api.ServerIdentityApi
 import org.siloserver.silo.network.api.ServerIdentityProbe
 import org.siloserver.silo.repository.ExternalSignInRepository
 import org.siloserver.silo.repository.ServerIdentityRepository
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.annotation.Config
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
