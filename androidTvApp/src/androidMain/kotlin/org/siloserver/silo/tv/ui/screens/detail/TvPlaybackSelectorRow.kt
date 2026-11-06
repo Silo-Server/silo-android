@@ -7,7 +7,10 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.catalog.PlaybackVariant
@@ -84,10 +87,18 @@ internal fun TvPlaybackActionSelectors(
     onSelectVersion: (Int?) -> Unit,
     onSelectAudioTrack: (Int?) -> Unit,
     onSelectSubtitleTrack: (Int?) -> Unit,
+    editionFocusRequester: FocusRequester,
     versionFocusRequester: FocusRequester,
+    audioFocusRequester: FocusRequester,
+    subtitleFocusRequester: FocusRequester,
+    /** Reports the focus target of the trigger that gains focus. */
+    onTriggerFocused: (FocusRequester) -> Unit = {},
+    /** Reports whether the Edition trigger is shown. */
+    onEditionsShown: (Boolean) -> Unit = {},
 ) {
     val editions = playbackEditions(versions, playbackVariants)
     val showEditions = editions.hasEditionChoices()
+    SideEffect { onEditionsShown(showEditions) }
     val currentEdition = editions.firstOrNull { currentVersion?.fileId in it.fileIds }
         ?: editions.firstOrNull()
     val scopedVersions = if (showEditions) currentEdition?.versions.orEmpty() else versions
@@ -226,7 +237,8 @@ internal fun TvPlaybackActionSelectors(
                     onSelect = { onSelectVersion(edition.defaultVersion.fileId) },
                 )
             },
-            triggerFocusRequester = versionFocusRequester,
+            triggerFocusRequester = editionFocusRequester,
+            modifier = Modifier.reportTriggerFocus(editionFocusRequester, onTriggerFocused),
             interactive = currentVersion != null,
             triggerStyle = TvSelectorTriggerStyle.CircularAction,
         )
@@ -236,7 +248,8 @@ internal fun TvPlaybackActionSelectors(
         label = "Version",
         value = versionValue,
         options = versionOptions,
-        triggerFocusRequester = versionFocusRequester.takeUnless { showEditions },
+        triggerFocusRequester = versionFocusRequester,
+        modifier = Modifier.reportTriggerFocus(versionFocusRequester, onTriggerFocused),
         interactive = currentVersion != null && selectorIsInteractive(scopedVersions.size),
         triggerStyle = TvSelectorTriggerStyle.CircularAction,
     )
@@ -245,6 +258,8 @@ internal fun TvPlaybackActionSelectors(
         label = "Audio",
         value = audioValue,
         options = audioOptions,
+        triggerFocusRequester = audioFocusRequester,
+        modifier = Modifier.reportTriggerFocus(audioFocusRequester, onTriggerFocused),
         interactive = currentVersion != null && formattedAudioOptions.isNotEmpty(),
         triggerStyle = TvSelectorTriggerStyle.CircularAction,
     )
@@ -253,7 +268,14 @@ internal fun TvPlaybackActionSelectors(
         label = "Subtitles",
         value = subtitleValue,
         options = subtitleOptions,
+        triggerFocusRequester = subtitleFocusRequester,
+        modifier = Modifier.reportTriggerFocus(subtitleFocusRequester, onTriggerFocused),
         interactive = currentVersion != null,
         triggerStyle = TvSelectorTriggerStyle.CircularAction,
     )
 }
+
+private fun Modifier.reportTriggerFocus(
+    target: FocusRequester,
+    onTriggerFocused: (FocusRequester) -> Unit,
+): Modifier = onFocusChanged { state -> if (state.hasFocus) onTriggerFocused(target) }
