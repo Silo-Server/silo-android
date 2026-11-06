@@ -9,7 +9,7 @@ import org.siloserver.silo.network.*
 import org.siloserver.silo.network.apiv2.*
 
 interface PushRegistrationApi {
-    suspend fun available(owner: AuthScopeSnapshot): ApiResult<Boolean>
+    suspend fun capability(owner: AuthScopeSnapshot): ApiResult<PushRegistrationCapability>
     suspend fun register(request: PushDeviceRegisterRequest, key: String, generation: Long, owner: AuthScopeSnapshot): ApiResult<PushDeviceRegisterResponse>
     suspend fun delete(deviceId: String, key: String, generation: Long, owner: AuthScopeSnapshot): ApiResult<Unit>
     /**
@@ -37,14 +37,17 @@ class DefaultPushRegistrationApi(
     private fun gateFor(owner: AuthScopeSnapshot) = if (owner.isGenerationPinned) gate.forServer(owner.serverId) else gate
     private fun guardOf(owner: AuthScopeSnapshot) = owner.takeUnless { it.isGenerationPinned }
 
-    override suspend fun available(owner: AuthScopeSnapshot): ApiResult<Boolean> {
+    override suspend fun capability(owner: AuthScopeSnapshot): ApiResult<PushRegistrationCapability> {
         if (!durable(owner)) return identityChanged()
-        return ownedV2Call<JsonObject, Boolean>(gateFor(owner), tokens, guardOf(owner), OwnerPolicy.FULL, HttpStatusCode.OK, {
+        return ownedV2Call<JsonObject, PushRegistrationCapability>(gateFor(owner), tokens, guardOf(owner), OwnerPolicy.FULL, HttpStatusCode.OK, {
             client.get("$DEVICES_PATH/capabilities") { authScope(owner); requireSiloAuth() }
         }) { body ->
-            body["state"] == JsonPrimitive("available") && body["allowed"] != JsonPrimitive(false) &&
-                body["registration_available"] == JsonPrimitive(true) &&
-                (body["platforms"] as? JsonArray)?.contains(JsonPrimitive("android")) == true
+            PushRegistrationCapability(
+                registrationAvailable = body["state"] == JsonPrimitive("available") && body["allowed"] != JsonPrimitive(false) &&
+                    body["registration_available"] == JsonPrimitive(true) &&
+                    (body["platforms"] as? JsonArray)?.contains(JsonPrimitive("android")) == true,
+                bindsLoginSession = body["binds_login_session"] == JsonPrimitive(true),
+            )
         }
     }
     override suspend fun register(request: PushDeviceRegisterRequest, key: String, generation: Long, owner: AuthScopeSnapshot): ApiResult<PushDeviceRegisterResponse> {
