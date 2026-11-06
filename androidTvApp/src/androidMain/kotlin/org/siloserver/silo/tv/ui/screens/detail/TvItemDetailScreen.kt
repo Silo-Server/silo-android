@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.getStringWithNames
 import org.siloserver.silo.common.i18n.localizedResources
 import org.siloserver.silo.common.i18n.asString
 import androidx.activity.compose.BackHandler
@@ -2144,7 +2145,7 @@ private fun HeroActionRow(
                 add(
                     TvDialogOption(
                         key = "season-watched",
-                        title = resources.getString(
+                        title = resources.getStringWithNames(
                             if (seasonWatched) {
                                 CommonR.string.detail_more_markNamedSeasonUnwatched
                             } else {

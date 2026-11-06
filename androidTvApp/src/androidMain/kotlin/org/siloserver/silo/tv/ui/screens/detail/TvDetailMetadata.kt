@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.getStringWithNames
 import org.siloserver.silo.model.catalog.DisplayRating
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.EpisodeListItem
@@ -42,7 +43,7 @@ internal object TvDetailMetadata {
         isAudiobookItemType(detail.type) -> listOfNotNull(
             resources.getString(CommonR.string.detail_type_audiobook),
             detail.audiobook?.publisher,
-            detail.audiobook?.narratorNames?.let { resources.getString(CommonR.string.detail_narratedBy, it) },
+            detail.audiobook?.narratorNames?.let { resources.getStringWithNames(CommonR.string.detail_narratedBy, it) },
         )
         else -> buildList {
             add(typeLabel(resources, detail))

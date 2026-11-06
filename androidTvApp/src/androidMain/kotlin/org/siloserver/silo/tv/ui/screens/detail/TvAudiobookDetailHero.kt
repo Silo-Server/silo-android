@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.getStringWithNames
 import org.siloserver.silo.common.i18n.localizedResources
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -239,7 +240,7 @@ private fun audiobookMetadataLine(resources: Resources, detail: ItemDetail): Str
         ?: detail.versions.sumOf { it.duration }.takeIf { it > 0.0 }
     return listOfNotNull(
         audiobook?.authorNames,
-        audiobook?.narratorNames?.let { resources.getString(CommonR.string.detail_narratedBy, it) },
+        audiobook?.narratorNames?.let { resources.getStringWithNames(CommonR.string.detail_narratedBy, it) },
         audiobookRuntimeLabel(resources, duration),
     )
         .filter { it.isNotBlank() }
