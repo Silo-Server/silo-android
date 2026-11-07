@@ -250,5 +250,11 @@ class SharedPresentationTextTest {
         assertEquals("1.5 Mbps", QualityChoices.bitrateLabel(1_500).text(resourcesIn("de-DE")))
         assertEquals("Jun 16, 1972", UiText.CalendarDate(1972, 6, 16).text(resourcesIn("de-DE")))
         assertEquals("Japanese", UiText.LanguageName("ja").text(resourcesIn("de-DE")))
+        // English plural rules and digits, not the device language's: no "٨ films" or "21 film".
+        assertEquals("8 films", boxSetFilmCount(8).text(arabic))
+        assertEquals("21 films", boxSetFilmCount(21).text(resourcesIn("ru")))
+        // English text keeps its direction in a right-to-left device language: no isolates.
+        val episode = EpisodeListItem("e", seasonNumber = 1, episodeNumber = 2, title = "Pilot")
+        assertEquals("S01E02 · Pilot", EpisodeCardCaption.title(episode).text(arabic))
     }
 }

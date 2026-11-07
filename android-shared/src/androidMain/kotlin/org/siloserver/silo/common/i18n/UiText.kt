@@ -38,8 +38,8 @@ fun UiText.text(resources: Resources): String =
 private fun UiText.resolve(resources: Resources, rtl: Boolean): String = when (this) {
     is UiText.Raw -> text
     is UiText.Res -> resources.format(id, args, rtl)
-    is UiText.Key -> resources.format(key.resId, args, rtl)
-    is UiText.Plural -> resources.formatPlural(key.resId, key.countIndex, count, args, rtl)
+    is UiText.Key -> resources.catalogResources().let { it.format(key.resId, args, it.isRtl) }
+    is UiText.Plural -> resources.catalogResources().let { it.formatPlural(key.resId, key.countIndex, count, args, it.isRtl) }
     is UiText.Number -> NumberFormat.getNumberInstance(resources.formatLocale).apply {
         isGroupingUsed = false
         maximumFractionDigits = maxFractionDigits
@@ -69,20 +69,36 @@ private fun languageName(tag: String, uppercaseIfUnnamed: Boolean, locale: Local
 }
 
 /**
- * The locale numbers, dates and language names are written in: the
- * configured one when the app ships its language, so an en-GB phone keeps its
- * own date order (D26). Otherwise the strings fall back to English, and so does
- * their formatting, so a language changes nothing until its catalog ships (D25).
+ * Resources that resolve the shared module's text in its catalog language:
+ * these when the app ships the configured language (so an en-GB phone keeps its
+ * own date order, D26) or it is a debug pseudo-locale. Otherwise the strings
+ * fall back to English, and so do plural rules, digits, number and date formats
+ * and text direction, so a language changes nothing until its catalog ships (D25).
  */
+private fun Resources.catalogResources(): Resources {
+    val locale = configuration.locales[0]
+    val tag = locale.toLanguageTag()
+    if (AppLanguage.isPseudo(tag) || AppLanguage.match(tag, AppLocales.shipped(this)) != null) return this
+    fallbackResources?.let { (config, fallback) -> if (config == configuration) return fallback }
+    val config = android.content.res.Configuration(configuration)
+    @Suppress("DEPRECATION")
+    val fallback = Resources(
+        assets,
+        displayMetrics,
+        android.content.res.Configuration(configuration).apply { setLocale(Locale.forLanguageTag(AppLanguage.DEFAULT)) },
+    )
+    fallbackResources = config to fallback
+    return fallback
+}
+
+/** The last [catalogResources] fallback, for the configuration it was made for. */
+@Volatile private var fallbackResources: Pair<android.content.res.Configuration, Resources>? = null
+
+private val Resources.isRtl: Boolean get() = configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+
+/** The locale numbers, dates and language names are written in; see [catalogResources]. */
 private val Resources.formatLocale: Locale
-    get() {
-        val locale = configuration.locales[0]
-        return if (AppLanguage.match(locale.toLanguageTag(), AppLocales.shipped(this)) != null) {
-            locale
-        } else {
-            Locale.forLanguageTag(AppLanguage.DEFAULT)
-        }
-    }
+    get() = catalogResources().configuration.locales[0]
 
 /** A message whose String and [UiText] arguments are isolated in a right-to-left interface. */
 private fun Resources.format(@StringRes id: Int, args: List<Any>, rtl: Boolean): String =
