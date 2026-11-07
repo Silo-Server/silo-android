@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.android.ui.components.LabelValueLine
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import org.siloserver.silo.android.ui.theme.MenuDimens
 import org.siloserver.silo.android.ui.theme.SettingsDimens
@@ -281,22 +282,25 @@ fun SettingsRow(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(SettingsDimens.rowLabelGap),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+            val labelText: @Composable () -> Unit = {
                 Text(
                     text = label,
                     style = SettingsTextStyles.rowLabel,
                     color = labelColor.copy(alpha = labelColor.alpha * contentAlpha),
-                    // Fills the line so the value stays trailing-aligned, and
-                    // yields — by wrapping — when a capped value needs room.
-                    modifier = Modifier.weight(1f),
                 )
-                if (value != null) {
-                    Spacer(modifier = Modifier.width(SettingsDimens.rowLabelValueGap))
-                    SettingsRowValue(value = value, enabled = enabled)
-                }
+            }
+            if (value != null) {
+                // The label yields by wrapping when a capped value needs room,
+                // but keeps its longest word whole.
+                LabelValueLine(
+                    label = labelText,
+                    value = { SettingsRowValue(value = value, enabled = enabled) },
+                    gap = SettingsDimens.rowLabelValueGap,
+                    valueMaxWidth = SettingsDimens.rowValueMaxWidth,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                labelText()
             }
             if (!description.isNullOrBlank()) {
                 Text(
@@ -398,9 +402,9 @@ fun SettingsButtonRow(
  * Trailing value text in the secondary colour, so a picker's current choice
  * does not read as a second label.
  *
- * Unweighted, so [SettingsRow]'s label line measures it first: it gets the
- * width it asks for up to [SettingsDimens.rowValueMaxWidth], and the label
- * takes what is left.
+ * [SettingsRow]'s [LabelValueLine] measures it first: it gets the width it
+ * asks for up to [SettingsDimens.rowValueMaxWidth], less any room the label's
+ * longest word needs, and the label takes what is left.
  */
 @Composable
 private fun SettingsRowValue(value: String, enabled: Boolean) {
