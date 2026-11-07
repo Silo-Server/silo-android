@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.Resources
 import android.view.View
+import androidx.annotation.PluralsRes
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
@@ -31,17 +32,24 @@ private fun UiText.resolve(resources: Resources, rtl: Boolean): String = when (t
     is UiText.Raw -> text
     is UiText.Res -> resources.format(id, args, rtl)
     is UiText.Key -> resources.format(key.resId, args, rtl)
-    is UiText.Plural -> resources.getQuantityString(key.resId, count, count, count.toString(), *isolated(names.toTypedArray(), rtl))
+    is UiText.Plural -> resources.formatPlural(key.resId, count, args, rtl)
 }
 
 /** A message whose String and [UiText] arguments are isolated in a right-to-left interface. */
-private fun Resources.format(@StringRes id: Int, args: List<Any>, rtl: Boolean): String {
-    if (args.isEmpty()) return getString(id)
+private fun Resources.format(@StringRes id: Int, args: List<Any>, rtl: Boolean): String =
+    if (args.isEmpty()) getString(id) else getString(id, *formatArgs(args, rtl))
+
+/** A plural: [count] first, then [args] as for [format]. */
+private fun Resources.formatPlural(@PluralsRes id: Int, count: Int, args: List<Any>, rtl: Boolean): String =
+    getQuantityString(id, count, count, *formatArgs(args, rtl))
+
+/** [args] with each [UiText] resolved; when all are text, each is isolated in a right-to-left interface. */
+private fun Resources.formatArgs(args: List<Any>, rtl: Boolean): Array<out Any> {
     val values = args.map { if (it is UiText) it.resolve(this, rtl) else it }
     return if (args.all { it is String || it is UiText }) {
-        getString(id, *isolated(values.map { it as String }.toTypedArray(), rtl))
+        isolated(values.map { it as String }.toTypedArray(), rtl)
     } else {
-        getString(id, *values.toTypedArray())
+        values.toTypedArray()
     }
 }
 

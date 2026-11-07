@@ -75,7 +75,7 @@ data class PasswordChangeUiState(
 
     val lead: UiText
         get() = accountName?.ifBlank { null }?.let { UiText.Key(SharedString.PasswordChangeLead, listOf(it)) }
-            ?: UiText.Key(SharedString.PasswordChangeLeadAccount)
+            ?: UiText.Key(SharedString.PasswordChangeLeadUnnamed)
 
     val requirementsHint: UiText get() = requirements.hint
 }

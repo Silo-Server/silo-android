@@ -18,14 +18,14 @@ internal val SharedString.resId: Int
         SharedString.NetworkErrorUnknown -> R.string.catalog_error_networkUnknown
         SharedString.RequestTimeout -> R.string.catalog_error_timeout
         SharedString.ServerUpdateRequired -> R.string.update_body
-        SharedString.PasswordChangeRequired -> R.string.signIn_passwordChange_error_required
-        SharedString.PasswordChangeLead -> R.string.web_auth_choosePassword_description
-        SharedString.PasswordChangeLeadAccount -> R.string.signIn_passwordChange_leadAccount
-        SharedString.PasswordEmptyNew -> R.string.signIn_passwordChange_error_emptyNew
-        SharedString.PasswordEmptyTemporary -> R.string.signIn_passwordChange_error_emptyTemporary
+        SharedString.PasswordChangeRequired -> R.string.shell_error_temporaryPassword
+        SharedString.PasswordChangeLead -> R.string.signIn_passwordChange_lead
+        SharedString.PasswordChangeLeadUnnamed -> R.string.signIn_passwordChange_leadUnnamed
+        SharedString.PasswordNewRequired -> R.string.signIn_passwordChange_error_newRequired
+        SharedString.PasswordTemporaryRequired -> R.string.signIn_passwordChange_error_temporaryRequired
         SharedString.PasswordMismatch -> R.string.signIn_passwordChange_error_mismatch
         SharedString.PasswordTooLong -> R.string.signIn_passwordChange_error_tooLong
-        SharedString.PasswordWrongTemporary -> R.string.signIn_passwordChange_error_wrongTemporary
+        SharedString.PasswordTemporaryIncorrect -> R.string.signIn_passwordChange_error_temporaryIncorrect
         SharedString.PasswordRejected -> R.string.signIn_passwordChange_error_rejected
         SharedString.PasswordRateLimited -> R.string.tvSignIn_error_rateLimited
         SharedString.PasswordNoSiloPassword -> R.string.signIn_passwordChange_error_noSiloPassword

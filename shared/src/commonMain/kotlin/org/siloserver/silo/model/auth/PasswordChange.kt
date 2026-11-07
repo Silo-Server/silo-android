@@ -92,14 +92,14 @@ private fun String.codePointCount(): Int {
  * server's refusals. [text] is what the form shows.
  */
 sealed class PasswordChangeError(val text: UiText) {
-    data object EmptyNew : PasswordChangeError(UiText.Key(SharedString.PasswordEmptyNew))
-    data object EmptyTemporary : PasswordChangeError(UiText.Key(SharedString.PasswordEmptyTemporary))
+    data object EmptyNew : PasswordChangeError(UiText.Key(SharedString.PasswordNewRequired))
+    data object EmptyTemporary : PasswordChangeError(UiText.Key(SharedString.PasswordTemporaryRequired))
     data object Mismatch : PasswordChangeError(UiText.Key(SharedString.PasswordMismatch))
     data class TooShort(val minimum: Int) : PasswordChangeError(UiText.Plural(SharedPlural.PasswordTooShort, minimum))
     data object TooLong : PasswordChangeError(UiText.Key(SharedString.PasswordTooLong))
 
     /** 422 naming the temporary password. */
-    data object WrongTemporary : PasswordChangeError(UiText.Key(SharedString.PasswordWrongTemporary))
+    data object WrongTemporary : PasswordChangeError(UiText.Key(SharedString.PasswordTemporaryIncorrect))
 
     /** Another 422: the server refused the new password, with its reason when it gave one. */
     data class Rejected(val server: String?) :

@@ -19,14 +19,14 @@ enum class SharedString(val key: String) {
     ServerUpdateRequired("update.body"),
 
     // Choose a new password (temporary passwords).
-    PasswordChangeRequired("signIn.passwordChange.error.required"),
-    PasswordChangeLead("web.auth.choosePassword.description"),
-    PasswordChangeLeadAccount("signIn.passwordChange.leadAccount"),
-    PasswordEmptyNew("signIn.passwordChange.error.emptyNew"),
-    PasswordEmptyTemporary("signIn.passwordChange.error.emptyTemporary"),
+    PasswordChangeRequired("shell.error.temporaryPassword"),
+    PasswordChangeLead("signIn.passwordChange.lead"),
+    PasswordChangeLeadUnnamed("signIn.passwordChange.leadUnnamed"),
+    PasswordNewRequired("signIn.passwordChange.error.newRequired"),
+    PasswordTemporaryRequired("signIn.passwordChange.error.temporaryRequired"),
     PasswordMismatch("signIn.passwordChange.error.mismatch"),
     PasswordTooLong("signIn.passwordChange.error.tooLong"),
-    PasswordWrongTemporary("signIn.passwordChange.error.wrongTemporary"),
+    PasswordTemporaryIncorrect("signIn.passwordChange.error.temporaryIncorrect"),
     PasswordRejected("signIn.passwordChange.error.rejected"),
     PasswordRateLimited("tvSignIn.error.rateLimited"),
     PasswordNoSiloPassword("signIn.passwordChange.error.noSiloPassword"),
@@ -73,8 +73,8 @@ enum class SharedString(val key: String) {
 }
 
 /**
- * The catalog plurals the shared module names. Each message's placeholders are
- * `{count}`, `{count_text}`, then any names (see [UiText.Plural]).
+ * The catalog plurals the shared module names. [UiText.Plural] fills the
+ * message's `{count}`, then its other placeholders from its args in order.
  */
 enum class SharedPlural(val key: String) {
     PasswordRequirement("signIn.passwordChange.requirement"),

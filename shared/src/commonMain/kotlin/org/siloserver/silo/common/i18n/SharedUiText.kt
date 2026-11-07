@@ -32,11 +32,12 @@ sealed interface UiText {
     data class Key(val key: SharedString, val args: List<Any> = emptyList()) : UiText
 
     /**
-     * A catalog plural. [count] picks the form and fills the message's
-     * `{count}` and `{count_text}` (the count as digits) placeholders; [names]
-     * fill the ones after them and are isolated in a right-to-left interface.
+     * A catalog plural. [count] picks the form and fills the message's first
+     * placeholder, `{count}`; [args] fill the ones after it, as for [Res]. A
+     * message with a `{count_text}` slot (a count that can pass 999) takes
+     * `count.toString()` as its first arg.
      */
-    data class Plural(val key: SharedPlural, val count: Int, val names: List<String> = emptyList()) : UiText
+    data class Plural(val key: SharedPlural, val count: Int, val args: List<Any> = emptyList()) : UiText
 
     /** Text that arrives already worded: the server's own message, user input. */
     data class Raw(val text: String) : UiText
