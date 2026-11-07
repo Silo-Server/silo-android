@@ -36,7 +36,7 @@ internal enum class TvPlayerRemoteKeyAction {
  * Maps one remote key event onto the player's intent vocabulary, or null when
  * the key is not ours (focus navigation and unhandled keys fall through).
  *
- * Media play/pause acts on the first DOWN and consumes UP halves and
+ * Media play/pause (and a keyboard's Space) acts on the first DOWN and consumes UP halves and
  * auto-repeats so the system media-key fallback cannot act on them twice.
  * Left/Right quick-skip only while [dpadHorizontalSeek] allows it — with a
  * focus-owning surface (transport overlay, HUD, Up Next) up, they belong to
@@ -66,6 +66,11 @@ internal fun tvPlayerRemoteKeyAction(
     KeyEvent.KEYCODE_MEDIA_PLAY,
     KeyEvent.KEYCODE_MEDIA_PAUSE,
     KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+    // A keyboard's Space bar toggles playback, as in desktop and web players.
+    // Without this, Space from clean playback only reveals the controls, and
+    // with them up a focused Compose button ignores it (only Select/Enter
+    // click), so a keyboard user had to reach for Enter on the Pause button.
+    KeyEvent.KEYCODE_SPACE,
     -> if (action == KeyEvent.ACTION_DOWN && repeatCount == 0) {
         TvPlayerRemoteKeyAction.PlayPause
     } else {

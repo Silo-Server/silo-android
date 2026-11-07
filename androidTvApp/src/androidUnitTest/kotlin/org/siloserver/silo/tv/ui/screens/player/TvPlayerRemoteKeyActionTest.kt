@@ -29,6 +29,7 @@ class TvPlayerRemoteKeyActionTest {
             KeyEvent.KEYCODE_MEDIA_PLAY,
             KeyEvent.KEYCODE_MEDIA_PAUSE,
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_SPACE,
         ).forEach { keyCode ->
             assertEquals(
                 TvPlayerRemoteKeyAction.PlayPause,
@@ -47,6 +48,7 @@ class TvPlayerRemoteKeyActionTest {
             KeyEvent.KEYCODE_MEDIA_PLAY,
             KeyEvent.KEYCODE_MEDIA_PAUSE,
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_SPACE,
         ).forEach { keyCode ->
             assertEquals(
                 TvPlayerRemoteKeyAction.ConsumeOnly,
@@ -65,6 +67,7 @@ class TvPlayerRemoteKeyActionTest {
             KeyEvent.KEYCODE_MEDIA_PLAY,
             KeyEvent.KEYCODE_MEDIA_PAUSE,
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_SPACE,
         ).forEach { keyCode ->
             assertEquals(
                 TvPlayerRemoteKeyAction.ConsumeOnly,
