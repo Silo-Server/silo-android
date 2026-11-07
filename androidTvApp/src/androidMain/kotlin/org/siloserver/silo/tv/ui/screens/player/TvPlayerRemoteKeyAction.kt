@@ -62,7 +62,15 @@ internal fun tvPlayerRemoteKeyAction(
     // overlay up, Down still belongs to it — that is the press that reaches the
     // buttons under the scrubber.
     dpadDownOpensHud: Boolean = false,
-): TvPlayerRemoteKeyAction? = when (keyCode) {
+    metaState: Int = 0,
+): TvPlayerRemoteKeyAction? = if (
+    // Ctrl+Space (and Alt/Meta+Space) are system shortcuts such as switching
+    // keyboard layout, not playback presses. Leave them unmapped, as Space was
+    // before it toggled playback.
+    keyCode == KeyEvent.KEYCODE_SPACE && metaState and SpaceShortcutModifiers != 0
+) {
+    null
+} else when (keyCode) {
     KeyEvent.KEYCODE_MEDIA_PLAY,
     KeyEvent.KEYCODE_MEDIA_PAUSE,
     KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
@@ -142,6 +150,9 @@ internal fun tvPlayerRemoteKeyAction(
     else -> null
 }
 
+private const val SpaceShortcutModifiers =
+    KeyEvent.META_CTRL_ON or KeyEvent.META_ALT_ON or KeyEvent.META_META_ON
+
 // The idle overlay is a focus-owning surface: the scrubber handles its own
 // Left/Right skips when focused, and the transport cluster needs Left/Right
 // for moving between buttons — so horizontal seek mapping stays off here.
@@ -149,10 +160,12 @@ internal fun tvPlayerIdleOverlayRemoteKeyAction(
     keyCode: Int,
     action: Int,
     repeatCount: Int,
+    metaState: Int = 0,
 ): TvPlayerRemoteKeyAction? =
     tvPlayerRemoteKeyAction(
         keyCode = keyCode,
         action = action,
         repeatCount = repeatCount,
         dpadHorizontalSeek = false,
+        metaState = metaState,
     )
