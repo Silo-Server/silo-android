@@ -1063,12 +1063,16 @@ private fun SourceRow(
                     color = DetailPrimaryText.copy(alpha = 0.4f),
                 )
             }
+            // The last token (usually the genres) gives way when a longer
+            // translated token leaves too little room; the chip never wraps.
             Text(
                 text = token,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
                 color = DetailPrimaryText.copy(alpha = 0.85f),
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = if (index == tokens.lastIndex) Modifier.weight(1f, fill = false) else Modifier,
             )
         }
         if (!ratingChip.isNullOrBlank()) {
@@ -1117,6 +1121,8 @@ private fun ContentRatingChip(text: String) {
             fontWeight = FontWeight.ExtraBold,
             letterSpacing = 0.8.sp,
             color = DetailPrimaryText,
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }
