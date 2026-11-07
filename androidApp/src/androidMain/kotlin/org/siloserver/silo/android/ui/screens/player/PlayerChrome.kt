@@ -649,8 +649,8 @@ internal fun PlayerValueRow(
             Box(modifier = Modifier.weight(1f)) { labelBlock() }
         } else {
             // The value ends at the chevron, so every value lines up on one
-            // edge. It keeps its own width unless the label's longest word
-            // needs the room; a long label wraps instead.
+            // edge. The label keeps its one line and a long value ellipsizes;
+            // a long label wraps so a value of up to half the row shows whole.
             LabelValueLine(
                 label = labelBlock,
                 value = {
@@ -663,6 +663,7 @@ internal fun PlayerValueRow(
                     )
                 },
                 gap = 10.dp,
+                labelFirst = true,
                 modifier = Modifier.weight(1f),
             )
         }
