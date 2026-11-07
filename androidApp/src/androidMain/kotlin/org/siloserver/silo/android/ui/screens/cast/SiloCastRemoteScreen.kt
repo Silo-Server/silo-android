@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.cast
 
 import org.siloserver.silo.android.ui.screens.player.mobileVideoGravityLabel
 import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.android.ui.components.LeftToRight
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
@@ -732,31 +733,33 @@ private fun RemoteScrubber(
     @Suppress("UNUSED_EXPRESSION") clockTick
     val live = scrubPreview?.toDouble() ?: controller.displayTime().coerceIn(0.0, duration)
 
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Slider(
-            value = live.toFloat(),
-            onValueChange = { scrubPreview = it },
-            onValueChangeFinished = {
-                scrubPreview?.let { controller.seek(it.toDouble()) }
-                scrubPreview = null
-            },
-            valueRange = 0f..duration.coerceAtLeast(1.0).toFloat(),
-            enabled = duration > 0.0,
-            colors = remoteSliderColors(),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                formatHMS(live),
-                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                color = RemoteSecondary,
+    LeftToRight {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Slider(
+                value = live.toFloat(),
+                onValueChange = { scrubPreview = it },
+                onValueChangeFinished = {
+                    scrubPreview?.let { controller.seek(it.toDouble()) }
+                    scrubPreview = null
+                },
+                valueRange = 0f..duration.coerceAtLeast(1.0).toFloat(),
+                enabled = duration > 0.0,
+                colors = remoteSliderColors(),
+                modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(modifier = Modifier.weight(1f))
-            Text(
-                if (duration > 0.0) "-" + formatHMS((duration - live).coerceAtLeast(0.0)) else formatHMS(duration),
-                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                color = RemoteSecondary,
-            )
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    formatHMS(live),
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                    color = RemoteSecondary,
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    if (duration > 0.0) "-" + formatHMS((duration - live).coerceAtLeast(0.0)) else formatHMS(duration),
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                    color = RemoteSecondary,
+                )
+            }
         }
     }
 }
@@ -770,91 +773,93 @@ private fun RemoteTransport(
     @Suppress("UNUSED_EXPRESSION") clockTick
     // Profile-wide video intervals; 10s back / 30s forward on older servers.
     val intervals = rememberVideoSeekIntervals(SeekIntervalPair(10, 30))
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if (playback.hasNextEpisode) {
-            Arrangement.SpaceBetween
-        } else {
-            Arrangement.spacedBy(28.dp)
-        },
-        modifier = if (playback.hasNextEpisode) Modifier.fillMaxWidth() else Modifier,
-    ) {
-        if (playback.hasNextEpisode) {
-            // Balance the trailing Next button so the core transport remains
-            // centered instead of shifting left whenever an episode follows.
-            Spacer(modifier = Modifier.size(48.dp))
-        }
-
-        IconButton(onClick = {
-            controller.seek((controller.displayTime() - intervals.backSeconds).coerceAtLeast(0.0))
-        }) {
-            SeekIntervalIcon(
-                forward = false,
-                seconds = intervals.backSeconds,
-                contentDescription = pluralStringResource(
-                    CommonR.plurals.player_skip_back,
-                    intervals.backSeconds,
-                    intervals.backSeconds,
-                ),
-                tint = RemoteOnSurface,
-                modifier = Modifier.size(34.dp),
-            )
-        }
-
-        Surface(
-            onClick = { controller.playPause() },
-            shape = CircleShape,
-            color = RemoteOnSurface,
-            modifier = Modifier.size(64.dp),
+    LeftToRight {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = if (playback.hasNextEpisode) {
+                Arrangement.SpaceBetween
+            } else {
+                Arrangement.spacedBy(28.dp)
+            },
+            modifier = if (playback.hasNextEpisode) Modifier.fillMaxWidth() else Modifier,
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                if (playback.isLoading || playback.isBuffering) {
-                    CircularProgressIndicator(
-                        color = Color.Black,
-                        strokeWidth = 2.5.dp,
-                        modifier = Modifier.size(26.dp),
-                    )
-                } else {
-                    Icon(
-                        if (controller.isPlaying()) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = stringResource(
-                            if (controller.isPlaying()) CommonR.string.player_controls_pause else CommonR.string.common_play,
-                        ),
-                        tint = Color.Black,
-                        modifier = Modifier.size(32.dp),
-                    )
+            if (playback.hasNextEpisode) {
+                // Balance the trailing Next button so the core transport remains
+                // centered instead of shifting left whenever an episode follows.
+                Spacer(modifier = Modifier.size(48.dp))
+            }
+
+            IconButton(onClick = {
+                controller.seek((controller.displayTime() - intervals.backSeconds).coerceAtLeast(0.0))
+            }) {
+                SeekIntervalIcon(
+                    forward = false,
+                    seconds = intervals.backSeconds,
+                    contentDescription = pluralStringResource(
+                        CommonR.plurals.player_skip_back,
+                        intervals.backSeconds,
+                        intervals.backSeconds,
+                    ),
+                    tint = RemoteOnSurface,
+                    modifier = Modifier.size(34.dp),
+                )
+            }
+
+            Surface(
+                onClick = { controller.playPause() },
+                shape = CircleShape,
+                color = RemoteOnSurface,
+                modifier = Modifier.size(64.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    if (playback.isLoading || playback.isBuffering) {
+                        CircularProgressIndicator(
+                            color = Color.Black,
+                            strokeWidth = 2.5.dp,
+                            modifier = Modifier.size(26.dp),
+                        )
+                    } else {
+                        Icon(
+                            if (controller.isPlaying()) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = stringResource(
+                                if (controller.isPlaying()) CommonR.string.player_controls_pause else CommonR.string.common_play,
+                            ),
+                            tint = Color.Black,
+                            modifier = Modifier.size(32.dp),
+                        )
+                    }
                 }
             }
-        }
 
-        IconButton(onClick = {
-            val base = controller.displayTime()
-            val step = intervals.forwardSeconds.toDouble()
-            val target = if (playback.duration > 0.0) (base + step).coerceAtMost(playback.duration) else base + step
-            controller.seek(target)
-        }) {
-            SeekIntervalIcon(
-                forward = true,
-                seconds = intervals.forwardSeconds,
-                contentDescription = pluralStringResource(
-                    CommonR.plurals.player_skip_forward,
-                    intervals.forwardSeconds,
-                    intervals.forwardSeconds,
-                ),
-                tint = RemoteOnSurface,
-                modifier = Modifier.size(34.dp),
-            )
-        }
-
-        if (playback.hasNextEpisode) {
-            IconButton(onClick = { controller.playNext() }) {
-                Icon(
-                    Icons.Filled.SkipNext,
-                    contentDescription = playback.nextEpisodeTitle?.let { stringResourceWithNames(CommonR.string.cast_remote_nextNamed, it) }
-                        ?: stringResource(CommonR.string.cast_remote_nextEpisode),
+            IconButton(onClick = {
+                val base = controller.displayTime()
+                val step = intervals.forwardSeconds.toDouble()
+                val target = if (playback.duration > 0.0) (base + step).coerceAtMost(playback.duration) else base + step
+                controller.seek(target)
+            }) {
+                SeekIntervalIcon(
+                    forward = true,
+                    seconds = intervals.forwardSeconds,
+                    contentDescription = pluralStringResource(
+                        CommonR.plurals.player_skip_forward,
+                        intervals.forwardSeconds,
+                        intervals.forwardSeconds,
+                    ),
                     tint = RemoteOnSurface,
-                    modifier = Modifier.size(30.dp),
+                    modifier = Modifier.size(34.dp),
                 )
+            }
+
+            if (playback.hasNextEpisode) {
+                IconButton(onClick = { controller.playNext() }) {
+                    Icon(
+                        Icons.Filled.SkipNext,
+                        contentDescription = playback.nextEpisodeTitle?.let { stringResourceWithNames(CommonR.string.cast_remote_nextNamed, it) }
+                            ?: stringResource(CommonR.string.cast_remote_nextEpisode),
+                        tint = RemoteOnSurface,
+                        modifier = Modifier.size(30.dp),
+                    )
+                }
             }
         }
     }

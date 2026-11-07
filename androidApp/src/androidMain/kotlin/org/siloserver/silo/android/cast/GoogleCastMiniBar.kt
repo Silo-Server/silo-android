@@ -23,6 +23,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.android.ui.components.LeftToRight
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
 import org.siloserver.silo.common.R as CommonR
 
@@ -82,27 +83,31 @@ fun GoogleCastMiniBar(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            IconButton(onClick = onSkipBack) {
-                SeekIntervalIcon(
-                    forward = false,
-                    seconds = skipBackSeconds,
-                    contentDescription = pluralStringResource(CommonR.plurals.player_skip_back, skipBackSeconds, skipBackSeconds),
-                    modifier = Modifier.size(24.dp),
-                )
-            }
-            IconButton(onClick = onPlayPause) {
-                Icon(
-                    imageVector = if (castState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = stringResource(if (castState.isPlaying) CommonR.string.player_controls_pause else CommonR.string.common_play),
-                )
-            }
-            IconButton(onClick = onSkipForward) {
-                SeekIntervalIcon(
-                    forward = true,
-                    seconds = skipForwardSeconds,
-                    contentDescription = pluralStringResource(CommonR.plurals.player_skip_forward, skipForwardSeconds, skipForwardSeconds),
-                    modifier = Modifier.size(24.dp),
-                )
+            LeftToRight {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onSkipBack) {
+                        SeekIntervalIcon(
+                            forward = false,
+                            seconds = skipBackSeconds,
+                            contentDescription = pluralStringResource(CommonR.plurals.player_skip_back, skipBackSeconds, skipBackSeconds),
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+                    IconButton(onClick = onPlayPause) {
+                        Icon(
+                            imageVector = if (castState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = stringResource(if (castState.isPlaying) CommonR.string.player_controls_pause else CommonR.string.common_play),
+                        )
+                    }
+                    IconButton(onClick = onSkipForward) {
+                        SeekIntervalIcon(
+                            forward = true,
+                            seconds = skipForwardSeconds,
+                            contentDescription = pluralStringResource(CommonR.plurals.player_skip_forward, skipForwardSeconds, skipForwardSeconds),
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+                }
             }
             CastSubtitleMenuButton(
                 options = castState.subtitleOptions,

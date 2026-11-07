@@ -75,6 +75,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.android.ui.components.LeftToRight
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
 import org.siloserver.silo.common.R as CommonR
 
@@ -449,64 +450,68 @@ private fun PlayerTransportControls(
     modifier: Modifier = Modifier,
 ) {
     val showPlay = isPaused || !isPlaying
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(46.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        PlayerDisc(
-            contentDescription = pluralStringResource(CommonR.plurals.player_controls_skipBack, skipBackSeconds, skipBackSeconds),
-            onClick = onSkipBackward,
-            size = 54.dp,
-            enabled = seekEnabled,
+    // Transport stays left to right in every language: back on the left, as
+    // on the seek bar.
+    LeftToRight {
+        Row(
+            modifier = modifier,
+            horizontalArrangement = Arrangement.spacedBy(46.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            SeekIntervalIcon(
-                forward = false,
-                seconds = skipBackSeconds,
-                contentDescription = null,
-                tint = PlayerChrome.Paper,
-                modifier = Modifier.size(31.dp),
-            )
-        }
-        // While loading, the spinner stands where the disc was; the slot still
-        // plays or pauses, so a stall never takes the control away.
-        PlayerDisc(
-            contentDescription = stringResource(if (showPlay) CommonR.string.player_controls_play else CommonR.string.player_controls_pause),
-            onClick = onPlayPause,
-            size = 70.dp,
-            enabled = playPauseEnabled,
-            fill = if (isLoading) Color.Transparent else PlayerChrome.Paper,
-            contentColor = PlayerChrome.Ink,
-            stroke = Color.Transparent,
-            stateDescription = stringResource(CommonR.string.common_loading).takeIf { isLoading },
-        ) {
-            if (isLoading) {
-                PlayerLoadingSpinner()
-            } else {
-                Icon(
-                    imageVector = if (showPlay) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+            PlayerDisc(
+                contentDescription = pluralStringResource(CommonR.plurals.player_controls_skipBack, skipBackSeconds, skipBackSeconds),
+                onClick = onSkipBackward,
+                size = 54.dp,
+                enabled = seekEnabled,
+            ) {
+                SeekIntervalIcon(
+                    forward = false,
+                    seconds = skipBackSeconds,
                     contentDescription = null,
-                    tint = PlayerChrome.Ink,
-                    // The play triangle's visual centre sits left of its box.
-                    modifier = Modifier
-                        .size(44.dp)
-                        .offset(x = if (showPlay) 2.dp else 0.dp),
+                    tint = PlayerChrome.Paper,
+                    modifier = Modifier.size(31.dp),
                 )
             }
-        }
-        PlayerDisc(
-            contentDescription = pluralStringResource(CommonR.plurals.player_controls_skipForward, skipForwardSeconds, skipForwardSeconds),
-            onClick = onSkipForward,
-            size = 54.dp,
-            enabled = seekEnabled,
-        ) {
-            SeekIntervalIcon(
-                forward = true,
-                seconds = skipForwardSeconds,
-                contentDescription = null,
-                tint = PlayerChrome.Paper,
-                modifier = Modifier.size(31.dp),
-            )
+            // While loading, the spinner stands where the disc was; the slot still
+            // plays or pauses, so a stall never takes the control away.
+            PlayerDisc(
+                contentDescription = stringResource(if (showPlay) CommonR.string.player_controls_play else CommonR.string.player_controls_pause),
+                onClick = onPlayPause,
+                size = 70.dp,
+                enabled = playPauseEnabled,
+                fill = if (isLoading) Color.Transparent else PlayerChrome.Paper,
+                contentColor = PlayerChrome.Ink,
+                stroke = Color.Transparent,
+                stateDescription = stringResource(CommonR.string.common_loading).takeIf { isLoading },
+            ) {
+                if (isLoading) {
+                    PlayerLoadingSpinner()
+                } else {
+                    Icon(
+                        imageVector = if (showPlay) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                        contentDescription = null,
+                        tint = PlayerChrome.Ink,
+                        // The play triangle's visual centre sits left of its box.
+                        modifier = Modifier
+                            .size(44.dp)
+                            .offset(x = if (showPlay) 2.dp else 0.dp),
+                    )
+                }
+            }
+            PlayerDisc(
+                contentDescription = pluralStringResource(CommonR.plurals.player_controls_skipForward, skipForwardSeconds, skipForwardSeconds),
+                onClick = onSkipForward,
+                size = 54.dp,
+                enabled = seekEnabled,
+            ) {
+                SeekIntervalIcon(
+                    forward = true,
+                    seconds = skipForwardSeconds,
+                    contentDescription = null,
+                    tint = PlayerChrome.Paper,
+                    modifier = Modifier.size(31.dp),
+                )
+            }
         }
     }
 }
