@@ -171,6 +171,7 @@ fun MainScreen(
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val metadataAiFeatureStore: MetadataAiFeatureStore = koinInject()
     val shuffleFeatureStore: org.siloserver.silo.model.feature.ShuffleFeatureStore = koinInject()
+    val ratingSourcesStore: org.siloserver.silo.model.feature.RatingSourcesStore = koinInject()
     val signOutTeardown: org.siloserver.silo.android.auth.SignOutTeardown = koinInject()
     val switchProfile = org.siloserver.silo.android.ui.navigation.LocalProfileSwitch.current
     val reachabilityState by reachabilityMonitor.state.collectAsState()
@@ -304,6 +305,9 @@ fun MainScreen(
         metadataAiFeatureStore.refresh()
         shuffleFeatureStore.reset()
         shuffleFeatureStore.refresh()
+        ratingSourcesStore.reset()
+        // Its own coroutine: sort lists need it, and it should not wait on the calls above.
+        launch { ratingSourcesStore.refresh() }
     }
 
     fun signOutFromProfileMenu(removeServer: Boolean) {

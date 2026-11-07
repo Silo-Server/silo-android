@@ -234,6 +234,7 @@ fun TvMainShell(
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val metadataAiFeatureStore: org.siloserver.silo.model.feature.MetadataAiFeatureStore = koinInject()
     val shuffleFeatureStore: org.siloserver.silo.model.feature.ShuffleFeatureStore = koinInject()
+    val ratingSourcesStore: org.siloserver.silo.model.feature.RatingSourcesStore = koinInject()
     val serverRegistry: ServerRegistry = koinInject()
     val reachabilityState by reachabilityMonitor.state.collectAsState()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
@@ -394,6 +395,9 @@ fun TvMainShell(
         metadataAiFeatureStore.refresh()
         shuffleFeatureStore.reset()
         shuffleFeatureStore.refresh()
+        ratingSourcesStore.reset()
+        // Its own coroutine: sort lists need it, and it should not wait on the calls above.
+        launch { ratingSourcesStore.refresh() }
     }
 
     val focusManager = LocalFocusManager.current

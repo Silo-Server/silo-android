@@ -480,7 +480,12 @@ private fun LibraryTab(
 
     when (openPanel) {
         TvBrowsePanel.Sort -> TvBrowseSortPanel(
-            options = TvLibrarySortOption.availableFor(state.libraryType),
+            options = TvLibrarySortOption.availableFor(
+                libraryType = state.libraryType,
+                mediaScope = state.mediaScope,
+                shownRatingSources = rememberShownRatingSources(),
+                current = state.browseFilter.sort,
+            ),
             currentSort = state.browseFilter.sort,
             order = state.browseFilter.order,
             onSelect = { option ->
@@ -591,7 +596,10 @@ private fun LibraryGrid(
         ) {
             if (showBrowseControls) {
                 item(span = { GridItemSpan(maxLineSpan) }, key = "browse-controls") {
-                    val sortOption = TvLibrarySortOption.fromWire(state.browseFilter.sort)
+                    val sortOption = TvLibrarySortOption.fromWire(
+                        state.browseFilter.sort,
+                        org.siloserver.silo.catalog.sort.CatalogSortRelevance.forLibrary(state.libraryType, state.mediaScope),
+                    )
                     var controlsFocused by remember { mutableStateOf(false) }
                     // Scrolling back up lands the pills via minimal
                     // bring-into-view (pinned at the viewport top edge);

@@ -645,7 +645,10 @@ private fun PersonalControlPanels(
     val controlsState by controls.uiState.collectAsState()
     when (openPanel) {
         TvPersonalPanel.Sort -> TvBrowseSortPanel(
-            options = TvLibrarySortOption.availableForPersonalList(),
+            options = TvLibrarySortOption.availableForPersonalList(
+                shownRatingSources = org.siloserver.silo.tv.ui.screens.library.rememberShownRatingSources(),
+                current = controlsState.sort,
+            ),
             currentSort = controlsState.sort,
             order = controlsState.order,
             onSelect = { option ->
