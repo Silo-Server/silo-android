@@ -1480,7 +1480,7 @@ fun SectionHeader(
     modifier: Modifier = Modifier,
 ) {
     // iOS PhoneSectionHeader: optional eyebrow label 11pt bold tracking 1.6
-    // (0.55 alpha), title 22pt semibold single-line, trailing 13pt medium,
+    // (0.55 alpha), title 22pt semibold (up to two lines), trailing 13pt medium,
     // column spacing 4.
     Row(
         modifier = modifier
@@ -1504,13 +1504,15 @@ fun SectionHeader(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            // Two lines, so a longer translated title such as "Episodios de
+            // Temporada 1" wraps instead of ellipsizing beside the count.
             Text(
                 text = title,
                 fontSize = 22.sp,
                 lineHeight = 28.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = DetailPrimaryText,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
