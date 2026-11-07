@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.material3.OutlinedTextField
 import kotlinx.coroutines.delay
 import org.koin.compose.koinInject
@@ -315,6 +316,13 @@ private fun BrowseControlPill(
 // Sort panel
 // ============================================================================
 
+/** The rating sources the server shows; a sort panel lists a rating sort only while its source is shown. */
+@Composable
+fun rememberShownRatingSources(): Set<String> {
+    val store: org.siloserver.silo.model.feature.RatingSourcesStore = org.koin.compose.koinInject()
+    return store.shown.collectAsState().value
+}
+
 @Composable
 fun TvBrowseSortPanel(
     options: List<TvLibrarySortOption>,
@@ -336,11 +344,15 @@ fun TvBrowseSortPanel(
     }
 
     BrowsePanelScrim(onClose = onClose) {
+        // A series library lists up to 17 sorts, more than a TV screen holds: the
+        // panel stops short of the screen edges and scrolls with focus.
         Column(
             modifier = Modifier
+                .padding(vertical = 48.dp)
                 .onFocusChanged { sortPanelHasFocus = it.hasFocus }
                 .width(260.dp)
                 .tvSkylinePanelChrome()
+                .verticalScroll(rememberScrollState())
                 .padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {

@@ -135,6 +135,8 @@ import org.siloserver.silo.catalog.scopeLibrarySection
 import org.siloserver.silo.catalog.filter.CatalogFacet
 import org.siloserver.silo.catalog.filter.CatalogFilterQueryBuilder
 import org.siloserver.silo.catalog.filter.CatalogFilterState
+import org.siloserver.silo.catalog.sort.CatalogSortField
+import org.siloserver.silo.catalog.sort.CatalogSortRelevance
 import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.diagnostics.DiagnosticsListLogger
@@ -175,28 +177,24 @@ enum class LibrariesSubtab {
     Collections,
 }
 
-enum class LibraryBrowseSort(
-    @StringRes val labelRes: Int,
-    val sortField: String,
-    val sortOrder: String,
-) {
-    RecentlyAdded(CommonR.string.catalog_sort_recentlyAdded, "added_at", "desc"),
-    Title(CommonR.string.catalog_sort_title, "title", "asc"),
-    ReleaseDate(CommonR.string.catalog_sort_released, "release_date", "desc");
+/** The library Browse grid opens newest first. */
+internal val DefaultLibraryBrowseSort = CatalogSortField.DateAdded
+internal const val DefaultLibraryBrowseOrder = "desc"
 
-    companion object {
-        /**
-         * The sort rides the persisted [CatalogFilterState] (same as
-         * BrowseViewModel), so restoring saved browse prefs also restores the
-         * chip label. [CatalogFilterState]'s own defaults are exactly
-         * [RecentlyAdded]'s pair, so a state saved before the sort travelled
-         * with it — or one naming a field this client does not offer — falls
-         * back to [RecentlyAdded].
-         */
-        fun fromFilterState(state: CatalogFilterState): LibraryBrowseSort =
-            entries.firstOrNull { it.sortField == state.sort && it.sortOrder == state.order }
-                ?: RecentlyAdded
-    }
+/**
+ * The sort and order a persisted [CatalogFilterState] restores. The sort
+ * rides that state (same as BrowseViewModel), so restoring saved browse prefs
+ * also restores the menu label. A field this library's sort list does not
+ * offer, or a state saved with no usable order, falls back to the default.
+ */
+internal fun restoredLibraryBrowseSort(
+    state: CatalogFilterState,
+    relevance: CatalogSortRelevance,
+): Pair<CatalogSortField, String> {
+    val field = CatalogSortField.fromWire(state.sort)?.takeIf { it.appliesTo(relevance) }
+        ?: return DefaultLibraryBrowseSort to DefaultLibraryBrowseOrder
+    val order = state.order.takeIf { it == "asc" || it == "desc" } ?: field.defaultOrder
+    return field to order
 }
 
 data class LibrariesUiState(
@@ -224,13 +222,26 @@ data class LibrariesUiState(
     val browseMediaType: BrowseFacetMediaType = BrowseFacetMediaType.Video,
     val preserveFilters: Boolean = true,
     val catalogDensity: CatalogViewDensity = CatalogViewDensity.Normal,
-    val browseSort: LibraryBrowseSort = LibraryBrowseSort.RecentlyAdded,
+    val browseSort: CatalogSortField = DefaultLibraryBrowseSort,
     val catalogError: UiText? = null,
     val isLoadingCollections: Boolean = false,
     val collections: List<LibraryCollection> = emptyList(),
     val collectionsError: UiText? = null,
     val librariesError: UiText? = null,
-)
+) {
+    /** The sort list's media: the selected library's type, or the mixed library side being browsed. */
+    val browseSortRelevance: CatalogSortRelevance
+        get() = CatalogSortRelevance.forLibrary(
+            libraries.firstOrNull { it.id == selectedLibraryId }?.type,
+            mediaScope,
+        )
+
+    /** The browse order, "asc" or "desc"; it rides [filterState] with the sort. */
+    val browseOrder: String get() = filterState.order
+
+    val isBrowseSortDefault: Boolean
+        get() = browseSort == DefaultLibraryBrowseSort && browseOrder == DefaultLibraryBrowseOrder
+}
 
 class LibrariesViewModel(
     private val personalDataRepository: PersonalDataRepository,
@@ -393,7 +404,7 @@ class LibrariesViewModel(
                     ?.let(::defaultMediaScope)
                     ?.let { default -> if (selectedLibraryId == previousLibraryId) previousScope ?: default else default }
                 val selectionChanged = selectedLibraryId != previousLibraryId || mediaScope != previousScope
-                if (selectionChanged) resetForLibrary(selectedLibraryId, mediaScope)
+                if (selectionChanged) resetForLibrary(selectedLibraryId, mediaScope, libraries)
                 _uiState.update {
                     it.copy(
                         isLoadingLibraries = false,
@@ -500,10 +511,15 @@ class LibrariesViewModel(
      * selection's rows, filter vocabulary and letter, and invalidating its
      * in-flight requests. Restores this library and scope's persisted
      * filter/sort state (iOS parity) so a preserved selection doesn't flash the
-     * unfiltered grid; defaults to a clean filter — and therefore
-     * RecentlyAdded — when nothing is saved.
+     * unfiltered grid; defaults to a clean filter — and therefore Date
+     * Added, newest first — when nothing is saved.
      */
-    private fun resetForLibrary(libraryId: Int?, mediaScope: String?) {
+    private fun resetForLibrary(
+        libraryId: Int?,
+        mediaScope: String?,
+        // The list being installed, when it is not in the state yet (first load).
+        libraries: List<UserLibrary> = _uiState.value.libraries,
+    ) {
         recommendedJob?.cancel()
         recommendedLoadedLibraryId = null
         browseLoadedLibraryId = null
@@ -514,8 +530,14 @@ class LibrariesViewModel(
         ++collectionsRequestGeneration
         catalogContinuation = null
         letterJumpController.reset(null)
-        val restoredFilterState = libraryId?.let { browsePrefs?.savedState(it, mediaScope) } ?: CatalogFilterState()
+        val savedFilterState = libraryId?.let { browsePrefs?.savedState(it, mediaScope) } ?: CatalogFilterState()
         _uiState.update {
+            val relevance = CatalogSortRelevance.forLibrary(
+                libraries.firstOrNull { library -> library.id == libraryId }?.type,
+                mediaScope,
+            )
+            val (restoredSort, restoredOrder) = restoredLibraryBrowseSort(savedFilterState, relevance)
+            val restoredFilterState = savedFilterState.copy(sort = restoredSort.wireValue, order = restoredOrder)
             it.copy(
                 selectedLibraryId = libraryId,
                 mediaScope = mediaScope,
@@ -528,7 +550,7 @@ class LibrariesViewModel(
                 isLoadingCatalog = false,
                 isLoadingMoreCatalog = false,
                 filterState = restoredFilterState,
-                browseSort = LibraryBrowseSort.fromFilterState(restoredFilterState),
+                browseSort = restoredSort,
                 availableFilters = null,
                 preserveFilters = libraryId?.let { id -> browsePrefs?.preserveEnabled(id, mediaScope) } ?: true,
                 catalogError = null,
@@ -574,13 +596,24 @@ class LibrariesViewModel(
         if (enabled) browsePrefs?.saveState(libraryId, _uiState.value.filterState, _uiState.value.mediaScope)
     }
 
-    fun selectBrowseSort(sort: LibraryBrowseSort) {
+    /**
+     * Sort the Browse grid by [sort]. Picking the active sort again flips its
+     * direction; a new sort starts in its own default direction. [order]
+     * forces a direction (Reset).
+     */
+    fun selectBrowseSort(sort: CatalogSortField, order: String? = null) {
+        val current = _uiState.value
+        val nextOrder = order ?: if (sort == current.browseSort) {
+            if (current.browseOrder == "asc") "desc" else "asc"
+        } else {
+            sort.defaultOrder
+        }
         // The sort rides the persisted filter state so "Preserve sort & filters"
         // actually restores it, instead of the chips coming back while the sort
-        // snaps to Recently Added.
-        val nextFilterState = _uiState.value.filterState.copy(
-            sort = sort.sortField,
-            order = sort.sortOrder,
+        // snaps to Date Added.
+        val nextFilterState = current.filterState.copy(
+            sort = sort.wireValue,
+            order = nextOrder,
         )
         _uiState.update {
             it.copy(
@@ -797,8 +830,8 @@ class LibrariesViewModel(
                 val result = catalogRepository.browse(
                     libraryId = libraryId,
                     mediaType = requestState.mediaScope,
-                    sort = requestState.browseSort.sortField,
-                    order = requestState.browseSort.sortOrder,
+                    sort = requestState.browseSort.wireValue,
+                    order = requestState.browseOrder,
                     continuation = if (reset) null else catalogContinuation,
                     // In title order the first page is one whole pager page, so
                     // the full-length grid need not read it again.
@@ -1002,7 +1035,7 @@ class LibrariesViewModel(
     private data class CatalogRequestIdentity(
         val libraryId: Int,
         val mediaScope: String?,
-        val browseSort: LibraryBrowseSort,
+        val browseSort: CatalogSortField,
         val filterState: CatalogFilterState,
     )
 }
@@ -1029,6 +1062,7 @@ fun LibrariesScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val letterJump by viewModel.letterJump.collectAsState()
+    val shownRatingSources = org.siloserver.silo.android.ui.components.rememberShownRatingSources()
     val selectedLibrary = state.libraries.firstOrNull { it.id == state.selectedLibraryId }
     // Movie, TV, and mixed libraries shuffle from the Browse tab when the
     // server offers it.
@@ -1159,6 +1193,7 @@ fun LibrariesScreen(
                             letterJump = letterJump,
                             onPrepareLetterJump = viewModel::prepareLetterJump,
                             letterJumpPosition = viewModel::letterJumpPosition,
+                            shownRatingSources = shownRatingSources,
                             onDensityChanged = viewModel::selectViewDensity,
                             onApplyFilter = viewModel::applyFilterState,
                             onSetPreserve = viewModel::setPreserveFilters,
@@ -1312,7 +1347,8 @@ private fun BrowseTabContent(
     onItemClick: (String) -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
-    onSortChanged: (LibraryBrowseSort) -> Unit,
+    onSortChanged: (CatalogSortField, String?) -> Unit,
+    shownRatingSources: Set<String>,
     letterJump: CatalogLetterJumpState?,
     onPrepareLetterJump: (String) -> Unit,
     letterJumpPosition: suspend (String) -> Int?,
@@ -1321,7 +1357,7 @@ private fun BrowseTabContent(
     onSetPreserve: (Boolean) -> Unit,
 ) {
     var showFilterSheet by remember { mutableStateOf(false) }
-    val isCustomised = state.browseSort != LibraryBrowseSort.RecentlyAdded ||
+    val isCustomised = !state.isBrowseSortDefault ||
         state.filterState.hasActiveFilters
 
     // Sort ▾ / Filter (n) / Reset — the same control row as the saved lists —
@@ -1329,17 +1365,32 @@ private fun BrowseTabContent(
     // so it scrolls with the content under the chrome's glass.
     val controlsHeader: @Composable () -> Unit = {
         Column(modifier = Modifier.padding(bottom = 4.dp)) {
+            val relevance = state.browseSortRelevance
+            val sortOptions = CatalogSortField.options(
+                relevance = relevance,
+                includePersonalized = true,
+                shownRatingSources = shownRatingSources,
+                keep = state.browseSort,
+            )
             SortFilterControlsRow(
-                sortLabel = stringResource(state.browseSort.labelRes),
-                sortActive = state.browseSort != LibraryBrowseSort.RecentlyAdded,
-                sortOptions = LibraryBrowseSort.entries.map { SortMenuOption(id = it.name, label = stringResource(it.labelRes)) },
+                sortLabel = stringResource(state.browseSort.labelRes(relevance)),
+                sortActive = !state.isBrowseSortDefault,
+                sortOptions = sortOptions.map { field ->
+                    val label = stringResource(field.labelRes(relevance))
+                    SortMenuOption(
+                        id = field.name,
+                        label = label,
+                        selectedLabel = "$label  ·  ${stringResource(field.directionLabelRes(state.browseOrder))}",
+                        flipsOnReselect = true,
+                    )
+                },
                 selectedSortId = state.browseSort.name,
-                onSelectSort = { id -> onSortChanged(LibraryBrowseSort.valueOf(id)) },
+                onSelectSort = { id -> onSortChanged(CatalogSortField.valueOf(id), null) },
                 filterCount = state.filterState.activeFacetCount,
                 onOpenFilters = { showFilterSheet = true },
                 showReset = isCustomised,
                 onReset = {
-                    onSortChanged(LibraryBrowseSort.RecentlyAdded)
+                    onSortChanged(DefaultLibraryBrowseSort, DefaultLibraryBrowseOrder)
                     onApplyFilter(state.filterState.resetFilters())
                 },
             )
@@ -1421,9 +1472,10 @@ private fun BrowseTabContent(
                     onLoadMore = onLoadMore,
                     // Date sorts surface the sorted-by date under each card
                     // (mirrors the standalone BrowseScreen), Jim QA 2026-07-09.
-                    cardSubtitle = when (state.browseSort.sortField) {
+                    cardSubtitle = when (state.browseSort.wireValue) {
                         "added_at" -> { item -> formatCardDate(item.addedAt, dateLocale) }
                         "release_date" -> { item -> formatCardDate(item.releaseDate, dateLocale) }
+                        "last_air_date" -> { item -> formatCardDate(item.lastAirDate, dateLocale) }
                         else -> null
                     },
                     letterJump = letterJump,

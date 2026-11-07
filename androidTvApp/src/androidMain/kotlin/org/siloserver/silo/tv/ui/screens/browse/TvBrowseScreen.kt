@@ -30,6 +30,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.catalog.sort.CatalogSortField
+import org.siloserver.silo.common.catalog.labelRes
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
@@ -118,7 +120,8 @@ fun TvBrowseScreen(
         initialFocusRequested = true
     }
 
-    val sortLabel = stringResource(TvBrowseSortOption.fromWire(state.filter.sort).labelRes)
+    val sortLabel = stringResource((CatalogSortField.fromWire(state.filter.sort) ?: CatalogSortField.DateAdded).labelRes())
+    val shownRatingSources = org.siloserver.silo.tv.ui.screens.library.rememberShownRatingSources()
 
     Box(
         modifier = Modifier
@@ -239,9 +242,9 @@ fun TvBrowseScreen(
                     horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                 ) {
-                    TvBrowseSortOption.entries.forEach { option ->
+                    tvBrowseSortOptions(shownRatingSources, state.filter.sort).forEach { option ->
                         FilterChoiceChip(
-                            label = stringResource(option.labelRes),
+                            label = stringResource(option.labelRes()),
                             selected = state.filter.sort == option.wireValue,
                             onClick = { viewModel.onSortChanged(option) },
                         )

@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.library
 
+import org.siloserver.silo.catalog.sort.CatalogSortField
 import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
 import io.ktor.client.HttpClient
@@ -82,7 +83,7 @@ class TvLibraryBrowsePrefsTest {
         val filter = TvLibraryBrowseFilter(
             genre = "Drama",
             namePrefix = "K",
-            sort = TvLibrarySortOption.Rating.wireValue,
+            sort = CatalogSortField.ImdbRating.wireValue,
             order = "asc",
             facetSelection = selection,
         )
@@ -103,7 +104,7 @@ class TvLibraryBrowsePrefsTest {
         val prefs = BrowsePrefsStore(ApplicationProvider.getApplicationContext(), FakeServerRegistry(), "androidtv")
         val first = viewModel(prefs)
         first.onTabSelected(TvLibraryTab.Browse)
-        first.onSortKeySelected(TvLibrarySortOption.ReleaseDate)
+        first.onSortKeySelected(TvLibrarySortOption.of(CatalogSortField.ReleaseDate))
         first.onFacetSelectionApplied(
             TvCatalogFacetSelection().toggled(TvCatalogFacet.Genre, "Drama"),
         )
@@ -134,7 +135,7 @@ class TvLibraryBrowsePrefsTest {
         val prefs = BrowsePrefsStore(ApplicationProvider.getApplicationContext(), FakeServerRegistry(), "androidtv")
         val first = viewModel(prefs)
         first.onTabSelected(TvLibraryTab.Browse)
-        first.onSortKeySelected(TvLibrarySortOption.Year)
+        first.onSortKeySelected(TvLibrarySortOption.of(CatalogSortField.Year))
         first.onTabSelected(TvLibraryTab.RecentlyAdded)
         first.onTabSelected(TvLibraryTab.Alphabet)
 
@@ -146,7 +147,7 @@ class TvLibraryBrowsePrefsTest {
         val prefs = BrowsePrefsStore(ApplicationProvider.getApplicationContext(), FakeServerRegistry(), "androidtv")
         val first = viewModel(prefs)
         first.onTabSelected(TvLibraryTab.Browse)
-        first.onSortKeySelected(TvLibrarySortOption.Year)
+        first.onSortKeySelected(TvLibrarySortOption.of(CatalogSortField.Year))
         first.onFacetSelectionApplied(
             TvCatalogFacetSelection().toggled(TvCatalogFacet.WatchStatus, TvWatchStatusFilter.Unwatched.wireValue),
         )
@@ -166,7 +167,7 @@ class TvLibraryBrowsePrefsTest {
         val prefs = BrowsePrefsStore(ApplicationProvider.getApplicationContext(), FakeServerRegistry(), "androidtv")
         val movies = viewModel(prefs, libraryType = "mixed", mediaScope = "movie")
         movies.onTabSelected(TvLibraryTab.Browse)
-        movies.onSortKeySelected(TvLibrarySortOption.Year)
+        movies.onSortKeySelected(TvLibrarySortOption.of(CatalogSortField.Year))
         movies.onFacetSelectionApplied(
             TvCatalogFacetSelection().toggled(TvCatalogFacet.Genre, "Drama"),
         )
@@ -179,7 +180,7 @@ class TvLibraryBrowsePrefsTest {
         series.onTabSelected(TvLibraryTab.Browse)
         assertEquals("title", series.uiState.value.browseFilter.sort)
         assertEquals(TvCatalogFacetSelection(), series.uiState.value.browseFilter.facetSelection)
-        series.onSortKeySelected(TvLibrarySortOption.Rating)
+        series.onSortKeySelected(TvLibrarySortOption.of(CatalogSortField.ImdbRating))
 
         assertEquals("rating_imdb", prefs.savedState(LIBRARY_ID, "series")?.sort)
         assertNull(prefs.savedState(LIBRARY_ID, "movie"))
