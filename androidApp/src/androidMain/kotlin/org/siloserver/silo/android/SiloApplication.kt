@@ -242,12 +242,14 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
     private fun registerDownloadsNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = getSystemService(NotificationManager::class.java) ?: return
+        // Shown in system settings: use the app language, as the activities do.
+        val text = org.siloserver.silo.common.i18n.AppLocales.wrap(this)
         val channel = NotificationChannel(
             DownloadWorker.NOTIFICATION_CHANNEL_ID,
-            getString(org.siloserver.silo.common.R.string.downloads_notification_channelName),
+            text.getString(org.siloserver.silo.common.R.string.downloads_notification_channelName),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = getString(org.siloserver.silo.common.R.string.downloads_notification_channelDescription)
+            description = text.getString(org.siloserver.silo.common.R.string.downloads_notification_channelDescription)
             setShowBadge(false)
         }
         nm.createNotificationChannel(channel)

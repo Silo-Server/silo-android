@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.util.Log
 import org.siloserver.silo.common.diagnostics.DiagnosticsDownloadLogger
+import org.siloserver.silo.common.i18n.AppLocales
 import androidx.core.app.NotificationCompat
 import androidx.work.BackoffPolicy
 import androidx.work.CoroutineWorker
@@ -97,6 +98,14 @@ class DownloadWorker(
     private val gate: org.siloserver.silo.network.apiv2.ApiV2Gate,
 ) : CoroutineWorker(appContext, params) {
 
+    /**
+     * Context for notification text. The application context keeps the
+     * device language before Android 13 and skips the English stand-in for a
+     * language without a catalog (D64); [AppLocales.wrap] applies both, as
+     * the activities do.
+     */
+    private val text: Context by lazy { AppLocales.wrap(appContext) }
+
     private var transferAuthority: DurableLoginAuthority? = null
 
     /**
@@ -151,7 +160,7 @@ class DownloadWorker(
         val fileName = inputData.getString(KEY_FILE_NAME)
         val container = inputData.getString(KEY_CONTAINER)
         val mediaType = inputData.getString(KEY_MEDIA_TYPE)
-        val displayTitle = inputData.getString(KEY_DISPLAY_TITLE) ?: appContext.getString(R.string.downloads_notification_defaultTitle)
+        val displayTitle = inputData.getString(KEY_DISPLAY_TITLE) ?: text.getString(R.string.downloads_notification_defaultTitle)
         if (fileId < 0) return@withContext Result.failure()
         if (authorities != null) {
             val captured = authorities.snapshotDurableLoginAuthority() ?: return@withContext Result.retry()
@@ -697,11 +706,11 @@ class DownloadWorker(
         val notification = NotificationCompat.Builder(appContext, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)
-            .setContentText(if (indeterminate) appContext.getString(R.string.downloads_notification_starting) else "$progress%")
+            .setContentText(if (indeterminate) text.getString(R.string.downloads_notification_starting) else "$progress%")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setProgress(100, progress, indeterminate)
-            .addAction(android.R.drawable.ic_delete, appContext.getString(R.string.common_cancel), cancelIntent)
+            .addAction(android.R.drawable.ic_delete, text.getString(R.string.common_cancel), cancelIntent)
             .build()
 
         val notificationId = notificationIdFor(downloadId)
