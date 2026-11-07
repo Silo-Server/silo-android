@@ -74,6 +74,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentFormatLocale
 
 /**
  * Glass-capsule scrubber matching `iosApp/.../tvOS/TVPlayerScrubber.swift`.
@@ -278,8 +279,17 @@ fun TvPlayerScrubber(
     // The bar sits above its clock row, as on tvOS: elapsed on the left, time
     // left and the wall-clock finish on the right.
     val context = LocalContext.current
-    // Keyed on the configuration: the activity keeps its context across an in-place language change.
-    val timeFormat = remember(context, LocalConfiguration.current) { android.text.format.DateFormat.getTimeFormat(context) }
+    // In the formatting locale, with the device's 12/24-hour setting. Keyed on
+    // the configuration: the activity keeps its context across an in-place
+    // language change.
+    val configuration = LocalConfiguration.current
+    val formatLocale = currentFormatLocale()
+    val timeFormat = remember(context, configuration, formatLocale) {
+        val localized = context.createConfigurationContext(
+            android.content.res.Configuration(configuration).apply { setLocale(formatLocale) },
+        )
+        android.text.format.DateFormat.getTimeFormat(localized)
+    }
     Column(modifier = modifier) {
         Box(modifier = Modifier.fillMaxWidth().height(28.dp)) {
 

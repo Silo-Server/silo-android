@@ -2847,8 +2847,8 @@ private fun playButtonLabel(
     resumePosition: Double?,
 ): String {
     if (isSeriesOrSeason && nextUp != null) {
-        val season = nextUp.seasonNumber.toString()
-        val episode = nextUp.episodeNumber.toString()
+        val season = LocaleFormat.integer(nextUp.seasonNumber)
+        val episode = LocaleFormat.integer(nextUp.episodeNumber)
         return when {
             seriesContainer && hasResume -> resources.getString(CommonR.string.detail_resumeEpisode, season, episode)
             seriesContainer -> resources.getString(CommonR.string.detail_playEpisode, season, episode)
