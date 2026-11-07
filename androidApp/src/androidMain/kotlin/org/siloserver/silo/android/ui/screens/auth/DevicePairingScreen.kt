@@ -6,6 +6,13 @@ import org.siloserver.silo.common.ui.marquee.ServerBranding
 import org.siloserver.silo.android.ui.components.SiloMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import android.text.format.DateUtils
+import android.icu.text.DisplayContext
+import android.icu.text.NumberFormat
+import android.icu.text.RelativeDateTimeFormatter
+import android.icu.text.RelativeDateTimeFormatter.RelativeUnit
+import android.icu.util.ULocale
+import androidx.compose.ui.platform.LocalConfiguration
+import org.siloserver.silo.common.i18n.LocaleFormat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -582,14 +589,30 @@ private fun DevicePairingError.message(): String = when (this) {
 @Composable
 private fun requestedLabel(requestedAt: String?): String? {
     val at = requestedAt?.let(::parseRfc3339ToEpochMillis) ?: return null
-    val now = System.currentTimeMillis()
+    val elapsed = System.currentTimeMillis() - at
     // Clocks differ a little between phone and server: a time "in the future"
     // is just now too.
-    return if (now - at < DateUtils.MINUTE_IN_MILLIS) {
-        stringResource(CommonR.string.signInTv_requestedJustNow)
-    } else {
-        DateUtils.getRelativeTimeSpanString(at, now, DateUtils.MINUTE_IN_MILLIS).toString()
+    if (elapsed < DateUtils.MINUTE_IN_MILLIS) return stringResource(CommonR.string.signInTv_requestedJustNow)
+    LocalConfiguration.current // recompose on an in-place language change
+    val locale = LocaleFormat.interfaceLocale()
+    val numberLocale = LocaleFormat.numberLocale()
+    // The phrase sits mid-sentence ("requested 5 minutes ago"), in the
+    // interface language; DateUtils capitalizes it for a sentence start.
+    val formatter = remember(locale, numberLocale) {
+        RelativeDateTimeFormatter.getInstance(
+            ULocale.forLocale(locale),
+            // Digits as the app's other numbers in text (D55).
+            NumberFormat.getInstance(ULocale.forLocale(numberLocale)),
+            RelativeDateTimeFormatter.Style.LONG,
+            DisplayContext.CAPITALIZATION_FOR_MIDDLE_OF_SENTENCE,
+        )
     }
+    val (count, unit) = when {
+        elapsed < DateUtils.HOUR_IN_MILLIS -> elapsed / DateUtils.MINUTE_IN_MILLIS to RelativeUnit.MINUTES
+        elapsed < DateUtils.DAY_IN_MILLIS -> elapsed / DateUtils.HOUR_IN_MILLIS to RelativeUnit.HOURS
+        else -> elapsed / DateUtils.DAY_IN_MILLIS to RelativeUnit.DAYS
+    }
+    return formatter.format(count.toDouble(), RelativeDateTimeFormatter.Direction.LAST, unit)
 }
 
 /** "Android TV" / "Apple TV" for the platform strings TVs send; anything else as sent. */
