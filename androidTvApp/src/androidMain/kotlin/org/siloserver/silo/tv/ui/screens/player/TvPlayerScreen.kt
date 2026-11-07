@@ -1233,6 +1233,7 @@ fun TvPlayerScreen(
                 // clean playback. The HUD-open and modal cases never reach the
                 // dispatch below — the guard beneath this call returns first.
                 dpadDownOpensHud = !playerState.showControls && !playerState.showNextUp,
+                metaState = event.metaState,
             )
             // Apple parity (TVPlayerControls.rearmAutoHideOnFocusMove): any key
             // activity while the overlay is up re-arms the 5s auto-hide so the
@@ -3146,6 +3147,7 @@ private fun TvPlayerIdleOverlay(
                         keyCode = event.nativeKeyEvent.keyCode,
                         action = event.nativeKeyEvent.action,
                         repeatCount = event.nativeKeyEvent.repeatCount,
+                        metaState = event.nativeKeyEvent.metaState,
                     )
                 ) {
                     TvPlayerRemoteKeyAction.PlayPause -> {
