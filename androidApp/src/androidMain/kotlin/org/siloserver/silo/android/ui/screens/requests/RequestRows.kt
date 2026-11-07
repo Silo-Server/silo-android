@@ -143,7 +143,8 @@ internal fun MyRequestRow(
                             text = RequestRowCopy.meta(requestResources(), record, progress),
                             fontSize = 12.sp,
                             color = SiloSecondaryText,
-                            maxLines = 1,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(top = 2.dp),
                         )
                         RequestStageTrack(progress = progress, modifier = Modifier.padding(top = 9.dp))
