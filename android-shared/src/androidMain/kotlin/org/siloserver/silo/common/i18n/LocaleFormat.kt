@@ -15,6 +15,7 @@ import java.text.NumberFormat
 import java.time.format.DateTimeFormatter
 import java.time.format.DecimalStyle
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The locale dates, times and numbers are shown in, and helpers that format
@@ -31,9 +32,16 @@ object LocaleFormat {
     @Volatile private var deviceLocales: LocaleList? = null
     @Volatile private var shipped: List<String>? = null
 
+    /** The last [locale] result, for the default locale and device list it came from. */
+    private class Resolved(val ui: Locale, val devices: LocaleList?, val locale: Locale)
+    @Volatile private var resolved: Resolved? = null
+
+    private val formatters = ConcurrentHashMap<FormatterKey, DateTimeFormatter>()
+    private data class FormatterKey(val skeleton: String, val fallback: String, val locale: Locale, val padYear: Boolean)
+
     /**
-     * Re-reads the device's language list. Called from
-     * [AppLanguageStore.check] (each activity's `onStart` and
+     * Re-reads the device's language list. Called from each `Application`
+     * and from [AppLanguageStore.check] (each activity's `onStart` and
      * `onConfigurationChanged`), which also covers coming back from system
      * settings after a device language change.
      */
@@ -53,8 +61,13 @@ object LocaleFormat {
     /** The locale to format dates, times and numbers in (D26). */
     fun locale(): Locale {
         val ui = Locale.getDefault()
-        if (AppLanguage.isPseudo(ui.toLanguageTag())) return ui
         val devices = deviceLocales ?: runCatching { Resources.getSystem().configuration.locales }.getOrNull()
+        resolved?.let { if (it.ui == ui && it.devices == devices) return it.locale }
+        return resolve(ui, devices).also { resolved = Resolved(ui, devices, it) }
+    }
+
+    private fun resolve(ui: Locale, devices: LocaleList?): Locale {
+        if (AppLanguage.isPseudo(ui.toLanguageTag())) return ui
         val device = devices?.takeUnless { it.isEmpty }?.get(0) ?: return ui
         return if (speaksSameLanguage(device, ui)) device else ui
     }
@@ -63,12 +76,25 @@ object LocaleFormat {
      * The language the interface shows, for words built in code (language
      * names): the default locale only when the app ships it. A German device
      * that follows the device shows English text and German dates (D26), and
-     * language names in English.
+     * language names in English. A pseudo-locale is its own interface.
      */
     fun interfaceLocale(): Locale {
-        val list = shipped ?: return Locale.getDefault()
+        val ui = Locale.getDefault()
+        val list = shipped ?: return ui
+        if (AppLanguage.isPseudo(ui.toLanguageTag())) return ui
         val tag = AppLanguage.match(LocaleList.getDefault().toLanguageTags().split(','), list) ?: AppLanguage.DEFAULT
         return Locale.forLanguageTag(tag)
+    }
+
+    /**
+     * The locale for a number inside text (D55): [locale] when it speaks the
+     * interface language, otherwise the interface language, so an English
+     * interface on an Arabic device writes "3 episodes" as `%d` does.
+     */
+    fun numberLocale(): Locale {
+        val format = locale()
+        val text = interfaceLocale()
+        return if (speaksSameLanguage(format, text)) format else text
     }
 
     private fun speaksSameLanguage(a: Locale, b: Locale): Boolean {
@@ -82,10 +108,10 @@ object LocaleFormat {
      * [value] as digits in [locale], without grouping (D55): "1234" in
      * English, "١٢٣٤" in Arabic. For numbers passed to a String placeholder.
      */
-    fun integer(value: Long, locale: Locale = locale(), minDigits: Int = 1): String =
+    fun integer(value: Long, locale: Locale = numberLocale(), minDigits: Int = 1): String =
         String.format(locale, "%0${minDigits.coerceAtLeast(1)}d", value)
 
-    fun integer(value: Int, locale: Locale = locale(), minDigits: Int = 1): String =
+    fun integer(value: Int, locale: Locale = numberLocale(), minDigits: Int = 1): String =
         integer(value.toLong(), locale, minDigits)
 
     /**
@@ -129,13 +155,17 @@ object LocaleFormat {
         fallbackPattern: String,
         locale: Locale = locale(),
         padYear: Boolean = true,
-    ): DateTimeFormatter {
+    ): DateTimeFormatter = formatters.getOrPut(FormatterKey(skeleton, fallbackPattern, locale, padYear)) {
+        buildFormatter(skeleton, fallbackPattern, locale, padYear)
+    }
+
+    private fun buildFormatter(skeleton: String, fallbackPattern: String, locale: Locale, padYear: Boolean): DateTimeFormatter {
         val best = runCatching { android.text.format.DateFormat.getBestDateTimePattern(locale, skeleton) }
             .getOrNull()?.let { normalizePattern(it, padYear) }
         val formatter = best?.let { pattern ->
             runCatching { DateTimeFormatter.ofPattern(pattern, locale) }.getOrNull()
                 // ICU's flexible day periods (`B`, `b`) predate java.time on Android.
-                ?: runCatching { DateTimeFormatter.ofPattern(withoutDayPeriods(pattern), locale) }.getOrNull()
+                ?: runCatching { DateTimeFormatter.ofPattern(withAmPm(pattern), locale) }.getOrNull()
         } ?: DateTimeFormatter.ofPattern(fallbackPattern, locale)
         return formatter.withDecimalStyle(DecimalStyle.of(locale))
     }
@@ -148,10 +178,9 @@ object LocaleFormat {
         if (padYear && run == "y") "yyyy" else run.replace('\u202F', ' ')
     }
 
-    internal fun withoutDayPeriods(pattern: String): String =
-        mapUnquoted(pattern) { run -> if (run[0] == 'B' || run[0] == 'b') "" else run }
-            .trim()
-            .replace(Regex("\\s{2,}"), " ")
+    /** ICU's flexible day periods ("in the evening") as plain AM/PM, which java.time reads everywhere. */
+    internal fun withAmPm(pattern: String): String =
+        mapUnquoted(pattern) { run -> if (run[0] == 'B' || run[0] == 'b') "a" else run }
 
     /** Applies [transform] to each run of one unquoted letter, or each unquoted non-letter. */
     private inline fun mapUnquoted(pattern: String, transform: (String) -> String): String {
@@ -189,7 +218,15 @@ object LocaleFormat {
 data class LocaleInteger(val value: Long, val minDigits: Int = 1) {
     constructor(value: Int, minDigits: Int = 1) : this(value.toLong(), minDigits)
 
-    fun format(locale: Locale = LocaleFormat.locale()): String = LocaleFormat.integer(value, locale, minDigits)
+    fun format(locale: Locale = LocaleFormat.numberLocale()): String = LocaleFormat.integer(value, locale, minDigits)
+}
+
+/** [LocaleFormat.numberLocale] for a composable; see [currentFormatLocale]. */
+@Composable
+@ReadOnlyComposable
+fun currentNumberLocale(): Locale {
+    LocalConfiguration.current
+    return LocaleFormat.numberLocale()
 }
 
 /**

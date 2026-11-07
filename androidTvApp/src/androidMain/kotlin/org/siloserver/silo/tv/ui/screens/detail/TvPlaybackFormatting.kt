@@ -435,7 +435,7 @@ object TvPlaybackFormatting {
     private fun audioTitle(track: AudioTrack, ordinal: Int, text: TvPlaybackText): String =
         languageDisplayName(track.language)
             ?: usefulAudioTitle(track.title)
-            ?: text.track((ordinal + 1).toString())
+            ?: text.track(LocaleFormat.integer(ordinal + 1))
 
     /** Pill-value summary. Mirrors tvOS `audioSummary`:
      *  "English · EAC3 · 5.1". */
@@ -481,7 +481,7 @@ object TvPlaybackFormatting {
         // track falls back to its title for audioTitle, which then rejected the
         // qualifier and dropped the only thing naming it ("Director Commentary"
         // with no language rendered as bare "AAC · Stereo").
-        val qualifier = usefulAudioTitle(track.title)?.takeIf { !summary.contains(it) }
+        val qualifier = usefulAudioTitle(track.title)?.takeIf { !summary.contains(it) && !namesLanguage(it, track.language) }
         return buildString {
             append(summary)
             if (qualifier != null) append(" · ").append(qualifier)
@@ -516,7 +516,7 @@ object TvPlaybackFormatting {
     private fun audioDetail(track: AudioTrack, ordinal: Int, version: FileVersion?, text: TvPlaybackText): String {
         val tokens = buildList {
             usefulAudioTitle(track.title)
-                ?.takeIf { it != audioTitle(track, ordinal, text) }
+                ?.takeIf { it != audioTitle(track, ordinal, text) && !namesLanguage(it, track.language) }
                 ?.let { add(it) }
             normalizedAudioCodec(track.codec)?.let { add(it) }
             compactAudioLayout(track, text)?.let { add(it) }
@@ -783,7 +783,7 @@ object TvPlaybackFormatting {
     private fun subtitleTitle(track: SubtitleTrack, ordinal: Int, text: TvPlaybackText): String =
         languageDisplayName(track.language)
             ?: meaningfulSubtitleTitle(track)
-            ?: text.track((ordinal + 1).toString())
+            ?: text.track(LocaleFormat.integer(ordinal + 1))
 
     /**
      * Pill-value summary. Mirrors tvOS `subtitlePillSummary`:
@@ -943,13 +943,13 @@ object TvPlaybackFormatting {
                 else -> layout
             }
         }
-        return when (track.channels) {
+        return when (val channels = track.channels) {
             null -> null
             1 -> text.mono
             2 -> text.stereo
             6 -> "5.1"
             8 -> "7.1"
-            else -> text.channels(track.channels.toString())
+            else -> text.channels(LocaleFormat.integer(channels))
         }
     }
 
@@ -963,16 +963,20 @@ object TvPlaybackFormatting {
         return displayTitle(trimmed)
     }
 
+    /**
+     * [title] is [language]'s name, in the interface language or in English:
+     * release titles are English, so a German interface still drops "English".
+     */
+    private fun namesLanguage(title: String, language: String?): Boolean =
+        listOf(LocaleFormat.interfaceLocale(), Locale.ENGLISH).any { inLocale ->
+            languageDisplayName(language, inLocale)?.equals(title, ignoreCase = true) == true
+        }
+
     private fun isRedundantSubtitleTitle(title: String, track: SubtitleTrack): Boolean {
         val lowered = title.lowercase(Locale.US)
-        // A title is matched against the English name too: release titles are English.
-        val languages = listOfNotNull(
-            languageDisplayName(track.language)?.lowercase(Locale.US),
-            languageDisplayName(track.language, Locale.ENGLISH)?.lowercase(Locale.US),
-        )
         val languageCode = nonEmpty(track.language)?.lowercase(Locale.US)
         if (lowered == "subtitle" || lowered == "subtitles") return true
-        if (lowered in languages) return true
+        if (namesLanguage(title, track.language)) return true
         if (languageCode != null && lowered == languageCode) return true
         val codec = normalizedSubtitleCodec(track.codec)?.lowercase(Locale.US)
         if (codec != null && (lowered == codec || lowered == track.codec?.lowercase(Locale.US))) return true

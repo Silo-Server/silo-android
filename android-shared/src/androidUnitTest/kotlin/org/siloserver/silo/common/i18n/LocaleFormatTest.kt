@@ -104,9 +104,20 @@ class LocaleFormatTest {
         assertEquals("MMM d, yyyy", LocaleFormat.normalizePattern("MMM d, y"))
         assertEquals("MMM d, y", LocaleFormat.normalizePattern("MMM d, y", padYear = false))
         assertEquals("yyyy'y'", LocaleFormat.normalizePattern("y'y'"))
-        assertEquals("H:mm", LocaleFormat.withoutDayPeriods("B H:mm"))
-        assertEquals("h:mm", LocaleFormat.withoutDayPeriods("Bh:mm"))
-        assertEquals("'B' H:mm", LocaleFormat.withoutDayPeriods("'B' H:mm"))
+        assertEquals("a H:mm", LocaleFormat.withAmPm("B H:mm"))
+        assertEquals("ah:mm", LocaleFormat.withAmPm("Bh:mm"))
+        assertEquals("'B' h:mm a", LocaleFormat.withAmPm("'B' h:mm b"))
+    }
+
+    /** D55: an English interface on an Arabic device writes counts as `%d` does; dates still follow the device (D26). */
+    @Test @Config(qualifiers = "ar")
+    fun countsFollowTheInterfaceLanguage() {
+        LocaleFormat.refresh(androidx.test.core.app.ApplicationProvider.getApplicationContext())
+        Locale.setDefault(ar)
+        assertEquals("ar", LocaleFormat.locale().language)
+        assertEquals("en", LocaleFormat.interfaceLocale().language)
+        assertEquals("1234", LocaleFormat.integer(1234))
+        assertEquals("١:٠٢:٠٣", LocaleFormat.clock(1, 2, 3))
     }
 
     /** D26: the device's own region when it speaks the chosen language, else the chosen language. */

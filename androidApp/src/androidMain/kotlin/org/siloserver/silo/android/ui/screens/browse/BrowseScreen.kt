@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.browse
 
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.currentFormatLocale
+import org.siloserver.silo.common.i18n.currentNumberLocale
 import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -132,7 +133,7 @@ fun BrowseScreen(
                         badge = {
                             if (state.filterState.activeFacetCount > 0) {
                                 androidx.compose.material3.Badge {
-                                    Text(LocaleFormat.integer(state.filterState.activeFacetCount))
+                                    Text(LocaleFormat.integer(state.filterState.activeFacetCount, currentNumberLocale()))
                                 }
                             }
                         },
@@ -326,7 +327,8 @@ internal fun facetValueLabel(
     facet: org.siloserver.silo.catalog.filter.CatalogFacet,
     value: String,
 ): String = when (facet) {
-    org.siloserver.silo.catalog.filter.CatalogFacet.Decade -> stringResource(CommonR.string.filters_decade, value)
+    org.siloserver.silo.catalog.filter.CatalogFacet.Decade ->
+        stringResource(CommonR.string.filters_decade, value.toIntOrNull()?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: value)
     org.siloserver.silo.catalog.filter.CatalogFacet.WatchStatus ->
         watchStatusLabel(value)?.let { stringResource(it) } ?: value
     org.siloserver.silo.catalog.filter.CatalogFacet.DynamicRange ->

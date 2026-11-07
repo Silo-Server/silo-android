@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.i18n.LocaleInteger
-import org.siloserver.silo.common.i18n.currentFormatLocale
+import org.siloserver.silo.common.i18n.currentNumberLocale
 import org.siloserver.silo.common.ui.RatingEntry
 import org.siloserver.silo.common.ui.WholeTokenRow
 import org.siloserver.silo.model.catalog.DisplayRating
@@ -108,7 +108,7 @@ internal fun TvFactsRow(
 
 /** The catalog string with its arguments, in the app language. */
 @Composable
-internal fun TvHeroFactToken.ResToken.resolved(): String = stringResource(id, *formatArgs(currentFormatLocale()))
+internal fun TvHeroFactToken.ResToken.resolved(): String = stringResource(id, *formatArgs(currentNumberLocale()))
 
 /** [TvHeroFactToken.ResToken.args] ready for a format string, numbers written for [locale]. */
 internal fun TvHeroFactToken.ResToken.formatArgs(locale: Locale): Array<Any> =

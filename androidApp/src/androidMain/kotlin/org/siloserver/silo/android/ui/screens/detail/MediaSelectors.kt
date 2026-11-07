@@ -677,7 +677,7 @@ fun formatAudioLabel(resources: Resources, track: AudioTrack?): String {
     trackHeadline(track.language, track.title)?.let { parts.add(it) }
     track.channelLayout?.let { parts.add(it) }
         ?: track.channels?.let { parts.add(resources.getString(CommonR.string.detail_channels, LocaleFormat.integer(it))) }
-    return parts.joinToString(" \u00B7 ").ifBlank { resources.getString(CommonR.string.detail_track, "1") }
+    return parts.joinToString(" \u00B7 ").ifBlank { resources.getString(CommonR.string.detail_track, LocaleFormat.integer(1)) }
 }
 
 fun formatSubtitleLabel(resources: Resources, track: SubtitleTrack?): String {

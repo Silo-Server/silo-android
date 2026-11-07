@@ -3,6 +3,7 @@ package org.siloserver.silo.android.ui.screens.libraries
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.i18n.currentFormatLocale
+import org.siloserver.silo.common.i18n.currentNumberLocale
 import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.common.i18n.detailedErrorText
@@ -1576,7 +1577,7 @@ private fun InlineLibraryCollectionCard(
                 modifier = Modifier.fillMaxSize(),
             )
             if (showItemCount) Text(
-                text = collection.itemCount?.takeIf { it > 0 }?.let { LocaleFormat.integer(it) } ?: stringResource(CommonR.string.collections_type_smart),
+                text = collection.itemCount?.takeIf { it > 0 }?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: stringResource(CommonR.string.collections_type_smart),
                 fontSize = 12.sp,
                 color = Color.White,
                 modifier = Modifier

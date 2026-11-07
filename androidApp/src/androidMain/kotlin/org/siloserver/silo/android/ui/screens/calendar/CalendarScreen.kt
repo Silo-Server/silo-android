@@ -94,7 +94,6 @@ import org.siloserver.silo.viewmodel.CalendarUiState
 import org.siloserver.silo.viewmodel.CalendarViewModel
 import org.koin.compose.viewmodel.koinViewModel
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 import java.util.Locale
 import org.siloserver.silo.common.R as CommonR
 
@@ -539,7 +538,7 @@ private fun DayCell(
     modifier: Modifier = Modifier,
 ) {
     val localDate = remember(date) { LocalDate.parse(date) }
-    val weekdayFormatter = remember(locale) { DateTimeFormatter.ofPattern("EEE", locale) }
+    val weekdayFormatter = remember(locale) { LocaleFormat.dateFormatter("EEE", "EEE", locale) }
     val numberShape = RoundedCornerShape(11.dp)
     Column(
         modifier = modifier

@@ -866,7 +866,7 @@ private fun DayCell(
     val localDate = remember(date) { LocalDate.parse(date) }
     val locale = currentFormatLocale()
     val weekdayFormatter = remember(locale) {
-        DateTimeFormatter.ofPattern("EEE", locale)
+        LocaleFormat.dateFormatter("EEE", "EEE", locale)
     }
     // tvOS CalendarDayButton is 84x96 pt with 18/26 pt type and an 8 pt
     // event dot. Type is floored at 14/16sp for 10-ft legibility, and the

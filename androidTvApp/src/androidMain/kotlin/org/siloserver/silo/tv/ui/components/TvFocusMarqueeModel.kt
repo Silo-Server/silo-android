@@ -70,7 +70,7 @@ data class TvMarqueeContent(
     val hidesStills: Boolean = false,
     /** Whether [backdropUrl], from the section item or enrichment, is an episode still; null when unknown. */
     val backdropIsEpisodeStill: Boolean? = null,
-    /** The air date ("Mar 12, 2026") the detail line opens with as "Aired …"; null when unknown. */
+    /** The server's air date the detail line opens with as "Aired Mar 12, 2026"; null when unknown. */
     val airDate: String? = null,
 ) {
     /** Backdrop art for the root hero. Like tvOS, the section artwork is shown
