@@ -15,11 +15,11 @@ data class FinalPlaybackPosition(
     val positionSeconds: Double,
     val durationSeconds: Double?,
     /**
-     * The playback was a sequenced session, so the server holds its resume
-     * point. Local samples saved for the title before now are stale and are
-     * cleared instead of recording this one.
+     * Set when the playback was a sequenced session, which the server tracks:
+     * when it exited. Local samples saved for the title before then are stale
+     * and are cleared instead of recording this one.
      */
-    val serverTracked: Boolean = false,
+    val serverTrackedAtMs: Long? = null,
 )
 
 /**

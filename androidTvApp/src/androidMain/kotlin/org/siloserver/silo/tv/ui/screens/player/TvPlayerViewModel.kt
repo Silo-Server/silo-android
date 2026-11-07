@@ -5564,7 +5564,8 @@ class TvPlayerViewModel(
                     fileId = fileId,
                     positionSeconds = state.position,
                     durationSeconds = state.duration.takeIf { it > 0.0 },
-                    serverTracked = expectedSessionId?.let(playbackSessionManager::isSequenced) == true,
+                    serverTrackedAtMs = System.currentTimeMillis()
+                        .takeIf { expectedSessionId?.let(playbackSessionManager::isSequenced) == true },
                 ),
             )
         }
@@ -7403,8 +7404,8 @@ class TvPlayerViewModel(
                     fileId = fileId,
                     positionSeconds = state.position,
                     durationSeconds = state.duration.takeIf { it > 0.0 },
-                    serverTracked = (lastAdoptedSessionId ?: state.sessionId)
-                        ?.let(playbackSessionManager::isSequenced) == true,
+                    serverTrackedAtMs = System.currentTimeMillis()
+                        .takeIf { (lastAdoptedSessionId ?: state.sessionId)?.let(playbackSessionManager::isSequenced) == true },
                 ),
             )
         }
@@ -7912,7 +7913,8 @@ class TvPlayerViewModel(
                     fileId = fid,
                     positionSeconds = _uiState.value.position,
                     durationSeconds = _uiState.value.duration.takeIf { it > 0.0 },
-                    serverTracked = exitSessionId?.let(playbackSessionManager::isSequenced) == true,
+                    serverTrackedAtMs = System.currentTimeMillis()
+                        .takeIf { exitSessionId?.let(playbackSessionManager::isSequenced) == true },
                 ),
             )
         }

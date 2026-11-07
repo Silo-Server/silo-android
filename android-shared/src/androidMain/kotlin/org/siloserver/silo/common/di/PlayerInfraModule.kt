@@ -169,18 +169,29 @@ val playerInfraModule = module {
     single {
         val userItemState = get<org.siloserver.silo.repository.port.UserItemStatePort>()
         val syncScheduler = get<org.siloserver.silo.common.data.sync.OutboxSyncScheduler>()
+        val tokenManager = get<TokenManager>()
         FinalPlaybackPositionWriter(
             scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-            scopeProvider = { get<TokenManager>().snapshotCurrentScope() },
+            scopeProvider = { tokenManager.snapshotCurrentScope() },
         ) { snapshot ->
-            if (snapshot.serverTracked) {
+            val serverTrackedAtMs = snapshot.serverTrackedAtMs
+            if (serverTrackedAtMs != null) {
                 // Otherwise an older local sample outlives the server's answer:
-                // a finished title kept offering Resume at it (#842).
-                userItemState.clearLocalPlaybackProgressBefore(
-                    listOf(snapshot.contentId),
-                    admittedAtMs = System.currentTimeMillis(),
-                    identityGeneration = snapshot.scope.identityGeneration,
-                )
+                // a finished title kept offering Resume at it (#842). Same scope
+                // check as recordPosition, so a switch since exit clears nothing.
+                val current = tokenManager.snapshotCurrentScope()
+                if (current != null &&
+                    current.serverId == snapshot.scope.serverId &&
+                    current.profileId == snapshot.scope.profileId &&
+                    current.credentialGenerationId == snapshot.scope.credentialGenerationId &&
+                    current.identityGeneration == snapshot.scope.identityGeneration
+                ) {
+                    userItemState.clearLocalPlaybackProgressBefore(
+                        listOf(snapshot.contentId),
+                        admittedAtMs = serverTrackedAtMs,
+                        identityGeneration = snapshot.scope.identityGeneration,
+                    )
+                }
             } else {
                 val written = userItemState.recordPosition(
                     snapshot.scope,
