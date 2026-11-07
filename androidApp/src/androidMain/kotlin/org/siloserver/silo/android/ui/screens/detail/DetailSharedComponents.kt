@@ -96,7 +96,6 @@ import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.theme.PillShape
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
-import org.siloserver.silo.common.i18n.digits
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.RatingEntry
@@ -1650,7 +1649,7 @@ object HeroMetadata {
         val e = detail.episodeNumber
         return when {
             s != null && e != null ->
-                resources.getString(CommonR.string.detail_episodeEyebrow, phoneSeasonNumberLabel(resources, s), resources.digits(e))
+                resources.getString(CommonR.string.detail_episodeEyebrow, phoneSeasonNumberLabel(resources, s), LocaleFormat.integer(e))
             s != null -> phoneSeasonNumberLabel(resources, s)
             else -> null
         }
@@ -1708,7 +1707,7 @@ internal fun phoneSeasonNumberLabel(resources: Resources, seasonNumber: Int): St
 
 /** "S1·E2", the short episode code on play buttons and party subtitles. */
 internal fun episodeCode(resources: Resources, seasonNumber: Int, episodeNumber: Int): String =
-    resources.getString(CommonR.string.detail_episodeCode, resources.digits(seasonNumber), resources.digits(episodeNumber))
+    resources.getString(CommonR.string.detail_episodeCode, LocaleFormat.integer(seasonNumber), LocaleFormat.integer(episodeNumber))
 
 // ── Play label helper ─────────────────────────────────────────
 

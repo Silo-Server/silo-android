@@ -69,8 +69,7 @@ import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import kotlin.math.abs
-import org.siloserver.silo.common.i18n.digits
-import org.siloserver.silo.common.i18n.localizedResources
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.text
 
 /**
@@ -265,8 +264,8 @@ private fun EpisodeRailCard(
                         imageVector = Icons.Filled.PlayArrow,
                         contentDescription = stringResource(
                             CommonR.string.detail_playSeasonEpisode,
-                            localizedResources().digits(episode.seasonNumber),
-                            localizedResources().digits(episode.episodeNumber),
+                            LocaleFormat.integer(episode.seasonNumber),
+                            LocaleFormat.integer(episode.episodeNumber),
                         ),
                         tint = Color.Black,
                         modifier = Modifier.size(24.dp),

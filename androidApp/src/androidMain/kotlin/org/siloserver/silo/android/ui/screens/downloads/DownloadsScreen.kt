@@ -286,7 +286,7 @@ fun DownloadsScreen(
                                 bottom = 16.dp + LocalBottomChromeInset.current,
                             ),
                     ) {
-                        Text(stringResource(CommonR.string.downloads_bulk_deleteButton, selectedEntryIds.size, formatBytes(selectedBytes)))
+                        Text(stringResource(CommonR.string.downloads_bulk_deleteButton, LocaleFormat.integer(selectedEntryIds.size), formatBytes(selectedBytes)))
                     }
                 }
             }

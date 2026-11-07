@@ -7,6 +7,7 @@ import android.content.res.Resources
 import androidx.test.core.app.ApplicationProvider
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.siloserver.silo.audiobook.AudiobookChapter
 import org.siloserver.silo.audiobook.AudiobookChapters
 import org.siloserver.silo.audiobook.audiobookChapterLabel
@@ -247,17 +248,36 @@ class SharedPresentationTextTest {
     }
 
     @Test
-    fun aLanguageWithoutACatalogFormatsAsTheEnglishItsStringsFallBackTo() {
-        // Only English ships in these tests: an Arabic or German phone shows English, formatted as before.
-        assertEquals("1234", UiText.Number(1234).text(arabic))
-        assertEquals("1.5 Mbps", QualityChoices.bitrateLabel(1_500).text(contextIn("de-DE")))
-        assertEquals("Jun 16, 1972", UiText.CalendarDate(1972, 6, 16).text(contextIn("de-DE")))
-        assertEquals("Japanese", UiText.LanguageName("ja").text(contextIn("de-DE")))
+    fun aLanguageWithoutACatalogKeepsEnglishRulesAndDirection() {
+        // Only English ships in these tests: an Arabic or Russian phone shows English.
         // English plural rules and digits, not the device language's: no "٨ films" or "21 film".
         assertEquals("8 films", boxSetFilmCount(8).text(arabic))
         assertEquals("21 films", boxSetFilmCount(21).text(contextIn("ru")))
         // English text keeps its direction in a right-to-left device language: no isolates.
         val episode = EpisodeListItem("e", seasonNumber = 1, episodeNumber = 2, title = "Pilot")
         assertEquals("S01E02 · Pilot", EpisodeCardCaption.title(episode).text(arabic))
+    }
+
+    @Test
+    @Config(sdk = [35], qualifiers = "de-rDE")
+    fun aLanguageWithoutACatalogFormatsAsTheAppsOwnNumbersAndDates() {
+        // A German phone that follows the device: English words, as LocaleFormat
+        // formats the app's own text (D55, D58). Whole numbers follow the interface
+        // language; decimals and dates follow the device.
+        val before = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.GERMANY)
+            LocaleFormat.refresh(app)
+            val german = contextIn("de-DE")
+            assertEquals("1234", UiText.Number(1234).text(german))
+            assertEquals("1,5 Mbps", QualityChoices.bitrateLabel(1_500).text(german))
+            assertEquals("16. Juni 1972", UiText.CalendarDate(1972, 6, 16).text(german))
+            assertEquals("Japanese", UiText.LanguageName("ja").text(german))
+            // An Arabic phone: Latin digits, as in the English text around them.
+            Locale.setDefault(Locale.forLanguageTag("ar"))
+            assertEquals("1234", UiText.Number(1234).text(arabic))
+        } finally {
+            Locale.setDefault(before)
+        }
     }
 }

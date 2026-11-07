@@ -3,7 +3,6 @@ package org.siloserver.silo.common.i18n
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.Resources
-import android.text.format.DateFormat
 import android.view.View
 import androidx.annotation.PluralsRes
 import androidx.annotation.StringRes
@@ -15,11 +14,9 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import org.siloserver.silo.model.settings.AppLanguage
 import org.siloserver.silo.network.ApiResult
-import java.text.NumberFormat
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.time.format.DecimalStyle
 import java.util.Locale
+import kotlin.math.roundToLong
 
 /** [UiText] for a catalog string the app names by resource id. */
 fun uiText(@StringRes id: Int, vararg args: Any): UiText = UiText.Res(id, args.toList())
@@ -46,19 +43,17 @@ private fun UiText.resolve(resources: Resources, rtl: Boolean): String = when (t
     is UiText.Res -> resources.format(id, args, rtl)
     is UiText.Key -> resources.catalogResources().let { it.format(key.resId, args, it.isRtl) }
     is UiText.Plural -> resources.catalogResources().let { it.formatPlural(key.resId, key.countIndex, count, args, it.isRtl) }
-    is UiText.Number -> NumberFormat.getNumberInstance(resources.formatLocale).apply {
-        isGroupingUsed = false
-        maximumFractionDigits = maxFractionDigits
-        minimumIntegerDigits = minIntegerDigits
-    }.format(value)
-    is UiText.CalendarDate -> resources.formatLocale.let { locale ->
-        LocalDate.of(year, month, day)
-            .format(
-                DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "yMMMd"), locale)
-                    .withDecimalStyle(DecimalStyle.of(locale)),
-            )
-    }
-    is UiText.LanguageName -> languageName(tag, uppercaseIfUnnamed, resources.formatLocale)
+    // Numbers and dates follow LocaleFormat, as the app's own do (D55, D58):
+    // whole numbers in the interface language, decimals and dates as the device.
+    is UiText.Number ->
+        if (maxFractionDigits == 0) {
+            LocaleFormat.integer(value.roundToLong(), minDigits = minIntegerDigits)
+        } else {
+            LocaleFormat.decimal(value, maxFractionDigits)
+        }
+    is UiText.CalendarDate -> LocalDate.of(year, month, day)
+        .format(LocaleFormat.dateFormatter("yMMMd", "MMM d, y", padYear = false))
+    is UiText.LanguageName -> languageName(tag, uppercaseIfUnnamed, LocaleFormat.interfaceLocale())
 }
 
 /**
@@ -76,10 +71,11 @@ private fun languageName(tag: String, uppercaseIfUnnamed: Boolean, locale: Local
 
 /**
  * Resources that resolve the shared module's text in its catalog language:
- * these when the app ships the configured language (so an en-GB phone keeps its
- * own date order, D26) or it is a debug pseudo-locale. Otherwise the strings
- * fall back to English, and so do plural rules, digits, number and date formats
- * and text direction, so a language changes nothing until its catalog ships (D25).
+ * these when the app ships the configured language or it is a debug
+ * pseudo-locale. Otherwise the strings fall back to English, and so do plural
+ * rules and text direction, so a language changes nothing until its catalog
+ * ships (D25). Numbers and dates in these strings follow [LocaleFormat]
+ * whatever the resources.
  */
 private fun Resources.catalogResources(): Resources {
     if (showsConfiguredLanguage) return this
@@ -118,10 +114,6 @@ private val Resources.showsConfiguredLanguage: Boolean
         val tag = configuration.locales[0].toLanguageTag()
         return AppLanguage.isPseudo(tag) || AppLanguage.match(tag, AppLocales.shipped(this)) != null
     }
-
-/** The locale numbers, dates and language names are written in; see [catalogResources]. */
-private val Resources.formatLocale: Locale
-    get() = if (showsConfiguredLanguage) configuration.locales[0] else Locale.forLanguageTag(AppLanguage.DEFAULT)
 
 /** A message whose String and [UiText] arguments are isolated in a right-to-left interface. */
 private fun Resources.format(@StringRes id: Int, args: List<Any>, rtl: Boolean): String =
