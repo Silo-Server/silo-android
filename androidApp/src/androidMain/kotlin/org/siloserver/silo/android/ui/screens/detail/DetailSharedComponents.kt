@@ -3,6 +3,7 @@ package org.siloserver.silo.android.ui.screens.detail
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.localizedResources
 import android.content.res.Resources
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
@@ -77,6 +78,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -1762,6 +1764,10 @@ fun DetailFactsList(
     SectionHeader(title = stringResource(CommonR.string.detail_details))
     Spacer(modifier = Modifier.height(14.dp))
 
+    val labels = rows.map { (label, _) -> label.uppercase() }
+    val labelStyle = LocalTextStyle.current.merge(FactLabelStyle)
+    val labelColumnWidth = factLabelColumnWidth(labels, labelStyle)
+
     // iOS PhoneDetailFactsSection: thin 1px dividers (white 0.08) between
     // rows, label 11pt bold tracking 1.2 (0.5 alpha) width 100, value 14pt
     // regular, top-aligned, hspacing 16, row vpad 12.
@@ -1770,7 +1776,7 @@ fun DetailFactsList(
             .fillMaxWidth()
             .padding(horizontal = SafePadding),
     ) {
-        rows.forEachIndexed { index, (label, value) ->
+        rows.forEachIndexed { index, (_, value) ->
             if (index > 0) {
                 Box(
                     modifier = Modifier
@@ -1786,13 +1792,10 @@ fun DetailFactsList(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 Text(
-                    text = label.uppercase(),
-                    fontSize = 12.sp,
-                    lineHeight = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.2.sp,
+                    text = labels[index],
+                    style = labelStyle,
                     color = SiloOnSurface.copy(alpha = 0.7f),
-                    modifier = Modifier.width(100.dp),
+                    modifier = Modifier.width(labelColumnWidth),
                 )
                 Text(
                     text = value,
@@ -1806,6 +1809,34 @@ fun DetailFactsList(
         }
     }
 }
+
+private val FactLabelStyle = TextStyle(
+    fontSize = 12.sp,
+    lineHeight = 15.sp,
+    fontWeight = FontWeight.Bold,
+    letterSpacing = 1.2.sp,
+)
+
+/**
+ * The facts label column: 100dp, as on iOS, widened to the longest single word
+ * when a translated label has one that would otherwise break mid-word, up to
+ * [FactLabelMaxWidth]. English labels fit in 100dp.
+ */
+@Composable
+private fun factLabelColumnWidth(labels: List<String>, style: TextStyle): Dp {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    return remember(labels, style, density) {
+        val widestWord = labels
+            .flatMap { it.split(' ') }
+            .maxOfOrNull { measurer.measure(it, style, softWrap = false).size.width }
+            ?: 0
+        with(density) { widestWord.toDp() + 1.dp }.coerceIn(FactLabelMinWidth, FactLabelMaxWidth)
+    }
+}
+
+private val FactLabelMinWidth = 100.dp
+private val FactLabelMaxWidth = 160.dp
 
 @Composable
 private fun buildDetailFacts(
