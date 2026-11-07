@@ -14,10 +14,14 @@ import org.siloserver.silo.network.apiv2.HistoryContinuationV2
 import org.siloserver.silo.network.apiv2.HistoryPageV2
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.network.apiv2.OwnerPolicy
+import org.siloserver.silo.network.apiv2.Problem
 import org.siloserver.silo.network.apiv2.UserLibrariesV2
 import org.siloserver.silo.network.apiv2.identityChanged
 import org.siloserver.silo.network.apiv2.ownedV2Call
 import org.siloserver.silo.network.apiv2.safeApiV2Call
+import org.siloserver.silo.network.AuthScopeSnapshot
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 
 class PersonalDataApi(
     private val client: HttpClient,
@@ -60,6 +64,44 @@ class PersonalDataApi(
         }) { it.project() }
     }
 
+    // --- Download playback progress ---
+
+    /**
+     * Sends one queued download playback position, pinned to [scope], through
+     * `POST /api/v2/sync/progress` with its original event time. The server
+     * applies its watched threshold and newest-write-wins, so a stale event
+     * cannot overwrite newer progress from another device.
+     */
+    suspend fun syncDownloadProgress(
+        scope: AuthScopeSnapshot,
+        contentId: String,
+        positionSeconds: Double,
+        durationSeconds: Double?,
+        updatedAt: String,
+    ): ApiResult<DownloadProgressReceipt> {
+        val body = ProgressSyncRequestV2(listOf(ProgressSyncItemV2(
+            mediaItemId = contentId,
+            positionMs = (positionSeconds * 1000).toLong(),
+            durationMs = ((durationSeconds ?: 0.0) * 1000).toLong(),
+            updatedAt = updatedAt,
+        )))
+        return ownedV2Call<ProgressSyncResponseV2, DownloadProgressReceipt>(apiV2Gate, tokenManager, scope, OwnerPolicy.PROFILE, HttpStatusCode.OK, { owner ->
+            client.post("/api/v2/sync/progress") {
+                authScope(owner!!); requireSiloAuth(); singleAttempt()
+                contentType(ContentType.Application.Json); setBody(body)
+            }
+        }) { response ->
+            val item = response.items.singleOrNull()
+            require(item != null && item.index == 0 && item.mediaItemId == contentId) { "The server returned no result for this progress." }
+            when (item.status) {
+                "success" -> DownloadProgressReceipt.ACCEPTED
+                // Any other failure (a storage error) is worth sending again.
+                else -> if (item.failure?.status == HttpStatusCode.NotFound.value) DownloadProgressReceipt.NOT_FOUND
+                    else DownloadProgressReceipt.RETRY
+            }
+        }
+    }
+
     // --- History ---
 
     private val historyV2 = HistoryV2Api(client, apiV2Gate, tokenManager)
@@ -67,3 +109,27 @@ class PersonalDataApi(
     suspend fun listHistory(continuation: HistoryContinuationV2? = null, limit: Int = 40): ApiResult<HistoryPageV2> =
         historyV2.page(limit = limit, continuation = continuation)
 }
+
+enum class DownloadProgressReceipt { ACCEPTED, NOT_FOUND, RETRY }
+
+@Serializable
+private data class ProgressSyncRequestV2(val items: List<ProgressSyncItemV2>)
+
+@Serializable
+private data class ProgressSyncItemV2(
+    @SerialName("media_item_id") val mediaItemId: String,
+    @SerialName("position_ms") val positionMs: Long,
+    @SerialName("duration_ms") val durationMs: Long,
+    @SerialName("updated_at") val updatedAt: String,
+)
+
+@Serializable
+private data class ProgressSyncResponseV2(val items: List<ProgressSyncResultV2>)
+
+@Serializable
+private data class ProgressSyncResultV2(
+    val index: Int,
+    @SerialName("media_item_id") val mediaItemId: String,
+    val status: String,
+    val failure: Problem? = null,
+)

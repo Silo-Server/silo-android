@@ -28,14 +28,15 @@ fun applyLocalStateOverlay(
     }
 }
 
+// Local progress is a downloaded playback position still waiting to reach the
+// server (`UserItemStatePort.localPlaybackProgress`), so it is newer than the
+// server's answer and wins whether it is ahead or behind. Once synced there is
+// none, and the server's answer, including a watched title's lack of one, stands.
 fun applyLocalPlaybackProgress(
     item: SectionItem,
     progress: LocalPlaybackProgress?,
 ): SectionItem {
     val local = progress ?: return item
-    if (!localProgressWins(currentPosition = item.positionSeconds, localPosition = local.positionSeconds)) {
-        return item
-    }
     return item.copy(
         positionSeconds = local.positionSeconds,
         durationSeconds = local.durationSeconds ?: item.durationSeconds,
@@ -48,9 +49,6 @@ fun applyLocalPlaybackProgress(
 ): ItemDetail {
     val local = progress ?: return detail
     val current = detail.userData
-    if (!localProgressWins(currentPosition = current?.positionSeconds, localPosition = local.positionSeconds)) {
-        return detail
-    }
     val updated = (current ?: LeafItemUserData()).withLocalProgress(local)
     return detail.copy(userData = updated)
 }
@@ -61,9 +59,6 @@ fun applyLocalPlaybackProgress(
 ): EpisodeListItem {
     val local = progress ?: return episode
     val current = episode.userData
-    if (!localProgressWins(currentPosition = current?.positionSeconds, localPosition = local.positionSeconds)) {
-        return episode
-    }
     val updated = (current ?: LeafItemUserData()).withLocalProgress(local)
     return episode.copy(userData = updated)
 }
@@ -86,9 +81,3 @@ private fun LeafItemUserData.withLocalProgress(progress: LocalPlaybackProgress):
         durationSeconds = progress.durationSeconds ?: durationSeconds,
         lastFileId = progress.fileId,
     )
-
-private fun localProgressWins(currentPosition: Double?, localPosition: Double?): Boolean {
-    val local = localPosition?.takeIf { it.isFinite() && it > 0.0 } ?: return false
-    val current = currentPosition?.takeIf { it.isFinite() && it > 0.0 } ?: 0.0
-    return local > current
-}

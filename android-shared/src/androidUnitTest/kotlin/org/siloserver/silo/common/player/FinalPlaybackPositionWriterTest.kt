@@ -123,7 +123,10 @@ class FinalPlaybackPositionWriterTest {
         writer.submit(FinalPlaybackPosition(scopeA, "movie", 7, 30.0, 100.0))
         runCurrent()
 
-        assertEquals(listOf(FinalPlaybackPosition(scopeA, "movie", 7, 30.0, 100.0)), written)
+        assertEquals(
+            listOf(FinalPlaybackPosition(scopeA, "movie", 7, 30.0, 100.0, eventTimeMs = 0)),
+            written.map { it.copy(eventTimeMs = 0) },
+        )
     }
 
     @Test

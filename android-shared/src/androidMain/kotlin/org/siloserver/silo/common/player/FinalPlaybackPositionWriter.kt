@@ -20,6 +20,10 @@ data class FinalPlaybackPosition(
      * and are cleared instead of recording this one.
      */
     val serverTrackedAtMs: Long? = null,
+    /** When the downloaded playback run this position ends started; see `UserItemStatePort.recordPosition`. */
+    val runStartedAtMs: Long? = null,
+    /** When the position was taken, so a write that runs late is not sent as newer. */
+    val eventTimeMs: Long = System.currentTimeMillis(),
 )
 
 /**

@@ -1263,6 +1263,14 @@ class PlayerViewModel(
      */
     private val lifecycleTeardown = PlaybackTeardownGate(sessionLifecycle)
     private var finalPositionScope: PlaybackWriteScope? = null
+
+    /**
+     * When the current downloaded (local-file) playback started; null for
+     * streaming. Only downloaded playback records a local position: it has no
+     * server session, so its progress is queued for the server. Captured here
+     * because exit clears the UI state before the player's last pause.
+     */
+    private var localPlaybackRunStartedAtMs: Long? = null
     private val initialPlayerLoadGate = InitialPlayerLoadGate()
 
     fun claimInitialRouteLoad(): Boolean = initialPlayerLoadGate.claim()
@@ -1677,6 +1685,7 @@ class PlayerViewModel(
         if (!initialized) return
 
         finalPositionScope = null
+        localPlaybackRunStartedAtMs = null
         val newLoadJob = viewModelScope.launch {
             finalPositionScope = finalPlaybackPositionWriter.captureScope()
             var unpublishedReadySessionId: String? = null
@@ -3219,10 +3228,9 @@ class PlayerViewModel(
             expectedSessionId = _uiState.value.sessionId,
         )
 
-        // Track B: durably record the position (local resume + outbox sync) for
-        // BOTH streaming and offline-download playback — the lifecycle's server
-        // reporter does nothing on the offline-download path (no session). Throttled
-        // by content-time delta so it fires ~every 10s of playback, not per tick.
+        // Downloaded playback has no session, so the lifecycle's reporter does
+        // nothing for it: queue its position for the server instead. Throttled by
+        // content-time delta so it fires ~every 10s of playback, not per tick.
         maybeRecordPosition(positionSec, _uiState.value.duration)
         refreshRoomObservation()
     }
@@ -3235,7 +3243,9 @@ class PlayerViewModel(
 
     /** [force] bypasses the time-throttle (used on pause/stop to capture the exact spot). */
     private fun maybeRecordPosition(positionSec: Double, durationSec: Double, force: Boolean = false) {
-        if (_uiState.value.sessionId?.let(playbackSessionManager::isSequenced) == true) return
+        // Streaming never writes one: its session reports progress to the server.
+        val runStartedAtMs = localPlaybackRunStartedAtMs ?: return
+        val scope = finalPositionScope ?: return
         if (positionSec < 0.0) return
         val contentId = _uiState.value.contentId.takeIf { it.isNotBlank() } ?: return
         val fileId = currentFileId() ?: return
@@ -3250,8 +3260,13 @@ class PlayerViewModel(
         }
         lastRecordedKey = key
         lastRecordedPositionSec = positionSec
+        val eventTimeMs = System.currentTimeMillis()
         viewModelScope.launch {
-            userItemStatePort.recordPosition(contentId, fileId, positionSec, durationSec.takeIf { it > 0.0 })
+            userItemStatePort.recordPosition(
+                scope, contentId, fileId, positionSec, durationSec.takeIf { it > 0.0 },
+                eventTimeMs = eventTimeMs,
+                runStartedAtMs = runStartedAtMs,
+            )
         }
     }
 
@@ -6721,7 +6736,12 @@ class PlayerViewModel(
         val cid = state.contentId.takeIf { it.isNotBlank() }
         val fid = currentFileId()
         val scope = finalPositionScope
-        if (ownedSessionId?.let(playbackSessionManager::isSequenced) != true && scope != null && cid != null && fid != null) {
+        val runStartedAtMs = localPlaybackRunStartedAtMs
+        // A sequenced stream is the server's to track: clear older local samples,
+        // such as a download position still queued, so they stop overriding it.
+        val serverTrackedAtMs = System.currentTimeMillis()
+            .takeIf { runStartedAtMs == null && ownedSessionId?.let(playbackSessionManager::isSequenced) == true }
+        if ((runStartedAtMs != null || serverTrackedAtMs != null) && scope != null && cid != null && fid != null) {
             finalPlaybackPositionWriter.submit(
                 FinalPlaybackPosition(
                     scope = scope,
@@ -6729,6 +6749,8 @@ class PlayerViewModel(
                     fileId = fid,
                     positionSeconds = state.position,
                     durationSeconds = state.duration.takeIf { it > 0.0 },
+                    serverTrackedAtMs = serverTrackedAtMs,
+                    runStartedAtMs = runStartedAtMs,
                 )
             )
         }
@@ -6857,10 +6879,11 @@ class PlayerViewModel(
             .coerceAtLeast(0)
         // Markers belong to one file; never borrow another version's.
         val localVersion = versions.firstOrNull { it.fileId == fileId }
-        // Offline-safe resume: the server's watchDetail may be stale or absent in
-        // airplane mode, so fold in the locally-recorded position and take the
-        // furthest of the two (matches the server's GREATEST semantics).
-        val detailPos = listOfNotNull(watchDetail?.userData?.positionSeconds, localPos).maxOrNull()
+        // A local position exists only while it is still waiting to reach the
+        // server, so it is the newest this device knows; otherwise the server's,
+        // and offline the server's last answer this device saved.
+        val detailPos = localPos ?: watchDetail?.userData?.positionSeconds
+            ?: catalogRepository.takeIf { watchDetail == null }?.getCachedItemDetail(contentId)?.userData?.positionSeconds
         val startPos = resolvePlaybackStartPosition(
             overridePosition = resumePositionOverride,
             sessionPosition = 0.0,
@@ -6896,6 +6919,7 @@ class PlayerViewModel(
 
         val published = loadOwners.runIfOwned(loadOwner) {
             trackChoiceOwner = localTrackChoiceOwner
+            localPlaybackRunStartedAtMs = System.currentTimeMillis()
             val mountGeneration = expectNextMediaMount()
             val preservesNextUp = nextUpTransitionGate.expectMount(
                 contentId = contentId,

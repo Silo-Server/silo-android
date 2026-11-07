@@ -192,13 +192,17 @@ val playerInfraModule = module {
                         identityGeneration = snapshot.scope.identityGeneration,
                     )
                 }
-            } else {
+            } else if (snapshot.runStartedAtMs != null) {
+                // Downloaded playback: queued for the server. A stream's session
+                // already reports its progress, so it writes nothing locally.
                 val written = userItemState.recordPosition(
                     snapshot.scope,
                     snapshot.contentId,
                     snapshot.fileId,
                     snapshot.positionSeconds,
                     snapshot.durationSeconds,
+                    eventTimeMs = snapshot.eventTimeMs,
+                    runStartedAtMs = snapshot.runStartedAtMs,
                 )
                 if (written) syncScheduler.requestSync()
             }

@@ -182,6 +182,9 @@ class RoomUserItemStateRepository(
             fileId = fileId,
             positionSeconds = positionSeconds,
             durationSeconds = durationSeconds,
+            eventTimeMs = now(),
+            queueForServer = false,
+            runStartedAtMs = null,
         )
     }
 
@@ -191,6 +194,8 @@ class RoomUserItemStateRepository(
         fileId: Int,
         positionSeconds: Double,
         durationSeconds: Double?,
+        eventTimeMs: Long?,
+        runStartedAtMs: Long?,
     ): Boolean {
         val current = snapshotProvider() ?: return false
         if (current.serverId != scope.serverId ||
@@ -208,6 +213,10 @@ class RoomUserItemStateRepository(
             fileId = fileId,
             positionSeconds = positionSeconds,
             durationSeconds = durationSeconds,
+            eventTimeMs = eventTimeMs ?: now(),
+            // A temporary sign-in has no durable account to replay under later.
+            queueForServer = scope.credentialGenerationId == null,
+            runStartedAtMs = runStartedAtMs,
         )
     }
 
@@ -219,6 +228,9 @@ class RoomUserItemStateRepository(
         fileId: Int,
         positionSeconds: Double,
         durationSeconds: Double?,
+        eventTimeMs: Long,
+        queueForServer: Boolean,
+        runStartedAtMs: Long?,
     ): Boolean {
         // Reject values that would enqueue invalid JSON and poison the drain
         // (a NaN/Infinity/negative would parse-fail after claim and retry forever).
@@ -231,15 +243,18 @@ class RoomUserItemStateRepository(
         // QA 2026-07-10). Legit resets go through markUnwatched, not this path.
         if (contentId.isBlank() || !positionSeconds.isFinite() || positionSeconds <= 0.0) return false
         val safeDuration = durationSeconds?.takeIf { it.isFinite() && it > 0.0 }
-        val nowMs = now()
+        val queuedAtMs = now()
 
-        db.withTransaction {
+        return db.withTransaction {
             // File-level local projection for resume (preserve track/cfi fields).
             val existing = userStateDao.get(serverId, accountId, profileId, contentId, fileId)
+            // A sample taken before the one already stored (an exit write that ran
+            // late) must not replace it or be sent as newer.
+            if ((existing?.positionUpdatedAtMs ?: Long.MIN_VALUE) > eventTimeMs) return@withTransaction false
             val row = existing?.copy(
                 positionSeconds = positionSeconds,
                 durationSeconds = safeDuration,
-                clientUpdatedAtMs = nowMs,
+                clientUpdatedAtMs = eventTimeMs,
             ) ?: UserItemStateEntity(
                 serverId = serverId,
                 accountId = accountId,
@@ -252,18 +267,16 @@ class RoomUserItemStateRepository(
                 subtitleFingerprint = null,
                 cfi = null,
                 readProgress = null,
-                clientUpdatedAtMs = nowMs,
+                clientUpdatedAtMs = eventTimeMs,
                 serverUpdatedAtMs = null,
             )
-            userStateDao.upsert(row.copy(positionUpdatedAtMs = nowMs))
+            userStateDao.upsert(row.copy(positionUpdatedAtMs = eventTimeMs))
+            if (!queueForServer) return@withTransaction true
 
-            // V2 playback sends sequenced progress under its admitted session. Keep local resume,
-            // but never coalesce a new position into a legacy queue with unknown authority.
-            if (ebookAuthorities != null) return@withTransaction
-
-            // Content-level outbox op: syncProgress is keyed by content id, so the
-            // coalesce key omits fileId — all pending positions for the item
-            // collapse to the latest.
+            // Downloaded playback has no server session, so its progress waits in
+            // the outbox and goes to POST /sync/progress with this event time. The
+            // server applies its watched threshold and newest-write-wins. Samples
+            // from one playback run collapse to the latest; each run keeps its own.
             outboxDao.enqueueCoalescingRestoringItemOrder(
                 DirtyOperationEntity(
                     opKind = OutboxOperation.SET_POSITION,
@@ -272,36 +285,38 @@ class RoomUserItemStateRepository(
                     profileId = profileId,
                     targetContentId = contentId,
                     targetFileId = fileId,
-                    coalesceKey = "$serverId|$accountId|$profileId|$contentId|${OutboxOperation.SET_POSITION}",
+                    coalesceKey = "$serverId|$accountId|$profileId|$contentId|${OutboxOperation.SET_POSITION}" +
+                        (runStartedAtMs?.let { "|$it" } ?: ""),
                     idempotencyKey = idGenerator(),
+                    opVersion = 2,
                     payloadJson = OutboxOperation.encodePositionPayload(positionSeconds, safeDuration),
-                    createdAtMs = nowMs,
-                    nextAttemptAtMs = nowMs,
+                    createdAtMs = eventTimeMs,
+                    nextAttemptAtMs = queuedAtMs,
                 ),
-                nowMs = nowMs,
+                nowMs = queuedAtMs,
             )
+            true
         }
-        return true
     }
 
     override suspend fun localPosition(contentId: String, fileId: Int): Double? {
         val snapshot = snapshotProvider() ?: return null
         val profileId = snapshot.profileId ?: return null
-        return userStateDao.get(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, contentId, fileId)
+        return userStateDao.pendingProgressForContentIds(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, listOf(contentId))
+            .firstOrNull { it.fileId == fileId }
             ?.positionSeconds
-            ?.takeIf { it > 0.0 }
     }
 
     override suspend fun localPositionForContent(contentId: String): Double? {
-        return localPlaybackProgress(contentId)?.positionSeconds
-    }
-
-    override suspend fun localPlaybackProgress(contentId: String): LocalPlaybackProgress? {
         val snapshot = snapshotProvider() ?: return null
         val profileId = snapshot.profileId ?: return null
+        // Every row, queued or not: the audiobook player's own resume snapshot.
         return userStateDao.getByContent(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, contentId)
-            .latestProgress()
+            .latestProgress()?.positionSeconds
     }
+
+    override suspend fun localPlaybackProgress(contentId: String): LocalPlaybackProgress? =
+        localPlaybackProgressForContent(listOf(contentId))[contentId]
 
     override suspend fun clearLocalPlaybackProgressBefore(
         contentIds: List<String>,
@@ -325,9 +340,9 @@ class RoomUserItemStateRepository(
         val snapshot = snapshotProvider() ?: return emptyMap()
         val profileId = snapshot.profileId ?: return emptyMap()
         return contentIds.distinct().chunked(MAX_IN_LIST_IDS)
-            .flatMap { userStateDao.progressForContentIds(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, it) }
+            .flatMap { userStateDao.pendingProgressForContentIds(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, it) }
             .groupBy { it.contentId }
-            .mapValues { (_, rows) -> rows.latestProgress() }
+            .mapValues { (_, rows) -> rows.latestProgress(byPositionTime = true) }
             .filterValues { it != null }
             .mapValues { (_, value) -> value!! }
     }
@@ -723,10 +738,12 @@ private const val MAX_IN_LIST_IDS = 900
 // Newest local write wins — NOT the furthest position. Picking the max
 // position made a deliberate backward seek (or an old row for a different
 // file version) permanently shadow the real resume point.
-internal fun List<UserItemStateEntity>.latestProgress(): LocalPlaybackProgress? =
+// [byPositionTime] orders by when the position was played rather than the row's
+// last touch, which track-selection edits also bump.
+internal fun List<UserItemStateEntity>.latestProgress(byPositionTime: Boolean = false): LocalPlaybackProgress? =
     filter { it.positionSeconds.isFinite() && it.positionSeconds > 0.0 }
         .maxWithOrNull(
-            compareBy<UserItemStateEntity> { it.clientUpdatedAtMs }
+            compareBy<UserItemStateEntity> { if (byPositionTime) it.positionUpdatedAtMs ?: it.clientUpdatedAtMs else it.clientUpdatedAtMs }
                 .thenBy { it.positionSeconds }
                 // Deterministic final tiebreak so equal-stamped rows across
                 // file versions can't flip-flop between reads.
