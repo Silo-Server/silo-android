@@ -100,7 +100,7 @@ fun facetOptionPairs(
 }
 
 /** "2020s" for the decade starting in [year]. */
-private fun decadeLabel(year: Int): UiText = UiText.Key(SharedString.FilterDecade, listOf(UiText.Number(year)))
+fun decadeLabel(year: Int): UiText = UiText.Key(SharedString.FilterDecade, listOf(UiText.Number(year)))
 
 private fun List<String>.serverOptions(): List<Pair<String, UiText>> = map { it to UiText.Raw(it) }
 

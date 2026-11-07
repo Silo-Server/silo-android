@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.LocaleList
 import androidx.annotation.RequiresApi
 import androidx.core.content.edit
+import org.siloserver.silo.common.R
 import org.siloserver.silo.model.settings.AppLanguage
 import org.xmlpull.v1.XmlPullParser
 
@@ -126,7 +127,14 @@ object AppLocales {
      * in debug builds.
      */
     fun shipped(context: Context): List<String> =
-        shippedCache ?: (listOf(AppLanguage.DEFAULT) + readLocaleConfig(context).filterNot(AppLanguage::isPseudo))
+        shipped(context.applicationContext.resources, context.packageName)
+
+    /** [shipped] for code that holds only [Resources], such as [UiText]'s resolver. */
+    internal fun shipped(resources: Resources): List<String> =
+        shipped(resources, resources.getResourcePackageName(R.string.catalog_error_network))
+
+    private fun shipped(resources: Resources, packageName: String): List<String> =
+        shippedCache ?: (listOf(AppLanguage.DEFAULT) + readLocaleConfig(resources, packageName).filterNot(AppLanguage::isPseudo))
             .distinct().also { shippedCache = it }
 
     /**
@@ -134,14 +142,14 @@ object AppLocales {
      * Only debug builds have them; the picker offers them there for
      * pseudo-locale checks on devices whose system settings list none.
      */
-    fun pseudoLocales(context: Context): List<String> = readLocaleConfig(context).filter(AppLanguage::isPseudo)
+    fun pseudoLocales(context: Context): List<String> =
+        readLocaleConfig(context.applicationContext.resources, context.packageName).filter(AppLanguage::isPseudo)
 
     // AGP generates this resource into each app; android-shared can't see the
     // apps' R classes, so it is looked up by name.
     @SuppressLint("DiscouragedApi")
-    private fun readLocaleConfig(context: Context): List<String> {
-        val res = context.applicationContext.resources
-        val id = res.getIdentifier("_generated_res_locale_config", "xml", context.packageName)
+    private fun readLocaleConfig(res: Resources, packageName: String): List<String> {
+        val id = res.getIdentifier("_generated_res_locale_config", "xml", packageName)
         val tags = if (id == 0) emptyList() else runCatching {
             res.getXml(id).use { parser ->
                 buildList {

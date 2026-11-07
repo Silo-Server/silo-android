@@ -79,7 +79,7 @@ fun formattedPersonDate(raw: String?): UiText? {
     val year = parts[0].toIntOrNull() ?: return UiText.Raw(value)
     val month = parts[1].toIntOrNull() ?: return UiText.Raw(value)
     val day = parts[2].toIntOrNull() ?: return UiText.Raw(value)
-    if (month !in 1..12 || day !in 1..31) return UiText.Raw(value)
+    if (year !in 1..9999 || month !in 1..12 || day !in 1..31) return UiText.Raw(value)
     // A day the month doesn't have (Feb 30) can't be formatted; keep the server's text.
     if (day > daysInMonth(year, month)) return UiText.Raw(value)
     return UiText.CalendarDate(year, month, day)

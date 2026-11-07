@@ -50,8 +50,10 @@ import kotlin.test.assertNull
 class SharedPresentationTextTest {
     private val app = ApplicationProvider.getApplicationContext<Application>()
     private val english: Resources = app.resources
-    private val arabic: Resources = app.createConfigurationContext(
-        Configuration(app.resources.configuration).apply { setLocale(Locale.forLanguageTag("ar")) },
+    private val arabic = resourcesIn("ar")
+
+    private fun resourcesIn(tag: String): Resources = app.createConfigurationContext(
+        Configuration(app.resources.configuration).apply { setLocale(Locale.forLanguageTag(tag)) },
     ).resources
 
     private fun UiText?.en(): String? = this?.text(english)
@@ -118,11 +120,9 @@ class SharedPresentationTextTest {
         assertEquals("Library default", LanguageOptions.label("", SettingKeys.CATALOG_METADATA_LANGUAGE).en())
         assertEquals("Match device", LanguageOptions.label(null, SettingKeys.UI_APP_LANGUAGE).en())
         assertEquals("Portuguese (Brazil)", LanguageOptions.label("pt-BR", SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE).en())
-        // The name follows the interface language, not English.
-        assertEquals(
-            Locale.forLanguageTag("pt-BR").getDisplayName(Locale.forLanguageTag("ar")),
-            LanguageOptions.label("pt-BR", SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE).text(arabic).removeIsolates(),
-        )
+        // A tag the platform can't name keeps its spelling in a picker; a badge uppercases it.
+        assertEquals("qaa", LanguageOptions.label("qaa", SettingKeys.PLAYBACK_AUDIO_LANGUAGE).en())
+        assertEquals("QAA", OverlayRegistry.def(OverlayId.OriginalLanguage)!!.getValue(OverlayData(originalLanguage = "qaa")).en())
     }
 
     @Test
@@ -175,8 +175,6 @@ class SharedPresentationTextTest {
         val next = BrowseItem(contentId = "hp2", type = "movie", title = "Chamber of Secrets", positionSeconds = 60.0)
         assertEquals("Continue · Chamber of Secrets", boxSet.playLabel(next).en())
         assertEquals("Play Chamber of Secrets", boxSet.playLabel(next.copy(positionSeconds = null)).en())
-        // The count sits after the played number in these keys, also in a right-to-left interface.
-        assertEquals("٥ / ٨ watched", boxSet.copy(playedCount = 5).cardCaption().text(arabic).removeIsolates())
     }
 
     @Test
@@ -238,13 +236,19 @@ class SharedPresentationTextTest {
     }
 
     @Test
-    fun numbersAreUngroupedInTheInterfaceLanguagesDigits() {
+    fun numbersAreUngrouped() {
         assertEquals("1234", UiText.Number(1234).text(english))
-        assertEquals("١٢٣٤", UiText.Number(1234).text(arabic))
         assertEquals("02", UiText.Number(2, minIntegerDigits = 2).text(english))
         assertEquals("1.5", UiText.Number(1.5, maxFractionDigits = 1).text(english))
         assertEquals("40", UiText.Number(40.0, maxFractionDigits = 1).text(english))
     }
 
-    private fun String.removeIsolates(): String = replace("\u2068", "").replace("\u2069", "")
+    @Test
+    fun aLanguageWithoutACatalogFormatsAsTheEnglishItsStringsFallBackTo() {
+        // Only English ships in these tests: an Arabic or German phone shows English, formatted as before.
+        assertEquals("1234", UiText.Number(1234).text(arabic))
+        assertEquals("1.5 Mbps", QualityChoices.bitrateLabel(1_500).text(resourcesIn("de-DE")))
+        assertEquals("Jun 16, 1972", UiText.CalendarDate(1972, 6, 16).text(resourcesIn("de-DE")))
+        assertEquals("Japanese", UiText.LanguageName("ja").text(resourcesIn("de-DE")))
+    }
 }

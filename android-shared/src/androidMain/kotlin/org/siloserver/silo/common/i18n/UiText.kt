@@ -13,10 +13,12 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
+import org.siloserver.silo.model.settings.AppLanguage
 import org.siloserver.silo.network.ApiResult
 import java.text.NumberFormat
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.time.format.DecimalStyle
 import java.util.Locale
 
 /** [UiText] for a catalog string the app names by resource id. */
@@ -38,29 +40,49 @@ private fun UiText.resolve(resources: Resources, rtl: Boolean): String = when (t
     is UiText.Res -> resources.format(id, args, rtl)
     is UiText.Key -> resources.format(key.resId, args, rtl)
     is UiText.Plural -> resources.formatPlural(key.resId, key.countIndex, count, args, rtl)
-    is UiText.Number -> NumberFormat.getNumberInstance(resources.locale).apply {
+    is UiText.Number -> NumberFormat.getNumberInstance(resources.formatLocale).apply {
         isGroupingUsed = false
         maximumFractionDigits = maxFractionDigits
         minimumIntegerDigits = minIntegerDigits
     }.format(value)
-    is UiText.CalendarDate -> resources.locale.let { locale ->
+    is UiText.CalendarDate -> resources.formatLocale.let { locale ->
         LocalDate.of(year, month, day)
-            .format(DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "yMMMd"), locale))
+            .format(
+                DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "yMMMd"), locale)
+                    .withDecimalStyle(DecimalStyle.of(locale)),
+            )
     }
-    is UiText.LanguageName -> languageName(tag, resources.locale)
+    is UiText.LanguageName -> languageName(tag, uppercaseIfUnnamed, resources.formatLocale)
 }
 
 /**
  * [tag]'s language name in [locale]. A tag the platform can't name (it echoes
- * the tag back) shows as the uppercased tag.
+ * the tag back) shows as given, or uppercased when [uppercaseIfUnnamed].
  */
-private fun languageName(tag: String, locale: Locale): String {
+private fun languageName(tag: String, uppercaseIfUnnamed: Boolean, locale: Locale): String {
     val name = Locale.forLanguageTag(tag.replace('_', '-')).getDisplayName(locale)
-    return if (name.isBlank() || name.equals(tag, ignoreCase = true)) tag.uppercase(Locale.ROOT) else name
+    return when {
+        name.isBlank() -> if (uppercaseIfUnnamed) tag.uppercase(Locale.ROOT) else tag
+        uppercaseIfUnnamed && name.equals(tag, ignoreCase = true) -> tag.uppercase(Locale.ROOT)
+        else -> name
+    }
 }
 
-/** The interface language: the first locale of these resources. */
-private val Resources.locale: Locale get() = configuration.locales[0]
+/**
+ * The locale numbers, dates and language names are written in: the
+ * configured one when the app ships its language, so an en-GB phone keeps its
+ * own date order (D26). Otherwise the strings fall back to English, and so does
+ * their formatting, so a language changes nothing until its catalog ships (D25).
+ */
+private val Resources.formatLocale: Locale
+    get() {
+        val locale = configuration.locales[0]
+        return if (AppLanguage.match(locale.toLanguageTag(), AppLocales.shipped(this)) != null) {
+            locale
+        } else {
+            Locale.forLanguageTag(AppLanguage.DEFAULT)
+        }
+    }
 
 /** A message whose String and [UiText] arguments are isolated in a right-to-left interface. */
 private fun Resources.format(@StringRes id: Int, args: List<Any>, rtl: Boolean): String =

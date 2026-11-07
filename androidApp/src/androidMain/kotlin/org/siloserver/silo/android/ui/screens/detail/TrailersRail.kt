@@ -43,7 +43,6 @@ import org.siloserver.silo.model.catalog.TrailerRailEntry
 import org.siloserver.silo.model.catalog.extraKindLabel
 import org.siloserver.silo.model.catalog.trailerRailDurationLabel
 import org.siloserver.silo.common.i18n.text
-import org.siloserver.silo.common.i18n.uppercaseForUi
 
 /**
  * "Trailers & More" section — header plus a horizontal rail of remote
@@ -156,7 +155,7 @@ private fun TrailerCard(
         }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                text = kindLabel.uppercaseForUi(),
+                text = kindLabel.uppercase(),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.sp,

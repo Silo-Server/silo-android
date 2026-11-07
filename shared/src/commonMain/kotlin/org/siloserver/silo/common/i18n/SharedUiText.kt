@@ -63,10 +63,11 @@ sealed interface UiText {
     data class CalendarDate(val year: Int, val month: Int, val day: Int) : UiText
 
     /**
-     * A language's name in the interface language, for a BCP 47 [tag]; the
-     * uppercased tag when the platform has no name for it.
+     * A language's name in the interface language, for a BCP 47 [tag]. When
+     * the platform has no name for it, the tag as given, or uppercased with
+     * [uppercaseIfUnnamed] (a badge's "QAA").
      */
-    data class LanguageName(val tag: String) : UiText
+    data class LanguageName(val tag: String, val uppercaseIfUnnamed: Boolean = false) : UiText
 }
 
 /**

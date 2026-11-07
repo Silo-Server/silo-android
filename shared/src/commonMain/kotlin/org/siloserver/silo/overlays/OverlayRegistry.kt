@@ -417,7 +417,7 @@ object OverlayRegistry {
             defaultEnabled = false,
             iconId = OverlayIconId.Globe,
             iconCapable = true,
-            getValue = { data -> data.originalLanguage?.trim()?.takeIf { it.isNotEmpty() }?.let { UiText.LanguageName(it) } },
+            getValue = { data -> data.originalLanguage?.trim()?.takeIf { it.isNotEmpty() }?.let { UiText.LanguageName(it, uppercaseIfUnnamed = true) } },
         ),
         OverlayDef(
             id = OverlayId.Studio,
