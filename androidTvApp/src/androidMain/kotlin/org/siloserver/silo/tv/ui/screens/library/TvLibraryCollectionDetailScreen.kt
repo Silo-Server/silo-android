@@ -183,7 +183,11 @@ fun TvLibraryCollectionDetailScreen(
 
     when (openPanel) {
         TvCollectionPanel.Sort -> TvBrowseSortPanel(
-            options = TvLibrarySortOption.availableForCollection(libraryType),
+            options = TvLibrarySortOption.availableForCollection(
+                libraryType = libraryType,
+                shownRatingSources = rememberShownRatingSources(),
+                current = state.sort,
+            ),
             currentSort = state.sort,
             order = state.order,
             onSelect = { option ->

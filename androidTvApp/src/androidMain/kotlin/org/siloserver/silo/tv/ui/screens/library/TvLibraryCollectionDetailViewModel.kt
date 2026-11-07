@@ -42,8 +42,7 @@ class TvLibraryCollectionDetailViewModel(
         val effectiveSort: CatalogEffectiveSort? = null,
     ) {
         val sortOption: TvLibrarySortOption
-            get() = TvLibrarySortOption.entries.firstOrNull { it.wireValue == sort }
-                ?: TvLibrarySortOption.CollectionOrder
+            get() = TvLibrarySortOption.fromWire(sort, fallback = TvLibrarySortOption.CollectionOrder)
     }
 
     private val _uiState = MutableStateFlow(UiState())

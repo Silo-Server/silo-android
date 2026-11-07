@@ -20,6 +20,7 @@ import org.siloserver.silo.android.ui.components.SortFilterControlsRow
 import org.siloserver.silo.android.ui.components.SortMenuOption
 import org.siloserver.silo.android.ui.screens.browse.FilterSheet
 import org.siloserver.silo.catalog.filter.BrowseFacetMediaType
+import org.siloserver.silo.catalog.sort.CatalogSortField
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.viewmodel.PersonalListQuery
 
@@ -76,23 +77,28 @@ fun PersonalListControlsRow(
     modifier: Modifier = Modifier,
 ) {
     val state by controls.uiState.collectAsState()
+    val shownRatingSources = org.siloserver.silo.android.ui.components.rememberShownRatingSources()
     var showFilterSheet by remember { mutableStateOf(false) }
+    val sortFields = personalListSortOptions(shownRatingSources, state.sort)
 
     SortFilterControlsRow(
         modifier = modifier,
-        sortLabel = state.sort.label,
-        sortActive = state.sort != PersonalListSort.ListOrder,
-        sortOptions = PersonalListSort.entries.mapIndexed { index, sort ->
-            SortMenuOption(
-                id = sort.name,
-                label = sort.label,
-                selectedLabel = if (sort.hasDirection) "${sort.label}  ·  ${sort.directionLabel(state.order)}" else sort.label,
-                flipsOnReselect = sort.hasDirection,
-                dividerAbove = index == 1,
-            )
+        sortLabel = state.sort?.label ?: PersonalListOrderLabel,
+        sortActive = state.sort != null,
+        sortOptions = listOf(SortMenuOption(id = PersonalListOrderId, label = PersonalListOrderLabel)) +
+            sortFields.mapIndexed { index, field ->
+                SortMenuOption(
+                    id = field.name,
+                    label = field.label,
+                    selectedLabel = "${field.label}  ·  ${field.directionLabel(state.order)}",
+                    flipsOnReselect = true,
+                    dividerAbove = index == 0,
+                )
+            },
+        selectedSortId = state.sort?.name ?: PersonalListOrderId,
+        onSelectSort = { id ->
+            controls.selectSort(if (id == PersonalListOrderId) null else CatalogSortField.valueOf(id))
         },
-        selectedSortId = state.sort.name,
-        onSelectSort = { id -> controls.selectSort(PersonalListSort.valueOf(id)) },
         filterCount = state.activeFacetCount,
         onOpenFilters = { showFilterSheet = true },
         showReset = state.isCustomised,
@@ -118,3 +124,6 @@ fun PersonalListControlsRow(
         )
     }
 }
+
+/** The menu id of the stored-list-order entry; never a [CatalogSortField] name. */
+private const val PersonalListOrderId = "__list_order"

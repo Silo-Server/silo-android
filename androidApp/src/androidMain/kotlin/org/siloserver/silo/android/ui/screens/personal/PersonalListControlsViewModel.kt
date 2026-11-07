@@ -9,42 +9,38 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.siloserver.silo.catalog.filter.CatalogFilterQueryBuilder
 import org.siloserver.silo.catalog.filter.CatalogFilterState
+import org.siloserver.silo.catalog.sort.CatalogSortField
+import org.siloserver.silo.catalog.sort.CatalogSortRelevance
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.viewmodel.PersonalListQuery
 
 /**
- * Sort keys for the saved lists (Watchlist / Favorites). Mirrors the TV
- * `TvLibrarySortOption.availableForPersonalList()` set: the default is the
- * server's stored list order, which is "no sort" on the wire, so [value] is
- * null there and it has no direction. "Recently Added" is the explicit
- * added_at sort (newest first by default).
+ * The saved lists' (Watchlist / Favorites) default order: the server's stored
+ * list order, which is "no sort" on the wire, so it has no direction.
  */
-enum class PersonalListSort(
-    val value: String?,
-    val label: String,
-    val defaultOrder: String,
-    private val ascendingLabel: String,
-    private val descendingLabel: String,
-) {
-    ListOrder(null, "List Order", "desc", "", ""),
-    Title("title", "Title", "asc", "A–Z", "Z–A"),
-    RecentlyAdded("added_at", "Recently Added", "desc", "Oldest first", "Newest first"),
-    Year("year", "Year", "desc", "Oldest first", "Newest first"),
-    Rating("rating_imdb", "Rating", "desc", "Lowest first", "Highest first"),
-    Runtime("runtime", "Runtime", "asc", "Shortest first", "Longest first"),
-    ;
+internal const val PersonalListOrderLabel = "List Order"
 
-    val hasDirection: Boolean get() = value != null
-
-    fun directionLabel(order: String): String =
-        if (order == "asc") ascendingLabel else descendingLabel
-}
+/**
+ * Sort fields for the saved lists, after [PersonalListOrderLabel]. Matches the
+ * web client's favorites and watchlist pages: every field except the
+ * per-viewer ones (Progress, Date Viewed, Plays).
+ */
+internal fun personalListSortOptions(
+    shownRatingSources: Set<String>,
+    current: CatalogSortField?,
+): List<CatalogSortField> = CatalogSortField.options(
+    relevance = CatalogSortRelevance.Any,
+    includePersonalized = false,
+    shownRatingSources = shownRatingSources,
+    keep = current,
+)
 
 data class PersonalListControlsState(
-    val sort: PersonalListSort = PersonalListSort.ListOrder,
-    val order: String = PersonalListSort.ListOrder.defaultOrder,
+    /** Null keeps the stored list order. */
+    val sort: CatalogSortField? = null,
+    val order: String = "desc",
     /** Facet selections + match mode; its sort/order fields are unused here. */
     val filters: CatalogFilterState = CatalogFilterState(),
     /** Vocabularies scoped to this list (`/catalog/filters?source=…`). */
@@ -54,13 +50,13 @@ data class PersonalListControlsState(
 
     /** Anything to reset — a non-default sort or any facet. */
     val isCustomised: Boolean
-        get() = sort != PersonalListSort.ListOrder || filters.hasActiveFilters
+        get() = sort != null || filters.hasActiveFilters
 
     /** What the shared list ViewModel should fetch with. */
     val query: PersonalListQuery
         get() = PersonalListQuery(
-            sort = sort.value,
-            order = if (sort.hasDirection) order else null,
+            sort = sort?.wireValue,
+            order = if (sort != null) order else null,
             queryGroups = CatalogFilterQueryBuilder.buildGroups(filters),
             match = CatalogFilterQueryBuilder.matchParam(filters).takeIf { filters.hasActiveFilters },
         )
@@ -86,12 +82,12 @@ class PersonalListControlsViewModel(
     }
 
     /** Re-picking the active key flips its direction; a new key starts at its default. */
-    fun selectSort(sort: PersonalListSort) {
+    fun selectSort(sort: CatalogSortField?) {
         _uiState.update { state ->
-            if (sort == state.sort && sort.hasDirection) {
-                state.copy(order = if (state.order == "asc") "desc" else "asc")
-            } else {
-                state.copy(sort = sort, order = sort.defaultOrder)
+            when {
+                sort == null -> state.copy(sort = null, order = "desc")
+                sort == state.sort -> state.copy(order = if (state.order == "asc") "desc" else "asc")
+                else -> state.copy(sort = sort, order = sort.defaultOrder)
             }
         }
     }
@@ -108,8 +104,8 @@ class PersonalListControlsViewModel(
     fun resetAll() {
         _uiState.update {
             it.copy(
-                sort = PersonalListSort.ListOrder,
-                order = PersonalListSort.ListOrder.defaultOrder,
+                sort = null,
+                order = "desc",
                 filters = it.filters.resetFilters(),
             )
         }
