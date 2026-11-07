@@ -6,14 +6,18 @@ import android.app.LocaleManager
 import android.content.Context
 import android.content.res.Configuration
 import android.content.res.Resources
+import android.icu.text.NumberingSystem
+import android.icu.util.ULocale
 import android.os.Build
 import android.os.LocaleList
 import androidx.annotation.RequiresApi
+import androidx.annotation.VisibleForTesting
 import androidx.core.content.edit
 import org.siloserver.silo.common.R
 import org.siloserver.silo.model.settings.AppLanguage
 import org.xmlpull.v1.XmlPullParser
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The per-app language, read and set the way this app can: the framework
@@ -30,6 +34,10 @@ import java.util.Locale
  * language this build doesn't ship), [wrap] shows the activities in a stand-in
  * ([standIn]) instead, so resources, `%d` digits, plural rules, direction and
  * [LocaleFormat] all agree until that language ships.
+ *
+ * Decision D75: the shown locale also carries [LocaleFormat]'s digits
+ * ([withFormatDigits]), so `%d` in resources and plurals writes the same
+ * digits as the numbers and dates the app formats itself.
  */
 object AppLocales {
     private const val PREFS = "silo_app_locales"
@@ -90,6 +98,9 @@ object AppLocales {
      * `onConfigurationChanged`.
      */
     fun needsRecreate(activity: Activity): Boolean {
+        // Before 13 the platform resets the default to the device language on a change;
+        // put the app language back first, as check() would, so the digits compare like for like.
+        reassertDefault(activity)
         val locales = inEffect(legacyTags(activity), activity.applicationContext)
         if (locales.isEmpty) return false
         return shown(activity, locales)[0] != activity.resources.configuration.locales[0]
@@ -99,9 +110,36 @@ object AppLocales {
     private fun inEffect(tags: String, context: Context): LocaleList =
         if (tags.isEmpty()) context.resources.configuration.locales else LocaleList.forLanguageTags(tags)
 
-    /** [locales], or their [standIn] when the first has no catalog. */
-    private fun shown(context: Context, locales: LocaleList): LocaleList =
-        standIn(locales, shipped(context))?.let { LocaleList(it) } ?: locales
+    /** [locales], or their [standIn] when the first has no catalog, with [LocaleFormat]'s digits. */
+    private fun shown(context: Context, locales: LocaleList): LocaleList {
+        // Both callers can run before AppLanguageStore.check, so read the device's list now.
+        LocaleFormat.refresh(context)
+        val shown = standIn(locales, shipped(context))?.let { LocaleList(it) } ?: locales
+        return withFormatDigits(shown, LocaleFormat.numberLocale())
+    }
+
+    /**
+     * D75: [locales] with the first given [format]'s digits (a `-u-nu-`
+     * keyword) when its own default differs, and otherwise unchanged.
+     * `Resources` formats `%d` in its configuration's first locale, while
+     * [LocaleFormat] follows the device's region (D26): an app set to `ar` on
+     * an `ar-EG` device formats in `ar-EG` (Arabic-Indic digits), but bare
+     * `ar` defaults to Latin digits from Android 16. Resource matching,
+     * plural rules and direction ignore the keyword.
+     */
+    internal fun withFormatDigits(locales: LocaleList, format: Locale): LocaleList {
+        if (locales.isEmpty) return locales
+        val first = locales[0]
+        val digits = numberingSystem(format)
+        if (numberingSystem(first) == digits) return locales
+        val pinned = Locale.Builder().setLocale(first).setUnicodeLocaleKeyword("nu", digits).build()
+        return LocaleList(pinned, *(1 until locales.size()).map { locales[it] }.toTypedArray())
+    }
+
+    private fun numberingSystem(locale: Locale): String =
+        numberingSystems.getOrPut(locale) { NumberingSystem.getInstance(ULocale.forLocale(locale)).name }
+
+    private val numberingSystems = ConcurrentHashMap<Locale, String>()
 
     /**
      * D64: the locale to show instead of [locales]' first when this build has
@@ -169,6 +207,12 @@ object AppLocales {
     }
 
     @Volatile private var shippedCache: List<String>? = null
+
+    /** Sets the shipped languages for a unit test, whose build ships only English; null reads them again. */
+    @VisibleForTesting
+    internal fun setShippedForTests(shipped: List<String>?) {
+        shippedCache = shipped
+    }
 
     /**
      * The languages this build ships: its generated localeConfig (the
