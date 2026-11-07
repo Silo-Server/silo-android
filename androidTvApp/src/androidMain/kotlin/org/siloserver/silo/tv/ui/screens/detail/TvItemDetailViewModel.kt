@@ -1107,14 +1107,16 @@ class TvItemDetailViewModel(
             }
             // Read after the player's final progress lands, so the answer
             // includes it; a stalled stop only delays the read.
-            if (playbackReturn != null) {
-                withTimeoutOrNull(PLAYBACK_SETTLE_WAIT_MS) { awaitPlaybackSettled() }
-            }
+            val settled = playbackReturn == null ||
+                withTimeoutOrNull(PLAYBACK_SETTLE_WAIT_MS) { awaitPlaybackSettled() } != null
             when (val result = catalogRepository.getItemDetail(
                 contentId,
                 libraryId = libraryId,
                 // An access-change refresh must not reuse a pre-change warm-up.
                 joinWarmup = !showRefusal,
+                // Nor may a return from the player settle on a pre-playback answer;
+                // if this read fails, the page keeps the exit spot it already shows.
+                fresh = playbackReturn != null,
             )) {
                 is ApiResult.Success -> {
                     // The playback just closed finished the title: the server
@@ -1147,6 +1149,12 @@ class TvItemDetailViewModel(
                 }
                 // Quiet refresh: on failure keep showing what we have.
                 is ApiResult.NetworkError -> Unit
+            }
+            // The stop outlasted the wait: read again once it lands. A newer
+            // refresh cancels this one, so it cannot overwrite a later answer.
+            if (!settled) {
+                awaitPlaybackSettled()
+                quietRefresh()
             }
         }
         // Watched badges in the box set row follow the player and

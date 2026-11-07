@@ -229,15 +229,20 @@ class CatalogRepository(
      * Live item detail. By default it joins a Home warm-up already in flight
      * for the same title; [joinWarmup] = false sends a fresh request instead,
      * for a reload whose answer must postdate an access change.
+     *
+     * [fresh] reads the server only: it neither joins a warm-up nor falls back
+     * to the cache, both of which can still hold the state from before a write.
      */
     suspend fun getItemDetail(
         contentId: String,
         libraryId: Int? = null,
         joinWarmup: Boolean = true,
+        fresh: Boolean = false,
     ): ApiResult<ItemDetail> {
         if (libraryId != null) return catalogApi.getItemDetail(contentId, libraryId, artwork.request(ArtworkSurface.DETAIL))
         val requestIdentityGeneration = identityTransitions.generation.value
         val requestLanguageRevision = currentLanguageRevision
+        if (fresh) return fetchItemDetail(contentId, requestIdentityGeneration, requestLanguageRevision, serveCacheOnFailure = false)
         val warmRequest = if (!joinWarmup) null else detailRequestMutex.withLock {
             itemDetailInFlight[DetailRequestKey(requestIdentityGeneration, requestLanguageRevision, contentId)]
         }
@@ -439,6 +444,7 @@ class CatalogRepository(
         contentId: String,
         requestIdentityGeneration: Long,
         requestLanguageRevision: Long,
+        serveCacheOnFailure: Boolean = true,
     ): ApiResult<ItemDetail> {
         val sized = artwork.sizedRead(ArtworkSurface.DETAIL)
         val artworkFingerprint = artwork.cacheFingerprint(ArtworkSurface.DETAIL)
@@ -451,7 +457,7 @@ class CatalogRepository(
             }
             return result
         }
-        if (result.canServeCache()) {
+        if (serveCacheOnFailure && result.canServeCache()) {
             getCachedItemDetail(contentId)?.let { return ApiResult.Success(it) }
         }
         return result
