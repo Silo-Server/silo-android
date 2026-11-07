@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.search
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -108,7 +109,7 @@ fun RequestSearchSection(
                 }
             }
             state.isLoading -> RequestSearchFeedback(stringResource(CommonR.string.search_requests_checking), showProgress = true)
-            state.error != null -> RequestSearchFeedback(state.error ?: stringResource(CommonR.string.search_requests_failed))
+            state.error != null -> RequestSearchFeedback(state.error?.text() ?: stringResource(CommonR.string.search_requests_failed))
             state.hasSubmittedQuery -> RequestSearchFeedback(stringResource(CommonR.string.search_requests_empty))
         }
     }

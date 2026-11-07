@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.i18n.UiText
 import android.content.res.Resources
 import androidx.annotation.StringRes
 import org.siloserver.silo.common.R as CommonR
@@ -39,10 +40,10 @@ internal data class TvSubtitleHudRow(
  */
 internal data class TvHudSubtitleSync(
     val timing: SubtitleTimingActions? = null,
-    val statusByServerIndex: Map<Int, String> = emptyMap(),
-    val statusByDownloadId: Map<Int, String> = emptyMap(),
+    val statusByServerIndex: Map<Int, UiText> = emptyMap(),
+    val statusByDownloadId: Map<Int, UiText> = emptyMap(),
 ) {
-    fun statusFor(identity: SubtitleIdentity): String? = when (identity) {
+    fun statusFor(identity: SubtitleIdentity): UiText? = when (identity) {
         is SubtitleIdentity.ServerSidecar -> statusByServerIndex[identity.serverIndex]
         is SubtitleIdentity.Downloaded -> statusByDownloadId[identity.downloadId]
         else -> null

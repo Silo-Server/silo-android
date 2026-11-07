@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.i18n.uiText
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -59,7 +61,7 @@ import org.siloserver.silo.tv.ui.screens.watchparty.tvWatchPartyWaitingFor
 import org.siloserver.silo.tv.ui.theme.DarkBackground
 import org.siloserver.silo.watchtogether.WatchPartyAvailabilityRepository
 import org.siloserver.silo.watchtogether.watchPartyEligibility
-import org.siloserver.silo.watchtogether.watchPartyErrorMessage
+import org.siloserver.silo.watchtogether.watchPartyErrorText
 import org.siloserver.silo.watchtogether.watchPartyInviteUrl
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 
@@ -103,7 +105,7 @@ internal fun TvWatchPartyPlayerOverlays(
                     if (result !is ApiResult.Success) {
                         Toast.makeText(
                             context,
-                            watchPartyErrorMessage(result, context.getString(CommonR.string.player_watchParty_stopFailed)),
+                            watchPartyErrorText(result, uiText(CommonR.string.player_watchParty_stopFailed)).text(context),
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
@@ -323,7 +325,7 @@ private fun TvWatchPartyPanel(
                     if (result !is ApiResult.Success) {
                         Toast.makeText(
                             context,
-                            watchPartyErrorMessage(result, context.getString(CommonR.string.player_watchParty_policyFailed)),
+                            watchPartyErrorText(result, uiText(CommonR.string.player_watchParty_policyFailed)).text(context),
                             Toast.LENGTH_SHORT,
                         ).show()
                     }

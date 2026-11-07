@@ -1,5 +1,8 @@
 package org.siloserver.silo.watchtogether
 
+import org.siloserver.silo.common.i18n.SharedPlural
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomMember
 import org.siloserver.silo.model.watchtogether.RoomPhase
@@ -28,13 +31,13 @@ fun watchPartySeatState(member: RoomMember, phase: RoomPhase): WatchPartySeatSta
 }
 
 /** The short word under a seat's name, or null when the ring already says it. */
-fun watchPartySeatStatus(state: WatchPartySeatState): String? = when (state) {
+fun watchPartySeatStatus(state: WatchPartySeatState): UiText? = when (state) {
     WatchPartySeatState.Ready, WatchPartySeatState.Watching -> null
-    WatchPartySeatState.NotReady -> "not ready"
-    WatchPartySeatState.Away -> "reconnecting"
-    WatchPartySeatState.Syncing -> "syncing"
-    WatchPartySeatState.Buffering -> "buffering"
-    WatchPartySeatState.Joining -> "joining"
+    WatchPartySeatState.NotReady -> UiText.Key(SharedString.WatchPartySeatNotReady)
+    WatchPartySeatState.Away -> UiText.Key(SharedString.WatchPartySeatReconnecting)
+    WatchPartySeatState.Syncing -> UiText.Key(SharedString.WatchPartySeatSyncing)
+    WatchPartySeatState.Buffering -> UiText.Key(SharedString.WatchPartySeatBuffering)
+    WatchPartySeatState.Joining -> UiText.Key(SharedString.WatchPartySeatJoining)
 }
 
 /** Host first, then this viewer, then everyone else by name. */
@@ -45,22 +48,34 @@ fun watchPartySeatOrder(members: List<RoomMember>): List<RoomMember> =
             .thenBy { it.displayName.lowercase() },
     )
 
-/** The trailing summary beside "Here now": "only you so far", "2 of 3 ready". */
-fun watchPartyPresenceSummary(members: List<RoomMember>, phase: RoomPhase): String {
+/** The trailing summary beside "Here now": "only you so far", "2 of 3 ready". Each app words it. */
+sealed interface WatchPartyPresence {
+    data object OnlyYou : WatchPartyPresence
+    data object Nobody : WatchPartyPresence
+
+    /** In the lobby: [ready] of the [here] connected members are ready. */
+    data class Ready(val ready: Int, val here: Int) : WatchPartyPresence
+
+    /** During playback: [watching] of the [here] connected members are watching. */
+    data class Watching(val watching: Int, val here: Int) : WatchPartyPresence
+}
+
+fun watchPartyPresenceSummary(members: List<RoomMember>, phase: RoomPhase): WatchPartyPresence {
     val here = members.filter { it.connected }
-    if (here.size <= 1) return if (here.size == 1) "only you so far" else "nobody connected"
+    if (here.size <= 1) return if (here.size == 1) WatchPartyPresence.OnlyYou else WatchPartyPresence.Nobody
     return if (phase == RoomPhase.Lobby) {
-        val ready = here.count { watchPartySeatState(it, phase) == WatchPartySeatState.Ready }
-        "$ready of ${here.size} ready"
+        WatchPartyPresence.Ready(here.count { watchPartySeatState(it, phase) == WatchPartySeatState.Ready }, here.size)
     } else {
-        val watching = here.count { watchPartySeatState(it, phase) == WatchPartySeatState.Watching }
-        "$watching of ${here.size} watching"
+        WatchPartyPresence.Watching(here.count { watchPartySeatState(it, phase) == WatchPartySeatState.Watching }, here.size)
     }
 }
 
-/** Connected guests who have not marked ready, for the host's advisory hint. */
-fun watchPartyLobbyWaitingNames(members: List<RoomMember>): List<String> =
-    members.filter { it.connected && !it.isHost && !it.lobbyReady }.map { it.displayName.ifBlank { "Someone" } }
+/** Connected guests who have not marked ready, for the host's advisory hint: each name, or "Someone". */
+fun watchPartyLobbyWaitingNames(members: List<RoomMember>): List<UiText> =
+    members.filter { it.connected && !it.isHost && !it.lobbyReady }.map { memberName(it.displayName) }
+
+private fun memberName(displayName: String): UiText =
+    displayName.takeIf { it.isNotBlank() }?.let(UiText::Raw) ?: UiText.Key(SharedString.WatchPartySomeone)
 
 /** The one action the lobby foregrounds for this member right now. */
 sealed interface WatchPartyPrimaryAction {
@@ -149,35 +164,42 @@ fun watchPartySecondaryAction(room: RoomSnapshot, primary: WatchPartyPrimaryActi
     }
 }
 
-private fun hostName(room: RoomSnapshot): String =
-    room.members.firstOrNull { it.isHost }?.displayName?.ifBlank { null } ?: "The host"
+private fun hostName(room: RoomSnapshot): UiText =
+    room.members.firstOrNull { it.isHost }?.displayName?.takeIf { it.isNotBlank() }?.let(UiText::Raw)
+        ?: UiText.Key(SharedString.WatchPartyTheHost)
+
+private fun text(key: SharedString, vararg args: Any): UiText = UiText.Key(key, args.toList())
 
 /** The quiet line under the lobby's buttons, or null. */
-fun watchPartyLobbyHint(room: RoomSnapshot, suggestions: List<Suggestion>): String? {
+fun watchPartyLobbyHint(room: RoomSnapshot, suggestions: List<Suggestion>): UiText? {
     if (room.phase != RoomPhase.Lobby) return null
     val host = hostName(room)
     if (room.managedBySelf) {
         if (room.selectionMode == RoomSelectionMode.Vote && roomVoteWinner(suggestions) == null) {
-            return if (suggestions.isEmpty()) "Suggest a title to get the vote going." else "Nobody has voted yet."
+            return text(if (suggestions.isEmpty()) SharedString.WatchPartyHintSuggest else SharedString.WatchPartyHintNoVotes)
         }
         if (room.selectionMode == RoomSelectionMode.HostPick && room.selectedContentId.isNullOrBlank()) return null
         val waiting = watchPartyLobbyWaitingNames(room.members)
-        if (waiting.isEmpty()) return if (room.members.count { it.connected } > 1) "Everyone's ready." else null
-        val names = waiting.take(2).joinToString(" and ") + if (waiting.size > 2) " and others" else ""
-        return "$names ${if (waiting.size == 1) "hasn't" else "haven't"} marked ready. You can still start."
+        return when (waiting.size) {
+            0 -> if (room.members.count { it.connected } > 1) text(SharedString.WatchPartyHintEveryoneReady) else null
+            1 -> text(SharedString.WatchPartyHintNotReadyOne, waiting[0])
+            2 -> text(SharedString.WatchPartyHintNotReadyTwo, waiting[0], waiting[1])
+            else -> text(SharedString.WatchPartyHintNotReadyMore, waiting[0], waiting[1])
+        }
     }
     if (room.selectionMode == RoomSelectionMode.Vote) {
-        return "$host starts ${roomVoteWinner(suggestions)?.title ?: "the winner"} when voting settles."
+        return roomVoteWinner(suggestions)?.title?.let { text(SharedString.WatchPartyHintHostStartsWinner, host, it) }
+            ?: text(SharedString.WatchPartyHintHostStartsTheWinner, host)
     }
-    return if (room.selectedContentId.isNullOrBlank()) null else "$host starts the movie when everyone's set."
+    return if (room.selectedContentId.isNullOrBlank()) null else text(SharedString.WatchPartyHintHostStarts, host)
 }
 
 /** The hero's eyebrow, title, and supporting line for the lobby. */
 data class WatchPartyLobbyHero(
-    val eyebrow: String,
+    val eyebrow: UiText,
     /** Null means "use the staged title's own name". */
-    val title: String?,
-    val supporting: String?,
+    val title: UiText?,
+    val supporting: UiText?,
     /** A voting lobby before playback: the question is the title and no poster shows. */
     val isVoteQuestion: Boolean = false,
 )
@@ -186,29 +208,36 @@ fun watchPartyLobbyHero(room: RoomSnapshot, suggestions: List<Suggestion>, selec
     val host = hostName(room)
     val manages = room.managedBySelf
     if (room.selectionMode == RoomSelectionMode.Vote && room.phase == RoomPhase.Lobby) {
-        val count = suggestions.size
         return WatchPartyLobbyHero(
-            eyebrow = "Voting · $count ${if (count == 1) "title" else "titles"}",
-            title = "What are we watching?",
-            supporting = if (manages) "Everyone votes. You start the leader." else "Tap a title to vote. $host starts the winner.",
+            eyebrow = UiText.Plural(SharedPlural.WatchPartyVotingEyebrow, suggestions.size),
+            title = text(SharedString.WatchPartyHeroVoteTitle),
+            supporting = if (manages) {
+                text(SharedString.WatchPartyHeroVoteCaptionHost)
+            } else {
+                text(SharedString.WatchPartyHeroVoteCaptionGuest, host)
+            },
             isVoteQuestion = true,
         )
     }
-    val eyebrow = if (room.phase == RoomPhase.Playing) "Now watching · together" else "Up next · together"
+    val eyebrow = text(if (room.phase == RoomPhase.Playing) SharedString.WatchPartyEyebrowNowWatching else SharedString.WatchPartyEyebrowUpNext)
     if (!room.selectedContentId.isNullOrBlank()) {
         return WatchPartyLobbyHero(
             eyebrow = eyebrow,
-            title = if (selectionUnavailable) "A title you can't see" else null,
-            supporting = if (room.selfRole == MemberRole.Host) "You chose this" else "$host chose this",
+            title = if (selectionUnavailable) text(SharedString.WatchPartyHeroHidden) else null,
+            supporting = if (room.selfRole == MemberRole.Host) {
+                text(SharedString.WatchPartyHeroYouChose)
+            } else {
+                text(SharedString.WatchPartyHeroHostChose, host)
+            },
         )
     }
     return WatchPartyLobbyHero(
-        eyebrow = "Your party is open",
-        title = if (manages) "Pick something\nto watch" else "Waiting for\n$host",
+        eyebrow = text(SharedString.WatchPartyEyebrowOpen),
+        title = if (manages) text(SharedString.WatchPartyHeroPick) else text(SharedString.WatchPartyHeroWaiting, host),
         supporting = if (manages) {
-            "Friends can join now with the code. They'll see your pick the moment you choose."
+            text(SharedString.WatchPartyHeroPickCaption)
         } else {
-            "$host is choosing what to watch. You'll see it here the moment they do."
+            text(SharedString.WatchPartyHeroWaitingCaption, host)
         },
     )
 }
@@ -224,29 +253,32 @@ fun watchPartyConnectionLabel(
     room: RoomSnapshot,
     connected: Boolean,
     reconnecting: Boolean,
-): Pair<WatchPartyConnectionTone, String> = when {
-    connected && !room.hostConnected && room.selfRole != MemberRole.Host -> WatchPartyConnectionTone.Warning to "Host away"
+): Pair<WatchPartyConnectionTone, UiText> = when {
+    connected && !room.hostConnected && room.selfRole != MemberRole.Host ->
+        WatchPartyConnectionTone.Warning to text(SharedString.WatchPartyConnectionHostAway)
     connected -> {
         val here = room.members.count { it.connected }
-        WatchPartyConnectionTone.Good to if (here <= 1) "Open" else "$here here"
+        WatchPartyConnectionTone.Good to
+            if (here <= 1) text(SharedString.WatchPartyConnectionOpen) else UiText.Plural(SharedPlural.WatchPartyHere, here)
     }
-    reconnecting -> WatchPartyConnectionTone.Warning to "Reconnecting"
-    else -> WatchPartyConnectionTone.Neutral to "Connecting"
+    reconnecting -> WatchPartyConnectionTone.Warning to text(SharedString.WatchPartyConnectionReconnecting)
+    else -> WatchPartyConnectionTone.Neutral to text(SharedString.WatchPartyConnectionConnecting)
 }
 
 /** The lobby's single status banner, in Apple's order of importance, or null. */
-fun watchPartyLobbyBanner(room: RoomSnapshot, selectionUnavailable: Boolean, reconnecting: Boolean): String? {
+fun watchPartyLobbyBanner(room: RoomSnapshot, selectionUnavailable: Boolean, reconnecting: Boolean): UiText? {
     val host = hostName(room)
     return when {
-        selectionUnavailable && room.managedBySelf ->
-            "This title isn't available to your profile. Choose something else so everyone can watch."
-        selectionUnavailable -> "This title isn't available to your profile. $host will need to pick something else."
-        !room.hostConnected && room.selfRole != MemberRole.Host ->
-            "$host lost connection. The party holds for two minutes while they come back."
-        reconnecting -> "Reconnecting to the party…"
+        selectionUnavailable && room.managedBySelf -> text(SharedString.WatchPartyBannerUnavailableHost)
+        selectionUnavailable -> text(SharedString.WatchPartyBannerUnavailableGuest, host)
+        !room.hostConnected && room.selfRole != MemberRole.Host -> text(SharedString.WatchPartyBannerHostAway, host)
+        reconnecting -> WatchPartyReconnectingBanner
         else -> null
     }
 }
+
+/** [watchPartyLobbyBanner]'s reconnect banner, which a screen may replace with its own. */
+val WatchPartyReconnectingBanner: UiText = UiText.Key(SharedString.WatchPartyReconnecting)
 
 /**
  * Which avatar colour a member gets, matching Apple's `avatarGradient(for:)`:

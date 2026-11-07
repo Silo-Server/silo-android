@@ -797,7 +797,7 @@ fun TvSearchScreen(
                     query = state.query,
                     requestsEnabled = requestsEnabled,
                     isLoading = requestState.isLoading,
-                    error = requestState.error,
+                    error = requestState.error?.text(),
                     hasSubmittedQuery = requestState.hasSubmittedQuery,
                     results = visibleRequestResults,
                     shouldShow = shouldShowRequestSection,

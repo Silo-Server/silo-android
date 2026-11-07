@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.requests
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -146,7 +147,7 @@ private fun RequestPosterCard(
     modifier: Modifier,
     width: Dp,
 ) {
-    val label = listOfNotNull(title, year?.takeIf { it > 0 }?.toString(), progress?.shortLabel).joinToString(", ")
+    val label = listOfNotNull(title, year?.takeIf { it > 0 }?.toString(), progress?.shortText?.text()).joinToString(", ")
     Column(
         modifier = modifier
             .width(width)
@@ -248,7 +249,7 @@ fun RequestPosterBadge(
 fun RequestStatusLabel(
     progress: RequestProgress,
     modifier: Modifier = Modifier,
-    text: String = progress.shortLabel,
+    text: String = progress.shortText.text(),
     fontSize: TextUnit = 12.sp,
     fontWeight: FontWeight = FontWeight.Normal,
     color: Color = SiloSecondaryText,

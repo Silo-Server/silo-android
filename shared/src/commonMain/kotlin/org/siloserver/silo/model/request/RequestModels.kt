@@ -29,7 +29,7 @@ object RequestOutcome {
 
 /**
  * Values of [RequestState.reason]: why a title cannot be requested. They are
- * codes for deciding what to offer, not text; show [requestReasonCopy] instead.
+ * codes for deciding what to offer, not text; show [requestReasonText] instead.
  */
 object RequestReason {
     const val AlreadyRequested = "already_requested"

@@ -1,8 +1,9 @@
 package org.siloserver.silo.viewmodel
 
+import org.siloserver.silo.common.i18n.english
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.request.CreateMediaRequest
-import org.siloserver.silo.model.request.RequestActionCopy
+import org.siloserver.silo.model.request.RequestActionMessage
 import org.siloserver.silo.model.request.RequestDisplayState
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestAvailability
@@ -288,7 +289,7 @@ class RequestsViewModelTest {
 
         val viewModel = RequestsViewModel(RequestsRepository(api))
 
-        assertEquals("Failed to load requests", viewModel.uiState.value.error)
+        assertEquals("Failed to load requests", viewModel.uiState.value.error?.english())
     }
 
     @Test
@@ -297,7 +298,7 @@ class RequestsViewModelTest {
 
         val viewModel = RequestsViewModel(RequestsRepository(api))
 
-        assertEquals("Network error. Check your connection.", viewModel.uiState.value.error)
+        assertEquals("Network error. Check your connection.", viewModel.uiState.value.error?.english())
     }
 
     @Test
@@ -412,7 +413,7 @@ class RequestsViewModelTest {
         val state = mine.uiState.value
         assertNull(state.removingId)
         assertTrue(state.requests.isEmpty())
-        assertEquals("Request removed", state.notice?.message)
+        assertEquals("Request removed", state.notice?.message?.text?.english())
         assertNull(state.actionErrorMessage)
         assertTrue(api.calls.count { it == "mine" } > readsBefore)
         // Every surface showing the title agrees it is gone.
@@ -441,7 +442,7 @@ class RequestsViewModelTest {
         val state = mine.uiState.value
         assertNull(state.removingId)
         assertEquals(listOf(retried), state.requests)
-        assertEquals(RequestActionCopy.RemoveConflict, state.actionErrorMessage)
+        assertEquals(RequestActionMessage.RemoveConflict, state.actionErrorMessage)
         assertNull(state.notice)
         assertFalse(state.canRemove(retried))
     }
@@ -463,7 +464,7 @@ class RequestsViewModelTest {
 
         val state = mine.uiState.value
         assertEquals(listOf("r-pending"), state.requests.map { it.id })
-        assertEquals("Request removed", state.notice?.message)
+        assertEquals("Request removed", state.notice?.message?.text?.english())
     }
 
     @Test
@@ -502,7 +503,7 @@ class RequestsViewModelTest {
 
         mine.removeFailed(failed)
 
-        assertEquals("Requests are turned off", mine.uiState.value.actionErrorMessage)
+        assertEquals("Requests are turned off", mine.uiState.value.actionErrorMessage?.text?.english())
     }
 }
 

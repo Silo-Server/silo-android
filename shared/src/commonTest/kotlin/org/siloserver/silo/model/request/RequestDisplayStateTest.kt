@@ -1,5 +1,8 @@
 package org.siloserver.silo.model.request
 
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.english
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -56,12 +59,12 @@ class RequestDisplayStateTest {
 
         val queued = RequestProgress.of(record(status = RequestStatus.Queued))
         assertEquals(RequestStep.Download, queued.currentStep)
-        assertEquals("Queued", queued.shortLabel)
+        assertEquals("Queued", queued.shortText.english())
 
         val adding = RequestProgress.of(record(status = RequestStatus.Completed, state = RequestUserState.Processing))
         assertEquals(RequestStep.Library, adding.currentStep)
         assertEquals(3, adding.completedSteps)
-        assertEquals("Adding to your library", adding.longLabel)
+        assertEquals("Adding to your library", adding.longText.english())
 
         val landed = RequestProgress.of(record(status = RequestStatus.Completed, state = RequestUserState.Available))
         assertEquals(4, landed.completedSteps)
@@ -131,10 +134,19 @@ class RequestDisplayStateTest {
 
     @Test
     fun reasonCopyHidesUnknownCodesButKeepsServerSentences() {
-        assertEquals("Request limit reached", requestReasonCopy(RequestReason.QuotaExceeded))
-        assertEquals("One or more fulfillment targets failed", requestReasonCopy("one or more fulfillment targets failed"))
-        assertNull(requestReasonCopy("some_new_code"))
-        assertEquals("Request failed · No indexer", RequestDisplayState.NeedsAttention(RequestAttention.Failed, "No indexer").detailTitle)
+        assertEquals("Request limit reached", requestReasonText(RequestReason.QuotaExceeded)?.english())
+        assertEquals("One or more fulfillment targets failed", requestReasonText("one or more fulfillment targets failed")?.english())
+        assertNull(requestReasonText("some_new_code"))
+        val targets = listOf(
+            RequestTarget(id = "a", requestId = "r", createdAt = "", updatedAt = "", quality = "1080p", status = RequestStatus.Completed),
+            RequestTarget(id = "b", requestId = "r", createdAt = "", updatedAt = "", quality = "4K", status = RequestStatus.Queued),
+            RequestTarget(id = "c", requestId = "r", createdAt = "", updatedAt = "", quality = "720p", status = RequestStatus.Failed),
+        )
+        assertEquals("1080p done · 4K queued · 720p failed", RequestTargetSummary.text(targets)?.english())
+        assertEquals(
+            "Request failed · No indexer",
+            requestStatusWithDetail(UiText.Key(SharedString.RequestTitleFailed), requestReasonText("No indexer")!!).english(),
+        )
     }
 
     private fun display(

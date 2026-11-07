@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.requests
 
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.model.request.RequestMediaResult
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -214,7 +215,7 @@ fun TvRequestDetailScreen(
                 actionFocusFallback = actionFocusFallback,
                 onOpenRecommendation = router::openResult,
             )
-            state.error != null -> TvErrorScreen(message = state.error.orEmpty(), onRetry = viewModel::load)
+            state.error != null -> TvErrorScreen(message = state.error?.text().orEmpty(), onRetry = viewModel::load)
             else -> RequestDetailLoading(focusRequester = loadingFocusRequester)
         }
     }
@@ -290,7 +291,7 @@ private fun RequestDetailContent(
                             key("follow") {
                                 RequestActionPill(
                                     icon = if (state.isFollowing) Icons.Filled.NotificationsOff else Icons.Filled.Notifications,
-                                    title = state.followActionTitle,
+                                    title = state.followActionTitle.text(),
                                     pending = state.isFollowPending,
                                     onClick = onToggleFollow,
                                     focusFallback = actionFocusFallback,
@@ -299,7 +300,7 @@ private fun RequestDetailContent(
                         }
                         (state.actionErrorMessage ?: state.shownFollowNotice)?.let { message ->
                             Text(
-                                text = message,
+                                text = message.text.text(),
                                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp),
                                 color = SiloOnSurface.copy(alpha = 0.72f),
                                 maxLines = 2,
@@ -363,7 +364,7 @@ private fun RequestPrimaryActionPill(
                 RequestPrimaryAction.Loading -> Unit
             }
             Text(
-                text = state.primaryActionTitle,
+                text = state.primaryActionTitle.text(),
                 style = MaterialTheme.typography.titleLarge.copy(fontSize = 14.sp),
                 color = foreground,
                 maxLines = 1,
@@ -480,10 +481,10 @@ private fun RequestStatusStrip(progress: RequestProgress, state: RequestDetailUi
     val record = state.record
     Column(modifier = Modifier.padding(top = 7.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            SummaryField(label = stringResource(CommonR.string.requests_strip_status), value = progress.longLabel, dot = progress.tint.tvColor())
+            SummaryField(label = stringResource(CommonR.string.requests_strip_status), value = progress.longText.text(), dot = progress.tint.tvColor())
             if (record != null) {
                 RequestRowCopy.day(record.createdAt)?.let { SummaryField(label = stringResource(CommonR.string.requests_strip_requested), value = it) }
-                (RequestTargetSummary.text(record.targets) ?: RequestTargetSummary.qualities(record.targets))?.let {
+                (RequestTargetSummary.text(record.targets)?.text() ?: RequestTargetSummary.qualities(record.targets))?.let {
                     SummaryField(label = stringResource(CommonR.string.requests_strip_quality), value = it)
                 }
             }
@@ -498,7 +499,7 @@ private fun RequestStatusStrip(progress: RequestProgress, state: RequestDetailUi
                         else -> SiloOnSurface.copy(alpha = 0.45f)
                     }
                     Text(
-                        text = step.title,
+                        text = step.text.text(),
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
                         color = color,
                         maxLines = 1,

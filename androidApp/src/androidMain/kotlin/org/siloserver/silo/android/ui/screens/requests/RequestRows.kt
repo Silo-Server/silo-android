@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.requests
 
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
@@ -148,7 +149,7 @@ internal fun MyRequestRow(
                         RequestStageTrack(progress = progress, modifier = Modifier.padding(top = 9.dp))
                         RequestStatusLabel(
                             progress = progress,
-                            text = RequestRowCopy.status(record, progress),
+                            text = RequestRowCopy.status(record, progress).text(),
                             fontWeight = FontWeight.SemiBold,
                             color = SiloOnSurface,
                             maxLines = 2,

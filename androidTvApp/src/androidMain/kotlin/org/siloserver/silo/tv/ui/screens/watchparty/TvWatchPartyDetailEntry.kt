@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.uiText
+import org.siloserver.silo.common.i18n.text
 import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -37,7 +39,7 @@ import org.siloserver.silo.watchtogether.RoomSession
 import org.siloserver.silo.watchtogether.WatchPartyAvailability
 import org.siloserver.silo.watchtogether.WatchPartyAvailabilityRepository
 import org.siloserver.silo.watchtogether.WatchPartyDestination
-import org.siloserver.silo.watchtogether.watchPartyErrorMessage
+import org.siloserver.silo.watchtogether.watchPartyErrorText
 import org.siloserver.silo.watchtogether.watchPartyHostingOffered
 
 /** The detail page's Watch Party row in its More menu. */
@@ -211,7 +213,7 @@ private fun DetailHostRunner(
     LaunchedEffect(state.error) {
         val error = state.error ?: return@LaunchedEffect
         if (!started) return@LaunchedEffect
-        Toast.makeText(context, error, Toast.LENGTH_LONG).show()
+        Toast.makeText(context, error.text(context), Toast.LENGTH_LONG).show()
         hub.clearError()
         // A staging failure after the room exists still lands in the lobby
         // (the destination above); anything else ends this request.
@@ -252,7 +254,7 @@ private fun DetailStageRunner(
     }
     LaunchedEffect(lobby) {
         lobby.messages.collect { message ->
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, message.text(context), Toast.LENGTH_SHORT).show()
             entry.request = null
         }
     }
@@ -283,7 +285,7 @@ private fun DetailSuggestRunner(entry: TvWatchPartyDetailEntry, request: TvDetai
     }
     LaunchedEffect(lobby) {
         lobby.messages.collect { message ->
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, message.text(context), Toast.LENGTH_SHORT).show()
             entry.request = null
         }
     }
@@ -313,10 +315,7 @@ private fun DetailSelectRunner(
         } else {
             Toast.makeText(
                 context,
-                watchPartyErrorMessage(
-                    result,
-                    context.getStringWithNames(CommonR.string.watchParty_error_switchPartyTo, request.item.title),
-                ),
+                watchPartyErrorText(result, uiText(CommonR.string.watchParty_error_switchPartyTo, request.item.title)).text(context),
                 Toast.LENGTH_LONG,
             ).show()
         }

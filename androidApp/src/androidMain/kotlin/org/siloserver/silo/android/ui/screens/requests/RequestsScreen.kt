@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.requests
 
+import org.siloserver.silo.common.i18n.text
 import androidx.annotation.PluralsRes
 import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.layout.Box
@@ -75,7 +76,7 @@ fun RequestsScreen(
         when {
             !state.isShowingDiscover -> searchResults(state, router::openResult)
             state.error != null -> item(key = "error") {
-                ErrorView(message = state.error.orEmpty(), onRetry = viewModel::load, modifier = Modifier.padding(top = 60.dp))
+                ErrorView(message = state.error?.text().orEmpty(), onRetry = viewModel::load, modifier = Modifier.padding(top = 60.dp))
             }
             state.isLoading -> item(key = "loading") {
                 val progress = rememberShimmerProgress()

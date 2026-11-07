@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.requests
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -137,7 +138,7 @@ private fun TvRequestPosterCard(
     val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(8.dp)
     val focus = siloCardDefaults(shape = shape)
-    val label = listOfNotNull(title, year?.takeIf { it > 0 }?.toString(), progress?.shortLabel).joinToString(", ")
+    val label = listOfNotNull(title, year?.takeIf { it > 0 }?.toString(), progress?.shortText?.text()).joinToString(", ")
     Column(modifier = modifier.width(width)) {
         Card(
             onClick = onClick,
@@ -222,7 +223,7 @@ internal fun TvRequestPosterBadge(state: RequestDisplayState, size: Dp, modifier
 internal fun TvRequestStatusLabel(
     progress: RequestProgress,
     modifier: Modifier = Modifier,
-    text: String = progress.shortLabel,
+    text: String = progress.shortText.text(),
     fontSize: TextUnit = 14.sp,
     fontWeight: FontWeight = FontWeight.Normal,
     color: Color = Color.White.copy(alpha = 0.70f),
