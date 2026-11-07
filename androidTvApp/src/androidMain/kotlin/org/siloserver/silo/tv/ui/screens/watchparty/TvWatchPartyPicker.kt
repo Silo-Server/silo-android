@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -324,7 +325,7 @@ internal fun TvWatchPartyPicker(
                     .padding(top = 12.dp, bottom = 24.dp),
             ) {
                 val status = when {
-                    searching && state.error != null && shelves.isEmpty() -> state.error
+                    searching && state.error != null && shelves.isEmpty() -> state.error?.text()
                     searching && state.searching && shelves.isEmpty() -> stringResource(CommonR.string.search_searching)
                     searching && shelves.isEmpty() -> stringResource(CommonR.string.watchParty_picker_noMatch, state.query.trim())
                     !searching && state.rowsLoading && shelves.isEmpty() -> stringResource(CommonR.string.status_loading)
@@ -344,7 +345,7 @@ internal fun TvWatchPartyPicker(
                             color = SiloSecondaryText,
                         )
                         state.error?.let { message ->
-                            TvPartyBanner(message = message, warning = true)
+                            TvPartyBanner(message = message.text(), warning = true)
                             TvPartyButton(
                                 label = stringResource(CommonR.string.common_tryAgain),
                                 kind = TvPartyButtonKind.Secondary,

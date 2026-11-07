@@ -89,7 +89,9 @@ import org.siloserver.silo.model.request.RequestStep
 import org.siloserver.silo.model.request.RequestTargetSummary
 import org.siloserver.silo.model.request.requestBackdropUrl
 import org.siloserver.silo.model.request.requestPosterUrl
-import org.siloserver.silo.model.request.requestReasonCopy
+import org.siloserver.silo.model.request.requestReasonText
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.viewmodel.RequestDetailUiState
 import org.siloserver.silo.viewmodel.RequestDetailViewModel
 import org.siloserver.silo.viewmodel.RequestPrimaryAction
@@ -151,7 +153,7 @@ fun RequestDetailScreen(
                         router = router,
                     )
                 }
-                "error" -> ErrorView(message = state.error.orEmpty(), onRetry = viewModel::load)
+                "error" -> ErrorView(message = state.error?.text().orEmpty(), onRetry = viewModel::load)
                 else -> DetailLoadingSkeleton()
             }
         }
@@ -192,7 +194,7 @@ private fun RequestDetailContent(
                 item(key = "hero", contentType = "detail-hero") {
                     AdaptiveDetailHero(
                         detail = itemDetail,
-                        eyebrow = state.eyebrow,
+                        eyebrow = state.eyebrow?.text(),
                         // The library hero's facts: year and runtime or
                         // seasons, then two genres as one token.
                         sourceTokens = if (itemDetail.type == "series") {
@@ -247,7 +249,7 @@ private fun RequestDetailActions(
         val message = state.actionErrorMessage ?: state.shownFollowNotice
         if (message != null) {
             Text(
-                text = message,
+                text = message.text.text(),
                 fontSize = 12.sp,
                 color = SiloSecondaryText,
                 textAlign = TextAlign.Center,
@@ -310,7 +312,7 @@ private fun FollowButton(state: RequestDetailUiState, onClick: () -> Unit) {
             )
         }
         Text(
-            text = state.followActionTitle,
+            text = state.followActionTitle.text(),
             fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold,
             color = SiloOnSurface,
@@ -350,7 +352,7 @@ private fun PrimaryActionButton(state: RequestDetailUiState, onClick: () -> Unit
             RequestPrimaryAction.Loading -> Unit
         }
         Text(
-            text = state.primaryActionTitle,
+            text = state.primaryActionTitle.text(),
             fontSize = 16.sp,
             fontWeight = FontWeight.SemiBold,
             color = content,
@@ -407,7 +409,7 @@ private fun StepRow(step: RequestStep, progress: RequestProgress, record: MediaR
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(
-                text = stepTitle(step, isCurrent, progress),
+                text = stepTitle(step, isCurrent, progress).text(),
                 fontSize = 15.sp,
                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
                 color = if (isDone || isCurrent) SiloOnSurface else SiloOnSurface.copy(alpha = 0.45f),
@@ -435,11 +437,11 @@ private fun StepMarker(isDone: Boolean, isCurrent: Boolean, tint: Color) {
 }
 
 /** The current step reads as what's happening now: "Declined" instead of "Approved", "Queued" instead of "Downloading". */
-private fun stepTitle(step: RequestStep, isCurrent: Boolean, progress: RequestProgress): String {
-    if (!isCurrent) return step.title
+private fun stepTitle(step: RequestStep, isCurrent: Boolean, progress: RequestProgress): UiText {
+    if (!isCurrent) return step.text
     return when (progress.display) {
-        is RequestDisplayState.NeedsAttention, RequestDisplayState.OnTheWay -> progress.shortLabel
-        else -> step.title
+        is RequestDisplayState.NeedsAttention, RequestDisplayState.OnTheWay -> progress.shortText
+        else -> step.text
     }
 }
 
@@ -456,14 +458,14 @@ private fun stepDetail(
         RequestStep.Requested -> RequestRowCopy.stamp(resources, record?.createdAt)
         RequestStep.Approval -> when {
             isDone -> RequestRowCopy.stamp(resources, record?.approvedAt)
-            isCurrent && progress.display is RequestDisplayState.NeedsAttention -> requestReasonCopy(reason)
+            isCurrent && progress.display is RequestDisplayState.NeedsAttention -> requestReasonText(reason)?.text(resources)
             isCurrent -> resources.getString(CommonR.string.requests_step_waitingForAdmin)
             else -> null
         }
         RequestStep.Download -> when {
             !isCurrent && !isDone -> null
-            isCurrent && progress.display is RequestDisplayState.NeedsAttention -> requestReasonCopy(reason)
-            else -> record?.let { RequestTargetSummary.text(it.targets) }
+            isCurrent && progress.display is RequestDisplayState.NeedsAttention -> requestReasonText(reason)?.text(resources)
+            else -> record?.let { RequestTargetSummary.text(it.targets)?.text(resources) }
         }
         RequestStep.Library -> if (isCurrent) resources.getString(CommonR.string.requests_step_libraryPickingUp) else null
     }

@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.requests
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -77,7 +78,7 @@ fun RequestDiscoverRowScreen(
                 )
             }
             state.error != null && state.results.isEmpty() -> item(key = "error") {
-                ErrorView(message = state.error.orEmpty(), onRetry = viewModel::loadMore, modifier = Modifier.padding(top = 60.dp))
+                ErrorView(message = state.error?.text().orEmpty(), onRetry = viewModel::loadMore, modifier = Modifier.padding(top = 60.dp))
             }
             state.isLoading && state.results.isEmpty() -> item(key = "loading") {
                 val progress = rememberShimmerProgress()

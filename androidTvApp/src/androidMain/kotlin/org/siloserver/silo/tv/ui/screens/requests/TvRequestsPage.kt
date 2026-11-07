@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.requests
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.runtime.rememberCoroutineScope
 import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.model.request.RequestDiscoverySection
@@ -71,7 +72,7 @@ import org.siloserver.silo.common.requests.RequestRowCopy
 import org.siloserver.silo.common.requests.RequestStageTrack
 import org.siloserver.silo.model.catalog.ExternalRatings
 import org.siloserver.silo.model.request.MediaRequest
-import org.siloserver.silo.model.request.RequestActionCopy
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.request.RequestDisplayState
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestProgress
@@ -161,27 +162,31 @@ fun TvRequestsPage(
     // for a few seconds. The view models outlive this page's composition (a
     // detail push and Back re-enter it), so remember what was already shown
     // and replay nothing.
+    val context = LocalContext.current
     var transientMessage by remember { mutableStateOf<String?>(null) }
-    var seenCancelMessage by rememberSaveable { mutableStateOf(mineState.actionErrorMessage) }
+    // Saved state can't hold the message itself, so it keeps the message's
+    // identity: its description, which doesn't change with the app language.
+    val cancelMessage = mineState.actionErrorMessage
+    var seenCancelMessage by rememberSaveable { mutableStateOf(cancelMessage?.toString()) }
     var seenNotice by rememberSaveable { mutableStateOf(mineState.notice?.sequence) }
     suspend fun showTransient(message: String) {
         transientMessage = message
         delay(ActionMessageMs)
         if (transientMessage == message) transientMessage = null
     }
-    LaunchedEffect(mineState.actionErrorMessage) {
-        val message = mineState.actionErrorMessage
-        // Cleared by the next action: the same text after it is a new message.
+    LaunchedEffect(cancelMessage) {
+        val message = cancelMessage
+        // Cleared by the next action: the same message after it is a new one.
         if (message == null) seenCancelMessage = null
-        if (message == null || message == seenCancelMessage) return@LaunchedEffect
-        seenCancelMessage = message
-        showTransient(message)
+        if (message == null || message.toString() == seenCancelMessage) return@LaunchedEffect
+        seenCancelMessage = message.toString()
+        showTransient(message.text.text(context))
     }
     LaunchedEffect(mineState.notice) {
         val notice = mineState.notice
         if (notice == null || notice.sequence == seenNotice) return@LaunchedEffect
         seenNotice = notice.sequence
-        showTransient(notice.message)
+        showTransient(notice.message.text.text(context))
     }
     val actionMessage = transientMessage
 
@@ -221,13 +226,13 @@ fun TvRequestsPage(
     removeTarget?.let { record ->
         // Keep request comes first and takes focus, so a stray Select deletes nothing.
         TvDialog(
-            title = RequestActionCopy.RemoveConfirmTitle,
-            message = RequestActionCopy.removeConfirmMessage(record.title),
+            title = stringResource(CommonR.string.requests_remove_title),
+            message = stringResourceWithNames(CommonR.string.requests_remove_message, record.title),
             onDismissRequest = { removeTarget = null },
             actions = listOf(
-                TvDialogAction(label = RequestActionCopy.RemoveKeep, onClick = { removeTarget = null }),
+                TvDialogAction(label = stringResource(CommonR.string.requests_remove_keep), onClick = { removeTarget = null }),
                 TvDialogAction(
-                    label = RequestActionCopy.RemoveConfirm,
+                    label = stringResource(CommonR.string.requests_remove_confirm),
                     onClick = {
                         removeTarget = null
                         // The hub's list shows the row; it re-reads unless the removal is confirmed.
@@ -243,7 +248,7 @@ fun TvRequestsPage(
         if (rows.isEmpty()) {
             TvRequestsPlaceholder(
                 hasLoaded = hasLoaded,
-                error = hubState.error,
+                error = hubState.error?.text(),
                 focusRequest = focusRequest,
                 onRetry = {
                     hasLoaded = false
@@ -564,7 +569,7 @@ internal data class TvRequestPreview(
                     mediaType = record.mediaType
                     year = record.year
                     progress = RequestProgress.of(record)
-                    statusText = RequestRowCopy.status(record, progress)
+                    statusText = RequestRowCopy.status(record, progress).text(resources)
                 }
                 is TvRequestItem.Result -> {
                     val result = item.result
@@ -577,7 +582,7 @@ internal data class TvRequestPreview(
                     // Like the detail page: a title that can't be requested has no track.
                     progress = RequestProgress.of(result.availability, result.request)
                         ?.takeUnless { it.display is RequestDisplayState.Unavailable }
-                    statusText = progress?.longLabel
+                    statusText = progress?.longText?.text(resources)
                 }
             }
             year?.takeIf { it > 0 }?.let { meta += TvHeroFactToken.TextToken(it.toString()) }
@@ -629,7 +634,7 @@ private fun TvRequestPreviewStatus(preview: TvRequestPreview) {
     ) {
         TvRequestStatusLabel(
             progress = progress,
-            text = preview.statusText ?: progress.longLabel,
+            text = preview.statusText ?: progress.longText.text(),
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
             color = SiloOnSurface,
@@ -770,22 +775,16 @@ private fun TvRequestsLoadingView() {
 
 // ── Long-press actions ───────────────────────────────────────
 
-internal enum class TvRequestAction {
-    Cancel,
-    Remove,
-    ;
-
-    /** Remove's label is the shared module's copy; Cancel's comes from the catalog ([title]). */
-    val label: String?
-        get() = when (this) {
-            Cancel -> null
-            Remove -> RequestActionCopy.RemoveConfirm
-        }
-}
+internal enum class TvRequestAction { Cancel, Remove }
 
 /** The action's dialog label. */
 @Composable
-private fun TvRequestAction.title(): String = label ?: stringResource(CommonR.string.requests_action_cancel)
+private fun TvRequestAction.title(): String = stringResource(
+    when (this) {
+        TvRequestAction.Cancel -> CommonR.string.requests_action_cancel
+        TvRequestAction.Remove -> CommonR.string.requests_remove_confirm
+    },
+)
 
 /** The long-press actions a card offers right now; empty when it has none. */
 internal fun TvRequestItem.actions(
@@ -815,7 +814,7 @@ private fun TvRequestActionDialog(
     // non-retryable action.
     TvDialog(
         title = record.title,
-        message = RequestProgress.of(record).longLabel,
+        message = RequestProgress.of(record).longText.text(),
         onDismissRequest = onDismiss,
         actions = listOf(TvDialogAction(label = stringResource(CommonR.string.requests_actionDialog_close), onClick = onDismiss)) + actions.map { action ->
             TvDialogAction(

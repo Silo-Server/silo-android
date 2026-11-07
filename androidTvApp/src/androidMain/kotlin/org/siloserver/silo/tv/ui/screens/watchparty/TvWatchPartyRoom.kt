@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -177,14 +178,15 @@ internal fun TvWatchPartyRoomView(
 ) {
     val connected = connection.writable
     val reconnecting = !connected && connection.epoch != 0L
-    val (tone, connectionText) = watchPartyConnectionLabel(room, connected, reconnecting)
+    val (tone, connectionLabel) = watchPartyConnectionLabel(room, connected, reconnecting)
+    val connectionText = connectionLabel.text()
     val primary = watchPartyPrimaryAction(room, features, suggestions)
     val secondary = watchPartySecondaryAction(room, primary)
     val hero = watchPartyLobbyHero(room, suggestions)
-    val hint = watchPartyLobbyHint(room, suggestions)
+    val hint = watchPartyLobbyHint(room, suggestions)?.text()
     val voting = room.selectionMode == RoomSelectionMode.Vote && room.phase == RoomPhase.Lobby
     val winner = if (room.selectionMode == RoomSelectionMode.Vote) roomVoteWinner(suggestions) else null
-    val warning = watchPartyLobbyBanner(room, selectionUnavailable = false, reconnecting = false)
+    val warning = watchPartyLobbyBanner(room, selectionUnavailable = false, reconnecting = false)?.text()
     val startState = TvControlState.transient(
         connected && if (room.selectionMode == RoomSelectionMode.Vote) eligibility.canPromote else eligibility.canStart,
     )
@@ -394,8 +396,8 @@ private fun HeroText(
 ) {
     val selected = !room.selectedContentId.isNullOrBlank()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        TvPartyEyebrow(hero.eyebrow)
-        val title = hero.title ?: staged?.title ?: stringResource(CommonR.string.watchParty_hero_loading)
+        TvPartyEyebrow(hero.eyebrow.text())
+        val title = hero.title?.text() ?: staged?.title ?: stringResource(CommonR.string.watchParty_hero_loading)
         val size = if (!hero.isVoteQuestion && hero.title == null && title.length > LONG_TITLE_CHARS) titleSize * 0.8f else titleSize
         Text(
             text = title,
@@ -409,7 +411,7 @@ private fun HeroText(
         )
         if (selected && !hero.isVoteQuestion) {
             if (staged != null) FactsLine(staged)
-            val chose = listOfNotNull(hero.supporting, memberStateLine).joinToString(" · ")
+            val chose = listOfNotNull(hero.supporting?.text(), memberStateLine).joinToString(" · ")
             if (chose.isNotBlank()) {
                 Text(
                     text = chose,
@@ -421,7 +423,7 @@ private fun HeroText(
             }
         } else {
             hero.supporting?.let {
-                Text(text = it, fontSize = TvPartyMetrics.body, lineHeight = 21.sp, color = SiloSecondaryText)
+                Text(text = it.text(), fontSize = TvPartyMetrics.body, lineHeight = 21.sp, color = SiloSecondaryText)
             }
         }
     }

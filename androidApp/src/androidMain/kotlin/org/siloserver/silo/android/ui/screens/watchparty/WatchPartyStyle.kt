@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.watchparty
 
+import org.siloserver.silo.common.watchparty.text
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -282,7 +284,7 @@ internal fun WatchPartySeat(member: RoomMember, state: WatchPartySeatState, size
     val ready = state == WatchPartySeatState.Ready || state == WatchPartySeatState.Watching
     val away = state == WatchPartySeatState.Away
     val name = watchPartyDisplayName(member.displayName)
-    val status = watchPartySeatStatus(state)
+    val status = watchPartySeatStatus(state)?.text()
     val you = stringResource(CommonR.string.watchParty_seat_youLower)
     val hostWord = stringResource(CommonR.string.watchParty_seat_a11yHost)
     val stateWord = when (state) {
@@ -449,7 +451,7 @@ internal fun WatchPartySeatsRow(
         Row(horizontalArrangement = Arrangement.spacedBy(seatSize * 0.2f), verticalAlignment = Alignment.CenterVertically) {
             WatchPartyEyebrow(stringResource(CommonR.string.watchParty_seats_hereNow))
             Text(
-                watchPartyPresenceSummary(members, phase),
+                watchPartyPresenceSummary(members, phase).text(),
                 fontSize = WatchPartyMetrics.CAPTION.sp,
                 color = SiloSecondaryText.copy(alpha = 0.7f),
             )

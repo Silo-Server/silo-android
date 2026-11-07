@@ -6,6 +6,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.LayoutDirection
 import org.siloserver.silo.common.R
+import org.siloserver.silo.watchtogether.WatchPartyPresence
 
 /*
  * Watch Party text both apps build the same way. Each is resolved in
@@ -66,4 +67,13 @@ fun watchPartyHistoryLabel(watched: Boolean?, inProgress: Boolean, onWatchlist: 
         },
     )
     return if (onWatchlist) stringResource(R.string.watchParty_whoSeen_watchlist, label) else label
+}
+
+/** The lobby's "Here now" summary: "only you so far", "2 of 3 ready". */
+@Composable
+fun WatchPartyPresence.text(): String = when (this) {
+    WatchPartyPresence.OnlyYou -> stringResource(R.string.watchParty_presence_onlyYou)
+    WatchPartyPresence.Nobody -> stringResource(R.string.watchParty_presence_nobody)
+    is WatchPartyPresence.Ready -> pluralStringResource(R.plurals.watchParty_presence_ready, here, ready.toString(), here)
+    is WatchPartyPresence.Watching -> pluralStringResource(R.plurals.watchParty_presence_watching, here, watching.toString(), here)
 }

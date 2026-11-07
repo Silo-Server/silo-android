@@ -31,7 +31,10 @@ import org.siloserver.silo.model.request.RequestProgress
 import org.siloserver.silo.model.request.RequestStatusTint
 import org.siloserver.silo.model.request.RequestStep
 import org.siloserver.silo.model.request.RequestTargetSummary
-import org.siloserver.silo.model.request.requestReasonCopy
+import org.siloserver.silo.model.request.requestReasonText
+import org.siloserver.silo.model.request.requestStatusWithDetail
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
 
 /**
  * The request status colors, shared by phone and TV and matching the Apple
@@ -65,10 +68,11 @@ fun RequestStageTrack(
     doneColor: Color = Color(0xFFEDEDED).copy(alpha = 0.82f),
     restColor: Color = Color.White.copy(alpha = 0.14f),
 ) {
+    val description = progress.longText.text()
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .semantics { contentDescription = progress.longLabel },
+            .semantics { contentDescription = description },
         horizontalArrangement = Arrangement.spacedBy(height),
     ) {
         RequestStep.entries.forEach { step ->
@@ -134,15 +138,15 @@ object RequestRowCopy {
      * The status line under the stage track: the long label, plus the
      * per-quality summary while in flight or the reason when stuck.
      */
-    fun status(record: MediaRequest, progress: RequestProgress): String {
+    fun status(record: MediaRequest, progress: RequestProgress): UiText {
         val display = progress.display
         if (display is RequestDisplayState.NeedsAttention) {
-            requestReasonCopy(display.reason)?.let { return "${progress.longLabel} · $it" }
+            requestReasonText(display.reason)?.let { return requestStatusWithDetail(progress.longText, it) }
         }
         if (display == RequestDisplayState.OnTheWay) {
-            RequestTargetSummary.text(record.targets)?.let { return "${progress.longLabel} · $it" }
+            RequestTargetSummary.text(record.targets)?.let { return requestStatusWithDetail(progress.longText, it) }
         }
-        return progress.longLabel
+        return progress.longText
     }
 
     private fun format(timestamp: String?, formatter: DateTimeFormatter): String? {

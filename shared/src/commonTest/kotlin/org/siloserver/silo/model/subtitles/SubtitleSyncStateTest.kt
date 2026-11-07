@@ -2,6 +2,7 @@ package org.siloserver.silo.model.subtitles
 
 import org.siloserver.silo.network.SiloJson
 import kotlin.test.Test
+import org.siloserver.silo.common.i18n.english
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
@@ -26,8 +27,8 @@ class SubtitleSyncStateTest {
         assertEquals("2", job.id)
         assertEquals("manual", job.trigger)
         assertEquals(40, syncProgressPercent(job))
-        assertEquals("Listening to the audio…", syncPhaseLabel(job))
-        assertEquals("Syncing… 40%", subtitleSyncStatusLabel(state.timing, job))
+        assertEquals("Listening to the audio…", syncPhaseLabel(job)?.english())
+        assertEquals("Syncing… 40%", subtitleSyncStatusLabel(state.timing, job)?.english())
     }
 
     @Test
@@ -42,10 +43,10 @@ class SubtitleSyncStateTest {
         assertFalse(state.isSidecar)
         assertEquals("9", state.storedSubtitleId)
         assertNull(syncProgressPercent(state.sync))
-        assertEquals("Synced −3.0 s", subtitleSyncStatusLabel(state.timing, state.sync))
+        assertEquals("Synced −3.0 s", subtitleSyncStatusLabel(state.timing, state.sync)?.english())
         assertEquals(
-            SubtitleSyncResultLine("Synced to the audio: −3.0 s"),
-            subtitleSyncResultLine(state.timing, state.sync),
+            ("Synced to the audio: −3.0 s" to false),
+            subtitleSyncResultLine(state.timing, state.sync)?.english(),
         )
 
         val capability = SiloJson.decodeFromString(
@@ -80,38 +81,38 @@ class SubtitleSyncStateTest {
     fun describesProgressPhasesAndFailures() {
         fun running(phase: String?, progress: Double?) =
             SubtitleSyncJob(id = "1", status = SubtitleSyncJob.RUNNING, phase = phase, progress = progress)
-        assertEquals("Waiting to start…", syncPhaseLabel(running("queued", 0.0)))
-        assertEquals("Matching lines to speech…", syncPhaseLabel(running("matching", 0.9)))
-        assertEquals("Syncing…", subtitleSyncStatusLabel(SubtitleTiming(), running("queued", 0.0)))
+        assertEquals("Waiting to start…", syncPhaseLabel(running("queued", 0.0))?.english())
+        assertEquals("Matching lines to speech…", syncPhaseLabel(running("matching", 0.9))?.english())
+        assertEquals("Syncing…", subtitleSyncStatusLabel(SubtitleTiming(), running("queued", 0.0))?.english())
         assertEquals(100, syncProgressPercent(running("matching", 1.4)))
-        assertNull(syncPhaseLabel(SubtitleSyncJob(status = SubtitleSyncJob.FAILED)))
+        assertNull(syncPhaseLabel(SubtitleSyncJob(status = SubtitleSyncJob.FAILED))?.english())
 
-        assertEquals("The subtitle changed while it was syncing. Try again.", syncFailureMessage("subtitle_changed"))
-        assertEquals("This video has no audio Silo can read.", syncFailureMessage("no_audio"))
-        assertEquals("The server is busy. Try again in a few minutes.", syncFailureMessage("unavailable"))
-        assertEquals("Sync failed. Try again.", syncFailureMessage("error"))
-        assertEquals("Sync failed. Try again.", syncFailureMessage(null))
+        assertEquals("The subtitle changed while it was syncing. Try again.", syncFailureMessage("subtitle_changed").english())
+        assertEquals("This video has no audio Silo can read.", syncFailureMessage("no_audio").english())
+        assertEquals("The server is busy. Try again in a few minutes.", syncFailureMessage("unavailable").english())
+        assertEquals("Sync failed. Try again.", syncFailureMessage("error").english())
+        assertEquals("Sync failed. Try again.", syncFailureMessage(null).english())
     }
 
     @Test
     fun resultLinesMatchTheWebPlayer() {
         val identity = SubtitleTiming()
         assertEquals(
-            SubtitleSyncResultLine("Doesn't match this video's audio; probably for another release.", warning = true),
-            subtitleSyncResultLine(identity, SubtitleSyncJob(status = SubtitleSyncJob.NO_MATCH)),
+            ("Doesn't match this video's audio; probably for another release." to true),
+            subtitleSyncResultLine(identity, SubtitleSyncJob(status = SubtitleSyncJob.NO_MATCH))?.english(),
         )
         assertEquals(
-            SubtitleSyncResultLine("This video has no audio Silo can read.", warning = true),
-            subtitleSyncResultLine(identity, SubtitleSyncJob(status = SubtitleSyncJob.FAILED, failure = "no_audio")),
+            ("This video has no audio Silo can read." to true),
+            subtitleSyncResultLine(identity, SubtitleSyncJob(status = SubtitleSyncJob.FAILED, failure = "no_audio"))?.english(),
         )
         assertEquals(
-            SubtitleSyncResultLine("Already matches the audio."),
-            subtitleSyncResultLine(identity, SubtitleSyncJob(status = SubtitleSyncJob.ALREADY_SYNCED)),
+            ("Already matches the audio." to false),
+            subtitleSyncResultLine(identity, SubtitleSyncJob(status = SubtitleSyncJob.ALREADY_SYNCED))?.english(),
         )
         // A synced subtitle that was reset afterwards has no result to show.
-        assertNull(subtitleSyncResultLine(identity, SubtitleSyncJob(status = SubtitleSyncJob.SYNCED)))
-        assertNull(subtitleSyncResultLine(identity, null))
-        assertEquals("+0.5 s · 25→23.976 fps", describeSyncTiming(SubtitleTiming(500, 25.0 / 23.976)))
-        assertEquals("25→23.976 fps", describeSyncTiming(SubtitleTiming(0, 25.0 / 23.976)))
+        assertNull(subtitleSyncResultLine(identity, SubtitleSyncJob(status = SubtitleSyncJob.SYNCED))?.english())
+        assertNull(subtitleSyncResultLine(identity, null)?.english())
+        assertEquals("+0.5 s · 25→23.976 fps", describeSyncTiming(SubtitleTiming(500, 25.0 / 23.976)).english())
+        assertEquals("25→23.976 fps", describeSyncTiming(SubtitleTiming(0, 25.0 / 23.976)).english())
     }
 }

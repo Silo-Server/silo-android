@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.watchparty
 
+import org.siloserver.silo.common.watchparty.text
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -580,7 +582,7 @@ internal fun TvPartySeat(member: RoomMember, state: WatchPartySeatState, size: D
             textAlign = TextAlign.Center,
         )
         // "you · not ready": the role rides with the state so long names keep their width.
-        listOfNotNull(stringResource(CommonR.string.watchParty_seat_youLower).takeIf { member.isSelf }, watchPartySeatStatus(state))
+        listOfNotNull(stringResource(CommonR.string.watchParty_seat_youLower).takeIf { member.isSelf }, watchPartySeatStatus(state)?.text())
             .takeIf { it.isNotEmpty() }
             ?.let { detail ->
                 Text(text = detail.joinToString(" · "), fontSize = detailSize, color = SiloSecondaryText, maxLines = 1)
@@ -657,7 +659,7 @@ internal fun TvPartySeatsRow(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             TvPartyEyebrow(stringResource(CommonR.string.watchParty_seats_hereNow))
             Text(
-                text = watchPartyPresenceSummary(members, phase),
+                text = watchPartyPresenceSummary(members, phase).text(),
                 fontSize = TvPartyMetrics.caption,
                 color = SiloSecondaryText.copy(alpha = 0.7f),
                 maxLines = 1,

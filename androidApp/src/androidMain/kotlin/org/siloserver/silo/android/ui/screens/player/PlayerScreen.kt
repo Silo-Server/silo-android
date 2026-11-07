@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.common.i18n.uiText
+import org.siloserver.silo.common.i18n.text
 import android.app.Activity
 import android.content.ComponentName
 import android.content.pm.ActivityInfo
@@ -132,7 +134,7 @@ import org.siloserver.silo.watchtogether.RoomSession
 import org.siloserver.silo.watchtogether.WatchPartyAvailability
 import org.siloserver.silo.watchtogether.WatchPartyAvailabilityRepository
 import org.siloserver.silo.watchtogether.watchPartyEligibility
-import org.siloserver.silo.watchtogether.watchPartyErrorMessage
+import org.siloserver.silo.watchtogether.watchPartyErrorText
 import org.siloserver.silo.watchtogether.watchPartyInviteUrl
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -2248,7 +2250,7 @@ fun PlayerScreen(
                     if (result !is ApiResult.Success) {
                         Toast.makeText(
                             context,
-                            watchPartyErrorMessage(result, context.getString(CommonR.string.player_watchParty_returnToLobbyFailed)),
+                            watchPartyErrorText(result, uiText(CommonR.string.player_watchParty_returnToLobbyFailed)).text(context),
                             Toast.LENGTH_SHORT,
                         ).show()
                     }

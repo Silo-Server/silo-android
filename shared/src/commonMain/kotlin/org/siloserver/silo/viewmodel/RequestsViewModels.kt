@@ -4,7 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.MyRequestsBucket
-import org.siloserver.silo.model.request.RequestActionCopy
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.model.request.RequestActionMessage
 import org.siloserver.silo.model.request.RequestActionHold
 import org.siloserver.silo.model.request.RequestDiscoverySection
 import org.siloserver.silo.model.request.RequestDisplayState
@@ -14,7 +17,6 @@ import org.siloserver.silo.model.request.RequestMutationFailure
 import org.siloserver.silo.model.request.RequestOutcome
 import org.siloserver.silo.model.request.applyingFollowUpdate
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.repository.RequestEvent
 import org.siloserver.silo.repository.RequestsRepository
@@ -42,7 +44,7 @@ data class RequestsUiState(
     val rowsBrowsable: Boolean = false,
     /** The signed-in user's requests, needs-attention first, newest first within each group. */
     val myRequests: List<MediaRequest> = emptyList(),
-    val error: String? = null,
+    val error: UiText? = null,
     val query: String = "",
     val searchResults: List<RequestMediaResult> = emptyList(),
     /** TMDB's total for the query, for the "N results" line. */
@@ -143,7 +145,7 @@ class RequestsViewModel(
                 it.copy(
                     isLoading = false,
                     hasLoaded = true,
-                    error = failure.errorMessage("Failed to load requests")
+                    error = failure.errorText(SharedString.RequestsLoadFailed)
                         .takeIf { _ -> it.sections.isEmpty() && it.myRequests.isEmpty() },
                 )
             }
@@ -231,7 +233,7 @@ data class RequestSearchUiState(
     val page: Int = 1,
     val totalPages: Int = 1,
     val totalResults: Int = 0,
-    val error: String? = null,
+    val error: UiText? = null,
 ) {
     val hasSubmittedQuery: Boolean
         get() = submittedQuery.isNotBlank() && query.trim() == submittedQuery
@@ -309,7 +311,7 @@ class RequestSearchViewModel(
                     page = 1,
                     totalPages = 1,
                     totalResults = 0,
-                    error = "Enter a search term.",
+                    error = UiText.Key(SharedString.RequestSearchEmpty),
                 )
             }
             return
@@ -347,7 +349,7 @@ class RequestSearchViewModel(
                         it.copy(
                             isLoading = false,
                             submittedQuery = query,
-                            error = result.errorMessage("Failed to search requests"),
+                            error = result.errorText(SharedString.RequestSearchFailed),
                         )
                     }
                 }
@@ -372,14 +374,14 @@ data class MyRequestsUiState(
     /** Requests whose cancel was sent without a usable answer; held until the request changes, or the hold lapses. */
     val unconfirmedCancelIds: Set<String> = emptySet(),
     /** Inline message for a failed cancel or removal; cleared on the next action. */
-    val actionErrorMessage: String? = null,
+    val actionErrorMessage: RequestActionMessage? = null,
     /** The server takes removals of failed requests (`remove_failed_supported`). */
     val removeFailedSupported: Boolean = false,
     /** The request being removed; its row dims and takes no taps. */
     val removingId: String? = null,
     /** A confirmation to show once, such as "Request removed". */
     val notice: RequestNotice? = null,
-    val error: String? = null,
+    val error: UiText? = null,
 ) {
     val requests: List<MediaRequest> get() = buckets.flatMap { it.second }
     val isEmpty: Boolean get() = hasLoaded && buckets.isEmpty()
@@ -394,7 +396,7 @@ data class MyRequestsUiState(
 }
 
 /** A one-time confirmation; [sequence] makes a repeat of the same text a new notice. */
-data class RequestNotice(val message: String, val sequence: Long)
+data class RequestNotice(val message: RequestActionMessage, val sequence: Long)
 
 class MyRequestsViewModel(
     private val repository: RequestsRepository,
@@ -470,7 +472,7 @@ class MyRequestsViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = result.errorMessage("Failed to load your requests").takeIf { _ -> it.buckets.isEmpty() },
+                        error = result.errorText(SharedString.MyRequestsLoadFailed).takeIf { _ -> it.buckets.isEmpty() },
                     )
                 }
                 false
@@ -504,11 +506,11 @@ class MyRequestsViewModel(
                         }
                     }
                     holdCancel(record, reread)
-                    _uiState.update { it.copy(cancellingId = null, actionErrorMessage = RequestActionCopy.UnconfirmedCancel) }
+                    _uiState.update { it.copy(cancellingId = null, actionErrorMessage = RequestActionMessage.UnconfirmedCancel) }
                     reread()
                 }
                 else -> _uiState.update {
-                    it.copy(cancellingId = null, actionErrorMessage = RequestActionCopy.failure(result, "Couldn't cancel the request"))
+                    it.copy(cancellingId = null, actionErrorMessage = RequestActionMessage.failure(result, SharedString.RequestCancelFailed))
                 }
             }
         }
@@ -539,20 +541,20 @@ class MyRequestsViewModel(
                     // The repository has dropped it already; a failed re-read must not bring the row back.
                     result is ApiResult.Success -> settled.copy(
                         buckets = MyRequestsBucket.bucket(repository.mine.value),
-                        notice = RequestNotice(RequestActionCopy.Removed, ++noticeSequence),
+                        notice = RequestNotice(RequestActionMessage.Removed, ++noticeSequence),
                     )
                     // Removed elsewhere since the list loaded: the repository has dropped it too.
                     result is ApiResult.Error && result.code == 404 -> settled.copy(buckets = MyRequestsBucket.bucket(repository.mine.value))
                     // Requests turned off also answers 409, as capability_disabled.
                     result is ApiResult.Error && result.code == 409 && result.error == "conflict" ->
-                        settled.copy(actionErrorMessage = RequestActionCopy.RemoveConflict)
+                        settled.copy(actionErrorMessage = RequestActionMessage.RemoveConflict)
                     RequestMutationFailure.isUncertain(result) && gone ->
-                        settled.copy(notice = RequestNotice(RequestActionCopy.Removed, ++noticeSequence))
-                    RequestMutationFailure.isUncertain(result) -> settled.copy(actionErrorMessage = RequestActionCopy.UnconfirmedRemove)
-                    else -> settled.copy(actionErrorMessage = RequestActionCopy.failure(result, "Couldn't remove the request"))
+                        settled.copy(notice = RequestNotice(RequestActionMessage.Removed, ++noticeSequence))
+                    RequestMutationFailure.isUncertain(result) -> settled.copy(actionErrorMessage = RequestActionMessage.UnconfirmedRemove)
+                    else -> settled.copy(actionErrorMessage = RequestActionMessage.failure(result, SharedString.RequestRemoveFailed))
                 }
             }
-            if (RequestActionCopy.isCapabilityOff(result)) featureStore?.refresh()
+            if (RequestActionMessage.isCapabilityOff(result)) featureStore?.refresh()
         }
     }
 
@@ -586,7 +588,7 @@ class MyRequestsViewModel(
             it.copy(
                 unconfirmedCancelIds = cancelHolds.keys.toSet(),
                 actionErrorMessage = it.actionErrorMessage.takeUnless { m ->
-                    cancelHolds.isEmpty() && m == RequestActionCopy.UnconfirmedCancel
+                    cancelHolds.isEmpty() && m == RequestActionMessage.UnconfirmedCancel
                 },
             )
         }

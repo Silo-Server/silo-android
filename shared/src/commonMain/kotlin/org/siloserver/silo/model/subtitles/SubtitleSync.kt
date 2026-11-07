@@ -1,6 +1,8 @@
 package org.siloserver.silo.model.subtitles
 
 import kotlinx.serialization.SerialName
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 import kotlinx.serialization.Serializable
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -112,10 +114,10 @@ data class SubtitleSyncCapability(
 }
 
 /** "+2.3 s" / "−0.4 s"; whole seconds keep one decimal so a list scans evenly. */
-fun formatSyncOffset(offsetMs: Long): String {
+fun formatSyncOffset(offsetMs: Long): UiText {
     val tenths = (abs(offsetMs) + 50) / 100
     val sign = if (offsetMs < 0) "−" else "+"
-    return "$sign${tenths / 10}.${tenths % 10} s"
+    return UiText.Key(SharedString.SubtitleSyncOffsetSeconds, listOf("$sign${tenths / 10}.${tenths % 10}"))
 }
 
 private val frameRates = listOf(
@@ -133,25 +135,28 @@ private const val FRAME_RATE_TOLERANCE = 1e-6
  * no scaling. A subtitle cut for source rate `from` stretched onto video rate
  * `to` has scale = from / to.
  */
-fun describeSyncScale(scale: Double): String? {
+fun describeSyncScale(scale: Double): UiText? {
     if (!scale.isFinite() || scale == 1.0) return null
     for ((from, fromLabel) in frameRates) {
         for ((to, toLabel) in frameRates) {
-            if (from != to && abs(from / to - scale) <= FRAME_RATE_TOLERANCE) return "$fromLabel→$toLabel fps"
+            if (from != to && abs(from / to - scale) <= FRAME_RATE_TOLERANCE) {
+                return UiText.Key(SharedString.SubtitleSyncFrameRate, listOf(fromLabel, toLabel))
+            }
         }
     }
     // Up to four decimals without trailing zeros, like the web player's Number(scale.toFixed(4)).
     val tenThousandths = (scale * 10_000).roundToLong()
     val whole = tenThousandths / 10_000
     val fraction = (tenThousandths % 10_000).toString().padStart(4, '0').trimEnd('0')
-    return if (fraction.isEmpty()) "×$whole speed" else "×$whole.$fraction speed"
+    val factor = if (fraction.isEmpty()) "$whole" else "$whole.$fraction"
+    return UiText.Key(SharedString.SubtitleSyncSpeedFactor, listOf(factor))
 }
 
 /** "+2.3 s · 25→23.976 fps": a correction in a few characters. */
-fun describeSyncTiming(timing: SubtitleTiming): String {
-    val scale = describeSyncScale(timing.scale)
-    val offset = if (timing.offsetMs != 0L || scale == null) formatSyncOffset(timing.offsetMs) else null
-    return listOfNotNull(offset, scale).joinToString(" · ")
+fun describeSyncTiming(timing: SubtitleTiming): UiText {
+    val scale = describeSyncScale(timing.scale) ?: return formatSyncOffset(timing.offsetMs)
+    if (timing.offsetMs == 0L) return scale
+    return UiText.Key(SharedString.SubtitleSyncTimingParts, listOf(formatSyncOffset(timing.offsetMs), scale))
 }
 
 /** An active job's progress as a whole percentage, or null once it finished. */
@@ -161,42 +166,50 @@ fun syncProgressPercent(job: SubtitleSyncJob?): Int? {
 }
 
 /** What an active job is doing, in a few words. */
-fun syncPhaseLabel(job: SubtitleSyncJob?): String? {
+fun syncPhaseLabel(job: SubtitleSyncJob?): UiText? {
     if (job == null || !job.inProgress) return null
-    return when (job.phase) {
-        SubtitleSyncJob.PHASE_MATCHING -> "Matching lines to speech…"
-        SubtitleSyncJob.PHASE_ANALYZING -> "Listening to the audio…"
-        else -> "Waiting to start…"
-    }
+    return UiText.Key(
+        when (job.phase) {
+            SubtitleSyncJob.PHASE_MATCHING -> SharedString.SubtitleSyncPhaseMatching
+            SubtitleSyncJob.PHASE_ANALYZING -> SharedString.SubtitleSyncPhaseAnalyzing
+            else -> SharedString.SubtitleSyncPhaseWaiting
+        },
+    )
 }
 
 /** Why a failed job failed, in plain words. */
-fun syncFailureMessage(failure: String?): String = when (failure) {
-    SubtitleSyncJob.FAILURE_SUBTITLE_CHANGED -> "The subtitle changed while it was syncing. Try again."
-    SubtitleSyncJob.FAILURE_NO_AUDIO -> "This video has no audio Silo can read."
-    SubtitleSyncJob.FAILURE_UNAVAILABLE -> "The server is busy. Try again in a few minutes."
-    else -> "Sync failed. Try again."
-}
+fun syncFailureMessage(failure: String?): UiText = UiText.Key(
+    when (failure) {
+        SubtitleSyncJob.FAILURE_SUBTITLE_CHANGED -> SharedString.SubtitleSyncFailureChanged
+        SubtitleSyncJob.FAILURE_NO_AUDIO -> SharedString.SubtitleSyncFailureNoAudio
+        SubtitleSyncJob.FAILURE_UNAVAILABLE -> SharedString.SubtitleSyncFailureBusy
+        else -> SharedString.SubtitleSyncFailureGeneric
+    },
+)
 
 /**
  * One short line describing a subtitle's timing, or null when there is
  * nothing to say (never synced and never adjusted). Matches the web player.
  */
-fun subtitleSyncStatusLabel(timing: SubtitleTiming, sync: SubtitleSyncJob?): String? {
+fun subtitleSyncStatusLabel(timing: SubtitleTiming, sync: SubtitleSyncJob?): UiText? {
     when (sync?.status) {
         SubtitleSyncJob.PENDING, SubtitleSyncJob.RUNNING -> {
             val percent = syncProgressPercent(sync)
-            return if (percent != null && percent > 0) "Syncing… $percent%" else "Syncing…"
+            return if (percent != null && percent > 0) {
+                UiText.Key(SharedString.SubtitleSyncStatusSyncingPercent, listOf(percent.toString()))
+            } else {
+                UiText.Key(SharedString.SubtitleSyncStatusSyncing)
+            }
         }
-        SubtitleSyncJob.NO_MATCH -> return "Doesn't match this video"
-        SubtitleSyncJob.FAILED -> return "Sync failed"
-        SubtitleSyncJob.ALREADY_SYNCED -> if (timing.isIdentity) return "Already in sync"
+        SubtitleSyncJob.NO_MATCH -> return UiText.Key(SharedString.SubtitleSyncStatusNoMatch)
+        SubtitleSyncJob.FAILED -> return UiText.Key(SharedString.SubtitleSyncStatusFailed)
+        SubtitleSyncJob.ALREADY_SYNCED -> if (timing.isIdentity) return UiText.Key(SharedString.SubtitleSyncStatusAlreadyInSync)
         SubtitleSyncJob.SYNCED -> {
-            if (timing.isIdentity) return "Original timing"
-            if (sync.result == timing) return "Synced ${describeSyncTiming(timing)}"
+            if (timing.isIdentity) return UiText.Key(SharedString.SubtitleSyncStatusOriginal)
+            if (sync.result == timing) return UiText.Key(SharedString.SubtitleSyncStatusSynced, listOf(describeSyncTiming(timing)))
         }
     }
-    return if (timing.isIdentity) null else "Timing adjusted ${describeSyncTiming(timing)}"
+    return if (timing.isIdentity) null else UiText.Key(SharedString.SubtitleSyncStatusAdjusted, listOf(describeSyncTiming(timing)))
 }
 
 /**
@@ -204,15 +217,19 @@ fun subtitleSyncStatusLabel(timing: SubtitleTiming, sync: SubtitleSyncJob?): Str
  * is none to show; [warning] marks an outcome that left the timing unchanged
  * because the sync could not help.
  */
-data class SubtitleSyncResultLine(val text: String, val warning: Boolean = false)
+data class SubtitleSyncResultLine(val text: UiText, val warning: Boolean = false)
 
 fun subtitleSyncResultLine(timing: SubtitleTiming, sync: SubtitleSyncJob?): SubtitleSyncResultLine? =
     when (sync?.status) {
         SubtitleSyncJob.SYNCED ->
-            if (timing.isIdentity) null else SubtitleSyncResultLine("Synced to the audio: ${describeSyncTiming(timing)}")
-        SubtitleSyncJob.ALREADY_SYNCED -> SubtitleSyncResultLine("Already matches the audio.")
+            if (timing.isIdentity) {
+                null
+            } else {
+                SubtitleSyncResultLine(UiText.Key(SharedString.SubtitleSyncResultSynced, listOf(describeSyncTiming(timing))))
+            }
+        SubtitleSyncJob.ALREADY_SYNCED -> SubtitleSyncResultLine(UiText.Key(SharedString.SubtitleSyncResultAlreadyMatches))
         SubtitleSyncJob.NO_MATCH ->
-            SubtitleSyncResultLine("Doesn't match this video's audio; probably for another release.", warning = true)
+            SubtitleSyncResultLine(UiText.Key(SharedString.SubtitleSyncResultNoMatch), warning = true)
         SubtitleSyncJob.FAILED -> SubtitleSyncResultLine(syncFailureMessage(sync.failure), warning = true)
         else -> null
     }
