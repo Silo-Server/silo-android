@@ -72,6 +72,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.android.ui.components.LabelValueLine
 import org.siloserver.silo.android.ui.screens.settings.settingsSwitchColors
 import org.siloserver.silo.android.ui.theme.SiloDestructive
 import org.siloserver.silo.common.R as CommonR
@@ -636,21 +637,32 @@ internal fun PlayerValueRow(
             .alpha(if (enabled) 1f else 0.4f),
         separator = separator,
     ) {
-        // The label keeps its natural width; the value takes the rest of the
-        // row and ends at the chevron, so every value lines up on one edge.
-        Column(modifier = if (value.isNullOrBlank()) Modifier.weight(1f) else Modifier) {
-            Text(text = label, style = PlayerType.RowTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (!detail.isNullOrBlank()) {
-                Text(text = detail, style = PlayerType.RowDetail, modifier = Modifier.padding(top = 1.dp))
+        val labelBlock: @Composable () -> Unit = {
+            Column {
+                Text(text = label, style = PlayerType.RowTitle, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (!detail.isNullOrBlank()) {
+                    Text(text = detail, style = PlayerType.RowDetail, modifier = Modifier.padding(top = 1.dp))
+                }
             }
         }
-        if (!value.isNullOrBlank()) {
-            Text(
-                text = value,
-                style = PlayerType.Value,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.End,
+        if (value.isNullOrBlank()) {
+            Box(modifier = Modifier.weight(1f)) { labelBlock() }
+        } else {
+            // The value ends at the chevron, so every value lines up on one
+            // edge. It keeps its own width unless the label's longest word
+            // needs the room; a long label wraps instead.
+            LabelValueLine(
+                label = labelBlock,
+                value = {
+                    Text(
+                        text = value,
+                        style = PlayerType.Value,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.End,
+                    )
+                },
+                gap = 10.dp,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -687,7 +699,7 @@ internal fun PlayerSwitchRow(
         separator = separator,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = label, style = PlayerType.RowTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text = label, style = PlayerType.RowTitle, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (!detail.isNullOrBlank()) {
                 Text(text = detail, style = PlayerType.RowDetail, modifier = Modifier.padding(top = 1.dp))
             }
