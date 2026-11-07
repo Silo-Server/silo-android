@@ -60,6 +60,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalDensity
@@ -651,6 +652,7 @@ private val SeriesCaptionTitleStyle = TextStyle(
     lineHeight = 14.sp,
     fontWeight = FontWeight.SemiBold,
     textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
 )
 private val SeriesCaptionMetadataStyle = TextStyle(
     fontFamily = InterFamily,
@@ -664,6 +666,7 @@ private val CaptionTitleStyle = TextStyle(
     lineHeight = 22.sp,
     fontWeight = FontWeight.SemiBold,
     textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
 )
 private val CaptionMetadataStyle = TextStyle(
     fontFamily = InterFamily,
@@ -677,6 +680,7 @@ private val CaptionOverviewStyle = TextStyle(
     lineHeight = 20.sp,
     fontWeight = FontWeight.Normal,
     textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
 )
 
 // Shared with the hero facts row (tvOS parity), so the card dates agree with it.

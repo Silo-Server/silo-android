@@ -592,6 +592,7 @@ private val heroDisplayHero = TextStyle(
     lineHeight = 46.sp,
     letterSpacing = 0.sp,
     textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
     // Apple shadows the hero title (black@0.55, r16, y4) for legibility on
     // bright backdrops. Inherited by the subtitle/episode `.copy()` variants.
     shadow = Shadow(color = Color.Black.copy(alpha = 0.55f), offset = Offset(0f, 4f), blurRadius = 16f),
