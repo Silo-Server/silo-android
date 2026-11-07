@@ -48,6 +48,55 @@ class SiloDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration16To17KeepsOnlyDownloadPositionsAndQueuesVideoOnesForTheServer() {
+        val name = "migration-16-to-17"
+        migrationHelper.createDatabase(name, 16).use { database ->
+            fun download(contentId: String, fileId: Int, mediaType: String) = database.execSQL(
+                "INSERT INTO downloads (serverId, accountId, profileId, mediaFileId, recordId, contentId, title, mediaType, status, kind, " +
+                    "fileSize, bytesSent, createdAt, updatedAtMs) VALUES ('s', 'a', 'p', $fileId, 'r$fileId', '$contentId', 'T', " +
+                    "'$mediaType', 'completed', 'queued', 1, 1, '2026-10-01T00:00:00Z', 1)",
+            )
+            fun position(contentId: String, fileId: Int, seconds: Double, playedAtMs: Long?) = database.execSQL(
+                "INSERT INTO user_item_state (serverId, accountId, profileId, contentId, fileId, positionSeconds, durationSeconds, " +
+                    "audioFingerprint, clientUpdatedAtMs, positionUpdatedAtMs) VALUES ('s', 'a', 'p', '$contentId', $fileId, $seconds, 1453.5, " +
+                    "'audio', 9000, ${playedAtMs ?: "NULL"})",
+            )
+            download("movie", 62, "movie")
+            download("book", 3, "audiobook")
+            position("movie", 62, 646.5, 5000)
+            position("book", 3, 50.0, 6000)
+            position("streamed", 9, 300.0, 7000)
+            database.execSQL(
+                "INSERT INTO dirty_operations (opKind, serverId, accountId, profileId, targetContentId, targetFileId, coalesceKey, " +
+                    "idempotencyKey, opVersion, payloadJson, state, createdAtMs, attemptCount, nextAttemptAtMs) VALUES " +
+                    "('SET_POSITION', 's', 'a', 'p', 'streamed', 9, 'k', 'legacy', 1, '{}', 'pending', 1, 0, 0)",
+            )
+        }
+        migrationHelper.runMigrationsAndValidate(name, 17, true, SiloDatabase.MIGRATION_16_17).use { database ->
+            database.query("SELECT contentId, positionSeconds, audioFingerprint FROM user_item_state ORDER BY contentId").use { cursor ->
+                val rows = buildList { while (cursor.moveToNext()) add(Triple(cursor.getString(0), cursor.getDouble(1), cursor.getString(2))) }
+                assertEquals(
+                    listOf(Triple("book", 50.0, "audio"), Triple("movie", 646.5, "audio"), Triple("streamed", 0.0, "audio")),
+                    rows,
+                )
+            }
+            database.query("SELECT targetContentId, targetFileId, opVersion, payloadJson, state, createdAtMs FROM dirty_operations").use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals("movie", cursor.getString(0))
+                assertEquals(62, cursor.getInt(1))
+                assertEquals(2, cursor.getInt(2))
+                assertEquals(
+                    646.5 to 1453.5,
+                    org.siloserver.silo.common.data.sync.OutboxOperation.decodePositionPayload(cursor.getString(3)),
+                )
+                assertEquals("pending", cursor.getString(4))
+                assertEquals(5000L, cursor.getLong(5))
+                assertEquals(false, cursor.moveToNext())
+            }
+        }
+    }
+
     @get:Rule
     val migrationHelper =
         MigrationTestHelper(

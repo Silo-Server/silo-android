@@ -56,7 +56,7 @@ import org.siloserver.silo.common.data.db.entity.UserItemStateEntity
         MembershipProjectionEntity::class,
         LegacyMembershipQuarantineEntity::class,
     ],
-    version = 16,
+    version = 17,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -117,6 +117,47 @@ abstract class SiloDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 ACCOUNT_REBUILDS.forEach { it.apply(db) }
                 db.execSQL("ALTER TABLE `dirty_operations` ADD COLUMN `accountId` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        /**
+         * v17 makes local resume positions an offline queue (silo-android#846).
+         * Only downloaded playback writes one now, and it waits in the outbox
+         * until the server accepts it. Once-off cleanup, schema unchanged:
+         * - legacy `SET_POSITION` rows were held unsent forever; drop them;
+         * - positions for anything that isn't a download on this device were
+         *   streaming samples the server already has; zero them, keeping track
+         *   choices and reading state on the same rows;
+         * - video download positions never reached the server; queue each one
+         *   with the time it was played, so the server's newest-write-wins
+         *   decides whether it still matters.
+         * Audiobook download positions stay local; that player keeps its own.
+         */
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DELETE FROM dirty_operations WHERE opKind = 'SET_POSITION'")
+                db.execSQL(
+                    "UPDATE user_item_state SET positionSeconds = 0 WHERE positionSeconds <> 0 AND NOT EXISTS (" +
+                        "SELECT 1 FROM downloads d WHERE d.serverId = user_item_state.serverId " +
+                        "AND d.accountId = user_item_state.accountId AND d.profileId = user_item_state.profileId " +
+                        "AND d.contentId = user_item_state.contentId)",
+                )
+                db.execSQL(
+                    "INSERT INTO dirty_operations (opKind, serverId, accountId, profileId, targetContentId, targetFileId, " +
+                        "coalesceKey, idempotencyKey, opVersion, payloadJson, state, createdAtMs, attemptCount, nextAttemptAtMs) " +
+                        "SELECT 'SET_POSITION', s.serverId, s.accountId, s.profileId, s.contentId, s.fileId, " +
+                        "s.serverId || '|' || s.accountId || '|' || s.profileId || '|' || s.contentId || '|SET_POSITION|upgrade-' || s.fileId, " +
+                        "lower(hex(randomblob(16))), 2, " +
+                        "'{\"position\":' || s.positionSeconds || ',\"duration\":' || COALESCE(s.durationSeconds, 'null') || '}', " +
+                        "'pending', s.positionUpdatedAtMs, 0, 0 " +
+                        // '' is a temporary sign-in or pre-account data: no durable account to send as.
+                        // Without a play time the event can't be ordered against the server's.
+                        "FROM user_item_state s WHERE s.positionSeconds > 0 AND s.accountId <> '' " +
+                        "AND s.positionUpdatedAtMs IS NOT NULL AND EXISTS (" +
+                        "SELECT 1 FROM downloads d WHERE d.serverId = s.serverId AND d.accountId = s.accountId " +
+                        "AND d.profileId = s.profileId AND d.contentId = s.contentId AND d.mediaFileId = s.fileId " +
+                        "AND d.mediaType NOT IN ('audiobook', 'ebook'))",
+                )
             }
         }
 
@@ -192,6 +233,6 @@ abstract class SiloDatabase : RoomDatabase() {
          */
         fun build(context: Context): SiloDatabase =
             Room.databaseBuilder(context.applicationContext, SiloDatabase::class.java, NAME)
-                .addMigrations(MIGRATION_9_10, MIGRATION_15_16).addCallback(CALLBACK).build()
+                .addMigrations(MIGRATION_9_10, MIGRATION_15_16, MIGRATION_16_17).addCallback(CALLBACK).build()
     }
 }
