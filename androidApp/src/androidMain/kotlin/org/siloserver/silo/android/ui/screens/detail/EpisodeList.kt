@@ -60,6 +60,7 @@ import org.siloserver.silo.android.ui.util.formatCardDate
 import org.siloserver.silo.android.ui.util.playbackResumePosition
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -316,7 +317,7 @@ private fun EpisodeRailCard(
                 overflow = TextOverflow.Ellipsis,
             )
             val metadata = EpisodeCardCaption.metadata(
-                airDate = formatCardDate(episode.airDate) ?: episode.airDate,
+                airDate = formatCardDate(episode.airDate, currentFormatLocale()) ?: episode.airDate,
                 runtimeMinutes = episode.runtime,
             )
             val showsTranslationLabel = visibleOverview != null &&

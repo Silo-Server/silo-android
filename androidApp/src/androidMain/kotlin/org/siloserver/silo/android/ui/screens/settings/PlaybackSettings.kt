@@ -16,6 +16,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.settings.UseProfileSettingsCopy
 import org.siloserver.silo.common.settings.bufferingQualityModeLabel
 import org.siloserver.silo.common.settings.learnedLimitLabel
@@ -45,7 +46,7 @@ private fun resumeRewindLabel(seconds: Int) =
     if (seconds <= 0) stringResource(CommonR.string.settings_off) else stringResource(CommonR.string.settings_resumeRewind_seconds, seconds)
 
 @Composable
-private fun passOutThresholdLabel(count: Int) = if (count <= 0) stringResource(CommonR.string.settings_off) else count.toString()
+private fun passOutThresholdLabel(count: Int) = if (count <= 0) stringResource(CommonR.string.settings_off) else LocaleFormat.integer(count)
 
 @Composable
 private fun nextUpPromptLabel(seconds: Int): String = when {

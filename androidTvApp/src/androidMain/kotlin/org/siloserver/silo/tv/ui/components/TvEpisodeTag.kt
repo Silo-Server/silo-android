@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.components
 
 import androidx.compose.runtime.Composable
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleInteger
 
 /**
  * `S01E02` for a Home card or the hero marquee, or a half tag when only one
@@ -17,8 +18,8 @@ internal fun tvEpisodeTag(season: Int?, episode: Int?): String? = tvEpisodeTagTo
 
 /** [tvEpisodeTag] as a catalog string and its zero-padded numbers, resolved when drawn. */
 internal fun tvEpisodeTagToken(season: Int?, episode: Int?): TvHeroFactToken.ResToken? {
-    val s = season?.toString()?.padStart(2, '0')
-    val e = episode?.toString()?.padStart(2, '0')
+    val s = season?.let { LocaleInteger(it, minDigits = 2) }
+    val e = episode?.let { LocaleInteger(it, minDigits = 2) }
     return when {
         s != null && e != null -> TvHeroFactToken.ResToken(CommonR.string.catalog_episodeTag, listOf(s, e))
         s != null -> TvHeroFactToken.ResToken(CommonR.string.calendar_seasonShort, listOf(s))

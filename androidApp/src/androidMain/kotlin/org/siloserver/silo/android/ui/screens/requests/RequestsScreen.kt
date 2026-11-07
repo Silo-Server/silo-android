@@ -35,6 +35,7 @@ import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.components.skeleton
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.requests.RequestRouter
 import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.model.request.RequestMediaResult
@@ -157,7 +158,7 @@ private fun summaryTitle(state: RequestsUiState): String {
 
 /** A plural whose count can pass 999: the count also goes in as text, so every language groups it alike. */
 @Composable
-private fun requestCount(@PluralsRes id: Int, count: Int): String = pluralStringResource(id, count, count, count.toString())
+private fun requestCount(@PluralsRes id: Int, count: Int): String = pluralStringResource(id, count, count, LocaleFormat.integer(count))
 
 @Composable
 private fun summaryParts(state: RequestsUiState): List<Pair<RequestStatusTint, String>> = buildList {

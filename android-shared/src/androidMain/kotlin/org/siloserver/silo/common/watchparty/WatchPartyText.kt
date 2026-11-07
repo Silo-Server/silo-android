@@ -6,6 +6,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.LayoutDirection
 import org.siloserver.silo.common.R
+import org.siloserver.silo.common.i18n.LocaleFormat
 
 /*
  * Watch Party text both apps build the same way. Each is resolved in
@@ -39,20 +40,20 @@ fun watchPartyDisplayName(displayName: String): String =
 @Composable
 fun watchPartyRuntimeText(minutes: Int): String =
     if (minutes >= 60) {
-        stringResource(R.string.catalog_runtimeHoursMinutes, (minutes / 60).toString(), (minutes % 60).toString())
+        stringResource(R.string.catalog_runtimeHoursMinutes, LocaleFormat.integer(minutes / 60), LocaleFormat.integer(minutes % 60))
     } else {
-        stringResource(R.string.overlays_runtimeMinutes, minutes.toString())
+        stringResource(R.string.overlays_runtimeMinutes, LocaleFormat.integer(minutes))
     }
 
 /** "S1 · E2". */
 @Composable
 fun watchPartyEpisodeLine(season: Int, episode: Int): String =
-    stringResource(R.string.watchParty_episodes_line, season.toString(), episode.toString())
+    stringResource(R.string.watchParty_episodes_line, LocaleFormat.integer(season), LocaleFormat.integer(episode))
 
 /** "S1:E2", the staged episode's short code. */
 @Composable
 fun watchPartyEpisodeCode(season: Int, episode: Int): String =
-    stringResource(R.string.watchParty_facts_episodeCode, season.toString(), episode.toString())
+    stringResource(R.string.watchParty_facts_episodeCode, LocaleFormat.integer(season), LocaleFormat.integer(episode))
 
 /** A member's watch state on the picker's confirmation page: "Watched", "In progress · Watchlist", "No viewing history". */
 @Composable

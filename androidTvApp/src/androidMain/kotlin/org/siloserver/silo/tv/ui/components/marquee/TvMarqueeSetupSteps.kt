@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.tv.R
 
@@ -54,7 +55,7 @@ fun TvMarqueeSetupSteps(modifier: Modifier = Modifier) {
 
 @Composable
 private fun Step(number: Int, title: String, picture: @Composable () -> Unit) {
-    val spoken = stringResource(CommonR.string.setup_step_audio, number.toString(), title)
+    val spoken = stringResource(CommonR.string.setup_step_audio, LocaleFormat.integer(number), title)
     Row(
         Modifier.clearAndSetSemantics { contentDescription = spoken },
         horizontalArrangement = Arrangement.spacedBy(17.dp),

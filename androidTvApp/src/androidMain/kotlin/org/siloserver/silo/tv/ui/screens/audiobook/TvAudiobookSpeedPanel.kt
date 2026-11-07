@@ -33,6 +33,7 @@ import androidx.tv.material3.Text
 import kotlin.math.abs
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 
 private val SPEED_PRESETS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f)
 private const val SPEED_STEP = 0.05f
@@ -130,10 +131,6 @@ private fun SpeedFineAdjustRow(
 }
 
 private fun formatSpeedLabel(speed: Float): String {
-    val s = if (speed % 1f == 0f) {
-        speed.toInt().toString()
-    } else {
-        "%.2f".format(speed).trimEnd('0').trimEnd('.')
-    }
+    val s = LocaleFormat.decimal(speed.toDouble(), maxFractionDigits = 2)
     return "${s}×"
 }

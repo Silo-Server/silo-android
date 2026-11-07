@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.browse
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -581,8 +582,8 @@ private fun browseSubtitle(state: TvBrowseViewModel.UiState): String {
     val count = state.items.size
     val titles = when {
         count == 0 -> null
-        state.hasMore -> pluralStringResource(CommonR.plurals.library_titleCountMore, count, count, count.toString())
-        else -> pluralStringResource(CommonR.plurals.library_titleCount, count, count, count.toString())
+        state.hasMore -> pluralStringResource(CommonR.plurals.library_titleCountMore, count, count, LocaleFormat.integer(count))
+        else -> pluralStringResource(CommonR.plurals.library_titleCount, count, count, LocaleFormat.integer(count))
     }
     val parts = listOfNotNull(state.filter.genre, state.filter.contentRating, titles)
     return parts.joinToString(" · ").ifBlank { stringResource(CommonR.string.library_browseAllSubtitle) }

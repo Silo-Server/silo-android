@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.catalog.editionLabel
 import android.graphics.Rect
 import android.widget.Toast
@@ -947,7 +948,7 @@ internal fun playerEyebrow(state: PlayerViewModel.PlayerUiState): String {
     val series = state.seriesTitle?.takeIf { it.isNotBlank() }
     if (series != null) {
         val code = if (state.seasonNumber != null && state.episodeNumber != null) {
-            stringResource(CommonR.string.player_eyebrow_episode, state.seasonNumber.toString(), state.episodeNumber.toString())
+            stringResource(CommonR.string.player_eyebrow_episode, LocaleFormat.integer(state.seasonNumber), LocaleFormat.integer(state.episodeNumber))
         } else {
             null
         }

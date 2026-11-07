@@ -21,10 +21,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.i18n.LocaleInteger
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.ui.RatingEntry
 import org.siloserver.silo.common.ui.WholeTokenRow
 import org.siloserver.silo.model.catalog.DisplayRating
 import org.siloserver.silo.tv.ui.theme.SuccessGreen
+import java.util.Locale
 
 /**
  * Tokens for a hero facts row, mirroring tvOS `TVHeroFactToken`.
@@ -105,7 +108,11 @@ internal fun TvFactsRow(
 
 /** The catalog string with its arguments, in the app language. */
 @Composable
-internal fun TvHeroFactToken.ResToken.resolved(): String = stringResource(id, *args.toTypedArray())
+internal fun TvHeroFactToken.ResToken.resolved(): String = stringResource(id, *formatArgs(currentFormatLocale()))
+
+/** [TvHeroFactToken.ResToken.args] ready for a format string, numbers written for [locale]. */
+internal fun TvHeroFactToken.ResToken.formatArgs(locale: Locale): Array<Any> =
+    args.map { if (it is LocaleInteger) it.format(locale) else it }.toTypedArray()
 
 @Composable
 private fun FactToken(token: TvHeroFactToken, style: TextStyle) {

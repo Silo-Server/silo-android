@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.model.subtitles.SubtitleResult
 
@@ -270,7 +271,7 @@ private fun SubtitleResultRow(
                     SubtitleBadgeText(text = stringResource(CommonR.string.subtitleSearch_hearingImpaired), color = Color.White.copy(alpha = 0.7f))
                 }
                 Text(
-                    text = pluralStringResource(CommonR.plurals.subtitleSearch_downloadCount, result.downloads, result.downloads, result.downloads.toString()),
+                    text = pluralStringResource(CommonR.plurals.subtitleSearch_downloadCount, result.downloads, result.downloads, LocaleFormat.integer(result.downloads)),
                     color = Color.White.copy(alpha = 0.45f),
                     fontSize = 12.sp,
                 )

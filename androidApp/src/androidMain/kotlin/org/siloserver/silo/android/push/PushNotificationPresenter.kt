@@ -15,6 +15,7 @@ import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.navigation.Route
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.AppLocales
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.notifications.NotificationRow
 import org.siloserver.silo.model.notifications.NotificationType
 import org.siloserver.silo.network.ApiResult
@@ -237,7 +238,7 @@ class PushNotificationPresenter internal constructor(
         }
 
         val episodeTag = row.seasonNumber?.let { season ->
-            row.episodeNumber?.let { episode -> text.getString(CommonR.string.catalog_episodeTag, season.toString(), episode.toString()) }
+            row.episodeNumber?.let { episode -> text.getString(CommonR.string.catalog_episodeTag, LocaleFormat.integer(season), LocaleFormat.integer(episode)) }
         }
         val route = notificationRouteFor(row)
         return when (row.type) {

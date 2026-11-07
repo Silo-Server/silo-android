@@ -1,6 +1,8 @@
 package org.siloserver.silo.android.ui.screens.libraries
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.common.i18n.detailedErrorText
@@ -1402,6 +1404,7 @@ private fun BrowseTabContent(
                 }
             }
             else -> {
+                val dateLocale = currentFormatLocale()
                 CatalogGrid(
                     items = state.catalogItems,
                     isLoadingMore = state.isLoadingMoreCatalog,
@@ -1411,8 +1414,8 @@ private fun BrowseTabContent(
                     // Date sorts surface the sorted-by date under each card
                     // (mirrors the standalone BrowseScreen), Jim QA 2026-07-09.
                     cardSubtitle = when (state.browseSort.sortField) {
-                        "added_at" -> { item -> formatCardDate(item.addedAt) }
-                        "release_date" -> { item -> formatCardDate(item.releaseDate) }
+                        "added_at" -> { item -> formatCardDate(item.addedAt, dateLocale) }
+                        "release_date" -> { item -> formatCardDate(item.releaseDate, dateLocale) }
                         else -> null
                     },
                     selectedNamePrefix = state.selectedNamePrefix,
@@ -1573,7 +1576,7 @@ private fun InlineLibraryCollectionCard(
                 modifier = Modifier.fillMaxSize(),
             )
             if (showItemCount) Text(
-                text = collection.itemCount?.takeIf { it > 0 }?.toString() ?: stringResource(CommonR.string.collections_type_smart),
+                text = collection.itemCount?.takeIf { it > 0 }?.let { LocaleFormat.integer(it) } ?: stringResource(CommonR.string.collections_type_smart),
                 fontSize = 12.sp,
                 color = Color.White,
                 modifier = Modifier
@@ -1593,7 +1596,7 @@ private fun InlineLibraryCollectionCard(
         )
         Text(
             text = collection.itemCount?.takeIf { showItemCount }
-                ?.let { pluralStringResource(CommonR.plurals.collections_itemCount, it, it, it.toString()) }
+                ?.let { pluralStringResource(CommonR.plurals.collections_itemCount, it, it, LocaleFormat.integer(it)) }
                 ?: stringResource(CommonR.string.collections_collection),
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

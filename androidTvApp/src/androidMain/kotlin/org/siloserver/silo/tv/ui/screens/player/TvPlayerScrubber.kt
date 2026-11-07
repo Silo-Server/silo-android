@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
@@ -72,6 +73,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import org.siloserver.silo.common.i18n.LocaleFormat
 
 /**
  * Glass-capsule scrubber matching `iosApp/.../tvOS/TVPlayerScrubber.swift`.
@@ -276,7 +278,8 @@ fun TvPlayerScrubber(
     // The bar sits above its clock row, as on tvOS: elapsed on the left, time
     // left and the wall-clock finish on the right.
     val context = LocalContext.current
-    val timeFormat = remember(context) { android.text.format.DateFormat.getTimeFormat(context) }
+    // Keyed on the configuration: the activity keeps its context across an in-place language change.
+    val timeFormat = remember(context, LocalConfiguration.current) { android.text.format.DateFormat.getTimeFormat(context) }
     Column(modifier = modifier) {
         Box(modifier = Modifier.fillMaxWidth().height(28.dp)) {
 
@@ -622,10 +625,10 @@ private fun formatRemainingTime(secondsRemaining: Double): String =
     "−${formatTimelineClock(secondsRemaining.coerceAtLeast(0.0))}"
 
 private fun formatTimelineClock(seconds: Double): String {
-    if (seconds <= 0 || seconds.isNaN()) return "0:00"
+    if (seconds <= 0 || seconds.isNaN()) return LocaleFormat.clock(0, 0, 0)
     val total = seconds.toInt()
     val h = total / 3600
     val m = (total % 3600) / 60
     val s = total % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    return LocaleFormat.clock(h, m, s)
 }

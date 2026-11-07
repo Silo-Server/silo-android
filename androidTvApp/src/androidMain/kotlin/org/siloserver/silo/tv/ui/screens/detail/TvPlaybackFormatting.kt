@@ -2,6 +2,7 @@
 
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.localizedResources
 import org.siloserver.silo.common.player.TrackSelectionPresets
 import org.siloserver.silo.model.catalog.AudioTrack
@@ -926,9 +927,9 @@ object TvPlaybackFormatting {
     private fun formatFileSize(bytes: Long, text: TvPlaybackText): String? {
         if (bytes <= 0) return null
         val gb = bytes / 1_000_000_000.0
-        if (gb >= 1.0) return text.sizeGb(String.format(Locale.US, "%.2f", gb))
+        if (gb >= 1.0) return text.sizeGb(String.format(LocaleFormat.locale(), "%.2f", gb))
         val mb = bytes / 1_000_000.0
-        return text.sizeMb(String.format(Locale.US, "%.1f", mb))
+        return text.sizeMb(String.format(LocaleFormat.locale(), "%.1f", mb))
     }
 
     private fun compactAudioLayout(track: AudioTrack, text: TvPlaybackText): String? {
@@ -964,10 +965,14 @@ object TvPlaybackFormatting {
 
     private fun isRedundantSubtitleTitle(title: String, track: SubtitleTrack): Boolean {
         val lowered = title.lowercase(Locale.US)
-        val language = languageDisplayName(track.language)?.lowercase(Locale.US)
+        // A title is matched against the English name too: release titles are English.
+        val languages = listOfNotNull(
+            languageDisplayName(track.language)?.lowercase(Locale.US),
+            languageDisplayName(track.language, Locale.ENGLISH)?.lowercase(Locale.US),
+        )
         val languageCode = nonEmpty(track.language)?.lowercase(Locale.US)
         if (lowered == "subtitle" || lowered == "subtitles") return true
-        if (language != null && lowered == language) return true
+        if (lowered in languages) return true
         if (languageCode != null && lowered == languageCode) return true
         val codec = normalizedSubtitleCodec(track.codec)?.lowercase(Locale.US)
         if (codec != null && (lowered == codec || lowered == track.codec?.lowercase(Locale.US))) return true
@@ -985,15 +990,16 @@ object TvPlaybackFormatting {
         }
     }
 
-    private fun languageDisplayName(value: String?): String? {
+    /** The language's name in [inLocale], by default the interface language. */
+    private fun languageDisplayName(value: String?, inLocale: Locale = LocaleFormat.interfaceLocale()): String? {
         val trimmed = nonEmpty(value) ?: return null
         val normalized = trimmed.lowercase(Locale.US).replace('_', '-')
         val primary = normalized.split('-').firstOrNull() ?: normalized
         if (primary.length > 3) return capitalizeWords(trimmed)
         val languageCode = languageCodeAliases[primary] ?: primary
-        val display = Locale.forLanguageTag(languageCode).getDisplayLanguage(Locale.ENGLISH)
+        val display = Locale.forLanguageTag(languageCode).getDisplayLanguage(inLocale)
         return if (display.isNotBlank() && !display.equals(languageCode, ignoreCase = true)) {
-            capitalizeWords(display)
+            capitalizeWords(display, inLocale)
         } else {
             trimmed.uppercase(Locale.US)
         }
@@ -1007,9 +1013,9 @@ object TvPlaybackFormatting {
         "spa" to "es", "swe" to "sv", "zho" to "zh",
     )
 
-    private fun capitalizeWords(value: String): String =
+    private fun capitalizeWords(value: String, locale: Locale = Locale.US): String =
         value.split(" ").joinToString(" ") { word ->
-            word.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString() }
+            word.replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
         }
 
     private fun nonEmpty(value: String?): String? = value?.trim()?.takeIf { it.isNotEmpty() }

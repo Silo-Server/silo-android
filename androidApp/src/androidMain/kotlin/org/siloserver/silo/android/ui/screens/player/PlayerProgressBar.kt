@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import org.siloserver.silo.android.ui.util.formatClockTime
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.common.R as CommonR
@@ -432,6 +433,6 @@ internal fun remainingTimeLabel(position: Double, duration: Double): String =
 internal fun chapterTitleAt(chapters: List<VersionChapter>, seconds: Double): String? {
     val chapter = chapters.lastOrNull { it.startSeconds <= seconds } ?: return null
     return chapter.title.ifBlank {
-        stringResource(CommonR.string.options_chapterNumbered, (chapter.index + 1).toString())
+        stringResource(CommonR.string.options_chapterNumbered, LocaleFormat.integer(chapter.index + 1))
     }
 }

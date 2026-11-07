@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.localizedResources
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -404,5 +405,5 @@ private fun TvSeasonChip(
 internal fun tvSeasonPickerLabel(resources: Resources, season: Season): String {
     if (season.isSpecialsForDisplay()) return resources.getString(CommonR.string.detail_specials)
     return season.title?.takeIf { it.isNotBlank() }
-        ?: resources.getString(CommonR.string.detail_season, season.seasonNumber.toString())
+        ?: resources.getString(CommonR.string.detail_season, LocaleFormat.integer(season.seasonNumber))
 }

@@ -73,6 +73,7 @@ import androidx.media3.session.SessionToken
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.player.AudiobookPlayerViewModel
 import org.siloserver.silo.common.player.SiloPlaybackService
@@ -955,19 +956,13 @@ private fun tvAudiobookCurrentChapterLabel(
     val chapter = chapters.getOrNull(currentChapterIndex)
     val title = chapter?.title?.trim().orEmpty()
     if (title.isNotBlank()) return title
-    if (chapter != null) return stringResource(CommonR.string.options_chapterNumbered, (chapter.index + 1).toString())
+    if (chapter != null) return stringResource(CommonR.string.options_chapterNumbered, LocaleFormat.integer(chapter.index + 1))
     return fallback.substringBefore(" of ").takeIf { it.isNotBlank() }.orEmpty()
 }
 
 @Composable
 private fun tvAudiobookSpeedLabel(speed: Float): String {
-    val rounded = (speed * 100).toInt()
-    val value = if (rounded % 100 == 0) {
-        "${rounded / 100}"
-    } else {
-        "%.2f".format(speed).trimEnd('0').trimEnd('.')
-    }
-    return stringResource(CommonR.string.audiobook_speed_value, value)
+    return stringResource(CommonR.string.audiobook_speed_value, LocaleFormat.decimal(speed.toDouble(), maxFractionDigits = 2))
 }
 
 @Composable

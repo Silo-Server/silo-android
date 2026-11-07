@@ -80,6 +80,7 @@ import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.android.ui.theme.SiloPageBackground
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.sectionTitle
 import org.siloserver.silo.common.watchparty.watchPartyDisplayName
 import org.siloserver.silo.common.watchparty.watchPartyEpisodeLine
@@ -435,7 +436,7 @@ private fun PickerShelvesPage(
     val togetherTitle = stringResource(CommonR.string.watchParty_picker_continueTogether)
     val togetherCaptions = rows?.continueTogether.orEmpty().mapNotNull { entry ->
         val caption = entry.nextUp?.let {
-            stringResource(CommonR.string.watchParty_picker_nextEpisode, it.seasonNumber.toString(), it.episodeNumber.toString())
+            stringResource(CommonR.string.watchParty_picker_nextEpisode, LocaleFormat.integer(it.seasonNumber), LocaleFormat.integer(it.episodeNumber))
         } ?: memberNames(entry)
         caption?.let { entry.item.contentId to it }
     }.toMap()

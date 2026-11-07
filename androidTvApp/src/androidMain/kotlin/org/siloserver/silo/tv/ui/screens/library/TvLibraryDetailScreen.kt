@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.library
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.model.section.ResolvedSection
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -1252,7 +1253,7 @@ private val CollectionsGroupHeaderNudge = 10.dp
 private fun audiobookGroupSubtitle(group: AudiobookGroup): String? {
     val parts = mutableListOf<String>()
     if (group.itemCount > 0) {
-        parts += pluralStringResource(CommonR.plurals.library_audiobookGroup_books, group.itemCount, group.itemCount, group.itemCount.toString())
+        parts += pluralStringResource(CommonR.plurals.library_audiobookGroup_books, group.itemCount, group.itemCount, LocaleFormat.integer(group.itemCount))
     }
     group.totalDurationSeconds
         ?.takeIf { it > 0 }
@@ -1262,7 +1263,7 @@ private fun audiobookGroupSubtitle(group: AudiobookGroup): String? {
             CommonR.plurals.library_audiobookGroup_inProgress,
             group.inProgressCount,
             group.inProgressCount,
-            group.inProgressCount.toString(),
+            LocaleFormat.integer(group.inProgressCount),
         )
     }
     return parts.takeIf { it.isNotEmpty() }?.joinToString(" • ")
@@ -1274,9 +1275,9 @@ private fun formatAudiobookGroupDuration(seconds: Long): String {
     val minutes = (seconds % 3600) / 60
     return when {
         hours > 0 && minutes > 0 ->
-            stringResource(CommonR.string.catalog_runtimeHoursMinutes, hours.toString(), minutes.toString())
-        hours > 0 -> stringResource(CommonR.string.catalog_runtimeHours, hours.toString())
-        minutes > 0 -> stringResource(CommonR.string.catalog_runtimeMinutesShort, minutes.toString())
+            stringResource(CommonR.string.catalog_runtimeHoursMinutes, LocaleFormat.integer(hours), LocaleFormat.integer(minutes))
+        hours > 0 -> stringResource(CommonR.string.catalog_runtimeHours, LocaleFormat.integer(hours))
+        minutes > 0 -> stringResource(CommonR.string.catalog_runtimeMinutesShort, LocaleFormat.integer(minutes))
         else -> stringResource(CommonR.string.catalog_runtimeUnderMinute)
     }
 }

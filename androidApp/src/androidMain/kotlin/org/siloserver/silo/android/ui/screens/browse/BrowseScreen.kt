@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.browse
 
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -130,7 +132,7 @@ fun BrowseScreen(
                         badge = {
                             if (state.filterState.activeFacetCount > 0) {
                                 androidx.compose.material3.Badge {
-                                    Text(state.filterState.activeFacetCount.toString())
+                                    Text(LocaleFormat.integer(state.filterState.activeFacetCount))
                                 }
                             }
                         },
@@ -255,6 +257,7 @@ fun BrowseScreen(
 
                 else -> {
                     // iOS phone Browse shows the grid directly with no count header.
+                    val dateLocale = currentFormatLocale()
                     CatalogGrid(
                         items = state.items,
                         isLoadingMore = state.isLoadingMore,
@@ -263,8 +266,8 @@ fun BrowseScreen(
                         onLoadMore = { viewModel.loadMore() },
                         // Date sorts surface the sorted-by date under each card.
                         cardSubtitle = when (state.filterState.sort) {
-                            "added_at" -> { item -> formatCardDate(item.addedAt) }
-                            "release_date" -> { item -> formatCardDate(item.releaseDate) }
+                            "added_at" -> { item -> formatCardDate(item.addedAt, dateLocale) }
+                            "release_date" -> { item -> formatCardDate(item.releaseDate, dateLocale) }
                             else -> null
                         },
                         selectedNamePrefix = state.selectedNamePrefix,

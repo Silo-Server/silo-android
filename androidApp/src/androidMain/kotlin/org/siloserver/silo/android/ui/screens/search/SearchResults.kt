@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.search
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
@@ -149,7 +150,7 @@ fun SearchResults(
                     text = if (totalExact) {
                         pluralStringResource(CommonR.plurals.search_result, total, total)
                     } else {
-                        pluralStringResource(CommonR.plurals.search_resultAbout, total, total, total.toString())
+                        pluralStringResource(CommonR.plurals.search_resultAbout, total, total, LocaleFormat.integer(total))
                     },
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

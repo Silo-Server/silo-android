@@ -28,6 +28,7 @@ import org.siloserver.silo.android.ui.theme.SiloSettingsBackground
 import org.siloserver.silo.android.ui.util.formatBytes
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.AppLanguageStore
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import org.siloserver.silo.common.settings.profileLaunchDescription
@@ -357,7 +358,7 @@ fun SettingsDownloadsScreen(
             SettingsSection(title = stringResource(CommonR.string.settings_downloads_storage)) {
                 SettingsNavigationRow(
                     label = stringResource(CommonR.string.settings_downloads_used),
-                    value = formatBytes(downloadsState.totalBytesUsed),
+                    value = formatBytes(downloadsState.totalBytesUsed, currentFormatLocale()),
                 )
                 if (!downloadsState.isEmpty || downloadsState.totalBytesUsed > 0L) {
                     SettingsDestructiveRow(

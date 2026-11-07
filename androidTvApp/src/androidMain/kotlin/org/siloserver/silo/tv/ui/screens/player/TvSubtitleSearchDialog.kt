@@ -51,6 +51,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.model.subtitles.SubtitleResult
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
@@ -415,7 +416,7 @@ private fun TvSubtitleResultRow(
                             CommonR.plurals.subtitleSearch_downloadCount,
                             result.downloads,
                             result.downloads,
-                            result.downloads.toString(),
+                            LocaleFormat.integer(result.downloads),
                         ) + " · " + tvLanguageDisplayName(result.language),
                         style = MaterialTheme.typography.bodySmall,
                         color = if (isFocused) {

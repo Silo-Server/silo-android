@@ -110,6 +110,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import kotlinx.coroutines.launch
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.player.AudioOutputPath
 import org.siloserver.silo.common.player.PlayerStatsSnapshot
 import org.siloserver.silo.common.player.SleepTimerState
@@ -858,7 +859,7 @@ private fun HudInfoPane(
     chapters: List<VersionChapter>,
 ) {
     val episodeTag = if (seasonNumber != null && episodeNumber != null) {
-        stringResource(CommonR.string.catalog_episodeCaption, seasonNumber.toString(), episodeNumber.toString())
+        stringResource(CommonR.string.catalog_episodeCaption, LocaleFormat.integer(seasonNumber), LocaleFormat.integer(episodeNumber))
     } else {
         null
     }
@@ -1061,30 +1062,39 @@ private val PLAYBACK_SPEED_OPTIONS = listOf(0.75, 1.0, 1.25, 1.5, 2.0)
 private fun speedOptionId(speed: Double): String =
     String.format(java.util.Locale.ROOT, "%.2f", speed)
 
-/** 1.0 -> "1×", 1.25 -> "1.25×", 2.0 -> "2×": no trailing zero, as on the phone. */
-private fun formatTvPlaybackSpeed(speed: Double): String {
-    // Locale.ROOT so comma-decimal devices render "1.25×", not "1,25×",
-    // matching the dot-formatted speedOptionId used to commit the choice.
-    val text = String.format(java.util.Locale.ROOT, "%.2f", speed).trimEnd('0').trimEnd('.')
-    return "$text×"
-}
+/**
+ * 1.0 -> "1×", 1.25 -> "1.25×", 2.0 -> "2×": no trailing zero, as on the phone,
+ * in the app language's digits and decimal separator. Only the label is
+ * localized; [speedOptionId] stays dot-formatted for the commit.
+ */
+private fun formatTvPlaybackSpeed(speed: Double): String =
+    "${LocaleFormat.decimal(speed, maxFractionDigits = 2)}×"
 
 /** Sleep-timer presets (minutes) — mirrors the phone SleepTimerSheet. */
 private val SLEEP_TIMER_PRESETS = listOf(15, 30, 45, 60, 90)
 
+@Composable
 private fun formatSleepRemaining(totalSeconds: Int): String {
     val s = totalSeconds.coerceAtLeast(0)
     val m = s / 60
-    val sec = s % 60
-    return if (m > 0) "${m}m ${sec}s" else "${sec}s"
+    val sec = LocaleFormat.integer(s % 60)
+    return if (m > 0) {
+        stringResource(CommonR.string.catalog_runtimeMinutesSeconds, LocaleFormat.integer(m), sec)
+    } else {
+        stringResource(CommonR.string.catalog_runtimeSeconds, sec)
+    }
 }
 
-private fun sleepPresetLabel(minutes: Int): String =
-    if (minutes >= 60) {
-        "${minutes / 60}h${if (minutes % 60 != 0) " ${minutes % 60}m" else ""}"
-    } else {
-        "${minutes}m"
-    }
+@Composable
+private fun sleepPresetLabel(minutes: Int): String = when {
+    minutes >= 60 && minutes % 60 != 0 -> stringResource(
+        CommonR.string.catalog_runtimeHoursMinutes,
+        LocaleFormat.integer(minutes / 60),
+        LocaleFormat.integer(minutes % 60),
+    )
+    minutes >= 60 -> stringResource(CommonR.string.catalog_runtimeHours, LocaleFormat.integer(minutes / 60))
+    else -> stringResource(CommonR.string.catalog_runtimeMinutesShort, LocaleFormat.integer(minutes))
+}
 
 /** Aspect (video-gravity) option labels — mirrors tvOS VideoGravity. */
 @StringRes
@@ -1155,6 +1165,7 @@ private fun HudVideoPane(
     val sleepTimerTitle = stringResource(CommonR.string.player_sleepTimer_title)
     val cancelTimerLabel = stringResource(CommonR.string.player_sleepTimer_cancel)
     val sleepOffLabel = stringResource(CommonR.string.player_sleepTimer_off)
+    val sleepPresetLabels = SLEEP_TIMER_PRESETS.map { sleepPresetLabel(it) }
     HudColumns(
         modifier = modifier,
         left = {
@@ -1356,8 +1367,8 @@ private fun HudVideoPane(
                                     }
                                     add(HudPickerOption("off", sleepOffLabel))
                                     addAll(
-                                        SLEEP_TIMER_PRESETS.map { minutes ->
-                                            HudPickerOption(minutes.toString(), sleepPresetLabel(minutes))
+                                        SLEEP_TIMER_PRESETS.zip(sleepPresetLabels) { minutes, label ->
+                                            HudPickerOption(minutes.toString(), label)
                                         },
                                     )
                                 },
@@ -1437,7 +1448,7 @@ private fun HudAudioPane(
     val audioDelayTitle = stringResource(CommonR.string.player_settings_audioDelay)
     // Picker rows are built on Select, outside composition, so the fallback names are resolved here.
     val trackFallbackLabels = activeVersion?.audioTracks.orEmpty().indices.map { ordinal ->
-        stringResource(CommonR.string.options_track, (ordinal + 1).toString())
+        stringResource(CommonR.string.options_track, LocaleFormat.integer(ordinal + 1))
     }
     HudColumns(
         modifier = modifier,
@@ -1986,7 +1997,7 @@ private fun subtitleTimingSummary(
 
 /** 0 -> "0.0 s", 300 -> "+0.3 s", -1200 -> "−1.2 s" (true minus sign). */
 private fun delaySecondsLabel(valueMs: Int): String {
-    val seconds = String.format(java.util.Locale.ROOT, "%.1f", kotlin.math.abs(valueMs) / 1000.0)
+    val seconds = String.format(LocaleFormat.locale(), "%.1f", kotlin.math.abs(valueMs) / 1000.0)
     return when {
         valueMs > 0 -> "+$seconds s"
         valueMs < 0 -> "−$seconds s"
@@ -2654,7 +2665,7 @@ private fun chapterEndSeconds(chapters: List<VersionChapter>, index: Int, durati
 @Composable
 private fun chapterTitle(chapter: VersionChapter): String =
     chapter.title.ifBlank {
-        stringResource(CommonR.string.options_chapterNumbered, (chapter.index + 1).toString())
+        stringResource(CommonR.string.options_chapterNumbered, LocaleFormat.integer(chapter.index + 1))
     }
 
 @Composable
@@ -3110,12 +3121,12 @@ private fun HudPickerOptionRow(
 }
 
 private fun formatTime(seconds: Double): String {
-    if (seconds <= 0 || seconds.isNaN()) return "0:00"
+    if (seconds <= 0 || seconds.isNaN()) return LocaleFormat.clock(0, 0, 0)
     val total = seconds.toInt()
     val h = total / 3600
     val m = (total % 3600) / 60
     val s = total % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    return LocaleFormat.clock(h, m, s)
 }
 
 /** The label each intro-skip mode is offered under; the copy is contract-fixed. */

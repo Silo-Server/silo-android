@@ -71,6 +71,8 @@ import org.siloserver.silo.android.ui.components.LoadingIndicator
 import org.siloserver.silo.common.R as CommonR
 import kotlinx.coroutines.launch
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -295,7 +297,7 @@ fun DownloadsScreen(
         SiloConfirmDialog(
             title = stringResource(CommonR.string.downloads_bulk_title),
             body = pluralStringResource(CommonR.plurals.downloads_bulk_body, ids.size),
-            confirmLabel = pluralStringResource(CommonR.plurals.downloads_bulk_confirm, ids.size, ids.size, ids.size.toString()),
+            confirmLabel = pluralStringResource(CommonR.plurals.downloads_bulk_confirm, ids.size, ids.size, LocaleFormat.integer(ids.size)),
             onConfirm = {
                 viewModel.removeDownloadIds(ids)
                 pendingBulkDelete = null
@@ -311,7 +313,7 @@ fun DownloadsScreen(
             message = if (plan.count == 0) {
                 stringResource(CommonR.string.downloads_reclaim_none)
             } else {
-                pluralStringResource(CommonR.plurals.downloads_reclaim_message, plan.count, plan.count, formatBytes(plan.totalBytes), plan.count.toString())
+                pluralStringResource(CommonR.plurals.downloads_reclaim_message, plan.count, plan.count, formatBytes(plan.totalBytes), LocaleFormat.integer(plan.count))
             },
             onDismissRequest = viewModel::clearReclaimPlan,
             actions = buildList {
@@ -370,7 +372,7 @@ private fun DownloadsTotalCard(
             )
         }
         Text(
-            text = formatBytes(totalBytesUsed),
+            text = formatBytes(totalBytesUsed, currentFormatLocale()),
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.Medium,
             fontSize = 14.sp,
@@ -403,7 +405,7 @@ private fun DownloadsSelectBar(
             }
             Spacer(modifier = Modifier.weight(1f))
             Text(
-                text = pluralStringResource(CommonR.plurals.downloads_select_count, selectedCount, selectedCount, selectedCount.toString()),
+                text = pluralStringResource(CommonR.plurals.downloads_select_count, selectedCount, selectedCount, LocaleFormat.integer(selectedCount)),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 13.sp,
             )

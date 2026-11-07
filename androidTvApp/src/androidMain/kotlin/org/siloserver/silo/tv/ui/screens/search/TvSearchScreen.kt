@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.search
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -1418,8 +1419,8 @@ private fun searchStatusText(
     error != null -> stringResource(CommonR.string.search_updateFailed)
     total == 0 && hasPeople -> stringResource(CommonR.string.search_noMatchingTitles)
     total == 0 -> stringResource(CommonR.string.search_empty)
-    isEstimatedCount && !isPartialCount -> pluralStringResource(CommonR.plurals.search_resultAbout, total, total, total.toString())
-    isPartialCount && total != 1 -> pluralStringResource(CommonR.plurals.search_resultPartial, total, total, total.toString())
+    isEstimatedCount && !isPartialCount -> pluralStringResource(CommonR.plurals.search_resultAbout, total, total, LocaleFormat.integer(total))
+    isPartialCount && total != 1 -> pluralStringResource(CommonR.plurals.search_resultPartial, total, total, LocaleFormat.integer(total))
     else -> pluralStringResource(CommonR.plurals.search_result, total, total)
 }
 

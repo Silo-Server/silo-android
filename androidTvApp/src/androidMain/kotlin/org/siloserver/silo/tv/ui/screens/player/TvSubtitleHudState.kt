@@ -3,6 +3,7 @@ package org.siloserver.silo.tv.ui.screens.player
 import android.content.res.Resources
 import androidx.annotation.StringRes
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
@@ -172,7 +173,7 @@ internal fun buildTvSubtitleHudOptions(
                 tvSubtitleHudOption(
                     tvSubtitleIdentity(track),
                     track.displayLabel.ifBlank {
-                        resources.getString(CommonR.string.options_track, (position + 1).toString())
+                        resources.getString(CommonR.string.options_track, LocaleFormat.integer(position + 1))
                     },
                 ),
             )

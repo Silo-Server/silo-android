@@ -379,7 +379,7 @@ class TvFocusMarqueeModelTest {
         assertEquals(listOf("1h 56m"), content.metaText())
     }
 
-    private fun TvHeroFactToken.ResToken.englishText(): String = resources.getString(id, *args.toTypedArray())
+    private fun TvHeroFactToken.ResToken.englishText(): String = resources.getString(id, *formatArgs(java.util.Locale.US))
 
     /** A catalog-string token as the plain text token it shows as, in English. */
     private fun TvHeroFactToken.inEnglish(): TvHeroFactToken =

@@ -63,7 +63,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.PlatformTextStyle
@@ -83,6 +82,8 @@ import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.common.calendar.localDisplayAirTime
 import org.siloserver.silo.common.cards.LocalCardPresentation
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -138,7 +139,7 @@ fun CalendarScreen(
     val state by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
     val density = LocalDensity.current
-    val locale = LocalConfiguration.current.locales[0]
+    val locale = currentFormatLocale()
 
     // The card floats over the agenda; its measured height is the top inset
     // the list scrolls under. Local blur source so the card can be glass.
@@ -572,7 +573,7 @@ private fun DayCell(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = localDate.dayOfMonth.toString(),
+                text = LocaleFormat.integer(localDate.dayOfMonth, locale),
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = if (isSelected) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.onSurface,
@@ -588,7 +589,7 @@ private fun DayCell(
         ) {
             if (eventCount > 0) {
                 Text(
-                    text = eventCount.toString(),
+                    text = LocaleFormat.integer(eventCount, locale),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
@@ -892,14 +893,14 @@ private fun sectionHeading(date: String, today: String, locale: Locale): String 
         if (localDate == todayDate) return stringResource(CommonR.string.calendar_today)
         if (localDate == todayDate.plusDays(1)) return stringResource(CommonR.string.calendar_tomorrow)
     }
-    return localDate.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", locale))
+    return localDate.format(LocaleFormat.dateFormatter("MMMMEEEEd", "EEEE, MMMM d", locale))
 }
 
 /** iOS monthLabel: month + year of the week's Thursday (startDate + 3). */
 private fun monthLabel(weekDates: List<String>, locale: Locale): String {
     val anchorStr = weekDates.getOrNull(3) ?: weekDates.firstOrNull() ?: return ""
     val anchor = LocalDate.parse(anchorStr)
-    return anchor.format(DateTimeFormatter.ofPattern("MMMM yyyy", locale))
+    return anchor.format(LocaleFormat.dateFormatter("yMMMM", "MMMM yyyy", locale))
 }
 
 /** Local viewer time, preferring the server's absolute RFC3339 instant. */
@@ -917,12 +918,12 @@ private fun cardSubtitle(item: CalendarItem): String? {
             val season = item.seasonNumber
             val episode = item.episodeNumber
             if (season != null && episode != null) {
-                parts.add(stringResource(CommonR.string.catalog_episodeCaption, season.toString(), episode.toString()))
+                parts.add(stringResource(CommonR.string.catalog_episodeCaption, LocaleFormat.integer(season), LocaleFormat.integer(episode)))
             }
             item.episodeTitle?.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
         }
         "season_premiere" -> {
-            item.seasonNumber?.let { parts.add(stringResource(CommonR.string.calendar_season, it.toString())) }
+            item.seasonNumber?.let { parts.add(stringResource(CommonR.string.calendar_season, LocaleFormat.integer(it))) }
         }
         "movie" -> parts.add(stringResource(CommonR.string.calendar_movie))
     }

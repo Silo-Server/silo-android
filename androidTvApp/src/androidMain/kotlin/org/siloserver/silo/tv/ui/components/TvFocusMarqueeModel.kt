@@ -9,7 +9,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
+import java.time.ZoneId
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.LocaleInteger
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.model.catalog.ExternalRatings
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.OverlaySummary
@@ -218,8 +222,8 @@ data class TvMarqueeContent(
 
         private fun episodeToken(season: Int?, episode: Int?): TvHeroFactToken? = when {
             season != null && episode != null -> tvEpisodeTagToken(season, episode)
-            season != null -> TvHeroFactToken.ResToken(CommonR.string.home_seasonOnly, listOf(season.toString()))
-            episode != null -> TvHeroFactToken.ResToken(CommonR.string.home_episodeOnly, listOf(episode.toString()))
+            season != null -> TvHeroFactToken.ResToken(CommonR.string.home_seasonOnly, listOf(LocaleInteger(season)))
+            episode != null -> TvHeroFactToken.ResToken(CommonR.string.home_episodeOnly, listOf(LocaleInteger(episode)))
             else -> null
         }
 
@@ -273,12 +277,12 @@ data class TvMarqueeContent(
                 val hours = minutes / 60
                 val rest = minutes % 60
                 if (rest == 0) {
-                    TvHeroFactToken.ResToken(CommonR.string.catalog_runtimeHours, listOf(hours.toString()))
+                    TvHeroFactToken.ResToken(CommonR.string.catalog_runtimeHours, listOf(LocaleInteger(hours)))
                 } else {
-                    TvHeroFactToken.ResToken(CommonR.string.catalog_runtimeHoursMinutes, listOf(hours.toString(), rest.toString()))
+                    TvHeroFactToken.ResToken(CommonR.string.catalog_runtimeHoursMinutes, listOf(LocaleInteger(hours), LocaleInteger(rest)))
                 }
             } else {
-                TvHeroFactToken.ResToken(CommonR.string.catalog_runtimeMinutes, listOf(minutes.toString()))
+                TvHeroFactToken.ResToken(CommonR.string.catalog_runtimeMinutes, listOf(LocaleInteger(minutes)))
             }
         }
     }
@@ -286,11 +290,13 @@ data class TvMarqueeContent(
 
 /**
  * The marquee's quieter line: "Aired [airDate]" and [detailLine] (the cast)
- * joined by " · "; null when both are absent.
+ * joined by " · "; null when both are absent. [airDate] is the server's
+ * date, formatted here so it follows a language change.
  */
 @Composable
 internal fun tvMarqueeDetailLine(airDate: String?, detailLine: String?): String? {
-    val aired = airDate?.let { stringResource(CommonR.string.shell_marquee_aired, it) }
+    val locale = currentFormatLocale()
+    val aired = TvMarqueeEnrichment.airDateText(airDate, locale)?.let { stringResource(CommonR.string.shell_marquee_aired, it) }
     return listOfNotNull(aired, detailLine?.takeIf { it.isNotEmpty() }).joinToString(" · ").ifEmpty { null }
 }
 
@@ -305,7 +311,7 @@ internal fun tvMarqueeDetailLine(airDate: String?, detailLine: String?): String?
  * @property detailLine `Pedro Pascal, Bella Ramsey, Anna Torv` — up to 3 cast
  *  names sorted by [org.siloserver.silo.model.catalog.CastMember.order].
  *  `null` when there are none.
- * @property airDate `Mar 12, 2026` — the abbreviated air date, shown as
+ * @property airDate the server's air date (`2026-03-12`), shown as
  *  "Aired Mar 12, 2026" before the cast ([tvMarqueeDetailLine]); `null` if
  *  unparseable/absent.
  */
@@ -329,16 +335,17 @@ data class TvMarqueeEnrichment(
                 backdropUrl = detail.backdropUrl?.takeIf { it.isNotBlank() },
                 backdropThumbhash = detail.backdropThumbhash,
                 backdropIsEpisodeStill = detail.backdropIsEpisodeStill,
-                airDate = airDateText(detail.airDate),
+                airDate = detail.airDate?.takeIf { airDateText(it) != null },
             )
         }
 
         /**
-         * Abbreviated "MMM d, yyyy" from the server's `yyyy-MM-dd` (or full ISO
-         * timestamp). Mirrors tvOS `.abbreviated` date formatting; returns `null`
-         * if the string is absent or unparseable, so the "Aired" part is omitted.
+         * Abbreviated date ("Jul 8, 2026" in US English) from the server's
+         * `yyyy-MM-dd` (or full ISO timestamp). Mirrors tvOS `.abbreviated` date
+         * formatting; returns `null` if the string is absent or unparseable, so
+         * the "Aired" part is omitted.
          */
-        private fun airDateText(raw: String?): String? {
+        internal fun airDateText(raw: String?, locale: Locale = LocaleFormat.locale()): String? {
             val value = raw?.takeIf { it.isNotBlank() } ?: return null
             // The payload is usually `yyyy-MM-dd`; full ISO timestamps carry the
             // date as their first 10 chars, so truncate to the date component.
@@ -347,7 +354,8 @@ data class TvMarqueeEnrichment(
                 SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }
                     .parse(datePart)
             }.getOrNull() ?: return null
-            return SimpleDateFormat("MMM d, yyyy", Locale.US).format(parsed)
+            val date = parsed.toInstant().atZone(ZoneId.systemDefault()).toLocalDate()
+            return date.format(LocaleFormat.dateFormatter("yMMMd", "MMM d, yyyy", locale))
         }
     }
 }
