@@ -406,9 +406,12 @@ private fun PillTabItem(
             )
             Spacer(modifier = Modifier.height(2.dp))
             // Steps down from 11sp only when a translated label is wider than
-            // its tab.
+            // its tab or, on the chip, than the chip where the label sits: low
+            // in the chip, its round ends take about 5dp a side at mid-letter
+            // height, at any tab width.
             BasicText(
                 text = label,
+                modifier = Modifier.padding(horizontal = if (onLightChip) 5.dp else 0.dp),
                 style = LocalTextStyle.current.merge(
                     TextStyle(
                         color = tint,
