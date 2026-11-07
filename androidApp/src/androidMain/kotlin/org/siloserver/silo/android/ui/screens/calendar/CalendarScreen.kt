@@ -64,6 +64,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -71,6 +72,7 @@ import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.chrisbanes.haze.HazeTint
@@ -388,7 +390,9 @@ private fun CalendarFilterBar(
     }.coerceAtLeast(0)
 
     // Segment geometry, measured so the pill can slide to the selected one.
+    // `offset` is start-relative, so x is measured from the start edge.
     val density = LocalDensity.current
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val segmentX = remember { mutableStateOf(List(presets.size) { 0.dp }) }
     val segmentW = remember { mutableStateOf(List(presets.size) { 0.dp }) }
     val pillX by animateDpAsState(segmentX.value[selectedIndex], CalendarSpring, label = "filterPillX")
@@ -423,7 +427,10 @@ private fun CalendarFilterBar(
                             indication = null,
                         ) { onSelect(value) }
                         .onGloballyPositioned { coords ->
-                            val x = with(density) { coords.positionInParent().x.toDp() }
+                            val left = coords.positionInParent().x
+                            val rowWidth = coords.parentLayoutCoordinates?.size?.width ?: 0
+                            val start = if (isRtl) rowWidth - left - coords.size.width else left
+                            val x = with(density) { start.toDp() }
                             val w = with(density) { coords.size.width.toDp() }
                             if (segmentX.value[index] != x) {
                                 segmentX.value = segmentX.value.toMutableList().also { it[index] = x }
