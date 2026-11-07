@@ -68,6 +68,8 @@ import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import kotlin.math.abs
+import org.siloserver.silo.common.i18n.digits
+import org.siloserver.silo.common.i18n.localizedResources
 
 /**
  * PR #212's phone episode carousel: a 240dp card settles in the centre and,
@@ -261,8 +263,8 @@ private fun EpisodeRailCard(
                         imageVector = Icons.Filled.PlayArrow,
                         contentDescription = stringResource(
                             CommonR.string.detail_playSeasonEpisode,
-                            episode.seasonNumber,
-                            episode.episodeNumber,
+                            localizedResources().digits(episode.seasonNumber),
+                            localizedResources().digits(episode.episodeNumber),
                         ),
                         tint = Color.Black,
                         modifier = Modifier.size(24.dp),
