@@ -1106,8 +1106,13 @@ class TvItemDetailViewModel(
                 joinWarmup = !showRefusal,
             )) {
                 is ApiResult.Success -> {
+                    // A server that reset the resume point (the title finished
+                    // past the watched threshold) outranks the player's exit spot.
                     val detail = withLocalProgress(result.data)
-                        .let { refreshed -> playbackReturn?.let(refreshed::withPlaybackReturn) ?: refreshed }
+                        .let { refreshed ->
+                            playbackReturn?.takeUnless { result.data.isWatchedWithoutResume() }
+                                ?.let(refreshed::withPlaybackReturn) ?: refreshed
+                        }
                     if (!isTvHiddenMediaType(detail.type)) {
                         _uiState.update {
                             it.copy(
@@ -3145,6 +3150,9 @@ internal object TvDetailTrackSelectionSession {
         return saved
     }
 }
+
+private fun ItemDetail.isWatchedWithoutResume(): Boolean =
+    userData?.let { it.played && (it.positionSeconds ?: 0.0) <= 0.0 } == true
 
 private fun ItemDetail.withPlaybackReturn(saved: TvDetailTrackSelectionSession.Saved): ItemDetail {
     val position = saved.positionSeconds?.takeIf { it.isFinite() && it >= 0.0 } ?: return this

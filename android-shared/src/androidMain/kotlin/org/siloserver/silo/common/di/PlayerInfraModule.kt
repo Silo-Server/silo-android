@@ -173,14 +173,24 @@ val playerInfraModule = module {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
             scopeProvider = { get<TokenManager>().snapshotCurrentScope() },
         ) { snapshot ->
-            val written = userItemState.recordPosition(
-                snapshot.scope,
-                snapshot.contentId,
-                snapshot.fileId,
-                snapshot.positionSeconds,
-                snapshot.durationSeconds,
-            )
-            if (written) syncScheduler.requestSync()
+            if (snapshot.serverTracked) {
+                // Otherwise an older local sample outlives the server's answer:
+                // a finished title kept offering Resume at it (#842).
+                userItemState.clearLocalPlaybackProgressBefore(
+                    listOf(snapshot.contentId),
+                    admittedAtMs = System.currentTimeMillis(),
+                    identityGeneration = snapshot.scope.identityGeneration,
+                )
+            } else {
+                val written = userItemState.recordPosition(
+                    snapshot.scope,
+                    snapshot.contentId,
+                    snapshot.fileId,
+                    snapshot.positionSeconds,
+                    snapshot.durationSeconds,
+                )
+                if (written) syncScheduler.requestSync()
+            }
         }
     }
 
