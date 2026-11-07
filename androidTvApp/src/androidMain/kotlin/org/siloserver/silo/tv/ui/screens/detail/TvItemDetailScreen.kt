@@ -169,6 +169,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 internal data class TvSeriesDetailRedirect(
     val seriesContentId: String,
@@ -2588,7 +2589,7 @@ private fun TvAudiobookNarrationsSection(
                 TvAudiobookDetailActionRow(
                     title = narration.title,
                     subtitle = narration.narrators.joinToString(", ").takeIf { it.isNotBlank() },
-                    trailing = narration.year?.takeIf { it > 0 }?.toString(),
+                    trailing = narration.year?.takeIf { it > 0 }?.let { LocaleFormat.integer(it, currentNumberLocale()) },
                     onClick = { onNarrationSelected(narration) },
                     upFocusRequester = if (index == 0) firstRowUpFocusRequester else null,
                     onDirectionUp = if (index == 0) onDirectionUp else null,

@@ -204,6 +204,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.network.isTimeout
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /**
  * ViewModel for the video player screen.
@@ -269,10 +271,10 @@ data class MobileEpisodeSubtitle(val seriesTitle: String, val season: Int, val e
 internal fun PlayerViewModel.PlayerUiState.displaySubtitle(): String = subtitleEpisode?.let {
     it.seriesTitle + " - " + stringResource(
         CommonR.string.catalog_episodeTag,
-        it.season.toString().padStart(2, '0'),
-        it.episode.toString().padStart(2, '0'),
+        LocaleFormat.integer(it.season, minDigits = 2, locale = currentNumberLocale()),
+        LocaleFormat.integer(it.episode, minDigits = 2, locale = currentNumberLocale()),
     )
-} ?: subtitle
+} ?: subtitleYear?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: subtitle
 
 /** For logs and the debug test hook: the message in English, as before the catalog (the resource id without one). */
 internal val PlayerMessage.debugText: String
@@ -514,6 +516,8 @@ class PlayerViewModel(
          * the English form.
          */
         val episodeLine: OnDeckEpisodeLine? = null,
+        /** The release year of a title that isn't an episode; the card formats it when drawn (D77). */
+        val year: Int? = null,
     )
 
     data class OnDeckEpisodeLine(val season: Int, val episode: Int, val title: String?)
@@ -575,6 +579,8 @@ class PlayerViewModel(
         val subtitle: String = "",
         /** Set when [subtitle] is an episode line; [displaySubtitle] shows it translated. */
         val subtitleEpisode: MobileEpisodeSubtitle? = null,
+        /** Set when [subtitle] is a title's year; [displaySubtitle] writes it in the app's digits (D77). */
+        val subtitleYear: Int? = null,
         val seriesTitle: String? = null,
         /** Catalog item type ("movie", "episode", …), for the controls' "MOVIE · 2026" line. */
         val contentType: String? = null,
@@ -2170,6 +2176,7 @@ class PlayerViewModel(
                 contentType = watchDetail?.type ?: playbackState.contentType,
                 subtitle = watchDetail?.let { detail -> buildSubtitle(detail) } ?: playbackState.subtitle.orEmpty(),
                 subtitleEpisode = watchDetail?.let(::episodeSubtitle),
+                subtitleYear = watchDetail?.let(::subtitleYear),
                 artworkUrl = playbackState.artworkUrl,
                 sessionId = playbackState.sessionId
                     ?.also { retainedOwnedSessionId = it },
@@ -6863,6 +6870,10 @@ class PlayerViewModel(
         }
     }
 
+    /** The year [buildSubtitle] shows when the title isn't an episode. */
+    private fun subtitleYear(watchDetail: org.siloserver.silo.model.catalog.WatchDetail): Int? =
+        watchDetail.year.takeIf { episodeSubtitle(watchDetail) == null }
+
     private fun episodeSubtitle(watchDetail: org.siloserver.silo.model.catalog.WatchDetail): MobileEpisodeSubtitle? {
         val series = watchDetail.seriesTitle ?: return null
         val season = watchDetail.seasonNumber ?: return null
@@ -7012,6 +7023,8 @@ class PlayerViewModel(
                 title = title,
                 subtitle = subtitle,
                 subtitleEpisode = watchDetail?.let(::episodeSubtitle),
+                // A movie's stored download subtitle is its year as digits.
+                subtitleYear = if (watchDetail != null) subtitleYear(watchDetail) else sidecar.year?.takeIf { subtitle == it.toString() },
                 contentType = watchDetail?.type,
                 artworkUrl = artworkUrl,
                 // Playback fields — file:// is read directly by Media3, no

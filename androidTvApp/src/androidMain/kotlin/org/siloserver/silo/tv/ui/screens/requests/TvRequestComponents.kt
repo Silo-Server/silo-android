@@ -57,6 +57,8 @@ import org.siloserver.silo.model.request.requestPosterUrl
 import org.siloserver.silo.tv.ui.theme.RowDimens
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 internal fun RequestStatusTint.tvColor(): Color = color(neutral = SiloSecondaryText)
 
@@ -138,7 +140,7 @@ private fun TvRequestPosterCard(
     val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(8.dp)
     val focus = siloCardDefaults(shape = shape)
-    val label = listOfNotNull(title, year?.takeIf { it > 0 }?.toString(), progress?.shortText?.text()).joinToString(", ")
+    val label = listOfNotNull(title, year?.takeIf { it > 0 }?.let { LocaleFormat.integer(it, currentNumberLocale()) }, progress?.shortText?.text()).joinToString(", ")
     Column(modifier = modifier.width(width)) {
         Card(
             onClick = onClick,
@@ -192,7 +194,7 @@ private fun TvRequestPosterCard(
                 color = Color.White.copy(alpha = 0.70f),
             )
             year != null && year > 0 -> Text(
-                text = year.toString(),
+                text = LocaleFormat.integer(year, currentNumberLocale()),
                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
                 color = Color.White.copy(alpha = 0.70f),
             )

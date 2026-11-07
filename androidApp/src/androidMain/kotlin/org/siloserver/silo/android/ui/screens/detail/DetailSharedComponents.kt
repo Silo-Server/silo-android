@@ -1686,7 +1686,7 @@ object HeroMetadata {
         detail: ItemDetail,
         runtimeMinutes: Int = detail.runtime,
     ): List<String> = buildList {
-        if (detail.year > 0) add(detail.year.toString())
+        if (detail.year > 0) add(LocaleFormat.integer(detail.year))
         if (runtimeMinutes > 0) add(runtimeText(resources, runtimeMinutes))
     }
 
@@ -1695,7 +1695,7 @@ object HeroMetadata {
         val seasons = detail.seasonCount?.takeIf { it > 0 }
             ?.let { pluralStringResource(CommonR.plurals.catalog_seasons, it, it) }
         return buildList {
-            if (detail.year > 0) add(detail.year.toString())
+            if (detail.year > 0) add(LocaleFormat.integer(detail.year))
             seasons?.let { add(it) }
         }
     }

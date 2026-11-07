@@ -389,6 +389,7 @@ class TvFocusMarqueeModelTest {
         when (token) {
             is TvHeroFactToken.TextToken -> token.value
             is TvHeroFactToken.ResToken -> token.englishText()
+            is TvHeroFactToken.NumberToken -> token.value.value.toString()
             is TvHeroFactToken.ExternalRating -> "${token.rating.name} ${token.rating.display}"
             is TvHeroFactToken.Rating -> token.value
             is TvHeroFactToken.Chip -> token.value

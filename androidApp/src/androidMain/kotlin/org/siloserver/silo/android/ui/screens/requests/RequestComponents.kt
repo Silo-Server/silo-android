@@ -81,6 +81,8 @@ import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestProgress
 import org.siloserver.silo.model.request.RequestStatusTint
 import org.siloserver.silo.model.request.requestPosterUrl
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /** Card geometry shared with the library rows ([org.siloserver.silo.android.ui.components.MediaCard]). */
 internal const val RequestPosterAspect = 2f / 3.3f
@@ -150,7 +152,7 @@ private fun RequestPosterCard(
     modifier: Modifier,
     width: Dp,
 ) {
-    val label = listOfNotNull(title, year?.takeIf { it > 0 }?.toString(), progress?.shortText?.text()).joinToString(", ")
+    val label = listOfNotNull(title, year?.takeIf { it > 0 }?.let { LocaleFormat.integer(it, currentNumberLocale()) }, progress?.shortText?.text()).joinToString(", ")
     Column(
         modifier = modifier
             .width(width)
@@ -208,7 +210,7 @@ private fun RequestPosterCard(
         when {
             showsStatusInCaption && progress != null -> RequestStatusLabel(progress = progress)
             year != null && year > 0 -> Text(
-                text = year.toString(),
+                text = LocaleFormat.integer(year, currentNumberLocale()),
                 fontSize = 12.sp,
                 color = SiloSecondaryText,
                 maxLines = 1,
@@ -530,7 +532,7 @@ internal fun <T> LazyListScope.requestGroupedSection(
                 .padding(horizontal = 32.dp, vertical = 8.dp),
         ) {
             Text(text = title, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SiloSecondaryText, modifier = Modifier.weight(1f))
-            Text(text = items.size.toString(), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SiloSecondaryText)
+            Text(text = LocaleFormat.integer(items.size, currentNumberLocale()), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SiloSecondaryText)
         }
     }
     itemsIndexed(items, key = { _, item -> "$key:${itemKey(item)}" }, contentType = { _, _ -> "group-row" }) { index, item ->

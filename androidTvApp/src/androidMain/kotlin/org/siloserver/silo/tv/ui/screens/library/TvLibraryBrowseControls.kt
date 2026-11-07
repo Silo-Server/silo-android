@@ -89,6 +89,8 @@ import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.components.tvShowImeOnSelect
 import org.siloserver.silo.tv.ui.components.tvSkylinePanelChrome
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /**
  * Sort + Filter controls for the library Browse grid, 1:1 with tvOS
@@ -191,7 +193,7 @@ fun TvBrowseControlRow(
                         .padding(horizontal = 6.dp, vertical = 1.dp),
                 ) {
                     Text(
-                        text = filterCount.toString(),
+                        text = LocaleFormat.integer(filterCount, currentNumberLocale()),
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,

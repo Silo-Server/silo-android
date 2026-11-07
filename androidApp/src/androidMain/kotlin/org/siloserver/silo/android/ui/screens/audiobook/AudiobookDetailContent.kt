@@ -70,6 +70,7 @@ import androidx.compose.ui.platform.LocalDensity
 import org.siloserver.silo.android.ui.screens.detail.HeaderSettledDp
 import org.siloserver.silo.android.ui.screens.detail.LocalDetailScrollState
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /**
  * Phone audiobook detail. Cover + author + narrator above, then the
@@ -512,7 +513,7 @@ private fun OtherNarrationRow(narration: AudiobookNarration) {
             overflow = TextOverflow.Ellipsis,
         )
         val subtitle = listOfNotNull(
-            narration.year?.toString(),
+            narration.year?.let { LocaleFormat.integer(it, currentNumberLocale()) },
             narration.narrators
                 .filter { it.isNotBlank() }
                 .takeIf { it.isNotEmpty() }

@@ -100,6 +100,7 @@ import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.viewmodel.WatchPartyItem
 import org.siloserver.silo.viewmodel.WatchPartySpoilers
 import org.siloserver.silo.viewmodel.WatchPartyPickerViewModel
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /** What choosing a title in the picker does. */
 internal enum class WatchPartyPickMode(
@@ -762,7 +763,7 @@ private fun PickerChoicePage(
                         WatchPartyHeroTitle(choice.title, size = WatchPartyMetrics.HERO_TITLE * 0.9f)
                         val code = choice.season?.let { season -> choice.episode?.let { watchPartyEpisodeLine(season, it) } }
                         val subtitle = listOfNotNull(code, choice.episodeTitle).joinToString(" · ").ifBlank { null }
-                        val facts = listOfNotNull(subtitle, choice.year, watchPartyRuntime(choice.runtimeMinutes)) +
+                        val facts = listOfNotNull(subtitle, choice.year?.toIntOrNull()?.let { LocaleFormat.integer(it, currentNumberLocale()) }, watchPartyRuntime(choice.runtimeMinutes)) +
                             choice.otherFacts
                         if (facts.isNotEmpty()) {
                             Text(facts.joinToString(" · "), fontSize = WatchPartyMetrics.BODY.sp, color = SiloSecondaryText)

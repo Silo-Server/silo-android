@@ -60,6 +60,7 @@ import org.siloserver.silo.common.player.videoViewportBounds
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.components.SpoilerImage
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /** Episode details and controls beside the mounted player's preview pane. */
 @OptIn(ExperimentalLayoutApi::class)
@@ -399,7 +400,7 @@ private fun OnDeckCard(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        (item.episodeLine?.let { onDeckEpisodeText(it) } ?: item.subtitle)?.let { subtitle ->
+        (item.episodeLine?.let { onDeckEpisodeText(it) } ?: item.year?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: item.subtitle)?.let { subtitle ->
             Text(
                 text = subtitle,
                 color = Color.White.copy(alpha = 0.8f),
@@ -447,7 +448,7 @@ private fun CountdownRing(
             )
         }
         Text(
-            text = seconds.toString(),
+            text = LocaleFormat.integer(seconds, currentNumberLocale()),
             color = Color.White,
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,

@@ -53,6 +53,7 @@ import java.io.IOException
 import java.net.URLDecoder
 import java.time.Instant
 import java.util.concurrent.TimeUnit
+import org.siloserver.silo.common.i18n.LocaleFormat
 
 internal fun DownloadRecord.withWorkerStatus(
     status: String,
@@ -706,7 +707,7 @@ class DownloadWorker(
         val notification = NotificationCompat.Builder(appContext, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)
-            .setContentText(if (indeterminate) text.getString(R.string.downloads_notification_starting) else "$progress%")
+            .setContentText(if (indeterminate) text.getString(R.string.downloads_notification_starting) else LocaleFormat.percent(progress))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setProgress(100, progress, indeterminate)

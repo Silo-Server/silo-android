@@ -146,6 +146,10 @@ object LocaleFormat {
             roundingMode = RoundingMode.HALF_UP
         }.format(value)
 
+    /** [percent] (0–100) as the locale writes a percentage: "45%" in English, "٤٥٪" in Arabic-Indic Arabic. */
+    fun percent(percent: Int, locale: Locale = numberLocale()): String =
+        NumberFormat.getPercentInstance(locale).apply { isGroupingUsed = false }.format(percent / 100.0)
+
     /** A clock-style duration, "1:02:03" or, without [showHours], "2:03", in [locale]'s digits. */
     fun clock(
         hours: Number,

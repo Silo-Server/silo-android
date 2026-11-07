@@ -4,6 +4,7 @@ import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.tv.ui.util.visibleOnTv
+import org.siloserver.silo.common.i18n.LocaleFormat
 
 /** One On Deck card on the Up Next overlay (tvOS `nextUpCarouselItems` parity). */
 data class TvOnDeckItem(
@@ -13,6 +14,8 @@ data class TvOnDeckItem(
     val title: String,
     /** The episode's title for an episode (shown after its [seasonNumber]·[episodeNumber] code), else the year. */
     val subtitle: String?,
+    /** The release year of a title that isn't an episode, formatted when drawn (D77); [subtitle] keeps it as digits. */
+    val year: Int? = null,
     val artUrl: String?,
     val artThumbhash: String?,
     val progressFraction: Float?,
@@ -60,6 +63,7 @@ internal fun List<ResolvedSection>.toTvOnDeckItems(contentId: String, seriesId: 
                     item.year > 0 -> item.year.toString()
                     else -> null
                 },
+                year = item.year.takeIf { it > 0 && (item.seasonNumber == null || item.episodeNumber == null) },
                 seasonNumber = item.seasonNumber.takeIf { item.episodeNumber != null },
                 episodeNumber = item.episodeNumber.takeIf { item.seasonNumber != null },
                 artUrl = item.backdropUrl,

@@ -15,6 +15,7 @@ import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.viewmodel.WatchPartyItem
 import org.siloserver.silo.viewmodel.WatchPartySpoilers
 import java.util.concurrent.ConcurrentHashMap
+import org.siloserver.silo.common.i18n.LocaleFormat
 
 /**
  * Title previews handed from the detail page or the picker to the lobby, so
@@ -92,7 +93,7 @@ internal fun rememberTvStagedPreview(
             backdropThumbhash = loaded.backdropThumbhash,
             overview = loaded.overview?.takeIf { it.isNotBlank() },
             facts = listOfNotNull(
-                loaded.year.takeIf { it > 0 && loaded.type != "episode" }?.toString(),
+                loaded.year.takeIf { it > 0 && loaded.type != "episode" }?.let { LocaleFormat.integer(it) },
                 loaded.runtime.takeIf { it > 0 }?.let { watchPartyRuntimeText(it) },
             ),
             chips = listOfNotNull(

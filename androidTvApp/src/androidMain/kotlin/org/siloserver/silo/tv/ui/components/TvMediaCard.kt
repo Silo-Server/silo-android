@@ -64,6 +64,8 @@ import org.siloserver.silo.tv.ui.theme.RowDimens
 import org.siloserver.silo.tv.ui.theme.cardScaled
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
 import org.siloserver.silo.tv.ui.util.tvArtworkAspectRatioForMediaType
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /**
  * The core focusable media card used throughout the TV app.
@@ -309,7 +311,7 @@ fun TvMediaCard(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        val metadata = caption ?: year?.takeIf { it > 0 }?.toString()
+        val metadata = caption ?: year?.takeIf { it > 0 }?.let { LocaleFormat.integer(it, currentNumberLocale()) }
         if (metadata != null) {
             Text(
                 text = metadata,
