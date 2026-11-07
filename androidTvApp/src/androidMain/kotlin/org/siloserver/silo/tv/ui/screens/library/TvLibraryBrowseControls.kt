@@ -363,13 +363,16 @@ fun TvBrowseSortPanel(
                         tint = if (isCurrent) foreground else Color.Transparent,
                         modifier = Modifier.size(15.dp),
                     )
+                    // The name gives up width first, so the active row's
+                    // direction and arrow always fit.
                     Text(
                         text = option.label,
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
                         color = foreground,
                         maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
-                    Spacer(modifier = Modifier.weight(1f))
                     // Source-order entries have no asc/desc to show or flip.
                     if (isCurrent && option.hasDirection) {
                         Text(

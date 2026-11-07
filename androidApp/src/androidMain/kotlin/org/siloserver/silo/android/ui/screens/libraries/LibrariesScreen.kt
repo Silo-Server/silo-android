@@ -594,13 +594,13 @@ class LibrariesViewModel(
             sort = sort.wireValue,
             order = nextOrder,
         )
+        // The current page stays on screen until the re-sorted one replaces
+        // it, so the grid and its sort menu stay mounted: picking the active
+        // sort again flips it with the menu still open.
         _uiState.update {
             it.copy(
                 browseSort = sort,
                 filterState = nextFilterState,
-                catalogItems = emptyList(),
-                catalogTotal = 0,
-                catalogHasMore = false,
             )
         }
         browsePrefs?.saveState(_uiState.value.selectedLibraryId, nextFilterState, _uiState.value.mediaScope)

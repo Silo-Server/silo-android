@@ -185,6 +185,7 @@ fun TvLibraryCollectionDetailScreen(
         TvCollectionPanel.Sort -> TvBrowseSortPanel(
             options = TvLibrarySortOption.availableForCollection(
                 libraryType = libraryType,
+                mediaScope = mediaScope,
                 shownRatingSources = rememberShownRatingSources(),
                 current = state.sort,
             ),

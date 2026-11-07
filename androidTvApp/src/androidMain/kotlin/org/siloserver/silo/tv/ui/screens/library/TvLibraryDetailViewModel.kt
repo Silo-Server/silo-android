@@ -153,10 +153,11 @@ data class TvLibrarySortOption(
          */
         fun availableForCollection(
             libraryType: String,
+            mediaScope: String? = null,
             shownRatingSources: Set<String> = emptySet(),
             current: String? = null,
         ): List<TvLibrarySortOption> {
-            val relevance = CatalogSortRelevance.forLibrary(libraryType)
+            val relevance = CatalogSortRelevance.forLibrary(libraryType, mediaScope)
             return listOf(CollectionOrder) + CatalogSortField.options(
                 relevance = relevance,
                 includePersonalized = false,
