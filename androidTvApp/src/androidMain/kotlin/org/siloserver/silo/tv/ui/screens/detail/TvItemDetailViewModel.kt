@@ -61,6 +61,7 @@ import org.siloserver.silo.tv.ui.util.visibleOnTv
 import org.siloserver.silo.viewmodel.applyLocalPlaybackProgress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -436,6 +437,9 @@ internal fun shouldApplyNextUpTrackRestore(
  */
 internal const val EPISODE_FAVORITE_PROBE_CONCURRENCY = 6
 
+/** How long a return from the player waits for its stop before reading the server. */
+private const val PLAYBACK_SETTLE_WAIT_MS = 3_000L
+
 /**
  * Whether a revalidation pass answered everything it was asked to.
  *
@@ -547,6 +551,8 @@ class TvItemDetailViewModel(
     private val capabilityDetector: PlaybackCapabilityDetector? = null,
     /** Remembers a manual subtitle choice for the whole series on the server. */
     private val seriesTrackChoiceWriter: org.siloserver.silo.common.settings.SeriesTrackChoiceWriter? = null,
+    /** Waits for the closed player's stop, which sends its final progress, to finish. */
+    private val awaitPlaybackSettled: suspend () -> Unit = {},
 ) : ViewModel() {
     /** Access changes this ViewModel has applied, kept while its screen is away. */
     val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
@@ -1099,6 +1105,11 @@ class TvItemDetailViewModel(
             if (overlaid != current) {
                 _uiState.update { it.copy(detail = overlaid) }
             }
+            // Read after the player's final progress lands, so the answer
+            // includes it; a stalled stop only delays the read.
+            if (playbackReturn != null) {
+                withTimeoutOrNull(PLAYBACK_SETTLE_WAIT_MS) { awaitPlaybackSettled() }
+            }
             when (val result = catalogRepository.getItemDetail(
                 contentId,
                 libraryId = libraryId,
@@ -1106,13 +1117,15 @@ class TvItemDetailViewModel(
                 joinWarmup = !showRefusal,
             )) {
                 is ApiResult.Success -> {
-                    // A server that reset the resume point (the title finished
-                    // past the watched threshold) outranks the player's exit spot.
-                    val detail = withLocalProgress(result.data)
-                        .let { refreshed ->
-                            playbackReturn?.takeUnless { result.data.isWatchedWithoutResume() }
-                                ?.let(refreshed::withPlaybackReturn) ?: refreshed
-                        }
+                    // The playback just closed finished the title: the server
+                    // reset its resume point (#842). Neither the player's exit
+                    // spot nor a local sample from before it may bring one back.
+                    val detail = if (playbackReturn != null && result.data.isWatchedWithoutResume()) {
+                        result.data
+                    } else {
+                        withLocalProgress(result.data)
+                            .let { refreshed -> playbackReturn?.let(refreshed::withPlaybackReturn) ?: refreshed }
+                    }
                     if (!isTvHiddenMediaType(detail.type)) {
                         _uiState.update {
                             it.copy(

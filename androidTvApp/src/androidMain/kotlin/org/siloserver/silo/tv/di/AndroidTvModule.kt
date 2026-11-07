@@ -651,6 +651,7 @@ val androidTvModule = module {
             identityTransitions = get(),
             capabilityDetector = get(),
             seriesTrackChoiceWriter = get(),
+            awaitPlaybackSettled = get<org.siloserver.silo.common.player.PlaybackSessionLifecycle>()::awaitPendingStop,
         )
     }
     // Watch Party: the shared hub, lobby (keyed per room; roomId is the
