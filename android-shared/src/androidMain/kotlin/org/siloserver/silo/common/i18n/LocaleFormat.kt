@@ -27,14 +27,15 @@ import java.util.concurrent.ConcurrentHashMap
  * the one chosen, format as the device does (an `en-GB` device that picks
  * English keeps day-month order); otherwise format in the chosen language.
  * The interface language is the default locale: the platform sets it to the
- * per-app language on 13+, and [AppLocales.wrap] does before 13.
+ * per-app language on 13+, and [AppLocales.wrap] does before 13. A language
+ * without a catalog formats as its stand-in (D64, [AppLocales.standIn]).
  */
 object LocaleFormat {
     @Volatile private var deviceLocales: LocaleList? = null
     @Volatile private var shipped: List<String>? = null
 
     /** The last [locale] result, for the default locale and device list it came from. */
-    private class Resolved(val ui: Locale, val devices: LocaleList?, val locale: Locale)
+    private class Resolved(val ui: Locale, val uiList: LocaleList?, val devices: LocaleList?, val locale: Locale)
     @Volatile private var resolved: Resolved? = null
 
     private val formatters = ConcurrentHashMap<FormatterKey, DateTimeFormatter>()
@@ -57,13 +58,18 @@ object LocaleFormat {
                 Resources.getSystem().configuration.locales
             }
         }.getOrNull()
+        resolved = null
     }
 
-    /** Forgets the device list and shipped languages, so a unit test doesn't leak them to the next. */
+    /**
+     * Forgets the device list, so a unit test doesn't leak it to the next, and
+     * sets the shipped languages ([shipped] null reads them at the next
+     * [refresh]). Tests ship only English unless they pass more.
+     */
     @VisibleForTesting
-    internal fun resetForTests() {
+    internal fun resetForTests(shipped: List<String>? = null) {
         deviceLocales = null
-        shipped = null
+        this.shipped = shipped
         resolved = null
     }
 
@@ -71,12 +77,16 @@ object LocaleFormat {
     fun locale(): Locale {
         val ui = Locale.getDefault()
         val devices = deviceLocales ?: runCatching { Resources.getSystem().configuration.locales }.getOrNull()
-        resolved?.let { if (it.ui == ui && it.devices == devices) return it.locale }
-        return resolve(ui, devices).also { resolved = Resolved(ui, devices, it) }
+        // With a stand-in possible (D64), the whole default list: its later entries pick it.
+        val uiList = if (shipped != null) LocaleList.getDefault() else null
+        resolved?.let { if (it.ui == ui && it.uiList == uiList && it.devices == devices) return it.locale }
+        return resolve(ui, devices).also { resolved = Resolved(ui, uiList, devices, it) }
     }
 
     private fun resolve(ui: Locale, devices: LocaleList?): Locale {
         if (AppLanguage.isPseudo(ui.toLanguageTag())) return ui
+        // D64: a language without a catalog formats as the language shown in its place.
+        shipped?.let { list -> AppLocales.standIn(LocaleList.getDefault(), list)?.let { return it } }
         val device = devices?.takeUnless { it.isEmpty }?.get(0) ?: return ui
         return if (speaksSameLanguage(device, ui)) device else ui
     }
@@ -84,8 +94,8 @@ object LocaleFormat {
     /**
      * The language the interface shows, for words built in code (language
      * names): the default locale only when the app ships it. A German device
-     * that follows the device shows English text and German dates (D26), and
-     * language names in English. A pseudo-locale is its own interface.
+     * with no German catalog that follows the device shows English text,
+     * formats and language names (D64). A pseudo-locale is its own interface.
      */
     fun interfaceLocale(): Locale {
         val ui = Locale.getDefault()

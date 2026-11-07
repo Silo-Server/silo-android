@@ -43,8 +43,7 @@ private fun UiText.resolve(resources: Resources, rtl: Boolean): String = when (t
     is UiText.Res -> resources.format(id, args, rtl)
     is UiText.Key -> resources.catalogResources().let { it.format(key.resId, args, it.isRtl) }
     is UiText.Plural -> resources.catalogResources().let { it.formatPlural(key.resId, key.countIndex, count, args, it.isRtl) }
-    // Numbers and dates follow LocaleFormat, as the app's own do (D55, D58):
-    // whole numbers in the interface language, decimals and dates as the device.
+    // Numbers and dates follow LocaleFormat, as the app's own do (D55, D58, D64).
     is UiText.Number ->
         if (maxFractionDigits == 0) {
             LocaleFormat.integer(value.roundToLong(), minDigits = minIntegerDigits)
@@ -73,9 +72,9 @@ private fun languageName(tag: String, uppercaseIfUnnamed: Boolean, locale: Local
  * Resources that resolve the shared module's text in its catalog language:
  * these when the app ships the configured language or it is a debug
  * pseudo-locale. Otherwise the strings fall back to English, and so do plural
- * rules and text direction, so a language changes nothing until its catalog
- * ships (D25). Numbers and dates in these strings follow [LocaleFormat]
- * whatever the resources.
+ * rules and text direction. Activities never need it, since [AppLocales.wrap]
+ * already shows them in a shipped language (D64); it covers text resolved with
+ * application, service or notification resources, which keep the device's.
  */
 private fun Resources.catalogResources(): Resources {
     if (showsConfiguredLanguage) return this

@@ -287,8 +287,9 @@ class MainTvActivity : ComponentActivity() {
         get<AppLanguageStore>(AppLanguageStore::class.java).check(this)
     }
 
-    // Before Android 13 the app language is applied here; from 13 the
-    // platform does it.
+    // Before Android 13 the app language is applied here (from 13 the
+    // platform does it), and a device language without a catalog is shown as
+    // its stand-in on every version (D64).
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLocales.wrap(newBase))
     }
@@ -298,6 +299,9 @@ class MainTvActivity : ComponentActivity() {
     // screen) arrives here rather than as a recreation.
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        // attachBaseContext fixed this activity's locale; a change it can't take in place
+        // recreates it, though not in picture-in-picture: leaving it brings another change.
+        if (!isInPictureInPictureMode && AppLocales.needsRecreate(this)) return recreate()
         get<AppLanguageStore>(AppLanguageStore::class.java).check(this)
     }
 

@@ -16,7 +16,10 @@ import kotlin.test.assertEquals
 class LocaleFormatTest {
     private val defaultBefore = Locale.getDefault()
 
-    @After fun restoreDefault() = Locale.setDefault(defaultBefore)
+    @After fun restoreDefault() {
+        Locale.setDefault(defaultBefore)
+        LocaleFormat.resetForTests()
+    }
 
     private val date = LocalDate.of(2026, 7, 8)
     private val time = LocalTime.of(20, 5)
@@ -109,14 +112,25 @@ class LocaleFormatTest {
         assertEquals("'B' h:mm a", LocaleFormat.withAmPm("'B' h:mm b"))
     }
 
-    /** D55: an English interface on an Arabic device writes counts as `%d` does; dates still follow the device (D26). */
+    /** D64: an Arabic device with no Arabic catalog formats everything as the English it shows. */
     @Test @Config(qualifiers = "ar")
-    fun countsFollowTheInterfaceLanguage() {
+    fun aDeviceLanguageWithoutACatalogFormatsAsEnglish() {
         LocaleFormat.refresh(androidx.test.core.app.ApplicationProvider.getApplicationContext())
         Locale.setDefault(ar)
-        assertEquals("ar", LocaleFormat.locale().language)
+        assertEquals("en", LocaleFormat.locale().language)
         assertEquals("en", LocaleFormat.interfaceLocale().language)
         assertEquals("1234", LocaleFormat.integer(1234))
+        assertEquals("1:02:03", LocaleFormat.clock(1, 2, 3))
+    }
+
+    /** D55: once Arabic ships, an Arabic interface uses its own digits. */
+    @Test @Config(qualifiers = "ar")
+    fun aShippedLanguageUsesItsOwnDigits() {
+        LocaleFormat.refresh(androidx.test.core.app.ApplicationProvider.getApplicationContext())
+        LocaleFormat.resetForTests(shipped = listOf("en", "ar"))
+        Locale.setDefault(ar)
+        assertEquals("ar", LocaleFormat.locale().language)
+        assertEquals("١٢٣٤", LocaleFormat.integer(1234))
         assertEquals("١:٠٢:٠٣", LocaleFormat.clock(1, 2, 3))
     }
 
@@ -127,7 +141,11 @@ class LocaleFormatTest {
         LocaleFormat.refresh(androidx.test.core.app.ApplicationProvider.getApplicationContext())
         Locale.setDefault(Locale.ENGLISH)
         assertEquals(Locale.UK, LocaleFormat.locale())
+        // German without a catalog formats as English (D64); once German ships, as German.
         Locale.setDefault(de)
+        assertEquals(Locale.ENGLISH, LocaleFormat.locale())
+        LocaleFormat.resetForTests(shipped = listOf("en", "de"))
+        LocaleFormat.refresh(androidx.test.core.app.ApplicationProvider.getApplicationContext())
         assertEquals(de, LocaleFormat.locale())
         Locale.setDefault(Locale.forLanguageTag("en-XA"))
         assertEquals(Locale.forLanguageTag("en-XA"), LocaleFormat.locale())

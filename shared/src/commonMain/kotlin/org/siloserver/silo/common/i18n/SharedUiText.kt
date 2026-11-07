@@ -45,8 +45,8 @@ sealed interface UiText {
     /**
      * A number for a `String` placeholder, or shown alone, without grouping.
      * A whole number takes the interface language's digits (D55), so English
-     * keeps "1234"; with [maxFractionDigits] it is a decimal in the device's
-     * format when the device speaks the interface language (D26, D58). At
+     * keeps "1234"; with [maxFractionDigits] it is a decimal in the app's
+     * formatting locale (D26, D58, D64). At
      * least [minIntegerDigits] whole digits ("02" for an episode code).
      */
     data class Number(
@@ -59,7 +59,7 @@ sealed interface UiText {
 
     /**
      * A calendar date with the month as a word, formatted as the app's other
-     * dates are (D26, D58): "Jan 5, 1980" in US English. [month] is 1–12.
+     * dates are (D26, D58, D64): "Jan 5, 1980" in US English. [month] is 1–12.
      */
     data class CalendarDate(val year: Int, val month: Int, val day: Int) : UiText
 

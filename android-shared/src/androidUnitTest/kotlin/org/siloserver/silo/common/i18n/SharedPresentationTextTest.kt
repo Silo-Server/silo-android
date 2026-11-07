@@ -261,17 +261,16 @@ class SharedPresentationTextTest {
     @Test
     @Config(sdk = [35], qualifiers = "de-rDE")
     fun aLanguageWithoutACatalogFormatsAsTheAppsOwnNumbersAndDates() {
-        // A German phone that follows the device: English words, as LocaleFormat
-        // formats the app's own text (D55, D58). Whole numbers follow the interface
-        // language; decimals and dates follow the device.
+        // A German phone that follows the device, with no German catalog: English
+        // words, numbers and dates, as LocaleFormat formats the app's own (D64).
         val before = Locale.getDefault()
         try {
             Locale.setDefault(Locale.GERMANY)
             LocaleFormat.refresh(app)
             val german = contextIn("de-DE")
             assertEquals("1234", UiText.Number(1234).text(german))
-            assertEquals("1,5 Mbps", QualityChoices.bitrateLabel(1_500).text(german))
-            assertEquals("16. Juni 1972", UiText.CalendarDate(1972, 6, 16).text(german))
+            assertEquals("1.5 Mbps", QualityChoices.bitrateLabel(1_500).text(german))
+            assertEquals("Jun 16, 1972", UiText.CalendarDate(1972, 6, 16).text(german))
             assertEquals("Japanese", UiText.LanguageName("ja").text(german))
             // An Arabic phone: Latin digits, as in the English text around them.
             Locale.setDefault(Locale.forLanguageTag("ar"))
