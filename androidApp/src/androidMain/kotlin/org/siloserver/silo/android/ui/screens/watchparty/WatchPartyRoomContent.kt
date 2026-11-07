@@ -88,6 +88,8 @@ import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import org.siloserver.silo.android.ui.theme.SiloDestructive
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.watchtogether.GuestControlPolicy
 import org.siloserver.silo.model.watchtogether.MemberRole
@@ -882,7 +884,7 @@ private fun CandidateRow(
             SuggestionText(suggestion, Modifier.weight(1f))
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.widthIn(min = 48.dp)) {
                 Text(
-                    count.toString(),
+                    LocaleFormat.integer(count, currentNumberLocale()),
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,

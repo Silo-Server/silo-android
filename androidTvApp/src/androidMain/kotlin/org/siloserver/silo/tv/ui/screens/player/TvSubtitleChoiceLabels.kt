@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.platform.LocalResources
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.player.aiSubtitleKind
 import org.siloserver.silo.player.aiSubtitleSourceLabel
@@ -44,7 +45,7 @@ internal fun subtitleChoiceLabel(row: PlayerSubtitleInfo, position: Int, resourc
         language == null -> aiSubtitleSourceLabel(rawLabel)
         else -> null
     }
-    val base = language ?: title ?: resources.getString(CommonR.string.options_track, (position + 1).toString())
+    val base = language ?: title ?: resources.getString(CommonR.string.options_track, LocaleFormat.integer(position + 1))
     val detail = buildList {
         aiKind?.let { add(it.displayName) }
         if (title != null && title != base) add(title)
@@ -115,7 +116,7 @@ internal fun audioChoiceLabel(entry: PlayerTrackEntry, position: Int, resources:
     val parts = listOfNotNull(language, codec, layout)
     if (parts.isEmpty()) {
         return entry.displayLabel.trim().takeIf { it.isNotBlank() }
-            ?: resources.getString(CommonR.string.options_track, (position + 1).toString())
+            ?: resources.getString(CommonR.string.options_track, LocaleFormat.integer(position + 1))
     }
     val qualifier = meaningfulAudioTrackTitle(
         displayLabel = entry.displayLabel,

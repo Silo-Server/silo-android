@@ -9,6 +9,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import kotlinx.coroutines.delay
 import org.siloserver.silo.common.R
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.network.apiv2.PlaybackLearnedLimitV2
 
@@ -106,7 +107,8 @@ fun bufferingQualityModeLabel(mode: BufferingQualityMode): Int = when (mode) {
 @Composable
 fun learnedLimitLabel(limit: PlaybackLearnedLimitV2): String {
     val rate = connectionRateLabel(limit.kbps)
-    val date = remember(limit) { learnedLimitDate(limit.observedAt) }
+    val locale = currentFormatLocale()
+    val date = remember(limit, locale) { learnedLimitDate(limit.observedAt, locale) }
     return date?.let { stringResource(R.string.settings_learnedLimit, rate, it) }
         ?: stringResource(R.string.settings_learnedLimit_undated, rate)
 }

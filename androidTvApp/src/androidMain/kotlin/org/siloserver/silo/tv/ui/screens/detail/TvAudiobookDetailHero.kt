@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.getStringWithNames
 import org.siloserver.silo.common.i18n.localizedResources
 import androidx.compose.foundation.background
@@ -254,11 +255,11 @@ private fun audiobookRuntimeLabel(resources: Resources, seconds: Double?): Strin
     return when {
         hours > 0 && minutes > 0 -> resources.getString(
             CommonR.string.catalog_runtimeHoursMinutes,
-            hours.toString(),
-            minutes.toString(),
+            LocaleFormat.integer(hours),
+            LocaleFormat.integer(minutes),
         )
-        hours > 0 -> resources.getString(CommonR.string.catalog_runtimeHours, hours.toString())
-        minutes > 0 -> resources.getString(CommonR.string.catalog_runtimeMinutesShort, minutes.toString())
+        hours > 0 -> resources.getString(CommonR.string.catalog_runtimeHours, LocaleFormat.integer(hours))
+        minutes > 0 -> resources.getString(CommonR.string.catalog_runtimeMinutesShort, LocaleFormat.integer(minutes))
         else -> null
     }
 }

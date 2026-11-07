@@ -22,8 +22,8 @@ import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 import org.siloserver.silo.common.R
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestDisplayState
 import org.siloserver.silo.model.request.RequestMediaType
@@ -105,8 +105,8 @@ fun requestResources(): Resources {
 /** Row and caption copy shared by the phone list and the TV preview panel. */
 object RequestRowCopy {
     // Built per use: this object outlives an in-place app language change.
-    private val dayFormat get() = DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())
-    private val timeFormat get() = DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault())
+    private val dayFormat get() = LocaleFormat.dateFormatter("MMMd", "MMM d")
+    private val timeFormat get() = LocaleFormat.dateFormatter("jmm", "h:mm a")
 
     @StringRes
     fun mediaTypeLabel(mediaType: String): Int = when (mediaType) {

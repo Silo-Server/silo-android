@@ -2,6 +2,8 @@ package org.siloserver.silo.android.ui.components
 
 import org.siloserver.silo.common.R as CommonR
 import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -257,8 +259,9 @@ fun BackdropCard(
 /** "S01E02", "S01" or "E02" (each number at least two digits); null without either. */
 @Composable
 private fun formatEpisodeTag(season: Int?, episode: Int?): String? {
-    val s = season?.toString()?.padStart(2, '0')
-    val e = episode?.toString()?.padStart(2, '0')
+    val locale = currentNumberLocale()
+    val s = season?.let { LocaleFormat.integer(it, locale, minDigits = 2) }
+    val e = episode?.let { LocaleFormat.integer(it, locale, minDigits = 2) }
     return when {
         s != null && e != null -> stringResource(CommonR.string.catalog_episodeTag, s, e)
         s != null -> stringResource(CommonR.string.calendar_seasonShort, s)

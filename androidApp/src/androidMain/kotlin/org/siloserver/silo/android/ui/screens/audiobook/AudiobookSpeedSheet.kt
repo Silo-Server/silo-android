@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.round
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 
 /**
  * Speed picker bottom sheet. Slider in 0.05 increments from 0.5–3.0×,
@@ -176,9 +177,4 @@ private fun PresetChip(
 private fun snapToStep(value: Float, step: Float): Float =
     round(value / step) * step
 
-internal fun formatSpeedLabel(speed: Float): String =
-    when {
-        speed % 1f == 0f -> speed.toInt().toString()
-        speed * 10f % 1f == 0f -> "%.1f".format(speed)
-        else -> "%.2f".format(speed).trimEnd('0').trimEnd('.')
-    }
+internal fun formatSpeedLabel(speed: Float): String = LocaleFormat.decimal(speed.toDouble(), maxFractionDigits = 2)

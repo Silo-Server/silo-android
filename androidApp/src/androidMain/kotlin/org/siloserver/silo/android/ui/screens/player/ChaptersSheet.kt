@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.util.formatClockTime
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.catalog.VersionChapter
 
@@ -91,7 +92,7 @@ fun ChaptersSheet(
                 ChapterRow(
                     number = index + 1,
                     title = chapter.title.ifBlank {
-                        stringResource(CommonR.string.options_chapterNumbered, (chapter.index + 1).toString())
+                        stringResource(CommonR.string.options_chapterNumbered, LocaleFormat.integer(chapter.index + 1))
                     },
                     start = chapter.startSeconds,
                     length = length,

@@ -182,6 +182,25 @@ class TvDetailMetadataTest {
     }
 
     @Test
+    fun airDateFollowsTheAppLanguage() {
+        val before = java.util.Locale.getDefault()
+        try {
+            val cases = mapOf(
+                "en-US" to "Mar 30, 2026",
+                "de" to "30. März 2026",
+                "ja" to "2026年3月30日",
+                "ar" to "٣٠ مارس ٢٠٢٦",
+            )
+            for ((tag, expected) in cases) {
+                java.util.Locale.setDefault(java.util.Locale.forLanguageTag(tag))
+                assertEquals(expected, TvDetailMetadata.abbreviatedDate("2026-03-30"), tag)
+            }
+        } finally {
+            java.util.Locale.setDefault(before)
+        }
+    }
+
+    @Test
     fun audiobookSourceTokensIncludeTypePublisherAndNarrator() {
         val detail = ItemDetail(
             contentId = "a1",

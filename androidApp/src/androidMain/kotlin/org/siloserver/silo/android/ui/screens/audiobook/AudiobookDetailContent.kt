@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.screens.detail.CircleActionButton
 import org.siloserver.silo.audiobook.buildAudiobookTimeline
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -643,15 +644,16 @@ private fun partTitle(version: FileVersion?, position: Int): String {
     return stringResource(CommonR.string.audiobook_detail_partNumber, displayIndex)
 }
 
+@Composable
 private fun formatDuration(seconds: Double): String {
     val total = seconds.toLong().coerceAtLeast(0)
     val h = total / 3600
     val m = (total % 3600) / 60
     val s = total % 60
     return when {
-        h > 0 -> "${h}h ${m}m"
-        m > 0 -> "${m}m ${s}s"
-        else -> "${s}s"
+        h > 0 -> stringResource(CommonR.string.catalog_runtimeHoursMinutes, LocaleFormat.integer(h), LocaleFormat.integer(m))
+        m > 0 -> stringResource(CommonR.string.catalog_runtimeMinutesSeconds, LocaleFormat.integer(m), LocaleFormat.integer(s))
+        else -> stringResource(CommonR.string.catalog_runtimeSeconds, LocaleFormat.integer(s))
     }
 }
 
@@ -661,5 +663,5 @@ private fun formatClock(seconds: Double): String {
     val h = total / 3600
     val m = (total % 3600) / 60
     val s = total % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    return LocaleFormat.clock(h, m, s)
 }

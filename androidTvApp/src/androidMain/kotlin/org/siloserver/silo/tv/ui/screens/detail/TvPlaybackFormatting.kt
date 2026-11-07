@@ -2,6 +2,7 @@
 
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.localizedResources
 import org.siloserver.silo.common.player.TrackSelectionPresets
 import org.siloserver.silo.model.catalog.AudioTrack
@@ -434,7 +435,7 @@ object TvPlaybackFormatting {
     private fun audioTitle(track: AudioTrack, ordinal: Int, text: TvPlaybackText): String =
         languageDisplayName(track.language)
             ?: usefulAudioTitle(track.title)
-            ?: text.track((ordinal + 1).toString())
+            ?: text.track(LocaleFormat.integer(ordinal + 1))
 
     /** Pill-value summary. Mirrors tvOS `audioSummary`:
      *  "English · EAC3 · 5.1". */
@@ -480,7 +481,7 @@ object TvPlaybackFormatting {
         // track falls back to its title for audioTitle, which then rejected the
         // qualifier and dropped the only thing naming it ("Director Commentary"
         // with no language rendered as bare "AAC · Stereo").
-        val qualifier = usefulAudioTitle(track.title)?.takeIf { !summary.contains(it) }
+        val qualifier = usefulAudioTitle(track.title)?.takeIf { !summary.contains(it) && !namesLanguage(it, track.language) }
         return buildString {
             append(summary)
             if (qualifier != null) append(" · ").append(qualifier)
@@ -515,7 +516,7 @@ object TvPlaybackFormatting {
     private fun audioDetail(track: AudioTrack, ordinal: Int, version: FileVersion?, text: TvPlaybackText): String {
         val tokens = buildList {
             usefulAudioTitle(track.title)
-                ?.takeIf { it != audioTitle(track, ordinal, text) }
+                ?.takeIf { it != audioTitle(track, ordinal, text) && !namesLanguage(it, track.language) }
                 ?.let { add(it) }
             normalizedAudioCodec(track.codec)?.let { add(it) }
             compactAudioLayout(track, text)?.let { add(it) }
@@ -782,7 +783,7 @@ object TvPlaybackFormatting {
     private fun subtitleTitle(track: SubtitleTrack, ordinal: Int, text: TvPlaybackText): String =
         languageDisplayName(track.language)
             ?: meaningfulSubtitleTitle(track)
-            ?: text.track((ordinal + 1).toString())
+            ?: text.track(LocaleFormat.integer(ordinal + 1))
 
     /**
      * Pill-value summary. Mirrors tvOS `subtitlePillSummary`:
@@ -926,9 +927,9 @@ object TvPlaybackFormatting {
     private fun formatFileSize(bytes: Long, text: TvPlaybackText): String? {
         if (bytes <= 0) return null
         val gb = bytes / 1_000_000_000.0
-        if (gb >= 1.0) return text.sizeGb(String.format(Locale.US, "%.2f", gb))
+        if (gb >= 1.0) return text.sizeGb(String.format(LocaleFormat.locale(), "%.2f", gb))
         val mb = bytes / 1_000_000.0
-        return text.sizeMb(String.format(Locale.US, "%.1f", mb))
+        return text.sizeMb(String.format(LocaleFormat.locale(), "%.1f", mb))
     }
 
     private fun compactAudioLayout(track: AudioTrack, text: TvPlaybackText): String? {
@@ -942,13 +943,13 @@ object TvPlaybackFormatting {
                 else -> layout
             }
         }
-        return when (track.channels) {
+        return when (val channels = track.channels) {
             null -> null
             1 -> text.mono
             2 -> text.stereo
             6 -> "5.1"
             8 -> "7.1"
-            else -> text.channels(track.channels.toString())
+            else -> text.channels(LocaleFormat.integer(channels))
         }
     }
 
@@ -962,12 +963,20 @@ object TvPlaybackFormatting {
         return displayTitle(trimmed)
     }
 
+    /**
+     * [title] is [language]'s name, in the interface language or in English:
+     * release titles are English, so a German interface still drops "English".
+     */
+    private fun namesLanguage(title: String, language: String?): Boolean =
+        listOf(LocaleFormat.interfaceLocale(), Locale.ENGLISH).any { inLocale ->
+            languageDisplayName(language, inLocale)?.equals(title, ignoreCase = true) == true
+        }
+
     private fun isRedundantSubtitleTitle(title: String, track: SubtitleTrack): Boolean {
         val lowered = title.lowercase(Locale.US)
-        val language = languageDisplayName(track.language)?.lowercase(Locale.US)
         val languageCode = nonEmpty(track.language)?.lowercase(Locale.US)
         if (lowered == "subtitle" || lowered == "subtitles") return true
-        if (language != null && lowered == language) return true
+        if (namesLanguage(title, track.language)) return true
         if (languageCode != null && lowered == languageCode) return true
         val codec = normalizedSubtitleCodec(track.codec)?.lowercase(Locale.US)
         if (codec != null && (lowered == codec || lowered == track.codec?.lowercase(Locale.US))) return true
@@ -985,15 +994,16 @@ object TvPlaybackFormatting {
         }
     }
 
-    private fun languageDisplayName(value: String?): String? {
+    /** The language's name in [inLocale], by default the interface language. */
+    private fun languageDisplayName(value: String?, inLocale: Locale = LocaleFormat.interfaceLocale()): String? {
         val trimmed = nonEmpty(value) ?: return null
         val normalized = trimmed.lowercase(Locale.US).replace('_', '-')
         val primary = normalized.split('-').firstOrNull() ?: normalized
         if (primary.length > 3) return capitalizeWords(trimmed)
         val languageCode = languageCodeAliases[primary] ?: primary
-        val display = Locale.forLanguageTag(languageCode).getDisplayLanguage(Locale.ENGLISH)
+        val display = Locale.forLanguageTag(languageCode).getDisplayLanguage(inLocale)
         return if (display.isNotBlank() && !display.equals(languageCode, ignoreCase = true)) {
-            capitalizeWords(display)
+            capitalizeWords(display, inLocale)
         } else {
             trimmed.uppercase(Locale.US)
         }
@@ -1007,9 +1017,9 @@ object TvPlaybackFormatting {
         "spa" to "es", "swe" to "sv", "zho" to "zh",
     )
 
-    private fun capitalizeWords(value: String): String =
+    private fun capitalizeWords(value: String, locale: Locale = Locale.US): String =
         value.split(" ").joinToString(" ") { word ->
-            word.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString() }
+            word.replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
         }
 
     private fun nonEmpty(value: String?): String? = value?.trim()?.takeIf { it.isNotEmpty() }

@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import java.util.Locale
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.getStringWithNames
 import org.siloserver.silo.model.catalog.DisplayRating
 import org.siloserver.silo.model.catalog.FileVersion
@@ -36,7 +38,7 @@ internal object TvDetailMetadata {
             // tvOS `TVSeasonDetailView.sourceTokens`: leading episode-count token,
             // then up to two genres.
             detail.episodeCount?.takeIf { it > 0 }?.let {
-                add(resources.getQuantityString(CommonR.plurals.detail_seasonEpisodeCount, it, it, it.toString()))
+                add(resources.getQuantityString(CommonR.plurals.detail_seasonEpisodeCount, it, it, LocaleFormat.integer(it)))
             }
             detail.genres.filter { it.isNotBlank() }.take(2).forEach { add(it) }
         }
@@ -56,7 +58,7 @@ internal object TvDetailMetadata {
 
     fun seriesEpisodeSourceTokens(resources: Resources, episode: EpisodeListItem): List<String> = listOfNotNull(
         seasonLabel(resources, episode.seasonNumber),
-        resources.getString(CommonR.string.detail_episode, episode.episodeNumber.toString())
+        resources.getString(CommonR.string.detail_episode, LocaleFormat.integer(episode.episodeNumber))
             .takeIf { episode.episodeNumber > 0 },
     )
 
@@ -130,13 +132,13 @@ internal object TvDetailMetadata {
         if (seasonNumber == 0) {
             resources.getString(CommonR.string.detail_specials)
         } else {
-            resources.getString(CommonR.string.detail_season, seasonNumber.toString())
+            resources.getString(CommonR.string.detail_season, LocaleFormat.integer(seasonNumber))
         }
 
     private fun episodeNumberLabel(resources: Resources, detail: ItemDetail): String? {
         val seasonPart = detail.seasonNumber?.let { n -> seasonLabel(resources, n) }
         val episodePart = detail.episodeNumber?.takeIf { it > 0 }?.let {
-            resources.getString(CommonR.string.detail_episode, it.toString())
+            resources.getString(CommonR.string.detail_episode, LocaleFormat.integer(it))
         }
         return when {
             seasonPart != null && episodePart != null -> "$seasonPart · $episodePart"
@@ -151,11 +153,11 @@ internal object TvDetailMetadata {
         return if (minutes >= 60) {
             resources.getString(
                 CommonR.string.catalog_runtimeHoursMinutes,
-                (minutes / 60).toString(),
-                (minutes % 60).toString(),
+                LocaleFormat.integer(minutes / 60),
+                LocaleFormat.integer(minutes % 60),
             )
         } else {
-            resources.getString(CommonR.string.catalog_runtimeMinutes, minutes.toString())
+            resources.getString(CommonR.string.catalog_runtimeMinutes, LocaleFormat.integer(minutes))
         }
     }
 
@@ -163,15 +165,16 @@ internal object TvDetailMetadata {
      * tvOS `DetailDateFormatting.abbreviatedDate`: the server's air and release
      * dates are calendar dates (`yyyy-MM-dd`) and show that day in every time
      * zone. An RFC 3339 timestamp converts to its calendar date in [zone].
+     * "Jul 8, 2026" in US English, in [locale]'s order elsewhere.
      */
-    internal fun abbreviatedDate(raw: String?, zone: ZoneId = ZoneId.systemDefault()): String? {
+    internal fun abbreviatedDate(
+        raw: String?,
+        zone: ZoneId = ZoneId.systemDefault(),
+        locale: Locale = LocaleFormat.locale(),
+    ): String? {
         val trimmed = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         val date = parseServerDate(trimmed, zone) ?: return trimmed
-        val monthName = listOf(
-            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-        ).getOrNull(date.monthValue - 1) ?: return trimmed
-        return "$monthName ${date.dayOfMonth}, ${date.year}"
+        return date.format(LocaleFormat.dateFormatter("yMMMd", "MMM d, y", locale, padYear = false))
     }
 
     /** A bare `yyyy-MM-dd` as that day, or an RFC 3339 timestamp (`Z` or a

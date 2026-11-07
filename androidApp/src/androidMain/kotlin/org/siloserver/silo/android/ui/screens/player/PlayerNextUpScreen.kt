@@ -54,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.player.videoViewportBounds
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
@@ -161,7 +162,7 @@ fun PlayerNextUpScreen(
                     }
                     if (nextEpisode.runtimeMinutes > 0) {
                         Text(
-                            text = stringResource(CommonR.string.catalog_runtimeMinutes, nextEpisode.runtimeMinutes.toString()),
+                            text = stringResource(CommonR.string.catalog_runtimeMinutes, LocaleFormat.integer(nextEpisode.runtimeMinutes)),
                             color = Color.White.copy(alpha = 0.62f),
                             fontSize = 13.sp,
                         )
@@ -457,13 +458,13 @@ private fun CountdownRing(
 /** "S2·E4 — Title" under an On Deck card's title. */
 @Composable
 private fun onDeckEpisodeText(line: PlayerViewModel.OnDeckEpisodeLine): String {
-    val code = stringResource(CommonR.string.upNext_episodeCode, line.season.toString(), line.episode.toString())
+    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.integer(line.season), LocaleFormat.integer(line.episode))
     return code + (line.title?.let { " — $it" } ?: "")
 }
 
 /** "S2·E4 — Title", the next episode's line on the card. */
 @Composable
 private fun nextEpisodeLabel(episode: PlayerViewModel.NextEpisodeInfo): String {
-    val code = stringResource(CommonR.string.upNext_episodeCode, episode.seasonNumber.toString(), episode.episodeNumber.toString())
+    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.integer(episode.seasonNumber), LocaleFormat.integer(episode.episodeNumber))
     return code + (episode.title?.let { " — $it" } ?: "")
 }

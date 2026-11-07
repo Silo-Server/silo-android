@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 
 /**
  * Secondary control row beneath the transport: speed chip, sleep chip, and a
@@ -98,5 +99,4 @@ internal fun ChipButton(
     }
 }
 
-internal fun formatSpeed(speed: Float): String =
-    if (speed % 1f == 0f) speed.toInt().toString() else "%.2f".format(speed).trimEnd('0').trimEnd('.')
+internal fun formatSpeed(speed: Float): String = LocaleFormat.decimal(speed.toDouble(), maxFractionDigits = 2)

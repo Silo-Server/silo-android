@@ -65,7 +65,6 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -91,6 +90,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.calendar.localDisplayAirTime
 import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.calendar.calendarBadgeLabel
@@ -723,9 +724,9 @@ private fun WeekStrip(
     onNextWeek: () -> Unit,
     onToday: () -> Unit,
 ) {
-    val locale = LocalConfiguration.current.locales[0]
+    val locale = currentFormatLocale()
     val monthYearFormatter = remember(locale) {
-        DateTimeFormatter.ofPattern("MMMM yyyy", locale)
+        LocaleFormat.dateFormatter("yMMMM", "MMMM yyyy", locale)
     }
 
     Row(
@@ -864,9 +865,9 @@ private fun DayCell(
     onClick: () -> Unit,
 ) {
     val localDate = remember(date) { LocalDate.parse(date) }
-    val locale = LocalConfiguration.current.locales[0]
+    val locale = currentFormatLocale()
     val weekdayFormatter = remember(locale) {
-        DateTimeFormatter.ofPattern("EEE", locale)
+        LocaleFormat.dateFormatter("EEE", "EEE", locale)
     }
     // tvOS CalendarDayButton is 84x96 pt with 18/26 pt type and an 8 pt
     // event dot. Type is floored at 14/16sp for 10-ft legibility, and the
@@ -922,7 +923,7 @@ private fun DayCell(
                 },
             )
             Text(
-                text = localDate.dayOfMonth.toString(),
+                text = LocaleFormat.integer(localDate.dayOfMonth, locale),
                 style = MaterialTheme.typography.titleLarge.copy(
                     fontSize = 16.sp,
                     lineHeight = 20.sp,
@@ -1354,9 +1355,9 @@ private fun DayShelf(
 @Composable
 private fun DayHeader(date: String, isToday: Boolean, muted: Boolean) {
     val localDate = remember(date) { LocalDate.parse(date) }
-    val locale = LocalConfiguration.current.locales[0]
+    val locale = currentFormatLocale()
     val fullDateFormatter = remember(locale) {
-        DateTimeFormatter.ofPattern("EEEE, MMMM d", locale)
+        LocaleFormat.dateFormatter("MMMMEEEEd", "EEEE, MMMM d", locale)
     }
     Text(
         text = if (isToday) {
@@ -1670,7 +1671,7 @@ private fun cardSubtitle(item: CalendarItem): String? {
         val season = item.seasonNumber
         val episode = item.episodeNumber
         if (season != null && episode != null) {
-            parts.add(stringResource(CommonR.string.catalog_episodeCaption, season.toString(), episode.toString()))
+            parts.add(stringResource(CommonR.string.catalog_episodeCaption, LocaleFormat.integer(season), LocaleFormat.integer(episode)))
         }
         item.episodeTitle?.takeIf { it.isNotBlank() }?.let { parts.add(if (parts.isEmpty()) it else bidiIsolated(it)) }
     }

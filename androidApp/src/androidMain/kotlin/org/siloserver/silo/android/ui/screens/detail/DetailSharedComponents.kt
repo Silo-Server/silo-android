@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.localizedResources
 import android.content.res.Resources
 import androidx.compose.ui.platform.LocalConfiguration
@@ -1702,7 +1703,7 @@ internal fun phoneSeasonNumberLabel(resources: Resources, seasonNumber: Int): St
     if (seasonNumber == 0) {
         resources.getString(CommonR.string.detail_specials)
     } else {
-        resources.getString(CommonR.string.detail_season, seasonNumber.toString())
+        resources.getString(CommonR.string.detail_season, LocaleFormat.integer(seasonNumber))
     }
 
 /** "S1·E2", the short episode code on play buttons and party subtitles. */
@@ -1745,7 +1746,7 @@ fun formatResumeStoppedAt(positionSeconds: Double): String {
     val h = totalSec / 3600
     val m = (totalSec % 3600) / 60
     val s = totalSec % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    return LocaleFormat.clock(h, m, s)
 }
 
 // ── Details list (key/value facts) ────────────────────────────
@@ -1829,8 +1830,8 @@ private fun runtimeText(resources: Resources, minutes: Int): String {
     val h = minutes / 60
     val m = minutes % 60
     return when {
-        h > 0 && m > 0 -> resources.getString(CommonR.string.catalog_runtimeHoursMinutes, h.toString(), m.toString())
-        h > 0 -> resources.getString(CommonR.string.catalog_runtimeHours, h.toString())
-        else -> resources.getString(CommonR.string.catalog_runtimeMinutesShort, m.toString())
+        h > 0 && m > 0 -> resources.getString(CommonR.string.catalog_runtimeHoursMinutes, LocaleFormat.integer(h), LocaleFormat.integer(m))
+        h > 0 -> resources.getString(CommonR.string.catalog_runtimeHours, LocaleFormat.integer(h))
+        else -> resources.getString(CommonR.string.catalog_runtimeMinutesShort, LocaleFormat.integer(m))
     }
 }

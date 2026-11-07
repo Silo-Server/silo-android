@@ -44,6 +44,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.downloads.DownloadEnqueuer
 import org.siloserver.silo.common.R as CommonR
@@ -314,7 +316,7 @@ private fun SectionHeaderRow(
                     section.itemCount,
                     section.itemCount,
                     formatBytes(section.totalBytesUsed),
-                    section.itemCount.toString(),
+                    LocaleFormat.integer(section.itemCount),
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -394,7 +396,7 @@ private fun SingleRow(
             Spacer(modifier = Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = formatBytes(item.fileSizeBytes),
+                    text = formatBytes(item.fileSizeBytes, currentFormatLocale()),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -525,22 +527,22 @@ private fun downloadEntrySubtitle(entry: DownloadEntry): String = when (entry) {
         CommonR.plurals.downloads_entry_episodesDone,
         entry.episodes.size,
         entry.episodes.size,
-        entry.completedCount.toString(),
-        entry.episodes.size.toString(),
+        LocaleFormat.integer(entry.completedCount),
+        LocaleFormat.integer(entry.episodes.size),
     )
     is DownloadEntry.Series -> pluralStringResource(
         CommonR.plurals.downloads_entry_episodesDone,
         entry.totalEpisodes,
         entry.totalEpisodes,
-        entry.completedEpisodes.toString(),
-        entry.totalEpisodes.toString(),
+        LocaleFormat.integer(entry.completedEpisodes),
+        LocaleFormat.integer(entry.totalEpisodes),
     )
     is DownloadEntry.Author -> pluralStringResource(
         CommonR.plurals.downloads_entry_booksDone,
         entry.books.size,
         entry.books.size,
-        entry.completedCount.toString(),
-        entry.books.size.toString(),
+        LocaleFormat.integer(entry.completedCount),
+        LocaleFormat.integer(entry.books.size),
     )
     is DownloadEntry.Single -> storedDownloadSubtitle(entry.subtitle).orEmpty()
 }
@@ -615,7 +617,7 @@ private fun AggregateRow(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = formatBytes(totalBytesUsed),
+                text = formatBytes(totalBytesUsed, currentFormatLocale()),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

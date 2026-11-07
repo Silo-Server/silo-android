@@ -31,7 +31,7 @@ fun stringResourceWithNames(@StringRes id: Int, vararg names: String): String =
  */
 @Composable
 fun pluralStringResourceWithNames(@PluralsRes id: Int, count: Int, vararg names: String): String =
-    pluralStringResource(id, count, count, count.toString(), *isolated(names))
+    pluralStringResource(id, count, count, LocaleFormat.integer(count), *isolated(names))
 
 @Composable
 private fun isolated(names: Array<out String>): Array<String> =

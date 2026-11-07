@@ -207,6 +207,7 @@ class AppLanguageStore(
     fun check(activity: Activity) {
         foreground = WeakReference(activity)
         AppLocales.reassertDefault(appContext)
+        LocaleFormat.refresh(appContext)
         scope.launch { reconcile() }
     }
 

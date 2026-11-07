@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.localizedResources
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -60,9 +61,12 @@ data class TvMediaInfoTrackSummary(
 internal fun tvMediaInfoAudioSummary(resources: Resources, track: AudioTrack): TvMediaInfoTrackSummary {
     val primary = normalizedHumanTitle(track.title)
         ?: languageDisplayName(track.language)
-        ?: resources.getString(CommonR.string.detail_mediaInfo_audioTrack, track.index.toString())
+        ?: resources.getString(CommonR.string.detail_mediaInfo_audioTrack, LocaleFormat.integer(track.index))
     val secondary = listOfNotNull(
-        languageDisplayName(track.language)?.takeUnless { it.equals(primary, ignoreCase = true) },
+        languageDisplayName(track.language)?.takeUnless {
+            // A title is matched against the English name too: release titles are English.
+            it.equals(primary, ignoreCase = true) || languageDisplayName(track.language, Locale.ENGLISH).equals(primary, ignoreCase = true)
+        },
         track.channelLayout?.trim()?.takeIf { it.isNotBlank() } ?: channelLabel(resources, track.channels),
         codecLabel(track.codec),
         if (track.isDefault) resources.getString(CommonR.string.detail_trackDefault) else null,
@@ -74,7 +78,7 @@ internal fun tvMediaInfoSubtitleSummary(resources: Resources, track: SubtitleTra
     val rawTitle = track.title?.trim()
     val primary = normalizedHumanTitle(rawTitle)
         ?: languageDisplayName(track.language)
-        ?: resources.getString(CommonR.string.detail_mediaInfo_subtitleTrack, track.index.toString())
+        ?: resources.getString(CommonR.string.detail_mediaInfo_subtitleTrack, LocaleFormat.integer(track.index))
     val secondary = listOfNotNull(
         codecLabel(track.codec),
         if (track.isDefault) resources.getString(CommonR.string.detail_trackDefault) else null,
@@ -195,7 +199,7 @@ fun TvMediaInfoDialog(
                 if (version.bitrate > 0) {
                     InfoRow(
                         stringResource(CommonR.string.detail_mediaInfo_bitrate),
-                        stringResource(CommonR.string.settings_rate_kbps, (version.bitrate / 1000).toString()),
+                        stringResource(CommonR.string.settings_rate_kbps, LocaleFormat.integer(version.bitrate / 1000)),
                     )
                 }
 
@@ -316,9 +320,9 @@ private fun MediaInfoScrollAffordance(
 private fun formatBytes(resources: Resources, bytes: Long): String {
     if (bytes <= 0) return "0 B"
     val gb = bytes / 1_000_000_000.0
-    if (gb >= 1.0) return resources.getString(CommonR.string.detail_sizeGb, "%.2f".format(gb))
+    if (gb >= 1.0) return resources.getString(CommonR.string.detail_sizeGb, String.format(LocaleFormat.locale(), "%.2f", gb))
     val mb = bytes / 1_000_000.0
-    return resources.getString(CommonR.string.detail_sizeMb, "%.0f".format(mb))
+    return resources.getString(CommonR.string.detail_sizeMb, String.format(LocaleFormat.locale(), "%.0f", mb))
 }
 
 private fun normalizedHumanTitle(value: String?): String? {
@@ -342,7 +346,8 @@ private fun looksLikeReleaseFileName(value: String): Boolean {
         .any { it in lower } && ('[' in value || '-' in value || '.' in value)
 }
 
-private fun languageDisplayName(value: String?): String? {
+/** The language's name in [inLocale], by default the interface language. */
+private fun languageDisplayName(value: String?, inLocale: Locale = LocaleFormat.interfaceLocale()): String? {
     val normalized = value?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() && it != "und" }
         ?: return null
     val iso2 = when (normalized) {
@@ -359,10 +364,10 @@ private fun languageDisplayName(value: String?): String? {
         "rus" -> "ru"
         else -> normalized
     }
-    val display = Locale.forLanguageTag(iso2).getDisplayLanguage(Locale.ENGLISH)
+    val display = Locale.forLanguageTag(iso2).getDisplayLanguage(inLocale)
         .takeIf { it.isNotBlank() && !it.equals(iso2, ignoreCase = true) }
         ?: iso2.uppercase(Locale.ROOT)
-    return display.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+    return display.replaceFirstChar { if (it.isLowerCase()) it.titlecase(inLocale) else it.toString() }
 }
 
 private fun codecLabel(value: String?): String? {
@@ -389,5 +394,5 @@ private fun channelLabel(resources: Resources, channels: Int?): String? = when (
     2 -> resources.getString(CommonR.string.detail_stereo)
     6 -> "5.1"
     8 -> "7.1"
-    else -> resources.getString(CommonR.string.detail_channels, channels.toString())
+    else -> resources.getString(CommonR.string.detail_channels, LocaleFormat.integer(channels))
 }

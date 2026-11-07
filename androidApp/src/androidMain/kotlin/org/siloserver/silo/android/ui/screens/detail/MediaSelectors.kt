@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.localizedResources
 import android.content.res.Resources
 import org.siloserver.silo.model.playback.matchesSignature
@@ -675,8 +676,8 @@ fun formatAudioLabel(resources: Resources, track: AudioTrack?): String {
     val parts = mutableListOf<String>()
     trackHeadline(track.language, track.title)?.let { parts.add(it) }
     track.channelLayout?.let { parts.add(it) }
-        ?: track.channels?.let { parts.add(resources.getString(CommonR.string.detail_channels, it.toString())) }
-    return parts.joinToString(" \u00B7 ").ifBlank { resources.getString(CommonR.string.detail_track, "1") }
+        ?: track.channels?.let { parts.add(resources.getString(CommonR.string.detail_channels, LocaleFormat.integer(it))) }
+    return parts.joinToString(" \u00B7 ").ifBlank { resources.getString(CommonR.string.detail_track, LocaleFormat.integer(1)) }
 }
 
 fun formatSubtitleLabel(resources: Resources, track: SubtitleTrack?): String {
@@ -733,9 +734,9 @@ private fun formatVersionSubtitle(resources: Resources, version: FileVersion): S
     if (version.fileSize > 0) {
         val sizeMB = version.fileSize / (1024.0 * 1024.0)
         val sizeStr = if (sizeMB >= 1024) {
-            resources.getString(CommonR.string.detail_sizeGb, "%.1f".format(sizeMB / 1024.0))
+            resources.getString(CommonR.string.detail_sizeGb, String.format(LocaleFormat.locale(), "%.1f", sizeMB / 1024.0))
         } else {
-            resources.getString(CommonR.string.detail_sizeMb, "%.0f".format(sizeMB))
+            resources.getString(CommonR.string.detail_sizeMb, String.format(LocaleFormat.locale(), "%.0f", sizeMB))
         }
         parts.add(sizeStr)
     }
@@ -840,7 +841,7 @@ private fun formatCompactAudioLayout(resources: Resources, track: AudioTrack): S
             2 -> resources.getString(CommonR.string.detail_stereo)
             6 -> "5.1"
             8 -> "7.1"
-            else -> track.channels?.let { resources.getString(CommonR.string.detail_channels, it.toString()) }
+            else -> track.channels?.let { resources.getString(CommonR.string.detail_channels, LocaleFormat.integer(it)) }
         }
         "7.1" in lowered -> "7.1"
         "5.1" in lowered -> "5.1"
@@ -853,16 +854,16 @@ private fun formatCompactAudioLayout(resources: Resources, track: AudioTrack): S
 
 private fun formatAudioTitle(resources: Resources, track: AudioTrack, index: Int): String {
     return trackHeadline(track.language, track.title) ?: track.title
-        ?: resources.getString(CommonR.string.detail_audioTrackNumber, (index + 1).toString())
+        ?: resources.getString(CommonR.string.detail_audioTrackNumber, LocaleFormat.integer(index + 1))
 }
 
 private fun formatAudioSubtitle(resources: Resources, track: AudioTrack): String {
     val parts = mutableListOf<String>()
     track.codec?.uppercase()?.let { parts.add(it) }
     track.channelLayout?.let { parts.add(it) }
-        ?: track.channels?.let { parts.add(resources.getString(CommonR.string.detail_channels, it.toString())) }
+        ?: track.channels?.let { parts.add(resources.getString(CommonR.string.detail_channels, LocaleFormat.integer(it))) }
     track.bitrate?.let { br ->
-        if (br > 0) parts.add(resources.getString(CommonR.string.detail_bitrateKbps, (br / 1000).toString()))
+        if (br > 0) parts.add(resources.getString(CommonR.string.detail_bitrateKbps, LocaleFormat.integer(br / 1000)))
     }
     return parts.joinToString(" \u00B7 ")
 }
@@ -875,7 +876,7 @@ private fun buildAudioBadges(resources: Resources, track: AudioTrack): List<Stri
 
 private fun formatSubtitleTitle(resources: Resources, track: SubtitleTrack, index: Int): String {
     return trackHeadline(track.language, track.title) ?: track.title
-        ?: resources.getString(CommonR.string.detail_track, (index + 1).toString())
+        ?: resources.getString(CommonR.string.detail_track, LocaleFormat.integer(index + 1))
 }
 
 private fun formatSubtitleSubtitle(resources: Resources, track: SubtitleTrack): String {

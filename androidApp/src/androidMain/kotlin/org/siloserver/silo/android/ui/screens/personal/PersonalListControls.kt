@@ -22,6 +22,7 @@ import org.siloserver.silo.android.ui.components.SortFilterControlsRow
 import org.siloserver.silo.android.ui.components.SortMenuOption
 import org.siloserver.silo.android.ui.screens.browse.FilterSheet
 import org.siloserver.silo.catalog.filter.BrowseFacetMediaType
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.viewmodel.PersonalListQuery
 import org.siloserver.silo.common.R as CommonR
@@ -104,7 +105,7 @@ fun PersonalListControlsRow(
         trailing = {
             if (total != null && total > 0) {
                 Text(
-                    text = pluralStringResource(CommonR.plurals.personal_titleCount, total, total, total.toString()),
+                    text = pluralStringResource(CommonR.plurals.personal_titleCount, total, total, LocaleFormat.integer(total)),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

@@ -5,6 +5,7 @@ import androidx.annotation.StringRes
 import org.siloserver.silo.catalog.filter.CatalogFacet
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.catalog.filter.CatalogFilterState
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.model.catalog.CatalogQueryGroup
 import org.siloserver.silo.model.catalog.CatalogQueryRule
@@ -68,7 +69,7 @@ enum class TvCatalogFacet(@StringRes val titleRes: Int) {
      * [resources] supplies the fixed-vocabulary labels.
      */
     fun optionPairs(options: CatalogFiltersResponse?, resources: Resources): List<Pair<String, String>> = when (this) {
-        Decade -> DecadeLadder.map { it.toString() to resources.getString(CommonR.string.filters_decade, it.toString()) }
+        Decade -> DecadeLadder.map { it.toString() to resources.getString(CommonR.string.filters_decade, LocaleFormat.integer(it)) }
         DynamicRange -> listOf("hdr" to "HDR", "dolby_vision" to "Dolby Vision")
         WatchStatus -> TvWatchStatusFilter.entries.map { it.wireValue to resources.getString(it.labelRes) }
         Genre -> options?.genres.orEmpty().map { it to it }

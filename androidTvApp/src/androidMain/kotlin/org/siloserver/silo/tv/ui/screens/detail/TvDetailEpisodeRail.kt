@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -97,6 +98,7 @@ import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.i18n.localizedResources
 import androidx.compose.ui.platform.LocalConfiguration
+import java.util.Locale
 
 /** Includes the still, the two-line caption, and vertical rail padding from the first frame. */
 @Composable
@@ -580,9 +582,10 @@ private fun TvDetailEpisodeCard(
         val title = remember(episode, configuration) {
             EpisodeCardCaption.title(episode.copy(title = episode.title?.trim()?.let(::bidiIsolated))).text(resources)
         }
-        val metadata = remember(episode, configuration) {
+        val dateLocale = currentFormatLocale()
+        val metadata = remember(episode, configuration, dateLocale) {
             EpisodeCardCaption.metadata(
-                airDate = abbreviatedEpisodeDate(episode.airDate),
+                airDate = abbreviatedEpisodeDate(episode.airDate, dateLocale),
                 runtimeMinutes = episode.runtime,
             )?.text(resources)
         }
@@ -673,8 +676,8 @@ private val CaptionOverviewStyle = TextStyle(
 )
 
 // Shared with the hero facts row (tvOS parity), so the card dates agree with it.
-private fun abbreviatedEpisodeDate(raw: String?): String? =
-    TvDetailMetadata.abbreviatedDate(raw)
+private fun abbreviatedEpisodeDate(raw: String?, locale: Locale): String? =
+    TvDetailMetadata.abbreviatedDate(raw, locale = locale)
 
 private fun EpisodeListItem.progressFraction(): Float? {
     val user = userData ?: return null
