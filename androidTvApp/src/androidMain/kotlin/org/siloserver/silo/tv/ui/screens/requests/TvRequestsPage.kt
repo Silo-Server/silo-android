@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.requests
 
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.i18n.text
 import androidx.compose.runtime.rememberCoroutineScope
 import org.siloserver.silo.common.requests.rememberRequestRouter
@@ -162,14 +163,14 @@ fun TvRequestsPage(
     // for a few seconds. The view models outlive this page's composition (a
     // detail push and Back re-enter it), so remember what was already shown
     // and replay nothing.
-    val context = LocalContext.current
-    var transientMessage by remember { mutableStateOf<String?>(null) }
+    // Held as UiText and resolved where it shows, so it follows an in-place language change.
+    var transientMessage by remember { mutableStateOf<UiText?>(null) }
     // Saved state can't hold the message itself, so it keeps the message's
     // identity: its description, which doesn't change with the app language.
     val cancelMessage = mineState.actionErrorMessage
     var seenCancelMessage by rememberSaveable { mutableStateOf(cancelMessage?.toString()) }
     var seenNotice by rememberSaveable { mutableStateOf(mineState.notice?.sequence) }
-    suspend fun showTransient(message: String) {
+    suspend fun showTransient(message: UiText) {
         transientMessage = message
         delay(ActionMessageMs)
         if (transientMessage == message) transientMessage = null
@@ -180,13 +181,13 @@ fun TvRequestsPage(
         if (message == null) seenCancelMessage = null
         if (message == null || message.toString() == seenCancelMessage) return@LaunchedEffect
         seenCancelMessage = message.toString()
-        showTransient(message.text.text(context))
+        showTransient(message.text)
     }
     LaunchedEffect(mineState.notice) {
         val notice = mineState.notice
         if (notice == null || notice.sequence == seenNotice) return@LaunchedEffect
         seenNotice = notice.sequence
-        showTransient(notice.message.text.text(context))
+        showTransient(notice.message.text)
     }
     val actionMessage = transientMessage
 
@@ -270,7 +271,7 @@ fun TvRequestsPage(
         }
         if (actionMessage != null) {
             Text(
-                text = actionMessage,
+                text = actionMessage.text(),
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 16.sp),
                 color = SiloOnSurface,
                 modifier = Modifier
