@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -480,11 +481,12 @@ internal fun RequestSummaryCard(
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(text = title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = SiloOnSurface)
             if (parts.isNotEmpty()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                // A status that doesn't fit moves to the next line whole.
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     parts.forEach { (tint, text) ->
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                             Box(modifier = Modifier.size(6.dp).background(tint.uiColor(), CircleShape))
-                            Text(text = text, fontSize = 12.sp, color = SiloSecondaryText)
+                            Text(text = text, fontSize = 12.sp, color = SiloSecondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
