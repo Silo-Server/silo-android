@@ -24,9 +24,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -463,7 +465,14 @@ private fun WatchPartyCodeField(
         decorationBox = { inner ->
             Box(Modifier.fillMaxSize().padding(horizontal = 14.dp), contentAlignment = Alignment.CenterStart) {
                 if (value.isEmpty()) {
-                    Text(label, style = style.copy(color = SiloSecondaryText.copy(alpha = 0.5f)), maxLines = 1)
+                    // Monospace at 17sp holds about 19 characters here; a longer
+                    // translated placeholder steps down instead of being cut.
+                    BasicText(
+                        label,
+                        style = style.copy(color = SiloSecondaryText.copy(alpha = 0.5f)),
+                        maxLines = 1,
+                        autoSize = TextAutoSize.StepBased(minFontSize = 11.sp, maxFontSize = 17.sp, stepSize = 0.5.sp),
+                    )
                 }
                 inner()
             }
