@@ -510,13 +510,16 @@ internal fun WatchPartyButton(
             Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
         }
+        // Two centred lines, so a longer translation such as "Iniciar una Watch
+        // Party con votación de todos" wraps instead of ellipsizing.
         Text(
             text,
             fontSize = 17.sp,
             fontWeight = FontWeight.SemiBold,
             color = foreground,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
         )
         trailing?.invoke(this)
     }
