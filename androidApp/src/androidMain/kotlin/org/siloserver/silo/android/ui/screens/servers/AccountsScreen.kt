@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.ui.marquee.MarqueeServerMark
 import org.siloserver.silo.common.ui.marquee.ServerBrandingLoader
 import org.siloserver.silo.common.ui.marquee.rememberSignInServer
@@ -55,7 +56,6 @@ import org.siloserver.silo.common.downloads.DownloadSummary
 import org.siloserver.silo.common.ui.marquee.ServerBranding
 import org.siloserver.silo.model.server.AccountEntry
 import org.siloserver.silo.model.server.ServerEntry
-import org.siloserver.silo.network.localroute.LocalRoute
 
 /**
  * Settings › Accounts (multi-account spec §4.5), the management surface that
@@ -333,7 +333,7 @@ private fun ServerHeader(
                 )
                 Text(
                     text = if (isOnLocalNetwork) {
-                        "${ServerBranding.hostLabel(server.url)} · ${LocalRoute.STATUS_TEXT}"
+                        stringResourceWithNames(CommonR.string.accounts_hostOnLocalNetwork, ServerBranding.hostLabel(server.url))
                     } else {
                         ServerBranding.hostLabel(server.url)
                     },
