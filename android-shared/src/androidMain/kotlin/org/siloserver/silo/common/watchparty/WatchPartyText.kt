@@ -75,6 +75,6 @@ fun watchPartyHistoryLabel(watched: Boolean?, inProgress: Boolean, onWatchlist: 
 fun WatchPartyPresence.text(): String = when (this) {
     WatchPartyPresence.OnlyYou -> stringResource(R.string.watchParty_presence_onlyYou)
     WatchPartyPresence.Nobody -> stringResource(R.string.watchParty_presence_nobody)
-    is WatchPartyPresence.Ready -> pluralStringResource(R.plurals.watchParty_presence_ready, here, ready.toString(), here)
-    is WatchPartyPresence.Watching -> pluralStringResource(R.plurals.watchParty_presence_watching, here, watching.toString(), here)
+    is WatchPartyPresence.Ready -> pluralStringResource(R.plurals.watchParty_presence_ready, here, LocaleFormat.integer(ready), here)
+    is WatchPartyPresence.Watching -> pluralStringResource(R.plurals.watchParty_presence_watching, here, LocaleFormat.integer(watching), here)
 }

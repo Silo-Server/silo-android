@@ -278,6 +278,7 @@ class SharedPresentationTextTest {
             assertEquals("1234", UiText.Number(1234).text(arabic))
         } finally {
             Locale.setDefault(before)
+            LocaleFormat.resetForTests()
         }
     }
 }

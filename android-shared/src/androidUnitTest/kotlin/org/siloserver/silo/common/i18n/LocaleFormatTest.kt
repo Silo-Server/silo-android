@@ -123,6 +123,8 @@ class LocaleFormatTest {
     /** D26: the device's own region when it speaks the chosen language, else the chosen language. */
     @Test @Config(qualifiers = "en-rGB")
     fun formattingFollowsTheDeviceWhenItSpeaksTheChosenLanguage() {
+        // The device list is process-wide; read this test's, not an earlier test's.
+        LocaleFormat.refresh(androidx.test.core.app.ApplicationProvider.getApplicationContext())
         Locale.setDefault(Locale.ENGLISH)
         assertEquals(Locale.UK, LocaleFormat.locale())
         Locale.setDefault(de)

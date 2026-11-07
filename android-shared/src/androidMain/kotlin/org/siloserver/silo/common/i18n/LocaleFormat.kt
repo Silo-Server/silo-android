@@ -6,6 +6,7 @@ import android.content.res.Resources
 import android.icu.util.ULocale
 import android.os.Build
 import android.os.LocaleList
+import androidx.annotation.VisibleForTesting
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.platform.LocalConfiguration
@@ -56,6 +57,14 @@ object LocaleFormat {
                 Resources.getSystem().configuration.locales
             }
         }.getOrNull()
+    }
+
+    /** Forgets the device list and shipped languages, so a unit test doesn't leak them to the next. */
+    @VisibleForTesting
+    internal fun resetForTests() {
+        deviceLocales = null
+        shipped = null
+        resolved = null
     }
 
     /** The locale to format dates, times and numbers in (D26). */
