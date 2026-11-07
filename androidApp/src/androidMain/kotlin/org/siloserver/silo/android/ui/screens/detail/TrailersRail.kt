@@ -42,6 +42,8 @@ import org.siloserver.silo.model.catalog.ItemExtra
 import org.siloserver.silo.model.catalog.TrailerRailEntry
 import org.siloserver.silo.model.catalog.extraKindLabel
 import org.siloserver.silo.model.catalog.trailerRailDurationLabel
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.uppercaseForUi
 
 /**
  * "Trailers & More" section — header plus a horizontal rail of remote
@@ -108,9 +110,10 @@ private fun TrailerCard(
     entry: TrailerRailEntry,
     onClick: () -> Unit,
 ) {
-    val kindLabel = extraKindLabel(entry.kind)
+    val kindLabel = extraKindLabel(entry.kind).text()
+    val title = entry.title.text()
     val durationLabel = trailerRailDurationLabel(entry)
-    val cardDescription = stringResource(CommonR.string.detail_trailerCardDescription, entry.title, kindLabel)
+    val cardDescription = stringResource(CommonR.string.detail_trailerCardDescription, title, kindLabel)
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier
@@ -153,7 +156,7 @@ private fun TrailerCard(
         }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                text = kindLabel.uppercase(),
+                text = kindLabel.uppercaseForUi(),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.sp,
@@ -161,7 +164,7 @@ private fun TrailerCard(
                 maxLines = 1,
             )
             Text(
-                text = entry.title,
+                text = title,
                 fontSize = 14.sp,
                 lineHeight = 18.sp,
                 fontWeight = FontWeight.SemiBold,

@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.settings
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -66,8 +67,8 @@ fun SubtitleProfileSection(
         val languageLabels = subtitleLanguageOptions.map { it.second }
         SettingsIndexedDropdownRow(
             label = stringResource(CommonR.string.settings_control_language),
-            value = languageValue,
-            options = languageLabels,
+            value = languageValue.text(),
+            options = languageLabels.map { it.text() },
             selectedIndex = languageLabels.indexOf(languageValue),
             onIndexSelected = { onLanguageChanged(subtitleLanguageOptions[it].first) },
         )
@@ -115,8 +116,8 @@ fun SubtitleMetadataSection(
         val metadataLabels = metadataLanguageOptions.map { it.second }
         SettingsIndexedDropdownRow(
             label = stringResource(CommonR.string.settings_control_metadataLanguage),
-            value = metadataValue,
-            options = metadataLabels,
+            value = metadataValue.text(),
+            options = metadataLabels.map { it.text() },
             selectedIndex = metadataLabels.indexOf(metadataValue),
             onIndexSelected = { onMetadataLanguageChanged(metadataLanguageOptions[it].first) },
         )

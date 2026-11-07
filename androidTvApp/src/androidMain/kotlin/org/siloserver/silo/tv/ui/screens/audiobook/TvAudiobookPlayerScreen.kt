@@ -373,7 +373,7 @@ fun TvAudiobookPlayerScreen(
                     val currentChapterLabel = tvAudiobookCurrentChapterLabel(
                         chapters = state.chapters,
                         currentChapterIndex = currentChapterIndex,
-                        fallback = chapterCountLabel,
+                        hasChapterLine = chapterCountLabel != null,
                     )
                     Row(
                         modifier = Modifier
@@ -950,13 +950,16 @@ private fun TvAudiobookPillButton(
 private fun tvAudiobookCurrentChapterLabel(
     chapters: List<VersionChapter>,
     currentChapterIndex: Int,
-    fallback: String,
+    /** Whether the player shows a "Chapter N of M" line (two or more chapters). */
+    hasChapterLine: Boolean,
 ): String {
     val chapter = chapters.getOrNull(currentChapterIndex)
     val title = chapter?.title?.trim().orEmpty()
     if (title.isNotBlank()) return title
     if (chapter != null) return stringResource(CommonR.string.options_chapterNumbered, (chapter.index + 1).toString())
-    return fallback.substringBefore(" of ").takeIf { it.isNotBlank() }.orEmpty()
+    // The chapter list hasn't caught up with the index yet: "Chapter N" from the index alone.
+    if (!hasChapterLine) return ""
+    return stringResource(CommonR.string.options_chapterNumbered, (currentChapterIndex + 1).toString())
 }
 
 @Composable

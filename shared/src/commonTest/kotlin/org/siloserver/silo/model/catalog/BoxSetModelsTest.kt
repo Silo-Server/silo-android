@@ -1,6 +1,9 @@
 package org.siloserver.silo.model.catalog
 
 import kotlin.test.*
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.SharedPlural
 
 class BoxSetModelsTest {
     private fun movie(id: String, played: Boolean = false, position: Double? = null) = BrowseItem(
@@ -21,26 +24,34 @@ class BoxSetModelsTest {
         val next = assertNotNull(boxSetNextMovie(items))
         assertEquals("hp2", next.contentId)
         assertEquals(600.0, next.boxSetResumePosition())
-        assertEquals("Continue · hp2", boxSet.copy(playedCount = 1).playLabel(next))
+        assertEquals(UiText.Key(SharedString.BoxSetContinue, listOf("hp2")), boxSet.copy(playedCount = 1).playLabel(next))
     }
 
     @Test fun aFullyWatchedBoxSetStartsOverFromTheFirstMovie() {
         val items = listOf(movie("hp1", played = true), movie("hp2", played = true))
         val next = assertNotNull(boxSetNextMovie(items))
         assertEquals("hp1", next.contentId)
-        assertEquals("Play hp1", boxSet.copy(movieCount = 2, playedCount = 2).playLabel(next))
+        assertEquals(UiText.Key(SharedString.BoxSetPlay, listOf("hp1")), boxSet.copy(movieCount = 2, playedCount = 2).playLabel(next))
         assertNull(boxSetNextMovie(emptyList()))
     }
 
     @Test fun captionsAndFacts() {
-        assertEquals("2001 – 2011", boxSet.yearsLabel())
-        assertEquals("2001", boxSet.copy(lastYear = 2001).yearsLabel())
+        val years = UiText.Key(SharedString.BoxSetYears, listOf(UiText.Number(2001), UiText.Number(2011)))
+        val films = UiText.Plural(SharedPlural.BoxSetFilms, 8)
+        assertEquals(years, boxSet.yearsLabel())
+        assertEquals(UiText.Number(2001), boxSet.copy(lastYear = 2001).yearsLabel())
         assertNull(boxSet.copy(firstYear = null, lastYear = 0).yearsLabel())
-        assertEquals("2001 – 2011", boxSet.cardCaption())
-        assertEquals("8 films", boxSet.copy(firstYear = null, lastYear = null).cardCaption())
-        assertEquals("5 / 8 watched", boxSet.copy(playedCount = 5).cardCaption())
-        assertEquals("1 film", boxSetFilmCount(1))
-        assertEquals(listOf("8 films", "2001 – 2011", "5 of 8 watched"), boxSet.copy(playedCount = 5).heroFacts())
+        assertEquals(years, boxSet.cardCaption())
+        assertEquals(films, boxSet.copy(firstYear = null, lastYear = null).cardCaption())
+        assertEquals(
+            UiText.Plural(SharedPlural.BoxSetWatchedCard, 8, listOf(UiText.Number(5))),
+            boxSet.copy(playedCount = 5).cardCaption(),
+        )
+        assertEquals(UiText.Plural(SharedPlural.BoxSetFilms, 1), boxSetFilmCount(1))
+        assertEquals(
+            listOf(films, years, UiText.Plural(SharedPlural.BoxSetWatchedFact, 8, listOf(UiText.Number(5)))),
+            boxSet.copy(playedCount = 5).heroFacts(),
+        )
         assertNull(boxSet.watchedFraction)
         assertEquals(0.5f, boxSet.copy(playedCount = 4).watchedFraction)
     }

@@ -129,6 +129,7 @@ import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
 import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.common.i18n.text
 
 // Geometry follows the options mockup on a 960×540dp screen: a capsule tab
 // rail 24dp from the top, and a smoked panel 10dp under it, 780dp (81%) wide
@@ -1205,7 +1206,7 @@ private fun HudVideoPane(
                     HudFocusedSettingRow(
                         label = qualityLabel,
                         // No row lit: a saved resolution the source plays under.
-                        value = selectedQuality?.label ?: QualityChoices.resolutionLabel(videoQualityPreference),
+                        value = selectedQuality?.label ?: QualityChoices.resolutionLabel(videoQualityPreference).text(),
                         enabled = enabled,
                         entryFocusRequester = entryFocusRequester.takeIf { entryRow == "quality" },
                         onActivate = {

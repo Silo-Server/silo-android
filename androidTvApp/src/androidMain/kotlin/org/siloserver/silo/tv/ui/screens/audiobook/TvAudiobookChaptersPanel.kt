@@ -13,6 +13,7 @@ import org.siloserver.silo.audiobook.audiobookChapterLabel
 import org.siloserver.silo.model.catalog.VersionChapter
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Full-screen, focusable chapters overlay. Auto-scrolls to + highlights the
@@ -50,7 +51,7 @@ fun TvAudiobookChaptersPanel(
         LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) {
             itemsIndexed(chapters) { index, chapter ->
                 TvAudiobookOverlayRow(
-                    label = audiobookChapterLabel(index, chapter.title),
+                    label = audiobookChapterLabel(index, chapter.title).text(),
                     trailing = formatAudiobookTime(chapter.startSeconds),
                     isCurrent = index == currentChapterIndex,
                     focusRequester = if (index == focusIndex) focusRequester else null,

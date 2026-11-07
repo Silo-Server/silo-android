@@ -25,9 +25,14 @@ import org.siloserver.silo.common.i18n.errorText
 data class CollectionSection(
     /** Null when this section is the anonymous "Ungrouped" bucket. */
     val groupId: String?,
+    /** The group's name, or "Ungrouped" in English; stable across languages, so it can key a list. */
     val name: String,
     val collections: List<Collection>,
-)
+) {
+    /** The heading a screen shows: the group's name, or the catalog's "Ungrouped". */
+    val title: UiText
+        get() = if (groupId == null) UiText.Key(SharedString.CollectionsUngrouped) else UiText.Raw(name)
+}
 
 data class CollectionsUiState(
     val collections: List<Collection> = emptyList(),

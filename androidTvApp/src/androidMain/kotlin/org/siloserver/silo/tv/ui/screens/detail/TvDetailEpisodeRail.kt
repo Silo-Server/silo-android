@@ -94,6 +94,9 @@ import org.siloserver.silo.tv.ui.theme.cardFocusedScale
 import org.siloserver.silo.tv.ui.theme.cardScaled
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.localizedResources
+import androidx.compose.ui.platform.LocalConfiguration
 
 /** Includes the still, the two-line caption, and vertical rail padding from the first frame. */
 @Composable
@@ -572,14 +575,16 @@ private fun TvDetailEpisodeCard(
         // episode is marked by its still's border, as on tvOS. The card
         // recomposes on every frame of its focus animation, so the text is built
         // once per episode.
-        val title = remember(episode) {
-            EpisodeCardCaption.title(episode.copy(title = episode.title?.trim()?.let(::bidiIsolated)))
+        val resources = localizedResources()
+        val configuration = LocalConfiguration.current
+        val title = remember(episode, configuration) {
+            EpisodeCardCaption.title(episode.copy(title = episode.title?.trim()?.let(::bidiIsolated))).text(resources)
         }
-        val metadata = remember(episode) {
+        val metadata = remember(episode, configuration) {
             EpisodeCardCaption.metadata(
                 airDate = abbreviatedEpisodeDate(episode.airDate),
                 runtimeMinutes = episode.runtime,
-            )
+            )?.text(resources)
         }
         Column(verticalArrangement = Arrangement.spacedBy(if (usesSeriesGeometry) SeriesCaptionLineGap else 4.dp)) {
             Text(

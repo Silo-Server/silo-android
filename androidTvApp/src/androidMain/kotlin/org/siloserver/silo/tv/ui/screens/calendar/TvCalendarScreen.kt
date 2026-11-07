@@ -1469,7 +1469,7 @@ private fun CalendarEventCard(
                             .padding(6.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        badges.forEach { label -> BadgePill(text = label) }
+                        badges.forEach { label -> BadgePill(text = label.text()) }
                     }
                 }
 

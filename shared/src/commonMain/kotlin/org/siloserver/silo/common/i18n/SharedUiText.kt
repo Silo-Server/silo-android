@@ -41,6 +41,32 @@ sealed interface UiText {
 
     /** Text that arrives already worded: the server's own message, user input. */
     data class Raw(val text: String) : UiText
+
+    /**
+     * A number for a `String` placeholder, or shown alone: in the interface
+     * language's digits, without grouping (D55), so English keeps "1234".
+     * At most [maxFractionDigits] decimals, and at least [minIntegerDigits]
+     * whole digits ("02" for an episode code).
+     */
+    data class Number(
+        val value: Double,
+        val maxFractionDigits: Int = 0,
+        val minIntegerDigits: Int = 1,
+    ) : UiText {
+        constructor(value: Int, minIntegerDigits: Int = 1) : this(value.toDouble(), 0, minIntegerDigits)
+    }
+
+    /**
+     * A calendar date with the month as a word, in the interface language's
+     * order and month names: "Jan 5, 1980" in US English. [month] is 1–12.
+     */
+    data class CalendarDate(val year: Int, val month: Int, val day: Int) : UiText
+
+    /**
+     * A language's name in the interface language, for a BCP 47 [tag]; the
+     * uppercased tag when the platform has no name for it.
+     */
+    data class LanguageName(val tag: String) : UiText
 }
 
 /**

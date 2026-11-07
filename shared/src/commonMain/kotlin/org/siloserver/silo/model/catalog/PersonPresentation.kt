@@ -1,5 +1,8 @@
 package org.siloserver.silo.model.catalog
 
+import org.siloserver.silo.common.i18n.SharedPlural
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.util.IsoDate
 
 data class PersonWorksFilter(
@@ -7,11 +10,6 @@ data class PersonWorksFilter(
     val title: String,
     val serverMediaType: String?,
     val clientTypes: Set<String> = emptySet(),
-)
-
-private val monthNames = arrayOf(
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 )
 
 private val readingTypes = setOf(
@@ -55,33 +53,42 @@ fun personInitials(name: String): String {
     return initials.ifBlank { "?" }
 }
 
-fun personMetadataBadges(person: Person, todayIso: String? = null): List<String> {
-    val badges = mutableListOf<String>()
-    formattedPersonDate(person.birthDate)?.let { badges += "Born $it" }
+fun personMetadataBadges(person: Person, todayIso: String? = null): List<UiText> {
+    val badges = mutableListOf<UiText>()
+    formattedPersonDate(person.birthDate)?.let { badges += UiText.Key(SharedString.PersonBorn, listOf(it)) }
     if (person.deathDate.isNullOrBlank()) {
-        personAge(person.birthDate, null, todayIso)?.let { badges += "$it years old" }
+        personAge(person.birthDate, null, todayIso)?.let { badges += UiText.Plural(SharedPlural.PersonYearsOld, it) }
     } else {
         val deathDate = formattedPersonDate(person.deathDate)
         val age = personAge(person.birthDate, person.deathDate, todayIso)
         if (deathDate != null && age != null) {
-            badges += "Died $deathDate (age $age)"
+            badges += UiText.Key(SharedString.PersonDiedAge, listOf(deathDate, UiText.Number(age)))
         } else if (deathDate != null) {
-            badges += "Died $deathDate"
+            badges += UiText.Key(SharedString.PersonDied, listOf(deathDate))
         }
     }
-    person.birthplace?.trim()?.takeIf { it.isNotBlank() }?.let { badges += it }
+    person.birthplace?.trim()?.takeIf { it.isNotBlank() }?.let { badges += UiText.Raw(it) }
     return badges
 }
 
-fun formattedPersonDate(raw: String?): String? {
+/** An ISO `YYYY-MM-DD` date with the month as a word ("Jan 5, 1980"), or the server's text as it came. */
+fun formattedPersonDate(raw: String?): UiText? {
     val value = raw?.trim()?.takeIf { it.isNotBlank() } ?: return null
     val parts = value.split("-")
-    if (parts.size != 3) return value
-    val year = parts[0].toIntOrNull() ?: return value
-    val month = parts[1].toIntOrNull() ?: return value
-    val day = parts[2].toIntOrNull() ?: return value
-    if (month !in 1..12 || day !in 1..31) return value
-    return "${monthNames[month - 1]} $day, $year"
+    if (parts.size != 3) return UiText.Raw(value)
+    val year = parts[0].toIntOrNull() ?: return UiText.Raw(value)
+    val month = parts[1].toIntOrNull() ?: return UiText.Raw(value)
+    val day = parts[2].toIntOrNull() ?: return UiText.Raw(value)
+    if (month !in 1..12 || day !in 1..31) return UiText.Raw(value)
+    // A day the month doesn't have (Feb 30) can't be formatted; keep the server's text.
+    if (day > daysInMonth(year, month)) return UiText.Raw(value)
+    return UiText.CalendarDate(year, month, day)
+}
+
+private fun daysInMonth(year: Int, month: Int): Int = when (month) {
+    2 -> if ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0) 29 else 28
+    4, 6, 9, 11 -> 30
+    else -> 31
 }
 
 fun personAge(birthValue: String?, deathValue: String?, todayIso: String?): Int? {
@@ -92,11 +99,12 @@ fun personAge(birthValue: String?, deathValue: String?, todayIso: String?): Int?
     return age.takeIf { it >= 0 }
 }
 
-fun personWorksCountLabel(total: Int, loaded: Int, hasMore: Boolean): String? = when {
-    total > 0 && hasMore -> "$loaded of $total titles"
-    total > 0 -> if (total == 1) "1 title" else "$total titles"
-    loaded > 0 && hasMore -> "$loaded+ titles"
-    loaded > 0 -> if (loaded == 1) "1 title" else "$loaded titles"
+fun personWorksCountLabel(total: Int, loaded: Int, hasMore: Boolean): UiText? = when {
+    total > 0 && hasMore ->
+        UiText.Plural(SharedPlural.PersonTitlesOf, total, listOf(UiText.Number(total), UiText.Number(loaded)))
+    total > 0 -> UiText.Plural(SharedPlural.PersonTitles, total)
+    loaded > 0 && hasMore -> UiText.Plural(SharedPlural.PersonTitlesMore, loaded)
+    loaded > 0 -> UiText.Plural(SharedPlural.PersonTitles, loaded)
     else -> null
 }
 

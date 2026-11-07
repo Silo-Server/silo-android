@@ -328,7 +328,7 @@ internal fun facetValueLabel(
         watchStatusLabel(value)?.let { stringResource(it) } ?: value
     org.siloserver.silo.catalog.filter.CatalogFacet.DynamicRange ->
         org.siloserver.silo.catalog.filter.CatalogFacet.DYNAMIC_RANGE_OPTIONS
-            .firstOrNull { it.first == value }?.second ?: value
+            .firstOrNull { it.first == value }?.second?.text() ?: value
     else -> value
 }
 

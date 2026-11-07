@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.settings
 
+import org.siloserver.silo.common.i18n.text
 import androidx.annotation.StringRes
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -165,15 +166,15 @@ fun PlaybackStreamingSection(
         BufferingQualityMode.entries.map { it to stringResource(bufferingQualityModeLabel(it)) }
     SettingsSection(
         title = stringResource(CommonR.string.settings_section_streaming),
-        footer = QualityChoices.description(qualityResolution, maxBitrateKbps),
+        footer = QualityChoices.description(qualityResolution, maxBitrateKbps).text(),
         modifier = modifier,
     ) {
         val resolutionValue = QualityChoices.resolutionLabel(qualityResolution)
         val resolutionOptions = QualityChoices.RESOLUTIONS.map { it.label }
         ProfileLayeredDropdownRow(
             label = stringResource(CommonR.string.settings_control_resolution),
-            value = resolutionValue,
-            options = resolutionOptions,
+            value = resolutionValue.text(),
+            options = resolutionOptions.map { it.text() },
             selectedIndex = resolutionOptions.indexOf(resolutionValue),
             overridden = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, PlaybackSettingsKeys.PreferredQuality),
             onIndexSelected = { onResolutionSelected(QualityChoices.RESOLUTIONS[it].value) },
@@ -184,8 +185,8 @@ fun PlaybackStreamingSection(
         val bitrateOptions = bitrateChoices.map { it.label }
         ProfileLayeredDropdownRow(
             label = stringResource(CommonR.string.settings_control_bitrate),
-            value = bitrateValue,
-            options = bitrateOptions,
+            value = bitrateValue.text(),
+            options = bitrateOptions.map { it.text() },
             selectedIndex = bitrateOptions.indexOf(bitrateValue),
             overridden = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, PlaybackSettingsKeys.MaxBitrateKbps),
             onIndexSelected = { onMaxBitrateSelected(bitrateChoices[it].value) },
@@ -222,8 +223,8 @@ fun PlaybackStreamingSection(
         val audioLanguageLabels = audioLanguageOptions.map { it.second }
         ProfileLayeredDropdownRow(
             label = stringResource(CommonR.string.settings_control_audioLanguage),
-            value = audioLanguageValue,
-            options = audioLanguageLabels,
+            value = audioLanguageValue.text(),
+            options = audioLanguageLabels.map { it.text() },
             selectedIndex = audioLanguageLabels.indexOf(audioLanguageValue),
             overridden = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, PlaybackSettingsKeys.AudioLanguage),
             onIndexSelected = { onAudioLanguageChanged(audioLanguageOptions[it].first) },
@@ -274,11 +275,11 @@ fun PlaybackCellularSection(
     val label = CellularQuality.label(resolution, maxBitrateKbps)
     val custom = label.takeIf { QualityPresets.presetFor(resolution, maxBitrateKbps) == null }
     val options = QualityPresets.ALL.map { it.label } + listOfNotNull(custom)
-    SettingsSection(title = stringResource(CommonR.string.settings_playback_cellular), footer = CellularQuality.FOOTER, modifier = modifier) {
+    SettingsSection(title = stringResource(CommonR.string.settings_playback_cellular), footer = CellularQuality.FOOTER.text(), modifier = modifier) {
         ProfileLayeredDropdownRow(
             label = stringResource(CommonR.string.settings_playback_cellularQuality),
-            value = label,
-            options = options,
+            value = label.text(),
+            options = options.map { it.text() },
             selectedIndex = options.indexOf(label),
             overridden = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, PlaybackSettingsKeys.CellularPreferredQuality),
             onIndexSelected = { index -> QualityPresets.ALL.getOrNull(index)?.let { onPresetSelected(it.id) } },

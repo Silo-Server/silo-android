@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.settings
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -225,7 +226,7 @@ fun SettingsScreen(
                                 icon = Icons.Filled.Dashboard,
                                 value = state.cardPresentation.takeIf {
                                     it.support != CardPresentationSupport.Unsupported
-                                }?.presentation?.posterSize?.displayName,
+                                }?.presentation?.posterSize?.displayName?.text(),
                                 onClick = onOpenInterface,
                             )
                         }
@@ -256,7 +257,7 @@ fun SettingsScreen(
                             SettingsNavigationRow(
                                 label = stringResource(CommonR.string.settings_playback),
                                 icon = Icons.Filled.PlayArrow,
-                                value = QualityChoices.summary(state.qualityResolution, state.maxBitrateKbps),
+                                value = QualityChoices.summary(state.qualityResolution, state.maxBitrateKbps).text(),
                                 onClick = onOpenPlayback,
                             )
                         }
@@ -264,7 +265,7 @@ fun SettingsScreen(
                             SettingsNavigationRow(
                                 label = stringResource(CommonR.string.settings_subtitles),
                                 icon = Icons.Filled.Subtitles,
-                                value = LanguageOptions.label(state.subtitleLanguage, SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE),
+                                value = LanguageOptions.label(state.subtitleLanguage, SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE).text(),
                                 onClick = onOpenSubtitles,
                             )
                         }

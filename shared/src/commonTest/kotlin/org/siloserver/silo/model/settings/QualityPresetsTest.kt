@@ -80,20 +80,12 @@ class QualityPresetsTest {
             ),
             QualityPresets.ALL.map { it.resolution to it.bitrateKbps },
         )
-        assertEquals(
-            listOf(
-                "Auto", "4K", "1080p High", "1080p", "1080p Low",
-                "720p High", "720p", "480p",
-            ),
-            QualityPresets.ALL.map { it.label },
-        )
     }
 
     @Test
-    fun `a combination no preset covers selects nothing but still describes`() {
+    fun `a combination no preset covers selects nothing`() {
         assertNull(QualityPresets.presetFor("1080p", 4500))
-        assertEquals("1080p at 4.5 Mbps", QualityPresets.describe("1080p", 4500))
-        assertEquals("4K at 25 Mbps", QualityPresets.describe("2160p", 25000))
+        assertNull(QualityPresets.presetFor("2160p", 25000))
     }
 
     @Test
@@ -101,7 +93,6 @@ class QualityPresetsTest {
         assertEquals("auto", QualityPresets.presetFor("auto", null)?.id)
         // 0 is the local store's spelling of uncapped; it must not read as a cap.
         assertEquals("auto", QualityPresets.presetFor("auto", 0)?.id)
-        assertEquals("Auto", QualityPresets.describe("auto", 0))
     }
 
     @Test
@@ -127,9 +118,8 @@ class QualityPresetsTest {
             assertEquals("auto", QualityPresets.normalizeResolution(alias))
         }
         assertEquals("auto", QualityPresets.presetFor("original", null)?.id)
-        assertEquals("Auto", QualityPresets.describe("original", null))
         assertNull(QualityPresets.byId("original"))
-        assertTrue(QualityPresets.ALL.none { it.label == "Original" })
+        assertTrue(QualityPresets.ALL.none { it.resolution == "original" })
     }
 
     @Test

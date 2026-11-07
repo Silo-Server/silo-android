@@ -16,6 +16,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.overlays.CardOverlayPrefs
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.overlays.OverlayDef
@@ -23,13 +25,13 @@ import org.siloserver.silo.overlays.OverlayIconId
 
 /**
  * Resolved values needed to render one badge — the Android port of
- * Apple's `OverlayBadgeRenderState`. The live card path uses [resolve]
- * and treats the `null` return as "do not render"; settings preview can
- * use [resolveForPreview] to force a chip.
+ * Apple's `OverlayBadgeRenderState`. The card path uses [resolve] and
+ * treats the `null` return as "do not render". [label] is resolved in
+ * composition, so it follows an in-place language change.
  */
 internal data class OverlayBadgeRenderState(
     val id: org.siloserver.silo.overlays.OverlayId,
-    val label: String,
+    val label: UiText,
     val iconId: OverlayIconId?,
     val iconOnly: Boolean,
     /** [Color.Unspecified] when the badge has no accent override/default. */
@@ -46,19 +48,9 @@ internal data class OverlayBadgeRenderState(
             return build(def, label, data, prefs, preset)
         }
 
-        fun resolveForPreview(
-            def: OverlayDef,
-            data: OverlayData,
-            prefs: CardOverlayPrefs,
-            preset: OverlayPresetStyle,
-        ): OverlayBadgeRenderState {
-            val label = def.getValue(data) ?: def.label.uppercase()
-            return build(def, label, data, prefs, preset)
-        }
-
         private fun build(
             def: OverlayDef,
-            label: String,
+            label: UiText,
             data: OverlayData,
             prefs: CardOverlayPrefs,
             preset: OverlayPresetStyle,
@@ -118,6 +110,7 @@ internal fun OverlayBadge(
         horizontalArrangement = Arrangement.spacedBy(4.dp * preset.scale),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        val label = state.label.text()
         val iconId = state.iconId
         var renderedIcon = false
         if (iconId != null) {
@@ -143,10 +136,10 @@ internal fun OverlayBadge(
         // reads "HDR10 HDR10". Mirrors web's `labelRedundantWithIcon`.
         val labelRedundantWithIcon = renderedIcon &&
             iconId != null &&
-            overlayBrandToken(iconId)?.equals(state.label.trim(), ignoreCase = true) == true
+            overlayBrandToken(iconId)?.equals(label.trim(), ignoreCase = true) == true
         // Apple: render text unless icon-only AND an icon was shown.
         if ((!state.iconOnly || !renderedIcon) && !labelRedundantWithIcon) {
-            BadgeText(text = state.label, preset = preset, color = foreground)
+            BadgeText(text = label, preset = preset, color = foreground)
         }
     }
 }

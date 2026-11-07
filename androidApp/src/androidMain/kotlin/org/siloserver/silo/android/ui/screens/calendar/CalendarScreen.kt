@@ -721,7 +721,7 @@ private fun CalendarEventCard(
                         .padding(6.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp), // iOS badgeSpacing = 4
                 ) {
-                    badges.forEach { BadgePill(it) }
+                    badges.forEach { BadgePill(it.text()) }
                 }
             }
 

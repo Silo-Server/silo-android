@@ -1,5 +1,8 @@
 package org.siloserver.silo.audiobook
 
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+
 /**
  * Platform-agnostic view of one audiobook chapter: a half-open
  * [startSeconds, endSeconds) span on the playable file. Built from the
@@ -66,10 +69,10 @@ object AudiobookChapters {
      * "Chapter N of M" label, one-based. Null when there are 0 or 1 chapters
      * (single-chapter / chapterless books hide the chapter header).
      */
-    fun countLabel(chapters: List<AudiobookChapter>, positionSeconds: Double): String? {
+    fun countLabel(chapters: List<AudiobookChapter>, positionSeconds: Double): UiText? {
         if (chapters.size < 2) return null
         val n = currentIndex(chapters, positionSeconds) + 1
-        return "Chapter $n of ${chapters.size}"
+        return UiText.Key(SharedString.AudiobookChapterOf, listOf(UiText.Number(n), UiText.Number(chapters.size)))
     }
 
     /**
@@ -110,11 +113,11 @@ object AudiobookChapters {
  * show "Chapter N" (1-based). Genuine titles are returned trimmed as-is. Shared
  * by the phone and TV chapter lists so the behavior is identical and tested once.
  */
-fun audiobookChapterLabel(index: Int, title: String): String {
+fun audiobookChapterLabel(index: Int, title: String): UiText {
     val trimmed = title.trim()
     return if (trimmed.isEmpty() || trimmed.all { it.isDigit() }) {
-        "Chapter ${index + 1}"
+        UiText.Key(SharedString.AudiobookChapter, listOf(UiText.Number(index + 1)))
     } else {
-        trimmed
+        UiText.Raw(trimmed)
     }
 }

@@ -198,7 +198,7 @@ private fun BoxSetContent(
                             detail = hero,
                             eyebrow = stringResource(CommonR.string.boxSets_eyebrow),
                             sourceTokens = emptyList(),
-                            factsLine = boxSet.heroFacts(),
+                            factsLine = boxSet.heroFacts().map { it.text() },
                             portraitArtwork = DetailPortraitArtwork(url = boxSet.posterUrl, thumbhash = boxSet.posterThumbhash),
                             dominantColor = dominantColor,
                             overviewText = boxSet.overview,
@@ -208,7 +208,7 @@ private fun BoxSetContent(
                             if (next != null) {
                                 PrimaryPillButton(
                                     icon = Icons.Filled.PlayArrow,
-                                    label = boxSet.playLabel(next),
+                                    label = boxSet.playLabel(next).text(),
                                     onClick = { onPlayMovie(next.contentId, next.boxSetResumePosition()) },
                                 )
                             }

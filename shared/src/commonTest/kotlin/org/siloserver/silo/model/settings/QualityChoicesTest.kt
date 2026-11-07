@@ -1,41 +1,34 @@
 package org.siloserver.silo.model.settings
 
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
+// The English these labels read is checked in android-shared's SharedPresentationTextTest.
 class QualityChoicesTest {
 
     @Test
     fun resolutionPickerOffersAutoThenEachCeiling() {
-        assertEquals(listOf("Auto", "4K", "1080p", "720p", "480p"), QualityChoices.RESOLUTIONS.map { it.label })
         assertEquals(listOf("auto", "2160p", "1080p", "720p", "480p"), QualityChoices.RESOLUTIONS.map { it.value })
     }
 
     @Test
-    fun resolutionCopySaysWhatPlaysAsIs() {
-        assertEquals(
-            "Plays the original file whenever your device and connection can handle it.",
-            QualityChoices.resolutionDescription("auto"),
-        )
-        assertEquals(
-            "Plays the original file up to 1080p. Larger files are converted.",
-            QualityChoices.resolutionDescription("1080p"),
-        )
-        assertEquals(
-            "Plays the original file up to 4K. Larger files are converted.",
-            QualityChoices.resolutionDescription("2160p"),
-        )
-        // A legacy "original" is Auto.
-        assertEquals("Auto", QualityChoices.resolutionLabel("original"))
+    fun aLegacyOriginalReadsAsAuto() {
+        assertEquals(QualityChoices.resolutionLabel("auto"), QualityChoices.resolutionLabel("original"))
+        assertEquals(QualityChoices.resolutionDescription("auto"), QualityChoices.resolutionDescription("original"))
     }
 
     @Test
     fun theBitrateCopyIsAddedOnlyWhenACapIsSet() {
         assertEquals(QualityChoices.resolutionDescription("720p"), QualityChoices.description("720p", null))
+        assertEquals(QualityChoices.resolutionDescription("720p"), QualityChoices.description("720p", 0))
         assertEquals(
-            "Plays the original file up to 720p. Larger files are converted. " +
-                "Files above this bitrate are converted to fit.",
+            UiText.Key(
+                SharedString.QualityFooterJoined,
+                listOf(QualityChoices.resolutionDescription("720p"), UiText.Key(SharedString.QualityFooterBitrate)),
+            ),
             QualityChoices.description("720p", 4_000),
         )
     }
@@ -43,14 +36,8 @@ class QualityChoicesTest {
     @Test
     fun bitratePickerOffersNoLimitThenTheWebLadderHighestFirst() {
         val choices = QualityChoices.bitrateChoices(null)
-        assertEquals(
-            listOf(
-                "No limit", "200 Mbps", "100 Mbps", "60 Mbps", "40 Mbps", "20 Mbps", "15 Mbps",
-                "10 Mbps", "6 Mbps", "4 Mbps", "2 Mbps", "1.5 Mbps",
-            ),
-            choices.map { it.label },
-        )
-        assertNull(choices.first().value)
+        assertEquals(listOf(null) + QualityChoices.BITRATES_KBPS, choices.map { it.value })
+        assertEquals(choices.map { QualityChoices.bitrateLabel(it.value) }, choices.map { it.label })
         assertEquals(choices, QualityChoices.bitrateChoices(40_000), "a listed cap adds nothing")
     }
 
@@ -61,16 +48,26 @@ class QualityChoicesTest {
         assertEquals(1, choices.count { it.value == 8_500 })
         val values = choices.mapNotNull { it.value }
         assertEquals(values.sortedDescending(), values)
-        assertEquals("8.5 Mbps", QualityChoices.bitrateLabel(8_500))
+        assertEquals(choices.size, choices.map { it.label }.toSet().size, "no two choices share a label")
         // One decimal of Mbps would collide with the 1.5 Mbps choice.
-        assertEquals("1520 kbps", QualityChoices.bitrateLabel(1_520))
-        assertEquals("No limit", QualityChoices.bitrateLabel(null))
+        assertEquals(
+            UiText.Key(SharedString.RateKbps, listOf(UiText.Number(1_520))),
+            QualityChoices.bitrateLabel(1_520),
+        )
+        assertEquals(QualityChoices.NO_BITRATE_LIMIT_LABEL, QualityChoices.bitrateLabel(null))
+        assertEquals(QualityChoices.NO_BITRATE_LIMIT_LABEL, QualityChoices.bitrateLabel(0))
     }
 
     @Test
     fun theSummaryNamesBothAxes() {
-        assertEquals("Auto", QualityChoices.summary("auto", null))
-        assertEquals("1080p, up to 6 Mbps", QualityChoices.summary("1080p", 6_000))
+        assertEquals(QualityChoices.resolutionLabel("auto"), QualityChoices.summary("auto", null))
+        assertEquals(
+            UiText.Key(
+                SharedString.QualitySummaryUpTo,
+                listOf(QualityChoices.resolutionLabel("1080p"), QualityChoices.bitrateLabel(6_000)),
+            ),
+            QualityChoices.summary("1080p", 6_000),
+        )
     }
 
     @Test
@@ -80,7 +77,7 @@ class QualityChoicesTest {
         assertNull(CellularQuality.minimumRevision(SettingKeys.PLAYBACK_PREFERRED_QUALITY))
         // The default is the 720p preset.
         assertEquals(
-            "720p",
+            QualityPresets.byId("720p")?.label,
             CellularQuality.label(CellularQuality.DEFAULT_RESOLUTION, CellularQuality.DEFAULT_MAX_BITRATE_KBPS),
         )
     }
@@ -90,8 +87,11 @@ class QualityChoicesTest {
         val presetLabels = QualityPresets.ALL.map { it.label }.toSet()
 
         // 1080p uncapped is not the 1080p (6 Mbps) preset.
-        assertEquals("1080p, no limit", CellularQuality.label("1080p", null))
-        assertEquals("720p, up to 8 Mbps", CellularQuality.label("720p", 8_000))
+        assertEquals(
+            UiText.Key(SharedString.QualitySummaryNoLimit, listOf(QualityChoices.resolutionLabel("1080p"))),
+            CellularQuality.label("1080p", null),
+        )
+        assertEquals(QualityChoices.summary("720p", 8_000), CellularQuality.label("720p", 8_000))
         for (resolution in listOf("auto", "2160p", "1080p", "720p", "480p")) {
             for (cap in listOf(null, 1_500, 2_000, 3_000, 4_000, 6_000, 8_000, 10_000)) {
                 val label = CellularQuality.label(resolution, cap)

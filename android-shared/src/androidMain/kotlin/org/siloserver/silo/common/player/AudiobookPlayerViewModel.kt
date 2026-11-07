@@ -55,6 +55,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.random.Random
+import org.siloserver.silo.common.i18n.UiText
 
 /**
  * UI state for the audiobook player.
@@ -236,10 +237,10 @@ class AudiobookPlayerViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
 
-    /** "Chapter N of M" label, or empty when the book has 0/1 chapters. */
-    val chapterCountLabel: StateFlow<String> = uiState
-        .map { AudiobookChapters.countLabel(it.chapters.toAudiobookChapters(), it.positionSeconds).orEmpty() }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    /** "Chapter N of M" label, or null when the book has 0/1 chapters. */
+    val chapterCountLabel: StateFlow<UiText?> = uiState
+        .map { AudiobookChapters.countLabel(it.chapters.toAudiobookChapters(), it.positionSeconds) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _bookmarks = MutableStateFlow<List<AudiobookBookmark>>(emptyList())
     val bookmarks: StateFlow<List<AudiobookBookmark>> = _bookmarks.asStateFlow()

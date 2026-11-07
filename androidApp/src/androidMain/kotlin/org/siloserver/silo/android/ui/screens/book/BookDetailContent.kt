@@ -63,6 +63,7 @@ import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
 import androidx.compose.ui.res.pluralStringResource
 import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Phone book detail. Tall cover on the left (2:3 like a movie poster
@@ -427,7 +428,7 @@ fun BookDetailContent(
 @Composable
 private fun FormatBadge(format: BookFormat) {
     Text(
-        text = format.displayName,
+        text = format.displayName.text(),
         style = MaterialTheme.typography.labelSmall,
         color = Color.White,
         modifier = Modifier

@@ -3,6 +3,7 @@ package org.siloserver.silo.common.i18n
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.Resources
+import android.text.format.DateFormat
 import android.view.View
 import androidx.annotation.PluralsRes
 import androidx.annotation.StringRes
@@ -13,6 +14,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import org.siloserver.silo.network.ApiResult
+import java.text.NumberFormat
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /** [UiText] for a catalog string the app names by resource id. */
 fun uiText(@StringRes id: Int, vararg args: Any): UiText = UiText.Res(id, args.toList())
@@ -32,16 +37,40 @@ private fun UiText.resolve(resources: Resources, rtl: Boolean): String = when (t
     is UiText.Raw -> text
     is UiText.Res -> resources.format(id, args, rtl)
     is UiText.Key -> resources.format(key.resId, args, rtl)
-    is UiText.Plural -> resources.formatPlural(key.resId, count, args, rtl)
+    is UiText.Plural -> resources.formatPlural(key.resId, key.countIndex, count, args, rtl)
+    is UiText.Number -> NumberFormat.getNumberInstance(resources.locale).apply {
+        isGroupingUsed = false
+        maximumFractionDigits = maxFractionDigits
+        minimumIntegerDigits = minIntegerDigits
+    }.format(value)
+    is UiText.CalendarDate -> resources.locale.let { locale ->
+        LocalDate.of(year, month, day)
+            .format(DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "yMMMd"), locale))
+    }
+    is UiText.LanguageName -> languageName(tag, resources.locale)
 }
+
+/**
+ * [tag]'s language name in [locale]. A tag the platform can't name (it echoes
+ * the tag back) shows as the uppercased tag.
+ */
+private fun languageName(tag: String, locale: Locale): String {
+    val name = Locale.forLanguageTag(tag.replace('_', '-')).getDisplayName(locale)
+    return if (name.isBlank() || name.equals(tag, ignoreCase = true)) tag.uppercase(Locale.ROOT) else name
+}
+
+/** The interface language: the first locale of these resources. */
+private val Resources.locale: Locale get() = configuration.locales[0]
 
 /** A message whose String and [UiText] arguments are isolated in a right-to-left interface. */
 private fun Resources.format(@StringRes id: Int, args: List<Any>, rtl: Boolean): String =
     if (args.isEmpty()) getString(id) else getString(id, *formatArgs(args, rtl))
 
-/** A plural: [count] first, then [args] as for [format]. */
-private fun Resources.formatPlural(@PluralsRes id: Int, count: Int, args: List<Any>, rtl: Boolean): String =
-    getQuantityString(id, count, count, *formatArgs(args, rtl))
+/** A plural: [count] at [countIndex] among the placeholders (first by default), [args] as for [format] around it. */
+private fun Resources.formatPlural(@PluralsRes id: Int, countIndex: Int, count: Int, args: List<Any>, rtl: Boolean): String {
+    val values = formatArgs(args, rtl).toMutableList().apply { add(countIndex, count) }
+    return getQuantityString(id, count, *values.toTypedArray())
+}
 
 /** [args] with each [UiText] resolved; when all are text, each is isolated in a right-to-left interface. */
 private fun Resources.formatArgs(args: List<Any>, rtl: Boolean): Array<out Any> {

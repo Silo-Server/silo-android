@@ -71,6 +71,7 @@ import org.siloserver.silo.watchtogether.RoomTransportIntent
 import org.siloserver.silo.watchtogether.roomTransportAuthorized
 import org.siloserver.silo.playback.statusLabelFor
 import org.siloserver.silo.playback.timingActionsFor
+import org.siloserver.silo.common.i18n.text
 
 /** How long a failed AI subtitle job stays on screen when its sheet was closed. */
 private const val AI_FAILURE_NOTICE_MS = 8_000L
@@ -496,7 +497,7 @@ fun PlayerOverlay(
                 eyebrow = playerEyebrow(state),
                 tracksValue = playerTracksValue(state),
                 chapterValue = chapterTitleAt(state.chapters, shownPosition),
-                qualityValue = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference),
+                qualityValue = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference).text(),
                 pictureInPictureAvailable = pictureInPictureAvailable,
                 onEnterPictureInPicture = onEnterPictureInPicture,
                 isPlaying = state.isPlaying,
@@ -798,7 +799,7 @@ fun PlayerOverlay(
             // A party hides speed (session-only 1x) and the version picker.
             showPlaybackSpeed = !inRoom,
             showQuality = hasQualityMenu,
-            qualityLabel = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference),
+            qualityLabel = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference).text(),
             onOpenQuality = {
                 settingsSheetVisible = false
                 qualitySheetVisible = true
