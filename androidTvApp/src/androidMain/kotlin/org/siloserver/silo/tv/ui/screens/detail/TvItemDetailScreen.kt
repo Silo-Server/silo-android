@@ -168,6 +168,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.digits
 
 internal data class TvSeriesDetailRedirect(
     val seriesContentId: String,
@@ -2754,8 +2755,8 @@ private fun audiobookDisplayChapters(
         return timeline.chapters.map { chapter ->
             TvAudiobookDisplayChapter(
                 title = chapter.title?.trim()?.takeIf { it.isNotBlank() }
-                    ?: resources.getString(CommonR.string.detail_audiobook_chapter, chapter.index + 1),
-                partTitle = resources.getString(CommonR.string.detail_audiobook_part, chapter.trackIndex + 1),
+                    ?: resources.getString(CommonR.string.detail_audiobook_chapter, resources.digits(chapter.index + 1)),
+                partTitle = resources.getString(CommonR.string.detail_audiobook_part, resources.digits(chapter.trackIndex + 1)),
                 startSeconds = chapter.startSeconds,
             )
         }
@@ -2777,7 +2778,7 @@ private fun audiobookChapterTitle(
     fallbackIndex: Int,
     chapter: VersionChapter,
 ): String = chapter.title.trim().takeIf { it.isNotBlank() }
-    ?: resources.getString(CommonR.string.detail_audiobook_chapter, fallbackIndex + 1)
+    ?: resources.getString(CommonR.string.detail_audiobook_chapter, resources.digits(fallbackIndex + 1))
 
 /** Part row label: the file name when present, else "Part {presentationPartIndex}"
  *  (falling back to the 0-based track [position], displayed 1-based). Mirrors the
@@ -2786,7 +2787,7 @@ private fun audiobookPartTitle(resources: Resources, version: FileVersion?, posi
     version?.fileName?.takeIf { it.isNotBlank() }?.let { return it }
     val rawIndex = version?.presentationPartIndex ?: position
     val displayIndex = if (rawIndex <= 0) rawIndex + 1 else rawIndex
-    return resources.getString(CommonR.string.detail_audiobook_part, displayIndex)
+    return resources.getString(CommonR.string.detail_audiobook_part, resources.digits(displayIndex))
 }
 
 private fun audiobookPartSubtitle(resources: Resources, part: FileVersion?): String? =
