@@ -114,7 +114,7 @@ fun FilterSheet(
             pickerFacet?.let { facet ->
                 FacetValuePicker(
                     facet = facet,
-                    options = facetOptionPairs(facet, availableFilters),
+                    options = facetOptionPairs(facet, availableFilters).map { (value, label) -> value to label.text() },
                     scope = availableFilters?.facetScope,
                     selected = draft.valuesFor(facet),
                     onToggle = { value -> draft = draft.toggle(facet, value) },
@@ -194,7 +194,7 @@ fun FilterSheet(
                         FilterChip(
                             selected = selected,
                             onClick = { draft = draft.toggle(CatalogFacet.DynamicRange, value) },
-                            label = { Text(label) },
+                            label = { Text(label.text()) },
                             colors = filterSheetChipColors(selected),
                             border = null,
                         )

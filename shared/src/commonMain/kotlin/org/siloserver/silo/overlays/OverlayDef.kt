@@ -1,9 +1,13 @@
 package org.siloserver.silo.overlays
 
+import org.siloserver.silo.common.i18n.UiText
+
 /**
- * One overlay type, registered statically. [getValue] extracts the label
- * from [OverlayData]; returning `null` hides the badge for that item even
+ * One overlay type, registered statically. [getValue] extracts the badge's
+ * text from [OverlayData]; returning `null` hides the badge for that item even
  * if the user enabled the overlay (matching Apple's `getValue == nil`).
+ * [label], [description] and [availabilityNote] are the settings copy web and
+ * Apple show; Android has no overlay settings screen, so they stay English.
  *
  * No Compose/UI here — this is the foundation only.
  */
@@ -29,6 +33,6 @@ data class OverlayDef(
      * isn't wired up yet (e.g. IMDb Top 250).
      */
     val availabilityNote: String? = null,
-    val getValue: (OverlayData) -> String?,
+    val getValue: (OverlayData) -> UiText?,
     val getIcon: ((OverlayData) -> OverlayIconId?)? = null,
 )

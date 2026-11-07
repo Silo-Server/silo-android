@@ -70,6 +70,7 @@ import org.siloserver.silo.model.settings.EpisodeSpoilers
 import kotlin.math.abs
 import org.siloserver.silo.common.i18n.digits
 import org.siloserver.silo.common.i18n.localizedResources
+import org.siloserver.silo.common.i18n.text
 
 /**
  * PR #212's phone episode carousel: a 240dp card settles in the centre and,
@@ -308,7 +309,7 @@ private fun EpisodeRailCard(
                 )
             }
             Text(
-                text = EpisodeCardCaption.title(episode),
+                text = EpisodeCardCaption.title(episode).text(),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = DetailPrimaryText,
@@ -318,7 +319,7 @@ private fun EpisodeRailCard(
             val metadata = EpisodeCardCaption.metadata(
                 airDate = formatCardDate(episode.airDate) ?: episode.airDate,
                 runtimeMinutes = episode.runtime,
-            )
+            )?.text()
             val showsTranslationLabel = visibleOverview != null &&
                 hasMachineTranslatedOverview(episode.machineTranslatedFields)
             if (metadata != null || showsTranslationLabel || reservesLines) {

@@ -19,8 +19,10 @@ import kotlin.test.assertFalse
 class SharedTextTest {
     private val app = ApplicationProvider.getApplicationContext<Application>()
     private val english: Resources = app.resources
+    // ar-XB: a right-to-left interface. A real right-to-left language with no catalog
+    // shows English, which keeps its own direction (see SharedPresentationTextTest).
     private val rtl: Resources = app.createConfigurationContext(
-        Configuration(app.resources.configuration).apply { setLocale(Locale.forLanguageTag("ar")) },
+        Configuration(app.resources.configuration).apply { setLocale(Locale.forLanguageTag("ar-XB")) },
     ).resources
 
     @Test

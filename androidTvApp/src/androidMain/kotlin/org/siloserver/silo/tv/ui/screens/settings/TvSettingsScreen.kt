@@ -157,6 +157,7 @@ import org.siloserver.silo.viewmodel.HomeViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.siloserver.silo.common.settings.text
+import org.siloserver.silo.common.i18n.text
 
 /**
  * TV Settings — a tvOS-style split rail/detail surface modeled on
@@ -1094,7 +1095,7 @@ private fun TvGeneralSettingsPane(
                 } else {
                     SettingsValueRow(
                         label = stringResource(CommonR.string.settings_cards_posterSize),
-                        value = state.cardPresentation.posterSize.displayName,
+                        value = state.cardPresentation.posterSize.displayName.text(),
                         onClick = { showPosterSizePicker = true },
                     )
                     SettingsToggleRow(
@@ -1151,7 +1152,7 @@ private fun TvGeneralSettingsPane(
     if (showPosterSizePicker) {
         TvSettingsPickerSheet(
             title = stringResource(CommonR.string.settings_cards_posterSize),
-            options = CardPosterSize.entries.map { PickerOption(it.raw, it.displayName) },
+            options = CardPosterSize.entries.map { PickerOption(it.raw, it.displayName.text()) },
             selectedId = state.cardPresentation.posterSize.raw,
             onSelect = { id ->
                 CardPosterSize.fromRaw(id)?.let {
@@ -1272,13 +1273,13 @@ private fun TvPlaybackSettingsPane(
             SettingsGroup(title = stringResource(CommonR.string.settings_section_streaming)) {
                 SettingsValueRow(
                     label = stringResource(CommonR.string.settings_control_resolution),
-                    value = QualityChoices.resolutionLabel(state.qualityResolution),
+                    value = QualityChoices.resolutionLabel(state.qualityResolution).text(),
                     onClick = { activePicker = PlaybackPicker.Resolution },
                     focusRequester = firstFocusRequester,
                 )
                 SettingsValueRow(
                     label = stringResource(CommonR.string.settings_control_bitrate),
-                    value = QualityChoices.bitrateLabel(state.maxBitrateKbps),
+                    value = QualityChoices.bitrateLabel(state.maxBitrateKbps).text(),
                     onClick = { activePicker = PlaybackPicker.MaxBitrate },
                     // Takes the learned-limit row's focus when the buffering row is hidden.
                     focusRequester = bufferingQualityFocus.takeIf { !state.bufferingQualityModeSupported },
@@ -1316,7 +1317,7 @@ private fun TvPlaybackSettingsPane(
                     value = LanguageOptions.label(
                         state.audioLanguage,
                         SettingKeys.PLAYBACK_AUDIO_LANGUAGE,
-                    ),
+                    ).text(),
                     onClick = { activePicker = PlaybackPicker.AudioLanguage },
                 )
                 // tvOS TVPlaybackSettingsPane STREAMING parity: Dolby Vision
@@ -1358,7 +1359,7 @@ private fun TvPlaybackSettingsPane(
                 SettingsFooterText(
                     text = stringResource(
                         CommonR.string.settings_streaming_footer,
-                        QualityChoices.description(state.qualityResolution, state.maxBitrateKbps),
+                        QualityChoices.description(state.qualityResolution, state.maxBitrateKbps).text(),
                     ),
                 )
             }
@@ -1494,7 +1495,7 @@ private fun TvPlaybackSettingsPane(
         PlaybackPicker.Resolution -> {
             val (options, selectedId) = profileLayered(
                 PlaybackSettingsKeys.PreferredQuality,
-                QualityChoices.RESOLUTIONS.map { PickerOption(it.value, it.label) },
+                QualityChoices.RESOLUTIONS.map { PickerOption(it.value, it.label.text()) },
                 QualityPresets.normalizeResolution(state.qualityResolution),
             )
             TvSettingsPickerSheet(
@@ -1518,7 +1519,7 @@ private fun TvPlaybackSettingsPane(
             val (options, selectedId) = profileLayered(
                 PlaybackSettingsKeys.MaxBitrateKbps,
                 QualityChoices.bitrateChoices(state.maxBitrateKbps).map {
-                    PickerOption(it.value?.toString() ?: NoBitrateLimitId, it.label)
+                    PickerOption(it.value?.toString() ?: NoBitrateLimitId, it.label.text())
                 },
                 state.maxBitrateKbps?.toString() ?: NoBitrateLimitId,
             )
@@ -1540,7 +1541,7 @@ private fun TvPlaybackSettingsPane(
         PlaybackPicker.AudioLanguage -> {
             val (options, selectedId) = profileLayered(
                 PlaybackSettingsKeys.AudioLanguage,
-                audioLanguages.map { PickerOption(it.first, it.second) },
+                audioLanguages.map { PickerOption(it.first, it.second.text()) },
                 state.audioLanguage,
             )
             TvSettingsPickerSheet(
@@ -1655,7 +1656,7 @@ private fun TvPlaybackSettingsPane(
         val pair = if (media == SeekMedia.Video) seekState.video else seekState.audiobook
         TvSettingsPickerSheet(
             title = stringResource(seekIntervalPickerTitle(media, direction)),
-            options = seekState.choices.map { PickerOption(it.toString(), SeekIntervals.label(it)) },
+            options = seekState.choices.map { PickerOption(it.toString(), SeekIntervals.label(it).text()) },
             selectedId = pair.seconds(direction).toString(),
             onSelect = { id ->
                 id.toIntOrNull()?.let { seekIntervals?.select(media, direction, it) }
@@ -1811,7 +1812,7 @@ private fun TvSeekIntervalGroup(
                 SeekDirection.entries.forEach { direction ->
                     SettingsValueRow(
                         label = stringResource(seekDirectionLabel(direction)),
-                        value = SeekIntervals.label(pair.seconds(direction)),
+                        value = SeekIntervals.label(pair.seconds(direction)).text(),
                         onClick = { onOpenPicker(direction) },
                         focusRequester = if (direction == SeekDirection.Back) firstRowFocus else null,
                         modifier = if (direction == SeekDirection.Back) trackHandoff else Modifier,
@@ -1910,7 +1911,7 @@ private fun TvSubtitleSettingsPane(
                     value = LanguageOptions.label(
                         state.subtitleLanguage,
                         SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE,
-                    ),
+                    ).text(),
                     onClick = { activePicker = SubtitlePicker.Language },
                     focusRequester = firstFocusRequester,
                 )
@@ -1938,7 +1939,7 @@ private fun TvSubtitleSettingsPane(
                         value = LanguageOptions.label(
                             state.metadataLanguage,
                             SettingKeys.CATALOG_METADATA_LANGUAGE,
-                        ),
+                        ).text(),
                         onClick = { activePicker = SubtitlePicker.MetadataLanguage },
                     )
                     SettingsFooterText(
@@ -2049,14 +2050,14 @@ private fun TvSubtitleSettingsPane(
         )
         SubtitlePicker.Language -> TvSettingsPickerSheet(
             title = stringResource(CommonR.string.settings_control_language),
-            options = subtitleLanguages.map { PickerOption(it.first, it.second) },
+            options = subtitleLanguages.map { PickerOption(it.first, it.second.text()) },
             selectedId = state.subtitleLanguage,
             onSelect = { onSubtitleLanguageChanged(it); activePicker = null },
             onDismiss = { activePicker = null },
         )
         SubtitlePicker.MetadataLanguage -> TvSettingsPickerSheet(
             title = stringResource(CommonR.string.settings_control_metadataLanguage),
-            options = metadataLanguages.map { PickerOption(it.first, it.second) },
+            options = metadataLanguages.map { PickerOption(it.first, it.second.text()) },
             selectedId = state.metadataLanguage,
             onSelect = { onMetadataLanguageChanged(it); activePicker = null },
             onDismiss = { activePicker = null },

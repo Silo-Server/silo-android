@@ -213,7 +213,7 @@ private fun seekSaveErrorText(error: SeekSaveError): String = when (error) {
         ?: stringResource(R.string.settings_seekIntervals_saveFailed)
 }
 
-/** One sentence per direction, as `SeekImportResult.describe` words them in English. */
+/** One sentence per direction, joined with a space. */
 @Composable
 private fun seekImportMessageText(message: SeekImportMessage): String = when (message) {
     SeekImportMessage.Unsupported -> stringResource(R.string.settings_seekIntervals_import_unsupported)

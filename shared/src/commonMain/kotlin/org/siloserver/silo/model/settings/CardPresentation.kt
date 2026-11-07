@@ -6,6 +6,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 
 /**
  * Wire models for the canonical `ui.card_presentation` setting — the
@@ -34,12 +36,14 @@ enum class CardPosterSize(val raw: String) {
             Large -> 1.2f
         }
 
-    val displayName: String
-        get() = when (this) {
-            Compact -> "Compact"
-            Standard -> "Standard"
-            Large -> "Large"
-        }
+    val displayName: UiText
+        get() = UiText.Key(
+            when (this) {
+                Compact -> SharedString.PosterSizeCompact
+                Standard -> SharedString.PosterSizeStandard
+                Large -> SharedString.PosterSizeLarge
+            },
+        )
 
     companion object {
         fun fromRaw(value: String?): CardPosterSize? =

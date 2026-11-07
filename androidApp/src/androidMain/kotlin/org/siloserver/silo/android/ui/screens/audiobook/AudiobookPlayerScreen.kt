@@ -55,6 +55,7 @@ import kotlinx.coroutines.delay
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.player.errorText
 import org.siloserver.silo.common.player.skipIntervalErrorText
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Dedicated audiobook player UI. Big square cover up top, then title /
@@ -304,7 +305,7 @@ fun AudiobookPlayerScreen(
 
             ChapterProgressBar(
                 chapters = state.chapters,
-                chapterCountLabel = chapterCountLabel,
+                chapterCountLabel = chapterCountLabel?.text().orEmpty(),
                 positionSeconds = state.positionSeconds,
                 durationSeconds = state.durationSeconds,
                 onSeek = { viewModel.seekTo(it) },

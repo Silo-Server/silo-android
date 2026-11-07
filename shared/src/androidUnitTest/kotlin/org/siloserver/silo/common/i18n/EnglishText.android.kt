@@ -1,9 +1,14 @@
 package org.siloserver.silo.common.i18n
 
 import java.io.File
+import java.math.RoundingMode
+import java.text.NumberFormat
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Element
+import kotlin.math.roundToLong
 
 actual fun UiText.english(): String = when (this) {
     is UiText.Raw -> text
@@ -15,7 +20,28 @@ actual fun UiText.english(): String = when (this) {
     is UiText.Plural -> {
         val forms = EnglishCatalog.plurals.getValue(key.key.replace('.', '_'))
         val form = forms[if (count == 1) "one" else "other"] ?: forms.getValue("other")
-        String.format(Locale.US, form, count, *args.map(::englishArg).toTypedArray())
+        val values = args.map(::englishArg).toMutableList<Any>().apply { add(key.countIndex, count) }
+        String.format(Locale.US, form, *values.toTypedArray())
+    }
+    // As android-shared's resolver (LocaleFormat) formats them in US English.
+    is UiText.Number ->
+        if (maxFractionDigits == 0) {
+            String.format(Locale.US, "%0${minIntegerDigits.coerceAtLeast(1)}d", value.roundToLong())
+        } else {
+            NumberFormat.getNumberInstance(Locale.US).apply {
+                isGroupingUsed = false
+                maximumFractionDigits = this@english.maxFractionDigits
+                roundingMode = RoundingMode.HALF_UP
+            }.format(value)
+        }
+    is UiText.CalendarDate -> LocalDate.of(year, month, day).format(DateTimeFormatter.ofPattern("MMM d, y", Locale.US))
+    is UiText.LanguageName -> {
+        val name = Locale.forLanguageTag(tag.replace('_', '-')).getDisplayName(Locale.US)
+        when {
+            name.isBlank() -> if (uppercaseIfUnnamed) tag.uppercase(Locale.ROOT) else tag
+            uppercaseIfUnnamed && name.equals(tag, ignoreCase = true) -> tag.uppercase(Locale.ROOT)
+            else -> name
+        }
     }
 }
 

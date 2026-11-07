@@ -151,7 +151,7 @@ private fun SectionHeader(section: CollectionSection) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = section.name,
+            text = section.title.text(),
             style = MaterialTheme.typography.bodySmall,
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

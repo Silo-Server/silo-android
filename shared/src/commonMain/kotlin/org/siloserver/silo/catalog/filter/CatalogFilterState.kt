@@ -1,6 +1,8 @@
 package org.siloserver.silo.catalog.filter
 
 import kotlinx.serialization.Serializable
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.model.catalog.CatalogQueryGroup
 import org.siloserver.silo.model.catalog.CatalogQueryRule
@@ -16,7 +18,9 @@ enum class BrowseFacetMediaType { Video, Audiobook }
 /**
  * One filter dimension. [WatchStatus] is single-select; everything else is
  * multi-select. [Decade], [DynamicRange], and [WatchStatus] have fixed
- * client-side vocabularies; the rest come from `/catalog/filters`.
+ * client-side vocabularies; the rest come from `/catalog/filters`. [label] is
+ * English and no screen shows it: screens name a facet from the catalog
+ * (`filters.facet.*`).
  */
 enum class CatalogFacet(val label: String) {
     Genre("Genres"),
@@ -54,43 +58,51 @@ enum class CatalogFacet(val label: String) {
         val DECADE_LADDER = listOf(2020, 2010, 2000, 1990, 1980, 1970, 1960)
 
         /** value → label pairs for the fixed-vocabulary watch status facet. */
-        val WATCH_STATUS_OPTIONS = listOf(
-            "unwatched" to "Unwatched",
-            "inProgress" to "In Progress",
-            "watched" to "Watched",
-            "favorited" to "Favorited",
-            "watchlist" to "Watchlist",
+        val WATCH_STATUS_OPTIONS: List<Pair<String, UiText>> = listOf(
+            "unwatched" to UiText.Key(SharedString.FilterUnwatched),
+            "inProgress" to UiText.Key(SharedString.FilterInProgress),
+            "watched" to UiText.Key(SharedString.FilterWatched),
+            "favorited" to UiText.Key(SharedString.FilterFavorited),
+            "watchlist" to UiText.Key(SharedString.FilterWatchlist),
         )
 
-        val DYNAMIC_RANGE_OPTIONS = listOf(
-            "hdr" to "HDR",
-            "dolby_vision" to "Dolby Vision",
+        val DYNAMIC_RANGE_OPTIONS: List<Pair<String, UiText>> = listOf(
+            "hdr" to UiText.Key(SharedString.FilterHdr),
+            "dolby_vision" to UiText.Key(SharedString.FilterDolbyVision),
         )
     }
 }
 
-/** value → label option pairs for [facet] (iOS `optionPairs(for:)`). */
+/**
+ * value → label option pairs for [facet] (iOS `optionPairs(for:)`). Values
+ * from the server's vocabulary are their own labels.
+ */
 fun facetOptionPairs(
     facet: CatalogFacet,
     vocabulary: CatalogFiltersResponse?,
     hasProfile: Boolean = true,
-): List<Pair<String, String>> = when (facet) {
-    CatalogFacet.Decade -> CatalogFacet.DECADE_LADDER.map { it.toString() to "${it}s" }
+): List<Pair<String, UiText>> = when (facet) {
+    CatalogFacet.Decade -> CatalogFacet.DECADE_LADDER.map { it.toString() to decadeLabel(it) }
     CatalogFacet.WatchStatus -> if (hasProfile) CatalogFacet.WATCH_STATUS_OPTIONS else emptyList()
     CatalogFacet.DynamicRange -> CatalogFacet.DYNAMIC_RANGE_OPTIONS
-    CatalogFacet.Genre -> vocabulary?.genres.orEmpty().map { it to it }
-    CatalogFacet.ContentRating -> vocabulary?.contentRatings.orEmpty().map { it to it }
-    CatalogFacet.Resolution -> vocabulary?.resolutions.orEmpty().map { it to it }
-    CatalogFacet.Studio -> vocabulary?.studios.orEmpty().map { it to it }
-    CatalogFacet.Network -> vocabulary?.networks.orEmpty().map { it to it }
-    CatalogFacet.Country -> vocabulary?.countries.orEmpty().map { it to it }
-    CatalogFacet.AudioLanguage -> vocabulary?.audioLanguages.orEmpty().map { it to it }
-    CatalogFacet.SubtitleLanguage -> vocabulary?.subtitleLanguages.orEmpty().map { it to it }
-    CatalogFacet.OriginalLanguage -> vocabulary?.originalLanguages.orEmpty().map { it to it }
-    CatalogFacet.Author -> vocabulary?.authors.orEmpty().map { it to it }
-    CatalogFacet.Narrator -> vocabulary?.narrators.orEmpty().map { it to it }
-    CatalogFacet.SeriesName -> vocabulary?.series.orEmpty().map { it to it }
+    CatalogFacet.Genre -> vocabulary?.genres.orEmpty().serverOptions()
+    CatalogFacet.ContentRating -> vocabulary?.contentRatings.orEmpty().serverOptions()
+    CatalogFacet.Resolution -> vocabulary?.resolutions.orEmpty().serverOptions()
+    CatalogFacet.Studio -> vocabulary?.studios.orEmpty().serverOptions()
+    CatalogFacet.Network -> vocabulary?.networks.orEmpty().serverOptions()
+    CatalogFacet.Country -> vocabulary?.countries.orEmpty().serverOptions()
+    CatalogFacet.AudioLanguage -> vocabulary?.audioLanguages.orEmpty().serverOptions()
+    CatalogFacet.SubtitleLanguage -> vocabulary?.subtitleLanguages.orEmpty().serverOptions()
+    CatalogFacet.OriginalLanguage -> vocabulary?.originalLanguages.orEmpty().serverOptions()
+    CatalogFacet.Author -> vocabulary?.authors.orEmpty().serverOptions()
+    CatalogFacet.Narrator -> vocabulary?.narrators.orEmpty().serverOptions()
+    CatalogFacet.SeriesName -> vocabulary?.series.orEmpty().serverOptions()
 }
+
+/** "2020s" for the decade starting in [year]. */
+fun decadeLabel(year: Int): UiText = UiText.Key(SharedString.FilterDecade, listOf(UiText.Number(year)))
+
+private fun List<String>.serverOptions(): List<Pair<String, UiText>> = map { it to UiText.Raw(it) }
 
 /**
  * Applied filter + sort state. [matchAll] combines *across* facets (values

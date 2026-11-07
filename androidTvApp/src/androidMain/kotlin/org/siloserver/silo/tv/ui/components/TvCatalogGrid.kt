@@ -53,6 +53,7 @@ import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.cardScaled
 import org.siloserver.silo.tv.ui.theme.rememberTvGridBringIntoViewSpec
 import org.siloserver.silo.tv.ui.util.tvArtworkAspectRatioForMediaType
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Poster grid with automatic pagination. Fed by a [List] of
@@ -318,8 +319,8 @@ fun TvCatalogGrid(
                     progress = boxSet?.watchedFraction,
                     mediaType = if (boxSet != null) "movie" else item.type,
                     badge = if (boxSet != null) stringResource(CommonR.string.shell_card_boxSet) else null,
-                    cornerLabel = boxSet?.let { boxSetFilmCount(it.movieCount) },
-                    caption = boxSet?.cardCaption(),
+                    cornerLabel = boxSet?.let { boxSetFilmCount(it.movieCount).text() },
+                    caption = boxSet?.cardCaption()?.text(),
                     sleeves = org.siloserver.silo.tv.ui.theme.BoxSetSleeves.takeIf { boxSet != null },
                     onClick = { onBrowseItemClick?.invoke(item) ?: onItemClick(item.contentId) },
                     fillWidth = true,
