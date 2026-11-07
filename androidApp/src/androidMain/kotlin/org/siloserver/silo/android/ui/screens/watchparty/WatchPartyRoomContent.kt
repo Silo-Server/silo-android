@@ -1060,6 +1060,7 @@ private fun HostPickSuggestionRow(
                     kind = WatchPartyButtonKind.Secondary,
                     onClick = { actions.queue(suggestion) },
                     modifier = Modifier.height(44.dp).semantics { contentDescription = queueDescription },
+                    maxLines = 1,
                 )
             }
         }

@@ -480,6 +480,8 @@ internal fun WatchPartyButton(
     kind: WatchPartyButtonKind = WatchPartyButtonKind.Primary,
     enabled: Boolean = true,
     icon: ImageVector? = null,
+    // A caller that fixes the button's height keeps it to one line.
+    maxLines: Int = 2,
     trailing: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val shape = RoundedCornerShape(14.dp)
@@ -517,7 +519,7 @@ internal fun WatchPartyButton(
             fontSize = 17.sp,
             fontWeight = FontWeight.SemiBold,
             color = foreground,
-            maxLines = 2,
+            maxLines = maxLines,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
         )
