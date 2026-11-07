@@ -1,13 +1,12 @@
 package org.siloserver.silo.common.watchparty
 
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.LayoutDirection
 import org.siloserver.silo.common.R
 import org.siloserver.silo.watchtogether.WatchPartyPresence
 import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.isRightToLeftText
 
 /*
  * Watch Party text both apps build the same way. Each is resolved in
@@ -21,7 +20,7 @@ import org.siloserver.silo.common.i18n.LocaleFormat
  */
 @Composable
 fun watchPartyNameList(names: List<String>): String {
-    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val rtl = isRightToLeftText()
     val shown = if (rtl && names.size > 1) names.map { "\u2068$it\u2069" } else names
     return when (shown.size) {
         0 -> ""

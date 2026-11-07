@@ -75,6 +75,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.currentFormatLocale
+import org.siloserver.silo.common.i18n.isRightToLeftText
 
 /**
  * Glass-capsule scrubber matching `iosApp/.../tvOS/TVPlayerScrubber.swift`.
@@ -543,9 +544,13 @@ fun TvPlayerScrubber(
             )
             val remainingSec = (durationSec - labelPositionSec).coerceAtLeast(0.0)
             val wallClockRemainingSec = if (playbackSpeed > 0.0) remainingSec / playbackSpeed else remainingSec
+            // In an Arabic sentence the "−" would move to the far end of the
+            // time, so right-to-left text keeps the time in its own run.
+            val remaining = formatRemainingTime(remainingSec)
+                .let { if (isRightToLeftText()) "\u2066$it\u2069" else it } // i18n-ignore: isolate marks
             Text(
                 text = listOfNotNull(
-                    formatRemainingTime(remainingSec),
+                    remaining,
                     finishTimeLabel(timeFormat, wallClockRemainingSec)?.let {
                         stringResource(CommonR.string.player_scrubber_endsAt, it)
                     },
