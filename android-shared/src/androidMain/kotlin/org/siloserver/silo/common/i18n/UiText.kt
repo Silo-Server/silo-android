@@ -26,10 +26,16 @@ fun uiText(@StringRes id: Int, vararg args: Any): UiText = UiText.Res(id, args.t
 
 /** [UiText]'s text in composition; it follows an in-place language change. */
 @Composable
-fun UiText.text(): String = resolve(localizedResources(), rtl = LocalLayoutDirection.current == LayoutDirection.Rtl)
+fun UiText.text(): String {
+    rememberAppContext(LocalContext.current)
+    return resolve(localizedResources(), rtl = LocalLayoutDirection.current == LayoutDirection.Rtl)
+}
 
 /** [text] outside composition, such as for a toast. */
-fun UiText.text(context: Context): String = text(context.resources)
+fun UiText.text(context: Context): String {
+    rememberAppContext(context)
+    return text(context.resources)
+}
 
 /** [text] for helpers and tests that hold a plain [Resources]. */
 fun UiText.text(resources: Resources): String =
@@ -76,17 +82,14 @@ private fun languageName(tag: String, uppercaseIfUnnamed: Boolean, locale: Local
  * and text direction, so a language changes nothing until its catalog ships (D25).
  */
 private fun Resources.catalogResources(): Resources {
-    val locale = configuration.locales[0]
-    val tag = locale.toLanguageTag()
-    if (AppLanguage.isPseudo(tag) || AppLanguage.match(tag, AppLocales.shipped(this)) != null) return this
+    if (showsConfiguredLanguage) return this
     fallbackResources?.let { (config, fallback) -> if (config == configuration) return fallback }
+    // A configuration context has its own asset configuration; the caller's stays as it is.
+    val context = appContext ?: return this
     val config = android.content.res.Configuration(configuration)
-    @Suppress("DEPRECATION")
-    val fallback = Resources(
-        assets,
-        displayMetrics,
+    val fallback = context.createConfigurationContext(
         android.content.res.Configuration(configuration).apply { setLocale(Locale.forLanguageTag(AppLanguage.DEFAULT)) },
-    )
+    ).resources
     fallbackResources = config to fallback
     return fallback
 }
@@ -94,11 +97,31 @@ private fun Resources.catalogResources(): Resources {
 /** The last [catalogResources] fallback, for the configuration it was made for. */
 @Volatile private var fallbackResources: Pair<android.content.res.Configuration, Resources>? = null
 
-private val Resources.isRtl: Boolean get() = configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+/**
+ * The application context [catalogResources] makes its fallback from, recorded
+ * by [text] in composition and [text] with a context. Until one is recorded,
+ * text resolves with the resources it is given.
+ */
+@Volatile private var appContext: Context? = null
+
+private fun rememberAppContext(context: Context) {
+    if (appContext == null) appContext = context.applicationContext
+}
+
+/** Whether catalog text here is right to left: English that stands in for a language without a catalog never is. */
+private val Resources.isRtl: Boolean
+    get() = configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL && showsConfiguredLanguage
+
+/** Whether the strings are in the configured language: it ships, or it is a debug pseudo-locale. */
+private val Resources.showsConfiguredLanguage: Boolean
+    get() {
+        val tag = configuration.locales[0].toLanguageTag()
+        return AppLanguage.isPseudo(tag) || AppLanguage.match(tag, AppLocales.shipped(this)) != null
+    }
 
 /** The locale numbers, dates and language names are written in; see [catalogResources]. */
 private val Resources.formatLocale: Locale
-    get() = catalogResources().configuration.locales[0]
+    get() = if (showsConfiguredLanguage) configuration.locales[0] else Locale.forLanguageTag(AppLanguage.DEFAULT)
 
 /** A message whose String and [UiText] arguments are isolated in a right-to-left interface. */
 private fun Resources.format(@StringRes id: Int, args: List<Any>, rtl: Boolean): String =

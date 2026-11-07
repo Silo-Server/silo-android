@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.i18n
 
 import android.app.Application
+import android.content.Context
 import android.content.res.Configuration
 import android.content.res.Resources
 import androidx.test.core.app.ApplicationProvider
@@ -50,11 +51,13 @@ import kotlin.test.assertNull
 class SharedPresentationTextTest {
     private val app = ApplicationProvider.getApplicationContext<Application>()
     private val english: Resources = app.resources
-    private val arabic = resourcesIn("ar")
+    // Contexts, as screens resolve text: the English fallback for a language
+    // without a catalog is made from the application context.
+    private val arabic = contextIn("ar")
 
-    private fun resourcesIn(tag: String): Resources = app.createConfigurationContext(
+    private fun contextIn(tag: String): Context = app.createConfigurationContext(
         Configuration(app.resources.configuration).apply { setLocale(Locale.forLanguageTag(tag)) },
-    ).resources
+    )
 
     private fun UiText?.en(): String? = this?.text(english)
     private fun List<UiText>.en(): List<String> = map { it.text(english) }
@@ -247,12 +250,12 @@ class SharedPresentationTextTest {
     fun aLanguageWithoutACatalogFormatsAsTheEnglishItsStringsFallBackTo() {
         // Only English ships in these tests: an Arabic or German phone shows English, formatted as before.
         assertEquals("1234", UiText.Number(1234).text(arabic))
-        assertEquals("1.5 Mbps", QualityChoices.bitrateLabel(1_500).text(resourcesIn("de-DE")))
-        assertEquals("Jun 16, 1972", UiText.CalendarDate(1972, 6, 16).text(resourcesIn("de-DE")))
-        assertEquals("Japanese", UiText.LanguageName("ja").text(resourcesIn("de-DE")))
+        assertEquals("1.5 Mbps", QualityChoices.bitrateLabel(1_500).text(contextIn("de-DE")))
+        assertEquals("Jun 16, 1972", UiText.CalendarDate(1972, 6, 16).text(contextIn("de-DE")))
+        assertEquals("Japanese", UiText.LanguageName("ja").text(contextIn("de-DE")))
         // English plural rules and digits, not the device language's: no "٨ films" or "21 film".
         assertEquals("8 films", boxSetFilmCount(8).text(arabic))
-        assertEquals("21 films", boxSetFilmCount(21).text(resourcesIn("ru")))
+        assertEquals("21 films", boxSetFilmCount(21).text(contextIn("ru")))
         // English text keeps its direction in a right-to-left device language: no isolates.
         val episode = EpisodeListItem("e", seasonNumber = 1, episodeNumber = 2, title = "Pilot")
         assertEquals("S01E02 · Pilot", EpisodeCardCaption.title(episode).text(arabic))
