@@ -26,6 +26,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.koin.compose.koinInject
@@ -305,54 +307,95 @@ private fun ServerHeader(
         loader = brandingLoader,
         tintsBackdrop = false,
     )
-    Row(
+    val identity: @Composable () -> Unit = {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // The server's mark, or the Silo icon when it has none.
+            MarqueeServerMark(
+                name = server.displayName,
+                imageUrl = branding.branding?.markUrl,
+                size = 32.dp,
+                siloIconFallback = true,
+                modifier = Modifier.padding(end = 12.dp),
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .semantics(mergeDescendants = true) { heading() },
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = server.displayName,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = SiloOnSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = if (isOnLocalNetwork) {
+                        "${ServerBranding.hostLabel(server.url)} · ${LocalRoute.STATUS_TEXT}"
+                    } else {
+                        ServerBranding.hostLabel(server.url)
+                    },
+                    fontSize = 12.sp,
+                    color = SiloSecondaryText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+    val actions: @Composable () -> Unit = {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onRename, enabled = enabled) {
+                Text(stringResource(CommonR.string.accounts_rename), color = SiloOnSurface)
+            }
+            TextButton(onClick = onRemove, enabled = enabled) {
+                Text(stringResource(CommonR.string.accounts_remove_server), color = SiloDestructive)
+            }
+        }
+    }
+    // The actions sit beside the name, and move under it when longer labels
+    // would leave the name too narrow to read.
+    Layout(
+        contents = listOf(identity, actions),
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 16.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // The server's mark, or the Silo icon when it has none.
-        MarqueeServerMark(
-            name = server.displayName,
-            imageUrl = branding.branding?.markUrl,
-            size = 32.dp,
-            siloIconFallback = true,
-            modifier = Modifier.padding(end = 12.dp),
+    ) { (identityNodes, actionNodes), constraints ->
+        val width = constraints.maxWidth
+        val identityNode = identityNodes.first()
+        val actionsPlaceable = actionNodes.first().measure(Constraints(maxWidth = width))
+        // A short name that fits beside the actions never moves them.
+        val identityNeeds = minOf(
+            identityNode.maxIntrinsicWidth(constraints.maxHeight),
+            ServerHeaderMinIdentityWidth.roundToPx(),
         )
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .semantics(mergeDescendants = true) { heading() },
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                text = server.displayName,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = SiloOnSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = if (isOnLocalNetwork) {
-                    "${ServerBranding.hostLabel(server.url)} · ${LocalRoute.STATUS_TEXT}"
-                } else {
-                    ServerBranding.hostLabel(server.url)
-                },
-                fontSize = 12.sp,
-                color = SiloSecondaryText,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        TextButton(onClick = onRename, enabled = enabled) {
-            Text(stringResource(CommonR.string.accounts_rename), color = SiloOnSurface)
-        }
-        TextButton(onClick = onRemove, enabled = enabled) {
-            Text(stringResource(CommonR.string.accounts_remove_server), color = SiloDestructive)
+        val sideBySide = width - actionsPlaceable.width >= identityNeeds
+        val identityWidth = if (sideBySide) width - actionsPlaceable.width else width
+        val identityPlaceable = identityNode.measure(Constraints.fixedWidth(identityWidth))
+        if (sideBySide) {
+            val height = maxOf(identityPlaceable.height, actionsPlaceable.height)
+            layout(width, height) {
+                identityPlaceable.placeRelative(0, (height - identityPlaceable.height) / 2)
+                actionsPlaceable.placeRelative(identityWidth, (height - actionsPlaceable.height) / 2)
+            }
+        } else {
+            layout(width, identityPlaceable.height + actionsPlaceable.height) {
+                identityPlaceable.placeRelative(0, 0)
+                actionsPlaceable.placeRelative(width - actionsPlaceable.width, identityPlaceable.height)
+            }
         }
     }
 }
+
+/**
+ * The mark (32dp, 12dp gap) plus the narrowest truncated name worth showing
+ * beside the actions; a name shorter than that only needs its own width.
+ * English leaves the name about 90dp on a 360dp phone and keeps one row;
+ * Spanish leaves about 40dp.
+ */
+private val ServerHeaderMinIdentityWidth = 44.dp + 64.dp
 
 @Composable
 private fun RenameDialog(
