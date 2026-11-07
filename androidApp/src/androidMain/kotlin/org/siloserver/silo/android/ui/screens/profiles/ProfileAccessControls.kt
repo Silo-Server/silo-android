@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
@@ -33,6 +35,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -182,16 +186,23 @@ private fun RatingLadder(
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
+                // Steps down from 12sp when a translated "Any" is wider than
+                // its step ("Cualquiera"), instead of being cut.
+                BasicText(
                     text = rating ?: ANY_RATING_TEXT.text(),
-                    fontSize = 12.sp,
-                    fontWeight = if (isCeiling) FontWeight.SemiBold else FontWeight.Medium,
-                    color = when {
-                        isCeiling -> AuthColors.Background
-                        isAllowed -> AuthColors.OnSurface
-                        else -> AuthColors.OnSurfaceVariant
-                    },
+                    style = LocalTextStyle.current.merge(
+                        TextStyle(
+                            fontSize = 12.sp,
+                            fontWeight = if (isCeiling) FontWeight.SemiBold else FontWeight.Medium,
+                            color = when {
+                                isCeiling -> AuthColors.Background
+                                isAllowed -> AuthColors.OnSurface
+                                else -> AuthColors.OnSurfaceVariant
+                            },
+                        ),
+                    ),
                     maxLines = 1,
+                    autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = 12.sp, stepSize = 0.5.sp),
                 )
             }
         }
