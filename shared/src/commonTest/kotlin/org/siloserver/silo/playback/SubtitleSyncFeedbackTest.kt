@@ -8,6 +8,7 @@ import org.siloserver.silo.model.subtitles.SubtitleSyncJob
 import org.siloserver.silo.model.subtitles.SubtitleSyncState
 import org.siloserver.silo.model.subtitles.SubtitleTiming
 import kotlin.test.Test
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.i18n.english
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -34,7 +35,7 @@ class SubtitleSyncFeedbackTest {
                 activeKey = key.takeIf { onScreen },
                 cueRevisions = mapOf(key to revision),
                 loadedCueRevisions = mapOf(key to loaded),
-                nameOf = { "English" },
+                nameOf = { UiText.Raw("English") },
             )
 
     private fun SubtitleSyncFeedbackState.after(vararg inputs: SubtitleSyncFeedbackInput) =

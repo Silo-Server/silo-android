@@ -35,7 +35,7 @@ data class SubtitleSyncNotice(
 data class SubtitleSyncWatched(
     val key: String,
     /** The subtitle's language name, or null when it has none to show. */
-    val name: String?,
+    val name: UiText?,
     val job: SubtitleSyncJob,
     val timing: SubtitleTiming,
     /** The subtitle's cue revision now. */
@@ -100,7 +100,7 @@ fun SubtitleSyncFeedbackState.finishApplying(): SubtitleSyncFeedbackState {
  * "[name] subtitles …", or "Subtitles …" for a subtitle with no name. The card
  * capitalizes a title's first letter, so a name that opens it reads as one.
  */
-private fun subtitlesText(name: String?, named: SharedString, unnamed: SharedString): UiText =
+private fun subtitlesText(name: UiText?, named: SharedString, unnamed: SharedString): UiText =
     name?.let { UiText.Key(named, listOf(it)) } ?: UiText.Key(unnamed)
 
 private fun outcomeNotice(watched: SubtitleSyncWatched): SubtitleSyncNotice? {
@@ -237,12 +237,12 @@ fun SubtitleSyncUiState.feedbackInput(
     activeKey: String?,
     cueRevisions: Map<String, Int>,
     loadedCueRevisions: Map<String, Int>,
-    nameOf: (SubtitleSyncState) -> String?,
+    nameOf: (SubtitleSyncState) -> UiText?,
 ): SubtitleSyncFeedbackInput {
     val watched = watchedEntry()?.let { entry ->
         SubtitleSyncWatched(
             key = entry.state.key,
-            name = nameOf(entry.state)?.takeIf(String::isNotBlank),
+            name = nameOf(entry.state),
             job = entry.state.sync ?: return@let null,
             timing = entry.state.timing,
             revision = cueRevisions[entry.state.key] ?: 0,

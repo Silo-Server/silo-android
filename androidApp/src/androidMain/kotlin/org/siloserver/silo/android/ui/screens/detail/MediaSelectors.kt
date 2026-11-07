@@ -69,6 +69,8 @@ import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.playback.isUnplayableSubtitle
 import org.siloserver.silo.player.DolbyVisionDetection
+import org.siloserver.silo.player.trackLanguageDisplayName
+import org.siloserver.silo.player.trackLanguageEnglishName
 import org.siloserver.silo.playback.selectPlaybackVersion
 
 /**
@@ -697,15 +699,16 @@ fun formatSubtitleLabel(resources: Resources, track: SubtitleTrack?): String {
  */
 internal fun trackHeadline(language: String?, title: String?): String? {
     val code = language?.trim()?.takeUnless { it.isEmpty() || it.equals("und", ignoreCase = true) }
-    val name = org.siloserver.silo.player.trackLanguageDisplayName(code) ?: code?.uppercase()
-    val extra = title?.let { meaningfulTrackTitle(it, name, code) }
+    val name = trackLanguageDisplayName(code, LocaleFormat.interfaceLocale()) ?: code?.uppercase()
+    // Titles name the language in English ("English SDH"), whatever the interface shows.
+    val extra = title?.let { meaningfulTrackTitle(it, listOfNotNull(name, trackLanguageEnglishName(code), code).distinct()) }
     return listOfNotNull(name, extra).joinToString(" \u00B7 ").takeIf { it.isNotBlank() }
 }
 
-/** [title] without codec names or the language, or null when nothing else remains. */
-private fun meaningfulTrackTitle(title: String, languageName: String?, languageCode: String?): String? {
+/** [title] without codec names or the language's [languageWords], or null when nothing else remains. */
+private fun meaningfulTrackTitle(title: String, languageWords: List<String>): String? {
     var text = TECHNICAL_TRACK_TITLE.replace(title, " ")
-    listOfNotNull(languageName, languageCode).forEach { word ->
+    languageWords.forEach { word ->
         text = Regex("(?i)(?<![\\p{L}\\p{N}])${Regex.escape(word)}(?![\\p{L}\\p{N}])").replace(text, " ")
     }
     // Brackets the strip emptied, then separators left at either end or doubled.
