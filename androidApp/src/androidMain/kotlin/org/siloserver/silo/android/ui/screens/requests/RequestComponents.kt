@@ -47,6 +47,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -55,6 +56,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -339,7 +341,7 @@ internal fun RequestsSectionHeader(
         }
         if (trailing != null && onTrailingClick != null) {
             Text(
-                text = "$trailing ›", // i18n-ignore: a translated label and a chevron
+                text = "$trailing ${forwardChevron()}", // i18n-ignore: a translated label and a chevron
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
                 color = SiloSecondaryText,
@@ -488,9 +490,19 @@ internal fun RequestSummaryCard(
                 }
             }
         }
-        Text(text = "›", fontSize = 20.sp, color = SiloSecondaryText)
+        Text(text = forwardChevron(), fontSize = 20.sp, color = SiloSecondaryText)
     }
 }
+
+/**
+ * The "open" chevron after a row or link, pointing toward the reading end.
+ * Android mirrors a lone `›` in a right-to-left layout but not one that
+ * follows Arabic text, so right to left draws `‹` in a left-to-right isolate,
+ * which no bidi pass mirrors back.
+ */
+@Composable
+internal fun forwardChevron(): String =
+    if (LocalLayoutDirection.current == LayoutDirection.Rtl) "\u2066\u2039\u2069" else "\u203A" // i18n-ignore: chevron glyphs
 
 /** Space above each grouped section on pages that pass zero item spacing. */
 internal val RequestGroupGap = 24.dp
