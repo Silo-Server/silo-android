@@ -38,9 +38,9 @@ internal fun transcribeKindFor(audioLanguage: String?, targetLanguage: String): 
 /** Quota counter line, wording pinned to the web modal + its period labels. */
 internal fun quotaLineText(quota: SubtitleAiQuota, resources: Resources): String {
     val window = when (quota.period) {
-        "day" -> resources.getString(CommonR.string.player_aiTranslate_window_day)
-        "week" -> resources.getString(CommonR.string.player_aiTranslate_window_week)
-        "month" -> resources.getString(CommonR.string.player_aiTranslate_window_month)
+        "day" -> resources.getQuantityString(CommonR.plurals.player_aiTranslate_window_day, 24, 24)
+        "week" -> resources.getQuantityString(CommonR.plurals.player_aiTranslate_window_week, 7, 7)
+        "month" -> resources.getQuantityString(CommonR.plurals.player_aiTranslate_window_month, 30, 30)
         else -> quota.period
     }
     return if (quota.remaining <= 0) {
