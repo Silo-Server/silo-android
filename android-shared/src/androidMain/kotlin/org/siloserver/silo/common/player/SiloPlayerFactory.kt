@@ -433,7 +433,10 @@ class SiloPlayerFactory(
             C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS,
         )
 
-        return builder.build().also(libassBridge::initialize)
+        return builder.build().also { player ->
+            libassBridge.initialize(player)
+            player.addListener(loadControl.playingListener)
+        }
     }
 
     /** Releases the player and the libass handler/font graph adopted for it. */
