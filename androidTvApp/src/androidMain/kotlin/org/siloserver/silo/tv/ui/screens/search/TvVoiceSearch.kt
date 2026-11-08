@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -66,9 +67,12 @@ internal fun rememberTvVoiceSearch(
     // recomposing for, and re-querying the package manager on every frame is.
     val recognizerPackage = remember(context) { preferredRecognizerPackage(context) }
 
-    if (Build.VERSION.SDK_INT == Build.VERSION_CODES.R &&
-        recognizerPackage == "com.google.android.katniss"
-    ) {
+    val useLegacyRecognizer = remember(context, recognizerPackage) {
+        Build.VERSION.SDK_INT == Build.VERSION_CODES.R &&
+            recognizerPackage == "com.google.android.katniss" &&
+            SpeechRecognizer.isRecognitionAvailable(context)
+    }
+    if (useLegacyRecognizer) {
         return rememberLegacyTvVoiceSearch(prompt, onResult, onUnavailable)
     }
     val isAvailable = remember(context) { isTvSpeechRecognitionAvailable(context) }
