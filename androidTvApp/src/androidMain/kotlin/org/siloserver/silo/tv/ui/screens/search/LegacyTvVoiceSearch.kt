@@ -5,6 +5,8 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -37,66 +39,103 @@ internal fun rememberLegacyTvVoiceSearch(
     var recognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
     var dialog by remember { mutableStateOf<AlertDialog?>(null) }
     val available = remember(context) { SpeechRecognizer.isRecognitionAvailable(context) }
+    val handler = remember { Handler(Looper.getMainLooper()) }
+    var startupTimeout by remember { mutableStateOf<Runnable?>(null) }
+
+    fun cancelStartupTimeout() {
+        startupTimeout?.let(handler::removeCallbacks)
+        startupTimeout = null
+    }
+
+    fun releaseRecognizer() {
+        cancelStartupTimeout()
+        val speech = recognizer
+        recognizer = null
+        try {
+            speech?.destroy()
+        } catch (e: IllegalArgumentException) {
+            // A failed bind may leave no registered connection to unbind.
+            Log.w("TvVoiceSearch", "Recognition service was not bound", e)
+        }
+    }
+
+    fun stopRecognition() {
+        releaseRecognizer()
+        dialog?.dismiss()
+        dialog = null
+    }
 
     val startRecognition = {
-        recognizer?.destroy()
-        dialog?.dismiss()
+        stopRecognition()
         val speech = SpeechRecognizer.createSpeechRecognizer(context)
         recognizer = speech
         val listeningDialog = AlertDialog.Builder(context)
             .setTitle("Voice search")
             .setMessage(prompt)
             .setNegativeButton(android.R.string.cancel) { _, _ ->
-                speech.destroy()
-                recognizer = null
-                dialog = null
+                stopRecognition()
             }
             .create()
         dialog = listeningDialog
         listeningDialog.setOnCancelListener {
-            speech.destroy()
-            recognizer = null
-            dialog = null
+            stopRecognition()
         }
         speech.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
+                if (recognizer !== speech) return
+                cancelStartupTimeout()
                 Log.i("TvVoiceSearch", "Recognition ready")
             }
-            override fun onBeginningOfSpeech() = Unit
+            override fun onBeginningOfSpeech() {
+                if (recognizer === speech) cancelStartupTimeout()
+            }
             override fun onRmsChanged(rmsdB: Float) = Unit
             override fun onBufferReceived(buffer: ByteArray?) = Unit
             override fun onEndOfSpeech() = Unit
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
             override fun onPartialResults(partialResults: Bundle?) {
+                if (recognizer !== speech) return
+                cancelStartupTimeout()
                 partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()?.takeIf { it.isNotBlank() }
                     ?.let(listeningDialog::setMessage)
             }
             override fun onResults(results: Bundle?) {
+                if (recognizer !== speech) return
                 val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()?.trim().orEmpty()
-                listeningDialog.dismiss()
-                dialog = null
-                speech.destroy()
-                recognizer = null
+                stopRecognition()
                 if (spoken.isNotEmpty()) currentOnResult(spoken)
             }
             override fun onError(error: Int) {
+                if (recognizer !== speech) return
                 Log.w("TvVoiceSearch", "Recognition failed: $error")
-                speech.destroy()
-                recognizer = null
+                releaseRecognizer()
                 listeningDialog.setMessage(when (error) {
                     SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
                         "Didn't hear a title. Close and try again."
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
                         "Couldn't connect to voice search. Check your connection and try again."
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
-                        "Allow microphone access for Silo in Settings to use voice search."
+                        if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                            "Allow microphone access for Silo in Settings to use voice search."
+                        } else {
+                            "The voice service couldn't access the microphone. Check microphone access in device settings and try again."
+                        }
                     else -> "Voice search couldn't start. Close and try again."
                 })
             }
         })
         listeningDialog.show()
+        // Android 11 can drop binding errors before installing the listener.
+        val timeout = Runnable {
+            if (recognizer === speech) {
+                stopRecognition()
+                currentOnUnavailable()
+            }
+        }
+        startupTimeout = timeout
+        handler.postDelayed(timeout, 10_000L)
         try {
             speech.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -105,15 +144,7 @@ internal fun rememberLegacyTvVoiceSearch(
             true
         } catch (e: SecurityException) {
             Log.w("TvVoiceSearch", "Recognition service access denied", e)
-            try {
-                speech.destroy()
-            } catch (e: IllegalArgumentException) {
-                // A rejected bind may leave no registered connection to unbind.
-                Log.w("TvVoiceSearch", "Recognition service was not bound", e)
-            }
-            recognizer = null
-            listeningDialog.dismiss()
-            dialog = null
+            stopRecognition()
             false
         }
     }
@@ -132,12 +163,6 @@ internal fun rememberLegacyTvVoiceSearch(
         }
     }
     DisposableEffect(lifecycleOwner) {
-        fun stopRecognition() {
-            recognizer?.destroy()
-            recognizer = null
-            dialog?.dismiss()
-            dialog = null
-        }
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) stopRecognition()
         }
