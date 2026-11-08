@@ -249,8 +249,10 @@ class RoomUserItemStateRepository(
             // File-level local projection for resume (preserve track/cfi fields).
             val existing = userStateDao.get(serverId, accountId, profileId, contentId, fileId)
             // A sample taken before the one already stored (an exit write that ran
-            // late) must not replace it or be sent as newer.
-            if ((existing?.positionUpdatedAtMs ?: Long.MIN_VALUE) > eventTimeMs) return@withTransaction false
+            // late) must not replace it or be sent as newer. A stored time still in
+            // the future came from a clock that was ahead and has been corrected.
+            val storedAtMs = existing?.positionUpdatedAtMs
+            if (storedAtMs != null && storedAtMs in (eventTimeMs + 1)..queuedAtMs) return@withTransaction false
             val row = existing?.copy(
                 positionSeconds = positionSeconds,
                 durationSeconds = safeDuration,

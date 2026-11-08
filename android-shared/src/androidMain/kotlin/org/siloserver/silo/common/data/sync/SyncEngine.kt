@@ -10,6 +10,7 @@ import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.api.DownloadProgressReceipt
 import org.siloserver.silo.network.api.EbookReaderApi
 import org.siloserver.silo.network.api.PersonalDataApi
+import org.siloserver.silo.network.isUnansweredSend
 import org.siloserver.silo.repository.port.WriteOutcome
 import org.siloserver.silo.repository.port.toWriteOutcome
 
@@ -65,6 +66,9 @@ class SyncEngine(
         // A scope with no saved account (a temporary overlay) recorded under ''.
         val accountId = scope.accountId.orEmpty()
 
+        // A download position stranded in flight may already be applied, and
+        // the endpoint is not retryable: settle it, never resend it.
+        dao.inFlightDownloadProgress(serverId, accountId, profileId).forEach { settleDownloadProgress(it) }
         // Reclaim crash-stranded in-flight rows before claiming new work.
         dao.deleteSupersededInFlight(serverId, accountId, profileId)
         dao.resetInFlightToPending(serverId, accountId, profileId)
@@ -197,9 +201,15 @@ class SyncEngine(
                 DownloadProgressReceipt.NOT_FOUND -> WriteOutcome.TERMINAL
                 DownloadProgressReceipt.RETRY -> WriteOutcome.RETRIABLE
             }
-            // Only a request the server can never accept is dropped. A stale profile
-            // proof (403), identity change, upgrade gate or unreadable receipt waits.
+            // A request the server can never accept is dropped. So is one it may
+            // already have applied (an unreadable answer, or no answer after it
+            // left): /sync/progress is not retryable, and a resend after the
+            // server clamps a fast clock's updated_at could beat newer progress.
             result is ApiResult.Error && result.code in FINAL_PROGRESS_REFUSALS -> WriteOutcome.TERMINAL
+            result is ApiResult.Error && result.error == "invalid_response" -> WriteOutcome.TERMINAL
+            result is ApiResult.NetworkError && result.isUnansweredSend -> WriteOutcome.TERMINAL
+            // Not applied: a stale profile proof (403), identity change, upgrade
+            // gate, or a connection that never opened. Send it later.
             else -> WriteOutcome.RETRIABLE
         }
     }

@@ -28,7 +28,7 @@ data class FinalPlaybackPosition(
 
 /**
  * Application-owned final-position queue. Submission never waits for Room;
- * pending updates for the same identity/content/file collapse to the newest snapshot.
+ * pending updates for the same identity/content/file and playback run collapse to the newest snapshot.
  */
 class FinalPlaybackPositionWriter(
     scope: CoroutineScope,
@@ -39,6 +39,8 @@ class FinalPlaybackPositionWriter(
         val scope: PlaybackWriteScope,
         val contentId: String,
         val fileId: Int,
+        // Each downloaded playback run's last position is its own event.
+        val runStartedAtMs: Long?,
     )
 
     private val lock = Any()
@@ -110,7 +112,7 @@ class FinalPlaybackPositionWriter(
     private fun requeue(snapshot: FinalPlaybackPosition) {
         synchronized(lock) {
             pending.putIfAbsent(
-                Key(snapshot.scope, snapshot.contentId, snapshot.fileId),
+                Key(snapshot.scope, snapshot.contentId, snapshot.fileId, snapshot.runStartedAtMs),
                 snapshot,
             )
         }
@@ -119,7 +121,7 @@ class FinalPlaybackPositionWriter(
     fun submit(snapshot: FinalPlaybackPosition): Boolean {
         if (!snapshot.isValid()) return false
         synchronized(lock) {
-            pending[Key(snapshot.scope, snapshot.contentId, snapshot.fileId)] = snapshot
+            pending[Key(snapshot.scope, snapshot.contentId, snapshot.fileId, snapshot.runStartedAtMs)] = snapshot
         }
         wakeUp.trySend(Unit)
         return true

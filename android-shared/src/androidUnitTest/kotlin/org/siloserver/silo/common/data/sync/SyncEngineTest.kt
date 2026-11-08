@@ -159,6 +159,19 @@ class SyncEngineTest {
     }
 
     @Test
+    fun downloadProgressStrandedInFlightIsSettledNotResent() = runTest {
+        queueDownloadPosition()
+        val op = db.dirtyOperationDao().dueTargetHeads("s1", "", "p1", Long.MAX_VALUE, 10).single()
+        db.dirtyOperationDao().claim(op.id) // the process died after sending, before the answer
+
+        progressEngine().drainOnce()
+
+        assertEquals(emptyList(), progressBodies, "the server may already have it; never resend")
+        assertEquals(0, db.dirtyOperationDao().count())
+        assertEquals(0.0, storedPosition())
+    }
+
+    @Test
     fun legacyPersonalRowsRemainByteForByteAcrossRepeatedDrains() = runTest {
         val dao = db.dirtyOperationDao()
         val rows = listOf(OutboxOperation.SET_WATCHED, OutboxOperation.SET_RATING, OutboxOperation.SET_POSITION)
