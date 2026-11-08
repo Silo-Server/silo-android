@@ -97,6 +97,7 @@ import org.siloserver.silo.model.calendar.CalendarItemType
 import org.siloserver.silo.tv.ui.components.LocalAmbientBackdropTint
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.TvRootHeroBackdrop
+import org.siloserver.silo.tv.ui.components.bidiIsolated
 import org.siloserver.silo.tv.ui.components.rememberAmbientBackdropTintState
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvFocusAcquisitionBudgetMillis
@@ -1667,7 +1668,7 @@ private fun cardSubtitle(item: CalendarItem): String? {
         if (season != null && episode != null) {
             parts.add("S$season · E$episode")
         }
-        item.episodeTitle?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
+        item.episodeTitle?.takeIf { it.isNotBlank() }?.let { parts.add(if (parts.isEmpty()) it else bidiIsolated(it)) }
     }
     if (item.type == CalendarItemType.Movie) {
         parts.add("Movie")

@@ -6,6 +6,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import org.siloserver.silo.tv.ui.components.bidiIsolated
 
 /**
  * Presentation model for one TV inbox card. Pure: derived entirely from a
@@ -48,7 +49,11 @@ internal fun tvInboxCardModel(row: NotificationRow, now: Instant): TvInboxCardMo
 
     val sxey = row.seasonNumber?.let { s -> row.episodeNumber?.let { e -> "S${s}E$e" } }
     val subtitle = if (isEpisode) {
-        listOfNotNull(sxey, episodeTitle).joinToString(" • ").takeIf { it.isNotBlank() }
+        when {
+            sxey == null -> episodeTitle
+            episodeTitle == null -> sxey
+            else -> "$sxey • ${bidiIsolated(episodeTitle)}"
+        }
     } else {
         episodeTitle ?: seriesTitle
     }
