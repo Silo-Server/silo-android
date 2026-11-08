@@ -77,6 +77,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class TvItemDetailUiState(
     val isLoading: Boolean = true,
@@ -436,6 +437,9 @@ internal fun shouldApplyNextUpTrackRestore(
  */
 internal const val EPISODE_FAVORITE_PROBE_CONCURRENCY = 6
 
+/** How long a return from the player waits for its stop before reading the server. */
+private const val PLAYBACK_SETTLE_WAIT_MS = 3_000L
+
 /**
  * Whether a revalidation pass answered everything it was asked to.
  *
@@ -547,6 +551,8 @@ class TvItemDetailViewModel(
     private val capabilityDetector: PlaybackCapabilityDetector? = null,
     /** Remembers a manual subtitle choice for the whole series on the server. */
     private val seriesTrackChoiceWriter: org.siloserver.silo.common.settings.SeriesTrackChoiceWriter? = null,
+    /** Waits for the closed player's stop, which sends its final progress, to finish. */
+    private val awaitPlaybackSettled: suspend () -> Unit = {},
 ) : ViewModel() {
     /** Access changes this ViewModel has applied, kept while its screen is away. */
     val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
@@ -1099,15 +1105,29 @@ class TvItemDetailViewModel(
             if (overlaid != current) {
                 _uiState.update { it.copy(detail = overlaid) }
             }
+            // Read after the player's final progress lands, so the answer
+            // includes it; a stalled stop only delays the read.
+            val settled = playbackReturn == null ||
+                withTimeoutOrNull(PLAYBACK_SETTLE_WAIT_MS) { awaitPlaybackSettled() } != null
             when (val result = catalogRepository.getItemDetail(
                 contentId,
                 libraryId = libraryId,
                 // An access-change refresh must not reuse a pre-change warm-up.
                 joinWarmup = !showRefusal,
+                // Nor may a return from the player settle on a pre-playback answer;
+                // if this read fails, the page keeps the exit spot it already shows.
+                fresh = playbackReturn != null,
             )) {
                 is ApiResult.Success -> {
-                    val detail = withLocalProgress(result.data)
-                        .let { refreshed -> playbackReturn?.let(refreshed::withPlaybackReturn) ?: refreshed }
+                    // The playback just closed finished the title: the server
+                    // reset its resume point (#842). Neither the player's exit
+                    // spot nor a local sample from before it may bring one back.
+                    val detail = if (playbackReturn != null && result.data.isWatchedWithoutResume()) {
+                        result.data
+                    } else {
+                        withLocalProgress(result.data)
+                            .let { refreshed -> playbackReturn?.let(refreshed::withPlaybackReturn) ?: refreshed }
+                    }
                     if (!isTvHiddenMediaType(detail.type)) {
                         _uiState.update {
                             it.copy(
@@ -1129,6 +1149,12 @@ class TvItemDetailViewModel(
                 }
                 // Quiet refresh: on failure keep showing what we have.
                 is ApiResult.NetworkError -> Unit
+            }
+            // The stop outlasted the wait: read again once it lands. A newer
+            // refresh cancels this one, so it cannot overwrite a later answer.
+            if (!settled) {
+                awaitPlaybackSettled()
+                quietRefresh()
             }
         }
         // Watched badges in the box set row follow the player and
@@ -3145,6 +3171,9 @@ internal object TvDetailTrackSelectionSession {
         return saved
     }
 }
+
+private fun ItemDetail.isWatchedWithoutResume(): Boolean =
+    userData?.let { it.played && (it.positionSeconds ?: 0.0) <= 0.0 } == true
 
 private fun ItemDetail.withPlaybackReturn(saved: TvDetailTrackSelectionSession.Saved): ItemDetail {
     val position = saved.positionSeconds?.takeIf { it.isFinite() && it >= 0.0 } ?: return this
