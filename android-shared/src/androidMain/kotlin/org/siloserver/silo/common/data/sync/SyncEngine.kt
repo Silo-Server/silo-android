@@ -1,19 +1,25 @@
 package org.siloserver.silo.common.data.sync
 
 import android.util.Log
+import androidx.room.withTransaction
 import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.common.data.db.entity.DirtyOperationEntity
 import org.siloserver.silo.model.ebook.SaveEbookProgressRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.api.DownloadProgressReceipt
 import org.siloserver.silo.network.api.EbookReaderApi
 import org.siloserver.silo.network.api.PersonalDataApi
+import org.siloserver.silo.network.isUnansweredSend
 import org.siloserver.silo.repository.port.WriteOutcome
 import org.siloserver.silo.repository.port.toWriteOutcome
 
-/** Drains typed membership and ebook writes. Legacy personal-data rows remain unchanged and unsent. */
+/**
+ * Drains typed membership writes, ebook progress, and download playback
+ * progress (v2 `SET_POSITION`). Legacy personal-data rows remain unchanged and unsent.
+ */
 class SyncEngine(
-    db: SiloDatabase,
+    private val db: SiloDatabase,
     private val personalDataApi: PersonalDataApi,
     private val ebookReaderApi: EbookReaderApi,
     private val snapshotProvider: suspend () -> AuthScopeSnapshot?,
@@ -60,6 +66,9 @@ class SyncEngine(
         // A scope with no saved account (a temporary overlay) recorded under ''.
         val accountId = scope.accountId.orEmpty()
 
+        // A download position stranded in flight may already be applied, and
+        // the endpoint is not retryable: settle it, never resend it.
+        dao.inFlightDownloadProgress(serverId, accountId, profileId).forEach { settleDownloadProgress(it) }
         // Reclaim crash-stranded in-flight rows before claiming new work.
         dao.deleteSupersededInFlight(serverId, accountId, profileId)
         dao.resetInFlightToPending(serverId, accountId, profileId)
@@ -107,10 +116,13 @@ class SyncEngine(
                 }
                 when (outcome) {
                     WriteOutcome.SYNCED -> {
-                        dao.deleteById(op.id)
+                        if (op.opKind == OutboxOperation.SET_POSITION) settleDownloadProgress(op) else dao.deleteById(op.id)
                         synced++
                     }
-                    WriteOutcome.TERMINAL -> {
+                    WriteOutcome.TERMINAL -> if (op.opKind == OutboxOperation.SET_POSITION) {
+                        settleDownloadProgress(op)
+                        dropped++
+                    } else {
                         // A stale in-flight op must not roll back a newer pending
                         // intent with the same key. Otherwise revert both its
                         // optimistic content field and any resume rows it cleared.
@@ -168,8 +180,57 @@ class SyncEngine(
     }
 
     private suspend fun dispatch(op: DirtyOperationEntity, scope: AuthScopeSnapshot): WriteOutcome {
+        if (op.opKind == OutboxOperation.SET_POSITION && op.opVersion >= 2) return dispatchDownloadProgress(op, scope)
         check(op.opKind == OutboxOperation.SET_EBOOK_PROGRESS) { "Legacy personal-data intents must remain held" }
         return dispatchEbookProgress(op, op.targetContentId, scope)
+    }
+
+    /** One queued download position, sent with the time it was played. */
+    private suspend fun dispatchDownloadProgress(op: DirtyOperationEntity, scope: AuthScopeSnapshot): WriteOutcome {
+        val (position, duration) = OutboxOperation.decodePositionPayload(op.payloadJson)
+        val result = personalDataApi.syncDownloadProgress(
+            scope = scope,
+            contentId = op.targetContentId,
+            positionSeconds = position,
+            durationSeconds = duration,
+            updatedAt = java.time.Instant.ofEpochMilli(op.createdAtMs).toString(),
+        )
+        return when {
+            result is ApiResult.Success -> when (result.data) {
+                DownloadProgressReceipt.ACCEPTED -> WriteOutcome.SYNCED
+                DownloadProgressReceipt.NOT_FOUND -> WriteOutcome.TERMINAL
+                DownloadProgressReceipt.RETRY -> WriteOutcome.RETRIABLE
+            }
+            // A request the server can never accept is dropped. So is one it may
+            // already have applied (an unreadable answer, or no answer after it
+            // left): /sync/progress is not retryable, and a resend after the
+            // server clamps a fast clock's updated_at could beat newer progress.
+            result is ApiResult.Error && result.code in FINAL_PROGRESS_REFUSALS -> WriteOutcome.TERMINAL
+            result is ApiResult.Error && result.error == "invalid_response" -> WriteOutcome.TERMINAL
+            result is ApiResult.NetworkError && result.isUnansweredSend -> WriteOutcome.TERMINAL
+            // Not applied: a stale profile proof (403), identity change, upgrade
+            // gate, or a connection that never opened. Send it later.
+            else -> WriteOutcome.RETRIABLE
+        }
+    }
+
+    /**
+     * The server has the position (or refused it for good), so from now on its
+     * answer stands: drop the op and the local copy it sent. A newer sample
+     * queued meanwhile keeps its row until its own op settles.
+     */
+    private suspend fun settleDownloadProgress(op: DirtyOperationEntity) {
+        db.withTransaction {
+            dao.deleteById(op.id)
+            if (dao.countNewerForTargetKind(op.serverId, op.accountId, op.profileId, op.targetContentId, op.opKind, op.id) == 0) {
+                // Stamped with the event it settles, so a sample taken after it but
+                // written after this still counts as newer.
+                userStateDao.clearPlaybackProgressBefore(
+                    op.serverId, op.accountId, op.profileId, op.targetContentId,
+                    admittedAtMs = op.createdAtMs + 1, updatedAtMs = op.createdAtMs,
+                )
+            }
+        }
     }
 
     /**
@@ -233,6 +294,9 @@ class SyncEngine(
         // Backstop against a pathological re-due loop; a normal drain terminates
         // long before this because each op is deleted or pushed into the future.
         private const val MAX_BATCHES = 1_000
+
+        /** Malformed or for a title the server no longer has. */
+        private val FINAL_PROGRESS_REFUSALS = setOf(400, 404, 422)
 
     }
 }

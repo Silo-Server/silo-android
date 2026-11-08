@@ -4,6 +4,8 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.common.data.db.entity.DirtyOperationEntity
+import org.siloserver.silo.common.data.db.entity.UserItemStateEntity
+import io.ktor.client.engine.mock.toByteArray
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.api.PersonalDataApi
@@ -101,6 +103,74 @@ class SyncEngineTest {
         nextAttemptAtMs = nextAttemptAtMs,
     )
 
+    private var progressResult = SUCCESS
+    private val progressBodies = mutableListOf<String>()
+    private val progressApi = PersonalDataApi(
+        HttpClient(MockEngine { request ->
+            progressBodies += String(request.body.toByteArray())
+            respond("{\"items\":[$progressResult]}", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }) { install(ContentNegotiation) { json(SiloJson) } },
+        org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted,
+        tokens,
+    )
+    private fun progressEngine() = SyncEngine(db, progressApi, ebookApi, { snapshot }, now = { clock })
+
+    private suspend fun queueDownloadPosition() {
+        db.userItemStateDao().upsert(UserItemStateEntity("s1", "", "p1", "c1", 7, 646.5, 1453.0, "audio", null, null, null,
+            clientUpdatedAtMs = 5_000L, serverUpdatedAtMs = null, positionUpdatedAtMs = 5_000L))
+        db.dirtyOperationDao().insert(DirtyOperationEntity(
+            opKind = OutboxOperation.SET_POSITION, serverId = "s1", accountId = "", profileId = "p1",
+            targetContentId = "c1", targetFileId = 7, coalesceKey = "s1||p1|c1|SET_POSITION|4000",
+            idempotencyKey = "download", opVersion = 2,
+            payloadJson = OutboxOperation.encodePositionPayload(646.5, 1453.0), createdAtMs = 5_000L,
+        ))
+    }
+    private suspend fun storedPosition() = db.userItemStateDao().get("s1", "", "p1", "c1", 7)?.positionSeconds
+
+    @Test
+    fun downloadProgressIsSentWithItsEventTimeAndThenStopsOverridingTheServer() = runTest {
+        queueDownloadPosition()
+
+        assertEquals(1, progressEngine().drainOnce().synced)
+
+        val body = progressBodies.single()
+        assertTrue("\"position_ms\":646500" in body && "\"updated_at\":\"1970-01-01T00:00:05Z\"" in body, body)
+        assertEquals(0, db.dirtyOperationDao().count())
+        val row = db.userItemStateDao().get("s1", "", "p1", "c1", 7)
+        assertEquals(0.0, row?.positionSeconds, "the server's answer stands once it has the position")
+        assertEquals("audio", row?.audioFingerprint)
+    }
+
+    @Test
+    fun downloadProgressStaysQueuedUntilTheServerStoresOrRefusesIt() = runTest {
+        queueDownloadPosition()
+        // HTTP 200 with a per-item storage failure is not a refusal.
+        progressResult = failure(500)
+        assertEquals(1, progressEngine().drainOnce().retriable)
+        assertEquals(646.5, storedPosition())
+        assertEquals(1, db.dirtyOperationDao().count())
+
+        // A title the server no longer has is refused for good.
+        progressResult = failure(404)
+        clock = 10_000_000L
+        assertEquals(1, progressEngine().drainOnce().dropped)
+        assertEquals(0.0, storedPosition())
+        assertEquals(0, db.dirtyOperationDao().count())
+    }
+
+    @Test
+    fun downloadProgressStrandedInFlightIsSettledNotResent() = runTest {
+        queueDownloadPosition()
+        val op = db.dirtyOperationDao().dueTargetHeads("s1", "", "p1", Long.MAX_VALUE, 10).single()
+        db.dirtyOperationDao().claim(op.id) // the process died after sending, before the answer
+
+        progressEngine().drainOnce()
+
+        assertEquals(emptyList(), progressBodies, "the server may already have it; never resend")
+        assertEquals(0, db.dirtyOperationDao().count())
+        assertEquals(0.0, storedPosition())
+    }
+
     @Test
     fun legacyPersonalRowsRemainByteForByteAcrossRepeatedDrains() = runTest {
         val dao = db.dirtyOperationDao()
@@ -158,5 +228,11 @@ class SyncEngineTest {
         val result = engine().drainOnce()
         assertEquals(1, result.synced)
         assertEquals(0, db.dirtyOperationDao().count())
+    }
+
+    private companion object {
+        const val SUCCESS = """{"index":0,"media_item_id":"c1","status":"success"}"""
+        fun failure(status: Int) =
+            """{"index":0,"media_item_id":"c1","status":"failure","failure":{"type":"x","title":"t","status":$status,"detail":"d"}}"""
     }
 }

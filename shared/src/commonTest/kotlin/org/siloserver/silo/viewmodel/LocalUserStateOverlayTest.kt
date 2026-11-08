@@ -12,7 +12,7 @@ import kotlin.test.assertEquals
 class LocalUserStateOverlayTest {
 
     @Test
-    fun `home overlay applies local progress only when local is ahead`() {
+    fun `home overlay applies queued local progress whether ahead of the server or behind`() {
         val section = ResolvedSection(
             id = "cw",
             sectionType = "continue_watching",
@@ -56,9 +56,11 @@ class LocalUserStateOverlayTest {
         assertEquals(300.0, first.positionSeconds)
         assertEquals(1_200.0, first.durationSeconds)
 
+        // Local progress is only ever a download position waiting to sync, so it
+        // is newer than the server's even when behind it (a rewind offline).
         val second = overlaid.single().items[1]
-        assertEquals(500.0, second.positionSeconds)
-        assertEquals(1_000.0, second.durationSeconds)
+        assertEquals(250.0, second.positionSeconds)
+        assertEquals(900.0, second.durationSeconds)
     }
 
     @Test

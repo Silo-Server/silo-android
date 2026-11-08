@@ -21,8 +21,9 @@ import org.siloserver.silo.common.data.db.entity.DirtyOperationEntity
 interface DirtyOperationDao {
 
     // Personal-data v1 rows are held byte-for-byte, including crash-stranded rows.
+    // Queued download progress is not one: it replays on its own, with its event time.
     @Query("SELECT COUNT(*) FROM dirty_operations WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId " +
-        "AND targetContentId = :contentId AND opKind IN ('SET_WATCHED', 'SET_RATING', 'SET_POSITION', 'PERSONAL_V2')")
+        "AND targetContentId = :contentId AND opKind IN ('SET_WATCHED', 'SET_RATING', 'PERSONAL_V2')")
     suspend fun unresolvedPersonalCount(serverId: String, accountId: String, profileId: String, contentId: String): Int
 
     @Query("SELECT contentId FROM content_item_state WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId " +
@@ -159,12 +160,12 @@ interface DirtyOperationDao {
      */
     @Query(
         "SELECT candidate.* FROM dirty_operations candidate " +
-            "WHERE candidate.opKind = 'SET_EBOOK_PROGRESS' AND candidate.state = '${DirtyOperationEntity.STATE_PENDING}' " +
+            "WHERE ${DirtyOperationEntity.REPLAYABLE} AND candidate.state = '${DirtyOperationEntity.STATE_PENDING}' " +
             "AND candidate.nextAttemptAtMs <= :nowMs " +
             "AND candidate.serverId = :serverId AND candidate.accountId = :accountId AND candidate.profileId = :profileId " +
             "AND NOT EXISTS (" +
             "SELECT 1 FROM dirty_operations older " +
-            "WHERE older.opKind = 'SET_EBOOK_PROGRESS' AND older.serverId = candidate.serverId " +
+            "WHERE older.opKind = candidate.opKind AND older.serverId = candidate.serverId " +
             "AND older.accountId = candidate.accountId AND older.profileId = candidate.profileId " +
             "AND older.targetContentId = candidate.targetContentId " +
             "AND older.state IN ('${DirtyOperationEntity.STATE_PENDING}', '${DirtyOperationEntity.STATE_IN_FLIGHT}') " +
@@ -189,6 +190,14 @@ interface DirtyOperationDao {
             "WHERE id = :id AND state = '${DirtyOperationEntity.STATE_PENDING}'",
     )
     suspend fun claim(id: Long): Int
+
+    /** Pending or in-flight [opKind] ops for the same item that were queued after [id]. */
+    @Query(
+        "SELECT COUNT(*) FROM dirty_operations WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId " +
+            "AND targetContentId = :contentId AND opKind = :opKind AND id > :id " +
+            "AND state IN ('${DirtyOperationEntity.STATE_PENDING}', '${DirtyOperationEntity.STATE_IN_FLIGHT}')",
+    )
+    suspend fun countNewerForTargetKind(serverId: String, accountId: String, profileId: String, contentId: String, opKind: String, id: Long): Int
 
     /** Count of pending ops for the same coalesce key that are newer than [id]. */
     @Query(
@@ -245,6 +254,14 @@ interface DirtyOperationDao {
     )
     suspend fun resetInFlightToPending(serverId: String, accountId: String, profileId: String)
 
+    /** Download positions left in flight by a crash; their outcome is unknown. */
+    @Query(
+        "SELECT * FROM dirty_operations WHERE opKind = 'SET_POSITION' AND opVersion >= 2 " +
+            "AND state = '${DirtyOperationEntity.STATE_IN_FLIGHT}' " +
+            "AND serverId = :serverId AND accountId = :accountId AND profileId = :profileId",
+    )
+    suspend fun inFlightDownloadProgress(serverId: String, accountId: String, profileId: String): List<DirtyOperationEntity>
+
     @Query(
         "UPDATE dirty_operations SET " +
             "state = '${DirtyOperationEntity.STATE_PENDING}', " +
@@ -277,7 +294,7 @@ interface DirtyOperationDao {
 
     /** Future worker cutover must use this count, not all unresolved membership states. */
     @Query("SELECT COUNT(*) FROM dirty_operations WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId " +
-        "AND opKind = 'SET_EBOOK_PROGRESS' AND state IN ('pending', 'in_flight')")
+        "AND ${DirtyOperationEntity.REPLAYABLE} AND state IN ('pending', 'in_flight')")
     suspend fun runnableLegacyCountForScope(serverId: String, accountId: String, profileId: String): Int
 
     @Query("SELECT * FROM dirty_operations WHERE membershipAuthority = :authority " +

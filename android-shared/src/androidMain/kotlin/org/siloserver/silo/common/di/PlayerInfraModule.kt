@@ -168,7 +168,6 @@ val playerInfraModule = module {
 
     single {
         val userItemState = get<org.siloserver.silo.repository.port.UserItemStatePort>()
-        val syncScheduler = get<org.siloserver.silo.common.data.sync.OutboxSyncScheduler>()
         val tokenManager = get<TokenManager>()
         FinalPlaybackPositionWriter(
             scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
@@ -192,15 +191,18 @@ val playerInfraModule = module {
                         identityGeneration = snapshot.scope.identityGeneration,
                     )
                 }
-            } else {
-                val written = userItemState.recordPosition(
+            } else if (snapshot.runStartedAtMs != null) {
+                // Downloaded playback: queued for the server. A stream's session
+                // already reports its progress, so it writes nothing locally.
+                userItemState.recordPosition(
                     snapshot.scope,
                     snapshot.contentId,
                     snapshot.fileId,
                     snapshot.positionSeconds,
                     snapshot.durationSeconds,
+                    eventTimeMs = snapshot.eventTimeMs,
+                    runStartedAtMs = snapshot.runStartedAtMs,
                 )
-                if (written) syncScheduler.requestSync()
             }
         }
     }
