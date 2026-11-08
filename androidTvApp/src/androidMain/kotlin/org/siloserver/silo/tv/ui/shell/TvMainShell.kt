@@ -237,7 +237,7 @@ fun TvMainShell(
     val serverRegistry: ServerRegistry = koinInject()
     val reachabilityState by reachabilityMonitor.state.collectAsState()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
-    val requestsResolved by requestsFeatureStore.isResolved.collectAsState()
+    val requestsKnownUnavailable by requestsFeatureStore.isKnownUnavailable.collectAsState()
     val activeServerEntry by serverRegistry.activeEntry.collectAsState()
     val tvLibraryScopeStore: TvLibraryScopeStore = koinInject()
     // One shell-scoped Home owner feeds both the Home screen and General's
@@ -1042,7 +1042,29 @@ fun TvMainShell(
         }
     }
 
-    LaunchedEffect(currentRoute, visibleRoots, librariesLoaded, showAudiobooksTabResolved, requestsResolved, requestsEnabled) {
+    LaunchedEffect(currentRoute, visibleRoots, librariesLoaded, showAudiobooksTabResolved, requestsKnownUnavailable) {
+        // The Requests page and request details close once the server answers
+        // that requests are off, back to whatever opened them, as Back would:
+        // a detail opened from Search lands on Search, and Requests opened
+        // from a tab lands on that tab. A plain pop saves nothing, so a later
+        // tab switch can't restore a Requests screen (navigateToRoute's
+        // saveState pop would, and the tab would bounce Home every time).
+        // Stacked details ("More like this") share one route pattern, so this
+        // effect would not run again between them: pop the whole run at once.
+        // A restored Requests route (or a return from a title opened there)
+        // stays while the status read runs, or if it fails.
+        fun isRequestsRoute(route: String?) =
+            route == TvMainRoute.Requests.route || route == TvMainRoute.RequestDetail.ROUTE
+        if (isRequestsRoute(currentRoute)) {
+            if (requestsKnownUnavailable) {
+                while (isRequestsRoute(nestedNav.currentDestination?.route) &&
+                    nestedNav.previousBackStackEntry != null
+                ) {
+                    if (!nestedNav.popBackStack()) break
+                }
+            }
+            return@LaunchedEffect
+        }
         // Wait until libraries have actually loaded — before that `visibleRoots`
         // is just Home + Calendar, and a restored/deep-linked `main/movies` route
         // would be wrongly ejected even though that type exists. Likewise wait for
@@ -1050,13 +1072,6 @@ fun TvMainShell(
         // omits Audiobooks, so a restored `main/audiobooks` route would be ejected
         // to Home before the DataStore read completes.
         if (!librariesLoaded || !showAudiobooksTabResolved) return@LaunchedEffect
-        // Requests closes once the server's requests status reads as off. A
-        // restored Requests route (or a return from a title opened there) must
-        // not be ejected while that read runs.
-        if (currentRoute == TvMainRoute.Requests.route) {
-            if (requestsResolved && !requestsEnabled) navigateToRoute(firstTvRoute())
-            return@LaunchedEffect
-        }
         // Only media-root tabs are eligible for the "tab no longer visible"
         // redirect. Non-tab routes (Settings, Favorites, Search, …) map
         // to null and must be left alone — otherwise navigating to Settings

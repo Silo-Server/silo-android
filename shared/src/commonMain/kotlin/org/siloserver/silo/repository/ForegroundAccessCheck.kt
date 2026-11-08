@@ -1,5 +1,6 @@
 package org.siloserver.silo.repository
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import org.siloserver.silo.model.feature.RequestsFeatureStore
@@ -36,9 +37,17 @@ class ForegroundAccessCheck(
             }
             launch {
                 // The TV shell does not reset the store on sign-out, so check
-                // there is still a session before asking the server.
-                if (!tokenManager.getAccessToken().isNullOrBlank()) {
-                    requestsFeatureStore.refreshAfterReturnToForeground()
+                // there is still a session before asking the server. A failed
+                // token read skips this check rather than cancelling the
+                // library check beside it or crashing the foreground scope.
+                try {
+                    if (!tokenManager.getAccessToken().isNullOrBlank()) {
+                        requestsFeatureStore.refreshAfterReturnToForeground()
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // The next return to the foreground tries again.
                 }
             }
         }

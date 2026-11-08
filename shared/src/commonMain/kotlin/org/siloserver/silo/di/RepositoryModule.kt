@@ -128,7 +128,13 @@ val repositoryModule = module {
             ),
         )
     }
-    single { RequestsFeatureStore(get()) }
+    single {
+        RequestsFeatureStore(
+            repository = get(),
+            // Main, like the repository it listens to and the shells that probe it.
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+        )
+    }
     single { ActiveProfileStore(get()) }
     single { org.siloserver.silo.repository.MetadataAiRepository(get()) }
     single { org.siloserver.silo.model.feature.MetadataAiFeatureStore(get()) }
