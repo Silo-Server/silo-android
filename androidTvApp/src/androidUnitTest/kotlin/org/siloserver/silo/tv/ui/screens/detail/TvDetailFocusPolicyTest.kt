@@ -22,8 +22,11 @@ class TvDetailFocusPolicyTest {
             "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/detail/TvDetailEpisodeRail.kt",
         ).readText()
 
-        assertTrue(source.contains("LaunchedEffect(episodeSetKey)"))
-        assertFalse(source.contains("LaunchedEffect(currentContentId, episodes.size)"))
+        // Keyed on the episode set and on whether the start episode has
+        // arrived, never on the focused episode, and it centers at most once.
+        assertTrue(source.contains("LaunchedEffect(episodeSetKey, currentIndex != null)"))
+        assertTrue(source.contains("if (initialCenterDone || rememberedFocusedContentId != null) return@LaunchedEffect"))
+        assertFalse(source.contains("LaunchedEffect(currentContentId"))
     }
 
     @Test
