@@ -245,7 +245,7 @@ class RoomUserItemStateRepository(
         val safeDuration = durationSeconds?.takeIf { it.isFinite() && it > 0.0 }
         val queuedAtMs = now()
 
-        return db.withTransaction {
+        val written = db.withTransaction {
             // File-level local projection for resume (preserve track/cfi fields).
             val existing = userStateDao.get(serverId, accountId, profileId, contentId, fileId)
             // A sample taken before the one already stored (an exit write that ran
@@ -299,6 +299,9 @@ class RoomUserItemStateRepository(
             )
             true
         }
+        // Online, send it now rather than at the next exit or app start.
+        if (written && queueForServer) syncScheduler.requestSync()
+        return written
     }
 
     override suspend fun localPosition(contentId: String, fileId: Int): Double? {
