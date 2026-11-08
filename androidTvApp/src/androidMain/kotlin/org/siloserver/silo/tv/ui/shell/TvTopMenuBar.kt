@@ -688,7 +688,7 @@ private fun TvSiloWordmark() {
     )
 }
 
-/** Brand lockup height inside the 32dp bar; the PNG is 764×400. */
+/** Brand lockup height inside the 32dp bar; the drawable is 764:400. */
 private val TvSiloWordmarkHeight = 26.dp
 private const val TvSiloWordmarkAspect = 764f / 400f
 

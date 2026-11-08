@@ -87,7 +87,7 @@ object TvSkyline {
      * Rendered height of the Silo brand lockup at the bar's leading edge.
      *
      * The artwork is `silo-wordmark-white.svg` as silo-branding's `derive.py`
-     * renders it for Android (`res/drawable/silo_wordmark.png`, 764x400). Branding
+     * is converted to `res/drawable/silo_wordmark.xml` (764:400 canvas). Branding
      * requires clear space on every side of at least one bar counter — 54 of the
      * mark's 266 units, i.e. 6.32% of the lockup's own height. 24.dp is the
      * largest round height that keeps that clear space inside the 32.dp
