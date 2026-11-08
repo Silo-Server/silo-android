@@ -281,6 +281,28 @@ class RequestsFeatureStoreTest {
     }
 
     @Test
+    fun returningToTheForegroundWhileTheShellProbeIsOutStillProbes() = runTest {
+        // The shell's probe read the status before requests were turned off,
+        // and the app went to the background before it answered.
+        val api = FakeRequestsApi()
+        val stale = api.holdNextStatus()
+        val fresh = api.holdNextStatus()
+        val store = RequestsFeatureStore(RequestsRepository(api))
+        launch { store.refresh() }
+        runCurrent()
+
+        launch { store.refreshAfterReturnToForeground() }
+        runCurrent()
+        fresh.complete(ApiResult.Success(disabled()))
+        runCurrent()
+        stale.complete(ApiResult.Success(available()))
+        advanceUntilIdle()
+
+        assertEquals(2, api.statusCalls)
+        assertTrue(store.isKnownUnavailable.value)
+    }
+
+    @Test
     fun resetHidesRequestsBeforeNextProbe() = runTest {
         val repository = RequestsRepository(
             FakeRequestsApi(
