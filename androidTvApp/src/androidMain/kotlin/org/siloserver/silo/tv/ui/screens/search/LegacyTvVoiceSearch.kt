@@ -33,6 +33,7 @@ internal fun rememberLegacyTvVoiceSearch(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentOnResult by rememberUpdatedState(onResult)
+    val currentOnUnavailable by rememberUpdatedState(onUnavailable)
     var recognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
     var dialog by remember { mutableStateOf<AlertDialog?>(null) }
     val available = remember(context) { SpeechRecognizer.isRecognitionAvailable(context) }
@@ -89,21 +90,38 @@ internal fun rememberLegacyTvVoiceSearch(
                         "Didn't hear a title. Close and try again."
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
                         "Couldn't connect to voice search. Check your connection and try again."
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
+                        "Allow microphone access for Silo in Settings to use voice search."
                     else -> "Voice search couldn't start. Close and try again."
                 })
             }
         })
         listeningDialog.show()
-        speech.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        })
+        try {
+            speech.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            })
+            true
+        } catch (e: SecurityException) {
+            Log.w("TvVoiceSearch", "Recognition service access denied", e)
+            try {
+                speech.destroy()
+            } catch (e: IllegalArgumentException) {
+                // A rejected bind may leave no registered connection to unbind.
+                Log.w("TvVoiceSearch", "Recognition service was not bound", e)
+            }
+            recognizer = null
+            listeningDialog.dismiss()
+            dialog = null
+            false
+        }
     }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) {
-            startRecognition()
+            if (!startRecognition()) currentOnUnavailable()
         } else {
             dialog = AlertDialog.Builder(context)
                 .setTitle("Voice search")
@@ -134,7 +152,7 @@ internal fun rememberLegacyTvVoiceSearch(
             startRecognition()
         } else {
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            true
         }
-        true
-    }, onUnavailable)
+    }, { currentOnUnavailable() })
 }
