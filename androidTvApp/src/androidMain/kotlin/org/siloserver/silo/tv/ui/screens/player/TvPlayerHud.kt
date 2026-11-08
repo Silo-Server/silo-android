@@ -863,7 +863,7 @@ private fun HudInfoPane(
     chapters: List<VersionChapter>,
 ) {
     val episodeTag = if (seasonNumber != null && episodeNumber != null) {
-        stringResource(CommonR.string.catalog_episodeCaption, LocaleFormat.integer(seasonNumber), LocaleFormat.integer(episodeNumber))
+        stringResource(CommonR.string.catalog_episodeCaption, LocaleFormat.codeNumber(seasonNumber), LocaleFormat.codeNumber(episodeNumber))
     } else {
         null
     }

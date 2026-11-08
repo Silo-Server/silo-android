@@ -45,7 +45,7 @@ internal fun TvInboxText.resolve(resources: Resources): String = when (this) {
     is TvInboxText.Plain -> text
     is TvInboxText.Resource -> resources.getString(id, *args.toTypedArray())
     is TvInboxText.Episode -> {
-        val tag = season?.let { s -> episode?.let { e -> resources.getString(CommonR.string.catalog_episodeTag, LocaleFormat.integer(s), LocaleFormat.integer(e)) } }
+        val tag = season?.let { s -> episode?.let { e -> resources.getString(CommonR.string.catalog_episodeTag, LocaleFormat.codeNumber(s), LocaleFormat.codeNumber(e)) } }
         val rtl = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
         when {
             tag == null -> title.orEmpty()

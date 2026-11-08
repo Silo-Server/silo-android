@@ -134,6 +134,13 @@ object LocaleFormat {
         integer(value.toLong(), locale, minDigits)
 
     /**
+     * A season or episode number inside a code ("S2", "E05", "S2021E01") in
+     * ASCII digits in every language: codes are technical (D78). A phrase
+     * such as "Season 2" uses [integer].
+     */
+    fun codeNumber(value: Int, minDigits: Int = 1): String = integer(value, Locale.ROOT, minDigits)
+
+    /**
      * [value] with up to [maxFractionDigits] decimals and no trailing zeros
      * or grouping, rounded half up as `String.format` does: a playback speed
      * reads "1.25", "1.5" or "2" in English and "1,25" in German.
@@ -236,7 +243,7 @@ object LocaleFormat {
 /**
  * A number for a String placeholder in text a model builds and a screen draws
  * later: it is formatted ([LocaleFormat.integer]) when drawn, so it follows a
- * language change. [minDigits] zero-pads ("S01E02").
+ * language change. [minDigits] zero-pads ("05").
  */
 data class LocaleInteger(val value: Long, val minDigits: Int = 1) {
     constructor(value: Int, minDigits: Int = 1) : this(value.toLong(), minDigits)

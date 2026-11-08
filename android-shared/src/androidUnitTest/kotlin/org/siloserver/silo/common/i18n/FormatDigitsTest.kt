@@ -12,6 +12,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.siloserver.silo.common.R
+import org.siloserver.silo.model.catalog.EpisodeCardCaption
+import org.siloserver.silo.model.catalog.EpisodeListItem
 import java.util.Locale
 import kotlin.test.assertEquals
 
@@ -61,6 +63,10 @@ class FormatDigitsTest {
         assertEquals(true, res.getQuantityString(R.plurals.account_downloads_count, 12, 12).contains("١٢"))
         // D77: a release year is a number on screen too.
         assertEquals("٢٠٢١", LocaleFormat.integer(2021))
+        // D78: an episode code stays ASCII; the spoken phrase doesn't.
+        val code = EpisodeCardCaption.title(EpisodeListItem("e", seasonNumber = 1, episodeNumber = 5)).text(res)
+        assertEquals(true, code.contains("01") && code.contains("05"), code)
+        assertEquals(true, res.getString(R.string.detail_season, LocaleFormat.integer(2)).contains("٢"))
     }
 
     @Test @Config(sdk = [35], qualifiers = "ar-rAE")

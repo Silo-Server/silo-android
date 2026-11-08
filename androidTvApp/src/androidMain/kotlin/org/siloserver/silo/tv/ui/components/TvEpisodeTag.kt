@@ -2,7 +2,7 @@ package org.siloserver.silo.tv.ui.components
 
 import androidx.compose.runtime.Composable
 import org.siloserver.silo.common.R as CommonR
-import org.siloserver.silo.common.i18n.LocaleInteger
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.isRightToLeftText
 
 /**
@@ -17,10 +17,10 @@ import org.siloserver.silo.common.i18n.isRightToLeftText
 @Composable
 internal fun tvEpisodeTag(season: Int?, episode: Int?): String? = tvEpisodeTagToken(season, episode)?.resolved()
 
-/** [tvEpisodeTag] as a catalog string and its zero-padded numbers, resolved when drawn. */
+/** [tvEpisodeTag] as a catalog string, resolved when drawn, and its zero-padded code numbers (ASCII, D78). */
 internal fun tvEpisodeTagToken(season: Int?, episode: Int?): TvHeroFactToken.ResToken? {
-    val s = season?.let { LocaleInteger(it, minDigits = 2) }
-    val e = episode?.let { LocaleInteger(it, minDigits = 2) }
+    val s = season?.let { LocaleFormat.codeNumber(it, minDigits = 2) }
+    val e = episode?.let { LocaleFormat.codeNumber(it, minDigits = 2) }
     return when {
         s != null && e != null -> TvHeroFactToken.ResToken(CommonR.string.catalog_episodeTag, listOf(s, e))
         s != null -> TvHeroFactToken.ResToken(CommonR.string.calendar_seasonShort, listOf(s))

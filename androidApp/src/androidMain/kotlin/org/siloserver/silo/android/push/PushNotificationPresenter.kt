@@ -238,7 +238,7 @@ class PushNotificationPresenter internal constructor(
         }
 
         val episodeTag = row.seasonNumber?.let { season ->
-            row.episodeNumber?.let { episode -> text.getString(CommonR.string.catalog_episodeTag, LocaleFormat.integer(season), LocaleFormat.integer(episode)) }
+            row.episodeNumber?.let { episode -> text.getString(CommonR.string.catalog_episodeTag, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode)) }
         }
         val route = notificationRouteFor(row)
         return when (row.type) {

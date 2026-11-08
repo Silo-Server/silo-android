@@ -1672,7 +1672,7 @@ private fun cardSubtitle(item: CalendarItem): String? {
         val season = item.seasonNumber
         val episode = item.episodeNumber
         if (season != null && episode != null) {
-            parts.add(stringResource(CommonR.string.catalog_episodeCaption, LocaleFormat.integer(season), LocaleFormat.integer(episode)))
+            parts.add(stringResource(CommonR.string.catalog_episodeCaption, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode)))
         }
         item.episodeTitle?.takeIf { it.isNotBlank() }?.let { parts.add(if (parts.isEmpty()) it else bidiIsolated(it, isRightToLeftText())) }
     }

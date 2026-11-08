@@ -438,7 +438,7 @@ private fun PickerShelvesPage(
     val togetherTitle = stringResource(CommonR.string.watchParty_picker_continueTogether)
     val togetherCaptions = rows?.continueTogether.orEmpty().mapNotNull { entry ->
         val caption = entry.nextUp?.let {
-            stringResource(CommonR.string.watchParty_picker_nextEpisode, LocaleFormat.integer(it.seasonNumber), LocaleFormat.integer(it.episodeNumber))
+            stringResource(CommonR.string.watchParty_picker_nextEpisode, LocaleFormat.codeNumber(it.seasonNumber), LocaleFormat.codeNumber(it.episodeNumber))
         } ?: memberNames(entry)
         caption?.let { entry.item.contentId to it }
     }.toMap()

@@ -31,7 +31,7 @@ internal fun InboxText.resolve(resources: Resources): String = when (this) {
     is InboxText.Plain -> text
     is InboxText.Resource -> resources.getString(id, *args.toTypedArray())
     is InboxText.Episode -> {
-        val tag = season?.let { s -> episode?.let { e -> resources.getString(CommonR.string.catalog_episodeTag, LocaleFormat.integer(s), LocaleFormat.integer(e)) } }
+        val tag = season?.let { s -> episode?.let { e -> resources.getString(CommonR.string.catalog_episodeTag, LocaleFormat.codeNumber(s), LocaleFormat.codeNumber(e)) } }
         listOfNotNull(tag, title).joinToString(" • ")
     }
     is InboxText.Date -> formatAbsoluteDate(instant)

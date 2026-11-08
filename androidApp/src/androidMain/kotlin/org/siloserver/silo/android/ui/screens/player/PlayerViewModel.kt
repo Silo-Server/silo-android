@@ -271,8 +271,8 @@ data class MobileEpisodeSubtitle(val seriesTitle: String, val season: Int, val e
 internal fun PlayerViewModel.PlayerUiState.displaySubtitle(): String = subtitleEpisode?.let {
     it.seriesTitle + " - " + stringResource(
         CommonR.string.catalog_episodeTag,
-        LocaleFormat.integer(it.season, minDigits = 2, locale = currentNumberLocale()),
-        LocaleFormat.integer(it.episode, minDigits = 2, locale = currentNumberLocale()),
+        LocaleFormat.codeNumber(it.season, minDigits = 2),
+        LocaleFormat.codeNumber(it.episode, minDigits = 2),
     )
 } ?: subtitleYear?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: subtitle
 

@@ -47,7 +47,7 @@ sealed interface UiText {
      * A whole number takes the interface language's digits (D55), so English
      * keeps "1234"; with [maxFractionDigits] it is a decimal in the app's
      * formatting locale (D26, D58, D64). At
-     * least [minIntegerDigits] whole digits ("02" for an episode code).
+     * least [minIntegerDigits] whole digits ("02").
      */
     data class Number(
         val value: Double,

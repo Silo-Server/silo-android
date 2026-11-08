@@ -48,12 +48,12 @@ fun watchPartyRuntimeText(minutes: Int): String =
 /** "S1 · E2". */
 @Composable
 fun watchPartyEpisodeLine(season: Int, episode: Int): String =
-    stringResource(R.string.watchParty_episodes_line, LocaleFormat.integer(season), LocaleFormat.integer(episode))
+    stringResource(R.string.watchParty_episodes_line, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode))
 
 /** "S1:E2", the staged episode's short code. */
 @Composable
 fun watchPartyEpisodeCode(season: Int, episode: Int): String =
-    stringResource(R.string.watchParty_facts_episodeCode, LocaleFormat.integer(season), LocaleFormat.integer(episode))
+    stringResource(R.string.watchParty_facts_episodeCode, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode))
 
 /** A member's watch state on the picker's confirmation page: "Watched", "In progress · Watchlist", "No viewing history". */
 @Composable

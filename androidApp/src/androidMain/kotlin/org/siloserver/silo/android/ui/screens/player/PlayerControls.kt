@@ -78,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.LeftToRight
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
 import org.siloserver.silo.common.R as CommonR
+import java.util.Locale
 
 /**
  * Transport controls over the video, after iOS `MobilePlayerControls`:
@@ -672,7 +673,8 @@ private fun TabletopUtilityRow(
         nextEpisode?.let { episode ->
             TabletopActionButton(
                 icon = Icons.Rounded.SkipNext,
-                label = stringResource(CommonR.string.player_controls_nextEpisode, episode.seasonNumber, episode.episodeNumber),
+                // A `%d` code read without arguments: resources would print the app's digits (D75), codes stay ASCII (D78).
+                label = stringResource(CommonR.string.player_controls_nextEpisode).format(Locale.ROOT, episode.seasonNumber, episode.episodeNumber),
                 onClick = onPlayNextEpisode,
             )
         }

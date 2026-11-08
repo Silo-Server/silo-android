@@ -3333,7 +3333,7 @@ internal fun tvPlayerEyebrow(state: TvPlayerViewModel.UiState): String? {
     if (series != null) {
         val code = state.seasonNumber?.let { season ->
             state.episodeNumber?.let {
-                stringResource(CommonR.string.player_eyebrow_episode, LocaleFormat.integer(season), LocaleFormat.integer(it))
+                stringResource(CommonR.string.player_eyebrow_episode, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(it))
             }
         }
         return listOfNotNull(series, code).joinToString(" · ")
@@ -3647,8 +3647,8 @@ private fun TvPlayerNextUpOverlay(
                                     androidx.tv.material3.Text(
                                         text = stringResource(
                                             CommonR.string.upNext_episodeCode,
-                                            LocaleFormat.integer(nextEpisode.seasonNumber),
-                                            LocaleFormat.integer(nextEpisode.episodeNumber),
+                                            LocaleFormat.codeNumber(nextEpisode.seasonNumber),
+                                            LocaleFormat.codeNumber(nextEpisode.episodeNumber),
                                         ),
                                         color = Color.White.copy(alpha = 0.62f),
                                         style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
@@ -4613,7 +4613,7 @@ private fun tvOnDeckSubtitle(item: TvOnDeckItem): String? {
     val season = item.seasonNumber
     val episode = item.episodeNumber
     if (season == null || episode == null) return item.year?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: item.subtitle
-    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.integer(season), LocaleFormat.integer(episode))
+    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode))
     return code + (item.subtitle?.let { " — ${bidiIsolated(it, isRightToLeftText())}" } ?: "")
 }
 

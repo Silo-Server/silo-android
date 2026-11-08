@@ -459,13 +459,13 @@ private fun CountdownRing(
 /** "S2·E4 — Title" under an On Deck card's title. */
 @Composable
 private fun onDeckEpisodeText(line: PlayerViewModel.OnDeckEpisodeLine): String {
-    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.integer(line.season), LocaleFormat.integer(line.episode))
+    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.codeNumber(line.season), LocaleFormat.codeNumber(line.episode))
     return code + (line.title?.let { " — $it" } ?: "")
 }
 
 /** "S2·E4 — Title", the next episode's line on the card. */
 @Composable
 private fun nextEpisodeLabel(episode: PlayerViewModel.NextEpisodeInfo): String {
-    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.integer(episode.seasonNumber), LocaleFormat.integer(episode.episodeNumber))
+    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.codeNumber(episode.seasonNumber), LocaleFormat.codeNumber(episode.episodeNumber))
     return code + (episode.title?.let { " — $it" } ?: "")
 }
