@@ -5,8 +5,10 @@ import android.content.Context
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.provider.Settings
 import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -21,9 +23,10 @@ import androidx.compose.ui.platform.LocalContext
  *
  * This deliberately hands off to the system recogniser rather than recording
  * anything itself. On a Shield the recogniser listens through the remote's
- * microphone, which is the hardware the viewer expects to be talking into, and
- * because the recording happens in that app rather than this one Silo needs no
- * RECORD_AUDIO permission at all — nothing here can listen, only ask.
+ * microphone, which is the hardware the viewer expects to be talking into.
+ * Android 11's Google TV activity fails its permission check when it calls its
+ * own recognition service in-process. On those devices, call the service from
+ * Silo and request microphone permission instead.
  *
  * The remote's own mic BUTTON cannot be used to start this: Android TV binds it
  * to the system assistant before any app sees it. An on-screen affordance is
@@ -62,8 +65,17 @@ internal fun rememberTvVoiceSearch(
 
     // Resolved once. Installing a recogniser mid-session is not a case worth
     // recomposing for, and re-querying the package manager on every frame is.
-    val isAvailable = remember(context) { isTvSpeechRecognitionAvailable(context) }
     val recognizerPackage = remember(context) { preferredRecognizerPackage(context) }
+
+    val useLegacyRecognizer = remember(context, recognizerPackage) {
+        Build.VERSION.SDK_INT == Build.VERSION_CODES.R &&
+            recognizerPackage == "com.google.android.katniss" &&
+            SpeechRecognizer.isRecognitionAvailable(context)
+    }
+    if (useLegacyRecognizer) {
+        return rememberLegacyTvVoiceSearch(prompt, onResult, onUnavailable)
+    }
+    val isAvailable = remember(context) { isTvSpeechRecognitionAvailable(context) }
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
