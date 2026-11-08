@@ -33,7 +33,6 @@ internal fun rememberLegacyTvVoiceSearch(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentOnResult by rememberUpdatedState(onResult)
-    val currentOnUnavailable by rememberUpdatedState(onUnavailable)
     var recognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
     var dialog by remember { mutableStateOf<AlertDialog?>(null) }
     val available = remember(context) { SpeechRecognizer.isRecognitionAvailable(context) }
@@ -49,12 +48,14 @@ internal fun rememberLegacyTvVoiceSearch(
             .setNegativeButton(android.R.string.cancel) { _, _ ->
                 speech.destroy()
                 recognizer = null
+                dialog = null
             }
             .create()
         dialog = listeningDialog
         listeningDialog.setOnCancelListener {
             speech.destroy()
             recognizer = null
+            dialog = null
         }
         speech.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
@@ -74,6 +75,7 @@ internal fun rememberLegacyTvVoiceSearch(
                 val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()?.trim().orEmpty()
                 listeningDialog.dismiss()
+                dialog = null
                 speech.destroy()
                 recognizer = null
                 if (spoken.isNotEmpty()) currentOnResult(spoken)
@@ -100,7 +102,16 @@ internal fun rememberLegacyTvVoiceSearch(
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) startRecognition() else currentOnUnavailable()
+        if (granted) {
+            startRecognition()
+        } else {
+            dialog = AlertDialog.Builder(context)
+                .setTitle("Voice search")
+                .setMessage("Allow microphone access for Silo in Settings to use voice search.")
+                .setPositiveButton(android.R.string.ok) { _, _ -> dialog = null }
+                .setOnCancelListener { dialog = null }
+                .show()
+        }
     }
     DisposableEffect(lifecycleOwner) {
         fun stopRecognition() {

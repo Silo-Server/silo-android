@@ -64,14 +64,14 @@ internal fun rememberTvVoiceSearch(
 
     // Resolved once. Installing a recogniser mid-session is not a case worth
     // recomposing for, and re-querying the package manager on every frame is.
-    val isAvailable = remember(context) { isTvSpeechRecognitionAvailable(context) }
     val recognizerPackage = remember(context) { preferredRecognizerPackage(context) }
 
-    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.R &&
+    if (Build.VERSION.SDK_INT == Build.VERSION_CODES.R &&
         recognizerPackage == "com.google.android.katniss"
     ) {
         return rememberLegacyTvVoiceSearch(prompt, onResult, onUnavailable)
     }
+    val isAvailable = remember(context) { isTvSpeechRecognitionAvailable(context) }
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
