@@ -2,6 +2,7 @@ package org.siloserver.silo.common.ui.components
 
 import android.graphics.Color as AndroidColor
 import android.os.SystemClock
+import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -24,11 +25,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.RawResourceDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -56,6 +57,7 @@ fun StartupSplashVideo(
     val playbackStarted = remember { AtomicBoolean(false) }
     var playbackFinished by remember { mutableStateOf(false) }
     var playbackVisibleStartedAt by remember { mutableStateOf(0L) }
+    var videoAspectRatio by remember { mutableStateOf<Float?>(null) }
     // Tier the asset to what this device's decoder actually sustains — a 4K60
     // splash decoded into garbled half-frames on an onn 4K stick. See
     // [startupSplashRes].
@@ -108,6 +110,10 @@ fun StartupSplashVideo(
             override fun onPlayerError(error: PlaybackException) {
                 playbackFinished = true
             }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                videoAspectRatio = videoSize.aspectRatioOrNull()
+            }
         }
         player.addListener(listener)
         onDispose {
@@ -121,19 +127,24 @@ fun StartupSplashVideo(
             .fillMaxSize()
             .background(backgroundColor),
     ) {
+        // A bare SurfaceView in an AspectRatioFrameLayout, not a PlayerView:
+        // PlayerView inflates its whole control bar from XML even with
+        // useController = false, which cost ~70 ms on a Shield's first frame.
         AndroidView(
             factory = { ctx ->
-                PlayerView(ctx).apply {
-                    useController = false
+                AspectRatioFrameLayout(ctx).apply {
                     this.resizeMode = resizeMode.toPlayerViewResizeMode()
-                    setShutterBackgroundColor(AndroidColor.TRANSPARENT)
                     setBackgroundColor(AndroidColor.TRANSPARENT)
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                    layoutParams = FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    val surface = SurfaceView(ctx)
+                    addView(
+                        surface,
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        ),
                     )
-                    this.player = player
+                    player.setVideoSurfaceView(surface)
                     post {
                         if (playbackStarted.compareAndSet(false, true)) {
                             playbackVisibleStartedAt = SystemClock.elapsedRealtime()
@@ -145,7 +156,7 @@ fun StartupSplashVideo(
                 }
             },
             update = { view ->
-                view.player = player
+                videoAspectRatio?.let(view::setAspectRatio)
             },
             modifier = Modifier.fillMaxSize(),
         )
@@ -167,3 +178,6 @@ private fun StartupSplashResizeMode.toPlayerViewResizeMode(): Int =
 private fun AtomicBoolean.dispatchOnce(block: () -> Unit) {
     if (compareAndSet(false, true)) block()
 }
+
+private fun VideoSize.aspectRatioOrNull(): Float? =
+    if (width > 0 && height > 0) width * pixelWidthHeightRatio / height else null

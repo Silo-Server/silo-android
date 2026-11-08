@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,8 +32,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -163,11 +165,14 @@ private fun TvMarqueeBlock(
         // A logo that decoded inside the grace period fades in alone.
         if (!logoLoaded) showTitleFallback = true
     }
-    val logoAlpha by animateFloatAsState(
+    // Read the fade only through drawAlpha (draw phase): reading it during
+    // composition recomposed the whole block on every frame of the fade.
+    val logoAlpha = animateFloatAsState(
         targetValue = if (logoLoaded) 1f else 0f,
         animationSpec = tween(TvMarqueeCrossfadeMs, easing = TvMarqueeEasing),
         label = "marqueeLogoAlpha",
     )
+    val logoFadeDone by remember(logoAlpha) { derivedStateOf { logoAlpha.value >= 1f } }
     // 6dp rows and an 84dp logo slot: the marquee viewport (screen minus the
     // top-bar zone minus the row band) fits five text rows only if the block
     // stays under ~206dp, and the format spec line is the fifth row.
@@ -185,7 +190,7 @@ private fun TvMarqueeBlock(
                     .fillMaxWidth(),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                if (!logoLoaded || logoAlpha < 1f) {
+                if (!logoLoaded || !logoFadeDone) {
                     Text(
                         text = content.title,
                         color = Color.White,
@@ -195,9 +200,9 @@ private fun TvMarqueeBlock(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         onTextLayout = { titleLineCount = it.lineCount },
-                        modifier = Modifier.alpha(
-                            if (showTitleFallback) 1f - logoAlpha else 0f,
-                        ),
+                        modifier = Modifier.drawAlpha {
+                            if (showTitleFallback) 1f - logoAlpha.value else 0f
+                        },
                     )
                 }
                 ThumbhashImage(
@@ -216,7 +221,7 @@ private fun TvMarqueeBlock(
                     modifier = Modifier
                         .fillMaxHeight()
                         .widthIn(max = MarqueeLogoMaxWidth)
-                        .alpha(logoAlpha),
+                        .drawAlpha { logoAlpha.value },
                 )
             }
         } else {
@@ -279,15 +284,15 @@ private fun TvMarqueeBlock(
         synopsisText?.let { synopsis ->
             // A running translation pulses the original text until the
             // translated description replaces it.
-            val pulse = if (translating) {
+            val pulse: State<Float>? = if (translating) {
                 rememberInfiniteTransition(label = "marqueeTranslating").animateFloat(
                     initialValue = 0.35f,
                     targetValue = 0.7f,
                     animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
                     label = "marqueeTranslatingAlpha",
-                ).value
+                )
             } else {
-                1f
+                null
             }
             Text(
                 text = synopsis,
@@ -298,7 +303,7 @@ private fun TvMarqueeBlock(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .widthIn(max = MarqueeSynopsisMaxWidth)
-                    .alpha(pulse),
+                    .drawAlpha { pulse?.value ?: 1f },
             )
         }
 
@@ -352,6 +357,17 @@ private fun TvMarqueeBlock(
 
         footer?.invoke(content)
     }
+}
+
+/**
+ * [Modifier.alpha] that reads [alpha] in the draw phase, so an animated value
+ * redraws the layer without recomposing its caller. Like [Modifier.alpha], it
+ * clips only while translucent.
+ */
+private fun Modifier.drawAlpha(alpha: () -> Float): Modifier = graphicsLayer {
+    val value = alpha()
+    this.alpha = value
+    clip = value != 1f
 }
 
 @Composable
