@@ -1595,6 +1595,9 @@ class PlayerViewModel(
             )
             return
         }
+        // Next Up or another title replaces a downloaded run: queue where it ended
+        // before the new load resets the UI state and the run.
+        submitDownloadRunPosition()
         browseLibraryId = libraryId
         aiPlaybackGeneration++
         val normalizedPreferredQuality = VideoPlayerRouteArgs.normalizeQuality(preferredQuality)
@@ -3237,6 +3240,24 @@ class PlayerViewModel(
 
     private var lastRecordedKey: String? = null
     private var lastRecordedPositionSec: Double = -1.0
+
+    private fun submitDownloadRunPosition() {
+        val runStartedAtMs = localPlaybackRunStartedAtMs ?: return
+        val scope = finalPositionScope ?: return
+        val state = _uiState.value
+        val contentId = state.contentId.takeIf { it.isNotBlank() } ?: return
+        val fileId = currentFileId() ?: return
+        finalPlaybackPositionWriter.submit(
+            FinalPlaybackPosition(
+                scope = scope,
+                contentId = contentId,
+                fileId = fileId,
+                positionSeconds = state.position,
+                durationSeconds = state.duration.takeIf { it > 0.0 },
+                runStartedAtMs = runStartedAtMs,
+            ),
+        )
+    }
 
     private fun currentFileId(): Int? =
         _uiState.value.versions.getOrNull(_uiState.value.selectedVersionIndex)?.fileId
