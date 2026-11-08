@@ -236,7 +236,7 @@ interface DirtyOperationDao {
      * never touches another server/profile's rows.
      */
     @Query(
-        "DELETE FROM dirty_operations WHERE ${DirtyOperationEntity.REPLAYABLE} AND state = '${DirtyOperationEntity.STATE_IN_FLIGHT}' " +
+        "DELETE FROM dirty_operations WHERE opKind = 'SET_EBOOK_PROGRESS' AND state = '${DirtyOperationEntity.STATE_IN_FLIGHT}' " +
             "AND serverId = :serverId AND accountId = :accountId AND profileId = :profileId " +
             "AND EXISTS (SELECT 1 FROM dirty_operations newer " +
             "WHERE newer.coalesceKey = dirty_operations.coalesceKey " +
@@ -249,10 +249,18 @@ interface DirtyOperationDao {
     /** Return remaining crash-stranded in-flight rows (for one scope) to pending. */
     @Query(
         "UPDATE dirty_operations SET state = '${DirtyOperationEntity.STATE_PENDING}' " +
-            "WHERE ${DirtyOperationEntity.REPLAYABLE} AND state = '${DirtyOperationEntity.STATE_IN_FLIGHT}' " +
+            "WHERE opKind = 'SET_EBOOK_PROGRESS' AND state = '${DirtyOperationEntity.STATE_IN_FLIGHT}' " +
             "AND serverId = :serverId AND accountId = :accountId AND profileId = :profileId",
     )
     suspend fun resetInFlightToPending(serverId: String, accountId: String, profileId: String)
+
+    /** Download positions left in flight by a crash; their outcome is unknown. */
+    @Query(
+        "SELECT * FROM dirty_operations WHERE opKind = 'SET_POSITION' AND opVersion >= 2 " +
+            "AND state = '${DirtyOperationEntity.STATE_IN_FLIGHT}' " +
+            "AND serverId = :serverId AND accountId = :accountId AND profileId = :profileId",
+    )
+    suspend fun inFlightDownloadProgress(serverId: String, accountId: String, profileId: String): List<DirtyOperationEntity>
 
     @Query(
         "UPDATE dirty_operations SET " +

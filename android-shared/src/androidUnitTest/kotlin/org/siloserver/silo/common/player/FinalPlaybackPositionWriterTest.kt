@@ -130,6 +130,23 @@ class FinalPlaybackPositionWriterTest {
     }
 
     @Test
+    fun eachDownloadedRunKeepsItsOwnFinalPosition() = runTest {
+        val written = mutableListOf<FinalPlaybackPosition>()
+        val writer = FinalPlaybackPositionWriter(
+            scope = backgroundScope,
+            scopeProvider = { null },
+            write = { written += it },
+        )
+
+        // A finished run, then a rewatch of the same file before the queue drains.
+        writer.submit(FinalPlaybackPosition(scopeA, "movie", 7, 100.0, 100.0, runStartedAtMs = 1_000))
+        writer.submit(FinalPlaybackPosition(scopeA, "movie", 7, 10.0, 100.0, runStartedAtMs = 2_000))
+        runCurrent()
+
+        assertEquals(listOf(1_000L to 100.0, 2_000L to 10.0), written.map { it.runStartedAtMs to it.positionSeconds })
+    }
+
+    @Test
     fun pendingSnapshotsFromDifferentProfilesNeverCoalesce() = runTest {
         val written = mutableListOf<FinalPlaybackPosition>()
         val writer = FinalPlaybackPositionWriter(
