@@ -33,7 +33,14 @@ class ForegroundAccessCheck(
     suspend fun afterReturnToForeground() {
         coroutineScope {
             launch {
-                if (personalDataRepository.libraryListChangedSinceCached()) accessChanges.reportAccessChanged()
+                // A failed library check mustn't cancel the Requests check beside it.
+                try {
+                    if (personalDataRepository.libraryListChangedSinceCached()) accessChanges.reportAccessChanged()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // The next return to the foreground tries again.
+                }
             }
             launch {
                 // The TV shell does not reset the store on sign-out, so check
