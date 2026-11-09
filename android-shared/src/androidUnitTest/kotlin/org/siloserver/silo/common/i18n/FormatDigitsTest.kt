@@ -66,6 +66,7 @@ class FormatDigitsTest {
         // D78: an episode code stays ASCII; the spoken phrase doesn't.
         val code = EpisodeCardCaption.title(EpisodeListItem("e", seasonNumber = 1, episodeNumber = 5)).text(res)
         assertEquals(true, code.contains("01") && code.contains("05"), code)
+        assertEquals("05", LocaleFormat.codeNumber(5, minDigits = 2))
         assertEquals(true, res.getString(R.string.detail_season, LocaleFormat.integer(2)).contains("٢"))
     }
 
