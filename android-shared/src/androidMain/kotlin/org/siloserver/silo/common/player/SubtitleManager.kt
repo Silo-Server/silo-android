@@ -710,23 +710,27 @@ internal fun remapDefaultTextCuePlacements(
  * [org.siloserver.silo.common.player.subtitle.StreamingWebvttExtractor] parses
  * each block alone, so every cue gets the default `line = -1`.
  *
- * Cues that carry default placement (no line, or a negative line number with
- * the default anchor) and otherwise lay out the same way are joined into one
- * cue, so the painter lays them out as one block. The block keeps the default
- * placement, so [remapDefaultTextCuePlacement] still applies the Position
- * preset to it. Media3's own `-1, -2, …` numbering looks the same as an
- * author's `line:-2`; both ask for the bottom-up order used here.
+ * Cues that carry default placement and otherwise lay out the same way are
+ * joined into one cue, so the painter lays them out as one block. Default
+ * placement means no line, or a line in Media3's own `-1, -2, …` run with the
+ * default anchor. CEA-608 rows (the bottom row is -2) and an author's
+ * `line:-3` next to a default cue are real placements and stay where they
+ * are. The block keeps the default placement, so
+ * [remapDefaultTextCuePlacement] still applies the Position preset to it.
  *
  * A caption that stays on screen keeps its line, the way a browser keeps a
  * WebVTT cue box it has already placed: a new caption takes the line a
  * finished one left, bottom first, and otherwise goes on top. A name card
- * shown across two lines of dialogue therefore stays above them instead of
- * trading places with each new line. Captions that appear together are
+ * shown across two back-to-back lines of dialogue therefore stays above them
+ * instead of trading places with each new line. A caption left alone drops to
+ * the bottom like any single caption and keeps that line when the next one
+ * arrives, so a gap between two lines of dialogue moves the card once rather
+ * than down and back up at every gap. Captions that appear together are
  * ordered as the WebVTT rules order them, earliest at the bottom.
  *
- * Authored placements, bitmap cues and vertical text are left alone. A repeat
- * of a caption already in the block is dropped: drawn in the same place it was
- * invisible, and stacked it would show twice.
+ * Authored placements, bitmap cues, vertical text and empty cues are left
+ * alone. A repeat of a caption already in the block is dropped: drawn in the
+ * same place it was invisible, and stacked it would show twice.
  *
  * Keep one stacker per player view: [stack] remembers the order it last drew.
  */
@@ -744,6 +748,7 @@ internal class SimultaneousTextCueStacker {
         val joinedAway = HashSet<Int>()
         for ((key, block) in blocks) {
             val cues = block.map { it.value }
+            if (!hasMedia3LineNumbering(cues)) continue
             val order = bottomUpOrder(cues, lastOrders[key].orEmpty())
             orders[key] = order
             if (cues.size < 2) continue
@@ -804,15 +809,32 @@ private fun joinBottomUp(bottomUp: List<Cue>, block: List<Cue>): Cue {
     return builder.build()
 }
 
+/**
+ * Whether [cue] may join a block: text that draws something, with no line or a
+ * negative whole line number and the default anchor. Empty text draws nothing
+ * on its own, so joining it would only add a blank line.
+ */
 @UnstableApi
 private fun hasDefaultStackPlacement(cue: Cue): Boolean {
-    if (cue.bitmap != null || cue.text == null) return false
+    if (cue.bitmap != null || cue.text.isNullOrBlank()) return false
     if (cue.verticalType != Cue.TYPE_UNSET) return false
     if (cue.line == Cue.DIMEN_UNSET) return true
     return cue.lineType == Cue.LINE_TYPE_NUMBER &&
         cue.line < 0f &&
         cue.line == floor(cue.line) &&
         (cue.lineAnchor == Cue.TYPE_UNSET || cue.lineAnchor == Cue.ANCHOR_TYPE_START)
+}
+
+/**
+ * Whether the numbered lines in [block] are exactly Media3's stacking run
+ * `-1, -2, …, -n`, which `WebvttSubtitle` gives cues it parsed without a line.
+ * Unplaced cues count as part of it. CEA-608 rows never use -1, and an
+ * author's `line:-3` beside a default cue leaves a gap, so both are left alone.
+ */
+@UnstableApi
+private fun hasMedia3LineNumbering(block: List<Cue>): Boolean {
+    val lines = block.mapNotNullTo(HashSet()) { cue -> cue.line.takeIf { it != Cue.DIMEN_UNSET } }
+    return (1..lines.size).all { -it.toFloat() in lines }
 }
 
 /** Everything about a cue's layout except its text and its line. */

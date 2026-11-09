@@ -1,12 +1,13 @@
 package org.siloserver.silo.common.player
 
-import android.graphics.Typeface
+import android.text.Layout
 import android.text.SpannableString
 import android.text.Spanned
-import android.text.style.StyleSpan
 import androidx.annotation.OptIn
 import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
+import androidx.media3.common.text.RubySpan
+import androidx.media3.common.text.TextAnnotation
 import androidx.media3.common.util.UnstableApi
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -14,7 +15,6 @@ import org.siloserver.silo.model.settings.SubtitlePositionPreset
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
-import kotlin.test.assertTrue
 
 /**
  * Media3's `SubtitlePainter` draws every text cue without a line at the same
@@ -32,9 +32,18 @@ class SubtitleSimultaneousCueTest {
     /** A cue as Media3's WebVTT parser builds one with default placement. */
     private fun webvttCue(text: CharSequence, line: Float = -1f): Cue = Cue.Builder()
         .setText(text)
-        .setTextAlignment(android.text.Layout.Alignment.ALIGN_CENTER)
+        .setTextAlignment(Layout.Alignment.ALIGN_CENTER)
         .setLine(line, Cue.LINE_TYPE_NUMBER)
         .setLineAnchor(Cue.ANCHOR_TYPE_START)
+        .setPosition(0.5f)
+        .setPositionAnchor(Cue.ANCHOR_TYPE_MIDDLE)
+        .build()
+
+    /** A pop-on CEA-608 row as Media3's Cea608Decoder builds one: the bottom row is line -2. */
+    private fun cea608Row(text: CharSequence, line: Float): Cue = Cue.Builder()
+        .setText(text)
+        .setTextAlignment(Layout.Alignment.ALIGN_NORMAL)
+        .setLine(line, Cue.LINE_TYPE_NUMBER)
         .setPosition(0.5f)
         .setPositionAnchor(Cue.ANCHOR_TYPE_MIDDLE)
         .build()
@@ -151,18 +160,87 @@ class SubtitleSimultaneousCueTest {
     }
 
     @Test
-    fun stylingInsideEachCueSurvivesTheStack() {
-        val italic = SpannableString("whispered").apply {
-            setSpan(StyleSpan(Typeface.ITALIC), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    fun aRubyAnnotationSurvivesTheStack() {
+        // Silo strips embedded styling before drawing (setApplyEmbeddedStyles(false));
+        // language features such as ruby survive that, so they must survive the join.
+        val kanji = SpannableString("漢字").apply {
+            setSpan(RubySpan("かんじ", TextAnnotation.POSITION_BEFORE), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
 
         val text = SimultaneousTextCueStacker().stack(
-            group(subripCue("spoken"), subripCue(italic)),
+            group(subripCue("spoken"), subripCue(kanji)),
         ).cues.single().text as Spanned
 
-        val spans = text.getSpans(0, text.length, StyleSpan::class.java)
+        val spans = text.getSpans(0, text.length, RubySpan::class.java)
         assertEquals(1, spans.size)
-        assertEquals("whispered", text.subSequence(text.getSpanStart(spans[0]), text.getSpanEnd(spans[0])).toString())
-        assertTrue(spans[0].style == Typeface.ITALIC)
+        assertEquals("漢字", text.subSequence(text.getSpanStart(spans[0]), text.getSpanEnd(spans[0])).toString())
+        assertEquals("かんじ", spans[0].rubyText)
+    }
+
+    @Test
+    fun cea608RowsAreLeftWhereTheDecoderPutThem() {
+        // A two-row pop-on caption: rows 14 and 15 come out of Media3 as -3 and -2.
+        // Those are authored rows, not Media3's stacking numbers, and each row is
+        // centred on its own.
+        val input = group(cea608Row("I'm going", -3f), cea608Row("HOME.", -2f))
+        assertSame(input, SimultaneousTextCueStacker().stack(input))
+    }
+
+    @Test
+    fun anAuthoredWebvttLineBesideADefaultCueIsLeftAlone() {
+        // line:-3 is the author's choice; only Media3's own -1, -2, ... run is stacked.
+        val input = group(webvttCue("dialogue"), webvttCue("caption higher up", line = -3f))
+        assertSame(input, SimultaneousTextCueStacker().stack(input))
+    }
+
+    @Test
+    fun anEmptyCueIsNotJoinedAsABlankLine() {
+        // A SubRip cue made only of tags such as {\fad(200,200)} parses to empty text,
+        // which the painter skips; joined it would push the real line up.
+        val input = group(subripCue(""), subripCue("real line"))
+        assertSame(input, SimultaneousTextCueStacker().stack(input))
+    }
+
+    @Test
+    fun aCaptionLeftAloneKeepsTheBottomLineWhenTheNextOneArrives() {
+        // A gap between two dialogue lines leaves the card alone for a moment; it
+        // drops to the bottom like any single caption and stays there, so it moves
+        // once instead of dropping and climbing back at every gap.
+        val stacker = SimultaneousTextCueStacker()
+        val first = subripCue("first line")
+        val card = subripCue("[NAME CARD]")
+        val second = subripCue("second line")
+
+        assertEquals("[NAME CARD]\nfirst line", stacker.stack(group(first, card)).cues.single().text.toString())
+        assertEquals("[NAME CARD]", stacker.stack(group(card)).cues.single().text.toString())
+        assertEquals("second line\n[NAME CARD]", stacker.stack(group(card, second)).cues.single().text.toString())
+    }
+
+    @Test
+    fun theJoinedCueTakesTheFirstDefaultCuesPlaceAndOtherCuesKeepTheirs() {
+        val sign = Cue.Builder()
+            .setText("Courtroom 3")
+            .setLine(0.08f, Cue.LINE_TYPE_FRACTION)
+            .setLineAnchor(Cue.ANCHOR_TYPE_START)
+            .build()
+
+        val cues = SimultaneousTextCueStacker().stack(
+            group(subripCue("earlier"), sign, subripCue("later")),
+        ).cues
+
+        assertEquals(2, cues.size)
+        assertEquals("later\nearlier", cues[0].text.toString())
+        assertSame(sign, cues[1])
+    }
+
+    @Test
+    fun aJoinedWebvttBlockFollowsTheTopPreset() {
+        val cue = SimultaneousTextCueStacker().stack(
+            group(webvttCue("first"), webvttCue("second")),
+        ).cues.single()
+
+        val top = remapDefaultTextCuePlacement(cue, SubtitlePositionPreset.Top)
+        assertEquals(SUBTITLE_TOP_LINE_FRACTION, top.line)
+        assertEquals(Cue.LINE_TYPE_FRACTION, top.lineType)
     }
 }
