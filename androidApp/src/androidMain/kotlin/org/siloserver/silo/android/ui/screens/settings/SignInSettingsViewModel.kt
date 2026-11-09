@@ -261,7 +261,7 @@ class SignInSettingsViewModel(
                     }
                 }
                 is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(busy = false, passwordError = SettingsText.Plain(NativeSignInMessages.forNetworkError(linked, provider.displayName)))
+                    it.copy(busy = false, passwordError = SettingsText.Ui(NativeSignInMessages.text(NativeSignInMessages.networkReason(linked), provider.displayName)))
                 }
             }
         }
@@ -321,7 +321,7 @@ class SignInSettingsViewModel(
                 }
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(busy = false, passwordError = SettingsText.Plain(NativeSignInMessages.forNetworkError(issued, provider.displayName)))
+                        it.copy(busy = false, passwordError = SettingsText.Ui(NativeSignInMessages.text(NativeSignInMessages.networkReason(issued), provider.displayName)))
                     }
                     return@launch
                 }
@@ -346,7 +346,7 @@ class SignInSettingsViewModel(
             when (start) {
                 is NativeSignInStart.Open -> _uiState.update { it.copy(passwordPrompt = null, browserLaunch = start.url) }
                 is NativeSignInStart.Refused ->
-                    _uiState.update { it.copy(busy = false, passwordPrompt = null, error = SettingsText.Plain(start.message)) }
+                    _uiState.update { it.copy(busy = false, passwordPrompt = null, error = SettingsText.Ui(NativeSignInMessages.text(start.reason, start.providerName))) }
             }
         }
     }
@@ -357,7 +357,7 @@ class SignInSettingsViewModel(
             it.copy(
                 browserLaunch = null,
                 busy = false,
-                error = if (opened) it.error else SettingsText.Plain(NativeSignInMessages.forReason(NativeSignInMessages.NO_BROWSER)),
+                error = if (opened) it.error else SettingsText.Ui(NativeSignInMessages.text(NativeSignInMessages.NO_BROWSER)),
             )
         }
     }
@@ -387,7 +387,7 @@ class SignInSettingsViewModel(
                 }
                 is ApiResult.Error -> _uiState.update { it.copy(busy = false, error = disconnectMessage(result, identity)) }
                 is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(busy = false, error = SettingsText.Plain(NativeSignInMessages.forNetworkError(result)))
+                    it.copy(busy = false, error = SettingsText.Ui(NativeSignInMessages.text(NativeSignInMessages.networkReason(result))))
                 }
             }
         }
@@ -414,7 +414,7 @@ class SignInSettingsViewModel(
             }
             is NativeSignInResult.Failed -> {
                 nativeSignIn.consume(result)
-                _uiState.update { it.copy(busy = false, error = SettingsText.Plain(result.message)) }
+                _uiState.update { it.copy(busy = false, error = SettingsText.Ui(NativeSignInMessages.text(result.reason, result.providerName))) }
             }
             is NativeSignInResult.SignedIn -> Unit
         }
@@ -541,7 +541,7 @@ class SignInSettingsViewModel(
         private fun noLongerAvailable(providerName: String) = SettingsText.Plain(ProviderRefusalText.providerGone(providerName))
 
         private fun couldNotConnect(error: ApiResult.Error, providerName: String): SettingsText =
-            NativeSignInMessages.forProblem(error, providerName)?.let { SettingsText.Plain(it) }
+            NativeSignInMessages.problemReason(error)?.let { SettingsText.Ui(NativeSignInMessages.text(it, providerName)) }
                 ?: settingsText(CommonR.string.settings_signIn_connectFailed, providerName)
 
         /** Text for a refused link ticket (`createAccountIdentityLinkTicket`). */
@@ -599,7 +599,7 @@ class SignInSettingsViewModel(
             )
             error.code == 404 -> settingsText(CommonR.string.settings_signIn_alreadyDisconnected)
             error.code == 503 -> settingsText(CommonR.string.settings_signIn_serverUnreachable)
-            else -> NativeSignInMessages.forProblem(error)?.let { SettingsText.Plain(it) }
+            else -> NativeSignInMessages.problemReason(error)?.let { SettingsText.Ui(NativeSignInMessages.text(it)) }
                 ?: settingsText(CommonR.string.settings_signIn_disconnectFailed)
         }
     }

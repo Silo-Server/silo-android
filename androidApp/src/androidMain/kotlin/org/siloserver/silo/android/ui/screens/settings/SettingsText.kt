@@ -6,6 +6,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.LayoutDirection
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Text a settings view model hands its screen. A catalog message is resolved
@@ -22,6 +24,9 @@ sealed interface SettingsText {
     data class Res(@StringRes val id: Int, val args: List<Any> = emptyList()) : SettingsText
 
     data class Plain(val text: String) : SettingsText
+
+    /** Catalog text built by a helper outside Settings, such as the sign-in messages. */
+    data class Ui(val text: UiText) : SettingsText
 }
 
 fun settingsText(@StringRes id: Int, vararg args: Any): SettingsText = SettingsText.Res(id, args.toList())
@@ -29,6 +34,7 @@ fun settingsText(@StringRes id: Int, vararg args: Any): SettingsText = SettingsT
 /** This text in [context]'s language; use an activity context, which follows the app language. */
 fun SettingsText.resolve(context: Context): String = when (this) {
     is SettingsText.Plain -> text
+    is SettingsText.Ui -> text.text(context)
     is SettingsText.Res ->
         if (args.isEmpty()) {
             context.getString(id)
@@ -40,6 +46,7 @@ fun SettingsText.resolve(context: Context): String = when (this) {
 @Composable
 fun SettingsText.resolve(): String = when (this) {
     is SettingsText.Plain -> text
+    is SettingsText.Ui -> text.text()
     is SettingsText.Res -> {
         val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
         if (args.isEmpty()) {
