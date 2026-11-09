@@ -25,6 +25,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,12 +34,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.theme.SiloDetailActionControl
 import org.siloserver.silo.android.ui.theme.SiloDetailActionControlActive
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloOutline
+
+/** The rating sources the server shows; a sort menu lists a rating sort only while its source is shown. */
+@Composable
+fun rememberShownRatingSources(): Set<String> {
+    val store: org.siloserver.silo.model.feature.RatingSourcesStore = org.koin.compose.koinInject()
+    return store.shown.collectAsState().value
+}
 
 /** One entry in the sort dropdown. [selectedLabel] (e.g. "Title · A–Z") shows while active. */
 data class SortMenuOption(
@@ -78,64 +87,72 @@ fun SortFilterControlsRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box {
+        // The controls take every bit of width [trailing] does not need.
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // The sort pill gives up width first: a long sort name ("Latest
+            // Episode Added") ends in an ellipsis instead of squeezing Filter and
+            // Reset out of the row.
+            Box(modifier = Modifier.weight(1f, fill = false)) {
+                ControlPill(
+                    icon = Icons.AutoMirrored.Filled.Sort,
+                    label = sortLabel,
+                    active = sortActive,
+                    trailingChevron = true,
+                    onClick = { sortMenuOpen = true },
+                )
+                SiloDropdownMenu(
+                    expanded = sortMenuOpen,
+                    onDismissRequest = { sortMenuOpen = false },
+                ) {
+                    sortOptions.forEach { option ->
+                        val selected = option.id == selectedSortId
+                        if (option.dividerAbove) HorizontalDivider()
+                        SiloDropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = if (selected) option.selectedLabel else option.label,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                )
+                            },
+                            trailingIcon = if (selected) {
+                                { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                            } else {
+                                null
+                            },
+                            onClick = {
+                                onSelectSort(option.id)
+                                if (!(selected && option.flipsOnReselect)) sortMenuOpen = false
+                            },
+                        )
+                    }
+                }
+            }
+
             ControlPill(
-                icon = Icons.AutoMirrored.Filled.Sort,
-                label = sortLabel,
-                active = sortActive,
-                trailingChevron = true,
-                onClick = { sortMenuOpen = true },
+                icon = Icons.Filled.FilterList,
+                label = if (filterCount > 0) "Filter · $filterCount" else "Filter",
+                active = filterCount > 0,
+                onClick = onOpenFilters,
             )
-            SiloDropdownMenu(
-                expanded = sortMenuOpen,
-                onDismissRequest = { sortMenuOpen = false },
-            ) {
-                sortOptions.forEach { option ->
-                    val selected = option.id == selectedSortId
-                    if (option.dividerAbove) HorizontalDivider()
-                    SiloDropdownMenuItem(
-                        text = {
-                            Text(
-                                text = if (selected) option.selectedLabel else option.label,
-                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                            )
-                        },
-                        trailingIcon = if (selected) {
-                            { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                        } else {
-                            null
-                        },
-                        onClick = {
-                            onSelectSort(option.id)
-                            if (!(selected && option.flipsOnReselect)) sortMenuOpen = false
-                        },
-                    )
+
+            // Reset appears only once something is customised — one tap back to
+            // the defaults.
+            if (showReset) {
+                TextButton(
+                    onClick = onReset,
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                    modifier = Modifier.height(34.dp),
+                ) {
+                    Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Reset", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                 }
             }
         }
-
-        ControlPill(
-            icon = Icons.Filled.FilterList,
-            label = if (filterCount > 0) "Filter · $filterCount" else "Filter",
-            active = filterCount > 0,
-            onClick = onOpenFilters,
-        )
-
-        // Reset appears only once something is customised — one tap back to
-        // the defaults.
-        if (showReset) {
-            TextButton(
-                onClick = onReset,
-                contentPadding = PaddingValues(horizontal = 8.dp),
-                modifier = Modifier.height(34.dp),
-            ) {
-                Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Reset", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            }
-        }
-
-        Spacer(modifier = Modifier.weight(1f))
         trailing()
     }
 }
@@ -166,7 +183,14 @@ private fun ControlPill(
     ) {
         Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(14.dp))
         Spacer(modifier = Modifier.width(6.dp))
-        Text(text = label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Text(
+            text = label,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
         if (trailingChevron) {
             Spacer(modifier = Modifier.width(2.dp))
             Icon(
