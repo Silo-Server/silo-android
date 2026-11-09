@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import org.siloserver.silo.android.ui.util.formatClockTime
+import org.siloserver.silo.common.player.rememberPlayerEndTimeLabel
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
 
@@ -97,6 +98,7 @@ fun PlayerProgressBar(
     onScrubbingChange: (Boolean) -> Unit = {},
     thumbnail: ImageBitmap? = null,
     onScrubTarget: (Double?) -> Unit = {},
+    playbackSpeed: Double = 1.0,
 ) {
     var isSeeking by remember { mutableStateOf(false) }
     var seekPosition by remember { mutableDoubleStateOf(0.0) }
@@ -138,6 +140,11 @@ fun PlayerProgressBar(
 
     fun chapterIndexAt(seconds: Double): Int = latestChapters.indexOfLast { it.startSeconds <= seconds }
 
+    val endTimeLabel = rememberPlayerEndTimeLabel(
+        remainingSec = if (hasKnownDuration) duration - displayPosition else 0.0,
+        speed = playbackSpeed,
+    )
+
     Column(modifier = modifier.fillMaxWidth()) {
         if (showTimes) {
             Row(
@@ -153,11 +160,14 @@ fun PlayerProgressBar(
                 )
                 // Tap to switch between time left and total length (iOS).
                 Text(
-                    text = if (showTotal && hasKnownDuration) {
-                        formatClockTime(duration)
-                    } else {
-                        remainingTimeLabel(displayPosition, duration)
-                    },
+                    text = listOfNotNull(
+                        if (showTotal && hasKnownDuration) {
+                            formatClockTime(duration)
+                        } else {
+                            remainingTimeLabel(displayPosition, duration)
+                        },
+                        endTimeLabel,
+                    ).joinToString(" · "),
                     style = PlayerType.Time.copy(color = PlayerChrome.Graphite),
                     modifier = Modifier.clickable(
                         interactionSource = remember { MutableInteractionSource() },
@@ -275,7 +285,9 @@ fun PlayerProgressBar(
                 val delta = seekPosition - scrubStart
                 val chapterTitle = chapterTitleAt(chapters, seekPosition)
                 // A preview grows the bubble upward: its bottom edge stays put.
-                val lift = if (thumbnail != null) 52.dp + ScrubThumbnailBlockHeight / 2 else 52.dp
+                // The end time line does the same.
+                val lift = (if (thumbnail != null) 52.dp + ScrubThumbnailBlockHeight / 2 else 52.dp) +
+                    (if (endTimeLabel != null) 9.dp else 0.dp)
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
@@ -321,6 +333,7 @@ fun PlayerProgressBar(
                             .padding(top = 2.dp)
                             .widthIn(max = 220.dp),
                     )
+                    endTimeLabel?.let { Text(text = it, style = PlayerType.BubbleDetail, maxLines = 1) }
                 }
             }
         }
