@@ -104,6 +104,14 @@ class AppLocaleReconcilerTest {
         // A debug en-XA check left the user's own value; another profile shouldn't get it back.
         assertEquals(Decision("en", Ledger("en", ""), writeBack = "en"), AppLocaleReconciler.choose("en", "en-XA", Ledger("en-XA", null)))
 
+    @Test fun pickingALanguageAfterAProfileSwitchDropsAPseudoLocaleBaseline() {
+        // A debug en-XA pick, a switch to a profile with es, then a real pick there.
+        val switched = reconcile("en-XA", "es", Ledger("en-XA", null))
+        assertEquals(Decision("es", Ledger("es", "en-XA")), switched)
+        // The next profile without a value follows the device, not en-XA.
+        assertEquals(Decision("en", Ledger("en", ""), writeBack = "en"), AppLocaleReconciler.choose("en", "es", switched.ledger))
+    }
+
     @Test fun interruptedRestoreFinishesTheRestore() =
         assertEquals(Decision("", Ledger("", null)), reconcile("es", null, Ledger("", null, applying = true)))
 }
