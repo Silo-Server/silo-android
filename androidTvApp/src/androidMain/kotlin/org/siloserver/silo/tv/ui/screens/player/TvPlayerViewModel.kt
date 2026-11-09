@@ -4178,11 +4178,17 @@ class TvPlayerViewModel(
         _uiState.update { it.copy(isBuffering = isBuffering || outageRecoveryJob?.isActive == true) }
     }
 
+    /** A deliberate interaction shows someone is still watching. */
+    private fun resetPassOutStreak() {
+        autoAdvanceCount = 0
+    }
+
     /** Toggle user-intent pause state. Screen mirrors this to player.play/pause. */
     fun onPlayPause() {
         // In a Watch Party every toggle goes through the room; a local flip
         // here would fork this viewer from everyone else.
         if (roomId != null) return
+        resetPassOutStreak()
         _uiState.update { it.copy(isPaused = !it.isPaused) }
     }
 
@@ -4223,6 +4229,7 @@ class TvPlayerViewModel(
 
     /** Coalesces rapid remote/button skips into one route-aware seek. */
     fun onSkipBy(deltaSeconds: Double): Double {
+        resetPassOutStreak()
         val state = _uiState.value
         val nowMs = SystemClock.elapsedRealtime()
         if (quickSkipAccumulator.pending == null) {
@@ -6377,6 +6384,7 @@ class TvPlayerViewModel(
     }
 
     fun commitScrub(): Double {
+        resetPassOutStreak()
         val target = _uiState.value.scrubPreviewSec
         _uiState.update { it.copy(isScrubbing = false) }
         return target
