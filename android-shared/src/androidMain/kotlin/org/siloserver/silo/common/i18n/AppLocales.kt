@@ -63,7 +63,12 @@ object AppLocales {
         if (tags.isEmpty()) return base
         // Only the locale is overridden; orientation, size and night mode
         // keep following the device, since both activities handle those in place.
-        val config = Configuration().apply { setLocales(LocaleList.forLanguageTags(tags)) }
+        val config = Configuration().apply {
+            // A new Configuration's font scale is 1, which would override the
+            // user's text size; 0 leaves it to the base context.
+            fontScale = 0f
+            setLocales(LocaleList.forLanguageTags(tags))
+        }
         return base.createConfigurationContext(config)
     }
 
