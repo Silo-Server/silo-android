@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.cast
 
+import org.siloserver.silo.common.i18n.getStringWithNames
 import android.content.res.Resources
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.cast.SiloCastCloseReason
@@ -118,15 +119,15 @@ interface SiloCastReplaceText {
 class SiloCastResourceReplaceText(private val resources: Resources) : SiloCastReplaceText {
     override val replace: String get() = resources.getString(CommonR.string.cast_replace_confirm)
     override fun resolve(text: SiloCastText): String = text.resolve(resources)
-    override fun playOn(tv: String): String = resources.getString(CommonR.string.cast_replace_playOn, tv)
+    override fun playOn(tv: String): String = resources.getStringWithNames(CommonR.string.cast_replace_playOn, tv)
     override fun tvIsPlaying(tv: String, title: String): String =
-        resources.getString(CommonR.string.cast_replace_tvIsPlaying, tv, title)
+        resources.getStringWithNames(CommonR.string.cast_replace_tvIsPlaying, tv, title)
     override fun someoneWatchingSomething(tv: String): String =
-        resources.getString(CommonR.string.cast_replace_someoneWatchingSomething, tv)
+        resources.getStringWithNames(CommonR.string.cast_replace_someoneWatchingSomething, tv)
     override fun someoneWatching(title: String, tv: String): String =
-        resources.getString(CommonR.string.cast_replace_someoneWatching, title, tv)
+        resources.getStringWithNames(CommonR.string.cast_replace_someoneWatching, title, tv)
     override fun profileWatching(profile: String, title: String, tv: String): String =
-        resources.getString(CommonR.string.cast_replace_profileWatching, profile, title, tv)
+        resources.getStringWithNames(CommonR.string.cast_replace_profileWatching, profile, title, tv)
 }
 
 object SiloCastReplacePrompt {
