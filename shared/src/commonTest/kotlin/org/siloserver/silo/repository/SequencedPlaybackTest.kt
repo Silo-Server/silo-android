@@ -392,6 +392,47 @@ class SequencedPlaybackTest {
         assertTrue(BUFFERING_QUALITY_V1_FEATURE in lateReplan.features())
     }
 
+    /** The progress and stop bodies the wire saw for one buffered sample whose reply was lost. */
+    private suspend fun progressBufferBodies(capabilityFeatures: String, decisionFeatures: String): Pair<JsonObject, JsonObject> {
+        val identity = Identity(); val progress = mutableListOf<JsonObject>(); var stop: JsonObject? = null
+        val wire = adoptedDecision.replace("\"sequenced_progress_v1\"]", "\"sequenced_progress_v1\"$decisionFeatures]")
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps("\"sequenced_progress_v1\"$capabilityFeatures"))
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> reply(wire, HttpStatusCode.Created)
+            "/api/v2/playback/session-1/progress" -> {
+                progress += SiloJson.parseToJsonElement(req.body.toByteArray().decodeToString()).jsonObject
+                throw IllegalStateException("lost progress response")
+            }
+            "/api/v2/playback/session-1" -> {
+                stop = SiloJson.parseToJsonElement(req.body.toByteArray().decodeToString()).jsonObject
+                reply("""{"outcome":"stopped","stop_id":"$stopId"}""")
+            }
+            else -> error("Unexpected request ${req.url}")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, Store()) { stopId }
+            assertIs<ApiResult.Success<*>>(runtime.start(request()))
+            // The lost reply leaves the sample pending, so the stop carries its position.
+            assertIs<ApiResult.NetworkError>(runtime.progress("session-1", 120.0, false, bufferedThrough = 150.0))
+            assertIs<ApiResult.Success<Unit>>(runtime.stop("session-1"))
+            return progress.single() to requireNotNull(stop)
+        } finally { c.close() }
+    }
+
+    @Test fun bufferedThroughReachesOnlyAServerThatAdvertisesItAndNeverTheStop() = runTest {
+        val feature = ",\"$PROGRESS_BUFFER_V1_FEATURE\""
+        for ((capabilityFeatures, decisionFeatures) in listOf(feature to "", "" to feature)) {
+            val (progress, stop) = progressBufferBodies(capabilityFeatures, decisionFeatures)
+            assertEquals(JsonPrimitive(150.0), progress["buffered_through"])
+            assertEquals(JsonPrimitive(120.0), stop["position"]); assertNull(stop["buffered_through"])
+        }
+        // An older server rejects unknown fields, which would refuse the whole sample.
+        val (oldProgress, oldStop) = progressBufferBodies(capabilityFeatures = "", decisionFeatures = "")
+        assertEquals(JsonPrimitive(120.0), oldProgress["position"]); assertNull(oldProgress["buffered_through"])
+        assertNull(oldStop["buffered_through"])
+    }
+
     @Test fun remuxSubtitleRenditionsAreRequestedOnlyFromAServerThatAdvertisesThem() = runTest {
         val renditions = PLAYBACK_START_CLIENT_FEATURES_V3 + HLS_SUBTITLE_RENDITIONS_V1_FEATURE
         val remux = ",\"$HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE\""

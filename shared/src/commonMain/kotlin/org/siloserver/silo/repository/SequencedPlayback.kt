@@ -626,7 +626,12 @@ class SequencedPlayback(
     /** A refusal the server would repeat. A 401 can pass after a sign-in, and a 408 or 5xx on another try. */
     private fun ApiResult.Error.isFinalRefusal(): Boolean = code in 400..499 && code != 401 && code != 408
 
-    suspend fun progress(sessionId: String, position: Double, paused: Boolean): ApiResult<Unit>? = mutex.withLock {
+    suspend fun progress(
+        sessionId: String,
+        position: Double,
+        paused: Boolean,
+        bufferedThrough: Double? = null,
+    ): ApiResult<Unit>? = mutex.withLock {
         var entry = load().find { it.sessionId == sessionId } ?: return@withLock null
         val captured = scope(entry) ?: return@withLock authorityChanged()
         if (entry.terminal || entry.stop != null) return@withLock failure("playback_stopping", "Playback is stopping.")
@@ -639,7 +644,11 @@ class SequencedPlayback(
             entry = load().find { it.attemptId == entry.attemptId } ?: return@withLock authorityChanged()
         }
         if (entry.sequence == Long.MAX_VALUE) return@withLock failure("sequence_exhausted", "Playback sample sequence exhausted.")
-        val sample = PlaybackProgressV2(entry.installationId, entry.sequence + 1, position, paused)
+        // The server rejects fields it does not know, so the buffer goes only where it is advertised.
+        val buffer = bufferedThrough?.takeIf {
+            it.isFinite() && it >= 0 && PROGRESS_BUFFER_V1_FEATURE in serverFeatures(entry.attemptId)
+        }
+        val sample = PlaybackProgressV2(entry.installationId, entry.sequence + 1, position, paused, buffer)
         entry = entry.copy(sequence = sample.sequence, progress = sample)
         save(entry)
         sendProgress(entry, captured)

@@ -186,6 +186,7 @@ class PlaybackSessionLifecycleTest {
                 sessionId: String,
                 position: Double,
                 isPaused: Boolean,
+                bufferedThrough: Double?,
             ): ApiResult<Unit> {
                 progressCallCount++
                 reportEntered.complete(Unit)
@@ -947,6 +948,7 @@ private open class FakeSessionManager : PlaybackSessionManager(
         sessionId: String,
         position: Double,
         isPaused: Boolean,
+        bufferedThrough: Double?,
     ): ApiResult<Unit> {
         progressCallCount++
         lastProgressSessionId = sessionId

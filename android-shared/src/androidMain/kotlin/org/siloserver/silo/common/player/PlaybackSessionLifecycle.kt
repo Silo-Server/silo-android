@@ -95,6 +95,11 @@ class PlaybackSessionLifecycle(
     val sessionPinsVersion: Boolean get() = lastStartParams?.allowAlternateVersions == false
     @Volatile private var lastReportedPosition: Double? = null
     @Volatile private var lastReportedDuration: Double = 0.0
+    /**
+     * Media time the player held buffered through with [lastReportedPosition],
+     * on the same timeline; null when it could not tell. Display data only.
+     */
+    @Volatile private var lastBufferedThrough: Double? = null
     /** Durable content-time coordinate; differs from session time for multipart audio. */
     @Volatile private var lastPersistencePosition: Double? = null
     @Volatile private var lastPersistenceDuration: Double = 0.0
@@ -254,6 +259,7 @@ class PlaybackSessionLifecycle(
                 params
             }
             lastReportedPosition = params.startPosition ?: session.position
+            lastBufferedThrough = null
             lastReportedDuration = session.durationSeconds ?: 0.0
             lastPersistencePosition = params.startPosition ?: session.position
             lastPersistenceDuration = session.durationSeconds ?: 0.0
@@ -397,6 +403,8 @@ class PlaybackSessionLifecycle(
     ) {
         lastStartParams = snapshot.lastStartParams
         lastReportedPosition = snapshot.lastReportedPosition
+        // The restored player's next tick reports its own buffer.
+        lastBufferedThrough = null
         lastReportedDuration = snapshot.lastReportedDuration
         lastPersistencePosition = snapshot.lastPersistencePosition
         lastPersistenceDuration = snapshot.lastPersistenceDuration
@@ -455,10 +463,19 @@ class PlaybackSessionLifecycle(
         persistencePositionSec: Double = positionSec,
         /** Content-level duration paired with [persistencePositionSec]. */
         persistenceDurationSec: Double = durationSec,
+        /**
+         * Media time the player holds buffered through, on [positionSec]'s
+         * timeline; null when the player cannot tell.
+         */
+        bufferedThroughSec: Double? = null,
     ) {
         if (expectedSessionId != lastAdoptedSessionId) return
         if (positionSec.isFinite() && positionSec >= 0) {
             lastReportedPosition = positionSec
+            // A buffer that ends before the playhead does not contain it.
+            lastBufferedThrough = bufferedThroughSec?.takeIf { it.isFinite() && it >= positionSec }
+        } else {
+            lastBufferedThrough = null
         }
         if (durationSec.isFinite() && durationSec > 0) {
             lastReportedDuration = durationSec
@@ -585,6 +602,7 @@ class PlaybackSessionLifecycle(
             }
             lastStartParams = null
             lastReportedPosition = null
+            lastBufferedThrough = null
             lastReportedDuration = 0.0
             lastPersistencePosition = null
             lastPersistenceDuration = 0.0
@@ -692,6 +710,7 @@ class PlaybackSessionLifecycle(
                     sessionId = sess.sessionId,
                     position = pos,
                     isPaused = lastIsPaused,
+                    bufferedThrough = lastBufferedThrough,
                 )
                 // The API wrapper represents CancellationException as a
                 // NetworkError. Never interpret cancellation of this reporter

@@ -3710,7 +3710,7 @@ class TvPlayerViewModel(
         playerWindowEndPlayerMs = windowEndPlayerMs
     }
 
-    fun onPositionChanged(positionMs: Long, durationMs: Long) {
+    fun onPositionChanged(positionMs: Long, durationMs: Long, bufferedPositionMs: Long = 0L) {
         if (positionMs < 0) return
         // A new recovery response updates the source/player timeline before Compose can run the
         // matching backend.mount effect. Reports from the old MediaItem must not be interpreted
@@ -3728,6 +3728,7 @@ class TvPlayerViewModel(
         val serverDuration = currentState.serverDuration.takeIf { it > 0.0 }
         val rawPositionSec = positionMs / 1000.0
         val rawDurationSec = durationMs / 1000.0
+        val rawBufferedSec = bufferedPositionMs / 1000.0
         val mappedPositionSec = (timeline?.sourcePositionForPlayer(rawPositionSec) ?: rawPositionSec)
             .let { position -> serverDuration?.let { position.coerceAtMost(it) } ?: position }
         val mappedDurationSec = if (currentState.playbackPlan != null) {
@@ -3739,6 +3740,8 @@ class TvPlayerViewModel(
         } else {
             0.0
         }
+        val mappedBufferedSec = (timeline?.sourcePositionForPlayer(rawBufferedSec) ?: rawBufferedSec)
+            .let { position -> serverDuration?.let { position.coerceAtMost(it) } ?: position }
         val nowMs = SystemClock.elapsedRealtime()
         val positionDecision = seekPresentationGuard.onPositionReport(
             positionMs = (mappedPositionSec * 1_000.0).toLong().coerceAtLeast(0L),
@@ -3789,6 +3792,7 @@ class TvPlayerViewModel(
             durationSec = _uiState.value.duration,
             isPaused = _uiState.value.isPaused,
             expectedSessionId = _uiState.value.sessionId,
+            bufferedThroughSec = mappedBufferedSec,
         )
 
         // Track B: durably record (local resume + outbox sync) for both streaming

@@ -2822,6 +2822,7 @@ private fun TvPlayerCommandEffects(
                 viewModel.onPositionChanged(
                     player.currentPosition,
                     player.duration.coerceAtLeast(0L),
+                    player.bufferedPosition.coerceAtLeast(0L),
                 )
                 // Mounted-transport extent for the VM's native-first seek
                 // decision (see TvPlayerViewModel.mountedSeekableSourceRange).

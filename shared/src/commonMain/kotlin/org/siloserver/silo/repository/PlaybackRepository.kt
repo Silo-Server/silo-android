@@ -47,13 +47,17 @@ class PlaybackRepository(private val sequenced: SequencedPlayback) {
     suspend fun replayRouteEventsV3(): ApiResult<Unit> =
         guarded { sequenced.replayRouteEvents(); ApiResult.Success(Unit) }
 
-    /** Reports current playback position and paused state to the server. */
+    /**
+     * Reports current playback position and paused state to the server, with
+     * the media time the player holds buffered through when it can tell.
+     */
     suspend fun updateProgress(
         sessionId: String,
         position: Double,
         isPaused: Boolean,
+        bufferedThrough: Double? = null,
     ): ApiResult<Unit> =
-        guarded { sequenced.progress(sessionId, position, isPaused) ?: unknownSession() }
+        guarded { sequenced.progress(sessionId, position, isPaused, bufferedThrough) ?: unknownSession() }
 
     /** Stops an active playback session. */
     suspend fun stopPlayback(sessionId: String): ApiResult<Unit> =

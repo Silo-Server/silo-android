@@ -3217,6 +3217,7 @@ class PlayerViewModel(
             durationSec = _uiState.value.duration,
             isPaused = _uiState.value.isPaused,
             expectedSessionId = _uiState.value.sessionId,
+            bufferedThroughSec = bufferedSec,
         )
 
         // Track B: durably record the position (local resume + outbox sync) for

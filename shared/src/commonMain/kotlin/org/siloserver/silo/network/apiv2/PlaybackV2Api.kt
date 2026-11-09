@@ -18,6 +18,14 @@ import org.siloserver.silo.network.localroute.stayOnSavedAddress
 
 const val SEQUENCED_PROGRESS_FEATURE = "sequenced_progress_v1"
 
+/**
+ * The server accepts [PlaybackProgressV2.bufferedThrough] and shows it to
+ * administrators. A server without it rejects unknown fields, which would
+ * refuse the whole sample, so the client sends the field only when this is
+ * advertised.
+ */
+const val PROGRESS_BUFFER_V1_FEATURE = "progress_buffer_v1"
+
 /** The redirects a bandwidth probe download follows once; the server sends 307. */
 private val PROBE_REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)
 
@@ -163,6 +171,13 @@ data class PlaybackProgressV2(
     val sequence: Long,
     val position: Double,
     @SerialName("is_paused") val isPaused: Boolean,
+    /**
+     * Media time, on the same timeline as [position], that the player holds
+     * buffered through. Display data for administrators: it takes no part in
+     * sequencing or receipts, and the stop body never carries it. Needs
+     * [PROGRESS_BUFFER_V1_FEATURE].
+     */
+    @SerialName("buffered_through") val bufferedThrough: Double? = null,
 )
 
 @Serializable

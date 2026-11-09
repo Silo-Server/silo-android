@@ -3029,13 +3029,15 @@ open class PlaybackSessionManager(
     /**
      * Reports the current playback position to the server.
      * Called periodically (every ~10 seconds) during active playback.
+     * [bufferedThrough] is on [position]'s timeline; null when the player cannot tell.
      */
     open suspend fun reportProgress(
         sessionId: String,
         position: Double,
         isPaused: Boolean,
+        bufferedThrough: Double? = null,
     ): ApiResult<Unit> =
-        playbackRepository.updateProgress(sessionId, position, isPaused)
+        playbackRepository.updateProgress(sessionId, position, isPaused, bufferedThrough)
 
     /**
      * Stops an active playback session.
