@@ -433,6 +433,32 @@ class SequencedPlaybackTest {
         assertNull(oldStop["buffered_through"])
     }
 
+    @Test fun aRefusedBufferedThroughIsResentWithoutTheFieldSoProgressKeepsFlowing() = runTest {
+        // The start's server advertised progress_buffer_v1; the replica taking progress predates it.
+        val identity = Identity(); val progress = mutableListOf<JsonObject>()
+        val unknownField = """{"type":"https://siloserver.org/problems/validation_failed","title":"Unprocessable Entity","status":422,"errors":[{"location":"body.buffered_through","code":"unknown_field"}]}"""
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps("\"sequenced_progress_v1\",\"$PROGRESS_BUFFER_V1_FEATURE\""))
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> reply(adoptedDecision, HttpStatusCode.Created)
+            "/api/v2/playback/session-1/progress" -> {
+                val body = SiloJson.parseToJsonElement(req.body.toByteArray().decodeToString()).jsonObject.also { progress += it }
+                if ("buffered_through" in body) reply(unknownField, HttpStatusCode.UnprocessableEntity)
+                else reply("""{"outcome":"applied","accepted":{"sequence":${body["sequence"]},"position":${body["position"]},"is_paused":${body["is_paused"]}}}""")
+            }
+            else -> error("Unexpected request ${req.url}")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, Store()) { stopId }
+            assertIs<ApiResult.Success<*>>(runtime.start(request()))
+            assertIs<ApiResult.Success<Unit>>(runtime.progress("session-1", 120.0, false, bufferedThrough = 150.0))
+            assertIs<ApiResult.Success<Unit>>(runtime.progress("session-1", 130.0, false, bufferedThrough = 160.0))
+            assertEquals(listOf(1L, 1L, 2L), progress.map { it.getValue("sequence").jsonPrimitive.long })
+            assertEquals(listOf(true, false, false), progress.map { "buffered_through" in it })
+            assertFalse(PROGRESS_BUFFER_V1_FEATURE in runtime.serverFeatures("attempt-1"))
+        } finally { c.close() }
+    }
+
     @Test fun remuxSubtitleRenditionsAreRequestedOnlyFromAServerThatAdvertisesThem() = runTest {
         val renditions = PLAYBACK_START_CLIENT_FEATURES_V3 + HLS_SUBTITLE_RENDITIONS_V1_FEATURE
         val remux = ",\"$HLS_REMUX_SUBTITLE_RENDITIONS_V1_FEATURE\""

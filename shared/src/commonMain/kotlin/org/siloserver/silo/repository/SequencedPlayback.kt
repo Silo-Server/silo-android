@@ -666,7 +666,15 @@ class SequencedPlayback(
                 save(entry.copy(progress = null, sequence = maxOf(entry.sequence, accepted.sequence)))
                 ApiResult.Success(Unit)
             }
-            is ApiResult.Error -> result
+            // The server, or the replica that took this request, lacks progress_buffer_v1 after all.
+            // Resending the journaled sample verbatim would be refused on every tick, so the same
+            // sequence goes again without the field, and later samples leave it out.
+            is ApiResult.Error -> if (result.error == BUFFERED_THROUGH_UNSUPPORTED && entry.progress.bufferedThrough != null) {
+                attemptFeatures[entry.attemptId]?.let { attemptFeatures = attemptFeatures + (entry.attemptId to it - PROGRESS_BUFFER_V1_FEATURE) }
+                val bare = entry.copy(progress = entry.progress.copy(bufferedThrough = null))
+                save(bare)
+                sendProgress(bare, captured)
+            } else result
             is ApiResult.NetworkError -> result
         }
     }

@@ -50,14 +50,21 @@ internal fun decodeHomeLayoutV2(body: JsonObject): List<HomeLayoutRow> {
 const val ITEM_LIMIT_UNSUPPORTED = "item_limit_unsupported"
 
 /** Whether this is v2's 422 `validation_failed` naming `query.<name>` as an `unknown_parameter`. */
-internal suspend fun HttpResponse.rejectsQueryParameter(name: String): Boolean {
+internal suspend fun HttpResponse.rejectsQueryParameter(name: String): Boolean =
+    rejectsAsUnknown("query.$name", "unknown_parameter")
+
+/** Whether this is v2's 422 `validation_failed` naming `body.<name>` as an `unknown_field`. */
+internal suspend fun HttpResponse.rejectsBodyField(name: String): Boolean =
+    rejectsAsUnknown("body.$name", "unknown_field")
+
+private suspend fun HttpResponse.rejectsAsUnknown(location: String, code: String): Boolean {
     if (status != HttpStatusCode.UnprocessableEntity) return false
     // Non-streaming requests keep their body, so the call still reads it as a problem.
     val problem = runCatching {
         SiloJson.decodeFromString(Problem.serializer(), bodyAsText())
     }.getOrNull() ?: return false
     return problem.code == "validation_failed" &&
-        problem.errors.any { it.location == "query.$name" && it.code == "unknown_parameter" }
+        problem.errors.any { it.location == location && it.code == code }
 }
 
 /** Re-tags [result] as [ITEM_LIMIT_UNSUPPORTED] when the server refused the parameter. */

@@ -26,6 +26,14 @@ const val SEQUENCED_PROGRESS_FEATURE = "sequenced_progress_v1"
  */
 const val PROGRESS_BUFFER_V1_FEATURE = "progress_buffer_v1"
 
+/**
+ * The error [PlaybackV2Api.progress] answers when the server refused
+ * `buffered_through` as an unknown field: a server, or the replica that took
+ * the request, without [PROGRESS_BUFFER_V1_FEATURE] although the attempt's
+ * server advertised it. The caller resends the sample without the field.
+ */
+const val BUFFERED_THROUGH_UNSUPPORTED = "buffered_through_unsupported"
+
 /** The redirects a bandwidth probe download follows once; the server sends 307. */
 private val PROBE_REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)
 
@@ -362,17 +370,21 @@ class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate)
      * once after a 401. Otherwise an access token that expires mid-session
      * fails every tick until unrelated traffic happens to refresh it. The
      * resend carries the same sequenced sample, which the server settles as
-     * `replayed` at worst.
+     * `replayed` at worst. A refusal of `buffered_through` answers
+     * [BUFFERED_THROUGH_UNSUPPORTED].
      */
     suspend fun progress(scope: AuthScopeSnapshot, sessionId: String,
-        body: PlaybackProgressV2): ApiResult<PlaybackMutationV2> =
-        exchange<PlaybackMutationV2, PlaybackMutationV2>(HttpStatusCode.OK, {
+        body: PlaybackProgressV2): ApiResult<PlaybackMutationV2> {
+        var rejected = false
+        val result = exchange<PlaybackMutationV2, PlaybackMutationV2>(HttpStatusCode.OK, {
             client.post {
                 url { path("", "api", "v2", "playback", sessionId, "progress") }
                 authScope(scope); requireSiloAuth()
                 contentType(ContentType.Application.Json); setBody(body)
-            }
+            }.also { rejected = body.bufferedThrough != null && it.rejectsBodyField("buffered_through") }
         }) { it }
+        return if (rejected && result is ApiResult.Error) result.copy(error = BUFFERED_THROUGH_UNSUPPORTED) else result
+    }
 
     /** Only an HTTP 200 stopped or replayed receipt carrying the sent stop_id confirms the stop. */
     suspend fun stop(scope: AuthScopeSnapshot, sessionId: String, body: PlaybackStopV2): ApiResult<PlaybackMutationV2> =
