@@ -3,6 +3,8 @@ package org.siloserver.silo.common.player
 import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
+import android.text.SpannableStringBuilder
+import android.text.TextUtils
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -36,6 +38,7 @@ import org.siloserver.silo.playback.downloadedSubtitleArtifactTrackId
 import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 import java.lang.ref.WeakReference
 import java.util.WeakHashMap
+import kotlin.math.floor
 import kotlin.math.roundToInt
 
 /**
@@ -694,6 +697,137 @@ internal fun remapDefaultTextCuePlacements(
 }
 
 /**
+ * Draws text cues that are on screen at the same time one above the other
+ * instead of on top of each other.
+ *
+ * Media3 1.11.0's `SubtitlePainter` places each cue on its own: every cue
+ * without a line lands on the same bottom spot, and nothing moves one cue out
+ * of another's way. Two captions shown at once (a name card and the dialogue
+ * beside it, or two speakers) were drawn over each other. Media3's WebVTT
+ * parser numbers the cues it parses together `-1, -2, …` to stack them, but
+ * neither stream path gives it the chance: embedded SubRip arrives one cue per
+ * sample with no line, and
+ * [org.siloserver.silo.common.player.subtitle.StreamingWebvttExtractor] parses
+ * each block alone, so every cue gets the default `line = -1`.
+ *
+ * Cues that carry default placement (no line, or a negative line number with
+ * the default anchor) and otherwise lay out the same way are joined into one
+ * cue, so the painter lays them out as one block. The block keeps the default
+ * placement, so [remapDefaultTextCuePlacement] still applies the Position
+ * preset to it. Media3's own `-1, -2, …` numbering looks the same as an
+ * author's `line:-2`; both ask for the bottom-up order used here.
+ *
+ * A caption that stays on screen keeps its line, the way a browser keeps a
+ * WebVTT cue box it has already placed: a new caption takes the line a
+ * finished one left, bottom first, and otherwise goes on top. A name card
+ * shown across two lines of dialogue therefore stays above them instead of
+ * trading places with each new line. Captions that appear together are
+ * ordered as the WebVTT rules order them, earliest at the bottom.
+ *
+ * Authored placements, bitmap cues and vertical text are left alone. A repeat
+ * of a caption already in the block is dropped: drawn in the same place it was
+ * invisible, and stacked it would show twice.
+ *
+ * Keep one stacker per player view: [stack] remembers the order it last drew.
+ */
+@UnstableApi
+internal class SimultaneousTextCueStacker {
+    /** The bottom-up order each block was last drawn in, by [stackLayoutKey]. */
+    private var lastOrders: Map<Cue, List<Cue>> = emptyMap()
+
+    fun stack(cueGroup: CueGroup): CueGroup {
+        val blocks = cueGroup.cues.withIndex()
+            .filter { (_, cue) -> hasDefaultStackPlacement(cue) }
+            .groupBy { (_, cue) -> stackLayoutKey(cue) }
+        val orders = HashMap<Cue, List<Cue>>(blocks.size)
+        val stackedAt = HashMap<Int, Cue>()
+        val joinedAway = HashSet<Int>()
+        for ((key, block) in blocks) {
+            val cues = block.map { it.value }
+            val order = bottomUpOrder(cues, lastOrders[key].orEmpty())
+            orders[key] = order
+            if (cues.size < 2) continue
+            val first = block.minOf { it.index }
+            stackedAt[first] = joinBottomUp(order, cues)
+            block.forEach { if (it.index != first) joinedAway += it.index }
+        }
+        lastOrders = orders
+        if (stackedAt.isEmpty()) return cueGroup
+        val stacked = cueGroup.cues.mapIndexedNotNull { i, cue ->
+            if (i in joinedAway) null else stackedAt[i] ?: cue
+        }
+        return CueGroup(stacked, cueGroup.presentationTimeUs)
+    }
+}
+
+/**
+ * The bottom-up order for one block's [current] cues, one per caption text.
+ * Captions already showing keep their places in [last]; new ones fill the
+ * places of finished ones, bottom first, then go on top. A caption is matched
+ * by its text: within a block only text and line differ, and Media3 renumbers
+ * the lines of the cues it stacks as earlier ones end. New captions keep their
+ * own order: Media3 numbers the cues it stacks -1 (earliest), -2, …; otherwise
+ * the group's order is start time, as MergingCuesResolver builds it.
+ */
+@UnstableApi
+private fun bottomUpOrder(current: List<Cue>, last: List<Cue>): List<Cue> {
+    fun List<Cue>.withTextOf(cue: Cue) = firstOrNull { TextUtils.equals(it.text, cue.text) }
+    val captions = current.distinctBy { it.text.toString() }
+    val arriving = captions.filter { last.withTextOf(it) == null }.sortedBy(::stackRank).iterator()
+    val order = ArrayList<Cue>(captions.size)
+    for (shown in last) {
+        val still = captions.withTextOf(shown)
+        when {
+            still != null -> order += still
+            arriving.hasNext() -> order += arriving.next()
+        }
+    }
+    arriving.forEach { order += it }
+    return order
+}
+
+/**
+ * One cue showing [bottomUp] as lines of a block, the first at the bottom. The
+ * block sits where the lowest of [block]'s cues asked to.
+ */
+@UnstableApi
+private fun joinBottomUp(bottomUp: List<Cue>, block: List<Cue>): Cue {
+    val joined = SpannableStringBuilder()
+    bottomUp.asReversed().forEachIndexed { i, cue ->
+        if (i > 0) joined.append('\n')
+        joined.append(cue.text)
+    }
+    val builder = bottomUp.first().buildUpon().setText(joined)
+    if (block.none { it.line == Cue.DIMEN_UNSET }) {
+        builder.setLine(block.maxOf { it.line }, Cue.LINE_TYPE_NUMBER)
+    }
+    return builder.build()
+}
+
+@UnstableApi
+private fun hasDefaultStackPlacement(cue: Cue): Boolean {
+    if (cue.bitmap != null || cue.text == null) return false
+    if (cue.verticalType != Cue.TYPE_UNSET) return false
+    if (cue.line == Cue.DIMEN_UNSET) return true
+    return cue.lineType == Cue.LINE_TYPE_NUMBER &&
+        cue.line < 0f &&
+        cue.line == floor(cue.line) &&
+        (cue.lineAnchor == Cue.TYPE_UNSET || cue.lineAnchor == Cue.ANCHOR_TYPE_START)
+}
+
+/** Everything about a cue's layout except its text and its line. */
+@UnstableApi
+private fun stackLayoutKey(cue: Cue): Cue = cue.buildUpon()
+    .setText("")
+    .setLine(Cue.DIMEN_UNSET, Cue.TYPE_UNSET)
+    .setLineAnchor(Cue.TYPE_UNSET)
+    .build()
+
+/** 1 for the bottom line, 2 for the one above it, and so on. */
+@UnstableApi
+private fun stackRank(cue: Cue): Float = if (cue.line == Cue.DIMEN_UNSET) 1f else -cue.line
+
+/**
  * Vertical placement of the caption block, expressed the way Media3 wants it:
  * the fraction of the subtitle surface left free BELOW the caption.
  *
@@ -1057,6 +1191,9 @@ private class SubtitleVideoRectSync(
     /** The last group received from the player, BEFORE any transformation. */
     private var lastCueGroup: CueGroup? = null
 
+    /** Keeps captions that stay on screen on their lines; see [SimultaneousTextCueStacker]. */
+    private val cueStacker = SimultaneousTextCueStacker()
+
     var isDisposed: Boolean = false
         private set
 
@@ -1194,7 +1331,7 @@ private class SubtitleVideoRectSync(
         val subtitleView = playerView.subtitleView ?: return
         val cues = remapBitmapCues(
             cueGroup = remapDefaultTextCuePlacements(
-                cueGroup = neutralizeFullWidthCueSizes(cueGroup),
+                cueGroup = cueStacker.stack(neutralizeFullWidthCueSizes(cueGroup)),
                 position = appearance.position,
             ),
             appearance = appearance,
