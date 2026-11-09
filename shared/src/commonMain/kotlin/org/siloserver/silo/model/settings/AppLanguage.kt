@@ -59,7 +59,9 @@ object AppLanguage {
             fun parse(tag: String): Tag? {
                 val parts = tag.trim().split('-', '_').filter { it.isNotEmpty() }
                 val language = parts.firstOrNull()?.lowercase()?.takeIf { it.all(Char::isLetter) } ?: return null
-                val rest = parts.drop(1)
+                // A singleton (`u`, `x`, ...) starts an extension or private-use
+                // section; its subtags are not a script or a region.
+                val rest = parts.drop(1).takeWhile { it.length > 1 }
                 val script = rest.firstOrNull { it.length == 4 && it.all(Char::isLetter) }
                     ?.lowercase()?.replaceFirstChar { it.uppercaseChar() }
                 val region = rest.firstOrNull {

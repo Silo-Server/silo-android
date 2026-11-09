@@ -123,6 +123,9 @@ class AppLanguageMatchTest {
         assertEquals("zh-Hans", match("zh-CN"))
         assertEquals("zh-Hans", match("zh-SG"))
         assertEquals("zh-Hans", match("zh-Hans-HK"))
+        // A Unicode extension (numbering system) is not a script or a region.
+        assertEquals("zh-Hans", match("zh-CN-u-nu-latn"))
+        assertEquals("es", match("es-u-fw-mon"))
         assertNull(match("zh-TW"))
         assertNull(match("zh-Hant"))
         assertNull(match("zh-HK"))
