@@ -122,6 +122,12 @@ class AppLanguageStore(
     /** One save at a time, so they reach the server in the order chosen. */
     private val flushLock = Mutex()
 
+    /**
+     * One refresh at a time, so the server's answers publish in the order
+     * they were asked for: an older read can't land after a newer one.
+     */
+    private val refreshLock = Mutex()
+
     private val _state = MutableStateFlow(AppLanguageState())
     val state: StateFlow<AppLanguageState> = _state.asStateFlow()
 
@@ -144,7 +150,9 @@ class AppLanguageStore(
         }
     }
 
-    suspend fun refresh() {
+    suspend fun refresh() = refreshLock.withLock { refreshLocked() }
+
+    private suspend fun refreshLocked() {
         val identity = currentIdentity() ?: return
         val authority = captureAuthority()?.takeIf { it.belongsTo(identity) } ?: return
         if (currentIdentity() != identity) return
