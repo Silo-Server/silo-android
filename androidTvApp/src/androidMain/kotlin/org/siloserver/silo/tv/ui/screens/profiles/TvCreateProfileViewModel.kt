@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.model.profile.AssignableLibraries
-import org.siloserver.silo.model.profile.CHOOSE_A_LIBRARY_MESSAGE
 import org.siloserver.silo.model.profile.CreateProfileRequest
 import org.siloserver.silo.model.profile.ProfileAccessLimits
 import org.siloserver.silo.model.profile.withAccessLimits
@@ -18,6 +17,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.model.profile.CHOOSE_A_LIBRARY_TEXT
 
 /**
  * Mirrors the phone app's `CreateProfileViewModel`. Drives the TV create-profile
@@ -156,7 +157,7 @@ class TvCreateProfileViewModel(
             return
         }
         if (current.access.needsLibrary(assignable = current.libraries.ids)) {
-            _uiState.update { it.copy(error = UiText.Raw(CHOOSE_A_LIBRARY_MESSAGE)) }
+            _uiState.update { it.copy(error = CHOOSE_A_LIBRARY_TEXT) }
             return
         }
 
@@ -181,7 +182,7 @@ class TvCreateProfileViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = UiText.serverOr(result.message, CommonR.string.newProfile_error_createFailed),
+                            error = result.errorText(CommonR.string.newProfile_error_createFailed),
                         )
                     }
                 }

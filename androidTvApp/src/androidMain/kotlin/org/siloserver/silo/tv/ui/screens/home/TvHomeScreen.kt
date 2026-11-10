@@ -47,10 +47,12 @@ import org.siloserver.silo.viewmodel.HomeDismissal
 import org.siloserver.silo.viewmodel.HomeViewModel
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
 
 internal fun shouldShowHomeEmptyState(
     isLoading: Boolean,
-    error: String?,
+    error: UiText?,
     visibleSectionCount: Int,
 ): Boolean = !isLoading && error == null && visibleSectionCount == 0
 
@@ -126,7 +128,7 @@ fun TvHomeScreen(
             modifier = Modifier.background(MaterialTheme.colorScheme.background),
         )
         state.error != null && state.sections.isEmpty() -> TvErrorScreen(
-            message = state.error!!,
+            message = state.error!!.text(),
             onRetry = viewModel::loadSections,
             modifier = Modifier.background(MaterialTheme.colorScheme.background),
         )

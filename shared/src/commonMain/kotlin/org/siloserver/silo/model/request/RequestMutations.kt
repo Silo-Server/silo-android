@@ -4,8 +4,10 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.errorMessage
 
 /**
  * Sorts a failed create or cancel into the two outcomes the UI
@@ -40,43 +42,49 @@ object RequestMutationFailure {
     )
 }
 
-/** Copy for request mutations. */
-object RequestActionCopy {
-    const val UnconfirmedSubmit = "We couldn't confirm the request. Check My Requests before trying again."
-    const val UnconfirmedCancel = "We couldn't confirm the cancellation. Refresh your requests to check it."
-    const val UnconfirmedRemove = "We couldn't confirm the removal. Refresh your requests to check it."
+/**
+ * What a request mutation tells the user, as a message near the action or a
+ * one-time notice. Code compares these (a hold clears only its own message),
+ * so each fixed message is its own value.
+ */
+sealed class RequestActionMessage(val text: UiText) {
+    data object UnconfirmedSubmit : RequestActionMessage(UiText.Key(SharedString.RequestUnconfirmedSubmit))
+    data object UnconfirmedCancel : RequestActionMessage(UiText.Key(SharedString.RequestUnconfirmedCancel))
+    data object UnconfirmedRemove : RequestActionMessage(UiText.Key(SharedString.RequestUnconfirmedRemove))
 
     /** Removing a failed request (the web's copy). */
-    const val Removed = "Request removed"
-    const val RemoveConfirmTitle = "Remove this request?"
-    const val RemoveConfirm = "Remove request"
-    const val RemoveKeep = "Keep request"
-    fun removeConfirmMessage(title: String): String =
-        "Your failed request for \"$title\" will be deleted. You can request the title again later."
+    data object Removed : RequestActionMessage(UiText.Key(SharedString.RequestRemoved))
 
     /** A 409 on removal: an admin retried the request, or the library completed it, since the list loaded. */
-    const val RemoveConflict = "This request changed since the list loaded, so it wasn't removed."
-
-    /**
-     * Copy for a definite failure. v2 folds "already requested", "already
-     * available", and "invalid state" into one `conflict` problem, and the quota
-     * message carries the counts, so the problem's detail is the most specific
-     * copy there is.
-     */
-    fun failure(result: ApiResult<*>, fallback: String): String = when {
-        result is ApiResult.Error && result.error == "validation_failed" -> "That request couldn't be submitted"
-        result is ApiResult.Error && result.error in CapabilityOff -> "Requests are turned off"
-        else -> result.errorMessage(fallback)
-    }
-
-    /** The server refused because the feature is off: the caller should re-read its capability. */
-    fun isCapabilityOff(result: ApiResult<*>): Boolean = result is ApiResult.Error && result.error in CapabilityOff
-
-    private val CapabilityOff = setOf("capability_disabled", "capability_not_configured", "capability_unsupported")
+    data object RemoveConflict : RequestActionMessage(UiText.Key(SharedString.RequestRemoveConflict))
 
     /** Confirmations for following a title someone else requested (the web's toasts). */
-    const val Followed = "We'll let you know when it's available"
-    const val Unfollowed = "Notification turned off"
+    data object Followed : RequestActionMessage(UiText.Key(SharedString.RequestFollowed))
+    data object Unfollowed : RequestActionMessage(UiText.Key(SharedString.RequestUnfollowed))
+
+    /** A definite failure; see [failure]. */
+    data class Failed(val reason: UiText) : RequestActionMessage(reason)
+
+    companion object {
+        /**
+         * A definite failure. v2 folds "already requested", "already
+         * available", and "invalid state" into one `conflict` problem, and the quota
+         * message carries the counts, so the problem's detail is the most specific
+         * copy there is.
+         */
+        fun failure(result: ApiResult<*>, fallback: SharedString): RequestActionMessage = Failed(
+            when {
+                result is ApiResult.Error && result.error == "validation_failed" -> RequestReasonKind.NotSubmitted.text
+                result is ApiResult.Error && result.error in CapabilityOff -> RequestReasonKind.RequestsOff.text
+                else -> result.errorText(fallback)
+            },
+        )
+
+        /** The server refused because the feature is off: the caller should re-read its capability. */
+        fun isCapabilityOff(result: ApiResult<*>): Boolean = result is ApiResult.Error && result.error in CapabilityOff
+
+        private val CapabilityOff = setOf("capability_disabled", "capability_not_configured", "capability_unsupported")
+    }
 }
 
 /**

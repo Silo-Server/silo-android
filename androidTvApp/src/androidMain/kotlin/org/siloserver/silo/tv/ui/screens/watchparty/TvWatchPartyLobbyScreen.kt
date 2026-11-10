@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.text
 import android.widget.Toast
 import androidx.annotation.StringRes
 import androidx.activity.compose.BackHandler
@@ -113,7 +114,7 @@ fun TvWatchPartyLobbyScreen(
     }
     LaunchedEffect(viewModel) {
         viewModel.messages.collect { message ->
-            if (message.isNotBlank()) Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            message.text(context).takeIf { it.isNotBlank() }?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
         }
     }
 

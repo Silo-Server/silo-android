@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.watchparty
 
+import org.siloserver.silo.watchtogether.WatchPartyReconnectingBanner
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -224,12 +226,6 @@ private fun ItemDetail.episodeSubtitle(): String? {
     return if (season != null && episode != null) "$series · ${watchPartyEpisodeCode(season, episode)}" else series
 }
 
-/**
- * [watchPartyLobbyBanner]'s reconnect text (shared module, English). Matched
- * only to show the catalog's reconnect or first-connect banner in its place.
- */
-private const val SHARED_RECONNECTING_BANNER = "Reconnecting to the party…"
-
 internal fun Suggestion.toPartyItem() = WatchPartyItem(
     contentId = contentId,
     contentType = contentType,
@@ -279,11 +275,11 @@ internal fun WatchPartyRoomContent(
 
     val primary = watchPartyPrimaryAction(room, features, suggestions, unavailable)
     val secondary = watchPartySecondaryAction(room, primary)
-    val hint = watchPartyLobbyHint(room, suggestions)
+    val hint = watchPartyLobbyHint(room, suggestions)?.text()
     val lobbyBanner = watchPartyLobbyBanner(room, unavailable, reconnecting = showReconnect)
-    val reconnectBanner = lobbyBanner == SHARED_RECONNECTING_BANNER
+    val reconnectBanner = lobbyBanner == WatchPartyReconnectingBanner
     val banner = when {
-        !reconnectBanner -> lobbyBanner
+        !reconnectBanner -> lobbyBanner?.text()
         showReconnect && firstConnect -> stringResource(CommonR.string.watchParty_connection_connectingToParty)
         else -> stringResource(CommonR.string.watchParty_banner_reconnecting)
     }
@@ -429,7 +425,8 @@ internal fun WatchPartyRoomContent(
 
 @Composable
 private fun ConnectionDot(room: RoomSnapshot, connected: Boolean, reconnecting: Boolean) {
-    val (tone, label) = watchPartyConnectionLabel(room, connected, reconnecting)
+    val (tone, labelText) = watchPartyConnectionLabel(room, connected, reconnecting)
+    val label = labelText.text()
     val color = when (tone) {
         WatchPartyConnectionTone.Good -> WatchPartyColors.emerald
         WatchPartyConnectionTone.Warning -> WatchPartyColors.amber
@@ -466,8 +463,8 @@ private fun RoomHero(room: RoomSnapshot, staged: WatchPartyStagedTitle?, suggest
             )
         }
         Column(verticalArrangement = Arrangement.spacedBy((titleSize * 0.28f).dp), modifier = Modifier.weight(1f)) {
-            WatchPartyEyebrow(hero.eyebrow)
-            val title = hero.title ?: staged?.title
+            WatchPartyEyebrow(hero.eyebrow.text())
+            val title = hero.title?.text() ?: staged?.title
             WatchPartyHeroTitle(
                 text = title ?: stringResource(CommonR.string.watchParty_hero_loading),
                 color = if (title == null || staged?.unavailable == true) SiloSecondaryText else SiloOnSurface,
@@ -477,7 +474,7 @@ private fun RoomHero(room: RoomSnapshot, staged: WatchPartyStagedTitle?, suggest
             if (selected && staged != null) FactsLine(staged)
             hero.supporting?.let {
                 Text(
-                    it,
+                    it.text(),
                     fontSize = if (selected) WatchPartyMetrics.CAPTION.sp else WatchPartyMetrics.BODY.sp,
                     color = if (selected) SiloSecondaryText.copy(alpha = 0.7f) else SiloSecondaryText,
                 )

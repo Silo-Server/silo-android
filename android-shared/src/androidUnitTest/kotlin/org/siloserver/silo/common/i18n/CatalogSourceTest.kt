@@ -94,6 +94,7 @@ class CatalogSourceTest {
         "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/servers",
         "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/settings",
         "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/shuffle",
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/watchparty",
         "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/auth",
         "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/cast",
         "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/home",
@@ -120,6 +121,7 @@ class CatalogSourceTest {
         "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/search",
         "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/servers",
         "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/settings",
+        "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/watchparty",
         "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/ui/shell",
         "androidTvApp/src/androidMain/kotlin/org/siloserver/silo/tv/watchnext",
     )

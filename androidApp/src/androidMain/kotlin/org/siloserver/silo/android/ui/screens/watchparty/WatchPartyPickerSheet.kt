@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.text
 import androidx.annotation.StringRes
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.foundation.background
@@ -511,7 +512,7 @@ private fun PickerShelvesPage(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
         )
         state.error?.let {
-            WatchPartyBanner(it, tone = WatchPartyBannerTone.Warning, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            WatchPartyBanner(it.text(), tone = WatchPartyBannerTone.Warning, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
         }
         when {
             searching -> PickerSearchResults(state, onOpen)

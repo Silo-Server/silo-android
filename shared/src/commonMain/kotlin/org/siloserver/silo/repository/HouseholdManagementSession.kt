@@ -7,6 +7,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.VerifyPinResponse
 import org.siloserver.silo.model.profile.authorizedProfileToken
@@ -38,7 +41,7 @@ class HouseholdManagementSession internal constructor(
     data class Reverify(
         val profile: Profile,
         val isVerifying: Boolean = false,
-        val error: String? = null,
+        val error: UiText? = null,
         /** Bumped on each rejected PIN so the entry clears. */
         val errorCount: Int = 0,
     )
@@ -144,9 +147,9 @@ class HouseholdManagementSession internal constructor(
                 return renewed.manager
             }
             val message = when (result) {
-                is ApiResult.Success -> "Wrong PIN. Try again."
-                is ApiResult.Error -> result.message.ifBlank { "Incorrect PIN" }
-                is ApiResult.NetworkError -> "Network error. Please try again."
+                is ApiResult.Success -> UiText.Key(SharedString.PinWrong)
+                is ApiResult.Error -> result.errorText(SharedString.PinIncorrect)
+                is ApiResult.NetworkError -> UiText.Key(SharedString.PinNetworkError)
             }
             _reverify.update { it?.copy(isVerifying = false, error = message, errorCount = it.errorCount + 1) }
         }
@@ -172,6 +175,9 @@ class HouseholdManagementSession internal constructor(
             this is ApiResult.Error && code == 403 && error in VerificationCodes
 
         internal fun cancelledError(): ApiResult.Error =
-            ApiResult.Error(403, "profile_verification_required", "Enter the primary profile's PIN to manage profiles.")
+            ApiResult.Error(
+                403, "profile_verification_required", "Enter the primary profile's PIN to manage profiles.",
+                text = UiText.Key(SharedString.ProfileVerificationRequired),
+            )
     }
 }

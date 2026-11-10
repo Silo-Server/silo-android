@@ -359,7 +359,7 @@ private fun PersonHeader(person: Person, bioFocusRequester: FocusRequester) {
             val badges = personMetadataBadges(person, todayIso = LocalDate.now().toString())
             if (badges.isNotEmpty()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    badges.forEach { badge -> MetadataBadge(text = badge) }
+                    badges.forEach { badge -> MetadataBadge(text = badge.text()) }
                 }
             }
             val bio = cleanPersonBio(person.bio)

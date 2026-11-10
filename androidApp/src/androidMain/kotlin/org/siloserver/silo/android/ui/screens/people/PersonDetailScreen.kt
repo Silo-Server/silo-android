@@ -326,7 +326,7 @@ private fun PersonHeader(person: Person, isRefreshingMetadata: Boolean = false) 
                             color = SiloSurfaceVariant,
                         ) {
                             Text(
-                                text = badge,
+                                text = badge.text(),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Normal,
                                 color = SiloOnSurface,
@@ -405,7 +405,7 @@ private fun FilmographyHeader(
             )
             personWorksCountLabel(total = totalItems, loaded = totalLoaded, hasMore = hasMore)?.let { label ->
                 Text(
-                    text = label,
+                    text = label.text(),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Normal,
                     color = SiloSecondaryText,

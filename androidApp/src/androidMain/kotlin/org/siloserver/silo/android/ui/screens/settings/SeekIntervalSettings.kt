@@ -9,6 +9,7 @@ import org.siloserver.silo.model.settings.SeekDirection
 import org.siloserver.silo.model.settings.SeekIntervalSupport
 import org.siloserver.silo.model.settings.SeekIntervals
 import org.siloserver.silo.model.settings.SeekMedia
+import org.siloserver.silo.common.i18n.text
 
 
 
@@ -68,9 +69,9 @@ fun SeekIntervalSettings(
             SeekMedia.Video -> state.video
             SeekMedia.Audiobook -> state.audiobook
         }
-        val options = state.choices.map(SeekIntervals::label)
+        val options = state.choices.map { SeekIntervals.label(it).text() }
         SeekDirection.entries.forEach { direction ->
-            val value = SeekIntervals.label(pair.seconds(direction))
+            val value = SeekIntervals.label(pair.seconds(direction)).text()
             SettingsIndexedDropdownRow(
                 label = stringResource(
                     if (direction == SeekDirection.Back) CommonR.string.settings_control_skipBack else CommonR.string.settings_control_skipForward,

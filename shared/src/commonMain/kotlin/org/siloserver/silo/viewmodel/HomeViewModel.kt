@@ -31,6 +31,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.TimeSource
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 
 data class HomeUiState(
     val membershipReadWitnesses: Set<org.siloserver.silo.repository.MembershipActions.Intent> = emptySet(),
@@ -49,7 +52,7 @@ data class HomeUiState(
      * finished list; only a partial publish sets it false.
      */
     val sectionsFullyResolved: Boolean = true,
-    val error: String? = null,
+    val error: UiText? = null,
 )
 
 /**
@@ -340,7 +343,7 @@ class HomeViewModel(
         if (generation != fetchGeneration || !currentCoroutineContext().isActive) return generation
         if (owner == null) {
             displayedOwner = null
-            _uiState.update { it.copy(sections = emptyList(), membershipReadWitnesses = emptySet(), isLoading = false, isRefreshing = false, error = "Sign in to load Home.") }
+            _uiState.update { it.copy(sections = emptyList(), membershipReadWitnesses = emptySet(), isLoading = false, isRefreshing = false, error = UiText.Key(SharedString.HomeSignedOut)) }
             return generation
         }
         if (!mayPublish(owner, generation)) return generation
@@ -462,7 +465,7 @@ class HomeViewModel(
                         isLoading = false,
                         // Keep cached/prior sections on a failed refresh; only block
                         // with an error when there's nothing to show.
-                        error = if (hadSections) null else result.message.ifBlank { "Failed to load home sections" },
+                        error = if (hadSections) null else result.errorText(SharedString.HomeLoadFailed),
                     )
                 }
                 report(HomeLoadOutcome.API_ERROR)
@@ -475,7 +478,7 @@ class HomeViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = if (hadSections) null else "Network error. Check your connection.",
+                        error = if (hadSections) null else UiText.Key(SharedString.NetworkError),
                     )
                 }
                 report(HomeLoadOutcome.NETWORK_ERROR)

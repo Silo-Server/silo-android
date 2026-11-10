@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -54,7 +56,7 @@ fun TracksSheet(
     showTranslateAction: Boolean = false,
     onSearchSubtitles: () -> Unit = {},
     onTranslateWithAi: () -> Unit = {},
-    subtitleStatus: (PlayerSubtitleInfo) -> String? = { null },
+    subtitleStatus: (PlayerSubtitleInfo) -> UiText? = { null },
     timingActions: SubtitleTimingActions? = null,
     onSyncSubtitle: (String) -> Unit = {},
     onResetTiming: (String) -> Unit = {},
@@ -120,7 +122,7 @@ fun TracksSheet(
                     subtitles.forEachIndexed { index, subtitle ->
                         // A track no route can show stays listed, disabled, so
                         // the rows keep their places and the viewer sees why.
-                        val status = if (subtitle.unplayable) unsupportedFormat else subtitleStatus(subtitle)
+                        val status = if (subtitle.unplayable) unsupportedFormat else subtitleStatus(subtitle)?.text()
                         val presentation = subtitleTrackPresentation(subtitle, index, trackStrings, status)
                         PlayerTrackRow(
                             title = presentation.title,
@@ -196,7 +198,7 @@ private fun SubtitleTimingGroup(
     onReset: () -> Unit,
 ) {
     if (actions.forbidden) {
-        PlayerFootnote(SubtitleTimingActions.FORBIDDEN_MESSAGE)
+        PlayerFootnote(SubtitleTimingActions.FORBIDDEN_MESSAGE.text())
         return
     }
     if (actions.canSync || actions.canReset) {
@@ -225,15 +227,15 @@ private fun SubtitleTimingGroup(
     if (actions.inProgress) {
         SyncProgressRow(
             percent = actions.percent ?: 0,
-            label = actions.phaseLabel,
+            label = actions.phaseLabel?.text(),
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
         )
     }
     actions.result?.let { result ->
-        TimingMessage(result.text, color = if (result.warning) TimingWarningColor else null)
+        TimingMessage(result.text.text(), color = if (result.warning) TimingWarningColor else null)
     }
-    actions.note?.let { TimingMessage(it, color = PlayerChrome.Faint) }
-    actions.error?.let { TimingMessage(it, color = MaterialTheme.colorScheme.error) }
+    actions.note?.let { TimingMessage(it.text(), color = PlayerChrome.Faint) }
+    actions.error?.let { TimingMessage(it.text(), color = MaterialTheme.colorScheme.error) }
 }
 
 private val TimingWarningColor = Color(0xFFFDE68A).copy(alpha = 0.85f)

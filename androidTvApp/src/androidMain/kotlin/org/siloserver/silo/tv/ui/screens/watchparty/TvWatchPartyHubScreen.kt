@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.text
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -184,7 +185,7 @@ fun TvWatchPartyHubScreen(
                 }
                 val error = state.error
                 when {
-                    error != null && !joinOpen -> TvPartyBanner(message = error, warning = true)
+                    error != null && !joinOpen -> TvPartyBanner(message = error.text(), warning = true)
                     current != null -> Unit
                     availability == null -> TvPartyBanner(message = stringResource(CommonR.string.watchParty_page_checking))
                     availability is WatchPartyAvailability.Unsupported ->
@@ -306,7 +307,7 @@ fun TvWatchPartyHubScreen(
     if (joinOpen) {
         TvJoinCodeDialog(
             isBusy = state.busy == WatchPartyPendingAction.Join,
-            error = state.error,
+            error = state.error?.text(),
             onJoin = viewModel::join,
             onDismiss = {
                 viewModel.clearError()

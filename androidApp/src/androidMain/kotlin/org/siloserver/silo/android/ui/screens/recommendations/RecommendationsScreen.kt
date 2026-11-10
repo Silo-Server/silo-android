@@ -71,6 +71,7 @@ import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.screens.personal.currentQuery
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Phone Recommendations ("For You") screen.
@@ -176,7 +177,7 @@ fun RecommendationsScreen(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = state.error ?: stringResource(CommonR.string.home_forYou_loadFailed),
+                    text = state.error?.text() ?: stringResource(CommonR.string.home_forYou_loadFailed),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )

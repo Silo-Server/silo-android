@@ -18,6 +18,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.siloserver.silo.common.i18n.SharedPlural
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.model.auth.PasswordChangeError
 
 /**
  * silo-android#663: an account holding a temporary password signed in, then
@@ -88,7 +91,7 @@ class PasswordChangeViewModelTest {
             val state = model.uiState.value
             assertEquals(PasswordChangePhase.Editing, state.phase)
             assertEquals("member", state.accountName)
-            assertEquals("At least 10 characters", state.requirementsHint)
+            assertEquals(UiText.Plural(SharedPlural.PasswordRequirement, 10), state.requirementsHint)
             assertEquals(listOf("read"), account.calls)
         }
     }
@@ -146,7 +149,7 @@ class PasswordChangeViewModelTest {
             model.submit()
             val state = model.uiState.value
             assertEquals(PasswordChangePhase.Editing, state.phase)
-            assertEquals("That temporary password is incorrect.", state.error)
+            assertEquals(PasswordChangeError.WrongTemporary, state.error)
             assertEquals(listOf("read", "change"), account.calls, "a refusal needs no account check")
         }
     }
@@ -203,7 +206,7 @@ class PasswordChangeViewModelTest {
             model.recheck()
             val state = model.uiState.value
             assertEquals(PasswordChangePhase.Editing, state.phase)
-            assertEquals("Your password wasn't changed. Try again.", state.error)
+            assertEquals(PasswordChangeError.NotChanged, state.error)
             assertEquals("a-new-password", state.newPassword, "the form keeps what was typed")
             assertFalse("refresh" in account.calls)
         }
@@ -223,7 +226,7 @@ class PasswordChangeViewModelTest {
             model.fill()
             model.submit()
             assertEquals(PasswordChangePhase.Editing, model.uiState.value.phase)
-            assertEquals("Busy.", model.uiState.value.error)
+            assertEquals(PasswordChangeError.Failed(UiText.Raw("Busy.")), model.uiState.value.error)
         } finally {
             model.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
             Dispatchers.resetMain()
@@ -276,10 +279,10 @@ class PasswordChangeViewModelTest {
             model.onNewPasswordChanged("a-new-password")
             model.onConfirmationChanged("a-new-password")
             model.submit()
-            assertEquals("Enter the temporary password.", model.uiState.value.error)
+            assertEquals(PasswordChangeError.EmptyTemporary, model.uiState.value.error)
             model.fill(new = "too-short")
             model.submit()
-            assertEquals("Use at least 10 characters.", model.uiState.value.error)
+            assertEquals(PasswordChangeError.TooShort(10), model.uiState.value.error)
             assertFalse("change" in account.calls)
         }
     }

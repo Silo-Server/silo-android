@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.text
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -233,7 +234,7 @@ fun WatchPartyHubScreen(
                         // Errors stay inline; an uncertain create keeps its room id for Retry.
                         state.error?.let { message ->
                             WatchPartyBanner(
-                                text = message,
+                                text = message.text(),
                                 tone = WatchPartyBannerTone.Warning,
                                 action = {
                                     if (state.createRetryable) {

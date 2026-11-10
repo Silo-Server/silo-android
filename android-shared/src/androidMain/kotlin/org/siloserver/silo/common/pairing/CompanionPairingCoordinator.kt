@@ -1035,7 +1035,7 @@ internal fun approverFailure(
     otherwise: CompanionPairingText,
 ): CompanionPairingText = when {
     // The app's own update notice (no request was sent): retrying can't help.
-    result.code == 0 && result.error == ApiV2Gate.UPDATE_REQUIRED_ERROR -> CompanionPairingText.Verbatim(result.message)
+    result.code == 0 && result.error == ApiV2Gate.UPDATE_REQUIRED_ERROR -> CompanionPairingText.Message(R.string.update_body)
     result.code == 503 && result.error == SiloAuthUnavailableException.PROVIDER_UNAVAILABLE_PROBLEM ->
         APPROVER_PROVIDER_UNAVAILABLE
     result.code == 401 -> signInAgain(server)

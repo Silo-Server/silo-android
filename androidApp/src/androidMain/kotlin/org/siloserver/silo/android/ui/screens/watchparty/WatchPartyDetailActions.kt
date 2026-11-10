@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
 import android.content.Context
 import android.widget.Toast
 import androidx.annotation.StringRes
@@ -39,7 +41,7 @@ import org.siloserver.silo.watchtogether.WatchPartyAvailability
 import org.siloserver.silo.watchtogether.WatchPartyAvailabilityRepository
 import org.siloserver.silo.watchtogether.newWatchPartyId
 import org.siloserver.silo.watchtogether.watchPartyEligibility
-import org.siloserver.silo.watchtogether.watchPartyErrorMessage
+import org.siloserver.silo.watchtogether.watchPartyErrorText
 import org.siloserver.silo.watchtogether.watchPartyHostingOffered
 
 /** The detail page's one Watch Party overflow action. */
@@ -57,7 +59,7 @@ class DetailPartyMessage internal constructor(
 ) {
     fun text(context: Context): String {
         val text = if (title == null) context.getString(message) else context.getStringWithNames(message, title)
-        return result?.let { watchPartyErrorMessage(it, text) } ?: text
+        return result?.let { watchPartyErrorText(it, UiText.Raw(text)).text(context) } ?: text
     }
 }
 

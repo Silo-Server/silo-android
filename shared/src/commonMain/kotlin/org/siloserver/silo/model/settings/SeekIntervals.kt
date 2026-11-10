@@ -3,6 +3,8 @@ package org.siloserver.silo.model.settings
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
+import org.siloserver.silo.common.i18n.SharedPlural
+import org.siloserver.silo.common.i18n.UiText
 
 /** Media type a relative-seek interval applies to. */
 enum class SeekMedia { Video, Audiobook }
@@ -114,7 +116,7 @@ object SeekIntervals {
         )
 
     /** Short label, e.g. "10 seconds". */
-    fun label(seconds: Int): String = "$seconds seconds"
+    fun label(seconds: Int): UiText = UiText.Plural(SharedPlural.SeekIntervalSeconds, seconds)
 }
 
 /**
@@ -171,19 +173,6 @@ data class SeekImportResult(
 
     val anyFailed: Boolean
         get() = back is SeekImportOutcome.Failed || forward is SeekImportOutcome.Failed
-
-    /** One line per direction, suitable for a snackbar or status row. */
-    fun describe(): String = SeekDirection.entries.joinToString(" ") { direction ->
-        val name = if (direction == SeekDirection.Back) "Skip back" else "Skip forward"
-        when (val outcome = outcome(direction)) {
-            is SeekImportOutcome.Imported -> "$name imported (${outcome.seconds}s)."
-            SeekImportOutcome.NotStored -> "$name had no device value."
-            is SeekImportOutcome.Invalid -> "$name value ${outcome.seconds}s is not supported."
-            is SeekImportOutcome.Failed ->
-                "$name (${outcome.seconds}s) failed" +
-                    (outcome.message?.takeIf { it.isNotBlank() }?.let { ": $it." } ?: ".")
-        }
-    }
 }
 
 /** Whether the connected server supports the revision-9 seek interval keys. */

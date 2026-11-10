@@ -82,7 +82,7 @@ class DownloadEnqueuer(
             expectedAuthority = authority,
         )) {
             is ApiResult.Success -> r.data.also { Log.i(TAG, "start: server record id=${it.id} status=${it.status}") }
-            is ApiResult.Error -> { Log.w(TAG, "start: server error ${r.code} ${r.message}"); return ApiResult.Error(r.code, r.error, r.message, r.detail) }
+            is ApiResult.Error -> { Log.w(TAG, "start: server error ${r.code} ${r.message}"); return r }
             is ApiResult.NetworkError -> { Log.w(TAG, "start: network error", r.exception); return ApiResult.NetworkError(r.exception) }
         }
         val sidecar = buildInitialSidecar(record, contentId, displayTitle)
@@ -131,7 +131,7 @@ class DownloadEnqueuer(
             expectedAuthority = authority,
         )) {
             is ApiResult.Success -> r.data
-            is ApiResult.Error -> { Log.w(TAG, "startEpisode: server error ${r.code} ${r.message}"); return ApiResult.Error(r.code, r.error, r.message, r.detail) }
+            is ApiResult.Error -> { Log.w(TAG, "startEpisode: server error ${r.code} ${r.message}"); return r }
             is ApiResult.NetworkError -> { Log.w(TAG, "startEpisode: network error", r.exception); return ApiResult.NetworkError(r.exception) }
         }
         val episodeDetail = (catalogRepository.getItemDetail(episodeContentId) as? ApiResult.Success)?.data
@@ -187,7 +187,7 @@ class DownloadEnqueuer(
             expectedAuthority = authority,
         )) {
             is ApiResult.Success -> r.data
-            is ApiResult.Error -> { Log.w(TAG, "startSeries: server error ${r.code} ${r.message}"); return ApiResult.Error(r.code, r.error, r.message, r.detail) }
+            is ApiResult.Error -> { Log.w(TAG, "startSeries: server error ${r.code} ${r.message}"); return r }
             is ApiResult.NetworkError -> { Log.w(TAG, "startSeries: network error", r.exception); return ApiResult.NetworkError(r.exception) }
         }
         val records = created.downloads
@@ -255,7 +255,7 @@ class DownloadEnqueuer(
         Log.i(TAG, "startSeason: series=$seriesContentId season=$seasonNumber")
         val episodes = when (val r = catalogRepository.getEpisodes(seriesContentId, seasonNumber)) {
             is ApiResult.Success -> r.data.episodes
-            is ApiResult.Error -> return ApiResult.Error(r.code, r.error, r.message, r.detail)
+            is ApiResult.Error -> return r
             is ApiResult.NetworkError -> return ApiResult.NetworkError(r.exception)
         }
         if (episodes.isEmpty()) return ApiResult.Success(Unit)

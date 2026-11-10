@@ -32,6 +32,7 @@ import org.siloserver.silo.audiobook.audiobookChapterLabel
 import org.siloserver.silo.model.catalog.VersionChapter
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Chapters bottom sheet. Replaces the always-expanded inline list. Highlights
@@ -109,7 +110,7 @@ fun ChaptersSheet(
                         }
                         Spacer(modifier = Modifier.width(14.dp))
                         Text(
-                            text = audiobookChapterLabel(idx, chapter.title),
+                            text = audiobookChapterLabel(idx, chapter.title).text(),
                             style = MaterialTheme.typography.bodyLarge,
                             fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
                             color = if (isCurrent) MaterialTheme.colorScheme.primary

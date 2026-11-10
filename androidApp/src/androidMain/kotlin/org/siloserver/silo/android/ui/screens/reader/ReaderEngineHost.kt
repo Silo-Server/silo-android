@@ -27,6 +27,7 @@ import org.siloserver.silo.common.ebook.ReaderSection
 import org.siloserver.silo.model.ebook.EbookReadMode
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 @Composable
 fun ReaderEngineHost(
@@ -109,7 +110,7 @@ private fun ExternalReadingPanel(
             container = state.format.wire,
         )
     }
-    val formatLabel = state.formatDisplayName.ifBlank { state.format.displayName }
+    val formatLabel = state.formatDisplayName.ifBlank { state.format.displayName.text() }
     val thisFileLabel = stringResource(CommonR.string.reader_external_thisFile)
     val titleLabel = state.title.ifBlank { target?.displayName ?: thisFileLabel }
 

@@ -26,6 +26,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 
 /**
  * Immutable repository state, folded by the pure [applyEvent]. Newest-first
@@ -110,6 +112,21 @@ internal fun NotificationRealtimeEvent.isAuthClose(): Boolean =
         (reason?.contains("401") == true || reason?.contains("403") == true ||
             reason?.contains("auth", ignoreCase = true) == true)
 
+/** Why the inbox shows a notice: a step that failed or wasn't confirmed. */
+enum class NotificationsError(val key: SharedString) {
+    RefreshFailed(SharedString.NotificationsRefreshFailed),
+    CatchUpIncomplete(SharedString.NotificationsCatchUpIncomplete),
+    CheckpointFailed(SharedString.NotificationsCheckpointFailed),
+    OlderFailed(SharedString.NotificationsOlderFailed),
+    ReadUnconfirmed(SharedString.NotificationsReadUnconfirmed),
+    RefreshFirst(SharedString.NotificationsRefreshFirst),
+    MarkAllUnconfirmed(SharedString.NotificationsMarkAllUnconfirmed),
+    ;
+
+    /** What the inbox shows. */
+    val text: UiText get() = UiText.Key(key)
+}
+
 /**
  * Singleton owner of notification inbox state. REST is the source of truth;
  * the realtime client is a foreground accelerator folded into the same flows
@@ -147,7 +164,8 @@ class NotificationsRepository(
         else block()
     }
 
-    private val _error = MutableStateFlow<String?>(null)
+    private val _error = MutableStateFlow<NotificationsError?>(null)
+    /** The inbox's notice, shown above the list with a Retry. */
     val error = _error.asStateFlow()
     private val _state = MutableStateFlow(NotificationsState())
 
@@ -235,7 +253,7 @@ class NotificationsRepository(
             cutoffViewer = viewer.scope
         }
         if (page !is ApiResult.Success || count !is ApiResult.Success) publishFor(viewer) {
-            _error.value = "Notifications could not be refreshed. Retry when connected."
+            _error.value = NotificationsError.RefreshFailed
         }
         syncForward(viewer)
     }
@@ -253,7 +271,7 @@ class NotificationsRepository(
                 if (!current(viewer)) return
                 val result = viewer.api.sync(cursor, 50)
                 if (result !is ApiResult.Success) {
-                    publishFor(viewer) { _error.value = "Notification catch-up is incomplete. Retry to continue." }
+                    publishFor(viewer) { _error.value = NotificationsError.CatchUpIncomplete }
                     return
                 }
                 val page = result.data
@@ -269,14 +287,14 @@ class NotificationsRepository(
                 cursor = page.nextCursor ?: return
             }
         } catch (e: CancellationException) { throw e }
-        catch (_: Exception) { publishFor(viewer) { _error.value = "Notification catch-up could not save its checkpoint. Retry to continue." } }
+        catch (_: Exception) { publishFor(viewer) { _error.value = NotificationsError.CheckpointFailed } }
     }
 
     suspend fun loadMore(cursor: String) {
         val viewer = viewer()
         if (cursor != _nextCursor.value) return
         val result = viewer.api.list(25, false, cursor)
-        if (result !is ApiResult.Success) publishFor(viewer) { _error.value = "Older notifications could not be loaded. Retry to continue." }
+        if (result !is ApiResult.Success) publishFor(viewer) { _error.value = NotificationsError.OlderFailed }
         if (result is ApiResult.Success) publishFor(viewer) {
             if (cursor != _nextCursor.value) return@publishFor
             mutate { old -> old.copy(rows = (old.rows + result.data.notifications).dedupeById()) }
@@ -301,18 +319,18 @@ class NotificationsRepository(
         val viewer = viewer()
         if (viewer.api.markRead(id) is ApiResult.Success) {
             publishFor(viewer) { mutate { applyEvent(it, NotificationRealtimeEvent.Read(id)) } }
-        } else publishFor(viewer) { _error.value = "Notification read status could not be confirmed." }
+        } else publishFor(viewer) { _error.value = NotificationsError.ReadUnconfirmed }
     }
 
     suspend fun markAllRead() {
         val viewer = viewer()
         val cutoff = readCutoff // Freeze the displayed boundary before sending this user intent.
         if (cutoff == null || cutoffViewer?.isSameIdentityAs(viewer.scope) != true) {
-            publishFor(viewer) { _error.value = "Refresh the inbox before marking it read." }
+            publishFor(viewer) { _error.value = NotificationsError.RefreshFirst }
             return
         }
         val result = viewer.api.markAllRead(cutoff)
-        if (result !is ApiResult.Success) publishFor(viewer) { _error.value = "Mark all read could not be confirmed. Refresh before trying again." }
+        if (result !is ApiResult.Success) publishFor(viewer) { _error.value = NotificationsError.MarkAllUnconfirmed }
         if (result is ApiResult.Success && current(viewer)) refresh()
     }
 

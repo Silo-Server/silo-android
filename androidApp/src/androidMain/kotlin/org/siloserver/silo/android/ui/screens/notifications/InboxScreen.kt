@@ -50,6 +50,7 @@ import org.siloserver.silo.repository.NotificationsRepository
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import java.time.Instant
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Notifications inbox: paginated newest-first list of delivery rows rendered as
@@ -134,7 +135,7 @@ fun InboxScreen(
             when {
                 isRefreshing && cards.isEmpty() -> LoadingIndicator()
                 error != null && cards.isEmpty() -> TextButton(onClick = { scope.launch { doRefresh() } }) {
-                    Text(stringResource(CommonR.string.notifications_inbox_errorRetry, error.orEmpty()))
+                    Text(stringResource(CommonR.string.notifications_inbox_errorRetry, error?.text?.text().orEmpty()))
                 }
                 cards.isEmpty() -> EmptyStateView(
                     title = stringResource(CommonR.string.notifications_inbox_emptyTitle),
@@ -148,7 +149,7 @@ fun InboxScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     if (error != null) item(key = "inbox-error") {
-                        TextButton(onClick = { scope.launch { doRefresh() } }) { Text(stringResource(CommonR.string.notifications_inbox_errorRetry, error.orEmpty())) }
+                        TextButton(onClick = { scope.launch { doRefresh() } }) { Text(stringResource(CommonR.string.notifications_inbox_errorRetry, error?.text?.text().orEmpty())) }
                     }
                     items(cards, key = { it.id }) { card ->
                         InboxCard(

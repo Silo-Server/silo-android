@@ -8,6 +8,7 @@ import org.siloserver.silo.common.settings.CardPresentationSource
 import org.siloserver.silo.common.settings.CardPresentationSupport
 import org.siloserver.silo.common.settings.CardPresentationUiState
 import org.siloserver.silo.model.settings.CardPosterSize
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Interface → "Cards & Posters" (Apple `InterfaceCustomizationView`) — the
@@ -43,8 +44,8 @@ fun MediaCardsSettings(
         val presentation = state.presentation
         SettingsIndexedDropdownRow(
             label = stringResource(CommonR.string.settings_cards_posterSize),
-            value = presentation.posterSize.displayName,
-            options = CardPosterSize.entries.map { it.displayName },
+            value = presentation.posterSize.displayName.text(),
+            options = CardPosterSize.entries.map { it.displayName.text() },
             selectedIndex = CardPosterSize.entries.indexOf(presentation.posterSize),
             onIndexSelected = { onPosterSizeSelected(CardPosterSize.entries[it]) },
         )

@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.animation.animateContentSize
@@ -129,6 +131,7 @@ import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
 import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.common.i18n.text
 
 // Geometry follows the options mockup on a 960×540dp screen: a capsule tab
 // rail 24dp from the top, and a smoked panel 10dp under it, 780dp (81%) wide
@@ -1205,7 +1208,7 @@ private fun HudVideoPane(
                     HudFocusedSettingRow(
                         label = qualityLabel,
                         // No row lit: a saved resolution the source plays under.
-                        value = selectedQuality?.label ?: QualityChoices.resolutionLabel(videoQualityPreference),
+                        value = selectedQuality?.label ?: QualityChoices.resolutionLabel(videoQualityPreference).text(),
                         enabled = enabled,
                         entryFocusRequester = entryFocusRequester.takeIf { entryRow == "quality" },
                         onActivate = {
@@ -1592,7 +1595,7 @@ private fun HudSubtitlesPane(
     onSearchSubtitles: (() -> Unit)?,
     onTranslateWithAi: (() -> Unit)?,
     timing: SubtitleTimingActions?,
-    syncStatus: (SubtitleIdentity) -> String?,
+    syncStatus: (SubtitleIdentity) -> UiText?,
     onSyncSubtitle: (String) -> Unit,
     onResetTiming: (String) -> Unit,
     entryFocusRequester: FocusRequester,
@@ -1665,7 +1668,7 @@ private fun HudSubtitlesPane(
                 key(row.stableId) {
                     HudSubtitleTrackRow(
                         row = row,
-                        syncStatus = syncStatus(row.identity),
+                        syncStatus = syncStatus(row.identity)?.text(),
                         enabled = enabled,
                         focusRequester = entryFocusRequester.takeIf { row == entryRow },
                         onFocused = { presentation.onFocused(row.stableId) },
@@ -2794,7 +2797,7 @@ internal data class HudPickerPresentation(
 private fun subtitleTimingValue(timing: SubtitleTimingActions): String = when {
     timing.forbidden -> stringResource(CommonR.string.player_hud_syncNotAllowed)
     timing.busy -> stringResource(CommonR.string.player_hud_working)
-    else -> timing.error ?: timing.statusLabel ?: stringResource(CommonR.string.player_hud_notSynced)
+    else -> (timing.error ?: timing.statusLabel)?.text() ?: stringResource(CommonR.string.player_hud_notSynced)
 }
 
 /**
@@ -2809,16 +2812,17 @@ private fun HudSubtitleTimingDetail(timing: SubtitleTimingActions) {
     if (timing.inProgress && percent != null) {
         Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             TvSyncProgressBar(percent = percent)
-            timing.phaseLabel?.let { HudTimingText(it) }
+            timing.phaseLabel?.let { HudTimingText(it.text()) }
         }
     }
-    val message = when {
-        timing.forbidden -> SubtitleTimingActions.FORBIDDEN_MESSAGE to null
-        timing.error != null -> timing.error.orEmpty() to Color(0xFFFCA5A5)
-        timing.result != null -> timing.result?.let { it.text to if (it.warning) Color(0xFFFDE68A) else null }
-        else -> timing.note?.let { it to null }
+    val message = if (timing.forbidden) {
+        SubtitleTimingActions.FORBIDDEN_MESSAGE to null
+    } else {
+        timing.error?.let { it to Color(0xFFFCA5A5) }
+            ?: timing.result?.let { it.text to if (it.warning) Color(0xFFFDE68A) else null }
+            ?: timing.note?.let { it to null }
     }
-    message?.let { (text, color) -> HudTimingText(text, color, modifier) }
+    message?.let { (text, color) -> HudTimingText(text.text(), color, modifier) }
 }
 
 @Composable

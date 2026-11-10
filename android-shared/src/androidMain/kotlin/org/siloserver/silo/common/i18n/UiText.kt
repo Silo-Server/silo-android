@@ -3,80 +3,149 @@ package org.siloserver.silo.common.i18n
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.Resources
+import android.text.format.DateFormat
+import android.view.View
+import androidx.annotation.PluralsRes
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
-import org.siloserver.silo.common.R
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import org.siloserver.silo.model.settings.AppLanguage
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.isTimeout
+import java.text.NumberFormat
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.time.format.DecimalStyle
+import java.util.Locale
 
-/**
- * Text a view model hands its screen, resolved in composition so it follows
- * an in-place language change: a catalog string with its arguments, or text
- * that arrives already worded (the server's message, a shared-module notice).
- */
-sealed interface UiText {
-    /**
-     * A catalog string. Each of [args] is a [String] (a name, address or
-     * server text, isolated in a right-to-left interface), another [UiText]
-     * (resolved first), or a number, in the order its placeholders are declared.
-     */
-    data class Res(@StringRes val id: Int, val args: List<Any> = emptyList()) : UiText
-
-    /** Text that arrives already worded. */
-    data class Raw(val text: String) : UiText
-
-    companion object {
-        /** The server's [message] when it sent one, otherwise [fallback]. */
-        fun serverOr(message: String, @StringRes fallback: Int): UiText =
-            if (message.isBlank()) Res(fallback) else Raw(message)
-    }
-}
-
-/** [UiText] for a catalog string. */
+/** [UiText] for a catalog string the app names by resource id. */
 fun uiText(@StringRes id: Int, vararg args: Any): UiText = UiText.Res(id, args.toList())
 
+/** [UiText]'s text in composition; it follows an in-place language change. */
 @Composable
-fun UiText.text(): String = when (this) {
-    is UiText.Res -> when {
-        args.isEmpty() -> stringResource(id)
-        args.all { it is String || it is UiText } ->
-            stringResourceWithNames(id, *args.map { if (it is UiText) it.text() else it as String }.toTypedArray())
-        else -> stringResource(id, *args.map { if (it is UiText) it.text() else it }.toTypedArray())
-    }
-    is UiText.Raw -> text
+fun UiText.text(): String {
+    rememberAppContext(LocalContext.current)
+    return resolve(localizedResources(), rtl = LocalLayoutDirection.current == LayoutDirection.Rtl)
 }
 
 /** [text] outside composition, such as for a toast. */
-fun UiText.text(context: Context): String = when (this) {
-    is UiText.Res -> when {
-        args.isEmpty() -> context.getString(id)
-        args.all { it is String || it is UiText } ->
-            context.getStringWithNames(id, *args.map { if (it is UiText) it.text(context) else it as String }.toTypedArray())
-        else -> context.getString(id, *args.map { if (it is UiText) it.text(context) else it }.toTypedArray())
-    }
+fun UiText.text(context: Context): String {
+    rememberAppContext(context)
+    return text(context.resources)
+}
+
+/** [text] for helpers and tests that hold a plain [Resources]. */
+fun UiText.text(resources: Resources): String =
+    resolve(resources, rtl = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL)
+
+private fun UiText.resolve(resources: Resources, rtl: Boolean): String = when (this) {
     is UiText.Raw -> text
+    is UiText.Res -> resources.format(id, args, rtl)
+    is UiText.Key -> resources.catalogResources().let { it.format(key.resId, args, it.isRtl) }
+    is UiText.Plural -> resources.catalogResources().let { it.formatPlural(key.resId, key.countIndex, count, args, it.isRtl) }
+    is UiText.Number -> NumberFormat.getNumberInstance(resources.formatLocale).apply {
+        isGroupingUsed = false
+        maximumFractionDigits = maxFractionDigits
+        minimumIntegerDigits = minIntegerDigits
+    }.format(value)
+    is UiText.CalendarDate -> resources.formatLocale.let { locale ->
+        LocalDate.of(year, month, day)
+            .format(
+                DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "yMMMd"), locale)
+                    .withDecimalStyle(DecimalStyle.of(locale)),
+            )
+    }
+    is UiText.LanguageName -> languageName(tag, uppercaseIfUnnamed, resources.formatLocale)
 }
 
 /**
- * The catalog form of `errorMessage(fallback)`: the server's message,
- * [fallback] when it sent none, and the timeout or network-error text for a
- * request the server didn't answer.
+ * [tag]'s language name in [locale]. A tag the platform can't name (it echoes
+ * the tag back) shows as given, or uppercased when [uppercaseIfUnnamed].
  */
-fun ApiResult<*>.errorText(@StringRes fallback: Int): UiText = when (this) {
-    is ApiResult.Success -> UiText.Res(fallback)
-    is ApiResult.Error -> UiText.serverOr(message, fallback)
-    is ApiResult.NetworkError ->
-        UiText.Res(if (isTimeout) R.string.catalog_error_timeout else R.string.catalog_error_network)
+private fun languageName(tag: String, uppercaseIfUnnamed: Boolean, locale: Locale): String {
+    val name = Locale.forLanguageTag(tag.replace('_', '-')).getDisplayName(locale)
+    return when {
+        name.isBlank() -> if (uppercaseIfUnnamed) tag.uppercase(Locale.ROOT) else tag
+        uppercaseIfUnnamed && name.equals(tag, ignoreCase = true) -> tag.uppercase(Locale.ROOT)
+        else -> name
+    }
 }
 
-/** "Network error: <cause>", for loads that show the system's reason. */
-fun ApiResult.NetworkError.detailedErrorText(): UiText =
-    exception.message?.let { UiText.Res(R.string.catalog_error_networkDetail, listOf(it)) }
-        ?: UiText.Res(R.string.catalog_error_networkUnknown)
+/**
+ * Resources that resolve the shared module's text in its catalog language:
+ * these when the app ships the configured language (so an en-GB phone keeps its
+ * own date order, D26) or it is a debug pseudo-locale. Otherwise the strings
+ * fall back to English, and so do plural rules, digits, number and date formats
+ * and text direction, so a language changes nothing until its catalog ships (D25).
+ */
+private fun Resources.catalogResources(): Resources {
+    if (showsConfiguredLanguage) return this
+    fallbackResources?.let { (config, fallback) -> if (config == configuration) return fallback }
+    // A configuration context has its own asset configuration; the caller's stays as it is.
+    val context = appContext ?: return this
+    val config = android.content.res.Configuration(configuration)
+    val fallback = context.createConfigurationContext(
+        android.content.res.Configuration(configuration).apply { setLocale(Locale.forLanguageTag(AppLanguage.DEFAULT)) },
+    ).resources
+    fallbackResources = config to fallback
+    return fallback
+}
+
+/** The last [catalogResources] fallback, for the configuration it was made for. */
+@Volatile private var fallbackResources: Pair<android.content.res.Configuration, Resources>? = null
+
+/**
+ * The application context [catalogResources] makes its fallback from, recorded
+ * by [text] in composition and [text] with a context. Until one is recorded,
+ * text resolves with the resources it is given.
+ */
+@Volatile private var appContext: Context? = null
+
+private fun rememberAppContext(context: Context) {
+    if (appContext == null) appContext = context.applicationContext
+}
+
+/** Whether catalog text here is right to left: English that stands in for a language without a catalog never is. */
+private val Resources.isRtl: Boolean
+    get() = configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL && showsConfiguredLanguage
+
+/** Whether the strings are in the configured language: it ships, or it is a debug pseudo-locale. */
+private val Resources.showsConfiguredLanguage: Boolean
+    get() {
+        val tag = configuration.locales[0].toLanguageTag()
+        return AppLanguage.isPseudo(tag) || AppLanguage.match(tag, AppLocales.shipped(this)) != null
+    }
+
+/** The locale numbers, dates and language names are written in; see [catalogResources]. */
+private val Resources.formatLocale: Locale
+    get() = if (showsConfiguredLanguage) configuration.locales[0] else Locale.forLanguageTag(AppLanguage.DEFAULT)
+
+/** A message whose String and [UiText] arguments are isolated in a right-to-left interface. */
+private fun Resources.format(@StringRes id: Int, args: List<Any>, rtl: Boolean): String =
+    if (args.isEmpty()) getString(id) else getString(id, *formatArgs(args, rtl))
+
+/** A plural: [count] at [countIndex] among the placeholders (first by default), [args] as for [format] around it. */
+private fun Resources.formatPlural(@PluralsRes id: Int, countIndex: Int, count: Int, args: List<Any>, rtl: Boolean): String {
+    val values = formatArgs(args, rtl).toMutableList().apply { add(countIndex, count) }
+    return getQuantityString(id, count, *values.toTypedArray())
+}
+
+/** [args] with each [UiText] resolved; when all are text, each is isolated in a right-to-left interface. */
+private fun Resources.formatArgs(args: List<Any>, rtl: Boolean): Array<out Any> {
+    val values = args.map { if (it is UiText) it.resolve(this, rtl) else it }
+    return if (args.all { it is String || it is UiText }) {
+        isolated(values.map { it as String }.toTypedArray(), rtl)
+    } else {
+        values.toTypedArray()
+    }
+}
+
+/** [errorText] with a resource id as the fallback. */
+fun ApiResult<*>.errorText(@StringRes fallback: Int): UiText = errorText(UiText.Res(fallback))
+
 
 /**
  * The app's resources, for catalog text built outside `stringResource` (helpers

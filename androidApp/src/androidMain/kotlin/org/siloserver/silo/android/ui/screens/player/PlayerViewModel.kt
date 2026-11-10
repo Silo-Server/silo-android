@@ -144,7 +144,6 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.common.player.AutoPlayGuard
 import org.siloserver.silo.common.player.MountedSubtitleTrack
 import org.siloserver.silo.network.ServerRegistry
-import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.playback.audioTrackFingerprint
 import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
 import org.siloserver.silo.playback.nextEpisodeAfter
@@ -202,6 +201,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.siloserver.silo.playback.orNullIfBlank
 import java.util.concurrent.atomic.AtomicBoolean
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.network.isTimeout
 
 /**
  * ViewModel for the video player screen.
@@ -225,6 +227,8 @@ sealed interface PlayerMessage {
     data class Raw(val text: String) : PlayerMessage
     /** A catalog message after a technical code that is shown as written, such as "identity_changed: ". */
     data class Coded(val code: String, val message: Res) : PlayerMessage
+    /** Text the shared module names (an app-built error's [ApiResult.Error.text]), with its [english] for logs. */
+    data class Shared(val text: UiText, val english: String) : PlayerMessage
 }
 
 @Composable
@@ -232,6 +236,7 @@ fun PlayerMessage.text(): String = when (this) {
     is PlayerMessage.Res -> stringResource(id, *args.toTypedArray())
     is PlayerMessage.Raw -> text
     is PlayerMessage.Coded -> code + message.text()
+    is PlayerMessage.Shared -> text.text()
 }
 
 /** [PlayerMessage.text] outside composition, for text built when an event happens. */
@@ -239,6 +244,7 @@ fun PlayerMessage.text(context: android.content.Context): String = when (this) {
     is PlayerMessage.Res -> context.getString(id, *args.toTypedArray())
     is PlayerMessage.Raw -> text
     is PlayerMessage.Coded -> code + message.text(context)
+    is PlayerMessage.Shared -> text.text(context)
 }
 
 /**
@@ -246,8 +252,9 @@ fun PlayerMessage.text(context: android.content.Context): String = when (this) {
  * shared network text for a request with no answer, else [fallback].
  */
 private fun ApiResult<*>.subtitleToolsError(@StringRes fallback: Int): PlayerMessage = when (this) {
-    is ApiResult.Error -> message.takeIf { it.isNotBlank() }?.let(PlayerMessage::Raw) ?: PlayerMessage.Res(fallback)
-    is ApiResult.NetworkError -> PlayerMessage.Raw(errorMessage(""))
+    is ApiResult.Error -> text?.let { PlayerMessage.Shared(it, message) }
+        ?: message.takeIf { it.isNotBlank() }?.let(PlayerMessage::Raw) ?: PlayerMessage.Res(fallback)
+    is ApiResult.NetworkError -> PlayerMessage.Res(if (isTimeout) CommonR.string.catalog_error_timeout else CommonR.string.catalog_error_network)
     is ApiResult.Success -> PlayerMessage.Res(fallback)
 }
 
@@ -273,6 +280,7 @@ internal val PlayerMessage.debugText: String
         is PlayerMessage.Res -> EnglishText.string(id, *args.toTypedArray()) ?: "res:$id"
         is PlayerMessage.Raw -> text
         is PlayerMessage.Coded -> code + message.debugText
+        is PlayerMessage.Shared -> english
     }
 
 /** A transient remote "display_message"; [id] makes repeats re-trigger the toast. */

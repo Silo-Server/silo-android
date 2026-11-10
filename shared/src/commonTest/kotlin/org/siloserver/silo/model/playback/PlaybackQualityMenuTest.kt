@@ -3,6 +3,8 @@ package org.siloserver.silo.model.playback
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.SharedString
 
 class PlaybackQualityMenuTest {
     // The source entry is how servers before the Original removal list it.
@@ -119,9 +121,9 @@ class PlaybackQualityMenuTest {
 
         assertNull(activePlaybackQualityId(menu, "2160p", delivered, source))
         assertNull(activePlaybackQualityId(menu, "1080p", delivered, source))
-        assertEquals("1080p", playbackQualityValueLabel(menu, null, "1080p"))
-        assertEquals("4K", playbackQualityValueLabel(menu, null, "2160p"))
-        assertEquals("1080p Medium", playbackQualityValueLabel(menu, "1080p-medium", "1080p"))
+        assertEquals(UiText.Key(SharedString.Quality1080p), playbackQualityValueLabel(menu, null, "1080p"))
+        assertEquals(UiText.Key(SharedString.Quality4K), playbackQualityValueLabel(menu, null, "2160p"))
+        assertEquals(UiText.Raw("1080p Medium"), playbackQualityValueLabel(menu, "1080p-medium", "1080p"))
         // Only an auto preference lights Auto.
         assertEquals("auto", activePlaybackQualityId(menu, "auto", delivered, source))
         assertEquals("720p-medium", activePlaybackQualityId(menu, "720p", source = source))

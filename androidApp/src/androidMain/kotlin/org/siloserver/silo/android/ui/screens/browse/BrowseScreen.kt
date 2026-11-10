@@ -323,12 +323,14 @@ internal fun facetValueLabel(
     facet: org.siloserver.silo.catalog.filter.CatalogFacet,
     value: String,
 ): String = when (facet) {
-    org.siloserver.silo.catalog.filter.CatalogFacet.Decade -> stringResource(CommonR.string.filters_decade, value)
+    org.siloserver.silo.catalog.filter.CatalogFacet.Decade ->
+        value.toIntOrNull()?.let { org.siloserver.silo.catalog.filter.decadeLabel(it).text() }
+            ?: stringResource(CommonR.string.filters_decade, value)
     org.siloserver.silo.catalog.filter.CatalogFacet.WatchStatus ->
         watchStatusLabel(value)?.let { stringResource(it) } ?: value
     org.siloserver.silo.catalog.filter.CatalogFacet.DynamicRange ->
         org.siloserver.silo.catalog.filter.CatalogFacet.DYNAMIC_RANGE_OPTIONS
-            .firstOrNull { it.first == value }?.second ?: value
+            .firstOrNull { it.first == value }?.second?.text() ?: value
     else -> value
 }
 

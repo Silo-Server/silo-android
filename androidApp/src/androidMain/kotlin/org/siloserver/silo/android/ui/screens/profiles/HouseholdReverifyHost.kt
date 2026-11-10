@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.res.stringResource
 import org.koin.compose.koinInject
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.repository.ProfileRepository
 
 /**
@@ -21,7 +22,7 @@ fun HouseholdReverifyHost(profileRepository: ProfileRepository = koinInject()) {
         PINEntryOverlay(
             profile = it.profile,
             isVerifying = it.isVerifying,
-            error = it.error,
+            error = it.error?.text(),
             errorCount = it.errorCount,
             onPinComplete = session::submitPin,
             onDismiss = session::cancelReverify,

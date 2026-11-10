@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
 import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -24,7 +26,7 @@ import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.watchtogether.WatchPartyAvailability
 import org.siloserver.silo.watchtogether.WatchPartyAvailabilityRepository
 import org.siloserver.silo.watchtogether.WatchPartyEligibility
-import org.siloserver.silo.watchtogether.watchPartyErrorMessage
+import org.siloserver.silo.watchtogether.watchPartyErrorText
 
 /**
  * The party panel over a retained party player (Back opens it). It is the
@@ -83,7 +85,7 @@ internal fun WatchPartyPanelSheet(
                 if (result !is ApiResult.Success) {
                     Toast.makeText(
                         context,
-                        watchPartyErrorMessage(result, policyError),
+                        watchPartyErrorText(result, UiText.Raw(policyError)).text(context),
                         Toast.LENGTH_SHORT,
                     ).show()
                 }

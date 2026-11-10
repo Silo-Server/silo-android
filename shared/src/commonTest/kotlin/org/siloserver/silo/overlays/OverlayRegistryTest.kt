@@ -1,5 +1,7 @@
 package org.siloserver.silo.overlays
 
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -41,7 +43,7 @@ class OverlayRegistryTest {
     // The profile document the web app writes with the defaults plus a
     // combined badge turned on. Each combined badge hides the badges it
     // repeats, and the wider one also hides the narrower.
-    private fun topLeftLabels(vararg combined: String): List<String> {
+    private fun topLeftLabels(vararg combined: String): List<UiText> {
         val items = combined.joinToString(",") { "\"$it\":{\"enabled\":true,\"position\":\"top-left\"}" }
         val prefs = OverlaySchema.parse("""{"version":2,"preset":"classic","order":[],"items":{$items}}""")
         val data = OverlayData(resolution = "2160p", hdr = "DV HDR10", audio = "Atmos")
@@ -50,17 +52,17 @@ class OverlayRegistryTest {
 
     @Test
     fun combinedBadges_hideTheBadgesTheyRepeat() {
-        assertEquals(listOf("4K DV", "Atmos"), topLeftLabels("resolution_hdr"))
-        assertEquals(listOf("4K DV Atmos"), topLeftLabels("resolution_hdr_audio"))
-        assertEquals(listOf("4K DV Atmos"), topLeftLabels("resolution_hdr", "resolution_hdr_audio"))
+        assertEquals(listOf(UiText.Raw("4K DV"), UiText.Raw("Atmos")), topLeftLabels("resolution_hdr"))
+        assertEquals(listOf(UiText.Raw("4K DV Atmos")), topLeftLabels("resolution_hdr_audio"))
+        assertEquals(listOf(UiText.Raw("4K DV Atmos")), topLeftLabels("resolution_hdr", "resolution_hdr_audio"))
     }
 
     @Test
     fun resolutionHdrAudio_getValue_joinsThePartsTheFileHas() {
         val def = OverlayRegistry.all.single { it.id.raw == "resolution_hdr_audio" }
-        assertEquals("1080p TrueHD", def.getValue(OverlayData(resolution = "1080p", audio = "TrueHD")))
-        assertEquals("480p", def.getValue(OverlayData(resolution = "480p")))
-        assertEquals("HDR DTS-HD", def.getValue(OverlayData(hdr = "HDR10", audio = "DTS-HD")))
+        assertEquals(UiText.Raw("1080p TrueHD"), def.getValue(OverlayData(resolution = "1080p", audio = "TrueHD")))
+        assertEquals(UiText.Raw("480p"), def.getValue(OverlayData(resolution = "480p")))
+        assertEquals(UiText.Raw("HDR DTS-HD"), def.getValue(OverlayData(hdr = "HDR10", audio = "DTS-HD")))
         assertNull(def.getValue(OverlayData(audio = "")))
         assertEquals(OverlayIconId.DolbyVision, def.getIcon?.invoke(OverlayData(hdr = "DV HDR10")))
         assertNull(def.getIcon?.invoke(OverlayData(hdr = "HDR10", audio = "Atmos")))
@@ -86,33 +88,36 @@ class OverlayRegistryTest {
     @Test
     fun resolutionHdr_getValue_combinesPretty() {
         val def = OverlayRegistry.def(OverlayId.ResolutionHdr)!!
-        assertEquals("4K DV", def.getValue(OverlayData(resolution = "2160p", hdr = "DV")))
-        assertEquals("4K HDR", def.getValue(OverlayData(resolution = "4k", hdr = "HDR10")))
-        assertEquals("1080p", def.getValue(OverlayData(resolution = "1080p", hdr = null)))
+        assertEquals(UiText.Raw("4K DV"), def.getValue(OverlayData(resolution = "2160p", hdr = "DV")))
+        assertEquals(UiText.Raw("4K HDR"), def.getValue(OverlayData(resolution = "4k", hdr = "HDR10")))
+        assertEquals(UiText.Raw("1080p"), def.getValue(OverlayData(resolution = "1080p", hdr = null)))
         assertNull(def.getValue(OverlayData(resolution = null)))
     }
 
     @Test
     fun imdbRating_getValue_formatsOneDecimal() {
         val def = OverlayRegistry.def(OverlayId.RatingImdb)!!
-        assertEquals("8.4", def.getValue(OverlayData(ratingImdb = 8.42)))
-        assertEquals("7.0", def.getValue(OverlayData(ratingImdb = 7.0)))
+        assertEquals(UiText.Raw("8.4"), def.getValue(OverlayData(ratingImdb = 8.42)))
+        assertEquals(UiText.Raw("7.0"), def.getValue(OverlayData(ratingImdb = 7.0)))
         assertNull(def.getValue(OverlayData(ratingImdb = null)))
     }
 
     @Test
     fun runtime_getValue_formatsHoursMinutes() {
         val def = OverlayRegistry.def(OverlayId.Runtime)!!
-        assertEquals("2h 22m", def.getValue(OverlayData(runtime = 142)))
-        assertEquals("45m", def.getValue(OverlayData(runtime = 45)))
+        assertEquals(
+            UiText.Key(SharedString.OverlayRuntimeHoursMinutes, listOf(UiText.Number(2), UiText.Number(22))),
+            def.getValue(OverlayData(runtime = 142)),
+        )
+        assertEquals(UiText.Key(SharedString.OverlayRuntimeMinutes, listOf(UiText.Number(45))), def.getValue(OverlayData(runtime = 45)))
         assertNull(def.getValue(OverlayData(runtime = 0)))
     }
 
     @Test
     fun showStatus_getValue_trimsBeforeMappingAndFallback() {
         val def = OverlayRegistry.def(OverlayId.ShowStatus)!!
-        assertEquals("Returning", def.getValue(OverlayData(showStatus = "  returning series  ")))
-        assertEquals("Limited Series", def.getValue(OverlayData(showStatus = "  Limited Series  ")))
+        assertEquals(UiText.Key(SharedString.OverlayReturning), def.getValue(OverlayData(showStatus = "  returning series  ")))
+        assertEquals(UiText.Raw("Limited Series"), def.getValue(OverlayData(showStatus = "  Limited Series  ")))
         assertNull(def.getValue(OverlayData(showStatus = "   ")))
     }
 }

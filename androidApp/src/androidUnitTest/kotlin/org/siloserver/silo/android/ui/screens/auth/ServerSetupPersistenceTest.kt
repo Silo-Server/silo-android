@@ -48,6 +48,7 @@ import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import org.siloserver.silo.common.i18n.text
 
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, sdk = [28])
@@ -56,10 +57,7 @@ class ServerSetupPersistenceTest {
     private val resources = ApplicationProvider.getApplicationContext<Application>().resources
 
     /** The sign-in screen's text in English (the screen also isolates names in right-to-left). */
-    private fun UiText.inEnglish(): String = when (this) {
-        is UiText.Raw -> text
-        is UiText.Res -> resources.getString(id, *args.map { if (it is UiText) it.inEnglish() else it }.toTypedArray())
-    }
+    private fun UiText.inEnglish(): String = text(resources)
 
     private val dispatcher = StandardTestDispatcher()
 

@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.errorText
 
 data class LoginUiState(
     val username: String = "",
@@ -459,7 +460,7 @@ internal fun passwordLoginMessage(
         PasswordLoginFailure.IdentityLinkedElsewhere -> NativeSignInMessages.text("identity_linked_elsewhere", directoryName)
         PasswordLoginFailure.RateLimited -> NativeSignInMessages.text(NativeSignInMessages.RATE_LIMITED)
         PasswordLoginFailure.AccountRequired -> NativeSignInMessages.text(NativeSignInMessages.ACCOUNT_REQUIRED)
-        PasswordLoginFailure.Other -> UiText.serverOr(error.message, CommonR.string.tvSignIn_error_loginFailed)
+        PasswordLoginFailure.Other -> error.errorText(CommonR.string.tvSignIn_error_loginFailed)
     }
 
 /**

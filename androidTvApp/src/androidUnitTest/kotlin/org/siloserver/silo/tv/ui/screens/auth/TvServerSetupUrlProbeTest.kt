@@ -15,6 +15,7 @@ import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import org.siloserver.silo.common.i18n.text
 
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, sdk = [28])
@@ -22,10 +23,7 @@ class TvServerSetupUrlProbeTest {
     private val resources = ApplicationProvider.getApplicationContext<Application>().resources
 
     /** Setup text as the screen shows it in English. */
-    private fun UiText.inEnglish(): String = when (this) {
-        is UiText.Res -> resources.getString(id, *args.toTypedArray())
-        is UiText.Raw -> text
-    }
+    private fun UiText.inEnglish(): String = text(resources)
 
     @Test
     fun probeCandidatesContinueToHttpFallbackAfterHttpsHttpError() = runTest {

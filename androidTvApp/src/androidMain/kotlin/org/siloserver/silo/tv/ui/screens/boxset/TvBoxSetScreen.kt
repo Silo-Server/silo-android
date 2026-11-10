@@ -64,6 +64,7 @@ import org.siloserver.silo.tv.ui.screens.detail.tvDetailPageSurfaceColor
 import org.siloserver.silo.viewmodel.BoxSetViewModel
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 /**
  * One movie box set on TV: the movie detail hero (backdrop, title, facts,
@@ -102,7 +103,7 @@ fun TvBoxSetScreen(
             message = stringResource(CommonR.string.boxSets_unavailableMessage),
             modifier = Modifier.fillMaxSize(),
         )
-        state.error != null -> TvErrorScreen(message = state.error.orEmpty(), onRetry = viewModel::retry)
+        state.error != null -> TvErrorScreen(message = state.error?.text().orEmpty(), onRetry = viewModel::retry)
         else -> TvLoadingScreen()
     }
 }
@@ -222,14 +223,14 @@ private fun BoxSetContent(
                     ratingChip = null,
                     overview = boxSet.overview,
                     tagline = null,
-                    factsLine = (listOf(boxSetLabel) + boxSet.heroFacts()).map { TvHeroFactToken.TextToken(it) },
+                    factsLine = (listOf(boxSetLabel) + boxSet.heroFacts().map { it.text() }).map { TvHeroFactToken.TextToken(it) },
                     directorText = null,
                     actions = {
                         if (next != null) {
                             TvPrimaryPillButton(
                                 stableHero = true,
                                 icon = Icons.Filled.PlayArrow,
-                                title = boxSet.playLabel(next),
+                                title = boxSet.playLabel(next).text(),
                                 onClick = { onPlayMovie(next.contentId, next.boxSetResumePosition()) },
                                 focusRequester = playFocus,
                                 modifier = Modifier

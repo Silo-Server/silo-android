@@ -1,5 +1,8 @@
 package org.siloserver.silo.overlays
 
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+
 /**
  * Single source of truth for which overlays exist. Order within the
  * list determines the default render order within each corner. These
@@ -78,6 +81,9 @@ object OverlayRegistry {
             .map { it.value }
     }
 
+    /** Badge text that is the file's own data ("4K", "TrueHD", "PG-13"). */
+    private fun String?.raw(): UiText? = this?.let(UiText::Raw)
+
     // MARK: - Tech helpers
 
     private fun prettyResolution(value: String?): String? {
@@ -138,7 +144,7 @@ object OverlayRegistry {
             iconCapable = true,
             // `prettyResolution`, not raw uppercase: web renders "4K" for a
             // `2160p` payload and the standalone badge must match it.
-            getValue = { prettyResolution(it.resolution) },
+            getValue = { prettyResolution(it.resolution).raw() },
         ),
         OverlayDef(
             id = OverlayId.Hdr,
@@ -148,7 +154,7 @@ object OverlayRegistry {
             defaultPosition = OverlayPosition.TopLeft,
             defaultEnabled = true,
             iconCapable = true,
-            getValue = { it.hdr },
+            getValue = { it.hdr.raw() },
             getIcon = { hdrIcon(it.hdr) },
         ),
         OverlayDef(
@@ -162,7 +168,7 @@ object OverlayRegistry {
             getValue = { data ->
                 val res = prettyResolution(data.resolution) ?: return@OverlayDef null
                 val hdr = compactHdrSuffix(data.hdr)
-                if (hdr != null) "$res $hdr" else res
+                (if (hdr != null) "$res $hdr" else res).raw()
             },
             getIcon = { resolutionHdrIcon(it.hdr) },
         ),
@@ -182,7 +188,7 @@ object OverlayRegistry {
                     prettyResolution(data.resolution),
                     compactHdrSuffix(data.hdr),
                     data.audio?.takeIf { it.isNotEmpty() },
-                ).joinToString(" ").ifEmpty { null }
+                ).joinToString(" ").ifEmpty { null }.raw()
             },
             getIcon = { resolutionHdrIcon(it.hdr) },
         ),
@@ -194,7 +200,7 @@ object OverlayRegistry {
             defaultPosition = OverlayPosition.TopLeft,
             defaultEnabled = true,
             iconCapable = true,
-            getValue = { it.audio },
+            getValue = { it.audio.raw() },
             getIcon = { audioIcon(it.audio) },
         ),
         OverlayDef(
@@ -206,7 +212,7 @@ object OverlayRegistry {
             defaultEnabled = false,
             iconId = OverlayIconId.Volume,
             iconCapable = true,
-            getValue = { it.audioChannels },
+            getValue = { it.audioChannels.raw() },
         ),
         OverlayDef(
             id = OverlayId.VideoCodec,
@@ -217,7 +223,7 @@ object OverlayRegistry {
             defaultEnabled = false,
             iconId = OverlayIconId.Film,
             iconCapable = true,
-            getValue = { it.videoCodec },
+            getValue = { it.videoCodec.raw() },
             getIcon = { videoCodecIcon(it.videoCodec) },
         ),
         OverlayDef(
@@ -228,7 +234,7 @@ object OverlayRegistry {
             defaultPosition = OverlayPosition.BottomLeft,
             defaultEnabled = false,
             iconCapable = false,
-            getValue = { it.container },
+            getValue = { it.container.raw() },
         ),
         OverlayDef(
             id = OverlayId.AspectRatio,
@@ -239,7 +245,7 @@ object OverlayRegistry {
             defaultEnabled = false,
             iconId = OverlayIconId.Layout,
             iconCapable = true,
-            getValue = { it.aspectRatio },
+            getValue = { it.aspectRatio.raw() },
         ),
         OverlayDef(
             id = OverlayId.ReleaseType,
@@ -249,7 +255,7 @@ object OverlayRegistry {
             defaultPosition = OverlayPosition.BottomLeft,
             defaultEnabled = true,
             iconCapable = false,
-            getValue = { it.releaseType },
+            getValue = { it.releaseType.raw() },
         ),
         OverlayDef(
             id = OverlayId.Edition,
@@ -259,7 +265,7 @@ object OverlayRegistry {
             defaultPosition = OverlayPosition.BottomLeft,
             defaultEnabled = false,
             iconCapable = false,
-            getValue = { it.edition },
+            getValue = { it.edition.raw() },
         ),
         OverlayDef(
             id = OverlayId.MultiAudio,
@@ -270,7 +276,7 @@ object OverlayRegistry {
             defaultEnabled = false,
             iconId = OverlayIconId.Languages,
             iconCapable = true,
-            getValue = { if (it.multiAudio == true) "Multi-Audio" else null },
+            getValue = { if (it.multiAudio == true) UiText.Key(SharedString.OverlayMultiAudio) else null },
         ),
         OverlayDef(
             id = OverlayId.MultiSub,
@@ -281,7 +287,7 @@ object OverlayRegistry {
             defaultEnabled = false,
             iconId = OverlayIconId.Subtitles,
             iconCapable = true,
-            getValue = { if (it.multiSub == true) "CC" else null },
+            getValue = { if (it.multiSub == true) UiText.Key(SharedString.OverlaySubtitles) else null },
         ),
     )
 
@@ -313,7 +319,7 @@ object OverlayRegistry {
             iconId = OverlayIconId.Star,
             defaultAccent = "#f5c518",
             iconCapable = true,
-            getValue = { formatRating(it.ratingImdb, max = 10) },
+            getValue = { formatRating(it.ratingImdb, max = 10).raw() },
         ),
         OverlayDef(
             id = OverlayId.RatingTmdb,
@@ -325,7 +331,7 @@ object OverlayRegistry {
             iconId = OverlayIconId.Star,
             defaultAccent = "#01b4e4",
             iconCapable = true,
-            getValue = { formatRating(it.ratingTmdb, max = 10) },
+            getValue = { formatRating(it.ratingTmdb, max = 10).raw() },
         ),
         OverlayDef(
             id = OverlayId.RatingRt,
@@ -337,7 +343,7 @@ object OverlayRegistry {
             iconId = OverlayIconId.Tomato,
             defaultAccent = "#fa320a",
             iconCapable = true,
-            getValue = { formatPercent(it.ratingRtCritic) },
+            getValue = { formatPercent(it.ratingRtCritic).raw() },
         ),
         OverlayDef(
             id = OverlayId.RatingRtAudience,
@@ -349,7 +355,7 @@ object OverlayRegistry {
             iconId = OverlayIconId.Tomato,
             defaultAccent = "#fa6400",
             iconCapable = true,
-            getValue = { formatPercent(it.ratingRtAudience) },
+            getValue = { formatPercent(it.ratingRtAudience).raw() },
         ),
         OverlayDef(
             id = OverlayId.ContentRating,
@@ -360,17 +366,21 @@ object OverlayRegistry {
             defaultEnabled = false,
             iconId = OverlayIconId.Shield,
             iconCapable = true,
-            getValue = { it.contentRating },
+            getValue = { it.contentRating.raw() },
         ),
     )
 
     // MARK: - Metadata helpers
 
-    private fun formatRuntime(minutes: Int?): String? {
+    private fun formatRuntime(minutes: Int?): UiText? {
         if (minutes == null || minutes <= 0) return null
         val h = minutes / 60
         val m = minutes % 60
-        return if (h > 0) "${h}h ${m}m" else "${m}m"
+        return if (h > 0) {
+            UiText.Key(SharedString.OverlayRuntimeHoursMinutes, listOf(UiText.Number(h), UiText.Number(m)))
+        } else {
+            UiText.Key(SharedString.OverlayRuntimeMinutes, listOf(UiText.Number(m)))
+        }
     }
 
     private val metadata: List<OverlayDef> = listOf(
@@ -384,7 +394,7 @@ object OverlayRegistry {
             iconCapable = false,
             getValue = { data ->
                 val year = data.year
-                if (year == null || year <= 0) null else year.toString()
+                if (year == null || year <= 0) null else UiText.Number(year)
             },
         ),
         OverlayDef(
@@ -407,7 +417,7 @@ object OverlayRegistry {
             defaultEnabled = false,
             iconId = OverlayIconId.Globe,
             iconCapable = true,
-            getValue = { data -> data.originalLanguage?.let { overlayLanguageName(it) } },
+            getValue = { data -> data.originalLanguage?.trim()?.takeIf { it.isNotEmpty() }?.let { UiText.LanguageName(it, uppercaseIfUnnamed = true) } },
         ),
         OverlayDef(
             id = OverlayId.Studio,
@@ -418,7 +428,7 @@ object OverlayRegistry {
             defaultEnabled = false,
             iconId = OverlayIconId.Building,
             iconCapable = true,
-            getValue = { it.studio },
+            getValue = { it.studio.raw() },
         ),
         OverlayDef(
             id = OverlayId.Network,
@@ -429,7 +439,7 @@ object OverlayRegistry {
             defaultEnabled = false,
             iconId = OverlayIconId.Tv,
             iconCapable = true,
-            getValue = { it.network },
+            getValue = { it.network.raw() },
         ),
     )
 
@@ -438,15 +448,15 @@ object OverlayRegistry {
     // Mirrors web's `formatShowStatus` — the recognized spellings and the
     // pass-through default must stay identical or the same library renders
     // different ribbons per platform.
-    private fun formatShowStatus(value: String?): String? {
+    private fun formatShowStatus(value: String?): UiText? {
         val normalized = value?.trim().takeUnless { it.isNullOrEmpty() } ?: return null
         return when (normalized.lowercase()) {
             "returning", "returning series", "continuing", "in_production", "in production" ->
-                "Returning"
-            "ended" -> "Ended"
-            "cancelled", "canceled" -> "Cancelled"
-            "upcoming", "planned" -> "Upcoming"
-            else -> normalized
+                UiText.Key(SharedString.OverlayReturning)
+            "ended" -> UiText.Key(SharedString.OverlayEnded)
+            "cancelled", "canceled" -> UiText.Key(SharedString.OverlayCancelled)
+            "upcoming", "planned" -> UiText.Key(SharedString.OverlayUpcoming)
+            else -> UiText.Raw(normalized)
         }
     }
 
@@ -476,7 +486,7 @@ object OverlayRegistry {
             availabilityNote = "Requires an IMDb Top 250 data source (planned)",
             getValue = { data ->
                 val rank = data.imdbTop250 ?: return@OverlayDef null
-                "#$rank"
+                UiText.Raw("#$rank")
             },
         ),
         OverlayDef(
@@ -490,7 +500,7 @@ object OverlayRegistry {
             defaultAccent = "#fa320a",
             iconCapable = true,
             availabilityNote = "Requires Rotten Tomatoes certification data (planned)",
-            getValue = { if (it.rtCertifiedFresh == true) "Certified Fresh" else null },
+            getValue = { if (it.rtCertifiedFresh == true) UiText.Key(SharedString.OverlayCertifiedFresh) else null },
         ),
     )
 

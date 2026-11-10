@@ -102,20 +102,15 @@ class SeekIntervalsTest {
     }
 
     @Test
-    fun describeReportsEachDirectionSeparately() {
+    fun importResultReportsEachDirectionSeparately() {
         val result = SeekImportResult(
             back = SeekImportOutcome.Imported(15),
             forward = SeekImportOutcome.Failed(60, "Server unavailable"),
-        )
-        assertEquals(
-            "Skip back imported (15s). Skip forward (60s) failed: Server unavailable.",
-            result.describe(),
         )
         assertTrue(result.anyFailed)
         assertFalse(result.allImported)
 
         val partial = SeekImportResult(SeekImportOutcome.NotStored, SeekImportOutcome.Imported(60))
-        assertEquals("Skip back had no device value. Skip forward imported (60s).", partial.describe())
         assertTrue(partial.allImported)
     }
 

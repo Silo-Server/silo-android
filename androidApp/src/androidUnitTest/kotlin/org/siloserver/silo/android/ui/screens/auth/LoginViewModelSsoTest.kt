@@ -68,6 +68,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.siloserver.silo.common.i18n.text
 
 /** The phone sign-in screen's provider paths: discovery, starting a flow, and the flow's result. */
 @RunWith(RobolectricTestRunner::class)
@@ -77,10 +78,7 @@ class LoginViewModelSsoTest {
     private val resources = ApplicationProvider.getApplicationContext<Application>().resources
 
     /** The sign-in screen's text in English (the screen also isolates names in right-to-left). */
-    private fun UiText.inEnglish(): String = when (this) {
-        is UiText.Raw -> text
-        is UiText.Res -> resources.getString(id, *args.map { if (it is UiText) it.inEnglish() else it }.toTypedArray())
-    }
+    private fun UiText.inEnglish(): String = text(resources)
 
     private val dispatcher = StandardTestDispatcher()
 

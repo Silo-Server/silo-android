@@ -2,6 +2,9 @@ package org.siloserver.silo.model.catalog
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.siloserver.silo.common.i18n.SharedPlural
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 
 /**
  * A movie box set: the movies TMDB lists in one collection (a franchise such
@@ -42,28 +45,33 @@ val BrowseItem.boxSetCard: CatalogBoxSet?
     get() = boxSet?.takeIf { type == BOX_SET_TYPE }
 
 /** "8 films", or "1 film". */
-fun boxSetFilmCount(count: Int): String = if (count == 1) "1 film" else "$count films"
+fun boxSetFilmCount(count: Int): UiText = UiText.Plural(SharedPlural.BoxSetFilms, count)
 
 /** "2001 – 2011", one year when the box set spans one, or null with no year. */
-fun CatalogBoxSet.yearsLabel(): String? {
+fun CatalogBoxSet.yearsLabel(): UiText? {
     val first = firstYear?.takeIf { it > 0 }
     val last = lastYear?.takeIf { it > 0 }
     return when {
-        first != null && last != null && first != last -> "$first – $last"
-        else -> (first ?: last)?.toString()
+        first != null && last != null && first != last ->
+            UiText.Key(SharedString.BoxSetYears, listOf(UiText.Number(first), UiText.Number(last)))
+        else -> (first ?: last)?.let { UiText.Number(it) }
     }
 }
 
 /** A card's caption: watched progress once started, else the years or the film count. */
-fun CatalogBoxSet.cardCaption(): String =
-    if (playedCount > 0) "$playedCount / $movieCount watched" else yearsLabel() ?: boxSetFilmCount(movieCount)
+fun CatalogBoxSet.cardCaption(): UiText =
+    if (playedCount > 0) watched(SharedPlural.BoxSetWatchedCard) else yearsLabel() ?: boxSetFilmCount(movieCount)
 
 /** The box set page's facts: film count, years, and watched progress once started. */
-fun CatalogBoxSet.heroFacts(): List<String> = listOfNotNull(
+fun CatalogBoxSet.heroFacts(): List<UiText> = listOfNotNull(
     boxSetFilmCount(movieCount),
     yearsLabel(),
-    "$playedCount of $movieCount watched".takeIf { playedCount > 0 },
+    watched(SharedPlural.BoxSetWatchedFact).takeIf { playedCount > 0 },
 )
+
+/** "3 / 8 watched" or "3 of 8 watched": played movies of [CatalogBoxSet.movieCount]. */
+private fun CatalogBoxSet.watched(key: SharedPlural): UiText =
+    UiText.Plural(key, movieCount, listOf(UiText.Number(playedCount)))
 
 /** Share of the box set's movies the profile has played, or null before the first. */
 val CatalogBoxSet.watchedFraction: Float?
@@ -86,8 +94,10 @@ fun BrowseItem.boxSetResumePosition(): Double? =
     positionSeconds?.takeIf { it > 0 && userState?.played != true }
 
 /** The play button's label for [next], the movie [boxSetNextMovie] picked. */
-fun CatalogBoxSet.playLabel(next: BrowseItem): String =
-    if (isStarted || next.boxSetResumePosition() != null) "Continue · ${next.title}" else "Play ${next.title}"
+fun CatalogBoxSet.playLabel(next: BrowseItem): UiText = UiText.Key(
+    if (isStarted || next.boxSetResumePosition() != null) SharedString.BoxSetContinue else SharedString.BoxSetPlay,
+    listOf(next.title),
+)
 
 /**
  * A search result's box set as a grid card. Search can return one collection

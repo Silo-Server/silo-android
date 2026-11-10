@@ -49,8 +49,9 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.model.personal.UserLibrary
-import org.siloserver.silo.model.profile.ANY_RATING_LABEL
+import org.siloserver.silo.model.profile.ANY_RATING_TEXT
 import org.siloserver.silo.model.profile.AssignableLibraries
 import org.siloserver.silo.model.profile.ProfileAccessLimits
 import org.siloserver.silo.model.profile.contentRatingOptions
@@ -137,7 +138,7 @@ internal fun TvProfileAccessControls(
     ) {
         TvPanelLabel(stringResource(CommonR.string.profiles_access_maxRating))
         TvRatingLadder(access = access, focus = focus, onSelected = callbacks.onContentRatingSelected)
-        TvPanelHint(ratingCeilingCaption(access.maxContentRating), Modifier.padding(top = 10.dp))
+        TvPanelHint(ratingCeilingCaption(access.maxContentRating).text(), Modifier.padding(top = 10.dp))
 
         Box(
             modifier = Modifier
@@ -163,7 +164,7 @@ internal fun TvProfileAccessControls(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Column(modifier = Modifier.weight(1f)) { TvPanelHint(libraries.text) }
+                Column(modifier = Modifier.weight(1f)) { TvPanelHint(libraries.text.text()) }
                 // Stays mounted and enabled while retrying, so focus doesn't jump.
                 TvHeroActionPill(
                     label = stringResource(if (libraries.retrying) CommonR.string.profiles_access_retrying else CommonR.string.profiles_access_retry),
@@ -236,7 +237,7 @@ private fun TvRatingLadder(
             // Entering the row lands on the selected step.
             val isCeiling = rating == access.maxContentRating
             TvSegment(
-                label = rating ?: ANY_RATING_LABEL,
+                label = rating ?: ANY_RATING_TEXT.text(),
                 emphasis = when {
                     isCeiling -> SegmentEmphasis.Selected
                     rating != null && ratingIsUnderCeiling(rating, access.maxContentRating, TV_CONTENT_RATINGS) ->

@@ -45,6 +45,7 @@ import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.ui.OnViewerAccessChanged
 import org.siloserver.silo.network.AccessChangeSignals
 import org.siloserver.silo.model.personal.Collection
@@ -102,7 +103,7 @@ fun TvCollectionsScreen(
         when {
             state.isLoading && state.collections.isEmpty() -> TvLoadingScreen()
             state.error != null && state.collections.isEmpty() -> TvErrorScreen(
-                message = state.error!!,
+                message = state.error!!.text(),
                 onRetry = viewModel::loadCollections,
             )
             state.collections.isEmpty() && state.groups.isEmpty() -> EmptyState()
@@ -196,7 +197,7 @@ private fun SectionHeader(section: CollectionSection) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = section.name,
+            text = section.title.text(),
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.SemiBold,

@@ -13,6 +13,7 @@ import org.siloserver.silo.model.catalog.CatalogBoxSet
 import org.siloserver.silo.model.catalog.boxSetFilmCount
 import org.siloserver.silo.model.catalog.cardCaption
 import org.siloserver.silo.model.catalog.watchedFraction
+import org.siloserver.silo.common.i18n.text
 
 /**
  * The card of a movie box set: one poster for the movies TMDB lists in one
@@ -33,7 +34,7 @@ fun BoxSetCard(
         title = boxSet.title,
         posterUrl = posterUrl,
         posterThumbhash = posterThumbhash,
-        subtitle = boxSet.cardCaption(),
+        subtitle = boxSet.cardCaption().text(),
         type = "movie",
         progress = boxSet.watchedFraction,
         onClick = onClick,
@@ -41,7 +42,7 @@ fun BoxSetCard(
         detailBackdropUrl = boxSet.backdropUrl,
         detailBackdropThumbhash = boxSet.backdropThumbhash,
         badge = stringResource(CommonR.string.shell_card_boxSet),
-        cornerLabel = boxSetFilmCount(boxSet.movieCount),
+        cornerLabel = boxSetFilmCount(boxSet.movieCount).text(),
         sleeves = BoxSetSleeves,
         modifier = modifier,
     )

@@ -76,6 +76,7 @@ import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.pairing.PairingReceiver
 import org.siloserver.silo.common.pairing.PairingReceiverStatus
 import org.siloserver.silo.common.pairing.TvPairingAdvertiser
@@ -797,7 +798,7 @@ private fun TvLoginError.message(providerName: String?, externalName: String?): 
         TvLoginError.NetworkNotPermitted -> stringResource(CommonR.string.tvSignIn_error_networkNotPermitted, external)
         TvLoginError.NetworkEmailInUse -> stringResource(CommonR.string.tvSignIn_error_networkEmailInUse, external)
         TvLoginError.NetworkProviderGone -> stringResource(CommonR.string.tvSignIn_error_networkProviderGone, external)
-        is TvLoginError.Server -> message ?: stringResource(CommonR.string.tvSignIn_error_loginFailed)
+        is TvLoginError.Server -> message?.text() ?: stringResource(CommonR.string.tvSignIn_error_loginFailed)
     }
 }
 

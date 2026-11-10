@@ -52,6 +52,7 @@ import org.siloserver.silo.tv.ui.util.visibleOnTv
 import org.siloserver.silo.viewmodel.RecommendationsViewModel
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 /** Saved-list grids arrive a page at a time; pace the claim to that, not to frames. */
 private const val SavedListFocusRetryDelayMillis = 60L
@@ -225,7 +226,7 @@ fun TvRecommendationsScreen(
                 modifier = Modifier.background(MaterialTheme.colorScheme.background),
             )
             state.error != null && state.sections.isEmpty() -> TvErrorScreen(
-                message = state.error ?: stringResource(CommonR.string.home_forYou_loadFailed),
+                message = state.error?.text() ?: stringResource(CommonR.string.home_forYou_loadFailed),
                 onRetry = viewModel::loadRecommendations,
                 modifier = Modifier.background(MaterialTheme.colorScheme.background),
             )

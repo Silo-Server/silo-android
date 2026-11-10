@@ -8,12 +8,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogBoxSetDetail
 import org.siloserver.silo.model.catalog.withWatched
 import org.siloserver.silo.network.AccessChangeCursor
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.network.isAccessRefusal
 import org.siloserver.silo.repository.CatalogRepository
 
@@ -25,7 +27,7 @@ data class BoxSetUiState(
      * movies there (the server answers 404 for both).
      */
     val unavailable: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
 )
 
 /**
@@ -201,9 +203,9 @@ class BoxSetViewModel(
                 is ApiResult.Error -> if (result.code == 404) {
                     BoxSetUiState(isLoading = false, unavailable = true)
                 } else {
-                    BoxSetUiState(isLoading = false, error = result.message.ifBlank { "Couldn't load this box set." })
+                    BoxSetUiState(isLoading = false, error = result.errorText(SharedString.BoxSetLoadFailed))
                 }
-                is ApiResult.NetworkError -> BoxSetUiState(isLoading = false, error = result.errorMessage("Couldn't load this box set."))
+                is ApiResult.NetworkError -> BoxSetUiState(isLoading = false, error = result.errorText(SharedString.BoxSetLoadFailed))
             }
             _uiState.value = next
         }

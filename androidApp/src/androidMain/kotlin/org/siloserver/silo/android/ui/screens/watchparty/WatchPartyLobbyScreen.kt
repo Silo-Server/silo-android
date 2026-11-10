@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.text
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -80,7 +81,7 @@ fun WatchPartyLobbyScreen(
     var confirmHostLeave by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(viewModel) {
-        viewModel.messages.collect { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+        viewModel.messages.collect { Toast.makeText(context, it.text(context), Toast.LENGTH_SHORT).show() }
     }
 
     // Only the room's phase opens the player.

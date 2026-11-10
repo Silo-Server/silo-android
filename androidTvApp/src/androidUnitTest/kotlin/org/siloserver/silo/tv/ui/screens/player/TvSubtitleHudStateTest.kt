@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.i18n.UiText
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import org.junit.runner.RunWith
@@ -26,11 +27,11 @@ class TvSubtitleHudStateTest {
     @Test
     fun `sync status resolves server tracks by ordinal and merged stored rows by download id`() {
         val sync = TvHudSubtitleSync(
-            statusByServerIndex = mapOf(0 to "Synced −3.0 s"),
-            statusByDownloadId = mapOf(9 to "Syncing… 40%"),
+            statusByServerIndex = mapOf(0 to UiText.Raw("Synced −3.0 s")),
+            statusByDownloadId = mapOf(9 to UiText.Raw("Syncing… 40%")),
         )
-        assertEquals("Synced −3.0 s", sync.statusFor(SubtitleIdentity.ServerSidecar(0)))
-        assertEquals("Syncing… 40%", sync.statusFor(SubtitleIdentity.Downloaded(9, SubtitleMediaIdentity())))
+        assertEquals(UiText.Raw("Synced −3.0 s"), sync.statusFor(SubtitleIdentity.ServerSidecar(0)))
+        assertEquals(UiText.Raw("Syncing… 40%"), sync.statusFor(SubtitleIdentity.Downloaded(9, SubtitleMediaIdentity())))
         assertEquals(null, sync.statusFor(SubtitleIdentity.ServerSidecar(1)))
         assertEquals(null, sync.statusFor(SubtitleIdentity.Off))
     }

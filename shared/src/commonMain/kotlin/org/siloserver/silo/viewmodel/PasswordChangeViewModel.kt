@@ -10,9 +10,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.model.auth.PasswordChangeError
 import org.siloserver.silo.model.auth.PasswordRequirements
 import org.siloserver.silo.model.auth.User
-import org.siloserver.silo.model.auth.passwordChangeErrorMessage
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.getOrNull
 
@@ -57,7 +59,7 @@ data class PasswordChangeUiState(
     val newPassword: String = "",
     val confirmation: String = "",
     val phase: PasswordChangePhase = PasswordChangePhase.Editing,
-    val error: String? = null,
+    val error: PasswordChangeError? = null,
     /** Bumped on each failed attempt so the fields shake. */
     val errorCount: Int = 0,
     /** The account's username, once read. */
@@ -71,11 +73,11 @@ data class PasswordChangeUiState(
             phase == PasswordChangePhase.RefreshFailed(retrying = true) ||
             phase == PasswordChangePhase.Unconfirmed(checking = true)
 
-    val lead: String
-        get() = "An admin set a temporary password for ${accountName?.ifBlank { null } ?: "your account"}. " +
-            "Choose your own to continue."
+    val lead: UiText
+        get() = accountName?.ifBlank { null }?.let { UiText.Key(SharedString.PasswordChangeLead, listOf(it)) }
+            ?: UiText.Key(SharedString.PasswordChangeLeadUnnamed)
 
-    val requirementsHint: String get() = "At least ${requirements.minimumLength} characters"
+    val requirementsHint: UiText get() = requirements.hint
 }
 
 /**
@@ -134,7 +136,7 @@ class PasswordChangeViewModel(
         val state = _uiState.value
         if (state.phase != PasswordChangePhase.Editing) return
         val invalid = if (state.currentPassword.isEmpty()) {
-            "Enter the temporary password."
+            PasswordChangeError.EmptyTemporary
         } else {
             state.requirements.problem(state.newPassword, state.confirmation)
         }
@@ -162,7 +164,7 @@ class PasswordChangeViewModel(
             when (remains) {
                 true -> {
                     _uiState.update { it.copy(phase = PasswordChangePhase.Editing) }
-                    fail(passwordChangeErrorMessage(result))
+                    fail(PasswordChangeError.of(result))
                     return
                 }
                 null -> {
@@ -182,7 +184,7 @@ class PasswordChangeViewModel(
         when (temporaryPasswordRemains()) {
             true -> {
                 _uiState.update { it.copy(phase = PasswordChangePhase.Editing) }
-                fail("Your password wasn't changed. Try again.")
+                fail(PasswordChangeError.NotChanged)
             }
             null -> _uiState.update { it.copy(phase = PasswordChangePhase.Unconfirmed(checking = false)) }
             false -> {
@@ -233,7 +235,7 @@ class PasswordChangeViewModel(
         null
     }
 
-    private fun fail(message: String) {
-        _uiState.update { it.copy(error = message, errorCount = it.errorCount + 1) }
+    private fun fail(error: PasswordChangeError) {
+        _uiState.update { it.copy(error = error, errorCount = it.errorCount + 1) }
     }
 }

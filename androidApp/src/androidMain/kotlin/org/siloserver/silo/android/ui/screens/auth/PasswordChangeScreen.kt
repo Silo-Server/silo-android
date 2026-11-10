@@ -33,6 +33,7 @@ import org.siloserver.silo.android.ui.components.marquee.MarqueeSeparator
 import org.siloserver.silo.android.ui.components.marquee.MarqueeStage
 import org.siloserver.silo.android.ui.components.marquee.MarqueeTextField
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeScene
 import org.siloserver.silo.common.ui.marquee.MarqueeScrimStyle
@@ -94,7 +95,7 @@ fun PasswordChangeScreen(
                 onSignOut = onSignOut,
             )
             PasswordChangePhase.Editing, PasswordChangePhase.Saving -> {
-                MarqueeHeadline(title = stringResource(CommonR.string.signIn_passwordChange_title), lead = state.lead)
+                MarqueeHeadline(title = stringResource(CommonR.string.signIn_passwordChange_title), lead = state.lead.text())
                 Column(Modifier.fillMaxWidth().padding(top = 24.dp).animateContentSize()) {
                     MarqueeFieldGroup(isError = state.error != null, modifier = Modifier.marqueeShake(state.errorCount)) {
                         MarqueeTextField(
@@ -130,12 +131,12 @@ fun PasswordChangeScreen(
                         )
                     }
                     Text(
-                        state.requirementsHint,
+                        state.requirementsHint.text(),
                         color = MarqueeColors.InkTertiary,
                         fontSize = 13.sp,
                         modifier = Modifier.padding(top = 10.dp, start = 4.dp),
                     )
-                    state.error?.let { MarqueeErrorText(it, Modifier.padding(top = 10.dp, start = 4.dp).then(announced)) }
+                    state.error?.let { MarqueeErrorText(it.text.text(), Modifier.padding(top = 10.dp, start = 4.dp).then(announced)) }
                     MarqueeButton(
                         text = stringResource(if (state.isBusy) CommonR.string.signIn_passwordChange_saving else CommonR.string.signIn_passwordChange_save),
                         onClick = save,

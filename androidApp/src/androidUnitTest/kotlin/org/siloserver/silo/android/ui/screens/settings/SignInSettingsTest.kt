@@ -57,6 +57,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.siloserver.silo.common.i18n.text
 
 /** The English a screen shows for [this]; the tests read messages as people see them. */
 private fun SettingsText.text(): String = resolve(RuntimeEnvironment.getApplication())
@@ -67,10 +68,7 @@ class SignInSettingsTest {
     private val resources = ApplicationProvider.getApplicationContext<Application>().resources
 
     /** The sign-in screen's text in English (the screen also isolates names in right-to-left). */
-    private fun UiText.inEnglish(): String = when (this) {
-        is UiText.Raw -> text
-        is UiText.Res -> resources.getString(id, *args.map { if (it is UiText) it.inEnglish() else it }.toTypedArray())
-    }
+    private fun UiText.inEnglish(): String = text(resources)
 
     private val local = SignInProvider("local", "Silo account", SignInProvider.Mode.Credentials, true, null, null, null)
     private val ldap = SignInProvider("plugin:6:ldap", "Directory", SignInProvider.Mode.Credentials, false, null, "6", null)

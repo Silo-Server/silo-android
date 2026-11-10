@@ -4,16 +4,30 @@ import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import kotlinx.serialization.Serializable
+import org.siloserver.silo.common.i18n.UiText
 
 sealed class ApiResult<out T> {
     data class Success<T>(val data: T) : ApiResult<T>()
     /**
-     * [message] is the text a screen shows. For a v2 problem it is the
-     * server's `detail`, translated when the interface isn't English (see
-     * [org.siloserver.silo.network.apiv2.ProblemText]); [detail] keeps the
-     * server's own text for code that must recognise it.
+     * Screens show [errorText][org.siloserver.silo.common.i18n.errorText].
+     *
+     * - [message]: for a v2 problem, the server's `detail`, translated when the
+     *   interface isn't English (see [org.siloserver.silo.network.apiv2.ProblemText]);
+     *   for an error the app builds, its English, for logs.
+     * - [detail]: the server's own text, for code that must recognise it.
+     * - [text]: what a screen shows for an error the app builds; null for the
+     *   server's errors. Code that passes an error on returns the same object,
+     *   so this survives.
+     *
+     * Code recognises an error by [code] and [error], never by [message].
      */
-    data class Error(val code: Int, val error: String, val message: String, val detail: String = message) : ApiResult<Nothing>()
+    data class Error(
+        val code: Int,
+        val error: String,
+        val message: String,
+        val detail: String = message,
+        val text: UiText? = null,
+    ) : ApiResult<Nothing>()
     data class NetworkError(val exception: Throwable) : ApiResult<Nothing>()
 }
 
@@ -40,10 +54,10 @@ suspend fun <T, R> ApiResult<T>.map(transform: suspend (T) -> R): ApiResult<R> =
     is ApiResult.NetworkError -> this
 }
 
-/** Standard copy for failures that never reached the server. */
+/** English for failures that never reached the server (screens use `errorText`). */
 const val NETWORK_ERROR_MESSAGE = "Network error. Check your connection."
 
-/** Copy for a request the server accepted but did not answer in time. */
+/** English for a request the server accepted but did not answer in time (screens use `errorText`). */
 const val REQUEST_TIMEOUT_MESSAGE = "The server took too long to respond. Try again."
 
 /**
@@ -60,7 +74,8 @@ val ApiResult.NetworkError.isTimeout: Boolean
         }
 
 /**
- * User-facing error text for a failed [ApiResult]: the server-provided
+ * English error text for a failed [ApiResult], for logs; screens use
+ * [errorText][org.siloserver.silo.common.i18n.errorText]. The server-provided
  * message when present, [fallback] when it is blank, and the standard
  * network-error copy for [ApiResult.NetworkError]. Total over the sealed
  * type ([fallback] for Success) so it can be called on the when-subject

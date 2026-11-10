@@ -7,6 +7,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 
 class PasswordChangeTest {
 
@@ -14,19 +16,28 @@ class PasswordChangeTest {
     fun eachRefusalHasItsOwnCopy() {
         val cases = listOf(
             ApiResult.Error(422, WRONG_CURRENT_PASSWORD, "The current password is incorrect.") to
-                "That temporary password is incorrect.",
+                PasswordChangeError.WrongTemporary,
             ApiResult.Error(422, "validation_failed", "The new password must differ from the current one.") to
-                "The new password must differ from the current one.",
-            ApiResult.Error(422, "validation_failed", "") to "Choose a different password, then try again.",
-            ApiResult.Error(429, "rate_limited", "Slow down.") to "Too many attempts. Wait a moment, then try again.",
-            ApiResult.Error(409, "conflict", "Password login is disabled.") to
-                "This account doesn't sign in with a Silo password. Ask your server admin for help.",
-            ApiResult.Error(403, "permission_denied", "No.") to
-                "This session can't change the password. Sign in with your own account and try again.",
+                PasswordChangeError.Rejected("The new password must differ from the current one."),
+            ApiResult.Error(422, "validation_failed", "") to PasswordChangeError.Rejected(null),
+            ApiResult.Error(429, "rate_limited", "Slow down.") to PasswordChangeError.RateLimited,
+            ApiResult.Error(409, "conflict", "Password login is disabled.") to PasswordChangeError.NoSiloPassword,
+            ApiResult.Error(403, "permission_denied", "No.") to PasswordChangeError.SessionCannotChange,
+            ApiResult.Error(503, "service_unavailable", "Busy.") to PasswordChangeError.Failed(UiText.Raw("Busy.")),
+            ApiResult.Error(503, "service_unavailable", "") to
+                PasswordChangeError.Failed(UiText.Key(SharedString.PasswordChangeFailed)),
+            ApiResult.NetworkError(IllegalStateException("offline")) to
+                PasswordChangeError.Failed(UiText.Key(SharedString.NetworkError)),
         )
         for ((error, expected) in cases) {
-            assertEquals(expected, passwordChangeErrorMessage(error), error.toString())
+            assertEquals(expected, PasswordChangeError.of(error), error.toString())
         }
+    }
+
+    @Test
+    fun aRejectionShowsTheServersReasonOrTheGenericCopy() {
+        assertEquals(UiText.Raw("Too common."), PasswordChangeError.Rejected("Too common.").text)
+        assertEquals(UiText.Key(SharedString.PasswordRejected), PasswordChangeError.Rejected(null).text)
     }
 
     @Test
@@ -40,12 +51,12 @@ class PasswordChangeTest {
     @Test
     fun theFormChecksTheNewPasswordBeforeSendingIt() {
         val rules = PasswordRequirements.ServerDefault
-        assertEquals("Enter a new password.", rules.problem("", ""))
-        assertEquals("The new passwords don't match.", rules.problem("a-new-password", "something-else"))
-        assertEquals("Use at least 8 characters.", rules.problem("short", "short"))
+        assertEquals(PasswordChangeError.EmptyNew, rules.problem("", ""))
+        assertEquals(PasswordChangeError.Mismatch, rules.problem("a-new-password", "something-else"))
+        assertEquals(PasswordChangeError.TooShort(8), rules.problem("short", "short"))
         // 40 two-byte characters: long enough, but 80 bytes.
         val wide = "é".repeat(40)
-        assertEquals("That password is too long. Use a shorter one.", rules.problem(wide, wide))
+        assertEquals(PasswordChangeError.TooLong, rules.problem(wide, wide))
         assertNull(rules.problem("a-new-password", "a-new-password"))
     }
 
@@ -56,7 +67,7 @@ class PasswordChangeTest {
         val emoji = "😀".repeat(4)
         assertNull(rules.problem(emoji, emoji))
         val three = "😀".repeat(3)
-        assertEquals("Use at least 4 characters.", rules.problem(three, three))
+        assertEquals(PasswordChangeError.TooShort(4), rules.problem(three, three))
     }
 
     @Test

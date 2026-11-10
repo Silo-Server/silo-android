@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.common.player.titleText
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -90,13 +92,13 @@ private fun SubtitleSyncCardContent(notice: SubtitleSyncNotice, onDismiss: () ->
             SyncToneIcon(notice.tone, Modifier.padding(top = 2.dp).size(18.dp))
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
-                    text = notice.title,
+                    text = notice.titleText(),
                     color = Color.White,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
                 )
                 notice.detail?.let {
-                    Text(text = it, color = Color.White.copy(alpha = 0.70f), fontSize = 12.sp)
+                    Text(text = it.text(), color = Color.White.copy(alpha = 0.70f), fontSize = 12.sp)
                 }
                 if (running && notice.percent != null) {
                     SyncProgressRow(percent = notice.percent ?: 0, modifier = Modifier.padding(top = 4.dp))

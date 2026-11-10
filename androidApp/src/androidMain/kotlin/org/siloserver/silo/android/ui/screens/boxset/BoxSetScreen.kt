@@ -53,6 +53,7 @@ import org.siloserver.silo.android.ui.screens.watchparty.rememberWatchPartySoloG
 import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.ui.OnViewerAccessChanged
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.catalog.BOX_SET_TYPE
@@ -118,7 +119,7 @@ fun BoxSetScreen(
                 modifier = Modifier.fillMaxSize(),
             )
             state.error != null -> ErrorView(
-                message = state.error.orEmpty(),
+                message = state.error?.text().orEmpty(),
                 onRetry = viewModel::retry,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -197,7 +198,7 @@ private fun BoxSetContent(
                             detail = hero,
                             eyebrow = stringResource(CommonR.string.boxSets_eyebrow),
                             sourceTokens = emptyList(),
-                            factsLine = boxSet.heroFacts(),
+                            factsLine = boxSet.heroFacts().map { it.text() },
                             portraitArtwork = DetailPortraitArtwork(url = boxSet.posterUrl, thumbhash = boxSet.posterThumbhash),
                             dominantColor = dominantColor,
                             overviewText = boxSet.overview,
@@ -207,7 +208,7 @@ private fun BoxSetContent(
                             if (next != null) {
                                 PrimaryPillButton(
                                     icon = Icons.Filled.PlayArrow,
-                                    label = boxSet.playLabel(next),
+                                    label = boxSet.playLabel(next).text(),
                                     onClick = { onPlayMovie(next.contentId, next.boxSetResumePosition()) },
                                 )
                             }

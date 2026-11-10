@@ -92,6 +92,8 @@ import org.siloserver.silo.common.R as CommonR
 import androidx.compose.ui.res.pluralStringResource
 import org.siloserver.silo.common.player.errorText
 import org.siloserver.silo.common.player.skipIntervalErrorText
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
 
 private enum class AudiobookPanel { None, Chapters, Speed, Sleep, More, Skip, Bookmarks, About }
 
@@ -373,7 +375,7 @@ fun TvAudiobookPlayerScreen(
                     val currentChapterLabel = tvAudiobookCurrentChapterLabel(
                         chapters = state.chapters,
                         currentChapterIndex = currentChapterIndex,
-                        fallback = chapterCountLabel,
+                        hasChapterLine = chapterCountLabel != null,
                     )
                     Row(
                         modifier = Modifier
@@ -950,13 +952,16 @@ private fun TvAudiobookPillButton(
 private fun tvAudiobookCurrentChapterLabel(
     chapters: List<VersionChapter>,
     currentChapterIndex: Int,
-    fallback: String,
+    /** Whether the book has two or more chapters. */
+    hasChapterLine: Boolean,
 ): String {
     val chapter = chapters.getOrNull(currentChapterIndex)
     val title = chapter?.title?.trim().orEmpty()
     if (title.isNotBlank()) return title
-    if (chapter != null) return stringResource(CommonR.string.options_chapterNumbered, (chapter.index + 1).toString())
-    return fallback.substringBefore(" of ").takeIf { it.isNotBlank() }.orEmpty()
+    if (chapter != null) return stringResource(CommonR.string.options_chapterNumbered, UiText.Number(chapter.index + 1).text())
+    // The chapter list hasn't caught up with the index yet: "Chapter N" from the index alone.
+    if (!hasChapterLine) return ""
+    return stringResource(CommonR.string.options_chapterNumbered, UiText.Number(currentChapterIndex + 1).text())
 }
 
 @Composable
