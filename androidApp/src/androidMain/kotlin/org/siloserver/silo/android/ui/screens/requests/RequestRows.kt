@@ -143,7 +143,8 @@ internal fun MyRequestRow(
                             text = RequestRowCopy.meta(requestResources(), record, progress),
                             fontSize = 12.sp,
                             color = SiloSecondaryText,
-                            maxLines = 1,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(top = 2.dp),
                         )
                         RequestStageTrack(progress = progress, modifier = Modifier.padding(top = 9.dp))
@@ -162,7 +163,7 @@ internal fun MyRequestRow(
                         RequestCapsuleButton(title = stringResource(CommonR.string.requests_row_open), icon = Icons.AutoMirrored.Filled.OpenInNew, onClick = onOpenInLibrary)
                     onRemove != null && !isBusy ->
                         RequestCapsuleButton(title = stringResource(CommonR.string.requests_row_remove), icon = Icons.Outlined.Delete, onClick = onRemove)
-                    else -> Text(text = "›", fontSize = 20.sp, color = SiloSecondaryText.copy(alpha = 0.7f))
+                    else -> Text(text = forwardChevron(), fontSize = 20.sp, color = SiloSecondaryText.copy(alpha = 0.7f))
                 }
             }
             SiloDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {

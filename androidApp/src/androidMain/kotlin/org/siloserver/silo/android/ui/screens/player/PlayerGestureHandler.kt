@@ -47,6 +47,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
 import org.siloserver.silo.common.R as CommonR
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
@@ -383,6 +384,7 @@ fun PlayerGestureHandler(
         }
 
         // Double-tap skip flash badge — vertically centered in the tapped
+        // side, which is physical (the tap zones read x from the left) —
         // half (iOS positions it at 18% / 82% of the width; the edge padding
         // approximates that). Non-interactive: it sits under no pointer
         // handlers of its own and gestures keep flowing to this Box.
@@ -393,7 +395,7 @@ fun PlayerGestureHandler(
                 enter = fadeIn(),
                 exit = fadeOut(animationSpec = tween(durationMillis = 200)),
                 modifier = Modifier
-                    .align(if (flash.forward) Alignment.CenterEnd else Alignment.CenterStart)
+                    .align(if (flash.forward) AbsoluteAlignment.CenterRight else AbsoluteAlignment.CenterLeft)
                     .padding(horizontal = 56.dp),
             ) {
                 SkipFlashBadge(forward = flash.forward, seconds = flash.seconds)

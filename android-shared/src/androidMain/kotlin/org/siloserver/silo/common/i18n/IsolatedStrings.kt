@@ -6,10 +6,9 @@ import android.view.View
 import androidx.annotation.PluralsRes
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.LayoutDirection
 
 /**
  * [stringResource] for a message whose arguments are titles or names. In a
@@ -34,7 +33,15 @@ fun pluralStringResourceWithNames(@PluralsRes id: Int, count: Int, vararg names:
 
 @Composable
 private fun isolated(names: Array<out String>): Array<String> =
-    isolated(names, rtl = LocalLayoutDirection.current == LayoutDirection.Rtl)
+    isolated(names, rtl = isRightToLeftText())
+
+/**
+ * Whether the interface language writes right to left, which decides isolates.
+ * It follows the language rather than the layout direction: Android TV keeps
+ * a left-to-right layout in Arabic, and its sentences still need them.
+ */
+@Composable
+fun isRightToLeftText(): Boolean = LocalConfiguration.current.layoutDirection == View.LAYOUT_DIRECTION_RTL
 
 internal fun isolated(names: Array<out String>, rtl: Boolean): Array<String> =
     names.map { if (rtl) "\u2068$it\u2069" else it }.toTypedArray()

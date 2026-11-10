@@ -54,6 +54,19 @@ class SubtitleTrackDisplayLabelTest {
     }
 
     @Test
+    fun sharedFormatterKeepsALanguagelessLabelOutAsBefore() {
+        val label = formatSubtitleTrackDisplayLabel(
+            rawLabel = "Commentary",
+            language = null,
+            codecOrMime = "srt",
+            isForced = false,
+            index = 0,
+        )
+
+        assertEquals("SRT", label)
+    }
+
+    @Test
     fun trackSheetChipsTellTranslationsFromTranscriptions() {
         fun chips(label: String, language: String) = subtitleTrackPresentation(
             PlayerSubtitleInfo(index = 3, language = language, codec = "srt", label = label, forced = null, url = "/s.vtt"),

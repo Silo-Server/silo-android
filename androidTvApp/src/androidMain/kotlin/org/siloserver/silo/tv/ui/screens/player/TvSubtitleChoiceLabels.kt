@@ -10,6 +10,7 @@ import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.player.aiSubtitleKind
 import org.siloserver.silo.player.aiSubtitleSourceLabel
 import org.siloserver.silo.player.trackLanguageDisplayName
+import org.siloserver.silo.player.trackLanguageEnglishName
 import java.util.Locale
 
 /**
@@ -31,7 +32,7 @@ internal fun subtitleChoiceLabel(row: PlayerSubtitleInfo, position: Int, resourc
     // trackLanguageDisplayName handles ISO 639-2/B codes ("ger","fre","dut")
     // that Locale(code) alone cannot; fall back to the uppercased raw code.
     val language = row.language?.trim()?.takeIf { it.isNotBlank() }
-        ?.let { trackLanguageDisplayName(it) ?: it.uppercase(Locale.US) }
+        ?.let { trackLanguageDisplayName(it, LocaleFormat.interfaceLocale()) ?: it.uppercase(Locale.US) }
     val format = subtitleFormatShortName(
         row.codec?.trim()?.takeIf { it.isNotBlank() }
             ?: row.url.substringBefore('?').substringBefore('#').substringAfterLast('.', ""),
@@ -91,6 +92,8 @@ private fun meaningfulSubtitleRowTitle(
     if (label.length > 28 || '[' in label || SUBTITLE_FILENAME_SUFFIXES.any(lowered::endsWith)) return null
     if (lowered in GENERIC_SUBTITLE_LABELS) return null
     if (language != null && lowered == language.lowercase(Locale.US)) return null
+    // Server labels name the language in English, whatever the interface shows.
+    if (lowered == trackLanguageEnglishName(row.language)?.lowercase(Locale.US)) return null
     if (row.language != null && lowered == row.language!!.lowercase(Locale.US)) return null
     if (format != null && lowered == format.lowercase(Locale.US)) return null
     if (row.codec != null && lowered == row.codec!!.lowercase(Locale.US)) return null
@@ -110,7 +113,7 @@ private val SUBTITLE_FILENAME_SUFFIXES = listOf(
  */
 internal fun audioChoiceLabel(entry: PlayerTrackEntry, position: Int, resources: Resources): String {
     val language = entry.language?.trim()?.takeIf { it.isNotBlank() }
-        ?.let { trackLanguageDisplayName(it) ?: it.uppercase(Locale.US) }
+        ?.let { trackLanguageDisplayName(it, LocaleFormat.interfaceLocale()) ?: it.uppercase(Locale.US) }
     val codec = audioFormatShortName(entry.codecOrMime)
     val layout = audioChannelLayoutLabel(entry.channelCount, resources)
     val parts = listOfNotNull(language, codec, layout)
@@ -146,12 +149,14 @@ internal fun meaningfulAudioTrackTitle(
 ): String? {
     val original = displayLabel.trim().takeIf { it.isNotBlank() } ?: return null
     val lower = original.lowercase(Locale.US)
+    // Track titles name the language in English ("English", "eng"), whatever [language] shows.
+    val englishLanguage = trackLanguageEnglishName(rawLanguage)
     if (AUDIO_FILENAME_SUFFIXES.any(lower::endsWith)) return null
     if (lower.matches(Regex("\\d+"))) return null
     if (lower.matches(Regex("(?:audio\\s+)?track\\s*\\d+"))) return null
     if (lower.matches(Regex("[a-z]{2,3}")) &&
-        language != null &&
-        trackLanguageDisplayName(lower)?.equals(language, ignoreCase = true) == true
+        englishLanguage != null &&
+        trackLanguageEnglishName(lower)?.equals(englishLanguage, ignoreCase = true) == true
     ) {
         return null
     }
@@ -161,6 +166,7 @@ internal fun meaningfulAudioTrackTitle(
     // legitimate titles (for example AAC inside "Isaac Commentary").
     listOfNotNull(
         language,
+        englishLanguage,
         rawLanguage?.trim(),
         codec,
         rawCodecOrMime?.substringAfterLast('/')?.trim(),
@@ -181,12 +187,12 @@ internal fun meaningfulAudioTrackTitle(
         }
     // A raw two/three-letter alias can differ from the selected track's raw
     // code ("en" metadata with an "eng" server label). Remove it only when
-    // both codes resolve to the same localized language name.
-    if (language != null) {
+    // both codes resolve to the same language.
+    if (englishLanguage != null) {
         qualifier = qualifier.replace(
             Regex("(?<![\\p{L}\\p{N}])[a-z]{2,3}(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE),
         ) { match ->
-            if (trackLanguageDisplayName(match.value)?.equals(language, ignoreCase = true) == true) {
+            if (trackLanguageEnglishName(match.value)?.equals(englishLanguage, ignoreCase = true) == true) {
                 " "
             } else {
                 match.value

@@ -7,10 +7,12 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import java.util.Locale
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.player.subtitleTrackLabelParts
 import org.siloserver.silo.player.trackLanguageDisplayName
+import org.siloserver.silo.player.trackLanguageEnglishName
 
 /**
  * The catalog words a track label is built from, resolved in composition by
@@ -28,6 +30,8 @@ internal class TrackLabelStrings(
     val server: String,
     val mono: String,
     val stereo: String,
+    /** The interface language, which names track languages. */
+    val languageLocale: Locale = LocaleFormat.interfaceLocale(),
 )
 
 @Composable
@@ -65,10 +69,15 @@ internal data class TrackPresentation(
  * detail.
  */
 internal fun audioTrackPresentation(track: AudioTrack, index: Int, strings: TrackLabelStrings): TrackPresentation {
-    val language = trackLanguageDisplayName(track.language)
+    val language = trackLanguageDisplayName(track.language, strings.languageLocale)
+    // A title that only names the language, as the server writes it ("English") or as shown.
+    val englishLanguage = trackLanguageEnglishName(track.language)
     val descriptor = track.title
         ?.trim()
-        ?.takeIf { it.isNotBlank() && !isCodecDescription(it) && !it.equals(language, ignoreCase = true) }
+        ?.takeIf {
+            it.isNotBlank() && !isCodecDescription(it) &&
+                !it.equals(language, ignoreCase = true) && !it.equals(englishLanguage, ignoreCase = true)
+        }
     val title = language ?: descriptor ?: strings.audioNumbered(index + 1)
     val detail = listOfNotNull(
         descriptor.takeIf { language != null },
@@ -90,6 +99,7 @@ internal fun subtitleTrackPresentation(
         language = sub.language,
         codecOrMime = sub.codec,
         isForced = sub.forced == true,
+        languageLocale = strings.languageLocale,
     )
     val title = parts.languageName ?: parts.descriptor ?: strings.subtitleNumbered(index + 1)
     val chips = buildList {

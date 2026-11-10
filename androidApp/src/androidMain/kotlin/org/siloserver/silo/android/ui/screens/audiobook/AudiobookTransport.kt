@@ -20,6 +20,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import org.siloserver.silo.android.ui.components.LeftToRight
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,91 +69,93 @@ fun AudiobookTransport(
             Modifier.fillMaxWidth()
         }
 
-        Row(
-            modifier = rowModifier,
-            horizontalArrangement = Arrangement.spacedBy(
-                layout.spacingDp.dp,
-                Alignment.CenterHorizontally,
-            ),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (hasChapters) {
+        LeftToRight {
+            Row(
+                modifier = rowModifier,
+                horizontalArrangement = Arrangement.spacedBy(
+                    layout.spacingDp.dp,
+                    Alignment.CenterHorizontally,
+                ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (hasChapters) {
+                    IconButton(
+                        onClick = onPrevChapter,
+                        enabled = enabled,
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.SkipPrevious,
+                            contentDescription = stringResource(CommonR.string.audiobook_transport_previousChapter),
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+                }
                 IconButton(
-                    onClick = onPrevChapter,
+                    onClick = onSkipBack,
                     enabled = enabled,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(50.dp),
                 ) {
-                    Icon(
-                        Icons.Filled.SkipPrevious,
-                        contentDescription = stringResource(CommonR.string.audiobook_transport_previousChapter),
+                    SeekIntervalIcon(
+                        forward = false,
+                        seconds = skipBackSeconds,
+                        contentDescription = pluralStringResource(CommonR.plurals.player_skip_back, skipBackSeconds, skipBackSeconds),
                         tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(24.dp),
+                        modifier = Modifier.size(32.dp),
                     )
                 }
-            }
-            IconButton(
-                onClick = onSkipBack,
-                enabled = enabled,
-                modifier = Modifier.size(50.dp),
-            ) {
-                SeekIntervalIcon(
-                    forward = false,
-                    seconds = skipBackSeconds,
-                    contentDescription = pluralStringResource(CommonR.plurals.player_skip_back, skipBackSeconds, skipBackSeconds),
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(32.dp),
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .size(82.dp)
-                    .shadow(
-                        elevation = 16.dp,
-                        shape = CircleShape,
-                        ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                        spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                    )
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
-                    .clickable(enabled = enabled, onClick = onTogglePlay),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (isPlaying) {
-                        stringResource(CommonR.string.player_audio_pause)
-                    } else {
-                        stringResource(CommonR.string.player_audio_play)
-                    },
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(32.dp),
-                )
-            }
-            IconButton(
-                onClick = onSkipForward,
-                enabled = enabled,
-                modifier = Modifier.size(50.dp),
-            ) {
-                SeekIntervalIcon(
-                    forward = true,
-                    seconds = skipForwardSeconds,
-                    contentDescription = pluralStringResource(CommonR.plurals.player_skip_forward, skipForwardSeconds, skipForwardSeconds),
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(32.dp),
-                )
-            }
-            if (hasChapters) {
-                IconButton(
-                    onClick = onNextChapter,
-                    enabled = enabled,
-                    modifier = Modifier.size(48.dp),
+                Box(
+                    modifier = Modifier
+                        .size(82.dp)
+                        .shadow(
+                            elevation = 16.dp,
+                            shape = CircleShape,
+                            ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                            spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                        )
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary)
+                        .clickable(enabled = enabled, onClick = onTogglePlay),
+                    contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        Icons.Filled.SkipNext,
-                        contentDescription = stringResource(CommonR.string.audiobook_transport_nextChapter),
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(24.dp),
+                        imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (isPlaying) {
+                            stringResource(CommonR.string.player_audio_pause)
+                        } else {
+                            stringResource(CommonR.string.player_audio_play)
+                        },
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(32.dp),
                     )
+                }
+                IconButton(
+                    onClick = onSkipForward,
+                    enabled = enabled,
+                    modifier = Modifier.size(50.dp),
+                ) {
+                    SeekIntervalIcon(
+                        forward = true,
+                        seconds = skipForwardSeconds,
+                        contentDescription = pluralStringResource(CommonR.plurals.player_skip_forward, skipForwardSeconds, skipForwardSeconds),
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(32.dp),
+                    )
+                }
+                if (hasChapters) {
+                    IconButton(
+                        onClick = onNextChapter,
+                        enabled = enabled,
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.SkipNext,
+                            contentDescription = stringResource(CommonR.string.audiobook_transport_nextChapter),
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
                 }
             }
         }

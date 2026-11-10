@@ -7,8 +7,6 @@ import android.view.View
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.unit.LayoutDirection
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.apiv2.Problem
 import org.siloserver.silo.network.apiv2.ProblemText
@@ -107,7 +105,7 @@ object ServerText {
 fun sectionTitle(section: ResolvedSection): String {
     LocalConfiguration.current // recompose on a language change
     val context = LocalContext.current
-    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val rtl = isRightToLeftText()
     return context.sectionTitle(section, rtl)
 }
 

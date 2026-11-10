@@ -10,8 +10,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.unit.LayoutDirection
 import org.siloserver.silo.model.settings.AppLanguage
 import org.siloserver.silo.network.ApiResult
 import java.time.LocalDate
@@ -25,7 +23,7 @@ fun uiText(@StringRes id: Int, vararg args: Any): UiText = UiText.Res(id, args.t
 @Composable
 fun UiText.text(): String {
     rememberAppContext(LocalContext.current)
-    return resolve(localizedResources(), rtl = LocalLayoutDirection.current == LayoutDirection.Rtl)
+    return resolve(localizedResources(), rtl = isRightToLeftText())
 }
 
 /** [text] outside composition, such as for a toast. */

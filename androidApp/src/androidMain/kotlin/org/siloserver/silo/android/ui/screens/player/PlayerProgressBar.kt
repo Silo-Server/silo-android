@@ -64,6 +64,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
+import org.siloserver.silo.android.ui.components.LeftToRight
 import org.siloserver.silo.android.ui.util.formatClockTime
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.catalog.TimeRange
@@ -101,6 +102,34 @@ fun PlayerProgressBar(
     onScrubbingChange: (Boolean) -> Unit = {},
     thumbnail: ImageBitmap? = null,
     onScrubTarget: (Double?) -> Unit = {},
+) {
+    // A timeline runs left to right in every language: the bar is drawn and
+    // hit-tested from the left edge, so its times sit the same way round.
+    LeftToRight {
+        ProgressBarContent(
+            position, duration, onSeek, modifier, bufferedPosition, enabled, chapters, intro, credits, recap,
+            preview, showTimes, onScrubbingChange, thumbnail, onScrubTarget,
+        )
+    }
+}
+
+@Composable
+private fun ProgressBarContent(
+    position: Double,
+    duration: Double,
+    onSeek: (Double) -> Unit,
+    modifier: Modifier,
+    bufferedPosition: Double,
+    enabled: Boolean,
+    chapters: List<VersionChapter>,
+    intro: TimeRange?,
+    credits: TimeRange?,
+    recap: TimeRange?,
+    preview: TimeRange?,
+    showTimes: Boolean,
+    onScrubbingChange: (Boolean) -> Unit,
+    thumbnail: ImageBitmap?,
+    onScrubTarget: (Double?) -> Unit,
 ) {
     var isSeeking by remember { mutableStateOf(false) }
     var seekPosition by remember { mutableDoubleStateOf(0.0) }

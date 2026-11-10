@@ -480,6 +480,8 @@ internal fun WatchPartyButton(
     kind: WatchPartyButtonKind = WatchPartyButtonKind.Primary,
     enabled: Boolean = true,
     icon: ImageVector? = null,
+    // A caller that fixes the button's height keeps it to one line.
+    maxLines: Int = 2,
     trailing: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val shape = RoundedCornerShape(14.dp)
@@ -510,13 +512,16 @@ internal fun WatchPartyButton(
             Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
         }
+        // Two centred lines, so a longer translation such as "Iniciar una Watch
+        // Party con votación de todos" wraps instead of ellipsizing.
         Text(
             text,
             fontSize = 17.sp,
             fontWeight = FontWeight.SemiBold,
             color = foreground,
-            maxLines = 1,
+            maxLines = maxLines,
             overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
         )
         trailing?.invoke(this)
     }

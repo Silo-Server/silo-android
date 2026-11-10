@@ -44,6 +44,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.android.ui.components.LeftToRight
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
 import org.siloserver.silo.common.R as CommonR
 import coil3.compose.AsyncImage
@@ -133,34 +134,36 @@ fun SiloCastOverlay(
                 )
             }
 
-            if (castState.duration > 0.0) {
-                // Real seek bar, not a passive indicator: drag to scrub, seek is
-                // sent to the receiver on release. While dragging, the thumb and
-                // the time readout follow the finger instead of the 1s remote
-                // progress ticks.
-                var scrubFraction by remember { mutableStateOf<Float?>(null) }
-                val liveFraction = (castState.position / castState.duration).toFloat().coerceIn(0f, 1f)
-                Slider(
-                    value = scrubFraction ?: liveFraction,
-                    onValueChange = { scrubFraction = it },
-                    onValueChangeFinished = {
-                        scrubFraction?.let { onSeek(it.toDouble() * castState.duration) }
-                        scrubFraction = null
-                    },
-                    colors = SliderDefaults.colors(
-                        thumbColor = Color.White,
-                        activeTrackColor = Color.White,
-                        inactiveTrackColor = Color.White.copy(alpha = 0.3f),
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                val shownPosition = scrubFraction?.let { it.toDouble() * castState.duration }
-                    ?: castState.position
-                Text(
-                    text = "${formatTime(shownPosition)} / ${formatTime(castState.duration)}", // i18n-ignore
-                    color = Color.White.copy(alpha = 0.7f),
-                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                )
+            LeftToRight {
+                if (castState.duration > 0.0) {
+                    // Real seek bar, not a passive indicator: drag to scrub, seek is
+                    // sent to the receiver on release. While dragging, the thumb and
+                    // the time readout follow the finger instead of the 1s remote
+                    // progress ticks.
+                    var scrubFraction by remember { mutableStateOf<Float?>(null) }
+                    val liveFraction = (castState.position / castState.duration).toFloat().coerceIn(0f, 1f)
+                    Slider(
+                        value = scrubFraction ?: liveFraction,
+                        onValueChange = { scrubFraction = it },
+                        onValueChangeFinished = {
+                            scrubFraction?.let { onSeek(it.toDouble() * castState.duration) }
+                            scrubFraction = null
+                        },
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color.White,
+                            activeTrackColor = Color.White,
+                            inactiveTrackColor = Color.White.copy(alpha = 0.3f),
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    val shownPosition = scrubFraction?.let { it.toDouble() * castState.duration }
+                        ?: castState.position
+                    Text(
+                        text = "${formatTime(shownPosition)} / ${formatTime(castState.duration)}", // i18n-ignore
+                        color = Color.White.copy(alpha = 0.7f),
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
 
             // Icon-only transport row: five labeled buttons overflow the width
@@ -170,33 +173,42 @@ fun SiloCastOverlay(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = onSkipBack) {
-                    SeekIntervalIcon(
-                        forward = false,
-                        seconds = skipBackSeconds,
-                        contentDescription = pluralStringResource(CommonR.plurals.player_skip_back, skipBackSeconds, skipBackSeconds),
-                        tint = Color.White,
-                        modifier = Modifier.size(32.dp),
-                    )
-                }
+                // Only the transport stays left to right; the subtitle menu
+                // and Stop follow the language.
+                LeftToRight {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = onSkipBack) {
+                            SeekIntervalIcon(
+                                forward = false,
+                                seconds = skipBackSeconds,
+                                contentDescription = pluralStringResource(CommonR.plurals.player_skip_back, skipBackSeconds, skipBackSeconds),
+                                tint = Color.White,
+                                modifier = Modifier.size(32.dp),
+                            )
+                        }
 
-                IconButton(onClick = onPlayPause, modifier = Modifier.size(64.dp)) {
-                    Icon(
-                        imageVector = if (castState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = stringResource(if (castState.isPlaying) CommonR.string.player_controls_pause else CommonR.string.common_play),
-                        tint = Color.White,
-                        modifier = Modifier.size(48.dp),
-                    )
-                }
+                        IconButton(onClick = onPlayPause, modifier = Modifier.size(64.dp)) {
+                            Icon(
+                                imageVector = if (castState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = stringResource(if (castState.isPlaying) CommonR.string.player_controls_pause else CommonR.string.common_play),
+                                tint = Color.White,
+                                modifier = Modifier.size(48.dp),
+                            )
+                        }
 
-                IconButton(onClick = onSkipForward) {
-                    SeekIntervalIcon(
-                        forward = true,
-                        seconds = skipForwardSeconds,
-                        contentDescription = pluralStringResource(CommonR.plurals.player_skip_forward, skipForwardSeconds, skipForwardSeconds),
-                        tint = Color.White,
-                        modifier = Modifier.size(32.dp),
-                    )
+                        IconButton(onClick = onSkipForward) {
+                            SeekIntervalIcon(
+                                forward = true,
+                                seconds = skipForwardSeconds,
+                                contentDescription = pluralStringResource(CommonR.plurals.player_skip_forward, skipForwardSeconds, skipForwardSeconds),
+                                tint = Color.White,
+                                modifier = Modifier.size(32.dp),
+                            )
+                        }
+                    }
                 }
 
                 CastSubtitleMenuButton(
