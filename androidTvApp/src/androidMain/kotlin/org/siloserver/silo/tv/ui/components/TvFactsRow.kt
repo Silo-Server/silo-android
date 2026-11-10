@@ -51,6 +51,9 @@ sealed class TvHeroFactToken {
         val givesWayFirst: Boolean = false,
     ) : TvHeroFactToken()
     data class ResToken(@StringRes val id: Int, val args: List<Any> = emptyList()) : TvHeroFactToken()
+
+    /** A number such as a release year, written in the app's digits when drawn (D77). */
+    data class NumberToken(val value: LocaleInteger) : TvHeroFactToken()
     data class ExternalRating(val rating: DisplayRating) : TvHeroFactToken()
     data class Rating(val value: String) : TvHeroFactToken()
     data class Chip(val value: String) : TvHeroFactToken()
@@ -119,6 +122,12 @@ private fun FactToken(token: TvHeroFactToken, style: TextStyle) {
     when (token) {
         is TvHeroFactToken.TextToken -> Text(
             text = token.value,
+            style = style,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        is TvHeroFactToken.NumberToken -> Text(
+            text = token.value.format(currentNumberLocale()),
             style = style,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

@@ -187,6 +187,9 @@ import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
+import org.siloserver.silo.tv.ui.components.bidiIsolated
+import org.siloserver.silo.common.i18n.isRightToLeftText
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 private const val CONTROLS_AUTO_HIDE_MS = 5_000L
 // Pre-revision-9 relative seeks: 10s back, 30s forward, matching tvOS
@@ -3330,13 +3333,13 @@ internal fun tvPlayerEyebrow(state: TvPlayerViewModel.UiState): String? {
     if (series != null) {
         val code = state.seasonNumber?.let { season ->
             state.episodeNumber?.let {
-                stringResource(CommonR.string.player_eyebrow_episode, LocaleFormat.integer(season), LocaleFormat.integer(it))
+                stringResource(CommonR.string.player_eyebrow_episode, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(it))
             }
         }
         return listOfNotNull(series, code).joinToString(" · ")
     }
     val kind = stringResource(CommonR.string.player_eyebrow_movie).takeIf { state.contentType == "movie" }
-    return listOfNotNull(kind, state.year?.toString()).joinToString(" · ").ifBlank { null }
+    return listOfNotNull(kind, state.year?.let { LocaleFormat.integer(it, currentNumberLocale()) }).joinToString(" · ").ifBlank { null }
 }
 
 @Composable
@@ -3644,8 +3647,8 @@ private fun TvPlayerNextUpOverlay(
                                     androidx.tv.material3.Text(
                                         text = stringResource(
                                             CommonR.string.upNext_episodeCode,
-                                            LocaleFormat.integer(nextEpisode.seasonNumber),
-                                            LocaleFormat.integer(nextEpisode.episodeNumber),
+                                            LocaleFormat.codeNumber(nextEpisode.seasonNumber),
+                                            LocaleFormat.codeNumber(nextEpisode.episodeNumber),
                                         ),
                                         color = Color.White.copy(alpha = 0.62f),
                                         style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
@@ -3986,7 +3989,7 @@ private fun TvCountdownRing(seconds: Int, totalSeconds: Int) {
             )
         }
         androidx.tv.material3.Text(
-            text = "$seconds", // i18n-ignore
+            text = LocaleFormat.integer(seconds, currentNumberLocale()),
             color = Color.White,
             style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
         )
@@ -4609,9 +4612,9 @@ private fun tvPlayerErrorText(error: String, errorRes: TvPlayerErrorRes?): Strin
 private fun tvOnDeckSubtitle(item: TvOnDeckItem): String? {
     val season = item.seasonNumber
     val episode = item.episodeNumber
-    if (season == null || episode == null) return item.subtitle
-    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.integer(season), LocaleFormat.integer(episode))
-    return code + (item.subtitle?.let { " — $it" } ?: "")
+    if (season == null || episode == null) return item.year?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: item.subtitle
+    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode))
+    return code + (item.subtitle?.let { " — ${bidiIsolated(it, isRightToLeftText())}" } ?: "")
 }
 
 /**

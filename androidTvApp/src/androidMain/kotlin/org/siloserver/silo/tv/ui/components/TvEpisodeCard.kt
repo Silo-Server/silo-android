@@ -48,6 +48,8 @@ import org.siloserver.silo.tv.ui.theme.ProgressTrack
 import org.siloserver.silo.tv.ui.theme.RowDimens
 import org.siloserver.silo.tv.ui.theme.cardScaled
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /**
  * 16:9 thumbnail card for "Continue Watching", "Next Up", and episode list rows.
@@ -203,7 +205,7 @@ fun TvEpisodeCard(
             val secondaryLine = when {
                 seriesTitle != null -> tvEpisodeTitleLine(seasonNumber, episodeNumber, title)
                 episodeTag != null -> episodeTag
-                else -> year?.toString()
+                else -> year?.let { LocaleFormat.integer(it, currentNumberLocale()) }
             }
             if (secondaryLine != null) {
                 Text(

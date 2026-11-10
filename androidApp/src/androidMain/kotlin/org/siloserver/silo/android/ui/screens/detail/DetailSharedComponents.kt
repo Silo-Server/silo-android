@@ -111,6 +111,7 @@ import org.siloserver.silo.model.catalog.titleRatings
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
 import org.siloserver.silo.model.settings.EpisodeSpoilers
+import java.util.Locale
 
 // ── Tokens ────────────────────────────────────────────────────
 
@@ -1686,7 +1687,7 @@ object HeroMetadata {
         detail: ItemDetail,
         runtimeMinutes: Int = detail.runtime,
     ): List<String> = buildList {
-        if (detail.year > 0) add(detail.year.toString())
+        if (detail.year > 0) add(LocaleFormat.integer(detail.year))
         if (runtimeMinutes > 0) add(runtimeText(resources, runtimeMinutes))
     }
 
@@ -1695,7 +1696,7 @@ object HeroMetadata {
         val seasons = detail.seasonCount?.takeIf { it > 0 }
             ?.let { pluralStringResource(CommonR.plurals.catalog_seasons, it, it) }
         return buildList {
-            if (detail.year > 0) add(detail.year.toString())
+            if (detail.year > 0) add(LocaleFormat.integer(detail.year))
             seasons?.let { add(it) }
         }
     }
@@ -1717,7 +1718,7 @@ internal fun phoneSeasonNumberLabel(resources: Resources, seasonNumber: Int): St
 
 /** "S1·E2", the short episode code on play buttons and party subtitles. */
 internal fun episodeCode(resources: Resources, seasonNumber: Int, episodeNumber: Int): String =
-    resources.getString(CommonR.string.detail_episodeCode, LocaleFormat.integer(seasonNumber), LocaleFormat.integer(episodeNumber))
+    resources.getString(CommonR.string.detail_episodeCode, LocaleFormat.codeNumber(seasonNumber), LocaleFormat.codeNumber(episodeNumber))
 
 // ── Play label helper ─────────────────────────────────────────
 
@@ -1739,7 +1740,8 @@ fun computePlayLabel(
         val e = detail.episodeNumber
         if (s != null && e != null) {
             val code = if (s == 0) {
-                resources.getString(CommonR.string.detail_episodeCodeNoSeason, e)
+                // A `%d` code read without arguments: resources would print the app's digits (D75), codes stay ASCII (D78).
+                String.format(Locale.ROOT, resources.getString(CommonR.string.detail_episodeCodeNoSeason), e)
             } else {
                 episodeCode(resources, s, e)
             }

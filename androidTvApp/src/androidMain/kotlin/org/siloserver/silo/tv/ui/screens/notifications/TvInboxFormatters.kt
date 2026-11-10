@@ -8,6 +8,7 @@ import org.siloserver.silo.model.notifications.NotificationRow
 import org.siloserver.silo.model.notifications.NotificationType
 import java.time.Instant
 import java.time.ZoneId
+import android.view.View
 import org.siloserver.silo.tv.ui.components.bidiIsolated
 
 /**
@@ -44,11 +45,12 @@ internal fun TvInboxText.resolve(resources: Resources): String = when (this) {
     is TvInboxText.Plain -> text
     is TvInboxText.Resource -> resources.getString(id, *args.toTypedArray())
     is TvInboxText.Episode -> {
-        val tag = season?.let { s -> episode?.let { e -> resources.getString(CommonR.string.catalog_episodeTag, LocaleFormat.integer(s), LocaleFormat.integer(e)) } }
+        val tag = season?.let { s -> episode?.let { e -> resources.getString(CommonR.string.catalog_episodeTag, LocaleFormat.codeNumber(s), LocaleFormat.codeNumber(e)) } }
+        val rtl = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
         when {
             tag == null -> title.orEmpty()
             title == null -> tag
-            else -> "$tag • ${bidiIsolated(title)}"
+            else -> "$tag • ${bidiIsolated(title, rtl)}"
         }
     }
     is TvInboxText.Date -> formatAbsoluteDate(instant)

@@ -37,6 +37,7 @@ import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.catalog.VersionChapter
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /**
  * Chapter picker. Number, title, start and length line up in columns; the
@@ -153,7 +154,7 @@ private fun ChapterRow(
                     )
                 } else {
                     Text(
-                        text = number.toString().padStart(2, '0'),
+                        text = LocaleFormat.integer(number, currentNumberLocale(), minDigits = 2),
                         style = PlayerType.Value.copy(fontWeight = FontWeight.SemiBold),
                     )
                 }

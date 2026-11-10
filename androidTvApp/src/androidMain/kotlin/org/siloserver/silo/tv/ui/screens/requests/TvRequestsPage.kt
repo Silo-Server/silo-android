@@ -113,6 +113,7 @@ import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.TvSkyline
 import org.siloserver.silo.viewmodel.MyRequestsViewModel
 import org.siloserver.silo.viewmodel.RequestsViewModel
+import org.siloserver.silo.common.i18n.LocaleInteger
 
 /**
  * The Requests page, opened from the profile menu, in the Skyline layout
@@ -586,7 +587,7 @@ internal data class TvRequestPreview(
                     statusText = progress?.longText?.text(resources)
                 }
             }
-            year?.takeIf { it > 0 }?.let { meta += TvHeroFactToken.TextToken(it.toString()) }
+            year?.takeIf { it > 0 }?.let { meta += TvHeroFactToken.NumberToken(LocaleInteger(it)) }
             meta += TvHeroFactToken.TextToken(resources.getString(RequestRowCopy.mediaTypeLabel(mediaType)))
             when (item) {
                 is TvRequestItem.Record -> RequestRowCopy.day(item.record.createdAt)?.let {

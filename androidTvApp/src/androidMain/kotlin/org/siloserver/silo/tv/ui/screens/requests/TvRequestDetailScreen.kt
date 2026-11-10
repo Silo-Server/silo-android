@@ -91,6 +91,7 @@ import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.viewmodel.RequestDetailUiState
 import org.siloserver.silo.viewmodel.RequestDetailViewModel
 import org.siloserver.silo.viewmodel.RequestPrimaryAction
+import org.siloserver.silo.common.i18n.LocaleInteger
 
 /**
  * TV request detail on the same page surface and hero as a library title
@@ -537,7 +538,7 @@ private fun SummaryField(label: String, value: String, dot: Color? = null) {
 /** `2026 · 2h 25m · TMDB 7.9`, with genres after it as source tokens. */
 @Composable
 private fun RequestMediaDetail.factTokens(): List<TvHeroFactToken> = buildList {
-    year?.takeIf { it > 0 }?.let { add(TvHeroFactToken.TextToken(it.toString())) }
+    year?.takeIf { it > 0 }?.let { add(TvHeroFactToken.NumberToken(LocaleInteger(it))) }
     if (mediaType == RequestMediaType.Series) {
         numberOfSeasons?.takeIf { it > 0 }?.let {
             add(TvHeroFactToken.TextToken(pluralStringResource(CommonR.plurals.requests_detail_seasons, it, it)))

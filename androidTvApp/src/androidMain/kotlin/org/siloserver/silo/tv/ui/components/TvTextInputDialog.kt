@@ -37,6 +37,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -116,7 +117,7 @@ fun TvTextInputDialog(
                         },
                         label = { Text(label) },
                         singleLine = true,
-                        textStyle = androidx.compose.material3.LocalTextStyle.current.copy(textDirection = TextDirection.Content),
+                        textStyle = androidx.compose.material3.LocalTextStyle.current.copy(textDirection = TextDirection.Content, textAlign = TextAlign.Left),
                         enabled = !isBusy,
                         visualTransformation = if (keyboardType.isPasswordKeyboardType()) {
                             PasswordVisualTransformation()

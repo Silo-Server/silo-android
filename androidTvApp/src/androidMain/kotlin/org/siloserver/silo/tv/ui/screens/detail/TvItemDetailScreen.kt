@@ -169,6 +169,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 internal data class TvSeriesDetailRedirect(
     val seriesContentId: String,
@@ -2588,7 +2589,7 @@ private fun TvAudiobookNarrationsSection(
                 TvAudiobookDetailActionRow(
                     title = narration.title,
                     subtitle = narration.narrators.joinToString(", ").takeIf { it.isNotBlank() },
-                    trailing = narration.year?.takeIf { it > 0 }?.toString(),
+                    trailing = narration.year?.takeIf { it > 0 }?.let { LocaleFormat.integer(it, currentNumberLocale()) },
                     onClick = { onNarrationSelected(narration) },
                     upFocusRequester = if (index == 0) firstRowUpFocusRequester else null,
                     onDirectionUp = if (index == 0) onDirectionUp else null,
@@ -2846,8 +2847,8 @@ private fun playButtonLabel(
     resumePosition: Double?,
 ): String {
     if (isSeriesOrSeason && nextUp != null) {
-        val season = LocaleFormat.integer(nextUp.seasonNumber)
-        val episode = LocaleFormat.integer(nextUp.episodeNumber)
+        val season = LocaleFormat.codeNumber(nextUp.seasonNumber)
+        val episode = LocaleFormat.codeNumber(nextUp.episodeNumber)
         return when {
             seriesContainer && hasResume -> resources.getString(CommonR.string.detail_resumeEpisode, season, episode)
             seriesContainer -> resources.getString(CommonR.string.detail_playEpisode, season, episode)

@@ -60,6 +60,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalDensity
@@ -99,6 +100,7 @@ import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.i18n.localizedResources
 import androidx.compose.ui.platform.LocalConfiguration
 import java.util.Locale
+import org.siloserver.silo.common.i18n.isRightToLeftText
 
 /** Includes the still, the two-line caption, and vertical rail padding from the first frame. */
 @Composable
@@ -579,10 +581,13 @@ private fun TvDetailEpisodeCard(
         // once per episode.
         val resources = localizedResources()
         val configuration = LocalConfiguration.current
-        val title = remember(episode, configuration) {
-            EpisodeCardCaption.title(episode.copy(title = episode.title?.trim()?.let(::bidiIsolated))).text(resources)
-        }
         val dateLocale = currentFormatLocale()
+        // A right-to-left interface isolates the title as a catalog placeholder (D28).
+        val rtl = isRightToLeftText()
+        val title = remember(episode, configuration) {
+            val episodeForCaption = if (rtl) episode else episode.copy(title = episode.title?.trim()?.let { bidiIsolated(it, false) })
+            EpisodeCardCaption.title(episodeForCaption).text(resources)
+        }
         val metadata = remember(episode, configuration, dateLocale) {
             EpisodeCardCaption.metadata(
                 airDate = abbreviatedEpisodeDate(episode.airDate, dateLocale),
@@ -647,6 +652,7 @@ private val SeriesCaptionTitleStyle = TextStyle(
     lineHeight = 14.sp,
     fontWeight = FontWeight.SemiBold,
     textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
 )
 private val SeriesCaptionMetadataStyle = TextStyle(
     fontFamily = InterFamily,
@@ -660,6 +666,7 @@ private val CaptionTitleStyle = TextStyle(
     lineHeight = 22.sp,
     fontWeight = FontWeight.SemiBold,
     textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
 )
 private val CaptionMetadataStyle = TextStyle(
     fontFamily = InterFamily,
@@ -673,6 +680,7 @@ private val CaptionOverviewStyle = TextStyle(
     lineHeight = 20.sp,
     fontWeight = FontWeight.Normal,
     textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
 )
 
 // Shared with the hero facts row (tvOS parity), so the card dates agree with it.

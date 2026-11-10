@@ -73,6 +73,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -89,6 +90,8 @@ import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.components.tvShowImeOnSelect
 import org.siloserver.silo.tv.ui.components.tvSkylinePanelChrome
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /**
  * Sort + Filter controls for the library Browse grid, 1:1 with tvOS
@@ -191,7 +194,7 @@ fun TvBrowseControlRow(
                         .padding(horizontal = 6.dp, vertical = 1.dp),
                 ) {
                     Text(
-                        text = filterCount.toString(),
+                        text = LocaleFormat.integer(filterCount, currentNumberLocale()),
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
@@ -715,7 +718,7 @@ private fun FacetValuesScreen(
         // tvShowImeOnSelect: a plain text field keeps vertical D-pad for caret
         // moves, so focus could never reach the matches below it.
         OutlinedTextField(value = query, onValueChange = { query = it }, singleLine = true,
-            textStyle = androidx.compose.material3.LocalTextStyle.current.copy(textDirection = TextDirection.Content),
+            textStyle = androidx.compose.material3.LocalTextStyle.current.copy(textDirection = TextDirection.Content, textAlign = TextAlign.Left),
             placeholder = {
                 androidx.compose.material3.Text(stringResource(CommonR.string.filters_searchFacet, stringResource(facet.titleRes)))
             },

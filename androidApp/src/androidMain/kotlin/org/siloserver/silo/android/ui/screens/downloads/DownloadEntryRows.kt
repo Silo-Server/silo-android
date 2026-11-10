@@ -56,6 +56,7 @@ import org.siloserver.silo.model.download.DownloadMediaType
 import org.siloserver.silo.model.download.DownloadStatus
 import org.siloserver.silo.model.ebook.ebookFormatKey
 import org.siloserver.silo.model.ebook.isInAppReadableEbookFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 internal enum class DownloadRowAction {
     None,
@@ -344,7 +345,7 @@ private fun SingleRow(
     val ebookDetail = if (item.mediaType == DownloadMediaType.Ebook) {
         listOfNotNull(item.displayName, item.container?.uppercase()).joinToString(" · ")
     } else {
-        storedDownloadSubtitle(item.subtitle)
+        storedDownloadSubtitle(item.subtitle, item.mediaType)
     }
     val title = storedDownloadTitle(item.title, item.mediaType)
     val rowAction = downloadRowAction(item)
@@ -544,7 +545,7 @@ private fun downloadEntrySubtitle(entry: DownloadEntry): String = when (entry) {
         LocaleFormat.integer(entry.completedCount),
         LocaleFormat.integer(entry.books.size),
     )
-    is DownloadEntry.Single -> storedDownloadSubtitle(entry.subtitle).orEmpty()
+    is DownloadEntry.Single -> storedDownloadSubtitle(entry.subtitle, entry.item.mediaType).orEmpty()
 }
 
 /**
@@ -560,9 +561,16 @@ private fun storedDownloadTitle(stored: String, mediaType: DownloadMediaType): S
         stored
     }
 
+/**
+ * A stored subtitle for display: the episode fallback translated, and a
+ * movie's, which is its year as digits (D44), in the app's digits (D77).
+ */
 @Composable
-private fun storedDownloadSubtitle(stored: String?): String? =
-    if (stored == DownloadEnqueuer.UNKNOWN_EPISODE_SUBTITLE) stringResource(CommonR.string.downloads_entry_episodeFallback) else stored
+private fun storedDownloadSubtitle(stored: String?, mediaType: DownloadMediaType): String? = when {
+    stored == DownloadEnqueuer.UNKNOWN_EPISODE_SUBTITLE -> stringResource(CommonR.string.downloads_entry_episodeFallback)
+    mediaType == DownloadMediaType.Movie -> stored?.toIntOrNull()?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: stored
+    else -> stored
+}
 
 /**
  * Common chrome for the Series + Season aggregate rows: poster, title,

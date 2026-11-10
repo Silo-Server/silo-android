@@ -133,6 +133,7 @@ import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
 import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 // Geometry follows the options mockup on a 960×540dp screen: a capsule tab
 // rail 24dp from the top, and a smoked panel 10dp under it, 780dp (81%) wide
@@ -862,7 +863,7 @@ private fun HudInfoPane(
     chapters: List<VersionChapter>,
 ) {
     val episodeTag = if (seasonNumber != null && episodeNumber != null) {
-        stringResource(CommonR.string.catalog_episodeCaption, LocaleFormat.integer(seasonNumber), LocaleFormat.integer(episodeNumber))
+        stringResource(CommonR.string.catalog_episodeCaption, LocaleFormat.codeNumber(seasonNumber), LocaleFormat.codeNumber(episodeNumber))
     } else {
         null
     }
@@ -2713,7 +2714,7 @@ private fun HudChapterRow(
                     )
                 } else {
                     Text(
-                        text = number.toString().padStart(2, '0'),
+                        text = LocaleFormat.integer(number, currentNumberLocale(), minDigits = 2),
                         style = TvPlayerType.Figures.copy(fontWeight = FontWeight.SemiBold),
                         color = numberColor,
                     )

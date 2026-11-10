@@ -17,6 +17,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import android.content.res.Resources
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleInteger
 
 /**
  * Pure functions that build the hero metadata for the cinematic detail
@@ -96,7 +97,7 @@ internal object TvDetailMetadata {
                 tokens += TvHeroFactToken.TextToken(it)
             }
         } else if (detail.year > 0) {
-            tokens += TvHeroFactToken.TextToken(detail.year.toString())
+            tokens += TvHeroFactToken.NumberToken(LocaleInteger(detail.year))
         }
         when {
             detail.type.equals("series", ignoreCase = true) ->

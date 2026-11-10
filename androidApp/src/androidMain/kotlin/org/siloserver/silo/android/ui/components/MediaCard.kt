@@ -47,6 +47,8 @@ import org.siloserver.silo.common.overlays.CardOverlays
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.overlays.OverlayData
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 object MediaGridDefaults {
     // Same minimum as the Library grid's Normal density (CatalogViewDensity),
@@ -256,7 +258,7 @@ fun MediaCard(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        val caption = subtitle ?: year?.takeIf { it > 0 }?.toString()
+        val caption = subtitle ?: year?.takeIf { it > 0 }?.let { LocaleFormat.integer(it, currentNumberLocale()) }
         if (caption != null) {
             // iOS yearText: .siloCaption (12sp) at secondary text.
             Text(

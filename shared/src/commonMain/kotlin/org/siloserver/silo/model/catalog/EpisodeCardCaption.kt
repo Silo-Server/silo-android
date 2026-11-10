@@ -9,11 +9,16 @@ import org.siloserver.silo.common.i18n.UiText
  * air date with its own calendar-date formatter and passes the result in.
  */
 object EpisodeCardCaption {
-    /** "S01E02", zero-padded so codes line up across a rail. */
+    /**
+     * "S01E02", zero-padded so codes line up across a rail. A code is
+     * technical, so its numbers stay ASCII in every language (D78).
+     */
     private fun code(seasonNumber: Int, episodeNumber: Int): UiText = UiText.Key(
         SharedString.EpisodeTag,
-        listOf(UiText.Number(seasonNumber, minIntegerDigits = 2), UiText.Number(episodeNumber, minIntegerDigits = 2)),
+        listOf(UiText.Raw(codeNumber(seasonNumber)), UiText.Raw(codeNumber(episodeNumber))),
     )
+
+    private fun codeNumber(value: Int): String = value.toString().padStart(2, '0')
 
     /** "S01E02 · Pilot", or the code alone when the episode has no title. */
     fun title(episode: EpisodeListItem): UiText {

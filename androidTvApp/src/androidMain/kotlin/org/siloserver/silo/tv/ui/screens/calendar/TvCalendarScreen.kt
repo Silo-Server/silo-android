@@ -124,6 +124,7 @@ import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 import org.siloserver.silo.tv.ui.theme.cardScaled
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
 import org.siloserver.silo.viewmodel.CalendarViewModel
+import org.siloserver.silo.common.i18n.isRightToLeftText
 
 /**
  * TV calendar / upcoming screen. Reuses the shared [CalendarViewModel] that
@@ -1671,9 +1672,9 @@ private fun cardSubtitle(item: CalendarItem): String? {
         val season = item.seasonNumber
         val episode = item.episodeNumber
         if (season != null && episode != null) {
-            parts.add(stringResource(CommonR.string.catalog_episodeCaption, LocaleFormat.integer(season), LocaleFormat.integer(episode)))
+            parts.add(stringResource(CommonR.string.catalog_episodeCaption, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode)))
         }
-        item.episodeTitle?.takeIf { it.isNotBlank() }?.let { parts.add(if (parts.isEmpty()) it else bidiIsolated(it)) }
+        item.episodeTitle?.takeIf { it.isNotBlank() }?.let { parts.add(if (parts.isEmpty()) it else bidiIsolated(it, isRightToLeftText())) }
     }
     if (item.type == CalendarItemType.Movie) {
         parts.add(stringResource(CommonR.string.calendar_movie))

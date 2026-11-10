@@ -43,6 +43,9 @@ import org.siloserver.silo.tv.ui.util.tvArtworkAspectRatioForMediaType
 import org.siloserver.silo.common.diagnostics.DiagnosticsKeyAnomalyLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsKeyCollection
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
+import org.siloserver.silo.common.i18n.isRightToLeftText
+import org.siloserver.silo.common.i18n.LocaleFormat
+import androidx.compose.ui.platform.LocalConfiguration
 
 /** Visual style of cards inside a [TvMediaRow]. */
 enum class TvRowStyle { Poster, Backdrop }
@@ -178,7 +181,9 @@ fun TvMediaRow(
     if (items.isEmpty()) return
     val rowState = rememberLazyListState()
     val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
-    val rowItems = remember(items, showProgress, style, cardLayout, spoilerPrefs, unwatchedById, keyEpisodesBySeries) {
+    // The configuration: shelf years are written in the app's digits when the model is built.
+    val configuration = LocalConfiguration.current
+    val rowItems = remember(items, showProgress, style, cardLayout, spoilerPrefs, unwatchedById, keyEpisodesBySeries, configuration) {
         // Deduplicate before keying. A repeated contentId inside one row makes
         // the lazy list throw ("Key ... was already used"), which is fatal —
         // and a row has no reason to show the same title twice anyway. Feeds
@@ -430,7 +435,7 @@ fun TvMediaRow(
                         imageThumbhash = rowItem.backdropThumbhash,
                         subtitle = rowItem.shelfEpisodeTag
                             ?.let { tag ->
-                                listOfNotNull(tag.resolved(), rowItem.shelfSubtitle?.let { bidiIsolated(it) })
+                                listOfNotNull(tag.resolved(), rowItem.shelfSubtitle?.let { bidiIsolated(it, isRightToLeftText()) })
                                     .joinToString(" • ")
                             }
                             ?: rowItem.shelfSubtitle,
@@ -576,8 +581,8 @@ private fun SectionItem.shelfSubtitle(showProgress: Boolean): String? {
     // A progress row's episode tag is [TvMediaRowItemModel.shelfEpisodeTag], added when drawn.
     if (showProgress) return title.takeIf { it.isNotBlank() }
     return when {
-        year > 0 && genres.isNotEmpty() -> "${year} • ${genres.first()}"
-        year > 0 -> year.toString()
+        year > 0 && genres.isNotEmpty() -> "${LocaleFormat.integer(year)} • ${genres.first()}"
+        year > 0 -> LocaleFormat.integer(year)
         genres.isNotEmpty() -> genres.first()
         else -> null
     }

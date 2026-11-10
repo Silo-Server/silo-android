@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.isRightToLeftText
 import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -86,6 +87,8 @@ import org.siloserver.silo.common.watchparty.watchPartyDisplayName
 import org.siloserver.silo.common.watchparty.watchPartyEpisodeLine
 import org.siloserver.silo.common.watchparty.watchPartyHistoryLabel
 import org.siloserver.silo.common.watchparty.watchPartyRuntimeText
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /** One Home-style shelf of the picker. */
 private data class TvPickerShelf(
@@ -485,9 +488,10 @@ private fun TvPickerConfirmation(
                             overflow = TextOverflow.Ellipsis,
                         )
                         val code = choice.season?.let { season -> choice.episode?.let { watchPartyEpisodeLine(season, it) } }
-                        val episodeTitle = choice.episodeTitle?.let { if (code != null) bidiIsolated(it) else it }
+                        val rtl = isRightToLeftText()
+                        val episodeTitle = choice.episodeTitle?.let { if (code != null) bidiIsolated(it, rtl) else it }
                         val subtitle = listOfNotNull(code, episodeTitle).joinToString(" · ").ifBlank { null }
-                        val facts = listOfNotNull(subtitle, choice.year, choice.runtimeMinutes?.let { watchPartyRuntimeText(it) }) +
+                        val facts = listOfNotNull(subtitle, choice.year?.toIntOrNull()?.let { LocaleFormat.integer(it, currentNumberLocale()) }, choice.runtimeMinutes?.let { watchPartyRuntimeText(it) }) +
                             choice.otherFacts
                         if (facts.isNotEmpty()) {
                             Text(text = facts.joinToString(" · "), fontSize = TvPartyMetrics.body, color = SiloSecondaryText)

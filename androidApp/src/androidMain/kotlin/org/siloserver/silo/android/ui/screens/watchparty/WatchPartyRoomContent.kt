@@ -210,7 +210,7 @@ internal fun rememberWatchPartyStagedTitle(room: RoomSnapshot?, suggestions: Lis
         backdropUrl = loaded.backdropUrl,
         backdropThumbhash = loaded.backdropThumbhash,
         facts = listOfNotNull(
-            loaded.year.takeIf { it > 0 && !episode }?.toString(),
+            loaded.year.takeIf { it > 0 && !episode }?.let { LocaleFormat.integer(it) },
             watchPartyRuntime(loaded.runtime),
         ),
         chips = watchPartyQualityChips(version),

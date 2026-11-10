@@ -949,7 +949,7 @@ internal fun playerEyebrow(state: PlayerViewModel.PlayerUiState): String {
     val series = state.seriesTitle?.takeIf { it.isNotBlank() }
     if (series != null) {
         val code = if (state.seasonNumber != null && state.episodeNumber != null) {
-            stringResource(CommonR.string.player_eyebrow_episode, LocaleFormat.integer(state.seasonNumber), LocaleFormat.integer(state.episodeNumber))
+            stringResource(CommonR.string.player_eyebrow_episode, LocaleFormat.codeNumber(state.seasonNumber), LocaleFormat.codeNumber(state.episodeNumber))
         } else {
             null
         }

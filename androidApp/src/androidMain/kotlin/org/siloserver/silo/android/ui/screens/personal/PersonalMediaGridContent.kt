@@ -69,6 +69,8 @@ import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.navigation.LocalHeroSourceHandoff
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 private enum class PersonalMediaType(
     @StringRes val label: Int,
@@ -377,7 +379,7 @@ fun MediaGridItem(
 
         if (item.year > 0) {
             androidx.compose.material3.Text(
-                text = item.year.toString(),
+                text = LocaleFormat.integer(item.year, currentNumberLocale()),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Normal,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

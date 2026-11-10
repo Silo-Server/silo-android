@@ -65,6 +65,7 @@ import org.siloserver.silo.common.R as CommonR
 import androidx.compose.ui.res.pluralStringResource
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /**
  * Phone book detail. Tall cover on the left (2:3 like a movie poster
@@ -416,7 +417,7 @@ fun BookDetailContent(
             }
             items(related, key = { it.contentId }) { item ->
                 Text(
-                    text = listOfNotNull(item.title, item.year?.toString()).joinToString(" · "),
+                    text = listOfNotNull(item.title, item.year?.let { LocaleFormat.integer(it, currentNumberLocale()) }).joinToString(" · "),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )

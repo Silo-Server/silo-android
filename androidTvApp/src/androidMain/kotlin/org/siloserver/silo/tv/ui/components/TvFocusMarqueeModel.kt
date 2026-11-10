@@ -163,7 +163,7 @@ data class TvMarqueeContent(
                 episodeToken(item.seasonNumber, item.episodeNumber)?.let { meta += it }
                 if (item.title.isNotBlank()) meta += TvHeroFactToken.TextToken(item.title, truncates = true)
             } else {
-                if (item.year > 0) meta += TvHeroFactToken.TextToken(item.year.toString())
+                if (item.year > 0) meta += TvHeroFactToken.NumberToken(LocaleInteger(item.year))
                 lengthText(item.runtime, item.durationSeconds)?.let { meta += it }
                 ExternalRatings.primary(item.ratingImdb, item.ratingTmdb)?.let { meta += TvHeroFactToken.ExternalRating(it) }
                 item.genres.firstOrNull { it.isNotBlank() }?.let { meta += TvHeroFactToken.TextToken(it) }

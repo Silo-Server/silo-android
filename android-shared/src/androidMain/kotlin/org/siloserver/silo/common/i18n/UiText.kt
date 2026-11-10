@@ -38,7 +38,7 @@ fun UiText.text(resources: Resources): String =
 
 private fun UiText.resolve(resources: Resources, rtl: Boolean): String = when (this) {
     is UiText.Raw -> text
-    is UiText.Res -> resources.format(id, args, rtl)
+    is UiText.Res -> resources.withFormatDigits().format(id, args, rtl)
     is UiText.Key -> resources.catalogResources().let { it.format(key.resId, args, it.isRtl) }
     is UiText.Plural -> resources.catalogResources().let { it.formatPlural(key.resId, key.countIndex, count, args, it.isRtl) }
     // Numbers and dates follow LocaleFormat, as the app's own do (D55, D58, D64).
@@ -75,7 +75,7 @@ private fun languageName(tag: String, uppercaseIfUnnamed: Boolean, locale: Local
  * application, service or notification resources, which keep the device's.
  */
 private fun Resources.catalogResources(): Resources {
-    if (showsConfiguredLanguage) return this
+    if (showsConfiguredLanguage) return withFormatDigits()
     fallbackResources?.let { (config, fallback) -> if (config == configuration) return fallback }
     // A configuration context has its own asset configuration; the caller's stays as it is.
     val context = appContext ?: return this
@@ -89,6 +89,25 @@ private fun Resources.catalogResources(): Resources {
 
 /** The last [catalogResources] fallback, for the configuration it was made for. */
 @Volatile private var fallbackResources: Pair<android.content.res.Configuration, Resources>? = null
+
+/**
+ * These resources with [LocaleFormat]'s digits for `%d` (D75), as
+ * [AppLocales.wrap] gives an activity's, for text resolved with resources no
+ * activity wrapped (the application's, a service's, a notification's).
+ */
+private fun Resources.withFormatDigits(): Resources {
+    val numberLocale = LocaleFormat.numberLocale()
+    val shown = AppLocales.withFormatDigits(configuration.locales, numberLocale)
+    if (shown == configuration.locales) return this
+    digitsResources?.let { (made, pinned) -> if (made.first == configuration && made.second == numberLocale) return pinned }
+    val context = appContext ?: return this
+    val pinned = context.createConfigurationContext(android.content.res.Configuration(configuration).apply { setLocales(shown) }).resources
+    digitsResources = (android.content.res.Configuration(configuration) to numberLocale) to pinned
+    return pinned
+}
+
+/** The last [withFormatDigits] result, for the configuration and number locale it was made for. */
+@Volatile private var digitsResources: Pair<Pair<android.content.res.Configuration, Locale>, Resources>? = null
 
 /**
  * The application context [catalogResources] makes its fallback from, recorded
