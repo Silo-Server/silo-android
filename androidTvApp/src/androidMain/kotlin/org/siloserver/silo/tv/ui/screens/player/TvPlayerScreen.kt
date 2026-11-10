@@ -2961,7 +2961,7 @@ private fun TvSiloCastPlayerRegistration(
                 if (watchParty != null) {
                     watchParty.setPlaying(play = true)
                 } else {
-                    viewModel.setPaused(false)
+                    viewModel.setPausedByViewer(false)
                     latestSiloCastMediaController?.play()
                 }
             },
@@ -2969,7 +2969,7 @@ private fun TvSiloCastPlayerRegistration(
                 if (watchParty != null) {
                     watchParty.setPlaying(play = false)
                 } else {
-                    viewModel.setPaused(true)
+                    viewModel.setPausedByViewer(true)
                     latestSiloCastMediaController?.pause()
                 }
             },

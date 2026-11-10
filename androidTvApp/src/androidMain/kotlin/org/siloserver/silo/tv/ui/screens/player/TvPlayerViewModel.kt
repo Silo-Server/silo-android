@@ -3158,7 +3158,7 @@ class TvPlayerViewModel(
                 .map { state -> "${state.sessionId}:${state.selectedFileId}" }
                 .distinctUntilChanged(),
             // Only reachable outside a room, where the mode is pinned to `ask`.
-            onSeek = { seekToSec -> seekImmediate(seekToSec) },
+            onSeek = { seekToSec -> seekWithoutViewerAction(seekToSec) },
             // Filtered, not raw: isPlaying dips for a rebuffer exactly as it
             // does for a deliberate pause, and a pause that reaches the
             // controller freezes the timer. Unfiltered, a stuttering stream
@@ -4211,8 +4211,22 @@ class TvPlayerViewModel(
      * contract.
      */
     fun seekImmediate(positionSec: Double) {
+        // Every caller outside this ViewModel is a viewer's seek: scrubber,
+        // chapters, intro and marker skips, a cast phone.
+        resetPassOutStreak()
+        seekWithoutViewerAction(positionSec)
+    }
+
+    /** An automatic seek (intro auto-skip, Watch Party sync); not viewer activity. */
+    private fun seekWithoutViewerAction(positionSec: Double) {
         cancelPendingQuickSkip()
         beginAndExecuteSeek(positionSec)
+    }
+
+    /** Explicit play or pause from a viewer: a cast phone or a remote control command. */
+    fun setPausedByViewer(paused: Boolean) {
+        resetPassOutStreak()
+        setPaused(paused)
     }
 
     /**
@@ -4789,7 +4803,7 @@ class TvPlayerViewModel(
     /** A room seek. Maps onto the mounted stream or re-anchors; never user intent. */
     fun applyRoomSeek(sourceSeconds: Double) {
         if (roomId == null || !sourceSeconds.isFinite()) return
-        seekImmediate(sourceSeconds.coerceAtLeast(0.0))
+        seekWithoutViewerAction(sourceSeconds.coerceAtLeast(0.0))
         publishRoomObservation()
     }
 
@@ -4984,8 +4998,8 @@ class TvPlayerViewModel(
     /** True while this player belongs to a Watch Party: the room owns transport. */
     val inWatchParty: Boolean get() = roomId != null
 
-    fun remotePause() = setPaused(true)
-    fun remoteUnpause() = setPaused(false)
+    fun remotePause() = setPausedByViewer(true)
+    fun remoteUnpause() = setPausedByViewer(false)
     fun remoteTogglePlayPause() = onPlayPause()
     fun remoteSeek(positionSeconds: Double) = seekImmediate(positionSeconds)
     fun remoteStop(notice: String? = null) { _remoteStopRequests.tryEmit(notice) }
