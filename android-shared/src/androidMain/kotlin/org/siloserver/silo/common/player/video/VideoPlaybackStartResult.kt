@@ -1,5 +1,8 @@
 package org.siloserver.silo.common.player.video
 
+import androidx.annotation.StringRes
+import org.siloserver.silo.common.R
+import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.model.catalog.MarkerSegment
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
@@ -69,6 +72,7 @@ sealed interface VideoPlaybackStartResult {
 
     data class Error(
         val contentId: String,
+        /** English or server-written text, kept for logs and diagnostics. */
         val message: String,
         val diagnosticsCode: PlaybackDiagnosticsCode? = null,
         /**
@@ -77,6 +81,8 @@ sealed interface VideoPlaybackStartResult {
          * room; [diagnosticsCode] keeps only the reasons safe for telemetry.
          */
         val terminalReason: String? = null,
+        /** When set, the UI shows this catalog string instead of [message]. */
+        @StringRes val messageRes: Int? = null,
     ) : VideoPlaybackStartResult
 
     /**
@@ -97,7 +103,27 @@ sealed interface VideoPlaybackStartResult {
  * never in the on-screen sentence.
  */
 fun serverTerminalUserMessage(message: String): String =
-    message.trim().ifEmpty { "Playback is unavailable right now." }
+    message.trim().ifEmpty { SERVER_TERMINAL_FALLBACK_MESSAGE }
+
+/** English of [R.string.player_error_playbackUnavailable], kept for logs and tests. */
+const val SERVER_TERMINAL_FALLBACK_MESSAGE: String = "Playback is unavailable right now."
+
+/**
+ * The catalog string to show in place of [serverTerminalUserMessage] when the
+ * server sent no message, or null when the server's own words are shown.
+ */
+@StringRes
+fun serverTerminalUserMessageRes(message: String): Int? =
+    if (message.trim().isEmpty()) R.string.player_error_playbackUnavailable else null
+
+/**
+ * The catalog string to show for [terminal] in place of
+ * [serverTerminalUserMessage]: the one this client wrote, or the blank-message
+ * fallback; null when the server's own words are shown.
+ */
+@StringRes
+fun terminalUserMessageRes(terminal: VideoSessionStartV3.Terminal): Int? =
+    terminal.messageRes ?: serverTerminalUserMessageRes(terminal.message)
 
 @JvmInline
 value class PlaybackDiagnosticsCode private constructor(val wireValue: String) {

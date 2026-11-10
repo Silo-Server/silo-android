@@ -24,6 +24,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -31,6 +33,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.util.formatClockTime
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.catalog.VersionChapter
 
 /**
@@ -57,13 +61,13 @@ fun ChaptersSheet(
     )
 
     PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
-        PlayerPanelHeader(title = "Chapters", onClose = { controller.dismiss() })
+        PlayerPanelHeader(title = stringResource(CommonR.string.options_chapters), onClose = { controller.dismiss() })
         val current = chapters.getOrNull(currentChapterIndex)
-        val countLabel = if (chapters.size == 1) "1 chapter" else "${chapters.size} chapters"
+        val countLabel = pluralStringResource(CommonR.plurals.player_chapters_count, chapters.size, chapters.size)
         Text(
             text = if (current != null) {
                 val left = (chapterEnd(chapters, currentChapterIndex, duration) - position).coerceAtLeast(0.0)
-                "$countLabel · ${formatClockTime(left)} left in this chapter"
+                "$countLabel · " + stringResource(CommonR.string.player_chapters_timeLeft, formatClockTime(left))
             } else {
                 countLabel
             },
@@ -71,7 +75,7 @@ fun ChaptersSheet(
             modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 6.dp),
         )
         if (chapters.isEmpty()) {
-            PlayerFootnote("No chapters are available for this title.")
+            PlayerFootnote(stringResource(CommonR.string.player_chapters_empty))
             return@PlayerMenu
         }
         LazyColumn(
@@ -86,7 +90,9 @@ fun ChaptersSheet(
                 val length = chapterEnd(chapters, index, duration) - chapter.startSeconds
                 ChapterRow(
                     number = index + 1,
-                    title = chapter.title.ifBlank { "Chapter ${chapter.index + 1}" },
+                    title = chapter.title.ifBlank {
+                        stringResource(CommonR.string.options_chapterNumbered, (chapter.index + 1).toString())
+                    },
                     start = chapter.startSeconds,
                     length = length,
                     progress = if (index == currentChapterIndex) {
@@ -124,12 +130,13 @@ private fun ChapterRow(
     onClick: () -> Unit,
 ) {
     val isCurrent = progress != null
+    val playFromLabel = stringResourceWithNames(CommonR.string.player_chapters_playFrom, title)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(if (isCurrent) PlayerChrome.Raised else androidx.compose.ui.graphics.Color.Transparent)
-            .clickable(role = Role.Button, onClickLabel = "Play from $title", onClick = onClick)
+            .clickable(role = Role.Button, onClickLabel = playFromLabel, onClick = onClick)
             .heightIn(min = 44.dp)
             .padding(horizontal = 10.dp),
         verticalArrangement = Arrangement.Center,
@@ -139,7 +146,7 @@ private fun ChapterRow(
                 if (isCurrent) {
                     Icon(
                         imageVector = Icons.Rounded.PlayArrow,
-                        contentDescription = "Now playing",
+                        contentDescription = stringResource(CommonR.string.player_chapters_nowPlaying),
                         tint = PlayerChrome.Paper,
                         modifier = Modifier.size(18.dp),
                     )

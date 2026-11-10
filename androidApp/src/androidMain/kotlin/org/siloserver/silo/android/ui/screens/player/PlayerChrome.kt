@@ -62,6 +62,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -73,6 +74,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.screens.settings.settingsSwitchColors
 import org.siloserver.silo.android.ui.theme.SiloDestructive
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.android.ui.theme.SiloInterFamily
 
 /**
@@ -218,10 +220,11 @@ internal fun PlayerDisc(
  */
 @Composable
 internal fun PlayerLoadingSpinner(modifier: Modifier = Modifier) {
+    val loading = stringResource(CommonR.string.common_loading)
     CircularProgressIndicator(
         modifier = modifier
             .size(56.dp)
-            .semantics { contentDescription = "Loading" },
+            .semantics { contentDescription = loading },
         color = PlayerChrome.Paper,
         strokeWidth = 3.dp,
     )
@@ -316,7 +319,7 @@ internal fun PlayerPanelHeader(
     title: String,
     onClose: () -> Unit,
     onBack: (() -> Unit)? = null,
-    backDescription: String = "Back",
+    backDescription: String = stringResource(CommonR.string.common_back),
 ) {
     Row(
         modifier = Modifier
@@ -348,7 +351,7 @@ internal fun PlayerPanelHeader(
             modifier = Modifier.weight(1f),
         )
         PlayerDisc(
-            contentDescription = "Close",
+            contentDescription = stringResource(CommonR.string.player_menu_close),
             onClick = onClose,
             size = 32.dp,
             fill = Color.White.copy(alpha = 0.08f),
@@ -551,7 +554,7 @@ internal fun PlayerTrackRow(
         if (selected) {
             Icon(
                 imageVector = Icons.Rounded.Check,
-                contentDescription = "Selected",
+                contentDescription = stringResource(CommonR.string.player_menu_selected),
                 tint = PlayerChrome.Paper,
                 modifier = Modifier.size(21.dp),
             )
@@ -731,7 +734,7 @@ internal fun PlayerCheckRow(
         if (selected) {
             Icon(
                 imageVector = Icons.Rounded.Check,
-                contentDescription = "Selected",
+                contentDescription = stringResource(CommonR.string.player_menu_selected),
                 tint = PlayerChrome.Paper,
                 modifier = Modifier.size(20.dp),
             )
@@ -841,14 +844,14 @@ internal fun PlayerStepperRow(
                 Text(text = detail, style = PlayerType.RowDetail, modifier = Modifier.padding(top = 1.dp))
             }
         }
-        StepperButton(symbol = "−", description = "Decrease $label", enabled = enabled, onClick = onDecrease)
+        StepperButton(symbol = "−", description = stringResource(CommonR.string.player_menu_decrease, label), enabled = enabled, onClick = onDecrease)
         Text(
             text = value,
             style = PlayerType.Value.copy(color = PlayerChrome.Paper, fontWeight = FontWeight.SemiBold),
             textAlign = TextAlign.Center,
             modifier = Modifier.width(72.dp),
         )
-        StepperButton(symbol = "+", description = "Increase $label", enabled = enabled, onClick = onIncrease)
+        StepperButton(symbol = "+", description = stringResource(CommonR.string.player_menu_increase, label), enabled = enabled, onClick = onIncrease)
     }
 }
 

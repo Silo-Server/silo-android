@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -40,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.siloKeyboardActions
 import org.siloserver.silo.android.R
+import org.siloserver.silo.common.R as CommonR
 
 /** Silo brand colors used across auth screens. */
 object AuthColors {
@@ -101,7 +103,7 @@ fun SiloLogo(modifier: Modifier = Modifier) {
     ) {
         Image(
             painter = painterResource(id = R.drawable.silo_wordmark),
-            contentDescription = "Silo",
+            contentDescription = "Silo", // i18n-ignore
             modifier = Modifier
                 .fillMaxWidth()
                 .height(64.dp),
@@ -109,7 +111,7 @@ fun SiloLogo(modifier: Modifier = Modifier) {
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "Stream beautifully",
+            text = stringResource(CommonR.string.signIn_tagline),
             fontSize = 14.sp,
             fontWeight = FontWeight.Normal,
             color = AuthColors.OnSurfaceVariant,

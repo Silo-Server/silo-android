@@ -45,9 +45,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
+import org.siloserver.silo.common.R as CommonR
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -415,7 +418,11 @@ private fun SkipFlashBadge(forward: Boolean, seconds: Int) {
         SeekIntervalIcon(
             forward = forward,
             seconds = seconds,
-            contentDescription = if (forward) "Skipped forward $seconds seconds" else "Skipped back $seconds seconds",
+            contentDescription = pluralStringResource(
+                if (forward) CommonR.plurals.player_gestures_skippedForward else CommonR.plurals.player_gestures_skippedBack,
+                seconds,
+                seconds,
+            ),
             tint = Color.White,
             modifier = Modifier.size(26.dp),
         )
@@ -467,7 +474,7 @@ private fun VolumeHud(level: Float) {
             )
         }
         Text(
-            text = "${(level * 100).roundToInt()}",
+            text = "${(level * 100).roundToInt()}", // i18n-ignore: a percentage number
             style = PlayerType.Time,
             modifier = Modifier.width(26.dp),
         )
@@ -494,7 +501,9 @@ private fun DismissHint(armed: Boolean, modifier: Modifier = Modifier) {
             modifier = Modifier.size(18.dp),
         )
         Text(
-            text = if (armed) "Release to close" else "Pull down to close",
+            text = stringResource(
+                if (armed) CommonR.string.player_gestures_releaseToClose else CommonR.string.player_gestures_pullToClose,
+            ),
             style = PlayerType.PillLabel.copy(color = tint),
         )
     }

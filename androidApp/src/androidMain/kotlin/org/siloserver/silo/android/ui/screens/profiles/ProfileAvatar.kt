@@ -14,11 +14,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.screens.auth.AuthColors
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.components.isEmojiAvatar
@@ -96,7 +99,7 @@ fun ProfileAvatar(
             ThumbhashImage(
                 url = avatarImage.url,
                 thumbhash = null,
-                contentDescription = "$name avatar",
+                contentDescription = stringResourceWithNames(CommonR.string.profiles_avatar_description, name),
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(CircleShape),
@@ -138,7 +141,7 @@ fun AvatarPickerItem(
         // Picker entries are always preset refs, never uploads, so there is no
         // server URL to carry alongside them.
         avatar = ProfileAvatarRef(avatarRef),
-        name = "Profile avatar",
+        name = stringResource(CommonR.string.profiles_avatar_pickerName),
         modifier = modifier,
         size = 40.dp,
         selected = isSelected,

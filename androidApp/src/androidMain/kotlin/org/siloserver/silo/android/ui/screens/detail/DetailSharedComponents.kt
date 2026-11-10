@@ -1,5 +1,12 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.localizedResources
+import android.content.res.Resources
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
@@ -88,6 +95,7 @@ import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.theme.PillShape
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.i18n.digits
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.RatingEntry
@@ -1233,7 +1241,7 @@ fun CircleActionButton(
  */
 @Composable
 fun CircleOverflowButton(
-    contentDescription: String = "More options",
+    contentDescription: String = stringResource(CommonR.string.detail_moreOptions),
     menuContent: @Composable (dismiss: () -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1258,7 +1266,7 @@ fun CircleOverflowButton(
                     modifier = Modifier.size(19.dp),
                 )
             }
-            Text("More", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.60f))
+            Text(stringResource(CommonR.string.detail_more), fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.60f))
         }
         SiloDropdownMenu(
             expanded = expanded,
@@ -1278,7 +1286,7 @@ fun VersionPillButton(
     currentValue: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    label: String = "Version",
+    label: String = stringResource(CommonR.string.detail_version),
 ) {
     Surface(
         shape = PillShape,
@@ -1373,27 +1381,33 @@ fun HeroActionStack(
                 icon = Icons.Filled.FavoriteBorder,
                 activeIcon = Icons.Filled.Favorite,
                 isActive = isFavorite,
-                contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
+                contentDescription = stringResource(
+                    if (isFavorite) CommonR.string.detail_favoriteRemove else CommonR.string.detail_favoriteAdd,
+                ),
                 onClick = onToggleFavorite,
-                label = "Favorite",
+                label = stringResource(CommonR.string.detail_favorite),
                 modifier = Modifier.weight(1f),
             )
             CircleActionButton(
                 icon = Icons.Filled.BookmarkBorder,
                 activeIcon = Icons.Filled.Bookmark,
                 isActive = isInWatchlist,
-                contentDescription = if (isInWatchlist) "Remove from watchlist" else "Add to watchlist",
+                contentDescription = stringResource(
+                    if (isInWatchlist) CommonR.string.detail_watchlistRemove else CommonR.string.detail_watchlistAdd,
+                ),
                 onClick = onToggleWatchlist,
-                label = "Watchlist",
+                label = stringResource(CommonR.string.detail_watchlist),
                 modifier = Modifier.weight(1f),
             )
             CircleActionButton(
                 icon = Icons.Filled.CheckCircleOutline,
                 activeIcon = Icons.Filled.CheckCircle,
                 isActive = isWatched,
-                contentDescription = if (isWatched) "Mark as unwatched" else "Mark as watched",
+                contentDescription = stringResource(
+                    if (isWatched) CommonR.string.detail_markUnwatched else CommonR.string.detail_markWatched,
+                ),
                 onClick = onToggleWatched,
-                label = "Watched",
+                label = stringResource(CommonR.string.detail_watched),
                 modifier = Modifier.weight(1f),
             )
             if (downloadSlot != null) {
@@ -1403,7 +1417,7 @@ fun HeroActionStack(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     downloadSlot()
-                    Text("Download", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.60f))
+                    Text(stringResource(CommonR.string.detail_download), fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.60f))
                 }
             }
             if (overflow != null) {
@@ -1430,12 +1444,12 @@ fun HeroActionStack(
     if (showResumeDialog && onPlayFromBeginning != null) {
         val stoppedAt = resumeStoppedAtLabel
         SiloDialog(
-            title = "Continue Watching?",
-            message = stoppedAt?.let { "You stopped at $it." },
+            title = stringResource(CommonR.string.detail_resumeDialog_title),
+            message = stoppedAt?.let { stringResource(CommonR.string.detail_resumeDialog_stoppedAt, it) },
             onDismissRequest = { showResumeDialog = false },
             actions = listOf(
                 SiloDialogAction(
-                    label = "Resume",
+                    label = stringResource(CommonR.string.detail_resumeDialog_resume),
                     style = SiloDialogActionStyle.Primary,
                     onClick = {
                         showResumeDialog = false
@@ -1443,7 +1457,7 @@ fun HeroActionStack(
                     },
                 ),
                 SiloDialogAction(
-                    label = "Play from Beginning",
+                    label = stringResource(CommonR.string.detail_resumeDialog_playFromBeginning),
                     onClick = {
                         showResumeDialog = false
                         onPlayFromBeginning()
@@ -1564,7 +1578,7 @@ fun SeasonChips(
             contentType = { "season-chip" },
         ) { season ->
             val isSelected = season.seasonNumber == selectedSeasonNumber
-            val label = phoneSeasonLabel(season)
+            val label = phoneSeasonLabel(localizedResources(), season)
             val isWatched = season.userData?.played == true
             var menuExpanded by remember { mutableStateOf(false) }
             // iOS PhoneSeasonChips: 14pt (semibold selected / medium
@@ -1604,7 +1618,17 @@ fun SeasonChips(
                     onDismissRequest = { menuExpanded = false },
                 ) {
                     SiloDropdownMenuItem(
-                        text = { Text(if (isWatched) "Mark Season Unwatched" else "Mark Season Watched") },
+                        text = {
+                            Text(
+                                stringResource(
+                                    if (isWatched) {
+                                        CommonR.string.detail_more_markSeasonUnwatched
+                                    } else {
+                                        CommonR.string.detail_more_markSeasonWatched
+                                    },
+                                ),
+                            )
+                        },
                         onClick = {
                             menuExpanded = false
                             onSeasonWatchedChange?.invoke(season, !isWatched)
@@ -1620,12 +1644,13 @@ fun SeasonChips(
 
 object HeroMetadata {
 
-    fun episodeEyebrow(detail: ItemDetail): String? {
+    fun episodeEyebrow(resources: Resources, detail: ItemDetail): String? {
         val s = detail.seasonNumber
         val e = detail.episodeNumber
         return when {
-            s != null && e != null -> "${phoneSeasonNumberLabel(s)} · Episode $e"
-            s != null -> phoneSeasonNumberLabel(s)
+            s != null && e != null ->
+                resources.getString(CommonR.string.detail_episodeEyebrow, phoneSeasonNumberLabel(resources, s), resources.digits(e))
+            s != null -> phoneSeasonNumberLabel(resources, s)
             else -> null
         }
     }
@@ -1640,38 +1665,49 @@ object HeroMetadata {
             ?.let { listOf(it.joinToString(", ")) }
             .orEmpty()
 
+    @Composable
     fun movieFactsLine(
+        detail: ItemDetail,
+        runtimeMinutes: Int = detail.runtime,
+    ): List<String> = movieFactsLine(localizedResources(), detail, runtimeMinutes)
+
+    fun movieFactsLine(
+        resources: Resources,
         detail: ItemDetail,
         runtimeMinutes: Int = detail.runtime,
     ): List<String> = buildList {
         if (detail.year > 0) add(detail.year.toString())
-        if (runtimeMinutes > 0) add(formatRuntime(runtimeMinutes))
+        if (runtimeMinutes > 0) add(runtimeText(resources, runtimeMinutes))
     }
 
-    fun seriesFactsLine(detail: ItemDetail): List<String> = buildList {
-        if (detail.year > 0) add(detail.year.toString())
-        detail.seasonCount?.takeIf { it > 0 }?.let {
-            add("$it Season${if (it > 1) "s" else ""}")
-        }
-    }
-
-    private fun formatRuntime(minutes: Int): String {
-        if (minutes <= 0) return ""
-        val h = minutes / 60
-        val m = minutes % 60
-        return when {
-            h > 0 && m > 0 -> "${h}h ${m}m"
-            h > 0 -> "${h}h"
-            else -> "${m}m"
+    @Composable
+    fun seriesFactsLine(detail: ItemDetail): List<String> {
+        val seasons = detail.seasonCount?.takeIf { it > 0 }
+            ?.let { pluralStringResource(CommonR.plurals.catalog_seasons, it, it) }
+        return buildList {
+            if (detail.year > 0) add(detail.year.toString())
+            seasons?.let { add(it) }
         }
     }
 }
 
-internal fun phoneSeasonLabel(season: Season): String =
-    if (season.isSpecialsForDisplay()) "Specials" else phoneSeasonNumberLabel(season.seasonNumber)
+internal fun phoneSeasonLabel(resources: Resources, season: Season): String =
+    if (season.isSpecialsForDisplay()) {
+        resources.getString(CommonR.string.detail_specials)
+    } else {
+        phoneSeasonNumberLabel(resources, season.seasonNumber)
+    }
 
-private fun phoneSeasonNumberLabel(seasonNumber: Int): String =
-    if (seasonNumber == 0) "Specials" else "Season $seasonNumber"
+internal fun phoneSeasonNumberLabel(resources: Resources, seasonNumber: Int): String =
+    if (seasonNumber == 0) {
+        resources.getString(CommonR.string.detail_specials)
+    } else {
+        resources.getString(CommonR.string.detail_season, seasonNumber.toString())
+    }
+
+/** "S1·E2", the short episode code on play buttons and party subtitles. */
+internal fun episodeCode(resources: Resources, seasonNumber: Int, episodeNumber: Int): String =
+    resources.getString(CommonR.string.detail_episodeCode, resources.digits(seasonNumber), resources.digits(episodeNumber))
 
 // ── Play label helper ─────────────────────────────────────────
 
@@ -1681,20 +1717,26 @@ private fun phoneSeasonNumberLabel(seasonNumber: Int): String =
 // label — mirrors silo-apple MovieDetailContent.swift +
 // ViewExtensions.continuumResumePlaybackAlert (Jim phone QA 2026-07-10).
 fun computePlayLabel(
+    resources: Resources,
     detail: ItemDetail,
     nextEpisodeLabel: String? = null,
 ): String {
     if (detail.type == "series" && nextEpisodeLabel != null) {
-        return "Play $nextEpisodeLabel"
+        return resources.getString(CommonR.string.detail_playEpisodeCode, nextEpisodeLabel)
     }
     if (detail.type == "episode") {
         val s = detail.seasonNumber
         val e = detail.episodeNumber
         if (s != null && e != null) {
-            return if (s == 0) "Play E$e" else "Play S$s·E$e"
+            val code = if (s == 0) {
+                resources.getString(CommonR.string.detail_episodeCodeNoSeason, e)
+            } else {
+                episodeCode(resources, s, e)
+            }
+            return resources.getString(CommonR.string.detail_playEpisodeCode, code)
         }
     }
-    return "Play"
+    return resources.getString(CommonR.string.common_play)
 }
 
 /** Clock for the "Continue Watching?" dialog's "You stopped at …" line. */
@@ -1717,7 +1759,7 @@ fun DetailFactsList(
     val rows = buildDetailFacts(detail, runtimeMinutes)
     if (rows.isEmpty()) return
 
-    SectionHeader(title = "Details")
+    SectionHeader(title = stringResource(CommonR.string.detail_details))
     Spacer(modifier = Modifier.height(14.dp))
 
     // iOS PhoneDetailFactsSection: thin 1px dividers (white 0.08) between
@@ -1765,28 +1807,30 @@ fun DetailFactsList(
     }
 }
 
+@Composable
 private fun buildDetailFacts(
     detail: ItemDetail,
     runtimeMinutes: Int,
 ): List<Pair<String, String>> = buildList {
-    detail.releaseDate?.takeIf { it.isNotBlank() }?.let { add("Release date" to it) }
-    detail.firstAirDate?.takeIf { it.isNotBlank() }?.let { add("First aired" to it) }
-    detail.lastAirDate?.takeIf { it.isNotBlank() }?.let { add("Last aired" to it) }
-    if (runtimeMinutes > 0) add("Runtime" to runtimeText(runtimeMinutes))
-    detail.contentRating?.takeIf { it.isNotBlank() }?.let { add("Rated" to it) }
-    if (detail.studios.isNotEmpty()) add("Studio" to detail.studios.joinToString(", "))
-    if (detail.networks.isNotEmpty()) add("Network" to detail.networks.joinToString(", "))
-    if (detail.countries.isNotEmpty()) add("Country" to detail.countries.joinToString(", "))
+    detail.releaseDate?.takeIf { it.isNotBlank() }?.let { add(stringResource(CommonR.string.detail_facts_releaseDate) to it) }
+    detail.firstAirDate?.takeIf { it.isNotBlank() }?.let { add(stringResource(CommonR.string.detail_facts_firstAired) to it) }
+    detail.lastAirDate?.takeIf { it.isNotBlank() }?.let { add(stringResource(CommonR.string.detail_facts_lastAired) to it) }
+    if (runtimeMinutes > 0) add(stringResource(CommonR.string.detail_facts_runtime) to runtimeText(localizedResources(), runtimeMinutes))
+    detail.contentRating?.takeIf { it.isNotBlank() }?.let { add(stringResource(CommonR.string.detail_facts_rated) to it) }
+    if (detail.studios.isNotEmpty()) add(stringResource(CommonR.string.detail_studio) to detail.studios.joinToString(", "))
+    if (detail.networks.isNotEmpty()) add(stringResource(CommonR.string.detail_network) to detail.networks.joinToString(", "))
+    if (detail.countries.isNotEmpty()) add(stringResource(CommonR.string.detail_country) to detail.countries.joinToString(", "))
     // Genres are already carried by the hero facts line (HeroMetadata); iOS's
     // detail facts list omits them, so listing them here duplicated them.
 }
 
-private fun runtimeText(minutes: Int): String {
+/** A runtime such as "2h 4m", "2h" or "45m". */
+private fun runtimeText(resources: Resources, minutes: Int): String {
     val h = minutes / 60
     val m = minutes % 60
     return when {
-        h > 0 && m > 0 -> "${h}h ${m}m"
-        h > 0 -> "${h}h"
-        else -> "${m}m"
+        h > 0 && m > 0 -> resources.getString(CommonR.string.catalog_runtimeHoursMinutes, h.toString(), m.toString())
+        h > 0 -> resources.getString(CommonR.string.catalog_runtimeHours, h.toString())
+        else -> resources.getString(CommonR.string.catalog_runtimeMinutesShort, m.toString())
     }
 }

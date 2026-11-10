@@ -3,7 +3,9 @@ package org.siloserver.silo.tv.ui.screens.profiles
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.res.stringResource
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.tv.ui.components.TvPinEntryDialog
 
@@ -23,7 +25,7 @@ fun TvHouseholdReverifyHost(profileRepository: ProfileRepository = koinInject())
             onDismiss = session::cancelReverify,
             errorMessage = it.error,
             isVerifying = it.isVerifying,
-            prompt = "Enter this PIN to manage profiles",
+            prompt = stringResource(CommonR.string.pin_prompt_manage),
         )
     }
 }

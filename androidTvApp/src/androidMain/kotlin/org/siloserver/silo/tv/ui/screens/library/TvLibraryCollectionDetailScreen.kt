@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.library
 
+import org.siloserver.silo.common.i18n.text
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -25,6 +26,9 @@ import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
@@ -136,7 +140,7 @@ fun TvLibraryCollectionDetailScreen(
         // pills away exactly when the viewer needs them to undo the query
         // that is failing — Retry only repeats it (Codex).
         if (state.error != null) {
-            TvErrorScreen(message = state.error!!, onRetry = viewModel::retry)
+            TvErrorScreen(message = state.error!!.text(), onRetry = viewModel::retry)
         } else TvCatalogGrid(
             items = state.items,
             isLoading = state.isLoading || state.isLoadingMore,
@@ -167,13 +171,13 @@ fun TvLibraryCollectionDetailScreen(
             emptyState = {
                 val error = state.error
                 if (error != null) {
-                    TvErrorScreen(message = error, onRetry = viewModel::retry)
+                    TvErrorScreen(message = error.text(), onRetry = viewModel::retry)
                 } else {
                     TvCatalogEmptyState(
                         message = if (state.facetSelection.hasActiveFilters) {
-                            "No titles match the current filters."
+                            stringResource(CommonR.string.library_noTitlesMatchFilters)
                         } else {
-                            "This collection is empty."
+                            stringResource(CommonR.string.collections_emptyGrid)
                         },
                     )
                 }
@@ -254,9 +258,10 @@ private fun CollectionHeader(
  * reach — and would leak the excluded ebook membership. Hidden until paging
  * has exhausted, which is the first moment a TV-visible count is knowable.
  */
+@Composable
 private fun itemCountLabel(state: TvLibraryCollectionDetailViewModel.UiState): String? {
     if (state.isLoading || state.isLoadingMore || state.hasMore) return null
     val total = state.items.size
     if (total == 0) return null
-    return if (total == 1) "1 item" else "$total items"
+    return pluralStringResource(CommonR.plurals.collections_itemCount, total, total, total.toString())
 }

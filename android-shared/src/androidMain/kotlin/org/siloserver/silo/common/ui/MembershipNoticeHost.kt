@@ -16,11 +16,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.R
 import org.siloserver.silo.repository.MembershipActions
 import org.siloserver.silo.repository.port.MembershipPort
 
@@ -81,28 +83,48 @@ fun MembershipNoticeHost(
     }
 }
 
+@Composable
 private fun unconfirmedNotice(
     action: MembershipActions.Action,
     onDismiss: () -> Unit,
     onAction: () -> Unit,
 ): MembershipNotice {
-    val list = if (action.intent.key.kind == MembershipPort.Kind.FAVORITE) "Favorites" else "Watchlist"
-    val change = if (action.intent.present) "adding this title to your $list" else "removing this title from your $list"
+    val favorite = action.intent.key.kind == MembershipPort.Kind.FAVORITE
+    val adding = action.intent.present
     val recorded = action.command != null
     if (action.completion?.disposition == MembershipPort.Disposition.PAUSED) {
         return MembershipNotice(
-            title = "Change Not Saved",
-            message = "The server doesn't match your change, so $change wasn't saved. Choose again if you still want it.",
-            actionLabel = "Check Status",
+            title = stringResource(R.string.shell_membership_notSaved_title),
+            message = stringResource(
+                when {
+                    favorite && adding -> R.string.shell_membership_notSaved_addFavorite
+                    favorite -> R.string.shell_membership_notSaved_removeFavorite
+                    adding -> R.string.shell_membership_notSaved_addWatchlist
+                    else -> R.string.shell_membership_notSaved_removeWatchlist
+                },
+            ),
+            actionLabel = stringResource(R.string.shell_membership_checkStatus),
             onAction = onAction,
             onDismiss = onDismiss,
         )
     }
+    val unconfirmed = stringResource(
+        when {
+            favorite && adding -> R.string.shell_membership_notConfirmed_addFavorite
+            favorite -> R.string.shell_membership_notConfirmed_removeFavorite
+            adding -> R.string.shell_membership_notConfirmed_addWatchlist
+            else -> R.string.shell_membership_notConfirmed_removeWatchlist
+        },
+    )
+    val next = stringResource(
+        if (recorded) R.string.shell_membership_notConfirmed_checkLater else R.string.shell_membership_notConfirmed_retryLater,
+    )
     return MembershipNotice(
-        title = "Change Not Confirmed",
-        message = "Silo couldn't confirm $change with the server, so it isn't shown as saved. " +
-            if (recorded) "Check its status once you're connected." else "Try again in a moment.",
-        actionLabel = if (recorded) "Check Status" else "Try Again",
+        title = stringResource(R.string.shell_membership_notConfirmed_title),
+        message = stringResource(R.string.shell_membership_notConfirmed_message, unconfirmed, next),
+        actionLabel = stringResource(
+            if (recorded) R.string.shell_membership_checkStatus else R.string.shell_membership_tryAgain,
+        ),
         onAction = onAction,
         onDismiss = onDismiss,
     )
@@ -113,11 +135,11 @@ private fun unconfirmedNotice(
 private fun LegacyMembershipBanner(onDismiss: () -> Unit, modifier: Modifier) {
     Column(modifier.background(Color(0xF0222630)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         BasicText(
-            "Earlier unsent favorite changes were retained. Review your current Favorites before making a new choice.",
+            stringResource(R.string.shell_membership_legacy_message),
             style = TextStyle(color = Color.White, fontSize = 15.sp),
         )
         BasicText(
-            "Dismiss notice",
+            stringResource(R.string.shell_membership_legacy_dismiss),
             modifier = Modifier.clickable(role = Role.Button, onClick = onDismiss).padding(8.dp),
             style = TextStyle(color = Color(0xFFAACFFF), fontSize = 16.sp),
         )

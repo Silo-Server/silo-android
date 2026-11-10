@@ -1,11 +1,14 @@
 package org.siloserver.silo.android.ui.screens.browse
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.catalog.filter.BrowseFacetMediaType
 import org.siloserver.silo.catalog.filter.CatalogFilterQueryBuilder
 import org.siloserver.silo.catalog.filter.CatalogFilterState
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.settings.BrowsePrefsStore
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
@@ -41,8 +44,9 @@ data class BrowseUiState(
     val catalogDensity: CatalogViewDensity = CatalogViewDensity.Normal,
     val availableFilters: CatalogFiltersResponse? = null,
     val libraryId: Int? = null,
-    val title: String = "Browse",
-    val error: String? = null,
+    /** The server's title for the page; null shows the default Browse title. */
+    val title: String? = null,
+    val error: UiText? = null,
 )
 
 /**
@@ -251,7 +255,7 @@ class BrowseViewModel(
                             hasMore = response.hasMore,
                             total = response.total,
                             libraryHasItems = if (reset) libraryHasItems else it.libraryHasItems,
-                            title = response.title ?: "Browse",
+                            title = response.title,
                             mediaType = mediaType ?: it.mediaType,
                             error = null,
                         )
@@ -262,7 +266,7 @@ class BrowseViewModel(
                         it.copy(
                             isLoading = false,
                             isLoadingMore = false,
-                            error = result.message.ifBlank { "Failed to load catalog" },
+                            error = result.errorText(CommonR.string.library_error_loadCatalog),
                         )
                     }
                 }
@@ -271,7 +275,7 @@ class BrowseViewModel(
                         it.copy(
                             isLoading = false,
                             isLoadingMore = false,
-                            error = "Network error. Check your connection.",
+                            error = UiText.Res(CommonR.string.catalog_error_network),
                         )
                     }
                 }

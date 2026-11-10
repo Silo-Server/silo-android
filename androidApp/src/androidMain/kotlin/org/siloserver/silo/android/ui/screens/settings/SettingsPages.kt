@@ -17,6 +17,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import org.koin.compose.koinInject
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import org.siloserver.silo.android.ui.components.SiloTopBar
@@ -25,9 +26,12 @@ import org.siloserver.silo.android.ui.screens.home.HomeSectionsEditor
 import org.siloserver.silo.android.ui.theme.SettingsDimens
 import org.siloserver.silo.android.ui.theme.SiloSettingsBackground
 import org.siloserver.silo.android.ui.util.formatBytes
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.AppLanguageStore
 import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
+import org.siloserver.silo.common.settings.profileLaunchDescription
+import org.siloserver.silo.common.settings.profileLaunchTitle
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.common.settings.UseProfileSettingsCopy
@@ -35,6 +39,7 @@ import org.siloserver.silo.common.settings.shownIn
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
 import org.siloserver.silo.model.settings.SeekMedia
+import org.siloserver.silo.common.settings.text
 
 // The sub-pages the Settings overview pushes, one per Apple Settings page.
 // Each shares the overview's SettingsViewModel (AppNavigation hands it the
@@ -92,7 +97,7 @@ fun SettingsInterfaceScreen(viewModel: SettingsViewModel, onBackClick: () -> Uni
     val appLanguageStore: AppLanguageStore = koinInject()
     LaunchedEffect(appLanguageStore) { appLanguageStore.refresh() }
 
-    SettingsPageScaffold(title = "Interface", onBackClick = onBackClick) {
+    SettingsPageScaffold(title = stringResource(CommonR.string.settings_interface_title), onBackClick = onBackClick) {
         item(key = "app-language") {
             AppLanguageSettingsSection(store = appLanguageStore)
         }
@@ -106,11 +111,11 @@ fun SettingsInterfaceScreen(viewModel: SettingsViewModel, onBackClick: () -> Uni
         }
         item(key = "home") {
             SettingsSection(
-                title = "Home",
-                footer = "Choose which Home rows are visible and the order they appear in.",
+                title = stringResource(CommonR.string.settings_interface_home),
+                footer = stringResource(CommonR.string.settings_interface_homeFooter),
             ) {
                 SettingsNavigationRow(
-                    label = "Home Sections",
+                    label = stringResource(CommonR.string.settings_homeSections_title),
                     onClick = { showHomeSectionsEditor = true },
                 )
             }
@@ -148,7 +153,7 @@ fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit
         viewModel.onPlaybackOverridesResetShown()
     }
 
-    SettingsPageScaffold(title = "Playback", onBackClick = onBackClick) {
+    SettingsPageScaffold(title = stringResource(CommonR.string.settings_playback), onBackClick = onBackClick) {
         item(key = "streaming") {
             PlaybackStreamingSection(
                 qualityResolution = state.qualityResolution,
@@ -251,7 +256,7 @@ fun SettingsSubtitlesScreen(viewModel: SettingsViewModel, onBackClick: () -> Uni
     val metadataLanguageEnabled = metadataAiStatus.enabled && metadataAiStatus.onView != MetadataAiOnView.Off
     val customAppearance = !state.subtitleMatchesDevice
 
-    SettingsPageScaffold(title = "Subtitles", onBackClick = onBackClick) {
+    SettingsPageScaffold(title = stringResource(CommonR.string.settings_subtitles), onBackClick = onBackClick) {
         item(key = "profile") {
             SubtitleProfileSection(
                 subtitleLanguage = state.subtitleLanguage,
@@ -317,16 +322,19 @@ fun SettingsDownloadsScreen(
     val downloadsState by downloadsViewModel.uiState.collectAsState()
     var showRemoveAllDownloadsConfirm by rememberSaveable { mutableStateOf(false) }
 
-    SettingsPageScaffold(title = "Downloads", onBackClick = onBackClick) {
+    SettingsPageScaffold(title = stringResource(CommonR.string.settings_downloads_title), onBackClick = onBackClick) {
         item(key = "downloads") {
-            SettingsSection(title = "Downloads", footer = "Quality used for new downloads.") {
+            SettingsSection(
+                title = stringResource(CommonR.string.settings_downloads_title),
+                footer = stringResource(CommonR.string.settings_downloads_qualityFooter),
+            ) {
                 SettingsSwitchRow(
-                    label = "Download over Wi-Fi Only",
+                    label = stringResource(CommonR.string.settings_downloads_wifiOnly),
                     checked = state.downloadsWifiOnly,
                     onCheckedChange = viewModel::setDownloadsWifiOnly,
                 )
                 SettingsDropdownRow(
-                    label = "Quality",
+                    label = stringResource(CommonR.string.settings_downloads_quality),
                     value = state.defaultDownloadQuality,
                     options = state.downloadQualityOptions,
                     onOptionSelected = viewModel::setDefaultDownloadQuality,
@@ -335,27 +343,31 @@ fun SettingsDownloadsScreen(
         }
         item(key = "cleanup") {
             SettingsSection(
-                title = "Cleanup",
-                footer = "When off, the Downloads tab suggests freeing up space by removing items " +
-                    "you've finished watching.",
+                title = stringResource(CommonR.string.settings_downloads_cleanup),
+                footer = stringResource(CommonR.string.settings_downloads_cleanupFooter),
             ) {
                 SettingsSwitchRow(
-                    label = "Keep Watched Downloads",
+                    label = stringResource(CommonR.string.settings_downloads_keepWatched),
                     checked = state.keepWatchedDownloads,
                     onCheckedChange = viewModel::setKeepWatchedDownloads,
                 )
             }
         }
         item(key = "storage") {
-            SettingsSection(title = "Storage") {
-                SettingsNavigationRow(label = "Used", value = formatBytes(downloadsState.totalBytesUsed))
+            SettingsSection(title = stringResource(CommonR.string.settings_downloads_storage)) {
+                SettingsNavigationRow(
+                    label = stringResource(CommonR.string.settings_downloads_used),
+                    value = formatBytes(downloadsState.totalBytesUsed),
+                )
                 if (!downloadsState.isEmpty || downloadsState.totalBytesUsed > 0L) {
                     SettingsDestructiveRow(
-                        label = if (downloadsState.isRemovingAllDownloads) {
-                            "Removing Downloads…"
-                        } else {
-                            "Remove All Downloads"
-                        },
+                        label = stringResource(
+                            if (downloadsState.isRemovingAllDownloads) {
+                                CommonR.string.settings_downloads_removingAll
+                            } else {
+                                CommonR.string.settings_downloads_removeAll
+                            },
+                        ),
                         enabled = !downloadsState.isRemovingAllDownloads,
                         onClick = { showRemoveAllDownloadsConfirm = true },
                     )
@@ -366,10 +378,18 @@ fun SettingsDownloadsScreen(
 
     if (showRemoveAllDownloadsConfirm) {
         SiloConfirmDialog(
-            title = "Remove all downloads?",
-            body = "This removes ${formatBytes(downloadsState.totalBytesUsed)} of downloaded files " +
-                "from this device. Your library and server media stay intact.",
-            confirmLabel = if (downloadsState.isRemovingAllDownloads) "Removing…" else "Remove all",
+            title = stringResource(CommonR.string.settings_downloads_removeAllConfirm_title),
+            body = stringResource(
+                CommonR.string.settings_downloads_removeAllConfirm_body,
+                formatBytes(downloadsState.totalBytesUsed),
+            ),
+            confirmLabel = stringResource(
+                if (downloadsState.isRemovingAllDownloads) {
+                    CommonR.string.settings_downloads_removeAllConfirm_removing
+                } else {
+                    CommonR.string.settings_downloads_removeAllConfirm_confirm
+                },
+            ),
             confirmEnabled = !downloadsState.isRemovingAllDownloads,
             onConfirm = {
                 showRemoveAllDownloadsConfirm = false
@@ -388,14 +408,14 @@ fun SettingsDownloadsScreen(
 fun SettingsNotificationsScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit) {
     val state by viewModel.uiState.collectAsState()
 
-    SettingsPageScaffold(title = "Notifications", onBackClick = onBackClick) {
+    SettingsPageScaffold(title = stringResource(CommonR.string.settings_notifications_title), onBackClick = onBackClick) {
         item(key = "in-app") {
             SettingsSection(
                 title = null,
-                footer = "Show alerts inside Silo as new releases arrive.",
+                footer = stringResource(CommonR.string.settings_notifications_inAppFooter),
             ) {
                 SettingsSwitchRow(
-                    label = "In-App Notifications",
+                    label = stringResource(CommonR.string.settings_notifications_inApp),
                     checked = state.notificationsEnabled,
                     onCheckedChange = viewModel::setNotificationsEnabled,
                 )
@@ -404,28 +424,26 @@ fun SettingsNotificationsScreen(viewModel: SettingsViewModel, onBackClick: () ->
         if (state.notificationsEnabled) {
             item(key = "topics") {
                 SettingsSection(
-                    title = "Notify Me About",
-                    footer = "Favorites and Next Up cover new episodes of series you follow. Watchlist covers " +
-                        "titles that become available. Continue Watching covers titles you started but " +
-                        "haven't finished.",
+                    title = stringResource(CommonR.string.settings_notifications_topics),
+                    footer = stringResource(CommonR.string.settings_notifications_topicsFooter),
                 ) {
                     SettingsSwitchRow(
-                        label = "Favorites",
+                        label = stringResource(CommonR.string.menu_favorites),
                         checked = state.notifyFavorites,
                         onCheckedChange = viewModel::setNotifyFavorites,
                     )
                     SettingsSwitchRow(
-                        label = "Watchlist",
+                        label = stringResource(CommonR.string.menu_watchlist),
                         checked = state.notifyWatchlist,
                         onCheckedChange = viewModel::setNotifyWatchlist,
                     )
                     SettingsSwitchRow(
-                        label = "Continue Watching",
+                        label = stringResource(CommonR.string.home_section_continueWatching),
                         checked = state.notifyContinueWatching,
                         onCheckedChange = viewModel::setNotifyContinueWatching,
                     )
                     SettingsSwitchRow(
-                        label = "Next Up",
+                        label = stringResource(CommonR.string.home_section_nextUp),
                         checked = state.notifyNextUp,
                         onCheckedChange = viewModel::setNotifyNextUp,
                     )
@@ -434,9 +452,6 @@ fun SettingsNotificationsScreen(viewModel: SettingsViewModel, onBackClick: () ->
         }
     }
 }
-
-/** How Profile Selection's descriptions name this device. */
-internal const val PROFILE_LAUNCH_DEVICE = "this device"
 
 /**
  * Profile Selection (Apple Settings → General → Profile Selection): whether
@@ -448,16 +463,18 @@ fun SettingsProfileSelectionScreen(onBackClick: () -> Unit) {
     val preferences: ProfileLaunchPreferences = koinInject()
     val launchState by preferences.state.collectAsState()
 
-    SettingsPageScaffold(title = "Profile Selection", onBackClick = onBackClick) {
+    SettingsPageScaffold(title = stringResource(CommonR.string.settings_control_profileSelection), onBackClick = onBackClick) {
         item(key = "profile-selection") {
             SettingsSection(
                 title = null,
-                footer = "Choose when Silo asks who's watching. This applies only to this device.",
+                footer = stringResource(CommonR.string.settings_profileSelection_footer),
             ) {
                 ProfileLaunchBehavior.entries.forEach { behavior ->
                     SettingsChoiceRow(
-                        label = behavior.title,
-                        description = behavior.description(PROFILE_LAUNCH_DEVICE),
+                        label = stringResource(profileLaunchTitle(behavior)),
+                        description = stringResource(
+                            profileLaunchDescription(behavior, CommonR.string.settings_profileLaunch_automatic_detailPhone),
+                        ),
                         selected = behavior == launchState.behavior,
                         onSelect = { preferences.setBehavior(behavior) },
                     )

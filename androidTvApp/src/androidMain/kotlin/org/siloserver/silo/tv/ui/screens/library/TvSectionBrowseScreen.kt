@@ -15,7 +15,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.common.R as CommonR
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.koin.compose.viewmodel.koinViewModel
@@ -77,7 +79,7 @@ fun TvSectionBrowseScreen(
         when {
             state.unavailable -> PageMessage(
                 title = args.title,
-                message = "This row is no longer available.",
+                message = stringResource(CommonR.string.rowPage_unavailableBody),
             )
             state.isLoading && state.items.isEmpty() -> TvLoadingScreen()
             state.error != null -> TvErrorScreen(message = state.error!!, onRetry = viewModel::retry)
@@ -114,7 +116,7 @@ fun TvSectionBrowseScreen(
                     }
                 },
                 header = { PageTitle(args.title) },
-                emptyState = { TvCatalogEmptyState(message = "This row has no titles right now.") },
+                emptyState = { TvCatalogEmptyState(message = stringResource(CommonR.string.rowPage_noTitles)) },
             )
         }
     }

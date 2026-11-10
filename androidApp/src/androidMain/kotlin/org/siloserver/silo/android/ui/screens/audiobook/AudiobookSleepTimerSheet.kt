@@ -26,6 +26,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.common.player.SleepTimerChoice
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.pluralStringResource
 
 /**
  * Sleep timer picker bottom sheet. Matches Apple's audiobook player:
@@ -49,14 +52,14 @@ fun AudiobookSleepTimerSheet(
     ) {
         Column(modifier = Modifier.padding(24.dp).fillMaxWidth()) {
             Text(
-                text = "Sleep timer",
+                text = stringResource(CommonR.string.player_sleepTimer_title),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
             if (minutesLeft != null) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "${minutesLeft} min remaining",
+                    text = pluralStringResource(CommonR.plurals.audiobook_sleepTimer_remaining, minutesLeft, minutesLeft),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -64,10 +67,10 @@ fun AudiobookSleepTimerSheet(
             Spacer(modifier = Modifier.height(16.dp))
 
             val items = listOf(
-                "15 minutes" to SleepTimerChoice.Minutes(15),
-                "30 minutes" to SleepTimerChoice.Minutes(30),
-                "60 minutes" to SleepTimerChoice.Minutes(60),
-                "Off" to SleepTimerChoice.Off,
+                pluralStringResource(CommonR.plurals.player_sleepTimer_minutes, 15, 15) to SleepTimerChoice.Minutes(15),
+                pluralStringResource(CommonR.plurals.player_sleepTimer_minutes, 30, 30) to SleepTimerChoice.Minutes(30),
+                pluralStringResource(CommonR.plurals.player_sleepTimer_minutes, 60, 60) to SleepTimerChoice.Minutes(60),
+                stringResource(CommonR.string.audiobook_sleepTimer_off) to SleepTimerChoice.Off,
             )
 
             items.forEach { (label, choice) ->
@@ -126,7 +129,7 @@ private fun ChoiceRow(
         if (selected) {
             Icon(
                 imageVector = Icons.Filled.Check,
-                contentDescription = "Selected",
+                contentDescription = stringResource(CommonR.string.player_menu_selected),
                 tint = MaterialTheme.colorScheme.onPrimaryContainer,
             )
         }

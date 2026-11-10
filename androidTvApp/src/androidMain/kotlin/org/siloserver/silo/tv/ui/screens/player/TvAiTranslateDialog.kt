@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import android.content.res.Resources
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +26,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -34,14 +38,15 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
 import org.siloserver.silo.tv.ui.theme.DarkBackground
 
 /** Which capture mode the dialog is in — availability comes from AiStatus. */
-private enum class TvAiTranslateMode(val label: String) {
-    Subtitles("From subtitles"),
-    Audio("From audio"),
+private enum class TvAiTranslateMode(@StringRes val label: Int) {
+    Subtitles(CommonR.string.player_aiTranslate_fromSubtitles),
+    Audio(CommonR.string.player_aiTranslate_fromAudio),
 }
 
 /**
@@ -158,7 +163,7 @@ fun TvAiTranslateDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    text = "TRANSLATE WITH AI",
+                    text = stringResource(CommonR.string.player_aiTranslate_title).uppercase(),
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontSize = 16.sp,
                         letterSpacing = 1.1.sp,
@@ -172,14 +177,14 @@ fun TvAiTranslateDialog(
                     is AiJobPhase.Running -> {
                         TvAiJobProgress(
                             progress = phase.progress,
-                            message = phase.message,
+                            message = phase.message?.let { tvPlayerMessageText(it) },
                             onCancel = onCancelJob,
                             cancelFocus = firstRowFocus,
                         )
                     }
                     AiJobPhase.Submitting -> {
                         Text(
-                            text = "Submitting…",
+                            text = stringResource(CommonR.string.player_aiTranslate_submitting),
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White.copy(alpha = 0.72f),
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
@@ -191,8 +196,7 @@ fun TvAiTranslateDialog(
                             // translatable text tracks and transcription
                             // unavailable — explanatory empty state.
                             Text(
-                                text = "No translatable subtitle tracks, and audio " +
-                                    "transcription is not available on this server.",
+                                text = stringResource(CommonR.string.player_aiTranslate_noSources),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White.copy(alpha = 0.66f),
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
@@ -203,15 +207,17 @@ fun TvAiTranslateDialog(
                             // d-pad dead and no visible way out. Back dismissed it,
                             // but nothing on screen said so.
                             TvDialogActionRow(
-                                title = "Close",
+                                title = stringResource(CommonR.string.player_aiTranslate_close),
                                 onClick = onDismiss,
                                 modifier = Modifier.focusRequester(firstRowFocus),
                             )
                         } else {
                             if (subtitlesAvailable && audioAvailable) {
+                                val modeTitle = stringResource(CommonR.string.player_aiTranslate_mode)
+                                val modeLabel = stringResource(mode.label)
                                 TvDialogCyclerRow(
-                                    title = "Mode",
-                                    value = mode.label,
+                                    title = modeTitle,
+                                    value = modeLabel,
                                     onPrevious = {
                                         mode = if (mode == TvAiTranslateMode.Subtitles) {
                                             TvAiTranslateMode.Audio
@@ -228,7 +234,7 @@ fun TvAiTranslateDialog(
                                     },
                                     modifier = Modifier
                                         .focusRequester(firstRowFocus)
-                                        .semantics { contentDescription = "Mode, ${mode.label}" },
+                                        .semantics { contentDescription = "$modeTitle, $modeLabel" },
                                 )
                             }
 
@@ -240,9 +246,10 @@ fun TvAiTranslateDialog(
                                 }
                             if (mode == TvAiTranslateMode.Subtitles) {
                                 val pos = subtitleSourcePos.coerceIn(0, subtitleSources.lastIndex)
-                                val sourceLabel = subtitleSourceLabel(subtitleSources[pos], pos)
+                                val sourceLabel = subtitleSourceLabel(subtitleSources[pos], pos, tvLabelResources())
+                                val sourceTitle = stringResource(CommonR.string.player_aiTranslate_sourceSubtitle)
                                 TvDialogCyclerRow(
-                                    title = "Source subtitle",
+                                    title = sourceTitle,
                                     value = sourceLabel,
                                     onPrevious = {
                                         subtitleSourcePos =
@@ -252,14 +259,15 @@ fun TvAiTranslateDialog(
                                         subtitleSourcePos = (pos + 1) % subtitleSources.size
                                     },
                                     modifier = sourceFocusModifier.semantics {
-                                        contentDescription = "Source subtitle, $sourceLabel"
+                                        contentDescription = "$sourceTitle, $sourceLabel"
                                     },
                                 )
                             } else {
                                 val pos = audioSourcePos.coerceIn(0, audioSources.lastIndex)
-                                val sourceLabel = audioChoiceLabel(audioSources[pos], pos)
+                                val sourceLabel = audioChoiceLabel(audioSources[pos], pos, tvLabelResources())
+                                val sourceTitle = stringResource(CommonR.string.player_aiTranslate_sourceAudio)
                                 TvDialogCyclerRow(
-                                    title = "Source audio",
+                                    title = sourceTitle,
                                     value = sourceLabel,
                                     onPrevious = {
                                         audioSourcePos =
@@ -267,7 +275,7 @@ fun TvAiTranslateDialog(
                                     },
                                     onNext = { audioSourcePos = (pos + 1) % audioSources.size },
                                     modifier = sourceFocusModifier.semantics {
-                                        contentDescription = "Source audio, $sourceLabel"
+                                        contentDescription = "$sourceTitle, $sourceLabel"
                                     },
                                 )
                             }
@@ -275,8 +283,9 @@ fun TvAiTranslateDialog(
                             if (mode == TvAiTranslateMode.Subtitles || canTranslateTranscript) {
                                 val targetLanguageLabel =
                                     tvLanguageDisplayName(TvSubtitleLanguageOptions[targetPos])
+                                val targetTitle = stringResource(CommonR.string.player_aiTranslate_targetLanguage)
                                 TvDialogCyclerRow(
-                                    title = "Target language",
+                                    title = targetTitle,
                                     value = targetLanguageLabel,
                                     onPrevious = {
                                         targetPos = (targetPos - 1 + TvSubtitleLanguageOptions.size) %
@@ -286,13 +295,12 @@ fun TvAiTranslateDialog(
                                         targetPos = (targetPos + 1) % TvSubtitleLanguageOptions.size
                                     },
                                     modifier = Modifier.semantics {
-                                        contentDescription = "Target language, $targetLanguageLabel"
+                                        contentDescription = "$targetTitle, $targetLanguageLabel"
                                     },
                                 )
                             } else {
                                 Text(
-                                    text = "Subtitles are written in the spoken language. " +
-                                        "AI translation is turned off on this server.",
+                                    text = stringResource(CommonR.string.player_aiTranslate_transcribeOnly),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color.White.copy(alpha = 0.66f),
                                     modifier = Modifier.padding(horizontal = 8.dp),
@@ -308,11 +316,24 @@ fun TvAiTranslateDialog(
                                 aiState.quota?.limited == true
                             ) {
                                 val q = aiState.quota
+                                val period = quotaPeriodText(q.period)
                                 Text(
                                     text = if (quotaExhausted) {
-                                        "Transcription quota exhausted (${q.used} of ${q.limit} used ${quotaPeriodText(q.period)})"
+                                        stringResource(
+                                            CommonR.string.player_aiTranslate_quotaExhausted,
+                                            q.used,
+                                            q.limit,
+                                            period,
+                                        )
                                     } else {
-                                        "${q.remaining} of ${q.limit} transcriptions left ${quotaPeriodText(q.period)}"
+                                        pluralStringResource(
+                                            CommonR.plurals.player_aiTranslate_quotaLeftPeriod,
+                                            q.limit,
+                                            q.remaining.toString(),
+                                            q.limit,
+                                            period,
+                                            q.limit.toString(),
+                                        )
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (quotaExhausted) {
@@ -326,7 +347,7 @@ fun TvAiTranslateDialog(
 
                             if (phase is AiJobPhase.Failed) {
                                 Text(
-                                    text = phase.message,
+                                    text = tvPlayerMessageText(phase.message),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color(0xFFEF4444),
                                     modifier = Modifier.padding(horizontal = 8.dp),
@@ -334,11 +355,13 @@ fun TvAiTranslateDialog(
                             }
 
                             TvDialogActionRow(
-                                title = if (mode == TvAiTranslateMode.Subtitles) {
-                                    "Translate"
-                                } else {
-                                    "Transcribe"
-                                },
+                                title = stringResource(
+                                    if (mode == TvAiTranslateMode.Subtitles) {
+                                        CommonR.string.player_aiTranslate_translate
+                                    } else {
+                                        CommonR.string.player_aiTranslate_transcribe
+                                    },
+                                ),
                                 enabled = !quotaExhausted,
                                 onClick = {
                                     if (phase is AiJobPhase.Failed) onClearError()
@@ -392,7 +415,7 @@ private fun TvAiJobProgress(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(
-            text = "Translating… ${(fraction * 100).toInt()}%",
+            text = stringResource(CommonR.string.player_aiTranslate_progress, (fraction * 100).toInt()),
             style = MaterialTheme.typography.titleMedium.copy(
                 fontSize = 17.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -424,7 +447,7 @@ private fun TvAiJobProgress(
             )
         }
         TvDialogActionRow(
-            title = "Cancel",
+            title = stringResource(CommonR.string.common_cancel),
             onClick = onCancel,
             modifier = Modifier.focusRequester(cancelFocus),
         )
@@ -434,12 +457,13 @@ private fun TvAiJobProgress(
 // Same label builder as the HUD/quick pickers ("Danish SRT (External)") so
 // the translate dialog names tracks consistently; position is the list
 // position, not the server combined index (which numbered fallbacks wrongly).
-private fun subtitleSourceLabel(info: PlayerSubtitleInfo, position: Int): String =
-    subtitleChoiceLabel(info, position)
+private fun subtitleSourceLabel(info: PlayerSubtitleInfo, position: Int, resources: Resources): String =
+    subtitleChoiceLabel(info, position, resources)
 
+@Composable
 private fun quotaPeriodText(period: String): String = when (period.lowercase()) {
-    "day" -> "today"
-    "week" -> "this week"
-    "month" -> "this month"
-    else -> "this $period"
+    "day" -> stringResource(CommonR.string.player_aiTranslate_period_day)
+    "week" -> stringResource(CommonR.string.player_aiTranslate_period_week)
+    "month" -> stringResource(CommonR.string.player_aiTranslate_period_month)
+    else -> stringResource(CommonR.string.player_aiTranslate_period_custom, period)
 }

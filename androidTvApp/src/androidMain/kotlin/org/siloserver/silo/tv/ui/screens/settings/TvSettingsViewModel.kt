@@ -46,6 +46,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.settings.SettingsSaveError
 
 /**
  * ViewModel for the TV settings screen. Server-managed device settings
@@ -189,7 +190,7 @@ class TvSettingsViewModel(
         // from EpisodeSpoilerStore. The group is hidden unless supported.
         val episodeSpoilers: EpisodeSpoilerState = EpisodeSpoilerState(),
         /** Why the last spoiler switch change wasn't saved. */
-        val episodeSpoilerSaveError: String? = null,
+        val episodeSpoilerSaveError: SettingsSaveError? = null,
         val navAction: NavAction? = null,
     )
 

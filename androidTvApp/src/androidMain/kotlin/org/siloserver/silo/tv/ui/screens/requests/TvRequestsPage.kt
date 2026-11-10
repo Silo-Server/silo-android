@@ -49,6 +49,10 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import android.content.res.Resources
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -61,6 +65,7 @@ import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.requests.RequestRowCopy
 import org.siloserver.silo.common.requests.RequestStageTrack
@@ -149,7 +154,9 @@ fun TvRequestsPage(
     }
     LaunchedEffect(Unit) { load() }
 
-    val rows = if (hasLoaded) tvRequestRows(hubState.myRequests, hubState.sections) else emptyList()
+    val mineTitle = stringResource(CommonR.string.requests_yourRequests)
+    val discoverLabel = stringResource(CommonR.string.requests_hub_discover)
+    val rows = if (hasLoaded) tvRequestRows(hubState.myRequests, hubState.sections, mineTitle, discoverLabel) else emptyList()
     // A failed cancel's or removal's reason, or a removal's confirmation, shows
     // for a few seconds. The view models outlive this page's composition (a
     // detail push and Back re-enter it), so remember what was already shown
@@ -299,16 +306,18 @@ internal sealed interface TvRequestItem {
 private fun tvRequestRows(
     myRequests: List<MediaRequest>,
     sections: List<RequestDiscoverySection>,
+    mineTitle: String,
+    discoverLabel: String,
 ): List<TvRequestRow> = buildList {
     val mine = myRequests.filterTvMediaRequests()
-    if (mine.isNotEmpty()) add(TvRequestRow("mine", "Your requests", mine.map { TvRequestItem.Record(it) }))
+    if (mine.isNotEmpty()) add(TvRequestRow("mine", mineTitle, mine.map { TvRequestItem.Record(it) }))
     sections.filterTvRequestSections().forEachIndexed { index, section ->
         add(
             TvRequestRow(
                 id = "discover:${section.key}",
                 title = section.title,
                 items = section.results.map { TvRequestItem.Result(it) },
-                label = if (index == 0) "Discover" else null,
+                label = if (index == 0) discoverLabel else null,
             ),
         )
     }
@@ -413,9 +422,13 @@ private fun TvRequestsFeed(
         if (previewKey != null) delay(MarqueeRestMs)
         previewKey = key
     }
-    val preview = remember(previewKey, rows) {
+    // Keyed on the configuration too: the preview's meta line is resolved
+    // here and must follow an in-place language change.
+    val configuration = LocalConfiguration.current
+    val resources = LocalContext.current.resources
+    val preview = remember(previewKey, rows, configuration) {
         val key = previewKey ?: rows.first().let { it.key(it.items.first()) }
-        locate(key)?.let { (rowIndex, itemIndex) -> rows[rowIndex].let { row -> TvRequestPreview.of(row.items[itemIndex], row) } }
+        locate(key)?.let { (rowIndex, itemIndex) -> rows[rowIndex].let { row -> TvRequestPreview.of(resources, row.items[itemIndex], row) } }
     }
     LaunchedEffect(preview?.content?.heroBackdropUrl) {
         preview?.let { tintState.set(it.content.source, it.content.heroBackdropUrl) }
@@ -531,7 +544,7 @@ internal data class TvRequestPreview(
     val statusText: String?,
 ) {
     companion object {
-        fun of(item: TvRequestItem, row: TvRequestRow): TvRequestPreview {
+        fun of(resources: Resources, item: TvRequestItem, row: TvRequestRow): TvRequestPreview {
             val meta = mutableListOf<TvHeroFactToken>()
             val title: String
             val overview: String?
@@ -568,9 +581,11 @@ internal data class TvRequestPreview(
                 }
             }
             year?.takeIf { it > 0 }?.let { meta += TvHeroFactToken.TextToken(it.toString()) }
-            meta += TvHeroFactToken.TextToken(RequestRowCopy.mediaTypeLabel(mediaType))
+            meta += TvHeroFactToken.TextToken(resources.getString(RequestRowCopy.mediaTypeLabel(mediaType)))
             when (item) {
-                is TvRequestItem.Record -> RequestRowCopy.day(item.record.createdAt)?.let { meta += TvHeroFactToken.TextToken("Requested $it") }
+                is TvRequestItem.Record -> RequestRowCopy.day(item.record.createdAt)?.let {
+                    meta += TvHeroFactToken.TextToken(resources.getString(CommonR.string.requests_requestedOn, it))
+                }
                 is TvRequestItem.Result -> ExternalRatings.tmdb(item.result.voteAverage)?.let { meta += TvHeroFactToken.ExternalRating(it) }
             }
             val posterUrl = requestPosterUrl(posterPath)
@@ -665,7 +680,11 @@ private fun TvRequestsPlaceholder(
     when (state) {
         "error" -> TvErrorScreen(message = error.orEmpty(), onRetry = onRetry)
         else -> {
-            val label = if (state == "loading") "Loading requests" else "Nothing here yet"
+            val label = if (state == "loading") {
+                stringResource(CommonR.string.requests_loadingSpoken)
+            } else {
+                stringResource(CommonR.string.requests_empty)
+            }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -688,9 +707,9 @@ private fun TvRequestsEmptyState() {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(imageVector = Icons.Outlined.Inbox, contentDescription = null, tint = Color.White.copy(alpha = 0.62f), modifier = Modifier.size(36.dp))
-        Text(text = "Nothing here yet", style = MaterialTheme.typography.headlineSmall, color = Color.White)
+        Text(text = stringResource(CommonR.string.requests_empty), style = MaterialTheme.typography.headlineSmall, color = Color.White)
         Text(
-            text = "Use Search to find a movie or series to request",
+            text = stringResource(CommonR.string.requests_emptyBody),
             style = MaterialTheme.typography.bodyMedium,
             color = Color.White.copy(alpha = 0.68f),
         )
@@ -722,7 +741,7 @@ private fun TvRequestsLoadingView() {
             Box(modifier = Modifier.size(360.dp, 9.dp).background(bar, RoundedCornerShape(3.dp)))
             Box(modifier = Modifier.size(305.dp, 9.dp).background(bar, RoundedCornerShape(3.dp)))
             Text(
-                text = "Loading Requests",
+                text = stringResource(CommonR.string.requests_loading),
                 style = MaterialTheme.typography.bodyMedium,
                 color = SiloOnSurface.copy(alpha = 0.72f),
                 modifier = Modifier.padding(top = 2.dp),
@@ -751,10 +770,22 @@ private fun TvRequestsLoadingView() {
 
 // ── Long-press actions ───────────────────────────────────────
 
-internal enum class TvRequestAction(val label: String) {
-    Cancel("Cancel Request"),
-    Remove(RequestActionCopy.RemoveConfirm),
+internal enum class TvRequestAction {
+    Cancel,
+    Remove,
+    ;
+
+    /** Remove's label is the shared module's copy; Cancel's comes from the catalog ([title]). */
+    val label: String?
+        get() = when (this) {
+            Cancel -> null
+            Remove -> RequestActionCopy.RemoveConfirm
+        }
 }
+
+/** The action's dialog label. */
+@Composable
+private fun TvRequestAction.title(): String = label ?: stringResource(CommonR.string.requests_action_cancel)
 
 /** The long-press actions a card offers right now; empty when it has none. */
 internal fun TvRequestItem.actions(
@@ -786,9 +817,9 @@ private fun TvRequestActionDialog(
         title = record.title,
         message = RequestProgress.of(record).longLabel,
         onDismissRequest = onDismiss,
-        actions = listOf(TvDialogAction(label = "Close", onClick = onDismiss)) + actions.map { action ->
+        actions = listOf(TvDialogAction(label = stringResource(CommonR.string.requests_actionDialog_close), onClick = onDismiss)) + actions.map { action ->
             TvDialogAction(
-                label = action.label,
+                label = action.title(),
                 onClick = { onAction(action, record) },
                 style = when (action) {
                     TvRequestAction.Cancel, TvRequestAction.Remove -> TvDialogActionStyle.Destructive

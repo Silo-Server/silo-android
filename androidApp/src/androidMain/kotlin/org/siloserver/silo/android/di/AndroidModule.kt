@@ -378,6 +378,7 @@ val androidModule = module {
         // No network evidence: the phone's measured throughput describes its
         // own link, not the receiver's, so cast starts carry no estimate.
         CastPlaybackPreparer(
+            context = androidContext(),
             playbackRepository = get(),
             tokenManager = get(),
         )

@@ -451,13 +451,14 @@ private fun ApprovalCard(
                 val switchServerName = serverName ?: state.selectedServer?.displayName
                     ?: stringResource(CommonR.string.signInTv_switchThisServer)
                 val signInAgain = stringResource(CommonR.string.picker_signInAgain)
+                val unnamedAccount = stringResource(CommonR.string.account_unnamed)
                 SiloDialog(
                     title = stringResource(CommonR.string.signInTv_chooseAccountTitle),
                     message = stringResource(CommonR.string.signInTv_chooseAccountBody, switchServerName),
                     onDismissRequest = { confirmsSwitchAccount = false },
                     actions = buildList {
                         otherAccounts.forEach { account ->
-                            val name = account.username?.takeIf { it.isNotBlank() } ?: "Account"
+                            val name = account.username?.takeIf { it.isNotBlank() } ?: unnamedAccount
                             add(
                                 SiloDialogAction(
                                     label = if (account.needsSignIn) "$name · $signInAgain" else name,

@@ -1,5 +1,8 @@
 package org.siloserver.silo.tv.ui.components
 
+import androidx.compose.runtime.Composable
+import org.siloserver.silo.common.R as CommonR
+
 /**
  * `S01E02` for a Home card or the hero marquee, or a half tag when only one
  * number is known. Zero-padded so a rail of episodes keeps its numbers in one
@@ -9,11 +12,19 @@ package org.siloserver.silo.tv.ui.components
  * screens use (`S1 · E2`, `S1:E2`): those sit inside prose or on a badge with
  * room to breathe, while these labels are scanned down a list.
  */
-internal fun tvEpisodeTag(season: Int?, episode: Int?): String? {
-    if (season == null && episode == null) return null
-    val s = season?.let { "S${it.toString().padStart(2, '0')}" }.orEmpty()
-    val e = episode?.let { "E${it.toString().padStart(2, '0')}" }.orEmpty()
-    return "$s$e".ifBlank { null }
+@Composable
+internal fun tvEpisodeTag(season: Int?, episode: Int?): String? = tvEpisodeTagToken(season, episode)?.resolved()
+
+/** [tvEpisodeTag] as a catalog string and its zero-padded numbers, resolved when drawn. */
+internal fun tvEpisodeTagToken(season: Int?, episode: Int?): TvHeroFactToken.ResToken? {
+    val s = season?.toString()?.padStart(2, '0')
+    val e = episode?.toString()?.padStart(2, '0')
+    return when {
+        s != null && e != null -> TvHeroFactToken.ResToken(CommonR.string.catalog_episodeTag, listOf(s, e))
+        s != null -> TvHeroFactToken.ResToken(CommonR.string.calendar_seasonShort, listOf(s))
+        e != null -> TvHeroFactToken.ResToken(CommonR.string.calendar_episodeShort, listOf(e))
+        else -> null
+    }
 }
 
 /**
@@ -21,6 +32,7 @@ internal fun tvEpisodeTag(season: Int?, episode: Int?): String? {
  * [bidiIsolated]. A title on its own stays bare so its own script still sets
  * the paragraph direction.
  */
+@Composable
 internal fun tvEpisodeTitleLine(season: Int?, episode: Int?, title: String): String? {
     val tag = tvEpisodeTag(season, episode)
     val name = title.takeIf { it.isNotBlank() }

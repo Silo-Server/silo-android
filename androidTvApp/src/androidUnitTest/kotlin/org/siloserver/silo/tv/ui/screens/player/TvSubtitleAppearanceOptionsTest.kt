@@ -1,7 +1,12 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import android.app.Application
 import androidx.compose.ui.Alignment
+import androidx.test.core.app.ApplicationProvider
 import androidx.compose.ui.text.font.FontFamily
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
@@ -11,16 +16,20 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class TvSubtitleAppearanceOptionsTest {
+    private val resources get() = ApplicationProvider.getApplicationContext<Application>().resources
+
     @Test
     fun backgroundStylePickerLeadsWithNoBackground() {
         assertEquals(
             SubtitleBackgroundStylePreset.None to "No background",
-            TvSubtitleAppearanceOptions.BACKGROUND_STYLES.first(),
+            TvSubtitleAppearanceOptions.backgroundStyles(resources).first(),
         )
         assertEquals(
             "No background",
-            TvSubtitleAppearanceOptions.backgroundStyleLabel(SubtitleBackgroundStylePreset.None),
+            TvSubtitleAppearanceOptions.backgroundStyleLabel(SubtitleBackgroundStylePreset.None, resources),
         )
     }
 

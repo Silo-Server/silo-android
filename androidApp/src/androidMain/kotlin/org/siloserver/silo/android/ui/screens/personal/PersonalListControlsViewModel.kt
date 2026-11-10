@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.personal
 
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,6 +14,7 @@ import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.viewmodel.PersonalListQuery
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Sort keys for the saved lists (Watchlist / Favorites). Mirrors the TV
@@ -23,22 +25,25 @@ import org.siloserver.silo.viewmodel.PersonalListQuery
  */
 enum class PersonalListSort(
     val value: String?,
-    val label: String,
+    @StringRes val label: Int,
     val defaultOrder: String,
-    private val ascendingLabel: String,
-    private val descendingLabel: String,
+    /** Direction labels; 0 for [ListOrder], which has no direction. */
+    @StringRes private val ascendingLabel: Int,
+    @StringRes private val descendingLabel: Int,
 ) {
-    ListOrder(null, "List Order", "desc", "", ""),
-    Title("title", "Title", "asc", "A–Z", "Z–A"),
-    RecentlyAdded("added_at", "Recently Added", "desc", "Oldest first", "Newest first"),
-    Year("year", "Year", "desc", "Oldest first", "Newest first"),
-    Rating("rating_imdb", "Rating", "desc", "Lowest first", "Highest first"),
-    Runtime("runtime", "Runtime", "asc", "Shortest first", "Longest first"),
+    ListOrder(null, CommonR.string.catalog_sort_listOrder, "desc", 0, 0),
+    Title("title", CommonR.string.catalog_sort_title, "asc", CommonR.string.library_direction_az, CommonR.string.library_direction_za),
+    RecentlyAdded("added_at", CommonR.string.catalog_sort_recentlyAdded, "desc", CommonR.string.catalog_sort_direction_oldestFirst, CommonR.string.catalog_sort_direction_newestFirst),
+    Year("year", CommonR.string.catalog_sort_year, "desc", CommonR.string.catalog_sort_direction_oldestFirst, CommonR.string.catalog_sort_direction_newestFirst),
+    Rating("rating_imdb", CommonR.string.catalog_sort_rating, "desc", CommonR.string.catalog_sort_direction_lowestFirst, CommonR.string.catalog_sort_direction_highestFirst),
+    Runtime("runtime", CommonR.string.catalog_sort_runtime, "asc", CommonR.string.catalog_sort_direction_shortestFirst, CommonR.string.catalog_sort_direction_longestFirst),
     ;
 
     val hasDirection: Boolean get() = value != null
 
-    fun directionLabel(order: String): String =
+    /** Only meaningful when [hasDirection]. */
+    @StringRes
+    fun directionLabel(order: String): Int =
         if (order == "asc") ascendingLabel else descendingLabel
 }
 

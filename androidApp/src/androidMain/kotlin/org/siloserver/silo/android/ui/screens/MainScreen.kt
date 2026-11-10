@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -590,7 +592,7 @@ fun MainScreen(
             // Downloads and For You use the shared iOS-style top chrome.
             if (currentTab == Tab.Downloads || currentTab == Tab.ForYou) {
                 val title = when (currentTab) {
-                    Tab.Downloads -> "Downloads"
+                    Tab.Downloads -> stringResource(CommonR.string.tab_downloads)
                     // Names what For You is showing: the feed, or a saved list.
                     Tab.ForYou -> forYouDisplayed.headerTitle()
                     else -> null
@@ -679,7 +681,7 @@ private fun MobileServerOfflinePill(
         shadowElevation = 6.dp,
     ) {
         Text(
-            text = "Offline mode - tap to retry",
+            text = stringResource(CommonR.string.shell_offline_tapToRetry),
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,

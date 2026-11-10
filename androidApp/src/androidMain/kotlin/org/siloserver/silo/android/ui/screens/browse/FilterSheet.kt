@@ -1,5 +1,9 @@
 package org.siloserver.silo.android.ui.screens.browse
 
+import org.siloserver.silo.common.i18n.lowercaseForUi
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.UiText
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -33,11 +37,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import kotlinx.coroutines.delay
 import org.koin.compose.koinInject
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.network.apiv2.CatalogFacetScopeV2
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -124,7 +129,7 @@ fun FilterSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Filters",
+                    text = stringResource(CommonR.string.filters_title),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
@@ -133,7 +138,7 @@ fun FilterSheet(
                     onClick = { draft = draft.resetFilters() },
                     enabled = draft.canResetFilters,
                 ) {
-                    Text("Reset")
+                    Text(stringResource(CommonR.string.filters_resetShort))
                 }
             }
 
@@ -141,7 +146,7 @@ fun FilterSheet(
             // where the layout options read as extra sort choices.
             if (viewDensity != null && onSelectDensity != null) {
                 Text(
-                    text = "View",
+                    text = stringResource(CommonR.string.filters_view),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp, bottom = 6.dp),
@@ -151,7 +156,7 @@ fun FilterSheet(
                         FilterChip(
                             selected = viewDensity == density,
                             onClick = { onSelectDensity(density) },
-                            label = { Text(density.label) },
+                            label = { Text(stringResource(density.labelRes)) },
                         )
                     }
                 }
@@ -160,18 +165,18 @@ fun FilterSheet(
             // Quick section: watch status (single-select) + dynamic range.
             val watchOptions = facetOptionPairs(CatalogFacet.WatchStatus, availableFilters)
             if (watchOptions.isNotEmpty()) {
-                SectionLabel("Watch Status")
+                SectionLabel(stringResource(CommonR.string.filters_facet_watchStatus))
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    watchOptions.forEach { (value, label) ->
+                    watchOptions.forEach { (value, _) ->
                         val selected = value in draft.valuesFor(CatalogFacet.WatchStatus)
                         FilterChip(
                             selected = selected,
                             onClick = { draft = draft.toggle(CatalogFacet.WatchStatus, value) },
-                            label = { Text(label) },
+                            label = { Text(facetValueLabel(CatalogFacet.WatchStatus, value)) },
                             colors = filterSheetChipColors(selected),
                             border = null,
                         )
@@ -179,7 +184,7 @@ fun FilterSheet(
                 }
             }
             if (CatalogFacet.DynamicRange in facets) {
-                SectionLabel("Dynamic Range")
+                SectionLabel(stringResource(CommonR.string.filters_facet_dynamicRange))
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth(),
@@ -198,7 +203,7 @@ fun FilterSheet(
             }
 
             // Category rows — drill-in pickers for the multi-value facets.
-            SectionLabel("Categories")
+            SectionLabel(stringResource(CommonR.string.filters_categories))
             facets
                 .filter { it != CatalogFacet.WatchStatus && it != CatalogFacet.DynamicRange }
                 .forEach { facet ->
@@ -213,14 +218,18 @@ fun FilterSheet(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = facet.label,
+                            text = facetLabel(facet),
                             style = MaterialTheme.typography.bodyLarge,
                             modifier = Modifier.weight(1f),
                         )
                         if (selected.isNotEmpty()) {
                             val first = facetValueLabel(facet, selected.sorted().first())
                             Text(
-                                text = if (selected.size > 1) "$first +${selected.size - 1}" else first,
+                                text = if (selected.size > 1) {
+                                    stringResource(CommonR.string.filters_summaryMore, first, selected.size - 1)
+                                } else {
+                                    first
+                                },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -235,28 +244,28 @@ fun FilterSheet(
 
             // Match All / Any — combines across facets; values within one
             // facet are always OR'd.
-            SectionLabel("Match")
+            SectionLabel(stringResource(CommonR.string.filters_match))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = draft.matchAll,
                     onClick = { draft = draft.copy(matchAll = true) },
-                    label = { Text("All") },
+                    label = { Text(stringResource(CommonR.string.filters_matchAllShort)) },
                     colors = filterSheetChipColors(draft.matchAll),
                     border = null,
                 )
                 FilterChip(
                     selected = !draft.matchAll,
                     onClick = { draft = draft.copy(matchAll = false) },
-                    label = { Text("Any") },
+                    label = { Text(stringResource(CommonR.string.filters_matchAnyShort)) },
                     colors = filterSheetChipColors(!draft.matchAll),
                     border = null,
                 )
             }
             Text(
                 text = if (draft.matchAll) {
-                    "Results match every selected filter."
+                    stringResource(CommonR.string.filters_matchAllHint)
                 } else {
-                    "Results match any selected filter."
+                    stringResource(CommonR.string.filters_matchAnyHint)
                 },
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -270,7 +279,7 @@ fun FilterSheet(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Preserve sort & filters",
+                        text = stringResource(CommonR.string.filters_preserve),
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.weight(1f),
                     )
@@ -302,18 +311,18 @@ private fun FacetValuePicker(
     val remoteField = when (facet) { CatalogFacet.Author -> "author"; CatalogFacet.Narrator -> "narrator"; CatalogFacet.SeriesName -> "series"; else -> null }
     val repository: CatalogRepository = koinInject()
     var remoteValues by remember(facet, scope) { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
-    var remoteNote by remember(facet, scope) { mutableStateOf<String?>(null) }
+    var remoteNote by remember(facet, scope) { mutableStateOf<FacetSearchNote?>(null) }
     LaunchedEffect(query, facet, scope) {
         if (remoteField != null && scope != null) {
             remoteValues = emptyList()
-            remoteNote = "Searching…"
+            remoteNote = FacetSearchNote.Searching
             delay(250)
             when (val result = repository.searchFacet(scope, remoteField, query.trim())) {
                 is ApiResult.Success -> {
                     remoteValues = result.data.matches.map { it to it }
-                    remoteNote = if (result.data.hasMore) "More matches are available. Refine your search." else null
+                    remoteNote = if (result.data.hasMore) FacetSearchNote.MoreMatches else null
                 }
-                else -> remoteNote = result.errorMessage("Could not search filter values")
+                else -> remoteNote = FacetSearchNote.Failed(result.errorText(CommonR.string.filters_searchFailed))
             }
         }
     }
@@ -324,24 +333,24 @@ private fun FacetValuePicker(
         IconButton(onClick = onBack) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                contentDescription = "Back to filters",
+                contentDescription = stringResource(CommonR.string.filters_backToFilters),
             )
         }
         Text(
-            text = facet.label,
+            text = facetLabel(facet),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.weight(1f),
         )
         if (selected.isNotEmpty()) {
-            TextButton(onClick = onClear) { Text("Clear") }
+            TextButton(onClick = onClear) { Text(stringResource(CommonR.string.filters_clear)) }
         }
     }
     if (remoteField != null || options.size > 12) {
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = { Text("Search ${facet.label.lowercase()}") },
+            placeholder = { Text(stringResource(CommonR.string.filters_searchFacet, facetLabel(facet).lowercaseForUi())) },
             singleLine = true,
             modifier = Modifier
                 .fillMaxWidth()
@@ -349,7 +358,12 @@ private fun FacetValuePicker(
         )
     }
     if (remoteField != null) {
-        Text(remoteNote ?: if (scope == null) "Showing a limited list. Reload filters to search all values." else "Search by the beginning of a name.", style = MaterialTheme.typography.bodySmall)
+        val note = remoteNote?.text() ?: if (scope == null) {
+            stringResource(CommonR.string.filters_limitedList)
+        } else {
+            stringResource(CommonR.string.filters_searchByPrefix)
+        }
+        Text(note, style = MaterialTheme.typography.bodySmall)
     }
     val shown = if (remoteField != null && scope != null) {
         remoteValues
@@ -374,7 +388,7 @@ private fun FacetValuePicker(
             if (value in selected) {
                 Icon(
                     imageVector = Icons.Filled.Check,
-                    contentDescription = "Selected",
+                    contentDescription = stringResource(CommonR.string.filters_selectedValue),
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(20.dp),
                 )
@@ -382,6 +396,22 @@ private fun FacetValuePicker(
         }
     }
     Spacer(modifier = Modifier.height(24.dp))
+}
+
+/** The status line under a facet's search field while server-side search runs. */
+private sealed interface FacetSearchNote {
+    data object Searching : FacetSearchNote
+    data object MoreMatches : FacetSearchNote
+
+    /** The server's message, or the catalog's search-failed or network text. */
+    data class Failed(val message: UiText) : FacetSearchNote
+}
+
+@Composable
+private fun FacetSearchNote.text(): String = when (this) {
+    FacetSearchNote.Searching -> stringResource(CommonR.string.filters_searching)
+    FacetSearchNote.MoreMatches -> stringResource(CommonR.string.filters_moreMatches)
+    is FacetSearchNote.Failed -> message.text()
 }
 
 @Composable

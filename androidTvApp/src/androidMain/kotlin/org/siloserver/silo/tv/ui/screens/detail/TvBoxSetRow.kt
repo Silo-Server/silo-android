@@ -15,6 +15,8 @@ import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.tv.ui.components.TvMediaRow
 import org.siloserver.silo.tv.ui.components.TvRowStyle
 import org.siloserver.silo.tv.ui.components.tvCardWidth
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * The box set row on a movie's page: the box set's title over as many of its
@@ -83,7 +85,7 @@ internal fun TvBoxSetRowSection(
                 onExploreAllClick = onExploreAll,
                 onExploreAllFocused = onExploreAllFocused,
                 markedContentId = currentContentId,
-                markedBadge = "THIS FILM",
+                markedBadge = stringResource(CommonR.string.boxSets_thisFilm),
             )
         }
     }

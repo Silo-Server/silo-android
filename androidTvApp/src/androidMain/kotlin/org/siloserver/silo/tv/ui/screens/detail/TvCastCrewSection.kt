@@ -59,6 +59,8 @@ import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
 import org.siloserver.silo.tv.ui.theme.tvRailPinOnFocus
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 internal fun restoredRailIndex(lastFocusedIndex: Int, itemCount: Int): Int? =
     if (itemCount <= 0) null else lastFocusedIndex.coerceIn(0, itemCount - 1)
@@ -114,7 +116,7 @@ fun TvCastCrewSection(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         TvDetailSectionHeader(
-            title = "Cast & Crew",
+            title = stringResource(CommonR.string.detail_cast),
             modifier = Modifier.padding(horizontal = horizontalContentPadding),
         )
 

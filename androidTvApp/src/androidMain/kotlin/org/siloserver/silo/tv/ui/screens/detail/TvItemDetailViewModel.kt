@@ -2,6 +2,8 @@
 
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.model.playback.withPendingSeriesSubtitleChoice
 import org.siloserver.silo.model.playback.withPendingSeriesAudioChoice
 import org.siloserver.silo.model.playback.matchesSignature
@@ -78,11 +80,12 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import org.siloserver.silo.common.R as CommonR
 
 data class TvItemDetailUiState(
     val isLoading: Boolean = true,
     val detail: ItemDetail? = null,
-    val error: String? = null,
+    val error: UiText? = null,
     // User state toggles.
     val isFavorite: Boolean = false,
     val inWatchlist: Boolean = false,
@@ -846,7 +849,7 @@ class TvItemDetailViewModel(
                             it.copy(
                                 isLoading = false,
                                 detail = null,
-                                error = "This title is not available on Android TV.",
+                                error = UiText.Res(CommonR.string.detail_error_notOnTv),
                             )
                         }
                         return@launch
@@ -892,11 +895,11 @@ class TvItemDetailViewModel(
                         // refuses; drop the copy seedCachedDetail painted so the
                         // screen shows the error, not stale actions.
                         detail = if (result.isAccessRefusal()) null else it.detail,
-                        error = result.message.ifBlank { "Failed to load details" },
+                        error = result.errorText(CommonR.string.detail_error_loadFailed),
                     )
                 }
                 is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(isLoading = false, error = "Network error. Check your connection.")
+                    it.copy(isLoading = false, error = UiText.Res(CommonR.string.catalog_error_network))
                 }
             }
         }
@@ -1143,7 +1146,7 @@ class TvItemDetailViewModel(
                         it.copy(
                             isLoading = false,
                             detail = null,
-                            error = result.message.ifBlank { "Failed to load details" },
+                            error = result.errorText(CommonR.string.detail_error_loadFailed),
                         )
                     }
                 }

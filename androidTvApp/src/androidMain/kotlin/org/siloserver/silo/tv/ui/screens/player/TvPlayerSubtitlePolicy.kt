@@ -216,11 +216,13 @@ internal fun beginTvReplacementLoad(
 internal fun failTvReplacementLoad(
     state: TvPlayerViewModel.UiState,
     message: String,
+    messageRes: Int? = null,
 ): TvPlayerViewModel.UiState = state.copy(
     isLoading = false,
     error = null,
     serverUnreachable = false,
     subtitleFailureMessage = message,
+    subtitleFailureRes = messageRes?.let { TvPlayerErrorRes(message, it) },
 )
 
 internal fun tvAudioTrackPersistenceUpdate(

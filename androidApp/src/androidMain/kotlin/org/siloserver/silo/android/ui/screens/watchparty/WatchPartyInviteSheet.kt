@@ -35,6 +35,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -51,6 +52,7 @@ import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * The invitation, after Apple's `WatchPartyInviteView` phone layout: the
@@ -68,14 +70,18 @@ internal fun WatchPartyInviteSheet(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf<String?>(null) }
+    val shareSubject = stringResource(CommonR.string.watchParty_invite_shareSubject)
+    val shareChooser = stringResource(CommonR.string.watchParty_invite_shareChooser)
+    val shareText = watchPartyShareText(code, inviteUrl)
+    val copiedLabel = stringResource(CommonR.string.watchParty_invite_copied)
 
     fun share(text: String) {
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "Join my Silo Watch Party")
+            putExtra(Intent.EXTRA_SUBJECT, shareSubject)
             putExtra(Intent.EXTRA_TEXT, text)
         }
-        context.startActivity(Intent.createChooser(send, "Share Watch Party invitation"))
+        context.startActivity(Intent.createChooser(send, shareChooser))
     }
 
     ModalBottomSheet(
@@ -95,21 +101,22 @@ internal fun WatchPartyInviteSheet(
                 .navigationBarsPadding(),
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                WatchPartyEyebrow("Invite friends")
+                WatchPartyEyebrow(stringResource(CommonR.string.watchParty_invite_friends))
                 Text(
-                    "Join with this code",
+                    stringResource(CommonR.string.watchParty_invite_title),
                     fontSize = (WatchPartyMetrics.HERO_TITLE * 0.8f).sp,
                     fontWeight = FontWeight.Bold,
                     color = SiloOnSurface,
                     textAlign = TextAlign.Center,
                 )
                 Text(
-                    "Anyone with a profile on this Silo server can enter it from Watch Party.",
+                    stringResource(CommonR.string.watchParty_invite_body),
                     fontSize = WatchPartyMetrics.BODY.sp,
                     color = SiloSecondaryText,
                     textAlign = TextAlign.Center,
                 )
             }
+            val codeDescription = stringResource(CommonR.string.watchParty_partyCode, code.toList().joinToString(", "))
             Text(
                 code,
                 fontSize = 40.sp,
@@ -120,9 +127,10 @@ internal fun WatchPartyInviteSheet(
                 maxLines = 1,
                 modifier = Modifier
                     .padding(start = 8.dp)
-                    .semantics { contentDescription = "Party code ${code.toList().joinToString(", ")}" },
+                    .semantics { contentDescription = codeDescription },
             )
             if (inviteUrl != null) {
+                val qrDescription = stringResource(CommonR.string.watchParty_invite_qrDescription)
                 WatchPartyQrCode(
                     content = inviteUrl,
                     size = 200.dp,
@@ -130,10 +138,10 @@ internal fun WatchPartyInviteSheet(
                         .clip(RoundedCornerShape(16.dp))
                         .background(Color.White)
                         .padding(12.dp)
-                        .semantics { contentDescription = "Scan to join this party" },
+                        .semantics { contentDescription = qrDescription },
                 )
                 Text(
-                    "Or scan to open the invitation on a phone.",
+                    stringResource(CommonR.string.watchParty_invite_scan),
                     fontSize = WatchPartyMetrics.CAPTION.sp,
                     color = SiloSecondaryText,
                     textAlign = TextAlign.Center,
@@ -141,15 +149,17 @@ internal fun WatchPartyInviteSheet(
             }
             Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 8.dp)) {
                 WatchPartyButton(
-                    text = if (inviteUrl != null) "Share invitation" else "Share code",
+                    text = stringResource(
+                        if (inviteUrl != null) CommonR.string.watchParty_invite_shareInvitation else CommonR.string.watchParty_invite_shareCode,
+                    ),
                     icon = Icons.Outlined.IosShare,
-                    onClick = { share(watchPartyShareText(code, inviteUrl)) },
+                    onClick = { share(shareText) },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (inviteUrl != null) {
                         WatchPartyButton(
-                            text = if (copied == "link") "Copied" else "Copy link",
+                            text = if (copied == "link") copiedLabel else stringResource(CommonR.string.watchParty_invite_copyLink),
                             icon = if (copied == "link") Icons.Filled.Check else Icons.Outlined.Link,
                             kind = WatchPartyButtonKind.Secondary,
                             onClick = {
@@ -160,7 +170,7 @@ internal fun WatchPartyInviteSheet(
                         )
                     }
                     WatchPartyButton(
-                        text = if (copied == "code") "Copied" else "Copy code",
+                        text = if (copied == "code") copiedLabel else stringResource(CommonR.string.watchParty_invite_copyCode),
                         icon = if (copied == "code") Icons.Filled.Check else Icons.Outlined.ContentCopy,
                         kind = WatchPartyButtonKind.Secondary,
                         onClick = {
@@ -172,7 +182,7 @@ internal fun WatchPartyInviteSheet(
                 }
             }
             WatchPartyButton(
-                text = "Done",
+                text = stringResource(CommonR.string.common_done),
                 kind = WatchPartyButtonKind.Secondary,
                 onClick = onDismiss,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),

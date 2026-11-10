@@ -1,11 +1,19 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.LeafItemUserData
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = android.app.Application::class)
 class DetailPlayLabelTest {
+    private val resources = ApplicationProvider.getApplicationContext<Context>().resources
 
     @Test
     fun episodeWithProgressShowsNeutralSeasonEpisodeLabel() {
@@ -24,7 +32,7 @@ class DetailPlayLabelTest {
             ),
         )
 
-        assertEquals("Play S6·E4", computePlayLabel(detail))
+        assertEquals("Play S6·E4", computePlayLabel(resources, detail))
     }
 
     @Test
@@ -43,7 +51,7 @@ class DetailPlayLabelTest {
             ),
         )
 
-        assertEquals("Play S6·E4", computePlayLabel(detail))
+        assertEquals("Play S6·E4", computePlayLabel(resources, detail))
     }
 
     @Test
@@ -62,7 +70,7 @@ class DetailPlayLabelTest {
             ),
         )
 
-        assertEquals("Play S6·E4", computePlayLabel(detail))
+        assertEquals("Play S6·E4", computePlayLabel(resources, detail))
     }
 
     @Test
@@ -76,6 +84,6 @@ class DetailPlayLabelTest {
             episodeNumber = 4,
         )
 
-        assertEquals("Play S6·E4", computePlayLabel(detail))
+        assertEquals("Play S6·E4", computePlayLabel(resources, detail))
     }
 }

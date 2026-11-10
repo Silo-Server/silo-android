@@ -57,6 +57,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -324,7 +326,7 @@ private fun CatalogLetterIndex(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = previewPrefix ?: "All",
+                    text = previewPrefix ?: stringResource(CommonR.string.catalog_letters_all),
                     color = MaterialTheme.colorScheme.background,
                     fontSize = if (previewPrefix == null) 16.sp else 28.sp,
                     fontWeight = FontWeight.Bold,
@@ -480,7 +482,7 @@ private fun CatalogLetterIndex(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = selectedNamePrefix ?: "A\nZ",
+                text = selectedNamePrefix ?: "A\nZ", // i18n-ignore
                 color = if (selectedNamePrefix != null) MaterialTheme.colorScheme.background
                 else MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = if (selectedNamePrefix != null) 12.sp else 9.sp,

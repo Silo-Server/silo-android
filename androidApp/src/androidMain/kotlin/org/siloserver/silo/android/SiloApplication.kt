@@ -42,6 +42,7 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
         DiagnosticsStartup.installCrashCapture(this)
         // Before any request: v2 problem details show in the app's language.
         org.siloserver.silo.common.i18n.ServerText.install(this)
+        org.siloserver.silo.common.i18n.EnglishText.install(this)
         val koinApp = startKoin {
             androidContext(this@SiloApplication)
             modules(sharedModules() + playerModule + playerInfraModule + marqueeModule + watchPartyModule + androidModule + diagnosticsModule)
@@ -241,12 +242,14 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
     private fun registerDownloadsNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = getSystemService(NotificationManager::class.java) ?: return
+        // Shown in system settings: use the app language, as the activities do.
+        val text = org.siloserver.silo.common.i18n.AppLocales.wrap(this)
         val channel = NotificationChannel(
             DownloadWorker.NOTIFICATION_CHANNEL_ID,
-            "Downloads",
+            text.getString(org.siloserver.silo.common.R.string.downloads_notification_channelName),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Progress and completion for offline downloads"
+            description = text.getString(org.siloserver.silo.common.R.string.downloads_notification_channelDescription)
             setShowBadge(false)
         }
         nm.createNotificationChannel(channel)

@@ -8,10 +8,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.uiText
 import org.siloserver.silo.common.network.CleartextConsentStore
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.auth.InvitationLookupResponse
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.network.requiresApproval
 import org.siloserver.silo.repository.AuthRepository
 
@@ -32,7 +34,7 @@ data class InviteClaimUiState(
     val password: String = "",
     val confirmPassword: String = "",
     val isSubmitting: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val claimSuccess: Boolean = false,
     val signInRequiredUsername: String? = null,
     val acceptanceUncertain: Boolean = false,
@@ -136,9 +138,9 @@ class InviteClaimViewModel(
             current.signInRequiredUsername != null || current.acceptanceUncertain ||
             current.invitation?.acceptanceAvailable != true) return
         val validationError = when {
-            current.password.codePointCount(0, current.password.length) < 8 -> "Password must be at least 8 characters"
-            current.password.toByteArray(Charsets.UTF_8).size > 72 -> "Password must be at most 72 UTF-8 bytes"
-            current.password != current.confirmPassword -> "Passwords do not match"
+            current.password.codePointCount(0, current.password.length) < 8 -> uiText(CommonR.string.account_create_error_passwordShort)
+            current.password.toByteArray(Charsets.UTF_8).size > 72 -> uiText(CommonR.string.account_create_error_passwordLong)
+            current.password != current.confirmPassword -> uiText(CommonR.string.account_create_error_passwordMismatch)
             else -> null
         }
         if (validationError != null) {
@@ -195,13 +197,13 @@ class InviteClaimViewModel(
                 _uiState.update {
                     it.copy(isSubmitting = false, invitationInvalid = invalid,
                         acceptanceUncertain = uncertain,
-                        error = if (uncertain) "Account creation could not be confirmed. Check sign-in before trying another invitation."
-                            else result.errorMessage("Could not accept this invitation"))
+                        error = if (uncertain) uiText(CommonR.string.account_invite_error_unconfirmed)
+                            else UiText.serverOr(result.message, CommonR.string.account_invite_error_failed))
                 }
             }
             is ApiResult.NetworkError -> _uiState.update {
                 it.copy(isSubmitting = false, acceptanceUncertain = true,
-                    error = "Account creation could not be confirmed. Check sign-in before trying another invitation.")
+                    error = uiText(CommonR.string.account_invite_error_unconfirmed))
             }
         }
     }

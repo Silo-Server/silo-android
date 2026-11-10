@@ -1,5 +1,9 @@
 package org.siloserver.silo.common.player
 
+import androidx.annotation.StringRes
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -8,6 +12,7 @@ import org.siloserver.silo.audiobook.AudiobookChapter
 import org.siloserver.silo.audiobook.AudiobookChapters
 import org.siloserver.silo.audiobook.AudiobookTimeline
 import org.siloserver.silo.audiobook.buildAudiobookTimeline
+import org.siloserver.silo.common.R
 import org.siloserver.silo.common.audiobook.AudiobookBookmarksStore
 import org.siloserver.silo.common.downloads.DownloadEnqueuer
 import org.siloserver.silo.common.downloads.OfflineMediaResolver
@@ -85,7 +90,7 @@ data class AudiobookPlayerUiState(
     /** False while server support is still unknown: nothing may be edited yet. */
     val skipIntervalsEditable: Boolean = false,
     /** Why the last skip-interval change was not saved; cleared by the next attempt. */
-    val skipIntervalError: String? = null,
+    val skipIntervalFailure: AudiobookSkipIntervalFailure? = null,
     val sleepTimerMinutesLeft: Int? = null,
     val streamUrl: String? = null,
     val sessionId: String? = null,
@@ -102,6 +107,74 @@ data class AudiobookPlayerUiState(
             streamUrl == null &&
             sessionId == null &&
             !isLoading
+
+    /**
+     * The catalog string for [error] when this view model wrote it itself;
+     * null for server or exception text, which is shown as is. Show the
+     * error through [errorText].
+     */
+    @get:StringRes
+    val errorRes: Int?
+        get() = error?.let(AudiobookPlayerErrors::res)
+}
+
+/** Why a skip-interval change was not saved. */
+sealed interface AudiobookSkipIntervalFailure {
+    /** The server refused [seconds] as an interval. */
+    data class Unsupported(val seconds: Int) : AudiobookSkipIntervalFailure
+
+    /** The save failed; [message] is the server's or the exception's text, when there is one. */
+    data class SaveFailed(val message: String?) : AudiobookSkipIntervalFailure
+}
+
+/**
+ * English of the errors [AudiobookPlayerViewModel] writes itself. The state
+ * keeps the English (logs, retry checks); [AudiobookPlayerUiState.errorRes]
+ * maps it back to the catalog string for display.
+ */
+internal object AudiobookPlayerErrors {
+    const val PLAYBACK_FAILED = "Audiobook playback failed"
+    const val NETWORK = "Network error"
+    const val FILE_UNAVAILABLE = "Selected audiobook file is unavailable."
+    const val NO_PLAYABLE_FILE = "No playable audiobook file is available."
+    const val NO_ACTIVE_PROFILE = "No active profile"
+    const val SERVER_UPGRADE_REQUIRED = "This server does not support the playback protocol this app speaks."
+    const val SEEK_FAILED = "Seek failed"
+
+    @StringRes
+    fun res(english: String): Int? = when (english) {
+        PLAYBACK_FAILED -> R.string.audiobook_error_playbackFailed
+        NETWORK -> R.string.audiobook_error_network
+        FILE_UNAVAILABLE -> R.string.audiobook_error_fileUnavailable
+        NO_PLAYABLE_FILE -> R.string.audiobook_error_noPlayableFile
+        NO_ACTIVE_PROFILE -> R.string.audiobook_error_noActiveProfile
+        SERVER_UPGRADE_REQUIRED -> R.string.audiobook_error_serverUpgradeRequired
+        SEEK_FAILED -> R.string.audiobook_error_seekFailed
+        else -> null
+    }
+}
+
+/** The error to show, in the interface language when the view model wrote it. */
+@Composable
+fun AudiobookPlayerUiState.errorText(): String? {
+    val error = error ?: return null
+    return errorRes?.let { stringResource(it) } ?: error
+}
+
+/** The skip-interval save message to show, or null. */
+@Composable
+fun AudiobookPlayerUiState.skipIntervalErrorText(): String? = when (val failure = skipIntervalFailure) {
+    null -> null
+    is AudiobookSkipIntervalFailure.Unsupported ->
+        pluralStringResource(R.plurals.audiobook_skipInterval_unsupported, failure.seconds, failure.seconds)
+    is AudiobookSkipIntervalFailure.SaveFailed -> {
+        val message = failure.message?.takeIf { it.isNotBlank() }
+        if (message == null) {
+            stringResource(R.string.audiobook_skipInterval_saveFailed)
+        } else {
+            stringResource(R.string.audiobook_skipInterval_saveFailedDetail, message)
+        }
+    }
 }
 
 /**
@@ -350,13 +423,13 @@ class AudiobookPlayerViewModel(
             }
             is ApiResult.Error -> if (isCurrent()) {
                 applyFailedSessionStart(
-                    playback.message.ifBlank { "Audiobook playback failed" },
+                    playback.message.ifBlank { AudiobookPlayerErrors.PLAYBACK_FAILED },
                     expectedSessionId = staleSessionId,
                 )
             }
             is ApiResult.NetworkError -> if (isCurrent()) {
                 applyFailedSessionStart(
-                    playback.exception.message ?: "Network error",
+                    playback.exception.message ?: AudiobookPlayerErrors.NETWORK,
                     expectedSessionId = staleSessionId,
                 )
             }
@@ -423,7 +496,7 @@ class AudiobookPlayerViewModel(
                         _uiState.update {
                             it.copy(
                                 isLoading = false,
-                                error = "Selected audiobook file is unavailable.",
+                                error = AudiobookPlayerErrors.FILE_UNAVAILABLE,
                             )
                         }
                         return@launch
@@ -437,9 +510,9 @@ class AudiobookPlayerViewModel(
 
                     if (selectedVersion == null) {
                         val message = if (hasRequestedFileId) {
-                            "Selected audiobook file is unavailable."
+                            AudiobookPlayerErrors.FILE_UNAVAILABLE
                         } else {
-                            "No playable audiobook file is available."
+                            AudiobookPlayerErrors.NO_PLAYABLE_FILE
                         }
                         _uiState.update {
                             it.copy(
@@ -552,7 +625,7 @@ class AudiobookPlayerViewModel(
 
                     val profileId = profileRepository.getActiveProfileId()
                     if (profileId == null) {
-                        _uiState.update { it.copy(error = "No active profile") }
+                        _uiState.update { it.copy(error = AudiobookPlayerErrors.NO_ACTIVE_PROFILE) }
                         return@launch
                     }
 
@@ -648,7 +721,7 @@ class AudiobookPlayerViewModel(
         viewModelScope.launch {
             val profileId = profileRepository.getActiveProfileId()
             if (profileId == null) {
-                _uiState.update { it.copy(error = "No active profile") }
+                _uiState.update { it.copy(error = AudiobookPlayerErrors.NO_ACTIVE_PROFILE) }
                 return@launch
             }
             retireActiveSession(
@@ -687,11 +760,11 @@ class AudiobookPlayerViewModel(
                 }
                 is ApiResult.Error -> {
                     if (generation != loadGeneration) return@launch
-                    applyFailedSessionStart(playback.message.ifBlank { "Audiobook playback failed" })
+                    applyFailedSessionStart(playback.message.ifBlank { AudiobookPlayerErrors.PLAYBACK_FAILED })
                 }
                 is ApiResult.NetworkError -> {
                     if (generation != loadGeneration) return@launch
-                    applyFailedSessionStart(playback.exception.message ?: "Network error")
+                    applyFailedSessionStart(playback.exception.message ?: AudiobookPlayerErrors.NETWORK)
                 }
             }
         }
@@ -734,10 +807,10 @@ class AudiobookPlayerViewModel(
                 }
             }
             is ApiResult.Error -> if (generation == startGeneration && !isClosing) {
-                applyFailedSessionStart(playback.message.ifBlank { "Audiobook playback failed" })
+                applyFailedSessionStart(playback.message.ifBlank { AudiobookPlayerErrors.PLAYBACK_FAILED })
             }
             is ApiResult.NetworkError -> if (generation == startGeneration && !isClosing) {
-                applyFailedSessionStart(playback.exception.message ?: "Network error")
+                applyFailedSessionStart(playback.exception.message ?: AudiobookPlayerErrors.NETWORK)
             }
         }
     }
@@ -972,9 +1045,9 @@ class AudiobookPlayerViewModel(
     private fun VideoSessionStartV3.failureMessage(): String = when (this) {
         is VideoSessionStartV3.Ready -> ""
         is VideoSessionStartV3.Terminal ->
-            message.ifBlank { "Audiobook playback failed" }
+            message.ifBlank { AudiobookPlayerErrors.PLAYBACK_FAILED }
         VideoSessionStartV3.ServerUpgradeRequired ->
-            "This server does not support the playback protocol this app speaks."
+            AudiobookPlayerErrors.SERVER_UPGRADE_REQUIRED
     }
 
     /**
@@ -1224,7 +1297,7 @@ class AudiobookPlayerViewModel(
                         )
                         AudiobookReplanRecovery.Ended,
                         AudiobookReplanRecovery.Fail -> applyFailedSessionStart(
-                            result.message.ifBlank { "Audiobook playback failed" },
+                            result.message.ifBlank { AudiobookPlayerErrors.PLAYBACK_FAILED },
                             expectedSessionId = sessionId,
                             sessionEndedByServer = recovery == AudiobookReplanRecovery.Ended,
                         )
@@ -1236,7 +1309,7 @@ class AudiobookPlayerViewModel(
                     _uiState.value.sessionId == sessionId
                 ) {
                     applyFailedSessionStart(
-                        result.exception.message ?: "Network error",
+                        result.exception.message ?: AudiobookPlayerErrors.NETWORK,
                         expectedSessionId = sessionId,
                     )
                 }
@@ -1276,7 +1349,7 @@ class AudiobookPlayerViewModel(
         viewModelScope.launch {
             val profileId = profileRepository.getActiveProfileId()
             if (profileId == null) {
-                _uiState.update { it.copy(error = "No active profile") }
+                _uiState.update { it.copy(error = AudiobookPlayerErrors.NO_ACTIVE_PROFILE) }
                 return@launch
             }
             startSingleFileSession(
@@ -1413,7 +1486,7 @@ class AudiobookPlayerViewModel(
                                 )
                                 AudiobookReplanRecovery.Ended,
                                 AudiobookReplanRecovery.Fail ->
-                                    _uiState.update { it.copy(error = result.message.ifBlank { "Seek failed" }) }
+                                    _uiState.update { it.copy(error = result.message.ifBlank { AudiobookPlayerErrors.SEEK_FAILED }) }
                             }
                         }
                         is ApiResult.NetworkError -> if (
@@ -1421,7 +1494,7 @@ class AudiobookPlayerViewModel(
                             !isClosing &&
                             _uiState.value.sessionId == sessionId
                         ) {
-                            _uiState.update { it.copy(error = result.exception.message ?: "Seek failed") }
+                            _uiState.update { it.copy(error = result.exception.message ?: AudiobookPlayerErrors.SEEK_FAILED) }
                         }
                     }
                 }
@@ -1491,20 +1564,19 @@ class AudiobookPlayerViewModel(
     private fun setSkipSeconds(direction: SeekDirection, seconds: Int) {
         val seek = seekIntervalStore.state.value
         val attempt = ++skipSaveAttempt
-        _uiState.update { it.copy(skipIntervalError = null) }
+        _uiState.update { it.copy(skipIntervalFailure = null) }
         viewModelScope.launch {
             when {
                 seek.isSupported -> {
                     val error = when (val result = seekIntervalStore.save(SeekMedia.Audiobook, direction, seconds)) {
                         is SeekIntervalController.SaveResult.Saved -> null
                         is SeekIntervalController.SaveResult.Invalid ->
-                            "${result.seconds} seconds is not a supported interval."
+                            AudiobookSkipIntervalFailure.Unsupported(result.seconds)
                         is SeekIntervalController.SaveResult.Failed ->
-                            "Couldn't save the skip interval" +
-                                (result.message?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ".")
+                            AudiobookSkipIntervalFailure.SaveFailed(result.message)
                     }
                     // A newer pick owns the message; the store already reverted this one.
-                    if (attempt == skipSaveAttempt) _uiState.update { it.copy(skipIntervalError = error) }
+                    if (attempt == skipSaveAttempt) _uiState.update { it.copy(skipIntervalFailure = error) }
                 }
                 seek.allowsLegacyAudiobookEditing -> when (direction) {
                     SeekDirection.Back -> audiobookSettings.setSkipBackSeconds(seconds)
@@ -1517,7 +1589,7 @@ class AudiobookPlayerViewModel(
 
     /** Drops the skip-interval save message (the picker closed). */
     fun clearSkipIntervalError() {
-        _uiState.update { it.copy(skipIntervalError = null) }
+        _uiState.update { it.copy(skipIntervalFailure = null) }
     }
 
     private var skipSaveAttempt = 0

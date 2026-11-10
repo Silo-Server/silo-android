@@ -138,13 +138,13 @@ fun SyncProgressRow(percent: Int, modifier: Modifier = Modifier, label: String? 
                 modifier = Modifier.weight(1f),
             )
             if (label == null) {
-                Text(text = "$percent%", color = Color.White.copy(alpha = 0.60f), fontSize = 11.sp)
+                Text(text = "$percent%", color = Color.White.copy(alpha = 0.60f), fontSize = 11.sp) // i18n-ignore
             }
         }
         if (label != null) {
             Row(horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(text = label, color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp, modifier = Modifier.weight(1f))
-                Text(text = "$percent%", color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp)
+                Text(text = "$percent%", color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp) // i18n-ignore
             }
         }
     }

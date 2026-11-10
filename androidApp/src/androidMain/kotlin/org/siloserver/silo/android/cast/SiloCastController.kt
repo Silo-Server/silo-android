@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.cast
 
 import android.util.Log
+import androidx.annotation.StringRes
 import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -72,6 +73,7 @@ import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.api.DeviceLoginApi
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.ServerIdentityRepository
+import org.siloserver.silo.common.R as CommonR
 
 data class SiloCastControllerState(
     val targets: List<SiloCastTarget> = emptyList(),
@@ -100,7 +102,7 @@ data class SiloCastControllerState(
     val volumeMuteOnly: Boolean = false,
     /** The connected TV cannot change speed ([SiloCastFeature.NoPlaybackSpeed], Roku). */
     val noPlaybackSpeed: Boolean = false,
-    val error: String? = null,
+    val error: SiloCastText? = null,
 ) {
     val isConnected: Boolean get() = connectedTarget != null && !isReconnecting
     val hasActiveSession: Boolean get() = connectedTarget != null || isReconnecting
@@ -271,7 +273,7 @@ class SiloCastController(
                 // stream. Drop its backlog instead of applying it to the new TV.
                 if (controlTransport !== queued.transport) continue
                 runCatching { sendControl(queued) }
-                    .onFailure { error -> _state.update { it.copy(error = error.message) } }
+                    .onFailure { error -> _state.update { it.copy(error = error.castTextOrNull()) } }
             }
         }
     }
@@ -402,7 +404,7 @@ class SiloCastController(
                 val sent = _state.value.launch?.takeIf { it.isSent && it.contentId == pending.contentId }
                 if (sent != null) {
                     val ended = withTimeoutOrNull(LAUNCH_START_TIMEOUT_MS) { _state.first { it.launch !== sent } }
-                    if (ended == null && isCurrentLaunch(self)) failLaunch("The TV didn't start playback.")
+                    if (ended == null && isCurrentLaunch(self)) failLaunch(SiloCastText.Res(CommonR.string.cast_remote_error_didNotStart))
                 }
             } catch (error: CancellationException) {
                 // Transport teardown cancels the handoff deferreds. Clear the
@@ -422,14 +424,14 @@ class SiloCastController(
                             isConnecting = false,
                             connectingDeviceId = null,
                             launch = null,
-                            pendingReplace = SiloCastReplacePrompt.fromTv(target, request, error.nowPlaying, error.message),
+                            pendingReplace = SiloCastReplacePrompt.fromTv(target, request, error.nowPlaying, error.text),
                         )
                     }
                 } else {
                     // The TV turned this handoff down (another device's play
                     // superseded it, a watch party is on); the session stays.
                     _state.update {
-                        it.copy(isConnecting = false, connectingDeviceId = null, launch = null, error = error.message)
+                        it.copy(isConnecting = false, connectingDeviceId = null, launch = null, error = error.text)
                     }
                     _launchFeedback.tryEmit(SiloCastLaunchFeedback.Failed)
                 }
@@ -440,7 +442,7 @@ class SiloCastController(
                             isConnecting = false,
                             connectingDeviceId = null,
                             launch = null,
-                            error = error.message ?: "Unable to cast.",
+                            error = error.castText(CommonR.string.cast_remote_error_unableToCast),
                         )
                     }
                     _launchFeedback.tryEmit(SiloCastLaunchFeedback.Failed)
@@ -467,7 +469,7 @@ class SiloCastController(
     }
 
     /** Ends the pending launch as failed; the haptic fires only if one was pending. */
-    private fun failLaunch(message: String?) {
+    private fun failLaunch(message: SiloCastText?) {
         var failed = false
         _state.update {
             failed = it.launch != null
@@ -512,7 +514,7 @@ class SiloCastController(
         val target = _state.value.connectedTarget ?: return false
         val server = serverRegistry.activeEntry.value
         if (server == null) {
-            _state.update { it.copy(error = "Choose a server before controlling a TV.") }
+            _state.update { it.copy(error = SiloCastText.Res(CommonR.string.cast_remote_error_chooseServer)) }
             return true
         }
         val request = SiloCastLaunchRequest(serverId = server.id, playback = playback)
@@ -556,7 +558,7 @@ class SiloCastController(
                 .onFailure { error ->
                     if (error !is CancellationException) {
                         _state.update {
-                            it.copy(isConnecting = false, connectingDeviceId = null, error = error.message ?: "Unable to connect.")
+                            it.copy(isConnecting = false, connectingDeviceId = null, error = error.castText(CommonR.string.cast_remote_error_unableToConnect))
                         }
                     }
                 }
@@ -824,7 +826,7 @@ class SiloCastController(
         if (transport == null ||
             controlCommands.trySend(QueuedControlCommand(command, transport)).isFailure
         ) {
-            _state.update { it.copy(error = "Remote Control is unavailable.") }
+            _state.update { it.copy(error = SiloCastText.Res(CommonR.string.cast_remote_error_unavailable)) }
         }
     }
 
@@ -864,16 +866,13 @@ class SiloCastController(
         passive: Boolean = false,
     ) = connectionMutex.withLock {
         val activeServer = serverRegistry.activeEntry.value
-            ?: error("Choose a server before controlling a TV.")
+            ?: throw SiloCastFailure(CommonR.string.cast_remote_error_chooseServer)
         val activeServerId = activeServer.id
         val targetsActiveServer = AndroidServerRegistry.serversMatch(
             target.serverId, target.serverIdentity, activeServerId, activeServer.verifiedServerId,
         )
-        require(
-            targetsActiveServer ||
-                (allowCrossServer && target.version >= SiloCastProtocol.version),
-        ) {
-            "That TV is connected to a different server."
+        if (!targetsActiveServer && !(allowCrossServer && target.version >= SiloCastProtocol.version)) {
+            throw SiloCastFailure(CommonR.string.cast_remote_error_differentServer)
         }
         if (_state.value.connectedTarget?.deviceId == target.deviceId && session?.isConnected == true) return@withLock
         reconnectJob?.cancel()
@@ -920,7 +919,7 @@ class SiloCastController(
             withContext(Dispatchers.IO) {
                 created = dial(target, pairingKey)
             }
-            val newSession = created ?: error("SiloCast connection failed.")
+            val newSession = created ?: throw SiloCastFailure(CommonR.string.cast_remote_error_connectionFailed)
             session = newSession
             negotiatedVersion = CompletableDeferred()
             missedHeartbeats = 0
@@ -963,35 +962,34 @@ class SiloCastController(
         return try {
             SiloCastDialer.dial(target, pairingKey, CONNECT_TIMEOUT_MS)
         } catch (e: SiloCastPairingRefusedException) {
-            throw IllegalStateException(pairingChangedMessage(target), e)
+            throw SiloCastFailure(pairingChangedMessage(target), e)
         } catch (e: IOException) {
-            throw IllegalStateException(openSiloOnRokuMessage(target), e)
+            throw SiloCastFailure(openSiloOnRokuMessage(target), e)
         }
     }
 
     /** The stored key for a sealed Roku, or a message telling the user to scan its pairing code. */
     private fun sealedPairingKey(target: SiloCastTarget): ByteArray {
-        pairingProblem(target)?.let { error(it) }
+        pairingProblem(target)?.let { throw SiloCastFailure(it) }
         return checkNotNull(pairingKeyFor(target.deviceId))
     }
 
     private fun pairingKeyFor(deviceId: String): ByteArray? =
         rememberedRokus.value.firstOrNull { it.deviceId == deviceId }?.pairingKey
 
-    private fun pairingProblem(target: SiloCastTarget): String? {
+    private fun pairingProblem(target: SiloCastTarget): SiloCastText? {
         val key = pairingKeyFor(target.deviceId)
-            ?: return "${target.name} requires pairing. On the Roku, open Silo's profile menu, choose " +
-                "Connect a Phone, and scan its code with this phone's camera."
+            ?: return SiloCastText.Res(CommonR.string.cast_remote_error_requiresPairing, target.name)
         // TXT `kid` names the Roku's current key; a reset draws a new one.
         if (target.keyId != null && target.keyId != SiloCastSealed.keyId(key)) return pairingChangedMessage(target)
         return null
     }
 
-    private fun pairingChangedMessage(target: SiloCastTarget) =
-        "${target.name}'s pairing code has changed. Scan the new code on its Connect a Phone screen."
+    private fun pairingChangedMessage(target: SiloCastTarget): SiloCastText =
+        SiloCastText.Res(CommonR.string.cast_remote_error_pairingChanged, target.name)
 
-    private fun openSiloOnRokuMessage(target: SiloCastTarget) =
-        "Can't reach ${target.name}. Open Silo on your Roku."
+    private fun openSiloOnRokuMessage(target: SiloCastTarget): SiloCastText =
+        SiloCastText.Res(CommonR.string.cast_remote_error_openSiloOnRoku, target.name)
 
     private fun makeHello(passive: Boolean): SiloCastHello {
         val server = serverRegistry.activeEntry.value
@@ -1014,17 +1012,17 @@ class SiloCastController(
         title: Deferred<String?>,
         replaceConsent: SiloCastReplaceConsent?,
     ) {
-        val version = awaitHandoffStep(VERSION_TIMEOUT_MS, "The TV did not respond.") { negotiatedVersion.await() }
-        require(version == SiloCastProtocol.version) { "Update Silo on both devices to use Remote Control." }
+        val version = awaitHandoffStep(VERSION_TIMEOUT_MS, CommonR.string.cast_remote_error_noResponse) { negotiatedVersion.await() }
+        if (version != SiloCastProtocol.version) throw SiloCastFailure(CommonR.string.cast_remote_error_updateBoth)
 
         val server = serverRegistry.activeEntry.value
-            ?: error("Choose a server before controlling a TV.")
-        require(server.id == request.serverId) { "The active server changed before playback started." }
+            ?: throw SiloCastFailure(CommonR.string.cast_remote_error_chooseServer)
+        if (server.id != request.serverId) throw SiloCastFailure(CommonR.string.cast_remote_error_serverChanged)
         val profileId = tokenManager.getProfileId()?.takeIf { it.isNotBlank() }
-            ?: error("Choose a profile before controlling a TV.")
+            ?: throw SiloCastFailure(CommonR.string.cast_remote_error_chooseProfile)
         val scope = tokenManager.snapshotCurrentScope()
-            ?: error("The active Silo account is unavailable.")
-        require(scope.serverId == server.id) { "The active server changed before playback started." }
+            ?: throw SiloCastFailure(CommonR.string.cast_remote_error_accountUnavailable)
+        if (scope.serverId != server.id) throw SiloCastFailure(CommonR.string.cast_remote_error_serverChanged)
 
         val handoff = PendingHandoff(requestId = UUID.randomUUID().toString())
         pendingHandoff = handoff
@@ -1054,7 +1052,7 @@ class SiloCastController(
             // controller/server/profile (e.g. switching items mid-playback),
             // it skips the challenge and replies handoff_ready directly —
             // waiting only on the challenge would deadlock into a timeout.
-            val readyOrChallenge = awaitHandoffStep(CHALLENGE_TIMEOUT_MS, "The TV did not start the profile handshake.") {
+            val readyOrChallenge = awaitHandoffStep(CHALLENGE_TIMEOUT_MS, CommonR.string.cast_remote_error_noHandshake) {
                 select<Any> {
                     handoff.handoffReady.onAwait { it }
                     handoff.handoffChallenge.onAwait { it }
@@ -1067,26 +1065,26 @@ class SiloCastController(
                     val lookup = deviceLoginApi
                         .lookupDeviceLoginForScope(scope.withProfile(profileId), readyOrChallenge.userCode)
                         .successOrThrow()
-                    require(
-                        lookup.matchCode == readyOrChallenge.matchCode &&
-                            lookup.clientPurpose == "remote_playback" &&
-                            lookup.temporary == true,
-                    ) { "The TV's remote playback code could not be verified." }
+                    if (!(
+                            lookup.matchCode == readyOrChallenge.matchCode &&
+                                lookup.clientPurpose == "remote_playback" &&
+                                lookup.temporary == true
+                            )
+                    ) {
+                        throw SiloCastFailure(CommonR.string.cast_remote_error_codeUnverified)
+                    }
 
                     deviceLoginApi
                         .approveRemotePlaybackForScope(scope.withProfile(profileId), readyOrChallenge.userCode)
                         .successOrThrow()
-                    awaitHandoffStep(READY_TIMEOUT_MS, "The TV did not activate the profile in time.") {
+                    awaitHandoffStep(READY_TIMEOUT_MS, CommonR.string.cast_remote_error_profileTimeout) {
                         handoff.handoffReady.await()
                     }
                 }
-                else -> error("The TV sent an unexpected handoff reply.")
+                else -> throw SiloCastFailure(CommonR.string.cast_remote_error_unexpectedReply)
             }
-            require(
-                AndroidServerRegistry.serverIdsMatch(ready.serverId, server.id) &&
-                    ready.profileId == profileId,
-            ) {
-                "The TV activated a different remote playback profile."
+            if (!(AndroidServerRegistry.serverIdsMatch(ready.serverId, server.id) && ready.profileId == profileId)) {
+                throw SiloCastFailure(CommonR.string.cast_remote_error_differentProfile)
             }
             resumeTokens.store(ready.resumeToken, target.deviceId, server.id, profileId)
         } catch (t: Throwable) {
@@ -1146,9 +1144,9 @@ class SiloCastController(
                 } else {
                     val target = _state.value.connectedTarget
                     val reason = if (target?.isRoku == true) {
-                        "Lost connection to ${target.name}. Open Silo on your Roku."
+                        SiloCastText.Res(CommonR.string.cast_remote_error_lostRoku, target.name)
                     } else {
-                        "Lost connection to the TV."
+                        SiloCastText.Res(CommonR.string.cast_remote_error_lostTv)
                     }
                     beginReconnect(activeSession, reason)
                 }
@@ -1181,7 +1179,7 @@ class SiloCastController(
      * Transport dropped without a goodbye: keep the target and retry with
      * 1–4 s backoff (up to 5 attempts) while the UI shows "Reconnecting…".
      */
-    private fun beginReconnect(deadSession: SiloCastConnection, reason: String) {
+    private fun beginReconnect(deadSession: SiloCastConnection, reason: SiloCastText) {
         val target = _state.value.connectedTarget
         if (target == null || suppressReconnect) {
             scope.launch { closeConnection() }
@@ -1221,7 +1219,7 @@ class SiloCastController(
                                 return@launch
                             }
                         }
-                        Log.w(TAG, "SiloCast reconnect exhausted: $reason")
+                        Log.w(TAG, "SiloCast reconnect exhausted: ${reason.english()}")
                         closeConnection()
                         _state.update { it.copy(error = reason) }
                     } finally {
@@ -1286,7 +1284,8 @@ class SiloCastController(
                     val error = SiloCastHandoffRefusal(
                         reason = cancel.reason,
                         nowPlaying = cancel.nowPlaying,
-                        message = cancel.message ?: "The TV cancelled profile setup.",
+                        text = cancel.message?.let(SiloCastText::Verbatim)
+                            ?: SiloCastText.Res(CommonR.string.cast_remote_error_setupCancelled),
                     )
                     it.handoffChallenge.completeExceptionally(error)
                     it.handoffReady.completeExceptionally(error)
@@ -1336,11 +1335,11 @@ class SiloCastController(
                 if (sessionIsAutoResumed && !remoteScreenVisible) {
                     quietDisconnect()
                 } else if (_state.value.launch?.isSent == true && message.error.code !in CONTROL_REPLY_ERRORS) {
-                    failLaunch(message.error.message)
+                    failLaunch(SiloCastText.Verbatim(message.error.message))
                 } else {
                     // A reply to a control pressed mid-launch, or an error the
                     // launch's own handoff will surface, does not end it.
-                    _state.update { it.copy(error = message.error.message) }
+                    _state.update { it.copy(error = SiloCastText.Verbatim(message.error.message)) }
                 }
             }
             is SiloCastMessage.Ping -> send(SiloCastMessage.Pong())
@@ -1378,7 +1377,7 @@ class SiloCastController(
     }
 
     private suspend fun send(message: SiloCastMessage) {
-        val connection = session ?: error("SiloCast is not connected.")
+        val connection = session ?: throw SiloCastFailure(CommonR.string.cast_remote_error_notConnected)
         val payload = json.encodeToString(SiloCastMessage.serializer(), message).encodeToByteArray()
         sendMutex.withLock {
             withContext(Dispatchers.IO) { connection.writeFrame(payload) }
@@ -1459,11 +1458,11 @@ class SiloCastController(
      * genuine cancellation remains cancellation and is handled by the launch
      * owner without being mistaken for a timeout.
      */
-    private suspend fun <T> awaitHandoffStep(timeoutMs: Long, timeoutMessage: String, block: suspend () -> T): T =
+    private suspend fun <T> awaitHandoffStep(timeoutMs: Long, @StringRes timeoutMessage: Int, block: suspend () -> T): T =
         try {
             withTimeout(timeoutMs) { block() }
         } catch (e: TimeoutCancellationException) {
-            error(timeoutMessage)
+            throw SiloCastFailure(timeoutMessage)
         }
 
     private fun nowMs(): Long = android.os.SystemClock.elapsedRealtime()
@@ -1489,12 +1488,17 @@ class SiloCastController(
     private class SiloCastHandoffRefusal(
         val reason: String,
         val nowPlaying: SiloCastNowPlayingSummary?,
-        message: String,
-    ) : IllegalStateException(message)
+        text: SiloCastText,
+    ) : SiloCastFailure(text)
 
     private fun <T> ApiResult<T>.successOrThrow(): T = when (this) {
         is ApiResult.Success -> data
-        is ApiResult.Error -> error(message.ifBlank { "Server returned HTTP $code." })
+        is ApiResult.Error -> throw if (message.isBlank()) {
+            SiloCastFailure(SiloCastText.Res(CommonR.string.cast_remote_error_serverHttp, code))
+        } else {
+            // Shown in the app language; the TV gets the server's own text.
+            SiloCastFailure(SiloCastText.Verbatim(message), english = detail)
+        }
         is ApiResult.NetworkError -> throw exception
     }
 

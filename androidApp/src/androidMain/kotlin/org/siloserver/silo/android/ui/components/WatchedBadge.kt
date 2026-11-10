@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
@@ -43,7 +45,7 @@ fun WatchedBadge(
     ) {
         Icon(
             imageVector = Icons.Default.Check,
-            contentDescription = "Watched",
+            contentDescription = stringResource(CommonR.string.shell_card_watched),
             tint = MaterialTheme.colorScheme.background,
             modifier = Modifier.size(10.dp),
         )

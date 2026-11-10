@@ -1,5 +1,9 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.localizedResources
+import org.siloserver.silo.common.i18n.text
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.catalog.parentPoster
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
@@ -271,8 +275,8 @@ fun ItemDetailScreen(
         }
     }
     LaunchedEffect(Unit) {
-        viewModel.downloadFailureMessages.collect { message ->
-            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        viewModel.downloadFailureMessages.collect { failure ->
+            Toast.makeText(context, failure.text(context), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -312,7 +316,7 @@ fun ItemDetailScreen(
         } else {
             Toast.makeText(
                 context,
-                "Storage permission is required to save public downloads on this Android version.",
+                context.getString(CommonR.string.detail_storagePermissionRequired),
                 Toast.LENGTH_LONG,
             ).show()
         }
@@ -392,7 +396,7 @@ fun ItemDetailScreen(
             container = version.container,
         )
         if (target == null || !openDownloadTargetInExternalApp(context, target)) {
-            Toast.makeText(context, "No app found to open this file.", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, context.getString(CommonR.string.detail_noAppToOpenFile), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -437,13 +441,14 @@ fun ItemDetailScreen(
 
             branch == "error" -> {
                 ErrorView(
-                    message = state.error ?: "Something went wrong",
+                    message = state.error?.text() ?: stringResource(CommonR.string.status_errorGeneric),
                     onRetry = { viewModel.loadDetail() },
                 )
             }
 
             else -> {
                 val detail = state.detail ?: return@Crossfade
+                val resources = localizedResources()
                 val metadataAiStore: MetadataAiFeatureStore = koinInject()
                 val metadataAiStatus by metadataAiStore.status.collectAsState()
                 val translationPhase by viewModel.translationPhase.collectAsState()
@@ -667,7 +672,7 @@ fun ItemDetailScreen(
                             ep.userData?.played != true
                         } ?: state.episodes.firstOrNull()
                         val nextEpisodeLabel = nextEpisode?.let { ep ->
-                            "S${ep.seasonNumber}·E${ep.episodeNumber}"
+                            episodeCode(resources, ep.seasonNumber, ep.episodeNumber)
                         }
                         val episodeDownloadRecords by viewModel.downloads.collectAsState()
                         // Series-level roll-up across ALL seasons (state.allEpisodeFileIds
@@ -914,6 +919,8 @@ fun ItemDetailScreen(
                                     WatchPartyItem(
                                         contentId = episode.contentId,
                                         contentType = "episode",
+                                        // The party item is sent to the server and shown to
+                                        // every member, so its fallback text stays English data.
                                         title = episode.title?.takeIf { it.isNotBlank() }
                                             ?: "Episode ${episode.episodeNumber}",
                                         subtitle = "${detail.title} · S${episode.seasonNumber}·E${episode.episodeNumber}",
@@ -1103,6 +1110,7 @@ fun ItemDetailScreen(
                                             listOfNotNull(
                                                 detail.seriesTitle?.takeIf { value -> value.isNotBlank() },
                                                 detail.seasonNumber?.let { season ->
+                                                    // Sent to the server for the party: English data.
                                                     detail.episodeNumber?.let { episode -> "S$season·E$episode" }
                                                 },
                                             ).joinToString(" · ").ifBlank { null }
@@ -1162,10 +1170,10 @@ fun ItemDetailScreen(
 
         pendingCancelDownloadAction?.let { confirmAction ->
             SiloConfirmDialog(
-                title = "Cancel download?",
-                body = "The partially downloaded data will be discarded.",
-                confirmLabel = "Discard Download",
-                dismissLabel = "Keep Download",
+                title = stringResource(CommonR.string.detail_cancelDownload_title),
+                body = stringResource(CommonR.string.detail_cancelDownload_body),
+                confirmLabel = stringResource(CommonR.string.detail_cancelDownload_discard),
+                dismissLabel = stringResource(CommonR.string.detail_cancelDownload_keep),
                 onConfirm = {
                     pendingCancelDownloadAction = null
                     confirmAction()
@@ -1206,7 +1214,7 @@ fun ItemDetailScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.SettingsRemote,
-                        contentDescription = "Remote Control",
+                        contentDescription = stringResource(CommonR.string.detail_remoteControl),
                         tint = Color.White,
                     )
                 }
@@ -1215,14 +1223,14 @@ fun ItemDetailScreen(
                     onDismissRequest = { remoteMenuExpanded = false },
                 ) {
                     SiloDropdownMenuItem(
-                        text = { Text("Remote Control") },
+                        text = { Text(stringResource(CommonR.string.detail_remoteControl)) },
                         onClick = {
                             remoteMenuExpanded = false
                             onOpenCastRemote()
                         },
                     )
                     SiloDropdownMenuItem(
-                        text = { Text("Choose TV") },
+                        text = { Text(stringResource(CommonR.string.detail_chooseTv)) },
                         onClick = {
                             remoteMenuExpanded = false
                             showRemoteTargetPicker = true
@@ -1231,7 +1239,7 @@ fun ItemDetailScreen(
                     HorizontalDivider()
                     SiloDropdownMenuItem(
                         text = {
-                            Text("Turn Off Control Mode", color = MaterialTheme.colorScheme.error)
+                            Text(stringResource(CommonR.string.detail_turnOffControlMode), color = MaterialTheme.colorScheme.error)
                         },
                         onClick = {
                             remoteMenuExpanded = false

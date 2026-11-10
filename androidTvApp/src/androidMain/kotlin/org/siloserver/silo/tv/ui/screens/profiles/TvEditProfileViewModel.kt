@@ -2,6 +2,8 @@ package org.siloserver.silo.tv.ui.screens.profiles
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.model.profile.AssignableLibraries
 import org.siloserver.silo.model.profile.CHOOSE_A_LIBRARY_MESSAGE
 import org.siloserver.silo.model.profile.Profile
@@ -40,7 +42,7 @@ data class TvEditProfileUiState(
     val subtitleMode: String? = null,
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val saveSuccess: Boolean = false,
 )
 
@@ -99,20 +101,20 @@ class TvEditProfileViewModel(
                         }
                     } else {
                         _uiState.update {
-                            it.copy(isLoading = false, error = "Profile not found")
+                            it.copy(isLoading = false, error = UiText.Res(CommonR.string.profiles_error_notFound))
                         }
                     }
                 }
 
                 is ApiResult.Error -> {
                     _uiState.update {
-                        it.copy(isLoading = false, error = "Failed to load profile")
+                        it.copy(isLoading = false, error = UiText.Res(CommonR.string.profiles_error_loadOne))
                     }
                 }
 
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(isLoading = false, error = "Network error. Please try again.")
+                        it.copy(isLoading = false, error = UiText.Res(CommonR.string.profiles_error_network))
                     }
                 }
             }
@@ -213,19 +215,19 @@ class TvEditProfileViewModel(
         val current = _uiState.value
 
         if (current.name.isBlank()) {
-            _uiState.update { it.copy(error = "Profile name is required") }
+            _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_nameRequired)) }
             return
         }
         if (existingProfiles.hasProfileNamed(current.name, excludeId = current.profileId)) {
-            _uiState.update { it.copy(error = "A profile with this name already exists") }
+            _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_nameTaken)) }
             return
         }
         if (current.pinEnabled && current.pin.isNotEmpty() && current.pin.length != 4) {
-            _uiState.update { it.copy(error = "PIN must be 4 digits") }
+            _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_pinLength)) }
             return
         }
         if (current.access.needsLibrary(loadedAccess, current.libraries.ids)) {
-            _uiState.update { it.copy(error = CHOOSE_A_LIBRARY_MESSAGE) }
+            _uiState.update { it.copy(error = UiText.Raw(CHOOSE_A_LIBRARY_MESSAGE)) }
             return
         }
 
@@ -262,14 +264,14 @@ class TvEditProfileViewModel(
                     _uiState.update {
                         it.copy(
                             isSaving = false,
-                            error = result.message.ifBlank { "Failed to update profile" },
+                            error = UiText.serverOr(result.message, CommonR.string.profiles_error_updateFailed),
                         )
                     }
                 }
 
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(isSaving = false, error = "Network error. Please try again.")
+                        it.copy(isSaving = false, error = UiText.Res(CommonR.string.profiles_error_network))
                     }
                 }
             }

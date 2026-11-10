@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.getStringWithNames
+import org.siloserver.silo.common.i18n.localizedResources
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,6 +47,9 @@ import org.siloserver.silo.tv.ui.screens.audiobook.formatAudiobookTime
 import org.siloserver.silo.tv.ui.theme.DarkBackground
 import org.siloserver.silo.tv.ui.theme.DarkSurface
 import org.siloserver.silo.tv.ui.theme.Spacing
+import android.content.res.Resources
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 @Composable
 internal fun TvAudiobookDetailHero(
@@ -126,7 +131,7 @@ internal fun TvAudiobookDetailHero(
                     maxLines = 2,
                 )
 
-                audiobookMetadataLine(detail).takeIf { it.isNotBlank() }?.let { metadata ->
+                audiobookMetadataLine(localizedResources(), detail).takeIf { it.isNotBlank() }?.let { metadata ->
                     Text(
                         text = metadata,
                         style = MaterialTheme.typography.titleMedium,
@@ -161,7 +166,7 @@ internal fun TvAudiobookDetailHero(
                 ) {
                     TvPrimaryPillButton(
                         icon = Icons.Filled.PlayArrow,
-                        title = audiobookPlayLabel(resumePosition, isFinished),
+                        title = audiobookPlayLabel(localizedResources(), resumePosition, isFinished),
                         focusRequester = playFocus,
                         onClick = {
                             // Resume → stored whole-book position; finished with no
@@ -186,7 +191,7 @@ internal fun TvAudiobookDetailHero(
                     )
                     TvSecondaryPillButton(
                         icon = Icons.Filled.Replay,
-                        title = "Start Over",
+                        title = stringResource(CommonR.string.detail_startOver),
                         onClick = {
                             onPlay(
                                 detail.contentId,
@@ -218,7 +223,7 @@ private fun AudiobookEyebrow() {
                 .background(Color.White.copy(alpha = 0.85f), RoundedCornerShape(1.dp)),
         )
         Text(
-            text = "AUDIOBOOK",
+            text = stringResource(CommonR.string.detail_audiobook_label),
             style = MaterialTheme.typography.labelLarge.copy(
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.5.sp,
@@ -228,28 +233,32 @@ private fun AudiobookEyebrow() {
     }
 }
 
-private fun audiobookMetadataLine(detail: ItemDetail): String {
+private fun audiobookMetadataLine(resources: Resources, detail: ItemDetail): String {
     val audiobook = detail.audiobook
     val duration = audiobook?.totalDurationSeconds?.toDouble()
         ?: detail.userData?.durationSeconds
         ?: detail.versions.sumOf { it.duration }.takeIf { it > 0.0 }
     return listOfNotNull(
         audiobook?.authorNames,
-        audiobook?.narratorNames?.let { "Narrated by $it" },
-        audiobookRuntimeLabel(duration),
+        audiobook?.narratorNames?.let { resources.getStringWithNames(CommonR.string.detail_narratedBy, it) },
+        audiobookRuntimeLabel(resources, duration),
     )
         .filter { it.isNotBlank() }
         .joinToString("  ")
 }
 
-private fun audiobookRuntimeLabel(seconds: Double?): String? {
+private fun audiobookRuntimeLabel(resources: Resources, seconds: Double?): String? {
     val total = seconds?.takeIf { it.isFinite() && it > 0.0 } ?: return null
     val hours = (total / 3600).toInt()
     val minutes = ((total % 3600) / 60).toInt()
     return when {
-        hours > 0 && minutes > 0 -> "${hours}h ${minutes}m"
-        hours > 0 -> "${hours}h"
-        minutes > 0 -> "${minutes}m"
+        hours > 0 && minutes > 0 -> resources.getString(
+            CommonR.string.catalog_runtimeHoursMinutes,
+            hours.toString(),
+            minutes.toString(),
+        )
+        hours > 0 -> resources.getString(CommonR.string.catalog_runtimeHours, hours.toString())
+        minutes > 0 -> resources.getString(CommonR.string.catalog_runtimeMinutesShort, minutes.toString())
         else -> null
     }
 }
@@ -273,10 +282,10 @@ private fun audiobookIsFinished(detail: ItemDetail): Boolean {
     return duration > 0 && position > 0 && position >= duration - 5
 }
 
-private fun audiobookPlayLabel(resumePosition: Double?, isFinished: Boolean): String {
+private fun audiobookPlayLabel(resources: Resources, resumePosition: Double?, isFinished: Boolean): String {
     return when {
-        resumePosition != null -> "Resume ${formatAudiobookTime(resumePosition)}"
-        isFinished -> "Play Again"
-        else -> "Play"
+        resumePosition != null -> resources.getString(CommonR.string.detail_resumeAt, formatAudiobookTime(resumePosition))
+        isFinished -> resources.getString(CommonR.string.detail_playAgain)
+        else -> resources.getString(CommonR.string.common_play)
     }
 }

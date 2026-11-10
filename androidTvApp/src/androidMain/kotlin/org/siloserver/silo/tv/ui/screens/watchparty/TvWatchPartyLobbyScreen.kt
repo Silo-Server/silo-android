@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.watchparty
 
 import android.widget.Toast
+import androidx.annotation.StringRes
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -32,7 +34,10 @@ import kotlinx.coroutines.delay
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.ui.components.rememberProfileServerUrl
+import org.siloserver.silo.common.watchparty.watchPartyNameList
 import org.siloserver.silo.model.watchtogether.ItemMemberState
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomSelectionMode
@@ -252,7 +257,7 @@ fun TvWatchPartyLobbyScreen(
                 connection = connection,
                 staged = staged,
                 focus = focus,
-                notice = reconnect ?: "The host stopped playback".takeIf { showStopped && !isHost },
+                notice = reconnect ?: stringResource(CommonR.string.watchParty_notice_hostStopped).takeIf { showStopped && !isHost },
                 memberStateLine = memberStateLine(room, memberState),
                 footer = state.suggestionRetry?.let { draft ->
                     {
@@ -359,7 +364,7 @@ fun TvWatchPartyLobbyScreen(
         ) {
             suggestionMenuRows(room, menuSuggestion, state.features).forEach { row ->
                 TvPartyOptionRow(
-                    title = row.title,
+                    title = stringResource(row.title),
                     destructive = row == SuggestionMenuRow.Remove,
                     state = TvControlState.transient(!eligibility.busy),
                     onClick = {
@@ -377,9 +382,9 @@ fun TvWatchPartyLobbyScreen(
 
     if (confirmEnd) {
         TvWatchPartyConfirmDialog(
-            title = "End this party for everyone?",
-            message = "Everyone leaves the party.",
-            confirmLabel = "End party",
+            title = stringResource(CommonR.string.watchParty_end_confirmTitle),
+            message = stringResource(CommonR.string.watchParty_end_bodyTv),
+            confirmLabel = stringResource(CommonR.string.watchParty_end_button),
             destructive = true,
             onConfirm = {
                 confirmEnd = false
@@ -391,9 +396,9 @@ fun TvWatchPartyLobbyScreen(
     }
     if (confirmLeave) {
         TvWatchPartyConfirmDialog(
-            title = "Leave the party?",
-            message = TV_WATCH_PARTY_HOST_LEAVE_NOTE,
-            confirmLabel = "Leave party",
+            title = stringResource(CommonR.string.watchParty_leave_title),
+            message = stringResource(CommonR.string.watchParty_leave_hostNote),
+            confirmLabel = stringResource(CommonR.string.watchParty_options_leave),
             destructive = true,
             onConfirm = {
                 confirmLeave = false
@@ -422,10 +427,10 @@ private fun queue(viewModel: WatchPartyLobbyViewModel, suggestion: Suggestion) {
     viewModel.queue(suggestion)
 }
 
-private enum class SuggestionMenuRow(val title: String) {
-    StartThisOne("Start this one"),
-    Queue("Queue"),
-    Remove("Remove suggestion"),
+private enum class SuggestionMenuRow(@StringRes val title: Int) {
+    StartThisOne(CommonR.string.watchParty_ballot_startThis),
+    Queue(CommonR.string.watchParty_suggestion_queue),
+    Remove(CommonR.string.watchParty_ballot_remove),
 }
 
 /** A suggestion card's context actions for this member. */
@@ -457,20 +462,24 @@ private fun nearestActionable(ids: List<String>, actionable: List<String>, index
 }
 
 /** "Seen by Ana · Part way: Ben" for the staged item, from member state (omitted members are unknown, not unplayed). */
+@Composable
 private fun memberStateLine(room: RoomSnapshot?, state: ItemMemberState?): String? {
     if (room == null || state == null) return null
+    val someone = stringResource(CommonR.string.watchParty_member_someone)
     fun nameOf(userId: String, profileId: String): String? = room.members
         .firstOrNull { it.userId == userId && it.profileId == profileId }
-        ?.let(::tvWatchPartyMemberName)
+        ?.let { it.displayName.trim().ifBlank { someone } }
     val seen = state.members.filter { it.state == "watched" }.mapNotNull { nameOf(it.userId, it.profileId) }
     val partWay = state.members
         .filter { it.state != "watched" && (it.positionSeconds ?: 0.0) > 0.0 }
         .mapNotNull { nameOf(it.userId, it.profileId) }
-    val parts = buildList {
-        if (seen.isNotEmpty()) add("Seen by ${tvWatchPartyNameList(seen)}")
-        if (partWay.isNotEmpty()) add("Part way: ${tvWatchPartyNameList(partWay)}")
+    val seenText = if (seen.isNotEmpty()) stringResourceWithNames(CommonR.string.watchParty_memberState_seenBy, watchPartyNameList(seen)) else null
+    val partWayText = if (partWay.isNotEmpty()) {
+        stringResourceWithNames(CommonR.string.watchParty_memberState_partWay, watchPartyNameList(partWay))
+    } else {
+        null
     }
-    return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+    return listOfNotNull(seenText, partWayText).takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
 /** Before the first snapshot: say so, and keep a focus owner so Back and Select work. */
@@ -484,10 +493,10 @@ private fun ConnectingRoom(focus: TvPartyFocus, onBack: () -> Unit) {
                 .padding(horizontal = TvPartyMetrics.pageInsetX),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            TvPartyEyebrow("Watch Party")
-            Text(text = "Connecting to the party…", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = SiloOnSurface)
+            TvPartyEyebrow(stringResource(CommonR.string.watchParty_title))
+            Text(text = stringResource(CommonR.string.watchParty_connection_connectingToParty), fontSize = 30.sp, fontWeight = FontWeight.Bold, color = SiloOnSurface)
             TvPartyButton(
-                label = "Back",
+                label = stringResource(CommonR.string.common_back),
                 kind = TvPartyButtonKind.Secondary,
                 onClick = onBack,
                 modifier = Modifier.partyFocus(focus, PARTY_KEY_BACK),
@@ -503,13 +512,19 @@ private fun SuggestionRetryRow(title: String, onRetry: () -> Unit, onDismiss: ()
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = "Couldn't confirm your suggestion of $title.",
+            text = stringResourceWithNames(CommonR.string.watchParty_error_suggestionOfUnconfirmed, title),
             fontSize = TvPartyMetrics.caption,
             color = SiloSecondaryText,
             modifier = Modifier.weight(1f, fill = false),
         )
-        TvPartyButton(label = "Try again", kind = TvPartyButtonKind.Secondary, onClick = onRetry, height = 32.dp, fontSize = 14.sp)
-        TvPartyButton(label = "Dismiss", kind = TvPartyButtonKind.Secondary, onClick = onDismiss, height = 32.dp, fontSize = 14.sp)
+        TvPartyButton(
+            label = stringResource(CommonR.string.common_tryAgain),
+            kind = TvPartyButtonKind.Secondary,
+            onClick = onRetry,
+            height = 32.dp,
+            fontSize = 14.sp,
+        )
+        TvPartyButton(label = stringResource(CommonR.string.watchParty_action_dismiss), kind = TvPartyButtonKind.Secondary, onClick = onDismiss, height = 32.dp, fontSize = 14.sp)
     }
 }
 

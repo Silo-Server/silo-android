@@ -2,7 +2,10 @@ package org.siloserver.silo.android.ui.screens.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.uiText
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.repository.AuthRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,7 +18,7 @@ data class SetupUiState(
     val email: String = "",
     val password: String = "",
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val setupSuccess: Boolean = false,
 )
 
@@ -64,7 +67,7 @@ class SetupViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = result.message.ifBlank { "Setup failed" },
+                            error = UiText.serverOr(result.message, CommonR.string.setup_error_failed),
                         )
                     }
                 }
@@ -73,7 +76,7 @@ class SetupViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = "Network error. Please check your connection.",
+                            error = uiText(CommonR.string.signIn_error_networkConnection),
                         )
                     }
                 }
@@ -85,12 +88,12 @@ class SetupViewModel(
         _uiState.update { it.copy(setupSuccess = false) }
     }
 
-    private fun validateFields(state: SetupUiState): String? {
-        if (state.username.isBlank()) return "Username is required"
-        if (state.email.isBlank()) return "Email is required"
-        if (!state.email.contains("@")) return "Please enter a valid email address"
-        if (state.password.isBlank()) return "Password is required"
-        if (state.password.length < 8) return "Password must be at least 8 characters"
+    private fun validateFields(state: SetupUiState): UiText? {
+        if (state.username.isBlank()) return uiText(CommonR.string.tvSignIn_error_usernameRequired)
+        if (state.email.isBlank()) return uiText(CommonR.string.account_create_error_emailRequired)
+        if (!state.email.contains("@")) return uiText(CommonR.string.account_create_error_emailInvalid)
+        if (state.password.isBlank()) return uiText(CommonR.string.tvSignIn_error_passwordRequired)
+        if (state.password.length < 8) return uiText(CommonR.string.account_create_error_passwordShort)
         return null
     }
 }

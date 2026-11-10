@@ -1,9 +1,14 @@
 package org.siloserver.silo.common.settings
 
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R
 import org.siloserver.silo.common.player.AudiobookSettingsStore
 import org.siloserver.silo.domain.settings.SeekIntervalController
 import org.siloserver.silo.model.settings.LegacyAudiobookIntervals
 import org.siloserver.silo.model.settings.SeekDirection
+import org.siloserver.silo.model.settings.SeekImportOutcome
+import org.siloserver.silo.model.settings.SeekImportResult
 import org.siloserver.silo.model.settings.SeekIntervalPair
 import org.siloserver.silo.model.settings.SeekIntervalState
 import org.siloserver.silo.model.settings.SeekIntervalSupport
@@ -28,9 +33,9 @@ data class SeekIntervalSettingsUiState(
     val legacyAudiobook: LegacyAudiobookIntervals = LegacyAudiobookIntervals(),
     val importInProgress: Boolean = false,
     /** Per-direction result of the last explicit import. */
-    val importMessage: String? = null,
+    val importOutcome: SeekImportMessage? = null,
     /** Last failed save, cleared by the next successful one. */
-    val saveError: String? = null,
+    val saveError: SeekSaveError? = null,
     /** Media group [saveError] belongs to, so each screen shows it under that group. */
     val saveErrorMedia: SeekMedia? = null,
 ) {
@@ -45,7 +50,16 @@ data class SeekIntervalSettingsUiState(
     /** The check failed with no earlier answer; players use device values. */
     val checkFailed: Boolean get() = support == SeekIntervalSupport.Unavailable
 
-    fun saveErrorFor(media: SeekMedia): String? = saveError?.takeIf { saveErrorMedia == media }
+    /** The last failed save, when it belongs under [media]'s group. */
+    fun saveErrorOf(media: SeekMedia): SeekSaveError? = saveError?.takeIf { saveErrorMedia == media }
+
+    /** [saveErrorOf] as the words shown under [media]'s group. */
+    @Composable
+    fun saveErrorFor(media: SeekMedia): String? = saveErrorOf(media)?.let { seekSaveErrorText(it) }
+
+    /** The words for [importOutcome]: one sentence per direction. */
+    val importMessage: String?
+        @Composable get() = importOutcome?.let { seekImportMessageText(it) }
 
     /**
      * Offer the explicit import only on a supporting server, and only while a
@@ -58,12 +72,16 @@ data class SeekIntervalSettingsUiState(
 
     /** Names the device values the import would upload, e.g. "Skip back 15s, skip forward 60s". */
     val legacyAudiobookSummary: String
-        get() = SeekDirection.entries.mapNotNull { direction ->
-            legacyAudiobook.importable[direction]?.let { seconds ->
-                val name = if (direction == SeekDirection.Back) "skip back" else "skip forward"
-                "$name ${seconds}s"
+        @Composable get() {
+            val back = legacyAudiobook.importable[SeekDirection.Back]
+            val forward = legacyAudiobook.importable[SeekDirection.Forward]
+            return when {
+                back != null && forward != null -> stringResource(R.string.settings_seekIntervals_legacy_both, back, forward)
+                back != null -> stringResource(R.string.settings_seekIntervals_legacy_back, back)
+                forward != null -> stringResource(R.string.settings_seekIntervals_legacy_forward, forward)
+                else -> ""
             }
-        }.joinToString(", ").replaceFirstChar { it.uppercase() }
+        }
 
     companion object {
         fun from(
@@ -76,7 +94,7 @@ data class SeekIntervalSettingsUiState(
             audiobook = seek.audiobookIntervals,
             legacyAudiobook = legacy,
             importInProgress = local.importInProgress,
-            importMessage = local.importMessage,
+            importOutcome = local.importOutcome,
             saveError = local.saveError,
             saveErrorMedia = local.saveErrorMedia,
         )
@@ -84,8 +102,8 @@ data class SeekIntervalSettingsUiState(
 
     data class LocalState(
         val importInProgress: Boolean = false,
-        val importMessage: String? = null,
-        val saveError: String? = null,
+        val importOutcome: SeekImportMessage? = null,
+        val saveError: SeekSaveError? = null,
         val saveErrorMedia: SeekMedia? = null,
     )
 }
@@ -132,10 +150,11 @@ class SeekIntervalSettingsModel(
         scope.launch {
             val error = when (val result = store.save(media, direction, seconds)) {
                 is SeekIntervalController.SaveResult.Saved -> null
-                is SeekIntervalController.SaveResult.Invalid -> "${result.seconds}s is not a supported interval."
-                is SeekIntervalController.SaveResult.Failed ->
-                    "Couldn't save the skip interval" +
-                        (result.message?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ".")
+                is SeekIntervalController.SaveResult.Invalid -> SeekSaveError.Invalid(result.seconds)
+                is SeekIntervalController.SaveResult.Failed -> when (result.message) {
+                    DefaultSeekIntervalStore.UNSUPPORTED_MESSAGE -> SeekSaveError.Unsupported
+                    else -> SeekSaveError.Failed(result.message?.takeIf { it.isNotBlank() })
+                }
             }
             local.update { it.copy(saveError = error, saveErrorMedia = media.takeIf { error != null }) }
         }
@@ -145,19 +164,88 @@ class SeekIntervalSettingsModel(
     fun importLegacyAudiobook() {
         val current = state.value
         if (!current.editable || current.importInProgress) return
-        local.update { it.copy(importInProgress = true, importMessage = null) }
+        local.update { it.copy(importInProgress = true, importOutcome = null) }
         scope.launch {
-            val message = try {
-                store.importLegacyAudiobook(current.legacyAudiobook)?.describe()
-                    ?: "This server does not support profile-wide skip intervals. Nothing was uploaded."
+            val outcome = try {
+                store.importLegacyAudiobook(current.legacyAudiobook)
+                    ?.let { SeekImportMessage.Result(it) }
+                    ?: SeekImportMessage.Unsupported
             } finally {
                 local.update { it.copy(importInProgress = false) }
             }
-            local.update { it.copy(importMessage = message) }
+            local.update { it.copy(importOutcome = outcome) }
         }
     }
 
     fun dismissMessages() {
-        local.update { it.copy(importMessage = null, saveError = null, saveErrorMedia = null) }
+        local.update { it.copy(importOutcome = null, saveError = null, saveErrorMedia = null) }
+    }
+}
+
+/** Why a skip interval pick didn't save. */
+sealed interface SeekSaveError {
+    /** [seconds] isn't one of the offered intervals; nothing was written. */
+    data class Invalid(val seconds: Int) : SeekSaveError
+
+    /** The server is known not to hold profile skip intervals. */
+    data object Unsupported : SeekSaveError
+
+    /** The write failed; [detail] is the server's or the network's own words, when there are any. */
+    data class Failed(val detail: String?) : SeekSaveError
+}
+
+/** What the last explicit legacy import did. */
+sealed interface SeekImportMessage {
+    /** The server doesn't hold profile skip intervals, so nothing was uploaded. */
+    data object Unsupported : SeekImportMessage
+
+    data class Result(val result: SeekImportResult) : SeekImportMessage
+}
+
+@Composable
+private fun seekSaveErrorText(error: SeekSaveError): String = when (error) {
+    is SeekSaveError.Invalid -> stringResource(R.string.settings_seekIntervals_invalid, error.seconds)
+    SeekSaveError.Unsupported -> stringResource(
+        R.string.settings_seekIntervals_saveFailedDetail,
+        stringResource(R.string.settings_seekIntervals_unsupportedServer),
+    )
+    is SeekSaveError.Failed -> error.detail?.let { stringResource(R.string.settings_seekIntervals_saveFailedDetail, it) }
+        ?: stringResource(R.string.settings_seekIntervals_saveFailed)
+}
+
+/** One sentence per direction, as `SeekImportResult.describe` words them in English. */
+@Composable
+private fun seekImportMessageText(message: SeekImportMessage): String = when (message) {
+    SeekImportMessage.Unsupported -> stringResource(R.string.settings_seekIntervals_import_unsupported)
+    is SeekImportMessage.Result -> SeekDirection.entries.map { direction ->
+        seekImportOutcomeText(direction, message.result.outcome(direction))
+    }.joinToString(" ")
+}
+
+@Composable
+private fun seekImportOutcomeText(direction: SeekDirection, outcome: SeekImportOutcome): String {
+    val back = direction == SeekDirection.Back
+    return when (outcome) {
+        is SeekImportOutcome.Imported -> stringResource(
+            if (back) R.string.settings_seekIntervals_import_backImported else R.string.settings_seekIntervals_import_forwardImported,
+            outcome.seconds,
+        )
+        SeekImportOutcome.NotStored -> stringResource(
+            if (back) R.string.settings_seekIntervals_import_backNotStored else R.string.settings_seekIntervals_import_forwardNotStored,
+        )
+        is SeekImportOutcome.Invalid -> stringResource(
+            if (back) R.string.settings_seekIntervals_import_backInvalid else R.string.settings_seekIntervals_import_forwardInvalid,
+            outcome.seconds,
+        )
+        is SeekImportOutcome.Failed -> outcome.message?.takeIf { it.isNotBlank() }?.let { detail ->
+            stringResource(
+                if (back) R.string.settings_seekIntervals_import_backFailedDetail else R.string.settings_seekIntervals_import_forwardFailedDetail,
+                outcome.seconds,
+                detail,
+            )
+        } ?: stringResource(
+            if (back) R.string.settings_seekIntervals_import_backFailed else R.string.settings_seekIntervals_import_forwardFailed,
+            outcome.seconds,
+        )
     }
 }

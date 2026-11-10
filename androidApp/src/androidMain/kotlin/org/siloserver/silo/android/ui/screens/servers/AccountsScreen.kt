@@ -274,7 +274,7 @@ fun AccountDetailScreen(
 
 @Composable
 private fun AccountEntry.displayName(): String =
-    username?.takeIf { it.isNotBlank() } ?: "Account"
+    username?.takeIf { it.isNotBlank() } ?: stringResource(CommonR.string.settings_accounts_account)
 
 /** "3 profiles · 12 downloads", leaving out what isn't known or is none. */
 @Composable
@@ -362,22 +362,25 @@ private fun RenameDialog(
 ) {
     var input by remember { mutableStateOf(entry.userOverrideName ?: entry.fetchedName.orEmpty()) }
     val hasOverride = entry.userOverrideName != null
+    val saveLabel = stringResource(CommonR.string.common_save)
+    val resetLabel = stringResource(CommonR.string.servers_rename_reset)
+    val cancelLabel = stringResource(CommonR.string.common_cancel)
     SiloDialog(
-        title = "Rename server",
-        message = "Override the server-provided name with a label just for this device.",
+        title = stringResource(CommonR.string.servers_rename_title),
+        message = stringResource(CommonR.string.servers_rename_message),
         onDismissRequest = onDismiss,
         actions = buildList {
-            add(SiloDialogAction("Save", { onConfirm(input) }, SiloDialogActionStyle.Primary))
+            add(SiloDialogAction(saveLabel, { onConfirm(input) }, SiloDialogActionStyle.Primary))
             if (hasOverride) {
-                add(SiloDialogAction("Reset to server-provided name", { onConfirm("") }))
+                add(SiloDialogAction(resetLabel, { onConfirm("") }))
             }
-            add(SiloDialogAction("Cancel", onDismiss))
+            add(SiloDialogAction(cancelLabel, onDismiss))
         },
     ) {
         OutlinedTextField(
             value = input,
             onValueChange = { input = it },
-            label = { Text("Name") },
+            label = { Text(stringResource(CommonR.string.servers_rename_name)) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )

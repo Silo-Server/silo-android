@@ -2,7 +2,9 @@ package org.siloserver.silo.tv.ui.screens.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.discovery.DiscoveredServer
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.common.network.ServerSetupScheme
 import org.siloserver.silo.common.network.ServerSetupValidationException
@@ -29,14 +31,14 @@ data class TvServerSetupUiState(
     val port: String = "",
     val showsAdvancedOptions: Boolean = false,
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     /** Destination after a successful server probe; consumed by the screen. */
     val navigateTo: TvServerSetupDestination? = null,
     val pendingCleartextUrl: String? = null,
     /** The found server being connected to, so its row can show progress while [isLoading]. */
     val connectingServerUrl: String? = null,
     /** A failure connecting to a found server; shown beside the found list, not on the address field. */
-    val discoveryError: String? = null,
+    val discoveryError: UiText? = null,
 ) {
     /** True when the entered address will connect over unencrypted HTTP.
      *  Informational only — does not block LAN/IP connections. */
@@ -67,7 +69,7 @@ internal sealed class TvServerSetupProbeResult {
         val contract: ServerContract? = null,
     ) : TvServerSetupProbeResult()
 
-    data class Failure(val message: String) : TvServerSetupProbeResult()
+    data class Failure(val message: UiText) : TvServerSetupProbeResult()
 }
 
 /**
@@ -145,7 +147,8 @@ class TvServerSetupViewModel(
         val candidates = try {
             candidateUrls(current)
         } catch (error: ServerSetupValidationException) {
-            _uiState.update { it.copy(error = error.message) }
+            // The address parser's own wording (common/network).
+            _uiState.update { it.copy(error = error.message?.let(UiText::Raw)) }
             return
         }
         connect(candidates, found = null)
@@ -239,7 +242,7 @@ class TvServerSetupViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = "Could not safely identify this HTTP server.",
+                        error = UiText.Res(CommonR.string.setup_error_cleartextIdentity),
                         pendingCleartextUrl = null,
                         navigateTo = null,
                     )
@@ -313,7 +316,7 @@ internal suspend fun probeTvServerSetupCandidates(
         val probe = probeContract(candidate)
         if (probe is ApiV2ProbeResult.UpdateServer) {
             return TvServerSetupProbeResult.Failure(
-                message = ServerContract.UPDATE_REQUIRED_MESSAGE,
+                message = UiText.Raw(ServerContract.UPDATE_REQUIRED_MESSAGE),
             )
         }
         // Anything else the probe said (V2, a transient failure, or a timeout)
@@ -338,7 +341,7 @@ internal suspend fun probeTvServerSetupCandidates(
                 // carries no message; fall back to Apple TV's wording.
                 return TvServerSetupProbeResult.Failure(
                     message = result.message.takeIf { it.isNotBlank() }
-                        ?.let { "Could not reach server: $it" }
+                        ?.let { UiText.Res(CommonR.string.tvSignIn_server_unreachableWithReason, listOf(it)) }
                         ?: NETWORK_ERROR_MESSAGE,
                 )
             }
@@ -366,4 +369,4 @@ internal suspend fun probeTvServerSetupCandidates(
     )
 }
 
-private const val NETWORK_ERROR_MESSAGE = "Could not reach a Silo server at that address."
+private val NETWORK_ERROR_MESSAGE = UiText.Res(CommonR.string.setup_error_unreachable)

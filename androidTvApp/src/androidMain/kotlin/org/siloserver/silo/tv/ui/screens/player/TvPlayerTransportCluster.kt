@@ -46,8 +46,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.tv.ui.components.TvSeekIntervalIcon
 
 /**
@@ -101,14 +104,16 @@ fun TvPlayerTransportCluster(
             TransportIconButton(
                 icon = null,
                 seekGlyph = SeekGlyph(forward = false, seconds = skipBackSeconds),
-                description = "Skip back $skipBackSeconds seconds",
+                description = pluralStringResource(CommonR.plurals.player_audio_skipBack, skipBackSeconds, skipBackSeconds),
                 onClick = onSkipBack,
                 onMoveUp = onMoveUpToScrubber,
             )
             DockGap()
             TransportIconButton(
                 icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                description = if (isPlaying) "Pause" else "Play",
+                description = stringResource(
+                    if (isPlaying) CommonR.string.player_audio_pause else CommonR.string.player_audio_play,
+                ),
                 onClick = onPlayPause,
                 focusRequester = playPauseFocus,
                 isPrimary = true,
@@ -118,7 +123,7 @@ fun TvPlayerTransportCluster(
             TransportIconButton(
                 icon = null,
                 seekGlyph = SeekGlyph(forward = true, seconds = skipForwardSeconds),
-                description = "Skip forward $skipForwardSeconds seconds",
+                description = pluralStringResource(CommonR.plurals.player_audio_skipForward, skipForwardSeconds, skipForwardSeconds),
                 onClick = onSkipForward,
                 focusRequester = skipForwardFocus,
                 rightNeighbor = firstSecondaryFocus,
@@ -131,8 +136,8 @@ fun TvPlayerTransportCluster(
             onUpNext?.let { showUpNext ->
                 TransportIconButton(
                     icon = Icons.Rounded.SkipNext,
-                    description = "Up Next",
-                    label = "Up next",
+                    description = stringResource(CommonR.string.player_audio_upNext),
+                    label = stringResource(CommonR.string.player_transport_upNext),
                     onClick = showUpNext,
                     focusRequester = firstSecondaryFocus,
                     leftNeighbor = skipForwardFocus,
@@ -142,8 +147,8 @@ fun TvPlayerTransportCluster(
             }
             TransportIconButton(
                 icon = Icons.Rounded.Subtitles,
-                description = "Subtitles",
-                label = "Subtitles",
+                description = stringResource(CommonR.string.player_hud_subtitles),
+                label = stringResource(CommonR.string.player_hud_subtitles),
                 value = subtitlesValue,
                 onClick = onOpenQuickSubtitles,
                 focusRequester = firstSecondaryFocus.takeIf { onUpNext == null },
@@ -153,16 +158,16 @@ fun TvPlayerTransportCluster(
             DockGap()
             TransportIconButton(
                 icon = Icons.Rounded.Tune,
-                description = "Info and options",
-                label = "Options",
+                description = stringResource(CommonR.string.player_audio_options),
+                label = stringResource(CommonR.string.player_hud_options),
                 onClick = onOpenHUD,
                 onMoveUp = onMoveUpToScrubber,
             )
             DockGap()
             TransportIconButton(
                 icon = Icons.Rounded.Close,
-                description = "Close player",
-                label = "Close",
+                description = stringResource(CommonR.string.player_audio_close),
+                label = stringResource(CommonR.string.player_transport_close),
                 onClick = onClose,
                 onMoveUp = onMoveUpToScrubber,
             )

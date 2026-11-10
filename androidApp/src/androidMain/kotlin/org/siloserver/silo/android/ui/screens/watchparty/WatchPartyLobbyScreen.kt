@@ -23,12 +23,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.watchtogether.GuestControlPolicy
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomSelectionMode
@@ -136,7 +139,7 @@ fun WatchPartyLobbyScreen(
                 modifier = Modifier.align(Alignment.Center),
             ) {
                 CircularProgressIndicator(color = SiloSecondaryText)
-                Text("Connecting to the party…", color = SiloSecondaryText)
+                Text(stringResource(CommonR.string.watchParty_connection_connectingToParty), color = SiloSecondaryText)
             }
         }
         return
@@ -206,12 +209,18 @@ fun WatchPartyLobbyScreen(
         extraBanner = state.suggestionRetry?.let { draft ->
             {
                 WatchPartyBanner(
-                    text = "Couldn't confirm your suggestion of ${draft.title}.",
+                    text = stringResourceWithNames(CommonR.string.watchParty_error_suggestionOfUnconfirmed, draft.title),
                     tone = WatchPartyBannerTone.Warning,
                     action = {
-                        TextButton(onClick = viewModel::retrySuggestion) { Text("Try again", color = SiloOnSurface) }
+                        TextButton(onClick = viewModel::retrySuggestion) {
+                            Text(stringResource(CommonR.string.common_tryAgain), color = SiloOnSurface)
+                        }
                         IconButton(onClick = viewModel::dismissSuggestionRetry) {
-                            Icon(Icons.Filled.Close, contentDescription = "Dismiss", tint = SiloSecondaryText)
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = stringResource(CommonR.string.watchParty_action_dismiss),
+                                tint = SiloSecondaryText,
+                            )
                         }
                     },
                 )

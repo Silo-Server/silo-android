@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -177,7 +179,7 @@ fun MediaRow(
                 modifier = if (onExploreAllClick != null) {
                     Modifier
                         .clip(MaterialTheme.shapes.small)
-                        .clickable(onClickLabel = "Explore all", role = Role.Button, onClick = onExploreAllClick)
+                        .clickable(onClickLabel = stringResource(CommonR.string.rows_exploreAll), role = Role.Button, onClick = onExploreAllClick)
                 } else {
                     Modifier
                 },
@@ -344,7 +346,7 @@ fun MediaRow(
                             overlay = rowItem.overlay,
                             actions = cardActions(item),
                             overlayIcon = if (rowItem.isBook) Icons.AutoMirrored.Filled.MenuBook else Icons.Default.PlayArrow,
-                            overlayContentDescription = if (rowItem.isBook) "Read" else "Play",
+                            overlayContentDescription = stringResource(if (rowItem.isBook) CommonR.string.shell_card_read else CommonR.string.common_play),
                             onOverlayClick = if (!rowItem.isBook && onItemPlay != null) {
                                 { onItemPlay(item) }
                             } else {
@@ -430,7 +432,7 @@ internal fun ExploreAllCard(cardStyle: CardStyle, onClick: () -> Unit, width: Dp
                 )
             }
             Text(
-                text = "Explore all",
+                text = stringResource(CommonR.string.rows_exploreAll),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
             )

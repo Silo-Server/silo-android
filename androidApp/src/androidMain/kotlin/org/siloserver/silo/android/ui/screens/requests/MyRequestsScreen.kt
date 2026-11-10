@@ -34,12 +34,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.EmptyStateView
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.theme.SiloNavPillBorder
@@ -85,7 +87,7 @@ fun MyRequestsScreen(
     }
 
     RequestsLargeTitlePage(
-        title = "My Requests",
+        title = stringResource(CommonR.string.requests_myRequests),
         onBackClick = onBackClick,
         isRefreshing = state.isRefreshing,
         onRefresh = viewModel::refresh,
@@ -105,8 +107,8 @@ fun MyRequestsScreen(
             }
             state.isEmpty -> item(key = "empty") {
                 EmptyStateView(
-                    title = "No requests yet",
-                    subtitle = "Movies and series you request will show up here",
+                    title = stringResource(CommonR.string.requests_mine_emptyTitle),
+                    subtitle = stringResource(CommonR.string.requests_mine_emptyBody),
                     icon = Icons.Outlined.Inbox,
                     modifier = Modifier.padding(top = 80.dp),
                 )
@@ -174,12 +176,13 @@ private fun FilterMenu(
         ) {
             Icon(
                 imageVector = Icons.Filled.FilterList,
-                contentDescription = filter?.let { "Filter: ${it.title}" } ?: "Filter",
+                contentDescription = filter?.let { stringResource(CommonR.string.requests_filter_active, it.title) }
+                    ?: stringResource(CommonR.string.requests_filter_button),
                 tint = Color.White,
             )
         }
         SiloDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            FilterItem(label = "All Requests", icon = Icons.Outlined.Inventory2, selected = filter == null) {
+            FilterItem(label = stringResource(CommonR.string.requests_filter_all), icon = Icons.Outlined.Inventory2, selected = filter == null) {
                 open = false
                 onFilter(null)
             }
@@ -204,7 +207,7 @@ private fun FilterItem(label: String, icon: ImageVector, selected: Boolean, onCl
         text = { Text(label) },
         leadingIcon = {
             Box(modifier = Modifier.size(24.dp), contentAlignment = Alignment.Center) {
-                if (selected) Icon(Icons.Filled.Check, contentDescription = "Selected") else Icon(icon, contentDescription = null)
+                if (selected) Icon(Icons.Filled.Check, contentDescription = stringResource(CommonR.string.requests_filter_selected)) else Icon(icon, contentDescription = null)
             }
         },
         onClick = onClick,

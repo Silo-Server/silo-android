@@ -11,6 +11,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import org.siloserver.silo.audiobook.audiobookChapterLabel
 import org.siloserver.silo.model.catalog.VersionChapter
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Full-screen, focusable chapters overlay. Auto-scrolls to + highlights the
@@ -40,7 +42,7 @@ fun TvAudiobookChaptersPanel(
     }
 
     TvAudiobookOverlayScaffold(
-        title = "Chapters",
+        title = stringResource(CommonR.string.options_chapters),
         initialFocus = focusRequester,
         modifier = modifier,
         onAcquisitionFailed = onFocusAcquisitionFailed,
