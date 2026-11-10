@@ -1,7 +1,9 @@
 package org.siloserver.silo.tv
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -34,6 +36,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import org.siloserver.silo.common.diagnostics.DiagnosticsLifecycleLogger
+import org.siloserver.silo.common.i18n.AppLanguageStore
+import org.siloserver.silo.common.i18n.AppLocales
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.ServerDrivenConfigRefresher
@@ -279,6 +283,22 @@ class MainTvActivity : ComponentActivity() {
         val monitor = get<ServerReachabilityMonitor>(ServerReachabilityMonitor::class.java)
         monitor.startForeground()
         lifecycleScope.launch(Dispatchers.IO) { refresher.refreshIfStale() }
+        // A language chosen in system settings while Silo was away.
+        get<AppLanguageStore>(AppLanguageStore::class.java).check(this)
+    }
+
+    // Before Android 13 the app language is applied here; from 13 the
+    // platform does it.
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocales.wrap(newBase))
+    }
+
+    // `locale|layoutDirection` are handled in place, so a language chosen in
+    // system settings while this stays started (picture-in-picture, split
+    // screen) arrives here rather than as a recreation.
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        get<AppLanguageStore>(AppLanguageStore::class.java).check(this)
     }
 
     /**

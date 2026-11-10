@@ -941,7 +941,7 @@ class PlaybackSessionLifecycle(
     private fun isPlaybackSessionMissing(result: ApiResult<*>): Boolean {
         val error = result as? ApiResult.Error ?: return false
         return error.code == 404 &&
-            (error.error == "playback_session_not_found" || error.message == "Playback session not found")
+            (error.error == "playback_session_not_found" || error.detail == "Playback session not found")
     }
 
     private fun nowMs(): Long = System.currentTimeMillis()

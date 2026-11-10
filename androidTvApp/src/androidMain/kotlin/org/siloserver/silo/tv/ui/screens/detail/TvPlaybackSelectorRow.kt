@@ -143,7 +143,7 @@ internal fun TvPlaybackActionSelectors(
             )
         }
     }
-    val unsupportedFormat = stringResource(CommonR.string.subtitle_track_unsupported_format)
+    val unsupportedFormat = stringResource(CommonR.string.subtitle_trackUnsupportedFormat)
     val subtitleOptions = buildList {
         add(
             TvSelectorOption(

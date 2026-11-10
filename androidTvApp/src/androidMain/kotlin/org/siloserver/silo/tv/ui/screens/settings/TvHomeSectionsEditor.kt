@@ -58,6 +58,7 @@ import androidx.tv.material3.Text
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.i18n.sectionTitle
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.tv.data.preferences.TvHomeSectionPreferences
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
@@ -358,6 +359,7 @@ private fun HomeSectionEditorRow(
     onMoveDown: () -> Unit,
     onToggleVisibility: () -> Unit,
 ) {
+    val title = sectionTitle(section)
     HomeSectionsCard {
         Row(
             modifier = Modifier
@@ -373,7 +375,7 @@ private fun HomeSectionEditorRow(
                 verticalArrangement = Arrangement.spacedBy(1.dp),
             ) {
                 Text(
-                    text = section.title,
+                    text = title,
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontSize = 14.sp,
                         lineHeight = 17.sp,
@@ -393,7 +395,7 @@ private fun HomeSectionEditorRow(
             if (editing) {
                 HomeSectionsControlButton(
                     icon = Icons.Filled.KeyboardArrowUp,
-                    contentDescription = "Move ${section.title} earlier",
+                    contentDescription = "Move $title earlier",
                     onClick = onMoveUp,
                     enabled = canMoveUp,
                     compact = true,
@@ -402,7 +404,7 @@ private fun HomeSectionEditorRow(
                 )
                 HomeSectionsControlButton(
                     icon = Icons.Filled.KeyboardArrowDown,
-                    contentDescription = "Move ${section.title} later",
+                    contentDescription = "Move $title later",
                     onClick = onMoveDown,
                     enabled = canMoveDown,
                     compact = true,
@@ -413,9 +415,9 @@ private fun HomeSectionEditorRow(
             HomeSectionsControlButton(
                 icon = if (visible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
                 contentDescription = if (visible) {
-                    "Hide ${section.title}"
+                    "Hide $title"
                 } else {
-                    "Show ${section.title}"
+                    "Show $title"
                 },
                 onClick = onToggleVisibility,
                 compact = true,

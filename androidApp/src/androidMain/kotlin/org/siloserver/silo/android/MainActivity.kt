@@ -2,6 +2,7 @@ package org.siloserver.silo.android
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.content.pm.PackageManager
@@ -58,6 +59,8 @@ import org.siloserver.silo.android.ui.navigation.shouldStartOnDownloads
 import org.siloserver.silo.android.ui.screens.watchparty.WatchPartyHandoff
 import org.siloserver.silo.android.ui.screens.watchparty.watchPartyAppLinkOrNull
 import org.siloserver.silo.android.ui.screens.watchparty.watchPartyInviteRoute
+import org.siloserver.silo.common.i18n.AppLanguageStore
+import org.siloserver.silo.common.i18n.AppLocales
 import org.siloserver.silo.common.watchparty.WatchPartyExperiment
 import org.siloserver.silo.android.ui.screens.onboarding.OnboardingTourLocalCache
 import org.siloserver.silo.android.ui.theme.SiloTheme
@@ -316,6 +319,22 @@ class MainActivity : ComponentActivity() {
         val monitor = get<ServerReachabilityMonitor>(ServerReachabilityMonitor::class.java)
         monitor.startForeground()
         lifecycleScope.launch(Dispatchers.IO) { refresher.refreshIfStale() }
+        // A language chosen in system settings while Silo was away.
+        get<AppLanguageStore>(AppLanguageStore::class.java).check(this)
+    }
+
+    // Before Android 13 the app language is applied here; from 13 the
+    // platform does it.
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocales.wrap(newBase))
+    }
+
+    // `locale|layoutDirection` are handled in place, so a language chosen in
+    // system settings while this stays started (picture-in-picture, split
+    // screen) arrives here rather than as a recreation.
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        get<AppLanguageStore>(AppLanguageStore::class.java).check(this)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

@@ -1,3 +1,4 @@
+import java.util.Properties
 import com.android.build.api.variant.HasHostTestsBuilder
 import com.android.build.api.variant.HostTestBuilder
 
@@ -11,6 +12,11 @@ plugins {
     // run — first launches otherwise JIT the Home feed while the user browses.
     alias(libs.plugins.androidx.baselineprofile)
 }
+
+// The languages this app ships (see androidApp's build.gradle.kts).
+val siloLocaleFilters = Properties()
+    .apply { rootProject.file("android-shared/silo-locales.properties").reader().use(::load) }
+    .getProperty("tv").orEmpty().split(',').map(String::trim).filter(String::isNotEmpty)
 
 // See androidApp's build.gradle.kts for the channel rationale.
 val siloReleaseChannels = listOf("release", "sideload", "dev")
@@ -192,6 +198,12 @@ android {
         // build.gradle.kts for rationale.
         buildConfigField("boolean", "FFMPEG_AUDIO_ENABLED", "true")
     }
+    // Lists the shipped languages in the system per-app language screen
+    // (Settings → Apps → Silo → Language). Reads res/resources.properties.
+    androidResources {
+        generateLocaleConfig = true
+        localeFilters += siloLocaleFilters
+    }
     buildFeatures {
         compose = true
         buildConfig = true
@@ -217,6 +229,8 @@ android {
     }
     buildTypes {
         debug {
+            // en-XA (accented, longer) and ar-XB (mirrored) for layout checks.
+            isPseudoLocalesEnabled = true
             buildConfigField("String", "RELEASE_CHANNEL", "\"dev\"")
         }
         release {
@@ -244,6 +258,10 @@ android {
     bundle {
         abi {
             enableSplit = true
+        }
+        // See androidApp's build.gradle.kts.
+        language {
+            enableSplit = false
         }
     }
     splits {
@@ -290,8 +308,12 @@ android {
         // Without this, none of android-shared is examined.
         checkDependencies = true
         baseline = file("lint-baseline.xml")
+        lintConfig = rootProject.file("lint.xml")
         abortOnError = true
         fatal += setOf("NewApi", "InlinedApi")
+        // Translations arrive per language and may lag English; a missing
+        // one falls back to English at runtime by design.
+        disable += "MissingTranslation"
         checkReleaseBuilds = true
     }
 }

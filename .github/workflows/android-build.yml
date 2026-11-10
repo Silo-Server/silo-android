@@ -50,3 +50,5 @@ jobs:
       build_cache: ${{ github.event_name != 'workflow_dispatch' || inputs.build_cache }}
       parallel: ${{ inputs.parallel || false }}
       configuration_cache: ${{ inputs.configuration_cache || false }}
+    secrets:
+      SILO_TRANSLATIONS_TOKEN: ${{ secrets.SILO_TRANSLATIONS_READ_TOKEN }}

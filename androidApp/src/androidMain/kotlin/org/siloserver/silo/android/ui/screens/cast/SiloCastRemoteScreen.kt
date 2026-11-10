@@ -89,8 +89,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import org.koin.compose.koinInject
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
 import org.siloserver.silo.android.ui.components.rememberVideoSeekIntervals
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.settings.SeekIntervalPair
-import org.siloserver.silo.android.R
 import org.siloserver.silo.android.cast.RemoteControlBatteryOptimization
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.cast.SiloCastPlaybackState
@@ -226,10 +226,10 @@ fun SiloCastRemoteScreen(
 
     state.pendingReplace?.let { pending ->
         SiloConfirmDialog(
-            title = stringResource(R.string.remote_replace_title),
+            title = stringResource(CommonR.string.remote_replace_title),
             body = pending.message,
             confirmLabel = pending.confirmLabel,
-            dismissLabel = stringResource(R.string.remote_replace_cancel),
+            dismissLabel = stringResource(CommonR.string.common_cancel),
             destructive = false,
             onConfirm = controller::confirmReplace,
             onDismiss = controller::cancelReplace,
@@ -242,10 +242,10 @@ fun SiloCastRemoteScreen(
             showBatteryPrompt = false
         }
         SiloConfirmDialog(
-            title = stringResource(R.string.remote_battery_title),
-            body = stringResource(R.string.remote_battery_message),
-            confirmLabel = stringResource(R.string.remote_battery_settings),
-            dismissLabel = stringResource(R.string.remote_battery_not_now),
+            title = stringResource(CommonR.string.remote_battery_title),
+            body = stringResource(CommonR.string.remote_battery_message),
+            confirmLabel = stringResource(CommonR.string.remote_battery_settings),
+            dismissLabel = stringResource(CommonR.string.remote_battery_notNow),
             destructive = false,
             onConfirm = {
                 dismissBatteryPrompt()
@@ -348,7 +348,7 @@ private fun RemoteTopBar(
                 }
                 if (showBatterySettings) {
                     SiloDropdownMenuItem(
-                        text = { Text(stringResource(R.string.remote_battery_settings)) },
+                        text = { Text(stringResource(CommonR.string.remote_battery_settings)) },
                         leadingIcon = {
                             Icon(Icons.Outlined.SettingsRemote, contentDescription = null)
                         },

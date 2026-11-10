@@ -25,6 +25,7 @@ import org.siloserver.silo.android.ui.screens.home.HomeSectionsEditor
 import org.siloserver.silo.android.ui.theme.SettingsDimens
 import org.siloserver.silo.android.ui.theme.SiloSettingsBackground
 import org.siloserver.silo.android.ui.util.formatBytes
+import org.siloserver.silo.common.i18n.AppLanguageStore
 import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import org.siloserver.silo.common.settings.PlayerSettingsStore
@@ -88,8 +89,13 @@ fun SettingsInterfaceScreen(viewModel: SettingsViewModel, onBackClick: () -> Uni
     // another device shows here without waiting for the next foreground. Kept
     // out of the LazyColumn item, which re-enters composition on scroll.
     LaunchedEffect(titleArtStore) { titleArtStore.refresh() }
+    val appLanguageStore: AppLanguageStore = koinInject()
+    LaunchedEffect(appLanguageStore) { appLanguageStore.refresh() }
 
     SettingsPageScaffold(title = "Interface", onBackClick = onBackClick) {
+        item(key = "app-language") {
+            AppLanguageSettingsSection(store = appLanguageStore)
+        }
         item(key = "cards") {
             MediaCardsSettings(
                 state = state.cardPresentation,

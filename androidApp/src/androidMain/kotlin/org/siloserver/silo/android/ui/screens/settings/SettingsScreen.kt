@@ -46,7 +46,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.BuildConfig
-import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.components.SignOutConfirmDialog
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsViewModel
@@ -56,6 +55,7 @@ import org.siloserver.silo.android.ui.theme.SettingsTextStyles
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSettingsBackground
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
 import org.siloserver.silo.common.network.clientVersionLabel
 import org.siloserver.silo.common.settings.CardPresentationSupport
@@ -132,7 +132,7 @@ fun SettingsScreen(
 
     val matchesInterface = search.matches(
         "interface", "appearance", "cards", "posters", "home", "sections",
-        "title art", "logos",
+        "title art", "logos", "language",
     )
     val matchesNotifications = state.notificationsAvailable && search.matches(
         "notifications", "alerts", "favorites", "watchlist", "continue watching", "next up",
@@ -345,7 +345,7 @@ fun SettingsScreen(
                         if (matchesServer) {
                             // Settings › Accounts: every saved server and account (spec §4.5).
                             SettingsNavigationRow(
-                                label = stringResource(R.string.accounts_title),
+                                label = stringResource(CommonR.string.accounts_title),
                                 icon = Icons.Filled.Dns,
                                 value = serverLabel,
                                 onClick = onNavigateToServers,
@@ -353,7 +353,7 @@ fun SettingsScreen(
                         }
                         if (matchesPairDevice) {
                             SettingsNavigationRow(
-                                label = stringResource(R.string.sign_in_tv_settings_label),
+                                label = stringResource(CommonR.string.signInTv_settingsLabel),
                                 icon = Icons.Filled.ConnectedTv,
                                 onClick = onPairDevice,
                             )

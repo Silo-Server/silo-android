@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 import org.siloserver.silo.android.ui.components.CardStyle
 import org.siloserver.silo.android.ui.components.MediaCardActions
 import org.siloserver.silo.android.ui.components.MediaRow
+import org.siloserver.silo.common.i18n.sectionTitle
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SECTION_ROW_MAX_ITEMS
 import org.siloserver.silo.model.section.cappedForRow
@@ -58,7 +59,7 @@ fun HomeSectionRow(
     val cardStyle = if (useBackdrop) CardStyle.Backdrop else CardStyle.Poster
 
     MediaRow(
-        title = section.title,
+        title = sectionTitle(section),
         items = rowItems,
         onItemClick = onItemClick,
         onExploreAllClick = onExploreAllClick?.takeIf { section.offersExploreAll },

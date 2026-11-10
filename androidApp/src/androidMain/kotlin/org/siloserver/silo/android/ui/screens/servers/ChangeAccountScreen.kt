@@ -71,11 +71,11 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
-import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.components.marquee.MarqueeHeadline
 import org.siloserver.silo.android.ui.components.marquee.MarqueeIconButton
 import org.siloserver.silo.android.ui.components.marquee.MarqueeTopBarSpacer
 import org.siloserver.silo.android.ui.components.marquee.MarqueeWordmark
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeProfileAvatar
 import org.siloserver.silo.common.ui.marquee.MarqueeScrim
@@ -158,7 +158,7 @@ fun ChangeAccountScreen(
                 if (onBack != null) {
                     MarqueeIconButton(
                         icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = stringResource(R.string.action_back),
+                        contentDescription = stringResource(CommonR.string.common_navigateBack),
                         onClick = onBack,
                         enabled = !state.isWorking,
                     )
@@ -183,7 +183,7 @@ fun ChangeAccountScreen(
                 ) {
                     item(key = "title") {
                         MarqueeHeadline(
-                            stringResource(R.string.change_account_title),
+                            stringResource(CommonR.string.changeAccount_title),
                             modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
                         )
                     }
@@ -200,7 +200,7 @@ fun ChangeAccountScreen(
                     item(key = "add-server") {
                         Spacer(Modifier.height(28.dp))
                         AddRow(
-                            label = stringResource(R.string.accounts_add_server),
+                            label = stringResource(CommonR.string.accounts_addAServer),
                             shape = CardShape,
                             enabled = !state.isWorking,
                             onClick = onAddServer,
@@ -275,9 +275,9 @@ private fun LazyListScope.serverGroup(
     item(key = "add-${server.id}") {
         AddRow(
             label = if (group.accounts.isEmpty()) {
-                stringResource(R.string.change_account_sign_in_on, server.displayName)
+                stringResource(CommonR.string.changeAccount_signInOn, server.displayName)
             } else {
-                stringResource(R.string.change_account_add_account)
+                stringResource(CommonR.string.changeAccount_addAccount)
             },
             shape = segmentShape(rows - 1, rows),
             showDivider = rows > 1,
@@ -337,11 +337,11 @@ private fun ServerHeader(server: ServerEntry, loader: ServerBrandingLoader) {
 @Composable
 private fun AccountRow(card: AccountCard, shape: Shape, showDivider: Boolean, enabled: Boolean, onClick: () -> Unit) {
     val account = card.account
-    val name = account.username?.takeIf { it.isNotBlank() } ?: stringResource(R.string.account_fallback_name)
-    val count = card.profileCount.takeIf { it > 0 }?.let { pluralStringResource(R.plurals.account_profiles_count, it, it) }
+    val name = account.username?.takeIf { it.isNotBlank() } ?: stringResource(CommonR.string.account_fallbackName)
+    val count = card.profileCount.takeIf { it > 0 }?.let { pluralStringResource(CommonR.plurals.account_profiles_count, it, it) }
     val badge = when {
-        account.needsSignIn -> stringResource(R.string.picker_sign_in_again) to MarqueeColors.Warning
-        card.isCurrent -> stringResource(R.string.change_account_current) to MarqueeColors.Live
+        account.needsSignIn -> stringResource(CommonR.string.picker_signInAgain) to MarqueeColors.Warning
+        card.isCurrent -> stringResource(CommonR.string.changeAccount_current) to MarqueeColors.Live
         else -> null
     }
     CardSegment(shape = shape, showDivider = showDivider, enabled = enabled, onClick = onClick, stateLabel = badge?.first) {
@@ -427,7 +427,7 @@ private fun MoreBelowPill(onClick: () -> Unit, modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(stringResource(R.string.change_account_more_below), color = MarqueeColors.Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Text(stringResource(CommonR.string.changeAccount_moreBelow), color = MarqueeColors.Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium)
         Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null, tint = MarqueeColors.Ink, modifier = Modifier.size(18.dp))
     }
 }

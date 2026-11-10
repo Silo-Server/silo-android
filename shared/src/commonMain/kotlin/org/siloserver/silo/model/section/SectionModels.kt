@@ -59,6 +59,14 @@ data class ResolvedSection(
     val id: String,
     @SerialName("section_type") val sectionType: String,
     val title: String,
+    /**
+     * The shared catalog key whose English is [title] (`home.section.*`),
+     * present only while the title is the server's own text, with its named
+     * arguments. A client that has the key shows its translation; otherwise
+     * [title]. Absent on servers that predate it and for titles someone typed.
+     */
+    @SerialName("title_key") val titleKey: String? = null,
+    @SerialName("title_args") val titleArgs: Map<String, String>? = null,
     val featured: Boolean = false,
     @SerialName("item_limit") val itemLimit: Int = 0,
     @SerialName("total_count") val totalCount: Int = 0,

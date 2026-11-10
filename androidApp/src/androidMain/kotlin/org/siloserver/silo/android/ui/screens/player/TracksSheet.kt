@@ -115,7 +115,7 @@ fun TracksSheet(
                         selected = selectedSubtitleIndex == -1,
                         onClick = { choose { onSelectSubtitle(-1) } },
                     )
-                    val unsupportedFormat = stringResource(CommonR.string.subtitle_track_unsupported_format)
+                    val unsupportedFormat = stringResource(CommonR.string.subtitle_trackUnsupportedFormat)
                     subtitles.forEachIndexed { index, subtitle ->
                         // A track no route can show stays listed, disabled, so
                         // the rows keep their places and the viewer sees why.

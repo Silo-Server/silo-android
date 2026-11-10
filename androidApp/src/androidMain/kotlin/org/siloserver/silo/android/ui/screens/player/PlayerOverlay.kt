@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.catalog.editionLabel
 import android.graphics.Rect
 import android.widget.Toast
@@ -54,7 +55,6 @@ import org.siloserver.silo.common.player.allowsAudioDelay
 import org.siloserver.silo.common.player.video.markerSkipTarget
 import org.siloserver.silo.common.player.video.ManualMarkerKind
 import androidx.compose.ui.res.stringResource
-import org.siloserver.silo.android.R
 import org.siloserver.silo.common.player.NoticeTone
 import org.siloserver.silo.common.player.PlayerNotice
 import org.siloserver.silo.common.player.SleepTimerState
@@ -235,8 +235,8 @@ fun PlayerOverlay(
         PlayerNotice(
             stringResource(
                 when (kind) {
-                    BufferingQualityNotice.LOWERED -> R.string.buffering_quality_lowered
-                    BufferingQualityNotice.CANT_LOWER -> R.string.buffering_quality_cant_lower
+                    BufferingQualityNotice.LOWERED -> CommonR.string.bufferingQuality_lowered
+                    BufferingQualityNotice.CANT_LOWER -> CommonR.string.bufferingQuality_cantLower
                 },
             ),
             NoticeTone.Info,
@@ -584,7 +584,7 @@ fun PlayerOverlay(
             if (target != null) {
                 Box(modifier = bottomEndSlotModifier, contentAlignment = Alignment.BottomEnd) {
                     MarkerSkipPill(
-                        label = stringResource(if (target.kind == ManualMarkerKind.Recap) R.string.marker_skip_recap else R.string.marker_skip_credits),
+                        label = stringResource(if (target.kind == ManualMarkerKind.Recap) CommonR.string.marker_skipRecap else CommonR.string.marker_skipCredits),
                         onClick = { gatedSeek(target.endSeconds) },
                     )
                 }

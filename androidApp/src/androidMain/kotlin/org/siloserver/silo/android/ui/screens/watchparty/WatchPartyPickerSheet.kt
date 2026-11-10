@@ -57,6 +57,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -76,6 +77,7 @@ import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.android.ui.theme.SiloPageBackground
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
+import org.siloserver.silo.common.i18n.sectionTitle
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.model.watchtogether.ItemMemberState
@@ -333,6 +335,7 @@ private const val MAX_HOME_SECTIONS = 4
 private fun rememberPickerHomeShelves(): androidx.compose.runtime.State<PickerHomeShelves> {
     val sections: SectionRepository = koinInject()
     val catalog: CatalogRepository = koinInject()
+    val context = LocalContext.current
     return produceState(PickerHomeShelves()) {
         suspend fun recent(type: String): List<SectionItem> =
             when (val result = catalog.browse(mediaType = type, sort = "added_at", order = "desc", limit = 24)) {
@@ -356,7 +359,7 @@ private fun rememberPickerHomeShelves(): androidx.compose.runtime.State<PickerHo
                     .filter { it.sectionType.lowercase() !in skippedHomeSectionTypes }
                     .mapNotNull { section ->
                         val items = section.items.filter { it.type == "movie" || it.type == "series" }
-                        if (items.isEmpty()) null else section.title to items
+                        if (items.isEmpty()) null else context.sectionTitle(section) to items
                     }
                     .take(MAX_HOME_SECTIONS),
                 recentMovies = movies.await(),

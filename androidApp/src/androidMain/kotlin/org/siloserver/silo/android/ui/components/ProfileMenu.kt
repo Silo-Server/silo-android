@@ -15,9 +15,9 @@ import androidx.compose.material.icons.rounded.SwitchAccount
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import org.siloserver.silo.android.R
 import org.koin.compose.koinInject
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.common.ui.marquee.ServerBranding
 import org.siloserver.silo.model.profile.Profile
@@ -136,7 +136,7 @@ fun ProfileMenu(
             },
         )
         SiloMenuItem(
-            label = stringResource(R.string.change_account_menu),
+            label = stringResource(CommonR.string.changeAccount_menu),
             icon = Icons.Rounded.ManageAccounts,
             onClick = {
                 onDismissRequest()

@@ -13,7 +13,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import org.siloserver.silo.android.R
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import org.siloserver.silo.common.settings.UseProfileSettingsCopy
@@ -182,7 +181,7 @@ fun PlaybackStreamingSection(
         // copy is the spec's.
         if (bufferingQualityModeSupported) {
             ProfileLayeredDropdownRow(
-                label = stringResource(CommonR.string.settings_buffering_quality_title),
+                label = stringResource(CommonR.string.settings_bufferingQuality_title),
                 value = stringResource(bufferingQualityModeLabel(bufferingQualityMode)),
                 options = bufferingQualityOptions.map { it.second },
                 overridden = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, PlaybackSettingsKeys.BufferingQualityMode),
@@ -190,18 +189,18 @@ fun PlaybackStreamingSection(
                     bufferingQualityOptions.firstOrNull { it.second == label }?.let { onBufferingQualityModeChanged(it.first) }
                 },
                 onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.BufferingQualityMode) },
-                description = stringResource(CommonR.string.settings_buffering_quality_description),
+                description = stringResource(CommonR.string.settings_bufferingQuality_description),
             )
         }
 
         if (learnedLimit != null) {
             SettingsRow(label = learnedLimitLabel(learnedLimit)) {
                 TextButton(onClick = onResetLearnedLimit) {
-                    Text(stringResource(CommonR.string.settings_learned_limit_reset))
+                    Text(stringResource(CommonR.string.settings_learnedLimit_reset))
                 }
             }
             if (learnedLimitResetFailed) {
-                SettingsProse(body = stringResource(CommonR.string.settings_learned_limit_reset_failed))
+                SettingsProse(body = stringResource(CommonR.string.settings_learnedLimit_resetFailed))
             }
         }
 
@@ -399,7 +398,7 @@ fun PlaybackResetSection(onResetPlaybackOverrides: () -> Unit, modifier: Modifie
 /** The label each intro-skip mode is offered under; the copy is contract-fixed. */
 @StringRes
 private fun introSkipModeLabel(mode: IntroSkipMode): Int = when (mode) {
-    IntroSkipMode.NEVER -> R.string.settings_intro_skip_never
-    IntroSkipMode.ASK -> R.string.settings_intro_skip_ask
-    IntroSkipMode.ALWAYS -> R.string.settings_intro_skip_always
+    IntroSkipMode.NEVER -> CommonR.string.settings_introSkip_never
+    IntroSkipMode.ASK -> CommonR.string.settings_introSkip_ask
+    IntroSkipMode.ALWAYS -> CommonR.string.settings_introSkip_always
 }

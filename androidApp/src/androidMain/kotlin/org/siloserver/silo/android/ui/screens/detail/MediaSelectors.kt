@@ -390,7 +390,7 @@ fun SubtitlePickerSheet(
             PickerItem(
                 title = formatSubtitleTitle(track, index),
                 subtitle = if (unplayable) {
-                    stringResource(CommonR.string.subtitle_track_unsupported_format)
+                    stringResource(CommonR.string.subtitle_trackUnsupportedFormat)
                 } else {
                     formatSubtitleSubtitle(track)
                 },

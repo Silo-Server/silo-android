@@ -83,8 +83,9 @@ fun RequestStageTrack(
 
 /** Row and caption copy shared by the phone list and the TV preview panel. */
 object RequestRowCopy {
-    private val dayFormat = DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())
-    private val stampFormat = DateTimeFormatter.ofPattern("MMM d 'at' h:mm a", Locale.getDefault())
+    // Built per use: this object outlives an in-place app language change.
+    private val dayFormat get() = DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())
+    private val stampFormat get() = DateTimeFormatter.ofPattern("MMM d 'at' h:mm a", Locale.getDefault())
 
     fun mediaTypeLabel(mediaType: String): String = when (mediaType) {
         RequestMediaType.Movie -> "Movie"

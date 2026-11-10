@@ -3,6 +3,7 @@ package org.siloserver.silo.common.network
 import android.content.Context
 import android.content.pm.PackageInfo
 import android.os.Build
+import org.siloserver.silo.common.i18n.AppLocales
 import org.siloserver.silo.network.SiloDeviceMetadata
 import org.siloserver.silo.network.DeviceMetadataProvider
 import java.util.UUID
@@ -45,6 +46,8 @@ class AndroidDeviceMetadataProvider(
             clientBuild = buildIdentity.reportedBuildNumber,
             clientChannel = buildIdentity.reportedChannel,
             clientFamily = cachedClientFamily,
+            // Read per request so it follows a language change at once.
+            acceptLanguage = AppLocales.appliedTag(context),
         )
     }
 

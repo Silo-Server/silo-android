@@ -1,6 +1,5 @@
 package org.siloserver.silo.android.ui.screens.profiles
 
-import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import org.siloserver.silo.android.ui.components.SignOutConfirmDialog
 import org.siloserver.silo.android.ui.components.SiloDialogColors
@@ -102,6 +101,7 @@ import org.siloserver.silo.android.ui.components.marquee.MarqueeServerChip
 import org.siloserver.silo.android.ui.components.marquee.MarqueeTopBarSpacer
 import org.siloserver.silo.android.ui.components.marquee.MarqueeWordmark
 import org.siloserver.silo.android.ui.components.marquee.marqueePressHaptic
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeProfileAvatar
 import org.siloserver.silo.common.ui.marquee.MarqueeScene
@@ -291,7 +291,7 @@ fun ProfileSelectionScreen(
                     name = server.name,
                     hostLabel = server.hostLabel,
                     markUrl = server.branding?.markUrl,
-                    actionLabel = stringResource(R.string.picker_change_account),
+                    actionLabel = stringResource(CommonR.string.picker_changeAccount),
                     onAction = onChangeAccount,
                     enabled = !busy,
                 )
@@ -367,7 +367,7 @@ private fun AddChoiceSheet(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                stringResource(R.string.picker_add),
+                stringResource(CommonR.string.picker_add),
                 color = MarqueeColors.Ink,
                 fontSize = 22.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -376,21 +376,21 @@ private fun AddChoiceSheet(
             if (canAddProfile) {
                 AddChoiceRow(
                     icon = Icons.Outlined.PersonAdd,
-                    title = stringResource(R.string.picker_add_profile),
-                    detail = stringResource(R.string.picker_add_profile_detail),
+                    title = stringResource(CommonR.string.picker_addProfile),
+                    detail = stringResource(CommonR.string.picker_addProfileDetail),
                     onClick = onAddProfile,
                 )
             }
             AddChoiceRow(
                 icon = Icons.Outlined.ManageAccounts,
-                title = stringResource(R.string.picker_add_account),
-                detail = stringResource(R.string.picker_add_account_detail),
+                title = stringResource(CommonR.string.picker_addAccount),
+                detail = stringResource(CommonR.string.picker_addAccountDetail),
                 onClick = onAddAccount,
             )
             AddChoiceRow(
                 icon = Icons.Outlined.Dns,
-                title = stringResource(R.string.picker_add_server),
-                detail = stringResource(R.string.picker_add_server_detail),
+                title = stringResource(CommonR.string.picker_addServer),
+                detail = stringResource(CommonR.string.picker_addServerDetail),
                 onClick = onAddServer,
             )
             Box(
@@ -403,7 +403,7 @@ private fun AddChoiceSheet(
                     .clickable(role = Role.Button, onClick = onDismiss),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(stringResource(R.string.action_cancel), color = MarqueeColors.Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Text(stringResource(CommonR.string.common_cancel), color = MarqueeColors.Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium)
             }
             Spacer(Modifier.windowInsetsPadding(WindowInsets.navigationBars))
         }
@@ -540,7 +540,7 @@ private fun Picker(
                     horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
                 ) {
                     MarqueeButton(
-                        text = stringResource(R.string.picker_change_account),
+                        text = stringResource(CommonR.string.picker_changeAccount),
                         onClick = onChangeAccount,
                         kind = MarqueeButtonKind.Plain,
                         fullWidth = false,
@@ -611,7 +611,7 @@ private fun TileRows(
                             )
                             PickerItem.Add -> AddProfileTile(
                                 size = addSize,
-                                label = stringResource(R.string.picker_add),
+                                label = stringResource(CommonR.string.picker_add),
                                 enabled = enabled,
                                 onClick = { onItemTap(item) },
                             )

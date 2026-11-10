@@ -33,10 +33,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.components.rememberNoticeCountdownFill
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroAutoSkipState
-import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 
 /**
@@ -109,7 +109,7 @@ fun TvIntroAutoSkipBanner(
             }
             1 -> {
                 TvIntroPromptPill(
-                    label = stringResource(R.string.intro_skip_pill_skip),
+                    label = stringResource(CommonR.string.introSkip_pill_skip),
                     progress = fill.floatValue,
                     onSelect = onSelect,
                     autoFocus = mayTakeFocus,
@@ -117,8 +117,8 @@ fun TvIntroAutoSkipBanner(
             }
             else -> {
                 TvIntroPromptPill(
-                    label = stringResource(R.string.intro_skip_pill_undo),
-                    caption = stringResource(R.string.intro_skip_pill_undo_caption),
+                    label = stringResource(CommonR.string.introSkip_pill_undo),
+                    caption = stringResource(CommonR.string.introSkip_pill_undoCaption),
                     progress = fill.floatValue,
                     onSelect = onSelect,
                     autoFocus = mayTakeFocus,

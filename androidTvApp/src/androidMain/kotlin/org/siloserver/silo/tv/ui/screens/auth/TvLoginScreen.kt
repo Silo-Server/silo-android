@@ -74,6 +74,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.pairing.PairingReceiver
 import org.siloserver.silo.common.pairing.PairingReceiverStatus
 import org.siloserver.silo.common.pairing.TvPairingAdvertiser
@@ -82,7 +83,6 @@ import org.siloserver.silo.common.ui.marquee.MarqueeScene
 import org.siloserver.silo.common.ui.marquee.marqueeShake
 import org.siloserver.silo.common.ui.marquee.SignInHandoff
 import org.siloserver.silo.model.auth.SignInProvider
-import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeBody
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButton
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButtonKind
@@ -340,7 +340,7 @@ fun TvLoginScreen(
         val notices: @Composable () -> Unit = {
             if (state.sessionExpired && displayName.isNotBlank()) {
                 TvMarqueeStatusChip(
-                    stringResource(R.string.tv_signin_session_expired, displayName),
+                    stringResource(CommonR.string.tvSignIn_sessionExpired, displayName),
                     icon = Icons.Outlined.ErrorOutline,
                     modifier = Modifier.padding(bottom = 15.dp).semantics { liveRegion = LiveRegionMode.Polite },
                 )
@@ -349,7 +349,7 @@ fun TvLoginScreen(
             // form, the only place its error shows: say it here instead.
             if (state.passwordTurnedOff) {
                 TvMarqueeStatusChip(
-                    stringResource(R.string.tv_signin_error_local_login_disabled),
+                    stringResource(CommonR.string.tvSignIn_error_localLoginDisabled),
                     icon = Icons.Outlined.ErrorOutline,
                     modifier = Modifier.padding(bottom = 15.dp).semantics { liveRegion = LiveRegionMode.Polite },
                 )
@@ -388,10 +388,10 @@ fun TvLoginScreen(
             networkOnly -> TvMarqueeScreen(
                 copy = {
                     notices()
-                    TvMarqueeHeadline(stringResource(R.string.tv_signin_title, displayName), Modifier.padding(top = 22.dp))
+                    TvMarqueeHeadline(stringResource(CommonR.string.tvSignIn_title, displayName), Modifier.padding(top = 22.dp))
                     network?.let { NetworkSignInButton(it, below = changeServerFocus, modifier = Modifier.padding(top = 20.dp)) }
                     TvMarqueeButton(
-                        text = stringResource(R.string.tv_signin_action_change_server),
+                        text = stringResource(CommonR.string.common_changeServer),
                         onClick = changeServer,
                         kind = TvMarqueeButtonKind.Plain,
                         focusRequester = changeServerFocus,
@@ -425,7 +425,7 @@ fun TvLoginScreen(
             else -> TvMarqueeScreen(
                 copy = {
                     notices()
-                    TvMarqueeHeadline(stringResource(R.string.tv_signin_title, displayName), Modifier.padding(top = 22.dp))
+                    TvMarqueeHeadline(stringResource(CommonR.string.tvSignIn_title, displayName), Modifier.padding(top = 22.dp))
                     if (network != null) {
                         NetworkSignInButton(
                             action = network,
@@ -445,7 +445,7 @@ fun TvLoginScreen(
                     TvMarqueeBody(
                         // A decline withdraws the code, so there is nothing left to scan.
                         if (device.status == TvSignInStatus.Denied) {
-                            stringResource(R.string.tv_signin_declined_lead)
+                            stringResource(CommonR.string.tvSignIn_declinedLead)
                         } else {
                             "Scan the code with your phone's camera, or go to " +
                                 (activate.ifBlank { "your server's /activate page" }) +
@@ -459,7 +459,7 @@ fun TvLoginScreen(
                         modifier = Modifier.padding(top = 12.dp),
                     ) {
                         Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, tint = MarqueeColors.InkTertiary, modifier = Modifier.size(13.dp))
-                        Text(stringResource(R.string.tv_signin_nearby_hint), color = MarqueeColors.InkTertiary, fontSize = 14.sp)
+                        Text(stringResource(CommonR.string.tvSignIn_nearbyHint), color = MarqueeColors.InkTertiary, fontSize = 14.sp)
                     }
                     CodeActions(
                         status = device.status,
@@ -504,10 +504,10 @@ private fun TvSignInStatus.action(): Int? = when (this) {
     TvSignInStatus.Failed,
     TvSignInStatus.Unreachable,
     TvSignInStatus.TooManyRequests,
-    -> R.string.tv_signin_action_try_again
+    -> CommonR.string.common_tryAgain
     TvSignInStatus.Denied,
     TvSignInStatus.Paused,
-    -> R.string.tv_signin_action_new_code
+    -> CommonR.string.tvSignIn_action_newCode
     else -> null
 }
 
@@ -582,7 +582,7 @@ private fun CodeActions(
         }
         if (offersPassword) {
             TvMarqueeButton(
-                text = stringResource(R.string.tv_signin_action_password),
+                text = stringResource(CommonR.string.tvSignIn_action_password),
                 onClick = onUsePassword,
                 kind = TvMarqueeButtonKind.Glass,
                 icon = Icons.Outlined.Key,
@@ -596,7 +596,7 @@ private fun CodeActions(
             )
         }
         TvMarqueeButton(
-            text = stringResource(R.string.tv_signin_action_change_server),
+            text = stringResource(CommonR.string.common_changeServer),
             onClick = onChangeServer,
             kind = TvMarqueeButtonKind.Plain,
             focusRequester = changeServerFocus,
@@ -623,11 +623,11 @@ private fun NetworkSignInButton(action: NetworkSignInAction, below: FocusRequest
     val providerName = action.provider.displayName
     val owner = action.provider.networkIdentity?.label
     val title = when {
-        action.busy -> stringResource(R.string.tv_signin_form_submitting)
-        owner != null -> stringResource(R.string.tv_signin_network_continue_as, owner)
-        else -> stringResource(R.string.tv_signin_network_continue_with, providerName)
+        action.busy -> stringResource(CommonR.string.tvSignIn_form_submitting)
+        owner != null -> stringResource(CommonR.string.tvSignIn_network_continueAs, owner)
+        else -> stringResource(CommonR.string.tvSignIn_network_continueWith, providerName)
     }
-    val via = owner?.takeIf { !action.busy }?.let { stringResource(R.string.tv_signin_network_via, providerName) }
+    val via = owner?.takeIf { !action.busy }?.let { stringResource(CommonR.string.tvSignIn_network_via, providerName) }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
         TvMarqueeButton(
             onClick = action.onClick,
@@ -684,7 +684,7 @@ private fun CodeCard(device: TvDeviceSignInUi, serverHost: String) {
                 QrCodePanel(
                     content = code.qrContent,
                     size = QrSize,
-                    description = stringResource(R.string.tv_signin_qr_description, qrHost, code.spokenCode),
+                    description = stringResource(CommonR.string.tvSignIn_qrDescription, qrHost, code.spokenCode),
                 )
             }
             TvMarqueeCodeTiles(code = code.userCode, modifier = Modifier.padding(top = 17.dp))
@@ -743,19 +743,19 @@ private fun TvSignInStatus.isProblem(): Boolean = when (this) {
 
 @Composable
 private fun TvDeviceSignInUi.statusText(serverHost: String): String = when (status) {
-    TvSignInStatus.GettingCode -> stringResource(R.string.tv_signin_status_getting_code)
-    TvSignInStatus.Waiting -> stringResource(R.string.tv_signin_status_waiting)
-    TvSignInStatus.Opened -> stringResource(R.string.tv_signin_status_opened)
-    TvSignInStatus.NewCode -> stringResource(R.string.tv_signin_status_new_code)
-    TvSignInStatus.Unreachable -> stringResource(R.string.tv_signin_status_unreachable, serverHost)
-    TvSignInStatus.TooManyRequests -> stringResource(R.string.tv_signin_status_too_many)
-    TvSignInStatus.SignedIn -> accountName?.let { stringResource(R.string.tv_signin_status_signed_in_as, it) }
-        ?: stringResource(R.string.tv_signin_status_signed_in)
-    TvSignInStatus.CouldntFinish -> stringResource(R.string.tv_signin_status_couldnt_finish)
-    TvSignInStatus.Denied -> stringResource(R.string.tv_signin_status_denied)
-    TvSignInStatus.Paused -> stringResource(R.string.tv_signin_status_paused)
-    TvSignInStatus.Failed -> stringResource(R.string.tv_signin_status_failed)
-    TvSignInStatus.UpdateRequired -> stringResource(R.string.tv_signin_status_update_required)
+    TvSignInStatus.GettingCode -> stringResource(CommonR.string.tvSignIn_status_gettingCode)
+    TvSignInStatus.Waiting -> stringResource(CommonR.string.tvSignIn_status_waiting)
+    TvSignInStatus.Opened -> stringResource(CommonR.string.tvSignIn_status_opened)
+    TvSignInStatus.NewCode -> stringResource(CommonR.string.tvSignIn_status_newCode)
+    TvSignInStatus.Unreachable -> stringResource(CommonR.string.tvSignIn_status_unreachable, serverHost)
+    TvSignInStatus.TooManyRequests -> stringResource(CommonR.string.tvSignIn_status_tooMany)
+    TvSignInStatus.SignedIn -> accountName?.let { stringResource(CommonR.string.tvSignIn_status_signedInAs, it) }
+        ?: stringResource(CommonR.string.tvSignIn_status_signedIn)
+    TvSignInStatus.CouldntFinish -> stringResource(CommonR.string.tvSignIn_status_couldntFinish)
+    TvSignInStatus.Denied -> stringResource(CommonR.string.tvSignIn_status_denied)
+    TvSignInStatus.Paused -> stringResource(CommonR.string.tvSignIn_status_paused)
+    TvSignInStatus.Failed -> stringResource(CommonR.string.tvSignIn_status_failed)
+    TvSignInStatus.UpdateRequired -> stringResource(CommonR.string.tvSignIn_status_updateRequired)
 }
 
 /**
@@ -767,33 +767,33 @@ private fun TvDeviceSignInUi.statusText(serverHost: String): String = when (stat
  */
 @Composable
 private fun TvLoginError.message(providerName: String?, externalName: String?): String {
-    val external = externalName ?: stringResource(R.string.tv_signin_provider_fallback)
+    val external = externalName ?: stringResource(CommonR.string.tvSignIn_providerFallback)
     return when (this) {
-        TvLoginError.UsernameRequired -> stringResource(R.string.tv_signin_error_username_required)
-        TvLoginError.PasswordRequired -> stringResource(R.string.tv_signin_error_password_required)
+        TvLoginError.UsernameRequired -> stringResource(CommonR.string.tvSignIn_error_usernameRequired)
+        TvLoginError.PasswordRequired -> stringResource(CommonR.string.tvSignIn_error_passwordRequired)
         TvLoginError.InvalidCredentials -> if (providerName != null) {
-            stringResource(R.string.tv_signin_error_invalid_credentials_provider, providerName)
+            stringResource(CommonR.string.tvSignIn_error_invalidCredentialsProvider, providerName)
         } else {
-            stringResource(R.string.tv_signin_error_invalid_credentials)
+            stringResource(CommonR.string.tvSignIn_error_invalidCredentials)
         }
-        TvLoginError.EmailInUse -> stringResource(R.string.tv_signin_error_email_in_use, external)
-        TvLoginError.IdentityLinkedElsewhere -> stringResource(R.string.tv_signin_error_identity_linked_elsewhere, external)
-        TvLoginError.RateLimited -> stringResource(R.string.tv_signin_error_rate_limited)
-        TvLoginError.AccountRequired -> stringResource(R.string.tv_signin_error_account_required)
-        TvLoginError.AccountDisabled -> stringResource(R.string.tv_signin_error_account_disabled)
-        TvLoginError.Network -> stringResource(R.string.tv_signin_error_network)
-        TvLoginError.LocalLoginDisabled -> stringResource(R.string.tv_signin_error_local_login_disabled)
-        TvLoginError.NotPermitted -> stringResource(R.string.tv_signin_error_not_permitted)
-        TvLoginError.PasswordExpired -> stringResource(R.string.tv_signin_error_password_expired)
-        TvLoginError.ProviderUnavailable -> stringResource(R.string.tv_signin_error_provider_unavailable)
-        TvLoginError.IdentityChanged -> stringResource(R.string.tv_signin_error_identity_changed)
-        TvLoginError.SaveFailed -> stringResource(R.string.tv_signin_error_save_failed)
-        TvLoginError.CleanupIncomplete -> stringResource(R.string.tv_signin_error_cleanup_incomplete)
-        TvLoginError.NetworkIdentityRequired -> stringResource(R.string.tv_signin_error_network_identity_required, external)
-        TvLoginError.NetworkNotPermitted -> stringResource(R.string.tv_signin_error_network_not_permitted, external)
-        TvLoginError.NetworkEmailInUse -> stringResource(R.string.tv_signin_error_network_email_in_use, external)
-        TvLoginError.NetworkProviderGone -> stringResource(R.string.tv_signin_error_network_provider_gone, external)
-        is TvLoginError.Server -> message ?: stringResource(R.string.tv_signin_error_login_failed)
+        TvLoginError.EmailInUse -> stringResource(CommonR.string.tvSignIn_error_emailInUse, external)
+        TvLoginError.IdentityLinkedElsewhere -> stringResource(CommonR.string.tvSignIn_error_identityLinkedElsewhere, external)
+        TvLoginError.RateLimited -> stringResource(CommonR.string.tvSignIn_error_rateLimited)
+        TvLoginError.AccountRequired -> stringResource(CommonR.string.tvSignIn_error_accountRequired)
+        TvLoginError.AccountDisabled -> stringResource(CommonR.string.tvSignIn_error_accountDisabled)
+        TvLoginError.Network -> stringResource(CommonR.string.tvSignIn_error_network)
+        TvLoginError.LocalLoginDisabled -> stringResource(CommonR.string.tvSignIn_error_localLoginDisabled)
+        TvLoginError.NotPermitted -> stringResource(CommonR.string.tvSignIn_error_notPermitted)
+        TvLoginError.PasswordExpired -> stringResource(CommonR.string.tvSignIn_error_passwordExpired)
+        TvLoginError.ProviderUnavailable -> stringResource(CommonR.string.tvSignIn_error_providerUnavailable)
+        TvLoginError.IdentityChanged -> stringResource(CommonR.string.tvSignIn_error_identityChanged)
+        TvLoginError.SaveFailed -> stringResource(CommonR.string.tvSignIn_error_saveFailed)
+        TvLoginError.CleanupIncomplete -> stringResource(CommonR.string.tvSignIn_error_cleanupIncomplete)
+        TvLoginError.NetworkIdentityRequired -> stringResource(CommonR.string.tvSignIn_error_networkIdentityRequired, external)
+        TvLoginError.NetworkNotPermitted -> stringResource(CommonR.string.tvSignIn_error_networkNotPermitted, external)
+        TvLoginError.NetworkEmailInUse -> stringResource(CommonR.string.tvSignIn_error_networkEmailInUse, external)
+        TvLoginError.NetworkProviderGone -> stringResource(CommonR.string.tvSignIn_error_networkProviderGone, external)
+        is TvLoginError.Server -> message ?: stringResource(CommonR.string.tvSignIn_error_loginFailed)
     }
 }
 
@@ -853,7 +853,7 @@ private fun PasswordScreen(
                 TvMarqueeHeadline("Sign in with\na password", Modifier.padding(top = 22.dp))
                 TvMarqueeBody(
                     if (passwordOnly && network == null) {
-                        stringResource(R.string.tv_signin_password_only)
+                        stringResource(CommonR.string.tvSignIn_passwordOnly)
                     } else {
                         "Use your $serverName username and password."
                     },
@@ -887,7 +887,7 @@ private fun PasswordScreen(
                             value = state.username,
                             onValueChange = onUsernameChanged,
                             icon = Icons.Outlined.Person,
-                            placeholder = stringResource(R.string.tv_signin_form_username_placeholder),
+                            placeholder = stringResource(CommonR.string.tvSignIn_form_usernamePlaceholder),
                             isError = state.error == TvLoginError.UsernameRequired,
                             enabled = !state.signingIn,
                             focusRequester = usernameFocus,
@@ -904,7 +904,7 @@ private fun PasswordScreen(
                                 value = state.password,
                                 onValueChange = onPasswordChanged,
                                 icon = Icons.Outlined.Lock,
-                                placeholder = stringResource(R.string.tv_signin_form_password_placeholder),
+                                placeholder = stringResource(CommonR.string.tvSignIn_form_passwordPlaceholder),
                                 isSecure = true,
                                 revealed = passwordVisible,
                                 isError = state.error != null && state.error != TvLoginError.UsernameRequired,
@@ -949,7 +949,7 @@ private fun PasswordScreen(
                 // steps aside while that message shows.
                 state.providerName?.takeIf { state.error != TvLoginError.InvalidCredentials }?.let { provider ->
                     TvMarqueeBody(
-                        stringResource(R.string.tv_signin_form_provider_hint, provider),
+                        stringResource(CommonR.string.tvSignIn_form_providerHint, provider),
                         size = 14.sp,
                         color = MarqueeColors.InkTertiary,
                         modifier = Modifier.width(380.dp).padding(top = 8.dp),
@@ -962,7 +962,7 @@ private fun PasswordScreen(
                     horizontalArrangement = Arrangement.spacedBy(11.dp),
                 ) {
                     TvMarqueeButton(
-                        text = stringResource(if (state.isLoading) R.string.tv_signin_form_submitting else R.string.tv_signin_form_submit),
+                        text = stringResource(if (state.isLoading) CommonR.string.tvSignIn_form_submitting else CommonR.string.tvSignIn_form_submit),
                         onClick = onLoginClick,
                         isLoading = state.isLoading,
                         focusRequester = signInFocus,
@@ -971,7 +971,7 @@ private fun PasswordScreen(
                     )
                     if (signupEnabled) {
                         TvMarqueeButton(
-                            text = stringResource(R.string.tv_signin_form_create_account),
+                            text = stringResource(CommonR.string.tvSignIn_form_createAccount),
                             onClick = onCreateAccount,
                             kind = TvMarqueeButtonKind.Plain,
                             focusRequester = createAccountFocus,
@@ -981,7 +981,7 @@ private fun PasswordScreen(
                     if (!passwordOnly) {
                         // Back to the device code (a fresh one if the old one lapsed).
                         TvMarqueeButton(
-                            text = stringResource(R.string.tv_signin_form_use_phone),
+                            text = stringResource(CommonR.string.tvSignIn_form_usePhone),
                             onClick = onBackToPhone,
                             kind = TvMarqueeButtonKind.Plain,
                             focusRequester = backToPhoneFocus,
@@ -989,7 +989,7 @@ private fun PasswordScreen(
                         )
                     }
                     TvMarqueeButton(
-                        text = stringResource(R.string.tv_signin_action_change_server),
+                        text = stringResource(CommonR.string.common_changeServer),
                         onClick = onChangeServer,
                         kind = TvMarqueeButtonKind.Plain,
                         focusRequester = changeServerFocus,
