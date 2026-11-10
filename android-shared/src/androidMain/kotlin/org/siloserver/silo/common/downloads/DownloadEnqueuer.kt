@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import org.siloserver.silo.common.R
 import androidx.work.WorkManager
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
@@ -298,7 +299,7 @@ class DownloadEnqueuer(
 
     private fun batchOutcome(skipped: List<org.siloserver.silo.model.download.SkippedDownload>): ApiResult<Unit> =
         if (skipped.isEmpty()) ApiResult.Success(Unit) else ApiResult.Error(0, "downloads_partially_skipped",
-            context.resources.getQuantityString(R.plurals.downloads_error_partiallySkipped, skipped.size, skipped.size, skipped.size.toString()),
+            context.resources.getQuantityString(R.plurals.downloads_error_partiallySkipped, skipped.size, skipped.size, LocaleFormat.integer(skipped.size)),
             "${skipped.size} episodes could not be downloaded. Available episodes were queued.")
 
     private suspend fun completedLocalExists(

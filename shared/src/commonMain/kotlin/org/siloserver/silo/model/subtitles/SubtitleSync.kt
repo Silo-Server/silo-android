@@ -196,7 +196,7 @@ fun subtitleSyncStatusLabel(timing: SubtitleTiming, sync: SubtitleSyncJob?): UiT
         SubtitleSyncJob.PENDING, SubtitleSyncJob.RUNNING -> {
             val percent = syncProgressPercent(sync)
             return if (percent != null && percent > 0) {
-                UiText.Key(SharedString.SubtitleSyncStatusSyncingPercent, listOf(percent.toString()))
+                UiText.Key(SharedString.SubtitleSyncStatusSyncingPercent, listOf(UiText.Number(percent)))
             } else {
                 UiText.Key(SharedString.SubtitleSyncStatusSyncing)
             }

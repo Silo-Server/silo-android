@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.requests
 
 import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.model.request.RequestMediaResult
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -544,9 +545,9 @@ private fun RequestMediaDetail.factTokens(): List<TvHeroFactToken> = buildList {
     } else {
         runtime?.takeIf { it > 0 }?.let {
             val text = if (it >= 60) {
-                stringResource(CommonR.string.catalog_runtimeHoursMinutes, (it / 60).toString(), (it % 60).toString())
+                stringResource(CommonR.string.catalog_runtimeHoursMinutes, LocaleFormat.integer(it / 60), LocaleFormat.integer(it % 60))
             } else {
-                stringResource(CommonR.string.overlays_runtimeMinutes, it.toString())
+                stringResource(CommonR.string.overlays_runtimeMinutes, LocaleFormat.integer(it))
             }
             add(TvHeroFactToken.TextToken(text))
         }

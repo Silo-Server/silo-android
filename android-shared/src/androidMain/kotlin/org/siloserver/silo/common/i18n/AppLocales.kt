@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.i18n
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.LocaleManager
 import android.content.Context
 import android.content.res.Configuration
@@ -12,6 +13,7 @@ import androidx.core.content.edit
 import org.siloserver.silo.common.R
 import org.siloserver.silo.model.settings.AppLanguage
 import org.xmlpull.v1.XmlPullParser
+import java.util.Locale
 
 /**
  * The per-app language, read and set the way this app can: the framework
@@ -23,6 +25,11 @@ import org.xmlpull.v1.XmlPullParser
  * `AppCompatActivity`.
  *
  * Tags are `LocaleList.toLanguageTags()` strings; "" means follow the device.
+ *
+ * Decision D64: when the language in effect has no Silo catalog (a device
+ * language this build doesn't ship), [wrap] shows the activities in a stand-in
+ * ([standIn]) instead, so resources, `%d` digits, plural rules, direction and
+ * [LocaleFormat] all agree until that language ships.
  */
 object AppLocales {
     private const val PREFS = "silo_app_locales"
@@ -54,24 +61,67 @@ object AppLocales {
     }
 
     /**
-     * Before 13, returns [base] reconfigured to the stored tag; call from
-     * `attachBaseContext`. From 13 the platform does this itself.
+     * [base] reconfigured to the locales the app shows; call from
+     * `attachBaseContext`. Before 13 that is the stored tag (from 13 the
+     * platform applies the per-app value itself), and on every version a
+     * language without a catalog is replaced by its [standIn] (D64).
      */
     fun wrap(base: Context): Context {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return base
-        val tags = prefs(base).getString(KEY_TAGS, "").orEmpty()
-        setProcessDefault(tags)
-        if (tags.isEmpty()) return base
+        val tags = legacyTags(base)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) setProcessDefault(tags)
+        val locales = inEffect(tags, base)
+        val shown = shown(base, locales)
+        if (tags.isEmpty() && shown == locales) return base
         // Only the locale is overridden; orientation, size and night mode
         // keep following the device, since both activities handle those in place.
         val config = Configuration().apply {
             // A new Configuration's font scale is 1, which would override the
             // user's text size; 0 leaves it to the base context.
             fontScale = 0f
-            setLocales(LocaleList.forLanguageTags(tags))
+            setLocales(shown)
         }
         return base.createConfigurationContext(config)
     }
+
+    /**
+     * Whether [activity] shows another language than [wrap] would give it now.
+     * [wrap] fixes an activity's locale, so a language change it delivers in
+     * place (`configChanges`) needs a recreation to apply; call from
+     * `onConfigurationChanged`.
+     */
+    fun needsRecreate(activity: Activity): Boolean {
+        val locales = inEffect(legacyTags(activity), activity.applicationContext)
+        if (locales.isEmpty) return false
+        return shown(activity, locales)[0] != activity.resources.configuration.locales[0]
+    }
+
+    /** The per-app locales: the stored [tags] before 13, else [context]'s configuration. */
+    private fun inEffect(tags: String, context: Context): LocaleList =
+        if (tags.isEmpty()) context.resources.configuration.locales else LocaleList.forLanguageTags(tags)
+
+    /** [locales], or their [standIn] when the first has no catalog. */
+    private fun shown(context: Context, locales: LocaleList): LocaleList =
+        standIn(locales, shipped(context))?.let { LocaleList(it) } ?: locales
+
+    /**
+     * D64: the locale to show instead of [locales]' first when this build has
+     * no catalog for it: the first locale in the list whose language ships
+     * (D27 matching), kept as the device has it so its region's formats apply
+     * (`en-AU`, D26), else English. Null when the first is shipped (an en-GB
+     * device keeps its own formats, D59) or a debug pseudo-locale.
+     */
+    internal fun standIn(locales: LocaleList, shipped: List<String>): Locale? {
+        if (locales.isEmpty) return null
+        val first = locales[0].toLanguageTag()
+        if (AppLanguage.isPseudo(first) || AppLanguage.match(first, shipped) != null) return null
+        return (0 until locales.size()).map { locales[it] }
+            .firstOrNull { !AppLanguage.isPseudo(it.toLanguageTag()) && AppLanguage.match(it.toLanguageTag(), shipped) != null }
+            ?: Locale.forLanguageTag(AppLanguage.DEFAULT)
+    }
+
+    /** The tag stored before 13; "" from 13, where the platform holds the per-app value. */
+    private fun legacyTags(context: Context): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) "" else prefs(context).getString(KEY_TAGS, "").orEmpty()
 
     /**
      * Before 13, puts the app language back as the process default. A device
@@ -80,7 +130,7 @@ object AppLocales {
      */
     fun reassertDefault(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return
-        setProcessDefault(prefs(context).getString(KEY_TAGS, "").orEmpty())
+        setProcessDefault(legacyTags(context))
     }
 
     /** Formatters and `Accept-Language` read the default; "" restores the device's. */

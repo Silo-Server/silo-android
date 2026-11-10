@@ -73,6 +73,7 @@ import androidx.media3.session.SessionToken
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.player.AudiobookPlayerViewModel
 import org.siloserver.silo.common.player.SiloPlaybackService
@@ -92,8 +93,6 @@ import org.siloserver.silo.common.R as CommonR
 import androidx.compose.ui.res.pluralStringResource
 import org.siloserver.silo.common.player.errorText
 import org.siloserver.silo.common.player.skipIntervalErrorText
-import org.siloserver.silo.common.i18n.UiText
-import org.siloserver.silo.common.i18n.text
 
 private enum class AudiobookPanel { None, Chapters, Speed, Sleep, More, Skip, Bookmarks, About }
 
@@ -958,21 +957,15 @@ private fun tvAudiobookCurrentChapterLabel(
     val chapter = chapters.getOrNull(currentChapterIndex)
     val title = chapter?.title?.trim().orEmpty()
     if (title.isNotBlank()) return title
-    if (chapter != null) return stringResource(CommonR.string.options_chapterNumbered, UiText.Number(chapter.index + 1).text())
+    if (chapter != null) return stringResource(CommonR.string.options_chapterNumbered, LocaleFormat.integer(chapter.index + 1))
     // The chapter list hasn't caught up with the index yet: "Chapter N" from the index alone.
     if (!hasChapterLine) return ""
-    return stringResource(CommonR.string.options_chapterNumbered, UiText.Number(currentChapterIndex + 1).text())
+    return stringResource(CommonR.string.options_chapterNumbered, LocaleFormat.integer(currentChapterIndex + 1))
 }
 
 @Composable
 private fun tvAudiobookSpeedLabel(speed: Float): String {
-    val rounded = (speed * 100).toInt()
-    val value = if (rounded % 100 == 0) {
-        "${rounded / 100}"
-    } else {
-        "%.2f".format(speed).trimEnd('0').trimEnd('.')
-    }
-    return stringResource(CommonR.string.audiobook_speed_value, value)
+    return stringResource(CommonR.string.audiobook_speed_value, LocaleFormat.decimal(speed.toDouble(), maxFractionDigits = 2))
 }
 
 @Composable

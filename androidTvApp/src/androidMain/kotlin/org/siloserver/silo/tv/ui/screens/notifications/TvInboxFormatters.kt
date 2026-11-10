@@ -3,12 +3,11 @@ package org.siloserver.silo.tv.ui.screens.notifications
 import android.content.res.Resources
 import androidx.annotation.StringRes
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.notifications.NotificationRow
 import org.siloserver.silo.model.notifications.NotificationType
 import java.time.Instant
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 import org.siloserver.silo.tv.ui.components.bidiIsolated
 
 /**
@@ -45,7 +44,7 @@ internal fun TvInboxText.resolve(resources: Resources): String = when (this) {
     is TvInboxText.Plain -> text
     is TvInboxText.Resource -> resources.getString(id, *args.toTypedArray())
     is TvInboxText.Episode -> {
-        val tag = season?.let { s -> episode?.let { e -> resources.getString(CommonR.string.catalog_episodeTag, s.toString(), e.toString()) } }
+        val tag = season?.let { s -> episode?.let { e -> resources.getString(CommonR.string.catalog_episodeTag, LocaleFormat.integer(s), LocaleFormat.integer(e)) } }
         when {
             tag == null -> title.orEmpty()
             title == null -> tag
@@ -143,5 +142,5 @@ private fun parseInstantOrNull(iso: String): Instant? = try {
 
 private fun formatAbsoluteDate(instant: Instant): String =
     instant.atZone(ZoneId.systemDefault()).format(
-        DateTimeFormatter.ofPattern("MMM d", Locale.getDefault()),
+        LocaleFormat.dateFormatter("MMMd", "MMM d"),
     )

@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.library
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.text
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -263,5 +264,5 @@ private fun itemCountLabel(state: TvLibraryCollectionDetailViewModel.UiState): S
     if (state.isLoading || state.isLoadingMore || state.hasMore) return null
     val total = state.items.size
     if (total == 0) return null
-    return pluralStringResource(CommonR.plurals.collections_itemCount, total, total, total.toString())
+    return pluralStringResource(CommonR.plurals.collections_itemCount, total, total, LocaleFormat.integer(total))
 }

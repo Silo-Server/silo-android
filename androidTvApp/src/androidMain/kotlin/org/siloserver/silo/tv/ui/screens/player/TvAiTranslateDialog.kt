@@ -39,6 +39,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
 import org.siloserver.silo.tv.ui.theme.DarkBackground
@@ -329,10 +330,10 @@ fun TvAiTranslateDialog(
                                         pluralStringResource(
                                             CommonR.plurals.player_aiTranslate_quotaLeftPeriod,
                                             q.limit,
-                                            q.remaining.toString(),
+                                            LocaleFormat.integer(q.remaining),
                                             q.limit,
                                             period,
-                                            q.limit.toString(),
+                                            LocaleFormat.integer(q.limit),
                                         )
                                     },
                                     style = MaterialTheme.typography.bodySmall,

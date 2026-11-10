@@ -127,6 +127,20 @@ class TvPlaybackFormattingTest {
         assertEquals(null, TvPlaybackFormatting.audioChoiceLabelForOrdinal(tracks, 2, text = text))
     }
 
+    /** A release title naming the language in English is still redundant under a translated name. */
+    @Test fun audioChoiceLabelForOrdinal_dropsTheEnglishLanguageTitleInAnotherLanguage() {
+        val before = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.GERMAN)
+            val tracks = listOf(AudioTrack(language = "eng", codec = "aac", channels = 2, title = "English"))
+            val label = TvPlaybackFormatting.audioChoiceLabelForOrdinal(tracks, 0, text = text)!!
+            assertTrue(label.startsWith("Englisch"), "got $label")
+            assertFalse(label.contains("English"), "got $label")
+        } finally {
+            java.util.Locale.setDefault(before)
+        }
+    }
+
     // --- versionPickerLabels ---
 
     @Test fun versionPickerLabels_leaveDistinctLabelsAlone() {

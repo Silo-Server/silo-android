@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.getStringWithNames
 import org.siloserver.silo.common.i18n.localizedResources
 import org.siloserver.silo.common.i18n.text
@@ -168,7 +169,6 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.R as CommonR
-import org.siloserver.silo.common.i18n.digits
 
 internal data class TvSeriesDetailRedirect(
     val seriesContentId: String,
@@ -728,7 +728,7 @@ private fun TvDetailContent(
     val heroTitle = activeSeriesEpisode?.let { episode ->
         activeSeriesPlaybackDetail?.title
             ?: episode.title
-            ?: resources.getString(CommonR.string.detail_episode, episode.episodeNumber.toString())
+            ?: resources.getString(CommonR.string.detail_episode, LocaleFormat.integer(episode.episodeNumber))
     } ?: detail.title
     // Spoiler protection: the focused episode's (or an episode page's)
     // description stays hidden until the profile starts it. The rail row's
@@ -2344,7 +2344,7 @@ private fun EpisodesSection(
                 val count = state.episodes.size
                 if (count > 0) {
                     Text(
-                        text = pluralStringResource(CommonR.plurals.detail_episodeCount, count, count, count.toString()),
+                        text = pluralStringResource(CommonR.plurals.detail_episodeCount, count, count, LocaleFormat.integer(count)),
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Medium,
                             fontSize = 16.sp,
@@ -2470,7 +2470,7 @@ internal fun episodeEyebrowLabel(resources: Resources, detail: ItemDetail, state
     fun seasonLabel(specials: Boolean, number: Int): String = if (specials) {
         resources.getString(CommonR.string.detail_specials)
     } else {
-        resources.getString(CommonR.string.detail_season, number.toString())
+        resources.getString(CommonR.string.detail_season, LocaleFormat.integer(number))
     }
     state.seasons
         .firstOrNull { it.seasonNumber == state.selectedSeason }
@@ -2561,7 +2561,7 @@ private fun TvAudiobookChaptersSection(
         TvDetailSectionHeader(title = stringResource(CommonR.string.detail_audiobook_chapters))
         TvAudiobookDetailActionRow(
             title = stringResource(CommonR.string.detail_audiobook_chapterList),
-            subtitle = pluralStringResource(CommonR.plurals.detail_audiobook_chapterCount, chapters.size, chapters.size, chapters.size.toString()),
+            subtitle = pluralStringResource(CommonR.plurals.detail_audiobook_chapterCount, chapters.size, chapters.size, LocaleFormat.integer(chapters.size)),
             trailing = stringResource(CommonR.string.detail_audiobook_open),
             onClick = onOpenChapters,
             upFocusRequester = upFocusRequester,
@@ -2755,8 +2755,8 @@ private fun audiobookDisplayChapters(
         return timeline.chapters.map { chapter ->
             TvAudiobookDisplayChapter(
                 title = chapter.title?.trim()?.takeIf { it.isNotBlank() }
-                    ?: resources.getString(CommonR.string.detail_audiobook_chapter, resources.digits(chapter.index + 1)),
-                partTitle = resources.getString(CommonR.string.detail_audiobook_part, resources.digits(chapter.trackIndex + 1)),
+                    ?: resources.getString(CommonR.string.detail_audiobook_chapter, LocaleFormat.integer(chapter.index + 1)),
+                partTitle = resources.getString(CommonR.string.detail_audiobook_part, LocaleFormat.integer(chapter.trackIndex + 1)),
                 startSeconds = chapter.startSeconds,
             )
         }
@@ -2778,7 +2778,7 @@ private fun audiobookChapterTitle(
     fallbackIndex: Int,
     chapter: VersionChapter,
 ): String = chapter.title.trim().takeIf { it.isNotBlank() }
-    ?: resources.getString(CommonR.string.detail_audiobook_chapter, resources.digits(fallbackIndex + 1))
+    ?: resources.getString(CommonR.string.detail_audiobook_chapter, LocaleFormat.integer(fallbackIndex + 1))
 
 /** Part row label: the file name when present, else "Part {presentationPartIndex}"
  *  (falling back to the 0-based track [position], displayed 1-based). Mirrors the
@@ -2787,14 +2787,14 @@ private fun audiobookPartTitle(resources: Resources, version: FileVersion?, posi
     version?.fileName?.takeIf { it.isNotBlank() }?.let { return it }
     val rawIndex = version?.presentationPartIndex ?: position
     val displayIndex = if (rawIndex <= 0) rawIndex + 1 else rawIndex
-    return resources.getString(CommonR.string.detail_audiobook_part, resources.digits(displayIndex))
+    return resources.getString(CommonR.string.detail_audiobook_part, LocaleFormat.integer(displayIndex))
 }
 
 private fun audiobookPartSubtitle(resources: Resources, part: FileVersion?): String? =
     listOfNotNull(
         part?.codecAudio?.takeIf { it.isNotBlank() }?.uppercase(),
         part?.container?.takeIf { it.isNotBlank() }?.uppercase(),
-        part?.bitrate?.takeIf { it > 0 }?.let { resources.getString(CommonR.string.settings_rate_kbps, (it / 1000).toString()) },
+        part?.bitrate?.takeIf { it > 0 }?.let { resources.getString(CommonR.string.settings_rate_kbps, LocaleFormat.integer(it / 1000)) },
     )
         .joinToString("  ")
         .takeIf { it.isNotBlank() }
@@ -2846,8 +2846,8 @@ private fun playButtonLabel(
     resumePosition: Double?,
 ): String {
     if (isSeriesOrSeason && nextUp != null) {
-        val season = nextUp.seasonNumber.toString()
-        val episode = nextUp.episodeNumber.toString()
+        val season = LocaleFormat.integer(nextUp.seasonNumber)
+        val episode = LocaleFormat.integer(nextUp.episodeNumber)
         return when {
             seriesContainer && hasResume -> resources.getString(CommonR.string.detail_resumeEpisode, season, episode)
             seriesContainer -> resources.getString(CommonR.string.detail_playEpisode, season, episode)
@@ -2867,11 +2867,7 @@ private fun Double.formatHms(): String {
     val hours = totalSeconds / 3600
     val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60
-    return if (hours > 0) {
-        "$hours:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}"
-    } else {
-        "$minutes:${seconds.toString().padStart(2, '0')}"
-    }
+    return LocaleFormat.clock(hours, minutes, seconds)
 }
 
 /** Approved tvOS 64pt body rhythm and 140pt page tail at Android's 0.5 scale. */

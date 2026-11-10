@@ -10,7 +10,6 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.LayoutDirection
-import java.text.NumberFormat
 
 /**
  * [stringResource] for a message whose arguments are titles or names. In a
@@ -31,7 +30,7 @@ fun stringResourceWithNames(@StringRes id: Int, vararg names: String): String =
  */
 @Composable
 fun pluralStringResourceWithNames(@PluralsRes id: Int, count: Int, vararg names: String): String =
-    pluralStringResource(id, count, count, count.toString(), *isolated(names))
+    pluralStringResource(id, count, count, LocaleFormat.integer(count), *isolated(names))
 
 @Composable
 private fun isolated(names: Array<out String>): Array<String> =
@@ -51,10 +50,3 @@ fun Resources.getStringWithNames(@StringRes id: Int, vararg names: String): Stri
  */
 fun Context.getStringWithNames(@StringRes id: Int, vararg names: String): String =
     resources.getStringWithNames(id, *names)
-
-/**
- * [number] as digits for a String placeholder: in the interface language's own
- * digits and without grouping, as `%d` printed it (D55). English keeps "1234".
- */
-fun Resources.digits(number: Int): String =
-    NumberFormat.getIntegerInstance(configuration.locales[0]).apply { isGroupingUsed = false }.format(number)

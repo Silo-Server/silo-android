@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.localizedResources
 import android.content.res.Resources
 import androidx.compose.ui.platform.LocalConfiguration
@@ -95,7 +96,6 @@ import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.theme.PillShape
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
-import org.siloserver.silo.common.i18n.digits
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.RatingEntry
@@ -1649,7 +1649,7 @@ object HeroMetadata {
         val e = detail.episodeNumber
         return when {
             s != null && e != null ->
-                resources.getString(CommonR.string.detail_episodeEyebrow, phoneSeasonNumberLabel(resources, s), resources.digits(e))
+                resources.getString(CommonR.string.detail_episodeEyebrow, phoneSeasonNumberLabel(resources, s), LocaleFormat.integer(e))
             s != null -> phoneSeasonNumberLabel(resources, s)
             else -> null
         }
@@ -1702,12 +1702,12 @@ internal fun phoneSeasonNumberLabel(resources: Resources, seasonNumber: Int): St
     if (seasonNumber == 0) {
         resources.getString(CommonR.string.detail_specials)
     } else {
-        resources.getString(CommonR.string.detail_season, seasonNumber.toString())
+        resources.getString(CommonR.string.detail_season, LocaleFormat.integer(seasonNumber))
     }
 
 /** "S1·E2", the short episode code on play buttons and party subtitles. */
 internal fun episodeCode(resources: Resources, seasonNumber: Int, episodeNumber: Int): String =
-    resources.getString(CommonR.string.detail_episodeCode, resources.digits(seasonNumber), resources.digits(episodeNumber))
+    resources.getString(CommonR.string.detail_episodeCode, LocaleFormat.integer(seasonNumber), LocaleFormat.integer(episodeNumber))
 
 // ── Play label helper ─────────────────────────────────────────
 
@@ -1745,7 +1745,7 @@ fun formatResumeStoppedAt(positionSeconds: Double): String {
     val h = totalSec / 3600
     val m = (totalSec % 3600) / 60
     val s = totalSec % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    return LocaleFormat.clock(h, m, s)
 }
 
 // ── Details list (key/value facts) ────────────────────────────
@@ -1829,8 +1829,8 @@ private fun runtimeText(resources: Resources, minutes: Int): String {
     val h = minutes / 60
     val m = minutes % 60
     return when {
-        h > 0 && m > 0 -> resources.getString(CommonR.string.catalog_runtimeHoursMinutes, h.toString(), m.toString())
-        h > 0 -> resources.getString(CommonR.string.catalog_runtimeHours, h.toString())
-        else -> resources.getString(CommonR.string.catalog_runtimeMinutesShort, m.toString())
+        h > 0 && m > 0 -> resources.getString(CommonR.string.catalog_runtimeHoursMinutes, LocaleFormat.integer(h), LocaleFormat.integer(m))
+        h > 0 -> resources.getString(CommonR.string.catalog_runtimeHours, LocaleFormat.integer(h))
+        else -> resources.getString(CommonR.string.catalog_runtimeMinutesShort, LocaleFormat.integer(m))
     }
 }

@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.localizedResources
 import android.content.res.Resources
 import androidx.compose.ui.res.pluralStringResource
@@ -184,7 +185,7 @@ fun SeriesDetailContent(
         onShuffleSeason != null && org.siloserver.silo.model.shuffle.canShuffleSeason(episodes)
     }
     val episodeCountSubtitle = selectedSeason?.episodeCount?.takeIf { it > 0 }?.let { count ->
-        pluralStringResource(CommonR.plurals.detail_episodeCount, count, count, count.toString())
+        pluralStringResource(CommonR.plurals.detail_episodeCount, count, count, LocaleFormat.integer(count))
     }
 
     val playbackSelector: @Composable () -> Unit = {

@@ -68,6 +68,8 @@ import org.siloserver.silo.common.ebook.ReaderShellUiState
 import org.siloserver.silo.common.ebook.ReaderSheet
 import org.siloserver.silo.common.ebook.ReaderTheme
 import org.siloserver.silo.common.ebook.reduceReaderShellState
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 import org.siloserver.silo.model.ebook.EbookAnnotation
 import kotlin.math.roundToInt
 import androidx.compose.ui.res.stringResource
@@ -298,7 +300,7 @@ private fun FloatingReaderChromeContainer(
 
 @Composable
 private fun BoxScope.ReaderBottomChrome(state: ReaderUiState) {
-    val progressPercent = (state.progressPercent * 100).toInt().toString()
+    val progressPercent = LocaleFormat.integer((state.progressPercent * 100).toInt(), currentNumberLocale())
     val currentPage = state.currentPage + 1
     val progressLabel = readerBottomChromeLabel(
         state = state,
@@ -360,7 +362,7 @@ internal fun readerBottomChromeLabel(
 ): String? {
     val progressPercent = (state.progressPercent * 100).toInt()
     return when (state.capabilities.engineKind) {
-        ReaderEngineKind.Reflowable -> "$progressPercent%"
+        ReaderEngineKind.Reflowable -> "${LocaleFormat.integer(progressPercent)}%"
         ReaderEngineKind.FixedDocument,
         ReaderEngineKind.ComicManga -> pageProgressLabel
         ReaderEngineKind.External -> state.formatDisplayName.ifBlank { externalReaderLabel }

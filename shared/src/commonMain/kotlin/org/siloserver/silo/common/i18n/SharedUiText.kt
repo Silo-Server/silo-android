@@ -35,7 +35,7 @@ sealed interface UiText {
      * A catalog plural. [count] picks the form and fills the message's first
      * placeholder, `{count}`; [args] fill the ones after it, as for [Res]. A
      * message with a `{count_text}` slot (a count that can pass 999) takes
-     * `count.toString()` as its first arg.
+     * `UiText.Number(count)` as its first arg.
      */
     data class Plural(val key: SharedPlural, val count: Int, val args: List<Any> = emptyList()) : UiText
 
@@ -43,10 +43,11 @@ sealed interface UiText {
     data class Raw(val text: String) : UiText
 
     /**
-     * A number for a `String` placeholder, or shown alone: in the interface
-     * language's digits, without grouping (D55), so English keeps "1234".
-     * At most [maxFractionDigits] decimals, and at least [minIntegerDigits]
-     * whole digits ("02" for an episode code).
+     * A number for a `String` placeholder, or shown alone, without grouping.
+     * A whole number takes the interface language's digits (D55), so English
+     * keeps "1234"; with [maxFractionDigits] it is a decimal in the app's
+     * formatting locale (D26, D58, D64). At
+     * least [minIntegerDigits] whole digits ("02" for an episode code).
      */
     data class Number(
         val value: Double,
@@ -57,8 +58,8 @@ sealed interface UiText {
     }
 
     /**
-     * A calendar date with the month as a word, in the interface language's
-     * order and month names: "Jan 5, 1980" in US English. [month] is 1–12.
+     * A calendar date with the month as a word, formatted as the app's other
+     * dates are (D26, D58, D64): "Jan 5, 1980" in US English. [month] is 1–12.
      */
     data class CalendarDate(val year: Int, val month: Int, val day: Int) : UiText
 

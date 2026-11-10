@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.player
 
 import android.content.res.Resources
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.subtitles.SubtitleAiJobKind
 import org.siloserver.silo.model.subtitles.SubtitleAiQuota
@@ -49,16 +50,16 @@ internal fun quotaLineText(quota: SubtitleAiQuota, resources: Resources): String
             quota.limit,
             quota.limit,
             window,
-            quota.limit.toString(),
+            LocaleFormat.integer(quota.limit),
         )
     } else {
         resources.getQuantityString(
             CommonR.plurals.player_aiTranslate_quotaLeftWindow,
             quota.limit,
-            quota.remaining.toString(),
+            LocaleFormat.integer(quota.remaining),
             quota.limit,
             window,
-            quota.limit.toString(),
+            LocaleFormat.integer(quota.limit),
         )
     }
 }

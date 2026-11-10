@@ -60,6 +60,7 @@ import org.siloserver.silo.android.ui.util.formatCardDate
 import org.siloserver.silo.android.ui.util.playbackResumePosition
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -68,8 +69,7 @@ import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import kotlin.math.abs
-import org.siloserver.silo.common.i18n.digits
-import org.siloserver.silo.common.i18n.localizedResources
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.text
 
 /**
@@ -264,8 +264,8 @@ private fun EpisodeRailCard(
                         imageVector = Icons.Filled.PlayArrow,
                         contentDescription = stringResource(
                             CommonR.string.detail_playSeasonEpisode,
-                            localizedResources().digits(episode.seasonNumber),
-                            localizedResources().digits(episode.episodeNumber),
+                            LocaleFormat.integer(episode.seasonNumber),
+                            LocaleFormat.integer(episode.episodeNumber),
                         ),
                         tint = Color.Black,
                         modifier = Modifier.size(24.dp),
@@ -317,7 +317,7 @@ private fun EpisodeRailCard(
                 overflow = TextOverflow.Ellipsis,
             )
             val metadata = EpisodeCardCaption.metadata(
-                airDate = formatCardDate(episode.airDate) ?: episode.airDate,
+                airDate = formatCardDate(episode.airDate, currentFormatLocale()) ?: episode.airDate,
                 runtimeMinutes = episode.runtime,
             )?.text()
             val showsTranslationLabel = visibleOverview != null &&

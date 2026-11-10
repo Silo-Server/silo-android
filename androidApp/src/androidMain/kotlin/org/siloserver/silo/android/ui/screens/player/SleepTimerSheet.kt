@@ -11,6 +11,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.player.SleepTimerState
 
 /**
@@ -101,14 +102,15 @@ private fun formatDuration(seconds: Int): String {
 /**
  * Compact remaining-time format for chips: "3m", "45s", "1m 12s".
  */
+@Composable
 internal fun formatRemaining(seconds: Int): String {
     val safe = seconds.coerceAtLeast(0)
-    val m = safe / 60
-    val s = safe % 60
+    val m = LocaleFormat.integer(safe / 60)
+    val s = LocaleFormat.integer(safe % 60)
     return when {
-        m == 0 -> "${s}s"
-        s == 0 -> "${m}m"
-        else -> "${m}m ${s}s"
+        safe < 60 -> stringResource(CommonR.string.catalog_runtimeSeconds, s)
+        safe % 60 == 0 -> stringResource(CommonR.string.catalog_runtimeMinutesShort, m)
+        else -> stringResource(CommonR.string.catalog_runtimeMinutesSeconds, m, s)
     }
 }
 
