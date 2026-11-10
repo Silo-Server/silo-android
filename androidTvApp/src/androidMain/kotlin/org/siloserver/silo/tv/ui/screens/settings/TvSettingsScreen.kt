@@ -52,6 +52,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -3183,8 +3184,9 @@ private fun TvAppLanguageSettingsGroup(store: AppLanguageStore) {
     val activity = LocalActivity.current ?: return
     var showPicker by remember { mutableStateOf(false) }
     val title = stringResource(CommonR.string.settings_control_appLanguage)
-    val options = appLanguageOptions(stringResource(CommonR.string.settings_appLanguage_matchDevice), state)
-    val selectedId = state.choice.orEmpty()
+    val options = appLanguageOptions(stringResource(CommonR.string.settings_appLanguage_matchDevice), state, store.offeredPseudoLocales(state))
+    val appliedPseudo = remember(state, LocalConfiguration.current) { store.appliedPseudoLocale() }
+    val selectedId = appliedPseudo ?: state.choice.orEmpty()
     SettingsGroup(title = title) {
         SettingsValueRow(
             label = title,

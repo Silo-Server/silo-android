@@ -4,6 +4,8 @@ import androidx.activity.compose.LocalActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.AppLanguageStore
@@ -20,8 +22,10 @@ internal fun AppLanguageSettingsSection(store: AppLanguageStore) {
     if (!state.supported) return
     val activity = LocalActivity.current ?: return
     val title = stringResource(CommonR.string.settings_control_appLanguage)
-    val options = appLanguageOptions(stringResource(CommonR.string.settings_appLanguage_matchDevice), state)
-    val selected = options.firstOrNull { it.id == state.choice.orEmpty() } ?: options.first()
+    val options = appLanguageOptions(stringResource(CommonR.string.settings_appLanguage_matchDevice), state, store.offeredPseudoLocales(state))
+    val appliedPseudo = remember(state, LocalConfiguration.current) { store.appliedPseudoLocale() }
+    val selectedId = appliedPseudo ?: state.choice.orEmpty()
+    val selected = options.firstOrNull { it.id == selectedId } ?: options.first()
 
     SettingsSection(title = title, footer = stringResource(CommonR.string.android_settings_appLanguageFooter)) {
         SettingsIndexedDropdownRow(
