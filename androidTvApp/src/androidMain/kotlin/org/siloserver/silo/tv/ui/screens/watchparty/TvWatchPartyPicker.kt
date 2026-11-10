@@ -627,6 +627,7 @@ private fun BrowseItem.toSectionItem(entry: PickerEntry?): SectionItem = Section
     backdropIsEpisodeStill = backdropIsEpisodeStill,
     userState = userState,
     overlaySummary = overlaySummary,
+    availability = availability,
     positionSeconds = entry?.members?.mapNotNull { it.positionSeconds }?.maxOrNull(),
     durationSeconds = entry?.members?.mapNotNull { it.durationSeconds }?.maxOrNull(),
 )

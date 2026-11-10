@@ -35,4 +35,6 @@ data class OverlayDef(
     val availabilityNote: String? = null,
     val getValue: (OverlayData) -> UiText?,
     val getIcon: ((OverlayData) -> OverlayIconId?)? = null,
+    /** Hex accent for this item. A null result keeps [defaultAccent]. */
+    val getAccent: ((OverlayData) -> String?)? = null,
 )
