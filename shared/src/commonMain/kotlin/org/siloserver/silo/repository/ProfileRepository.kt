@@ -38,9 +38,30 @@ open class ProfileRepository(
     private val requestsRepository: RequestsRepository? = null,
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
 ) {
-    /** Lists all profiles for the current user. */
-    open suspend fun listProfiles(): ApiResult<List<Profile>> =
-        profileApi.listProfiles().map { it.profiles }
+    /**
+     * Lists all profiles for the current user, and keeps the open account's
+     * profile limit, which arrives with the list (the profile menu's row
+     * reads it).
+     */
+    open suspend fun listProfiles(): ApiResult<List<Profile>> {
+        val accountId = serverRegistry?.activeAccountId?.value
+        // A remote-playback handoff identity lists its own profile with no
+        // limit; that is not the open account's answer.
+        val handoff = tokenManager.hasTemporaryScope()
+        val result = profileApi.listProfiles()
+        if (result is ApiResult.Success && !handoff && !tokenManager.hasTemporaryScope()) {
+            rememberProfileLimit(accountId, result.data.maxProfiles)
+        }
+        return result.map { it.profiles }
+    }
+
+    /** Stores [maxProfiles] for [accountId] while it is still the open account. */
+    private suspend fun rememberProfileLimit(accountId: String?, maxProfiles: Int?) {
+        val registry = serverRegistry ?: return
+        if (accountId == null || registry.activeAccountId.value != accountId) return
+        if (registry.activeAccount.value?.maxProfiles == maxProfiles) return
+        registry.setMaxProfiles(accountId, maxProfiles)
+    }
 
     /**
      * The picker's manage mode: management calls act as the household's primary

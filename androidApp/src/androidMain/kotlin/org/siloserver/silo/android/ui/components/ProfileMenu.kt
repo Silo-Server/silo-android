@@ -9,19 +9,25 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Inbox
-import androidx.compose.material.icons.rounded.ManageAccounts
+import androidx.compose.material.icons.rounded.People
+import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SwitchAccount
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.koin.compose.koinInject
+import org.siloserver.silo.android.ui.navigation.LocalAddProfile
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.common.ui.marquee.ServerBranding
 import org.siloserver.silo.model.profile.Profile
+import org.siloserver.silo.model.server.ProfileMenuRow
+import org.siloserver.silo.model.server.profileMenuRow
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.network.TokenManager
 
 /**
  * The profile-avatar dropdown, in one place.
@@ -44,6 +50,11 @@ import org.siloserver.silo.network.ServerRegistry
  * It signs out of the active account only (multi-account spec §4.3). Switch
  * profile opens the open account's picker; Change account (in Switch
  * Server's old place) lists every saved server's accounts.
+ *
+ * The profile row follows the open account ([profileMenuRow]): Switch profile
+ * while it has several profiles; Add Profile while it has one and room for
+ * another, since there is nothing to switch to; no row while it has one and
+ * its limit is one. Change account is always there.
  */
 @Composable
 fun ProfileMenu(
@@ -64,6 +75,15 @@ fun ProfileMenu(
     val activeServer by serverRegistry.activeEntry.collectAsState()
     val activeAccount by serverRegistry.activeAccount.collectAsState()
     val accounts by serverRegistry.accounts.collectAsState()
+    val addProfile = LocalAddProfile.current
+    val tokenManager: TokenManager = koinInject()
+    // A remote-playback handoff session can neither switch nor add.
+    val isHandoffSession by produceState(false, expanded) {
+        value = expanded && tokenManager.hasTemporaryScope()
+    }
+    // From the account's cached list and limit, which the picker's loads and
+    // the launch and return refreshes keep current.
+    val profileRow = activeAccount.profileMenuRow(isHandoffSession)
     // The username only tells accounts apart when the server has more than one (spec §4.3).
     val username = activeAccount?.username?.takeIf { name ->
         name.isNotBlank() && accounts.count { it.serverId == activeServer?.id } > 1
@@ -127,17 +147,28 @@ fun ProfileMenu(
                 onSettingsClick()
             },
         )
-        SiloMenuItem(
-            label = stringResource(CommonR.string.menu_profileMenu_switchProfile),
-            icon = Icons.Rounded.SwitchAccount,
-            onClick = {
-                onDismissRequest()
-                onSwitchProfileClick()
-            },
-        )
+        when (profileRow) {
+            ProfileMenuRow.SwitchProfile -> SiloMenuItem(
+                label = stringResource(CommonR.string.menu_profileMenu_switchProfile),
+                icon = Icons.Rounded.People,
+                onClick = {
+                    onDismissRequest()
+                    onSwitchProfileClick()
+                },
+            )
+            ProfileMenuRow.AddProfile -> SiloMenuItem(
+                label = stringResource(CommonR.string.menu_addProfile),
+                icon = Icons.Rounded.PersonAdd,
+                onClick = {
+                    onDismissRequest()
+                    addProfile()
+                },
+            )
+            ProfileMenuRow.None -> Unit
+        }
         SiloMenuItem(
             label = stringResource(CommonR.string.changeAccount_menu),
-            icon = Icons.Rounded.ManageAccounts,
+            icon = Icons.Rounded.SwitchAccount,
             onClick = {
                 onDismissRequest()
                 onChangeAccountClick()

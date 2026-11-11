@@ -5,6 +5,7 @@ import io.ktor.client.request.*
 import io.ktor.http.*
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.model.profile.*
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import org.siloserver.silo.network.*
@@ -81,7 +82,7 @@ class ProfileApi(
 
     suspend fun listProfiles(): ApiResult<ProfilesResponse> =
         exchange<ProfileCollectionV2>("/api/v2/profiles", HttpMethod.Get, HttpStatusCode.OK)
-            .map { ProfilesResponse(it.items.map { profile -> profile.toProfile() }) }
+            .map { it.toResponse() }
 
     /**
      * The profiles of the saved account [scope] names, which need not be the
@@ -90,7 +91,7 @@ class ProfileApi(
     suspend fun listProfiles(scope: AuthScopeSnapshot): ApiResult<ProfilesResponse> =
         safeApiV2Call<ProfileCollectionV2>(apiV2Gate.forServer(scope.serverId)) {
             client.get("/api/v2/profiles") { authScope(scope) }
-        }.map { ProfilesResponse(it.items.map { profile -> profile.toProfile() }) }
+        }.map { it.toResponse() }
 
     suspend fun createProfile(
         request: CreateProfileRequest,
@@ -258,4 +259,10 @@ internal fun ProfileV2.toProfile(): Profile = Profile(
 )
 
 @Serializable
-private data class ProfileCollectionV2(val items: List<ProfileV2>)
+private data class ProfileCollectionV2(
+    val items: List<ProfileV2>,
+    /** How many profiles the account may have; absent when the server did not say. */
+    @SerialName("max_profiles") val maxProfiles: Int? = null,
+) {
+    fun toResponse() = ProfilesResponse(items.map { it.toProfile() }, maxProfiles)
+}

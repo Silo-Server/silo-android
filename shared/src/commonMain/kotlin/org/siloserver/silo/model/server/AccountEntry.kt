@@ -25,6 +25,12 @@ data class AccountEntry(
     val profileId: String? = null,
     /** The account's profiles as last fetched, so the picker renders offline. */
     val cachedProfiles: List<CachedProfile> = emptyList(),
+    /**
+     * How many profiles the account may have, as its server last said
+     * (`max_profiles` on the profile list). Null when it did not say: an older
+     * server, or one that could not read the limit.
+     */
+    val maxProfiles: Int? = null,
     val addedAtEpochMs: Long = 0L,
     val lastUsedAtEpochMs: Long = 0L,
     /**

@@ -61,6 +61,9 @@ import org.siloserver.silo.tv.ui.screens.library.TvSectionBrowseScreen
 import org.siloserver.silo.viewmodel.SectionBrowseArgs
 import org.siloserver.silo.tv.ui.screens.player.TvPlayerScreen
 import org.siloserver.silo.tv.ui.screens.profiles.TvProfileSelectionScreen
+import org.siloserver.silo.tv.ui.screens.profiles.asProfile
+import org.siloserver.silo.model.profile.householdPrimary
+import androidx.compose.runtime.DisposableEffect
 import org.siloserver.silo.tv.ui.screens.servers.TvAccountsScreen
 import org.siloserver.silo.tv.ui.screens.servers.TvChangeAccountScreen
 import org.siloserver.silo.tv.ui.screens.servers.TvServerSwitchDestination
@@ -545,6 +548,8 @@ fun TvAppNavigation(
     val remotePlaybackIdentityManager: RemotePlaybackIdentityManager = koinInject()
     val tvSignOut: TvSignOut = koinInject()
     val playbackLifecycle: PlaybackSessionLifecycle = koinInject()
+    /** The profile menu's Add Profile in progress; a second press waits for it. */
+    val addProfileJob = remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     // Android can restore Silo's previous back stack over the start route
     // MainTvActivity chose: after a configuration change while Silo was away,
@@ -1316,9 +1321,33 @@ fun TvAppNavigation(
         }
 
         composable(TvRoute.CreateProfile.route) {
+            // Opened from the picker, or by the profile menu's Add Profile
+            // over Home. From the menu, a new profile leads to the picker as
+            // Switch Profile opens it, Back returns to the screen the menu
+            // was on, and the management session the menu started ends with
+            // this screen.
+            val fromPicker = remember {
+                navController.previousBackStackEntry?.destination?.route == TvRoute.ProfileSelection.route
+            }
+            if (!fromPicker) {
+                DisposableEffect(Unit) {
+                    onDispose { profileRepository.householdManagement.end() }
+                }
+            }
             TvCreateProfileScreen(
                 onNavigateBack = { navController.popBackStack() },
-                onProfileCreated = { navController.popBackStack() },
+                onProfileCreated = {
+                    if (fromPicker) {
+                        navController.popBackStack()
+                    } else {
+                        scope.launch {
+                            navController.navigate(TvRoute.ProfileSelection.route) {
+                                popUpTo(TvRoute.Main.route) { inclusive = true }
+                            }
+                            activeProfileReset.clearActiveProfile()
+                        }
+                    }
+                },
             )
         }
 
@@ -1393,6 +1422,33 @@ fun TvAppNavigation(
                 // Where Switch Server was: other accounts and servers.
                 onChangeAccount = {
                     navController.navigate(TvRoute.ChangeAccount().route) { launchSingleTop = true }
+                },
+                // The profile menu's Add Profile, offered while the open
+                // account has one profile. Household management acts as the
+                // account's primary profile, as the picker's Add does, and
+                // asks for its PIN first when it has one
+                // (TvHouseholdReverifyHost shows the prompt). With no primary
+                // known, the picker opens instead, where Add runs the same
+                // steps.
+                onAddProfile = {
+                    if (addProfileJob.value?.isActive != true) {
+                        addProfileJob.value = scope.launch {
+                            val primary = serverRegistry.activeAccount.value?.cachedProfiles.orEmpty()
+                                .map { it.asProfile() }
+                                .householdPrimary()
+                            if (primary == null) {
+                                navController.navigate(TvRoute.ProfileSelection.route) {
+                                    popUpTo(TvRoute.Main.route) { inclusive = true }
+                                }
+                                activeProfileReset.clearActiveProfile()
+                                return@launch
+                            }
+                            val identity = profileRepository.captureIdentityScope()
+                            if (profileRepository.householdManagement.beginVerified(primary, identity)) {
+                                navController.navigate(TvRoute.CreateProfile.route) { launchSingleTop = true }
+                            }
+                        }
+                    }
                 },
                 onSwitchProfile = {
                     scope.launch {

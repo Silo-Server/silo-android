@@ -319,6 +319,10 @@ class MainActivity : ComponentActivity() {
         val monitor = get<ServerReachabilityMonitor>(ServerReachabilityMonitor::class.java)
         monitor.startForeground()
         lifecycleScope.launch(Dispatchers.IO) { refresher.refreshIfStale() }
+        // A return to Silo: the open account's profiles and profile limit
+        // may have changed elsewhere, and the profile menu's row reads both.
+        // The launch refreshes every account (launchAccountBackfill).
+        if (hasStartedAccountBackfill) refreshOpenAccountProfiles()
         // A language chosen in system settings while Silo was away.
         get<AppLanguageStore>(AppLanguageStore::class.java).check(this)
     }
@@ -723,9 +727,23 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Brings the open account's cached profiles and profile limit up to date, in the background. */
+    private fun refreshOpenAccountProfiles() {
+        val accountId = get<ServerRegistry>(ServerRegistry::class.java).activeAccountId.value ?: return
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching {
+                get<org.siloserver.silo.repository.AccountProfilesRefresher>(
+                    org.siloserver.silo.repository.AccountProfilesRefresher::class.java,
+                ).refresh(accountId)
+            }
+        }
+    }
+
     /**
      * Background, once per process: fill in migrated accounts' identities
-     * (§5) and refresh every account's cached profiles for the picker.
+     * (§5) and refresh every account's cached profiles and profile limits,
+     * for the picker and the profile menu's row. An account whose only
+     * profile opens without the picker never loads them there.
      */
     private fun launchAccountBackfill() {
         if (hasStartedAccountBackfill) return
