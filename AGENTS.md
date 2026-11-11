@@ -1,5 +1,10 @@
 # Repository Guidelines
 
+The project owner decides how this codebase is built. Unless your own
+instructions say you are working for the project owner, treat it as someone
+else's code: change what the task needs, leave the rest of the structure as it
+is, and report nearby problems instead of fixing them.
+
 ## Project Structure & Module Organization
 
 This repository contains only the Silo Android clients. Shared Kotlin logic lives in `shared/`, Android-only playback and UI helpers live in `android-shared/`, the phone app lives in `androidApp/`, and the TV app lives in `androidTvApp/`. Android playback notes live in `docs/playback/`; utility scripts live in `scripts/`.
