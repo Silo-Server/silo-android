@@ -89,6 +89,8 @@ import org.siloserver.silo.tv.auth.TvSignOut
 import org.siloserver.silo.tv.auth.TvSignOutResult
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
+import org.siloserver.silo.common.profiles.ProfileSelectionPrompt
+import org.siloserver.silo.common.profiles.profileSelectionPrompt
 import org.siloserver.silo.tv.profiles.TvActiveProfileReset
 import org.siloserver.silo.common.profiles.ProfileAwayTracker
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
@@ -550,7 +552,8 @@ fun TvAppNavigation(
     // MainTvActivity chose: after a configuration change while Silo was away,
     // or after its process was killed in the background. When Profile
     // Selection has already cleared the profile, that brings back Home with
-    // no profile behind it, so go to Who's Watching instead.
+    // no profile behind it, so go to Who's Watching instead, or to Change
+    // Account when that is the start route MainTvActivity chose.
     LaunchedEffect(navController) {
         navController.currentBackStackEntryFlow.first()
         val restoredMain = runCatching { navController.getBackStackEntry(TvRoute.Main.route) }.isSuccess
@@ -558,7 +561,9 @@ fun TvAppNavigation(
             !tokenManager.getAccessToken().isNullOrBlank() &&
             tokenManager.getProfileId().isNullOrBlank()
         ) {
-            navController.navigate(TvRoute.ProfileSelection.route) {
+            val changeAccount = TvRoute.ChangeAccount().route
+            val target = if (startDestination == changeAccount) changeAccount else TvRoute.ProfileSelection.route
+            navController.navigate(target) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
             }
@@ -567,7 +572,8 @@ fun TvAppNavigation(
 
     // Profile Selection's return rule (silo-apple `applyProfileReturnPolicy`):
     // when Silo comes back from the background and the setting asks, Who's
-    // Watching replaces whatever was on screen, as Switch Profile does.
+    // Watching replaces whatever was on screen, as Switch Profile does. With
+    // several accounts saved, Change Account replaces it instead.
     LaunchedEffect(profileAwayTracker) {
         kotlinx.coroutines.flow.combine(
             profileAwayTracker.selectionRequired,
@@ -609,17 +615,28 @@ fun TvAppNavigation(
                 profileAwayTracker.onSelectionHandled()
                 return@collect
             }
-            // The open account's only profile, with no PIN, is never asked
-            // for (multi-account spec §4.2): it is still the one open.
-            if (serverRegistry.onlyOpenTileIsActive(tokenManager)) {
+            val prompt = profileSelectionPrompt(
+                selectionRequired = true,
+                savedAccounts = serverRegistry.accounts.value.size,
+                onlyProfileNeedsNoChoice = serverRegistry.onlyOpenTileIsActive(tokenManager),
+            )
+            // With one account saved, its only profile, with no PIN, is never
+            // asked for (multi-account spec §4.2): it is still the one open.
+            if (prompt == ProfileSelectionPrompt.None) {
                 profileLaunchPreferences.clearBackgroundedAt()
                 profileAwayTracker.onSelectionHandled()
                 return@collect
             }
             // Leave the profile's screens before clearing its state (see
             // onSwitchProfile). MainTvActivity.onStop already flushed pending
-            // device-setting writes under this profile.
-            navController.navigate(TvRoute.ProfileSelection.route) {
+            // device-setting writes under this profile. Several accounts are
+            // saved: Change Account asks whose account first.
+            val target = if (prompt == ProfileSelectionPrompt.ChangeAccount) {
+                TvRoute.ChangeAccount().route
+            } else {
+                TvRoute.ProfileSelection.route
+            }
+            navController.navigate(target) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
             }
@@ -628,7 +645,10 @@ fun TvAppNavigation(
             // it once the previous profile's screens have faded out.
             withTimeoutOrNull(PROFILE_COVER_MAX_MS) {
                 navController.visibleEntries.first { entries ->
-                    entries.all { it.destination.route in preMainAuthRoutes }
+                    entries.all {
+                        val shown = it.destination.route
+                        shown in preMainAuthRoutes || shown == TvRoute.ChangeAccount.ROUTE
+                    }
                 }
             }
             profileAwayTracker.onSelectionHandled()
@@ -728,6 +748,10 @@ fun TvAppNavigation(
             // never go stale on an authenticated session.
             val route = entry.destination.route
             if (route == null || route in preMainAuthRoutes) return@collect // unauthenticated flow: keep queued until Main
+            // Change Account with no profile open stands in for Who's
+            // Watching (a launch or return with several accounts saved): keep
+            // the link queued until a profile is chosen, as the picker does.
+            if (route == TvRoute.ChangeAccount.ROUTE && tokenManager.getProfileId().isNullOrBlank()) return@collect
             // Profile Selection (silo-apple `handleDeepLink`): a link that
             // arrives while Silo is returning must not open the previous
             // profile's data before Who's Watching replaces it. Keep it queued
@@ -1267,7 +1291,8 @@ fun TvAppNavigation(
 
         // Change Account (owner decision 2026-11-02, Roku spec §7.5): pushed
         // from the picker and the profile menu, and the root while no account
-        // is open but another has a session.
+        // is open but another has a session, or while Profile Selection asks
+        // with several accounts saved (no profile is open then).
         composable(
             route = TvRoute.ChangeAccount.ROUTE,
             arguments = listOf(
@@ -1286,7 +1311,8 @@ fun TvAppNavigation(
                     val behind = navController.previousBackStackEntry?.destination?.route
                     when {
                         // Another account: the screens behind belong to the old one.
-                        switched -> navController.navigate(TvRoute.ProfileSelection.route) {
+                        // As the root, nothing is behind and no profile is open.
+                        switched || isRoot -> navController.navigate(TvRoute.ProfileSelection.route) {
                             popUpTo(0) { inclusive = true }
                         }
                         behind == TvRoute.ProfileSelection.route -> navController.popBackStack()

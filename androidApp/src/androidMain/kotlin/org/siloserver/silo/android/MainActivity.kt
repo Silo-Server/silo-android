@@ -53,6 +53,7 @@ import org.siloserver.silo.android.ui.navigation.deviceLoginPairRouteOrNull
 import org.siloserver.silo.android.ui.navigation.hasLocalDownloadsForScope
 import org.siloserver.silo.android.ui.navigation.hasOtherSession
 import org.siloserver.silo.android.ui.navigation.hasSingleOpenTile
+import org.siloserver.silo.android.ui.navigation.onlyOpenTile
 import org.siloserver.silo.android.ui.navigation.inviteClaimRouteOrNull
 import org.siloserver.silo.android.ui.navigation.notificationNavigationRouteOrNull
 import org.siloserver.silo.android.ui.navigation.shouldStartOnDownloads
@@ -69,6 +70,8 @@ import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.profiles.ProfileAwayTracker
 import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
+import org.siloserver.silo.common.profiles.ProfileSelectionPrompt
+import org.siloserver.silo.common.profiles.profileSelectionPrompt
 import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.ServerDrivenConfigRefresher
@@ -81,6 +84,7 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.requiresApproval
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.PersonalDataRepository
+import org.siloserver.silo.repository.ProfileCommitResult
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.repository.port.HomeCachePort
@@ -544,6 +548,9 @@ class MainActivity : ComponentActivity() {
      *  - No active server → `ServerSetup` (registry is empty)
      *  - Active server but no access token → `Login`
      *  - Tokens but no profile selected for THIS server → `ProfileSelection`
+     *    (its only profile, with no PIN, opens without it)
+     *  - Profile Selection asks → `ProfileSelection`, or `ChangeAccount` when
+     *    several accounts are saved
      *  - All set → `Home`
      */
     private suspend fun resolveStartDestination(): String {
@@ -610,19 +617,13 @@ class MainActivity : ComponentActivity() {
             return if (registry.hasOtherSession()) Route.ChangeAccount.ROUTE else Route.Login.route
         }
 
-        // Profile id is per-server: prefer the registry entry's saved value,
-        // fall back to whatever the token manager has cached.
-        val profileId = activeEntry.profileId ?: tokenManager.getProfileId()
-        if (profileId.isNullOrBlank()) return Route.ProfileSelection.route
-
         // Profile Selection (silo-apple `ProfileLaunchState.resolution`). A
         // process start applies the launch rule: Every Time, or a timed choice
         // whose away interval ran out while Silo was closed. A later Activity
         // in this process follows the return rule the away tracker evaluated
         // in onStart. Applied below, after the offline check.
         val profileAwayTracker = get<ProfileAwayTracker>(ProfileAwayTracker::class.java)
-        // The open account has one profile, with no PIN: the picker never shows.
-        val requiresSelection = !registry.hasSingleOpenTile() && if (processStart) {
+        val selectionRequired = if (processStart) {
             // A process the playback service started (Android's media
             // resumption) can already be playing this profile's audiobook;
             // that is use of the profile, as on a return.
@@ -630,6 +631,31 @@ class MainActivity : ComponentActivity() {
         } else {
             profileAwayTracker.selectionRequired.value
         }
+        val savedAccounts = registry.accounts.value.size
+
+        // Profile id is per-server: prefer the registry entry's saved value,
+        // fall back to whatever the token manager has cached.
+        val rememberedProfileId = activeEntry.profileId ?: tokenManager.getProfileId()
+        val profileId: String = if (!rememberedProfileId.isNullOrBlank()) {
+            rememberedProfileId
+        } else {
+            // No profile is open. When Profile Selection asks and several
+            // accounts are saved, Change Account takes the picker's place.
+            val prompt = profileSelectionPrompt(selectionRequired, savedAccounts, onlyProfileNeedsNoChoice = false)
+            if (prompt == ProfileSelectionPrompt.ChangeAccount) return Route.ChangeAccount.ROUTE
+            // The open account's only profile, with no PIN, opens here, so
+            // a one-tile picker is never drawn.
+            val only = registry.onlyOpenTile() ?: return Route.ProfileSelection.route
+            val opened = get<ProfileRepository>(ProfileRepository::class.java).selectProfile(only.id)
+            if (opened != ProfileCommitResult.Committed) return Route.ProfileSelection.route
+            only.id
+        }
+        // With one account saved, its only profile, with no PIN, is never asked for.
+        val prompt = profileSelectionPrompt(
+            selectionRequired = selectionRequired,
+            savedAccounts = savedAccounts,
+            onlyProfileNeedsNoChoice = registry.hasSingleOpenTile(),
+        )
 
         // Offline-with-downloads fast path: if local media exists and either
         // the device has no network OR the configured Silo server fails the
@@ -655,14 +681,20 @@ class MainActivity : ComponentActivity() {
             canUseServer = canUseServer,
         )
         when (
-            profileLaunchAction(requiresSelection = requiresSelection, startsOfflineOnDownloads = startsOnDownloads)
+            val action = profileLaunchAction(prompt = prompt, startsOfflineOnDownloads = startsOnDownloads)
         ) {
-            ProfileLaunchAction.AskWhoIsWatching -> {
-                // Cleared before the picker loads; losing its PIN proof makes
-                // a protected profile ask for its PIN again.
+            ProfileLaunchAction.AskWhoIsWatching, ProfileLaunchAction.AskWhichAccount -> {
+                // Cleared before the next screen loads; losing its PIN proof
+                // makes a protected profile ask for its PIN again.
                 get<ActiveProfileReset>(ActiveProfileReset::class.java).clearActiveProfile()
                 hasResolvedLaunchProfile = true
-                return Route.ProfileSelection.route
+                // Several accounts are saved: whose account comes first, with
+                // no profile open while Change Account shows.
+                return if (action == ProfileLaunchAction.AskWhichAccount) {
+                    Route.ChangeAccount.ROUTE
+                } else {
+                    Route.ProfileSelection.route
+                }
             }
             // The away interval stays recorded, so Silo asks once the server
             // can be reached again (AppNavigation watches for it). Every Time

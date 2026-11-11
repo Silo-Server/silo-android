@@ -62,6 +62,8 @@ import org.siloserver.silo.repository.port.HomeCachePort
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
 import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
+import org.siloserver.silo.common.profiles.ProfileSelectionPrompt
+import org.siloserver.silo.common.profiles.profileSelectionPrompt
 import org.siloserver.silo.tv.profiles.TvActiveProfileReset
 import org.siloserver.silo.tv.profiles.noAccountOpenButAnotherSignedIn
 import org.siloserver.silo.tv.profiles.onlyOpenTile
@@ -472,8 +474,13 @@ class MainTvActivity : ComponentActivity() {
             }
         }
 
+        val savedAccounts = registry.accounts.value.size
         val profileId = tokenManager.getProfileId()
         if (profileId.isNullOrBlank()) {
+            // No profile is open. When Profile Selection asks and several
+            // accounts are saved, Change Account takes the picker's place.
+            val prompt = profileSelectionPrompt(requiresSelection, savedAccounts, onlyProfileNeedsNoChoice = false)
+            if (prompt == ProfileSelectionPrompt.ChangeAccount) return TvRoute.ChangeAccount().route
             // The open account's only profile, with no PIN, opens without
             // the picker (spec §4.2).
             if (registry.onlyOpenTile() != null) SignInHandoff.skipsSingleProfilePicker = true
@@ -490,19 +497,31 @@ class MainTvActivity : ComponentActivity() {
         // whose away interval ran out while Silo was closed. A later Activity
         // in this process (Back left Silo, then it was reopened) follows the
         // return rule the away tracker evaluated in onStart. Either way the
-        // profile is cleared here, before the picker loads, and losing its PIN
-        // proof makes a protected profile ask for its PIN again.
-        // The open account's only profile, with no PIN, is never asked for (spec §4.2).
-        if (requiresSelection && registry.onlyOpenTileIsActive(tokenManager)) {
+        // profile is cleared here, before the next screen loads, and losing
+        // its PIN proof makes a protected profile ask for its PIN again.
+        val prompt = profileSelectionPrompt(
+            selectionRequired = requiresSelection,
+            savedAccounts = savedAccounts,
+            onlyProfileNeedsNoChoice = registry.onlyOpenTileIsActive(tokenManager),
+        )
+        if (prompt != ProfileSelectionPrompt.None) {
+            get<TvActiveProfileReset>(TvActiveProfileReset::class.java).clearActiveProfile()
+            // Several accounts are saved: whose account comes first, with no
+            // profile open while Change Account shows.
+            return if (prompt == ProfileSelectionPrompt.ChangeAccount) {
+                TvRoute.ChangeAccount().route
+            } else {
+                TvRoute.ProfileSelection.route
+            }
+        }
+        // With one account saved, its only profile, with no PIN, is never
+        // asked for (spec §4.2).
+        if (requiresSelection) {
             launchPreferences.clearBackgroundedAt()
             get<ProfileAwayTracker>(ProfileAwayTracker::class.java).onSelectionHandled()
-            return TvRoute.Main.route
+        } else if (processStart) {
+            launchPreferences.clearBackgroundedAt()
         }
-        if (requiresSelection) {
-            get<TvActiveProfileReset>(TvActiveProfileReset::class.java).clearActiveProfile()
-            return TvRoute.ProfileSelection.route
-        }
-        if (processStart) launchPreferences.clearBackgroundedAt()
 
         return TvRoute.Main.route
     }

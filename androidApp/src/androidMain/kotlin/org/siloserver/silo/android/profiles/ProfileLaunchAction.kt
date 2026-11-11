@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.profiles
 
+import org.siloserver.silo.common.profiles.ProfileSelectionPrompt
+
 /** What the phone does about Profile Selection when Silo opens or returns. */
 enum class ProfileLaunchAction {
     /** Keep the current profile; Silo is in use again. */
@@ -7,6 +9,12 @@ enum class ProfileLaunchAction {
 
     /** Clear the current profile and show Who's Watching. */
     AskWhoIsWatching,
+
+    /**
+     * Clear the current profile and show Change Account: several accounts
+     * are saved, so whose account comes before whose profile.
+     */
+    AskWhichAccount,
 
     /**
      * The setting asks, but the server cannot be reached and this profile
@@ -18,13 +26,14 @@ enum class ProfileLaunchAction {
 }
 
 /**
- * The phone's launch and return decision. [requiresSelection] is the shared
- * Profile Selection rule; [startsOfflineOnDownloads] says the server cannot be
- * used and the active profile has local downloads.
+ * The phone's launch and return decision. [prompt] is the shared Profile
+ * Selection rule; [startsOfflineOnDownloads] says the server cannot be used
+ * and the active profile has local downloads.
  */
-fun profileLaunchAction(requiresSelection: Boolean, startsOfflineOnDownloads: Boolean): ProfileLaunchAction =
+fun profileLaunchAction(prompt: ProfileSelectionPrompt, startsOfflineOnDownloads: Boolean): ProfileLaunchAction =
     when {
-        !requiresSelection -> ProfileLaunchAction.KeepProfile
+        prompt == ProfileSelectionPrompt.None -> ProfileLaunchAction.KeepProfile
         startsOfflineOnDownloads -> ProfileLaunchAction.KeepProfileOffline
+        prompt == ProfileSelectionPrompt.ChangeAccount -> ProfileLaunchAction.AskWhichAccount
         else -> ProfileLaunchAction.AskWhoIsWatching
     }
