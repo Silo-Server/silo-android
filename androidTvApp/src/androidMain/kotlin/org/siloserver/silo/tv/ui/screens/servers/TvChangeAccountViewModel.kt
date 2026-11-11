@@ -51,6 +51,8 @@ data class TvChangeAccountUiState(
  * servers, each with its accounts. Choosing an account makes it active on
  * its server and opens its picker, which waits for a choice; one that needs
  * to sign in again opens its sign-in; "Add an account" signs in on a server.
+ * It is also what Profile Selection shows in the picker's place when several
+ * accounts are saved.
  *
  * A change of account drops the departing profile's caches and Watch Next,
  * as the picker's switch did; the next profile chosen seeds Watch Next.
@@ -93,10 +95,16 @@ class TvChangeAccountViewModel(
         }
     }
 
-    /** An account card. */
-    fun onAccountChosen(card: AccountCard) {
+    /**
+     * An account card. [noProfileOpen]: this screen is the root in the
+     * picker's place (Profile Selection asked with several accounts saved),
+     * so the open account is chosen like any other and its lone profile
+     * without a PIN opens.
+     */
+    fun onAccountChosen(card: AccountCard, noProfileOpen: Boolean = false) {
         val account = card.account
         if (card.isCurrent && !account.needsSignIn) {
+            if (noProfileOpen) SignInHandoff.skipsSingleProfilePicker = true
             navigate(TvChangeAccountNavigation.Picker(switched = false))
             return
         }

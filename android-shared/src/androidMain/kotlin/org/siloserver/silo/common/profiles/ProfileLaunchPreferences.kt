@@ -16,7 +16,8 @@ import org.siloserver.silo.network.ServerRegistry
  * When this device asks "Who's watching?" instead of reopening the last
  * profile. Mirrors silo-apple `ProfileLaunchBehavior` (General → Profile
  * Selection), including its titles and descriptions. Shared by the phone and
- * TV apps; each keeps its own choice on the device.
+ * TV apps; each keeps its own choice on the device. With several accounts
+ * saved, the question starts at Change Account (see [profileSelectionPrompt]).
  */
 enum class ProfileLaunchBehavior(
     /** Stored value. Same strings as silo-apple's raw values. */

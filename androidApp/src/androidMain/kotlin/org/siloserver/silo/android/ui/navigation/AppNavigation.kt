@@ -32,6 +32,7 @@ import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.network.ServerReachabilityStatus
 import org.siloserver.silo.common.profiles.ProfileAwayTracker
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
+import org.siloserver.silo.common.profiles.profileSelectionPrompt
 import org.siloserver.silo.model.profile.ActiveProfileStore
 import org.siloserver.silo.android.ui.components.rememberVideoSeekIntervals
 import org.siloserver.silo.android.cast.GOOGLE_CAST_LEGACY_SEEK_INTERVALS
@@ -396,19 +397,22 @@ fun AppNavigation(
     // MainActivity chose: after its process was killed in the background.
     // When Profile Selection has already cleared the profile at launch, that
     // brings back the previous profile's screens with no profile behind them,
-    // so go to Who's Watching instead. Look beneath the top too: Manage
+    // so go to Who's Watching instead, or to Change Account when that is the
+    // start route MainActivity chose. Look beneath the top too: Manage
     // Servers over Home would otherwise let Back reach Home with no profile
     // chosen, and every stack of profile screens has a tab at its root.
     LaunchedEffect(navController) {
         val restoredRoute = navController.currentBackStackEntryFlow.first().destination.route
         val restoresProfileScreens = (restoredRoute != null && restoredRoute !in ProfileFreeRoutes) ||
             Tab.entries.any { tab -> runCatching { navController.getBackStackEntry(tab.route) }.isSuccess }
-        if (startDestination == Route.ProfileSelection.route &&
+        val startsOnChangeAccount = startDestination == Route.ChangeAccount.ROUTE
+        if ((startDestination == Route.ProfileSelection.route || startsOnChangeAccount) &&
             restoresProfileScreens &&
             !tokenManager.getAccessToken().isNullOrBlank() &&
             tokenManager.getProfileId().isNullOrBlank()
         ) {
-            navController.navigate(Route.ProfileSelection.route) {
+            val target = if (startsOnChangeAccount) Route.ChangeAccount().route else Route.ProfileSelection.route
+            navController.navigate(target) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
             }
@@ -417,8 +421,9 @@ fun AppNavigation(
 
     // Profile Selection's return rule (silo-apple `applyProfileReturnPolicy`):
     // when Silo comes back from the background and the setting asks, Who's
-    // Watching replaces whatever was on screen. Playback that kept going in
-    // the background never raises the request (see ProfileAwayTracker).
+    // Watching replaces whatever was on screen; with several accounts saved,
+    // Change Account does. Playback that kept going in the background never
+    // raises the request (see ProfileAwayTracker).
     val profileAwayTracker: ProfileAwayTracker = koinInject()
     val profileLaunchPreferences: ProfileLaunchPreferences = koinInject()
     val activeProfileReset: ActiveProfileReset = koinInject()
@@ -449,19 +454,29 @@ fun AppNavigation(
             }
             // Re-check after the wait, as silo-apple's return policy does.
             val action = profileLaunchAction(
-                // One tile with no PIN never asks (multi-account spec §4.2).
-                requiresSelection = profileLaunchPreferences.requiresSelectionAfterBackground() &&
-                    !serverRegistry.hasSingleOpenTile(),
+                // With one account saved, one tile with no PIN never asks
+                // (multi-account spec §4.2).
+                prompt = profileSelectionPrompt(
+                    selectionRequired = profileLaunchPreferences.requiresSelectionAfterBackground(),
+                    savedAccounts = serverRegistry.accounts.value.size,
+                    onlyProfileNeedsNoChoice = serverRegistry.hasSingleOpenTile(),
+                ),
                 startsOfflineOnDownloads = offlineWithDownloads,
             )
-            if (action != ProfileLaunchAction.AskWhoIsWatching) {
+            if (action != ProfileLaunchAction.AskWhoIsWatching && action != ProfileLaunchAction.AskWhichAccount) {
                 profileAwayTracker.onSelectionHandled()
                 return@collect
             }
             // Leave the profile's screens before clearing its state, as
             // Switch Profile does. The reset pushes pending device-setting
-            // writes under this profile before it drops it.
-            navController.navigate(Route.ProfileSelection.route) {
+            // writes under this profile before it drops it. Several accounts
+            // are saved: Change Account asks whose account first.
+            val target = if (action == ProfileLaunchAction.AskWhichAccount) {
+                Route.ChangeAccount().route
+            } else {
+                Route.ProfileSelection.route
+            }
+            navController.navigate(target) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
             }

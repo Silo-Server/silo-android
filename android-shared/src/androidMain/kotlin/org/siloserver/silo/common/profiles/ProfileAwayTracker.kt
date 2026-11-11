@@ -31,9 +31,10 @@ class ProfileAwayTracker(
     private val _selectionRequired = MutableStateFlow(false)
 
     /**
-     * Raised when a return to Silo must show Who's Watching. While it is up,
-     * the main Activity covers the screen; the navigation graph performs the
-     * switch and then calls [onSelectionHandled].
+     * Raised when a return to Silo must show Who's Watching, or Change
+     * Account when several accounts are saved. While it is up, the main
+     * Activity covers the screen; the navigation graph performs the switch
+     * and then calls [onSelectionHandled].
      */
     val selectionRequired: StateFlow<Boolean> = _selectionRequired.asStateFlow()
 

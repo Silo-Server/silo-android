@@ -130,7 +130,7 @@ Shown only while Settings → Experimental → Watch Party is on (default on in 
 |---|:---:|:---:|---|
 | Household profiles (multiple per account) | ✅ | ✅ | `ProfileRepository` |
 | PIN-protected & child profiles, content-rating limits | ✅ | ✅ | |
-| Profile Selection at launch (Automatic, Every Time, After 1 Hour, After 12 Hours) | ✅ | ✅ | Phone: Settings → Preferences; TV: Settings → General. Device-local; shared rules in `android-shared/.../profiles/`. TV also hides Watch Next |
+| Profile Selection at launch (Automatic, Every Time, After 1 Hour, After 12 Hours) | ✅ | ✅ | Phone: Settings → Preferences; TV: Settings → General. Device-local; shared rules in `android-shared/.../profiles/`. When it asks and several accounts are saved on the device, Change Account shows in place of Who's Watching, with no profile open. TV also hides Watch Next |
 | Per-profile language / subtitle / playback prefs | ✅ | ✅ | |
 | Library access restrictions per profile | ✅ | ✅ | |
 | Favorites & watchlist | ✅ | ✅ | TV: from Settings |

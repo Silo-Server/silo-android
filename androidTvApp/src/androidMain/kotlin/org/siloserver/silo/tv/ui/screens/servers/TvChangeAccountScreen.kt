@@ -132,8 +132,10 @@ private fun addAccountKey(serverId: String) = "add/$serverId"
  *
  * Left and Right move between the rail and the accounts, Up and Down within
  * them. Focus starts on the open account, or with [addAccountOn] on that
- * server's "Add an account". On the root screen ([isRoot], no account open)
- * Back goes from the accounts to the rail first.
+ * server's "Add an account". On the root screen ([isRoot]: no account is
+ * open, or Profile Selection asked with several accounts saved, so no profile
+ * is) Back goes from the accounts to the rail first, and choosing the open
+ * account opens it like any other.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -292,7 +294,7 @@ fun TvChangeAccountScreen(
                                         right = FocusRequester.Cancel
                                     }
                                     .onFocusChanged { if (it.isFocused) focusedKey = key },
-                                onClick = { viewModel.onAccountChosen(card) },
+                                onClick = { viewModel.onAccountChosen(card, noProfileOpen = isRoot) },
                             )
                         }
                         val addKey = addAccountKey(group.server.id)

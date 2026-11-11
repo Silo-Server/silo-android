@@ -12,7 +12,8 @@ import org.siloserver.silo.tv.watchnext.WatchNextSeeder
  * The open account's only profile, when it has no PIN and the account needs
  * no sign-in. The picker never appears for it (owner decision 2026-11-02: the
  * picker shows one account at a time): there is nothing to choose and nothing
- * to protect.
+ * to protect. With several accounts saved, Profile Selection asks whose
+ * account instead of keeping it open (see `profileSelectionPrompt`).
  */
 internal fun ServerRegistry.onlyOpenTile(): CachedProfile? {
     val account = activeAccount.value?.takeIf { !it.needsSignIn } ?: return null

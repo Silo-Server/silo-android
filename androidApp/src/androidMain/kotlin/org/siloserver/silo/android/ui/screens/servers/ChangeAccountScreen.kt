@@ -103,7 +103,9 @@ private val CardFill = Color.White.copy(alpha = 0.06f)
  * list continues past the screen.
  *
  * @param addAccountOn Scroll to (and focus) this server's Add an account row.
- * @param onBack Null when this is the root screen (no account open): Back leaves the app.
+ * @param onBack Null when this is the root screen (no account open, or
+ *   Profile Selection asked with several accounts saved, so no profile is):
+ *   Back leaves the app, and choosing the open account opens it like any other.
  */
 @Composable
 fun ChangeAccountScreen(
@@ -193,7 +195,7 @@ fun ChangeAccountScreen(
                             brandingLoader = brandingLoader,
                             enabled = !state.isWorking,
                             addFocus = addFocus.takeIf { group.server.id == addAccountOn },
-                            onAccount = viewModel::onAccount,
+                            onAccount = { card -> viewModel.onAccount(card, noProfileOpen = onBack == null) },
                             onAddAccount = { viewModel.onAddAccount(group.server.id) },
                         )
                     }
