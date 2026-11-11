@@ -316,7 +316,10 @@ class DefaultOverlayPrefsStore(
                 if (sessionStateEpoch == refreshState.sessionStateEpoch) {
                     val userResponseIsCurrent =
                         canonicalStateEpoch == refreshState.canonicalStateEpoch
-                    if (resolvedRevision != null) manifestRevision = resolvedRevision
+                    if (resolvedRevision != null) {
+                        manifestRevision = resolvedRevision
+                        resumeHeldWrite()
+                    }
                     // Preserve cached config state on transient failures. The
                     // sentinel `resolvedEnabled = true` is only valid when the
                     // fetch actually succeeded.
@@ -446,11 +449,19 @@ class DefaultOverlayPrefsStore(
             // Without the server's revision a save could only be the
             // conservative legacy document, which would erase the profile's
             // edge positions, style, images and preset on a current server.
-            // Fail the save instead: nothing is lost, and the next edit or
-            // refresh can try again once capabilities answer.
+            // Hold the edit instead: it stays on screen and queued, and the
+            // next refresh that learns the revision sends it
+            // ([resumeHeldWrite]). A newer edit queued meanwhile replaces it.
             if (support.manifestRevision == null) {
-                reconcileFailedWrite(UNKNOWN_REVISION_ERROR, generation)
-                continue
+                writeMutex.withLock {
+                    synchronized(stateLock) {
+                        if (writeGeneration != generation) return
+                        if (pendingSnapshot == null) pendingSnapshot = snapshot
+                        _lastError.value = UNKNOWN_REVISION_ERROR
+                        pendingWrite = null
+                    }
+                }
+                return
             }
             val written = OverlaySchema.serialize(snapshot, support)
             val json = Json.parseToJsonElement(written)
@@ -657,6 +668,25 @@ class DefaultOverlayPrefsStore(
      * the read failed, or the server speaks another settings API version
      * (web reads `manifest_revision` only for `api_version` 1).
      */
+    /**
+     * Send an edit held back while the server's revision was unknown. Called
+     * under [stateLock] once a refresh learns the revision; the drain itself
+     * runs behind the same mutexes as any other save.
+     */
+    private fun resumeHeldWrite() {
+        val generation = writeGeneration
+        scope.launch {
+            mutationBoundaryMutex.withLock {
+                writeMutex.withLock {
+                    if (writeGeneration != generation || pendingSnapshot == null) return@withLock
+                    if (pendingWrite?.isActive != true) {
+                        pendingWrite = scope.launch { flushPendingWrites(generation) }
+                    }
+                }
+            }
+        }
+    }
+
     private suspend fun fetchManifestRevision(): Int? =
         when (val caps = repository.contractCapabilities()) {
             is ApiResult.Success ->

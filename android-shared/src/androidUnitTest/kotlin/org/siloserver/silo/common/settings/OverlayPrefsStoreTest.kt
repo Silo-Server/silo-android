@@ -415,7 +415,7 @@ class OverlayPrefsStoreTest {
     }
 
     @Test
-    fun `save with an unknown revision is refused rather than downgraded`() = runTest {
+    fun `save with an unknown revision is held, then sent whole once the revision is known`() = runTest {
         val api = RecordingOverlaySettingsApi(
             storedValue = Json.parseToJsonElement(styledDocument(withCombinedAudio = true)),
         )
@@ -424,13 +424,24 @@ class OverlayPrefsStoreTest {
         store.refresh()
         val stored = store.prefs.value
 
-        store.setPrefs(stored.withYear())
+        val edited = stored.withYear()
+        store.setPrefs(edited)
         advanceUntilIdle()
 
-        // A legacy-shaped PUT would erase the rails, style, images and preset.
+        // A legacy-shaped PUT would erase the rails, style, images and preset,
+        // so nothing is sent; the edit stays on screen rather than rolling back.
         assertTrue(api.puts.isEmpty())
-        assertEquals(stored, store.prefs.value)
+        assertEquals(edited, store.prefs.value)
         assertNotNull(store.lastError.value)
+
+        api.capabilities = revision(26)
+        store.refresh()
+        advanceUntilIdle()
+
+        val body = api.puts.single().value
+        assertEquals(OverlaySchema.serialize(edited), OverlaySchema.serialize(OverlaySchema.parse(body)))
+        assertEquals(edited, store.prefs.value)
+        assertNull(store.lastError.value)
     }
 
     @Test
