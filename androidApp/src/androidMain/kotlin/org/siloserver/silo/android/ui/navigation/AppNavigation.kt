@@ -119,6 +119,7 @@ import org.siloserver.silo.android.ui.screens.profiles.EditProfileScreen
 import org.siloserver.silo.android.ui.screens.profiles.ProfileSelectionScreen
 import org.siloserver.silo.android.ui.screens.profiles.toProfile
 import org.siloserver.silo.model.profile.householdPrimary
+import org.siloserver.silo.viewmodel.MenuAddProfileSession
 import org.siloserver.silo.android.ui.screens.requests.MyRequestsScreen
 import org.siloserver.silo.android.ui.screens.requests.RequestDiscoverRowScreen
 import org.siloserver.silo.android.ui.screens.requests.RequestDetailScreen
@@ -1381,14 +1382,12 @@ fun AppNavigation(
             // over the profile's screens. From the menu, a new profile leads
             // to the picker as Switch profile opens it, Back returns to the
             // screen the menu was on, and the management session the menu
-            // started ends with this screen.
+            // started ends once this entry leaves the back stack.
             val fromPicker = remember {
                 navController.previousBackStackEntry?.destination?.route == Route.ProfileSelection.route
             }
             if (!fromPicker) {
-                DisposableEffect(Unit) {
-                    onDispose { profileRepository.householdManagement.end() }
-                }
+                androidx.lifecycle.viewmodel.compose.viewModel { MenuAddProfileSession(profileRepository) }
             }
             CreateProfileScreen(
                 onNavigateBack = { navController.popBackStack() },

@@ -52,7 +52,7 @@ import org.siloserver.silo.network.TokenManager
  * Server's old place) lists every saved server's accounts.
  *
  * The profile row follows the open account ([profileMenuRow]): Switch profile
- * while it has several profiles; Add Profile while it has one and room for
+ * while it has several profiles; Add profile while it has one and room for
  * another, since there is nothing to switch to; no row while it has one and
  * its limit is one. Change account is always there.
  */
@@ -156,8 +156,9 @@ fun ProfileMenu(
                     onSwitchProfileClick()
                 },
             )
+            // Sentence case, as this menu's other rows; TV uses menu_addProfile.
             ProfileMenuRow.AddProfile -> SiloMenuItem(
-                label = stringResource(CommonR.string.menu_addProfile),
+                label = stringResource(CommonR.string.profiles_addProfile),
                 icon = Icons.Rounded.PersonAdd,
                 onClick = {
                     onDismissRequest()

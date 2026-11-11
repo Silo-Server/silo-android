@@ -63,7 +63,7 @@ import org.siloserver.silo.tv.ui.screens.player.TvPlayerScreen
 import org.siloserver.silo.tv.ui.screens.profiles.TvProfileSelectionScreen
 import org.siloserver.silo.tv.ui.screens.profiles.asProfile
 import org.siloserver.silo.model.profile.householdPrimary
-import androidx.compose.runtime.DisposableEffect
+import org.siloserver.silo.viewmodel.MenuAddProfileSession
 import org.siloserver.silo.tv.ui.screens.servers.TvAccountsScreen
 import org.siloserver.silo.tv.ui.screens.servers.TvChangeAccountScreen
 import org.siloserver.silo.tv.ui.screens.servers.TvServerSwitchDestination
@@ -1324,15 +1324,13 @@ fun TvAppNavigation(
             // Opened from the picker, or by the profile menu's Add Profile
             // over Home. From the menu, a new profile leads to the picker as
             // Switch Profile opens it, Back returns to the screen the menu
-            // was on, and the management session the menu started ends with
-            // this screen.
+            // was on, and the management session the menu started ends once
+            // this entry leaves the back stack.
             val fromPicker = remember {
                 navController.previousBackStackEntry?.destination?.route == TvRoute.ProfileSelection.route
             }
             if (!fromPicker) {
-                DisposableEffect(Unit) {
-                    onDispose { profileRepository.householdManagement.end() }
-                }
+                androidx.lifecycle.viewmodel.compose.viewModel { MenuAddProfileSession(profileRepository) }
             }
             TvCreateProfileScreen(
                 onNavigateBack = { navController.popBackStack() },
