@@ -5,11 +5,14 @@ import org.siloserver.silo.model.settings.EffectiveSettingValuesResponse
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SettingScope
 import org.siloserver.silo.model.settings.SettingScopeIdentity
+import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.model.settings.StoredSettingValue
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.OverlayConfigResponse
 import org.siloserver.silo.network.api.SettingsApi
 import org.siloserver.silo.overlays.CardOverlayPrefs
+import org.siloserver.silo.overlays.OverlayId
+import org.siloserver.silo.overlays.OverlayImage
 import org.siloserver.silo.overlays.OverlaySchema
 import org.siloserver.silo.overlays.PresetId
 import org.siloserver.silo.repository.SettingsRepository
@@ -25,10 +28,14 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -355,8 +362,237 @@ class OverlayPrefsStoreTest {
         assertEquals("Reset failed", store.lastError.value)
     }
 
+    // ---- server-safe writes ----
+
+    @Test
+    fun `save below revision 25 writes corners, classic, and no style or images`() = runTest {
+        val body = saveStyledDocument(revision(24))
+
+        assertEquals("classic", body["preset"]!!.jsonPrimitive.content)
+        assertNull(body["style"])
+        val items = body["items"]!!.jsonObject
+        val resolution = items["resolution"]!!.jsonObject
+        assertEquals("top-left", resolution["position"]!!.jsonPrimitive.content)
+        assertNull(resolution["image"])
+        assertNull(resolution["valueImages"])
+        assertEquals("top-right", items["rating_imdb"]!!.jsonObject["position"]!!.jsonPrimitive.content)
+        assertNull(items["resolution_hdr_audio"])
+        assertEquals(listOf("rating_imdb", "resolution"), body.order())
+        assertEquals(true, items["year"]!!.jsonObject["enabled"]!!.jsonPrimitive.content.toBoolean())
+    }
+
+    @Test
+    fun `save at revision 25 writes the document without the revision 26 badge`() = runTest {
+        val body = saveStyledDocument(revision(25))
+
+        assertEquals("plate", body["preset"]!!.jsonPrimitive.content)
+        assertEquals(1.25, body["style"]!!.jsonObject["size"]!!.jsonPrimitive.content.toDouble())
+        val items = body["items"]!!.jsonObject
+        val resolution = items["resolution"]!!.jsonObject
+        assertEquals("left-edge", resolution["position"]!!.jsonPrimitive.content)
+        assertEquals(REF_A, resolution["image"]!!.jsonPrimitive.content)
+        assertEquals(REF_B, resolution["valueImages"]!!.jsonObject["4k"]!!.jsonPrimitive.content)
+        assertEquals("right-edge", items["rating_imdb"]!!.jsonObject["position"]!!.jsonPrimitive.content)
+        assertNull(items["resolution_hdr_audio"])
+        assertEquals(listOf("rating_imdb", "resolution"), body.order())
+    }
+
+    @Test
+    fun `save at revision 26 writes everything`() = runTest {
+        val body = saveStyledDocument(revision(26))
+
+        assertEquals("plate", body["preset"]!!.jsonPrimitive.content)
+        val items = body["items"]!!.jsonObject
+        assertEquals("left-edge", items["resolution"]!!.jsonObject["position"]!!.jsonPrimitive.content)
+        assertTrue(items["resolution_hdr_audio"]!!.jsonObject["enabled"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals(listOf("rating_imdb", "resolution_hdr_audio", "resolution"), body.order())
+        assertEquals(
+            OverlaySchema.serialize(OverlaySchema.parse(styledDocument(withCombinedAudio = true)).withYear()),
+            OverlaySchema.serialize(OverlaySchema.parse(body)),
+        )
+    }
+
+    @Test
+    fun `save with an unknown revision is conservative and keeps only gated ids already stored`() = runTest {
+        for (stored in listOf(true, false)) {
+            val failure = ApiResult.NetworkError(java.io.IOException("offline"))
+            val body = saveStyledDocument(failure, withCombinedAudio = stored)
+
+            assertEquals("classic", body["preset"]!!.jsonPrimitive.content, "stored=$stored")
+            assertNull(body["style"], "stored=$stored")
+            val items = body["items"]!!.jsonObject
+            assertEquals("top-left", items["resolution"]!!.jsonObject["position"]!!.jsonPrimitive.content)
+            assertNull(items["resolution"]!!.jsonObject["image"])
+            assertEquals("top-right", items["rating_imdb"]!!.jsonObject["position"]!!.jsonPrimitive.content)
+            assertEquals(stored, items["resolution_hdr_audio"] != null, "stored=$stored")
+        }
+    }
+
+    @Test
+    fun `failed capabilities read does not block hydration`() = runTest {
+        val api = RecordingOverlaySettingsApi(
+            storedValue = Json.parseToJsonElement(styledDocument(withCombinedAudio = true)),
+        )
+        api.capabilities = ApiResult.Error(500, "internal", "Capabilities failed")
+        val store = DefaultOverlayPrefsStore(SettingsRepository(api), this)
+
+        store.hydrateIfNeeded()
+        store.hydrateIfNeeded()
+
+        assertEquals(1, api.effectiveRequests.size)
+        assertNull(store.lastError.value)
+        assertEquals(OverlaySchema.parse(styledDocument(withCombinedAudio = true)), store.prefs.value)
+    }
+
+    @Test
+    fun `save keeps ids, fields and order this client does not know`() = runTest {
+        val stored = """
+            {"version":2,"preset":"classic","futureRoot":{"a":1},
+             "style":{"size":1.5,"glow":true},
+             "order":["advisory_age","resolution","request_status"],
+             "items":{
+               "advisory_age":{"enabled":true,"position":"top-right","tint":"amber"},
+               "request_status":{"enabled":false,"position":"bottom-left"},
+               "resolution":{"enabled":true,"position":"top-right","image":"$REF_A","valueImages":{"4k":"$REF_B"},"halo":2}
+             }}
+        """.trimIndent()
+        val api = RecordingOverlaySettingsApi(storedValue = Json.parseToJsonElement(stored))
+        api.capabilities = revision(26)
+        val store = DefaultOverlayPrefsStore(SettingsRepository(api), this)
+        store.refresh()
+
+        store.setPrefs(store.prefs.value.withYear())
+        advanceUntilIdle()
+
+        val body = api.puts.single().value.jsonObject
+        assertEquals(JsonObject(mapOf("a" to JsonPrimitive(1))), body["futureRoot"])
+        assertEquals(true, body["style"]!!.jsonObject["glow"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals(listOf("advisory_age", "resolution", "request_status"), body.order())
+        val items = body["items"]!!.jsonObject
+        val advisory = items["advisory_age"]!!.jsonObject
+        assertEquals("right-edge", advisory["position"]!!.jsonPrimitive.content)
+        assertEquals("amber", advisory["tint"]!!.jsonPrimitive.content)
+        assertEquals("bottom-left", items["request_status"]!!.jsonObject["position"]!!.jsonPrimitive.content)
+        val resolution = items["resolution"]!!.jsonObject
+        assertEquals("right-edge", resolution["position"]!!.jsonPrimitive.content)
+        assertEquals(REF_A, resolution["image"]!!.jsonPrimitive.content)
+        assertEquals(REF_B, resolution["valueImages"]!!.jsonObject["4k"]!!.jsonPrimitive.content)
+        assertEquals(2, resolution["halo"]!!.jsonPrimitive.content.toInt())
+        assertTrue(items["year"]!!.jsonObject["enabled"]!!.jsonPrimitive.content.toBoolean())
+    }
+
+    // ---- image library ----
+
+    @Test
+    fun `card prefs drop unlisted image refs while prefs and the save keep them`() = runTest {
+        val stored = """
+            {"version":2,"preset":"classic","order":[],
+             "items":{"resolution":{"enabled":true,"position":"top-left","image":"$REF_B","valueImages":{"4k":"$REF_A","8k":"$REF_B"}}}}
+        """.trimIndent()
+        val api = RecordingOverlaySettingsApi(storedValue = Json.parseToJsonElement(stored))
+        api.capabilities = revision(26)
+        api.images = listOf(image(REF_A))
+        val store = DefaultOverlayPrefsStore(SettingsRepository(api), this)
+        store.refresh()
+
+        assertEquals(listOf(image(REF_A)), store.images.value)
+        val card = store.cardPrefs.value.items.getValue(OverlayId.Resolution)
+        assertNull(card.image)
+        assertEquals(mapOf("4k" to REF_A), card.valueImages)
+        val editable = store.prefs.value.items.getValue(OverlayId.Resolution)
+        assertEquals(REF_B, editable.image)
+        assertEquals(mapOf("4k" to REF_A, "8k" to REF_B), editable.valueImages)
+
+        store.setPrefs(store.prefs.value.withYear())
+        advanceUntilIdle()
+        val written = api.puts.single().value.jsonObject["items"]!!.jsonObject["resolution"]!!.jsonObject
+        assertEquals(REF_B, written["image"]!!.jsonPrimitive.content)
+        assertEquals(REF_B, written["valueImages"]!!.jsonObject["8k"]!!.jsonPrimitive.content)
+        assertNull(store.cardPrefs.value.items.getValue(OverlayId.Resolution).image)
+        assertTrue(store.cardPrefs.value.items.getValue(OverlayId.Year).enabled)
+
+        // A failed config read keeps the library it had.
+        api.configFailure = ApiResult.NetworkError(java.io.IOException("offline"))
+        store.refresh()
+        assertEquals(listOf(image(REF_A)), store.images.value)
+        assertEquals(mapOf("4k" to REF_A), store.cardPrefs.value.items.getValue(OverlayId.Resolution).valueImages)
+
+        // A library that lists the image again draws it.
+        api.configFailure = null
+        api.images = listOf(image(REF_A), image(REF_B))
+        store.refresh()
+        assertEquals(REF_B, store.cardPrefs.value.items.getValue(OverlayId.Resolution).image)
+        assertTrue(store.cardPrefs.value === store.prefs.value)
+
+        store.clear()
+        assertEquals(emptyList(), store.images.value)
+        assertEquals(OverlaySchema.buildDefaults(), store.cardPrefs.value)
+    }
+
+    @Test
+    fun `admin defaults string still parses`() = runTest {
+        val api = RecordingOverlaySettingsApi(adminDefaults = """{"version":2,"preset":"band","order":[],"items":{}}""")
+        val store = DefaultOverlayPrefsStore(SettingsRepository(api), this)
+
+        store.refresh()
+
+        assertEquals(PresetId.Band, store.prefs.value.preset)
+        assertFalse(store.hasUserOverride)
+    }
+
+    /** Hydrate [styledDocument], turn on `year`, save, and return the PUT body. */
+    private suspend fun kotlinx.coroutines.test.TestScope.saveStyledDocument(
+        capabilities: ApiResult<SettingsContractCapabilities>,
+        withCombinedAudio: Boolean = true,
+    ): JsonObject {
+        val api = RecordingOverlaySettingsApi(
+            storedValue = Json.parseToJsonElement(styledDocument(withCombinedAudio)),
+        )
+        api.capabilities = capabilities
+        val store = DefaultOverlayPrefsStore(SettingsRepository(api), this)
+        store.refresh()
+        store.setPrefs(store.prefs.value.withYear())
+        advanceUntilIdle()
+        return api.puts.single().value.jsonObject
+    }
+
+    private fun styledDocument(withCombinedAudio: Boolean): String {
+        val combined = if (withCombinedAudio) {
+            """"resolution_hdr_audio":{"enabled":true,"position":"bottom-left"},"""
+        } else {
+            ""
+        }
+        val order = if (withCombinedAudio) {
+            """["rating_imdb","resolution_hdr_audio","resolution"]"""
+        } else {
+            """["rating_imdb","resolution"]"""
+        }
+        return """
+            {"version":2,"preset":"plate","style":{"size":1.25},"order":$order,
+             "items":{$combined
+               "resolution":{"enabled":true,"position":"left-edge","image":"$REF_A","valueImages":{"4k":"$REF_B"}},
+               "rating_imdb":{"enabled":true,"position":"right-edge"}}}
+        """.trimIndent()
+    }
+
+    private fun CardOverlayPrefs.withYear(): CardOverlayPrefs =
+        copy(items = items + (OverlayId.Year to items.getValue(OverlayId.Year).copy(enabled = true)))
+
+    private fun JsonObject.order(): List<String> = getValue("order").jsonArray.map { it.jsonPrimitive.content }
+
+    private fun revision(manifestRevision: Int): ApiResult<SettingsContractCapabilities> =
+        ApiResult.Success(SettingsContractCapabilities(apiVersion = 1, manifestRevision = manifestRevision))
+
+    private fun image(ref: String) =
+        OverlayImage(ref = ref, name = ref.take(4), url = "https://silo.test/api/v2/overlay-images/$ref", width = 300, height = 120)
+
     private fun prefs(preset: PresetId): CardOverlayPrefs =
         OverlaySchema.buildDefaults().copy(preset = preset)
+
+    private companion object {
+        val REF_A = "a".repeat(64) + ".webp"
+        val REF_B = "b".repeat(64) + ".webp"
+    }
 }
 
 private class RecordingOverlaySettingsApi(
@@ -386,6 +622,10 @@ private class RecordingOverlaySettingsApi(
     var overlayEnabled = true
     var putFailure: ApiResult<StoredSettingValue>? = null
     var deleteFailure: ApiResult<Unit>? = null
+    var capabilities: ApiResult<SettingsContractCapabilities> =
+        ApiResult.Success(SettingsContractCapabilities(apiVersion = 1, manifestRevision = SettingKeys.REVISION))
+    var images: List<OverlayImage> = emptyList()
+    var configFailure: ApiResult<OverlayConfigResponse>? = null
     private var nextEffectiveReadGate: CallGate? = null
     private var nextPutGate: CallGate? = null
     private var nextDeleteGate: CallGate? = null
@@ -406,7 +646,11 @@ private class RecordingOverlaySettingsApi(
     }
 
     override suspend fun overlayConfig(): ApiResult<OverlayConfigResponse> =
-        ApiResult.Success(OverlayConfigResponse(enabled = overlayEnabled, defaults = adminDefaults))
+        configFailure ?: ApiResult.Success(
+            OverlayConfigResponse(enabled = overlayEnabled, defaults = adminDefaults, images = images),
+        )
+
+    override suspend fun getContractCapabilities(): ApiResult<SettingsContractCapabilities> = capabilities
 
     override suspend fun getEffectiveValues(
         keys: List<String>,

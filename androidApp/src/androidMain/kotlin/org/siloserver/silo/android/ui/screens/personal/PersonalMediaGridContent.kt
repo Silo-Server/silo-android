@@ -36,7 +36,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
@@ -52,10 +51,11 @@ import org.siloserver.silo.android.ui.components.PosterGridSkeleton
 import org.siloserver.silo.android.ui.screens.browse.CatalogGrid
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.components.MediaCardContextMenu
-import org.siloserver.silo.android.ui.components.WatchedBadge
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.overlays.CardOverlayVariant
+import org.siloserver.silo.common.overlays.CardWatchStatusBadge
+import org.siloserver.silo.overlays.CardWatchStatus
 import org.siloserver.silo.common.overlays.CardOverlays
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.model.catalog.BrowseItem
@@ -362,9 +362,7 @@ fun MediaGridItem(
                 )
             }
 
-            if (userState.played) {
-                WatchedBadge(modifier = Modifier.align(Alignment.TopEnd))
-            }
+            CardWatchStatusBadge(CardWatchStatus.of(userState), Modifier.fillMaxSize())
         }
 
         androidx.compose.material3.Text(

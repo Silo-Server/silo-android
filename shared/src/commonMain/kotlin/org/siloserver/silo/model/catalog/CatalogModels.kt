@@ -15,8 +15,20 @@ import kotlinx.serialization.json.JsonPrimitive
 data class MediaItemUserState(
     val played: Boolean = false,
     @SerialName("is_favorite") val isFavorite: Boolean = false,
-    @SerialName("in_watchlist") val inWatchlist: Boolean = false
-)
+    @SerialName("in_watchlist") val inWatchlist: Boolean = false,
+    /** Episodes the profile has watched; the v2 catalog sends it only for a series or season the profile has not finished. */
+    @SerialName("watched_count") val watchedCount: Int? = null,
+    /** Available episodes the profile has not watched; sent only with [watchedCount]. */
+    @SerialName("unplayed_count") val unplayedCount: Int? = null,
+) {
+    /**
+     * This state optimistically marked watched or unwatched. Both episode
+     * counts go to zero, so a stale "N left" never shows beside the new state
+     * until the server's next answer brings real counts.
+     */
+    fun withPlayed(played: Boolean): MediaItemUserState =
+        copy(played = played, watchedCount = 0, unplayedCount = 0)
+}
 
 /**
  * Tech-level overlay summary derived server-side from the best-ranked file
@@ -42,7 +54,7 @@ data class OverlaySummary(
 
 /** A watched mutation clears resume progress, including optimistic unwatched resets. */
 fun BrowseItem.withWatched(watched: Boolean): BrowseItem = copy(
-    userState = (userState ?: MediaItemUserState()).copy(played = watched),
+    userState = (userState ?: MediaItemUserState()).withPlayed(watched),
     positionSeconds = 0.0,
 )
 

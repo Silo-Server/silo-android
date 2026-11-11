@@ -624,7 +624,7 @@ private fun List<ResolvedSection>.mapItem(
 
 /** Watched and unwatched both reset resume progress, as the server does. */
 private fun SectionItem.withPlayed(played: Boolean): SectionItem =
-    copy(userState = (userState ?: MediaItemUserState()).copy(played = played), positionSeconds = 0.0)
+    copy(userState = (userState ?: MediaItemUserState()).withPlayed(played), positionSeconds = 0.0)
 
 private fun SectionItem.withFavorite(favorite: Boolean): SectionItem =
     copy(userState = (userState ?: MediaItemUserState()).copy(isFavorite = favorite))

@@ -10,47 +10,48 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.overlays.OverlayIconId
 
 /**
- * Android port of Apple's `OverlayIcon`
- * (iosApp/Overlays/OverlayIcon.swift). The generic glyph set (star,
- * clock, tv, …) is drawn with [Canvas] so this stays free of any
- * material-icons dependency — android-shared only links the core Compose
- * runtime/foundation/ui artifacts. Brand marks (HDR10, DV, Atmos, AV1,
- * Tomato) render as short text tokens via [overlayBrandToken]; the badge
- * composable lays those out as text rather than calling [OverlayIconGlyph].
+ * The overlay icons. Generic glyphs (star, clock, tv, …) are drawn with
+ * [Canvas] so this stays free of any icon-font dependency, scaling cleanly
+ * at badge sizes. The wordmarks (HDR, HDR10, ATMOS, AV1) are text, drawn by
+ * the badge from [overlayWordmark]; the Dolby Vision mark is web's glyph
+ * (`web/src/lib/overlays/icons.tsx`).
  */
 
 /**
- * For brand-mark icons that have no clean vector at 10pt, returns the
- * short text token to render in place of a glyph (e.g. "DV", "HDR10").
- * Returns `null` for icons that should draw a [OverlayIconGlyph] instead.
+ * The text a wordmark icon spells (web `WORDMARK_TEXT`), or `null` for an
+ * icon drawn as a glyph by [OverlayIconGlyph]. A badge whose label says the
+ * same thing drops the label, so it doesn't read "HDR10 HDR10".
  */
-internal fun overlayBrandToken(iconId: OverlayIconId): String? =
+internal fun overlayWordmark(iconId: OverlayIconId): String? =
     when (iconId) {
         OverlayIconId.Hdr10 -> "HDR10"
         OverlayIconId.Hdr -> "HDR"
-        OverlayIconId.DolbyVision -> "DV"
         OverlayIconId.Atmos -> "ATMOS"
         OverlayIconId.Av1 -> "AV1"
         else -> null
     }
 
-/**
- * The Tomato brand mark keeps an official-ish red when the preset does
- * not force a tint; the badge passes this through so a "minimal" preset
- * still paints it in the accent/foreground color.
- */
-internal val OverlayTomatoColor = Color(red = 0.98f, green = 0.20f, blue = 0.04f)
+/** Web's `DolbyVisionMark` on its 16-unit grid: a ring with its right half filled. */
+private val dolbyVisionPath: Path by lazy {
+    PathParser()
+        .parsePathString(
+            "M8 2c3.3 0 6 2.7 6 6s-2.7 6-6 6-6-2.7-6-6 2.7-6 6-6zm0 1.5A4.5 4.5 0 1 0 8 12.5" +
+                "a4.5 4.5 0 0 0 0-9zm0 0v9a4.5 4.5 0 0 0 0-9z",
+        )
+        .toPath()
+}
 
 /**
- * Draws a generic overlay glyph at [size], tinted [tint]. Brand-mark ids
- * that resolve to a text token via [overlayBrandToken] should NOT be
- * routed here (the badge renders them as text); if one slips through it
- * falls back to the question-mark glyph, matching Apple's default arm.
+ * Draws a generic overlay glyph at [size], tinted [tint]. Wordmark ids
+ * ([overlayWordmark]) are drawn as text by the badge; if one slips through
+ * it falls back to a dot.
  */
 @Composable
 internal fun OverlayIconGlyph(
@@ -69,6 +70,9 @@ internal fun OverlayIconGlyph(
 
             OverlayIconId.Tomato ->
                 drawCircle(tint, radius = w * 0.42f, center = Offset(w / 2f, h / 2f))
+
+            OverlayIconId.DolbyVision ->
+                scale(w / 16f, h / 16f, pivot = Offset.Zero) { drawPath(dolbyVisionPath, tint) }
 
             OverlayIconId.Clock, OverlayIconId.Calendar -> {
                 drawCircle(tint, radius = w * 0.42f, center = Offset(w / 2f, h / 2f), style = stroke)
@@ -142,7 +146,7 @@ internal fun OverlayIconGlyph(
                 drawLine(tint, Offset(w * 0.55f, h * 0.6f), Offset(w * 0.72f, h * 0.6f), stroke.width)
             }
 
-            // Brand marks render as text tokens; if routed here, draw a dot.
+            // Wordmarks render as text; if routed here, draw a dot.
             else -> drawCircle(tint, radius = w * 0.18f, center = Offset(w / 2f, h / 2f))
         }
     }

@@ -71,12 +71,8 @@ fun applyLocalPlaybackProgress(
 private fun SectionItem.withLocalContentState(state: LocalContentState?): SectionItem {
     if (state == null) return this
     val base = userState ?: MediaItemUserState()
-    return copy(
-        userState = base.copy(
-            played = state.watched ?: base.played,
-            isFavorite = state.favorite ?: base.isFavorite,
-        ),
-    )
+    val watched = state.watched?.let(base::withPlayed) ?: base
+    return copy(userState = watched.copy(isFavorite = state.favorite ?: base.isFavorite))
 }
 
 private fun LeafItemUserData.withLocalProgress(progress: LocalPlaybackProgress): LeafItemUserData =

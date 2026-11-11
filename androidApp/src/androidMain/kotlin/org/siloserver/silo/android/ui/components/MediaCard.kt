@@ -44,8 +44,10 @@ import java.util.UUID
 import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.overlays.CardOverlayVariant
 import org.siloserver.silo.common.overlays.CardOverlays
+import org.siloserver.silo.common.overlays.CardWatchStatusBadge
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.model.catalog.MediaItemUserState
+import org.siloserver.silo.overlays.CardWatchStatus
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.currentNumberLocale
@@ -73,9 +75,9 @@ object MediaGridDefaults {
 /**
  * The core media poster card used throughout the app.
  *
- * 120dp × 180dp poster (2:3, matching server poster artwork) with a white
- * watched-checkmark circle in the top-right and a thin progress bar at the
- * bottom of the artwork.
+ * 120dp × 180dp poster (2:3, matching server poster artwork) with the watch
+ * status (a check, or the episodes left) in the top-right and a thin progress
+ * bar at the bottom of the artwork.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -176,22 +178,24 @@ fun MediaCard(
             )
 
             // Card-overlay badge layer (resolution / audio / ratings, etc.).
-            // Sits over the image but under the watched-check + progress so
+            // Sits over the image but under the watch status and progress so
             // those remain visually on top. Gated on the admin/user enable
             // flag and only when the caller supplied overlay data.
+            val hasProgressBar = progress != null && progress > 0f
             if (overlayState.enabled && overlay != null) {
                 CardOverlays(
                     data = overlay,
                     prefs = overlayState.prefs,
                     variant = CardOverlayVariant.Poster,
+                    hasProgressBar = hasProgressBar,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
 
-            // Watched indicator: white circle + checkmark, top-right.
-            // Mirrors iOS MediaCard.swift:104–119.
-            if (userState?.played == true) {
-                WatchedBadge(modifier = Modifier.align(Alignment.TopEnd))
+            // Watched check or episodes left, top-right, on poster-shaped
+            // artwork whether or not badges are on (web CardWatchStatus).
+            if (artworkAspectRatio <= 1f) {
+                CardWatchStatusBadge(CardWatchStatus.of(userState), Modifier.fillMaxSize())
             }
 
             if (badge != null) {
@@ -226,7 +230,7 @@ fun MediaCard(
             }
 
             // Progress bar at bottom of artwork.
-            if (progress != null && progress > 0f) {
+            if (hasProgressBar) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)

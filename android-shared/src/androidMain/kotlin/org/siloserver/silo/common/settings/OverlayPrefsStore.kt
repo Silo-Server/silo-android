@@ -4,7 +4,9 @@ import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SettingScope
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.overlays.CardOverlayPrefs
+import org.siloserver.silo.overlays.OverlayImage
 import org.siloserver.silo.overlays.OverlaySchema
+import org.siloserver.silo.overlays.OverlayServerSupport
 import org.siloserver.silo.repository.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -39,6 +41,11 @@ import kotlinx.serialization.json.booleanOrNull
  * iOS, and tvOS. Hydrated lazily on first read; successful canonical writes
  * become the confirmed local state so card views immediately see the shape
  * they just persisted.
+ *
+ * A save writes the document as the connected server can store it (web
+ * `useOverlayPrefs`: `overlayPrefsForServer`), judged by the server's
+ * settings manifest revision and the overlay ids its stored value already
+ * holds. While the revision is unknown the write is conservative.
  */
 interface OverlayPrefsStore {
     /**
@@ -50,8 +57,27 @@ interface OverlayPrefsStore {
      */
     val enabled: StateFlow<Boolean>
 
-    /** Resolved prefs (user value > admin defaults > registry defaults). */
+    /**
+     * Resolved prefs (user value > admin defaults > registry defaults), as
+     * stored: image refs stay even when the library no longer lists them.
+     * This is the document an editor edits and [setPrefs] writes back.
+     */
     val prefs: StateFlow<CardOverlayPrefs>
+
+    /**
+     * The document cards render: [prefs] without image refs [images] does not
+     * list (web `withoutUnlistedImages`), so a deleted image costs no request
+     * per card. The same instance as [prefs] when nothing is dropped.
+     */
+    val cardPrefs: StateFlow<CardOverlayPrefs>
+
+    /**
+     * Images administrators uploaded for badges, in upload order, as
+     * `GET /api/v2/settings/overlay-config` lists them. Each [OverlayImage.url]
+     * is absolute (resolved against the server that listed it). A failed
+     * config read keeps the last list.
+     */
+    val images: StateFlow<List<OverlayImage>>
 
     val isLoading: StateFlow<Boolean>
     val lastError: StateFlow<String?>
@@ -82,11 +108,15 @@ class DefaultOverlayPrefsStore(
 
     private val _enabled = MutableStateFlow(true)
     private val _prefs = MutableStateFlow(OverlaySchema.buildDefaults())
+    private val _cardPrefs = MutableStateFlow(_prefs.value)
+    private val _images = MutableStateFlow<List<OverlayImage>>(emptyList())
     private val _isLoading = MutableStateFlow(false)
     private val _lastError = MutableStateFlow<String?>(null)
 
     override val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
     override val prefs: StateFlow<CardOverlayPrefs> = _prefs.asStateFlow()
+    override val cardPrefs: StateFlow<CardOverlayPrefs> = _cardPrefs.asStateFlow()
+    override val images: StateFlow<List<OverlayImage>> = _images.asStateFlow()
     override val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
     override val lastError: StateFlow<String?> = _lastError.asStateFlow()
 
@@ -114,6 +144,18 @@ class DefaultOverlayPrefsStore(
 
     @Volatile
     private var confirmedHasUserOverride: Boolean = false
+
+    // What the server can store in ui.card_overlays (web
+    // `OverlayServerSupport`). [manifestRevision] is null until a capabilities
+    // read answers for this session; a failed read keeps the last answer.
+    // [storedOverlayIds] are the ids of the profile value behind
+    // [confirmedPrefs]: the last successful read's, or the last successful
+    // PUT's. Both change only under [stateLock].
+    private var manifestRevision: Int? = null
+    private var storedOverlayIds: Set<String> = emptySet()
+
+    // The refs [images] lists, for [_cardPrefs]. Changes only under [stateLock].
+    private var listedImageRefs: Set<String> = emptySet()
 
     // Refreshes run on a foreground IO coroutine while edits are drained on
     // the application Main scope. Keep their short state commits atomic so a
@@ -187,12 +229,14 @@ class DefaultOverlayPrefsStore(
         try {
             var resolvedEnabled = true
             var resolvedAdminDefaults: String? = null
+            var resolvedImages: List<OverlayImage> = emptyList()
             var configFetchFailed = false
             var configError: String? = null
             when (val config = repository.overlayConfig()) {
                 is ApiResult.Success -> {
                     resolvedEnabled = config.data.enabled
                     resolvedAdminDefaults = config.data.defaults
+                    resolvedImages = config.data.images
                 }
                 is ApiResult.Error -> {
                     configError = config.message
@@ -242,15 +286,21 @@ class DefaultOverlayPrefsStore(
                 }
             }
 
+            // Only decides how the next save is shaped, so a failure neither
+            // fails the refresh nor blocks hydration.
+            val resolvedRevision = fetchManifestRevision()
+
             val resolvedPrefs = if (userFetchFailed) {
                 null
+            } else if (userValue != null) {
+                OverlaySchema.parse(userValue)
             } else {
                 val defaults = if (configFetchFailed) {
                     refreshState.adminDefaultsRaw
                 } else {
                     resolvedAdminDefaults
                 }
-                OverlaySchema.parse(userValue?.toString() ?: defaults)
+                OverlaySchema.parse(defaults)
             }
             val resolvedAdminPrefs = if (configFetchFailed) {
                 null
@@ -266,12 +316,18 @@ class DefaultOverlayPrefsStore(
                 if (sessionStateEpoch == refreshState.sessionStateEpoch) {
                     val userResponseIsCurrent =
                         canonicalStateEpoch == refreshState.canonicalStateEpoch
+                    if (resolvedRevision != null) manifestRevision = resolvedRevision
                     // Preserve cached config state on transient failures. The
                     // sentinel `resolvedEnabled = true` is only valid when the
                     // fetch actually succeeded.
                     if (!configFetchFailed) {
                         serverEnabled = resolvedEnabled
                         adminDefaultsRaw = resolvedAdminDefaults
+                        if (_images.value != resolvedImages) {
+                            _images.value = resolvedImages
+                            listedImageRefs = resolvedImages.mapTo(HashSet()) { it.ref }
+                            publishPrefs(_prefs.value)
+                        }
                         // When the current confirmed state has no user value,
                         // the admin baseline is independently authoritative.
                         // Keep an optimistic edit visible, but update its
@@ -287,7 +343,7 @@ class DefaultOverlayPrefsStore(
                                     hasUserOverride == confirmedHasUserOverride
                             confirmedPrefs = resolvedAdminPrefs
                             if (wasShowingConfirmedState) {
-                                _prefs.value = resolvedAdminPrefs
+                                publishPrefs(resolvedAdminPrefs)
                             }
                         }
                     }
@@ -305,9 +361,10 @@ class DefaultOverlayPrefsStore(
                         if (!userFetchFailed && resolvedPrefs != null) {
                             val hasOverride = userValue != null
                             hasUserOverride = hasOverride
-                            _prefs.value = resolvedPrefs
+                            publishPrefs(resolvedPrefs)
                             confirmedHasUserOverride = hasOverride
                             confirmedPrefs = resolvedPrefs
+                            storedOverlayIds = OverlaySchema.storedOverlayIds(userValue)
                         }
                         // Only complete hydration when BOTH endpoints gave a
                         // definitive answer.
@@ -332,7 +389,7 @@ class DefaultOverlayPrefsStore(
     override fun setPrefs(next: CardOverlayPrefs) {
         val generation = synchronized(stateLock) {
             canonicalStateEpoch += 1
-            _prefs.value = next
+            publishPrefs(next)
             hasUserOverride = true
             writeGeneration
         }
@@ -347,7 +404,7 @@ class DefaultOverlayPrefsStore(
                             // snapshot. A preceding write may have completed
                             // between the immediate UI update above and this
                             // coroutine acquiring the mutex.
-                            _prefs.value = next
+                            publishPrefs(next)
                             hasUserOverride = true
                             true
                         }
@@ -383,7 +440,10 @@ class DefaultOverlayPrefsStore(
             // for the cleared session reaches the wire.
             if (currentCoroutineContext()[Job]?.isActive != true) return
             if (writeGeneration != generation) return
-            val json = Json.parseToJsonElement(OverlaySchema.serialize(snapshot))
+            val support = serverSupportForWrite(generation)
+            if (currentCoroutineContext()[Job]?.isActive != true) return
+            if (writeGeneration != generation) return
+            val json = Json.parseToJsonElement(OverlaySchema.serialize(snapshot, support))
             if (currentCoroutineContext()[Job]?.isActive != true) return
             if (writeGeneration != generation) return
             when (val result = repository.setProfileValue(OVERLAY_SETTING_KEY, json)) {
@@ -399,10 +459,13 @@ class DefaultOverlayPrefsStore(
                                 canonicalStateEpoch += 1
                                 confirmedPrefs = snapshot
                                 confirmedHasUserOverride = true
+                                // The server now holds exactly what this PUT
+                                // wrote, so those are the ids it accepts.
+                                storedOverlayIds = OverlaySchema.storedOverlayIds(json)
                                 // Do not paint an older successful snapshot
                                 // over a newer edit that is already queued.
                                 if (pendingSnapshot == null) {
-                                    _prefs.value = snapshot
+                                    publishPrefs(snapshot)
                                     hasUserOverride = true
                                     _lastError.value = null
                                 }
@@ -437,7 +500,7 @@ class DefaultOverlayPrefsStore(
                 // server-confirmed document instead of leaving a rejected
                 // value on screen.
                 if (pendingSnapshot == null) {
-                    _prefs.value = confirmedPrefs
+                    publishPrefs(confirmedPrefs)
                     hasUserOverride = confirmedHasUserOverride
                 }
                 _lastError.value = message
@@ -487,9 +550,10 @@ class DefaultOverlayPrefsStore(
                         val fallback = OverlaySchema.parse(adminDefaultsRaw)
                         confirmedHasUserOverride = false
                         confirmedPrefs = fallback
+                        storedOverlayIds = emptySet()
                         if (isStillLatestMutation) {
                             hasUserOverride = false
-                            _prefs.value = fallback
+                            publishPrefs(fallback)
                         }
                         isStillLatestMutation
                     }
@@ -503,7 +567,7 @@ class DefaultOverlayPrefsStore(
                             canonicalStateEpoch == resetState.canonicalStateEpoch
                         canonicalStateEpoch += 1
                         if (!isStillLatestMutation) return@synchronized
-                        _prefs.value = confirmedPrefs
+                        publishPrefs(confirmedPrefs)
                         hasUserOverride = confirmedHasUserOverride
                         _lastError.value = result.message
                     }
@@ -516,7 +580,7 @@ class DefaultOverlayPrefsStore(
                             canonicalStateEpoch == resetState.canonicalStateEpoch
                         canonicalStateEpoch += 1
                         if (!isStillLatestMutation) return@synchronized
-                        _prefs.value = confirmedPrefs
+                        publishPrefs(confirmedPrefs)
                         hasUserOverride = confirmedHasUserOverride
                         _lastError.value = result.exception.message
                     }
@@ -545,7 +609,11 @@ class DefaultOverlayPrefsStore(
             serverEnabled = true
             profileEnabled = null
             _enabled.value = true
-            _prefs.value = OverlaySchema.buildDefaults()
+            _images.value = emptyList()
+            listedImageRefs = emptySet()
+            manifestRevision = null
+            storedOverlayIds = emptySet()
+            publishPrefs(OverlaySchema.buildDefaults())
             confirmedPrefs = _prefs.value
             adminDefaultsRaw = null
             hasUserOverride = false
@@ -559,6 +627,45 @@ class DefaultOverlayPrefsStore(
             activeWrite
         }
         inflight?.cancel()
+    }
+
+    /**
+     * Publish [prefs] as the stored document and its render form. Callers hold
+     * [stateLock], so the two flows never describe different documents.
+     */
+    private fun publishPrefs(prefs: CardOverlayPrefs) {
+        _prefs.value = prefs
+        _cardPrefs.value = OverlaySchema.withoutUnlistedImages(prefs, listedImageRefs)
+    }
+
+    /**
+     * The server's settings manifest revision, or null when it is unknown:
+     * the read failed, or the server speaks another settings API version
+     * (web reads `manifest_revision` only for `api_version` 1).
+     */
+    private suspend fun fetchManifestRevision(): Int? =
+        when (val caps = repository.contractCapabilities()) {
+            is ApiResult.Success ->
+                caps.data.manifestRevision.takeIf { caps.data.apiVersion == SETTINGS_API_VERSION }
+            is ApiResult.Error, is ApiResult.NetworkError -> null
+        }
+
+    /**
+     * What the server accepts for the next PUT. When no capabilities read has
+     * answered yet this session, try once more; if that fails too the write
+     * is conservative, as web's is with an unknown revision.
+     */
+    private suspend fun serverSupportForWrite(generation: Int): OverlayServerSupport {
+        synchronized(stateLock) {
+            manifestRevision?.let { return OverlayServerSupport(it, storedOverlayIds) }
+        }
+        val fetched = fetchManifestRevision()
+        return synchronized(stateLock) {
+            if (fetched != null && writeGeneration == generation && manifestRevision == null) {
+                manifestRevision = fetched
+            }
+            OverlayServerSupport(manifestRevision ?: fetched, storedOverlayIds)
+        }
     }
 
     private data class RefreshState(
@@ -575,5 +682,6 @@ class DefaultOverlayPrefsStore(
     companion object {
         const val OVERLAY_SETTING_KEY = SettingKeys.UI_CARD_OVERLAYS
         const val OVERLAYS_ENABLED_SETTING_KEY = SettingKeys.UI_CARD_OVERLAYS_ENABLED
+        private const val SETTINGS_API_VERSION = 1
     }
 }

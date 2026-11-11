@@ -188,12 +188,8 @@ class BrowseViewModel(
         return items.map { item ->
             val ls = local[item.contentId] ?: return@map item
             val base = item.userState ?: MediaItemUserState()
-            item.copy(
-                userState = base.copy(
-                    played = ls.watched ?: base.played,
-                    isFavorite = ls.favorite ?: base.isFavorite,
-                ),
-            )
+            val watched = ls.watched?.let(base::withPlayed) ?: base
+            item.copy(userState = watched.copy(isFavorite = ls.favorite ?: base.isFavorite))
         }
     }
 
