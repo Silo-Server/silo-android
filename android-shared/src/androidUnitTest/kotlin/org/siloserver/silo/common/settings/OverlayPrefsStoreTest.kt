@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.settings
 
+import kotlin.test.assertNotNull
+import org.siloserver.silo.overlays.OverlayPosition
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.EffectiveSettingValuesResponse
 import org.siloserver.silo.model.settings.SettingKeys
@@ -413,19 +415,42 @@ class OverlayPrefsStoreTest {
     }
 
     @Test
-    fun `save with an unknown revision is conservative and keeps only gated ids already stored`() = runTest {
-        for (stored in listOf(true, false)) {
-            val failure = ApiResult.NetworkError(java.io.IOException("offline"))
-            val body = saveStyledDocument(failure, withCombinedAudio = stored)
+    fun `save with an unknown revision is refused rather than downgraded`() = runTest {
+        val api = RecordingOverlaySettingsApi(
+            storedValue = Json.parseToJsonElement(styledDocument(withCombinedAudio = true)),
+        )
+        api.capabilities = ApiResult.NetworkError(java.io.IOException("offline"))
+        val store = DefaultOverlayPrefsStore(SettingsRepository(api), this)
+        store.refresh()
+        val stored = store.prefs.value
 
-            assertEquals("classic", body["preset"]!!.jsonPrimitive.content, "stored=$stored")
-            assertNull(body["style"], "stored=$stored")
-            val items = body["items"]!!.jsonObject
-            assertEquals("top-left", items["resolution"]!!.jsonObject["position"]!!.jsonPrimitive.content)
-            assertNull(items["resolution"]!!.jsonObject["image"])
-            assertEquals("top-right", items["rating_imdb"]!!.jsonObject["position"]!!.jsonPrimitive.content)
-            assertEquals(stored, items["resolution_hdr_audio"] != null, "stored=$stored")
-        }
+        store.setPrefs(stored.withYear())
+        advanceUntilIdle()
+
+        // A legacy-shaped PUT would erase the rails, style, images and preset.
+        assertTrue(api.puts.isEmpty())
+        assertEquals(stored, store.prefs.value)
+        assertNotNull(store.lastError.value)
+    }
+
+    @Test
+    fun `save below revision 25 confirms and shows what the server stored`() = runTest {
+        val api = RecordingOverlaySettingsApi(
+            storedValue = Json.parseToJsonElement(styledDocument(withCombinedAudio = false)),
+        )
+        api.capabilities = revision(24)
+        val store = DefaultOverlayPrefsStore(SettingsRepository(api), this)
+        store.refresh()
+
+        store.setPrefs(store.prefs.value.withYear())
+        advanceUntilIdle()
+
+        val shown = store.prefs.value
+        assertEquals(PresetId.Classic, shown.preset)
+        assertNull(shown.style)
+        assertEquals(OverlayPosition.TopLeft, shown.items.getValue(OverlayId.Resolution).position)
+        assertNull(shown.items.getValue(OverlayId.Resolution).image)
+        assertEquals(OverlaySchema.parse(api.puts.single().value), shown)
     }
 
     @Test

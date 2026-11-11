@@ -268,6 +268,7 @@ private fun TextBadge(
     val paint = badge.paint
     val label = badge.label.text()
     val score = badge.score?.text()
+    val sourceMark = badge.sourceMark?.text()
     // An uploaded image beside a rating stands for its source, so the label
     // drops the mark; the plate preset draws the mark as a chip instead.
     val sourceChip = iconImageUrl == null && preset.sourceChips && badge.sourceMark != null
@@ -336,7 +337,9 @@ private fun TextBadge(
                 iconImageUrl != null -> UploadedImage(
                     url = iconImageUrl,
                     height = metrics.iconSize,
-                    contentDescription = null,
+                    // The image stands for a rating's source while the text
+                    // shows the bare score, so it carries the source's name.
+                    contentDescription = if (scoreOnly) sourceMark else null,
                     onFailed = { onIconImageFailed(iconImageUrl) },
                 )
                 sourceChip -> SourceChip(

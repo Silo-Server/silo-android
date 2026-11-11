@@ -471,4 +471,18 @@ class OverlaySchemaTest {
         // Every value image gone is no map.
         assertNull(OverlaySchema.withoutUnlistedImages(prefs, emptySet()).items.getValue(OverlayId.Resolution).valueImages)
     }
+
+    @Test
+    fun v1Migration_keepsIdsOutsideTheRegistry() {
+        val v1 = """{"resolution":{"enabled":false,"position":"top-left"},
+            "advisory_age":{"enabled":true,"position":"top-right"}}"""
+        val prefs = OverlaySchema.parse(v1)
+        assertEquals(false, prefs.items.getValue(OverlayId.Resolution).enabled)
+        val written = kotlinx.serialization.json.Json.parseToJsonElement(OverlaySchema.serialize(prefs))
+        assertEquals(
+            """{"enabled":true,"position":"right-edge"}""",
+            (written as kotlinx.serialization.json.JsonObject)["items"]!!
+                .let { it as kotlinx.serialization.json.JsonObject }["advisory_age"].toString(),
+        )
+    }
 }

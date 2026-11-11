@@ -443,7 +443,21 @@ class DefaultOverlayPrefsStore(
             val support = serverSupportForWrite(generation)
             if (currentCoroutineContext()[Job]?.isActive != true) return
             if (writeGeneration != generation) return
-            val json = Json.parseToJsonElement(OverlaySchema.serialize(snapshot, support))
+            // Without the server's revision a save could only be the
+            // conservative legacy document, which would erase the profile's
+            // edge positions, style, images and preset on a current server.
+            // Fail the save instead: nothing is lost, and the next edit or
+            // refresh can try again once capabilities answer.
+            if (support.manifestRevision == null) {
+                reconcileFailedWrite(UNKNOWN_REVISION_ERROR, generation)
+                continue
+            }
+            val written = OverlaySchema.serialize(snapshot, support)
+            val json = Json.parseToJsonElement(written)
+            // Below revision 25 the server stores an adapted document (rails
+            // as corners, no style or images, classic for plate and band).
+            // That is what is confirmed and shown, not the edit as made.
+            val accepted = if (written == OverlaySchema.serialize(snapshot)) snapshot else OverlaySchema.parse(json)
             if (currentCoroutineContext()[Job]?.isActive != true) return
             if (writeGeneration != generation) return
             when (val result = repository.setProfileValue(OVERLAY_SETTING_KEY, json)) {
@@ -457,7 +471,7 @@ class DefaultOverlayPrefsStore(
                                 // that was captured before this PUT completed,
                                 // even when a newer snapshot is already queued.
                                 canonicalStateEpoch += 1
-                                confirmedPrefs = snapshot
+                                confirmedPrefs = accepted
                                 confirmedHasUserOverride = true
                                 // The server now holds exactly what this PUT
                                 // wrote, so those are the ids it accepts.
@@ -465,7 +479,7 @@ class DefaultOverlayPrefsStore(
                                 // Do not paint an older successful snapshot
                                 // over a newer edit that is already queued.
                                 if (pendingSnapshot == null) {
-                                    publishPrefs(snapshot)
+                                    publishPrefs(accepted)
                                     hasUserOverride = true
                                     _lastError.value = null
                                 }
@@ -652,8 +666,8 @@ class DefaultOverlayPrefsStore(
 
     /**
      * What the server accepts for the next PUT. When no capabilities read has
-     * answered yet this session, try once more; if that fails too the write
-     * is conservative, as web's is with an unknown revision.
+     * answered yet this session, try once more; if that fails too the
+     * revision stays null and the write is refused (see [flushPendingWrites]).
      */
     private suspend fun serverSupportForWrite(generation: Int): OverlayServerSupport {
         synchronized(stateLock) {
@@ -683,5 +697,6 @@ class DefaultOverlayPrefsStore(
         const val OVERLAY_SETTING_KEY = SettingKeys.UI_CARD_OVERLAYS
         const val OVERLAYS_ENABLED_SETTING_KEY = SettingKeys.UI_CARD_OVERLAYS_ENABLED
         private const val SETTINGS_API_VERSION = 1
+        private const val UNKNOWN_REVISION_ERROR = "Could not read the server's settings revision" // i18n-ignore
     }
 }

@@ -173,7 +173,7 @@ object OverlaySchema {
     }
 
     private fun migrateFromV1(obj: JsonObject): CardOverlayPrefs =
-        buildDefaults().copy(items = buildItems(obj))
+        buildDefaults().copy(items = buildItems(obj), passthroughItems = passthroughItems(obj))
 
     /**
      * Every registry id gets either its stored entry patched onto the
