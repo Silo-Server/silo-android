@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.SwitchAccount
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -128,7 +129,10 @@ import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.accountsOn
+import org.siloserver.silo.model.server.ProfileMenuRow
+import org.siloserver.silo.model.server.profileMenuRow
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.ProfileRepository
@@ -218,6 +222,8 @@ fun TvMainShell(
     onSignOut: (removeServer: Boolean) -> Unit,
     /** Opens the open account's picker. */
     onSwitchProfile: () -> Unit,
+    /** The profile menu's Add Profile: opens the new-profile form. */
+    onAddProfile: () -> Unit,
     /** Opens Change Account: the saved servers and their accounts. */
     onChangeAccount: () -> Unit,
     onPairDevice: () -> Unit,
@@ -1804,11 +1810,26 @@ fun TvMainShell(
         }
 
         if (focusState.profileMenuOpen) {
+            // The profile row follows the open account's cached list and
+            // limit, which the picker's loads and the launch and return
+            // refreshes keep current.
+            val openAccount by serverRegistry.activeAccount.collectAsState()
+            val tokenManager: TokenManager = koinInject()
+            // A remote-playback handoff session can neither switch nor add.
+            val isHandoffSession by produceState(false) { value = tokenManager.hasTemporaryScope() }
             TvProfileDropdown(
                 accountState = accountSnapshot,
                 entersMenu = focusState.profileMenuEntered,
                 focusEntryToken = focusState.profileMenuFocusEntryToken,
+                profileRow = openAccount.profileMenuRow(isHandoffSession),
                 onSwitchProfile = closeMenuAnd(onSwitchProfile),
+                // Closed as Back closes it, with focus back on the avatar:
+                // the primary profile's PIN prompt may be cancelled, which
+                // leaves the viewer on this screen.
+                onAddProfile = {
+                    focusState.dismissProfileMenu()
+                    onAddProfile()
+                },
                 onChangeAccount = closeMenuAnd(onChangeAccount),
                 onHistory = closeMenuAnd {
                     navigateToSecondary(TvMainRoute.History.route)
@@ -2048,12 +2069,19 @@ private fun cascadePanelOffset(
  * consumes input and focuses its first row on open; Back/Menu closes it and
  * returns focus to the avatar via [onDismiss].
  *
- * Row set + order mirrors tvOS and Roku: Switch Profile · History · Requests
- * (while the server has it enabled) · Watch Party (Settings → Experimental) ·
- * Settings · Change Account · Sign Out. Watchlist and Favorites live under
- * For You only. Change Account replaces Switch Server (owner decision
- * 2026-11-02): the saved servers and their accounts. Switch Profile opens the
- * open account's picker. Sign Out leaves the account in use.
+ * Row set + order mirrors tvOS and Roku: History · Requests (while the
+ * server has it enabled) · Watch Party (Settings → Experimental), then
+ * Settings · the profile row · Change Account · Sign Out, the second group's
+ * order on the phones too. Watchlist and Favorites live under For You only.
+ * Change Account replaces Switch Server (owner decision 2026-11-02): the
+ * saved servers and their accounts, directly under the profile row. Sign Out
+ * leaves the account in use.
+ *
+ * The profile row follows the open account ([profileRow]): Switch Profile
+ * opens its picker while it has several profiles; Add Profile opens the
+ * new-profile form while it has one and room for another; there is no row
+ * while it has one and its limit is one. Focus opens on the first row,
+ * History.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -2061,7 +2089,9 @@ private fun TvProfileDropdown(
     accountState: TvAccountState,
     entersMenu: Boolean,
     focusEntryToken: Int,
+    profileRow: ProfileMenuRow,
     onSwitchProfile: () -> Unit,
+    onAddProfile: () -> Unit,
     onChangeAccount: () -> Unit,
     onHistory: () -> Unit,
     showRequests: Boolean,
@@ -2074,7 +2104,9 @@ private fun TvProfileDropdown(
     modifier: Modifier = Modifier,
 ) {
     val firstFocus = remember { FocusRequester() }
-    LaunchedEffect(entersMenu, focusEntryToken) {
+    // Also when the profile row changes while the menu is open, so focus
+    // never stays on a row that has gone: it returns to the first row.
+    LaunchedEffect(entersMenu, focusEntryToken, profileRow) {
         if (entersMenu && focusEntryToken > 0) {
             runCatching { firstFocus.requestFocus() }
         }
@@ -2104,12 +2136,11 @@ private fun TvProfileDropdown(
         ProfileDropdownDivider()
 
         ProfileDropdownRow(
-            label = stringResource(CommonR.string.menu_switchProfile),
-            icon = Icons.Filled.People,
+            label = stringResource(CommonR.string.menu_history),
+            icon = Icons.Filled.History,
             focusRequester = firstFocus,
-            onClick = onSwitchProfile,
+            onClick = onHistory,
         )
-        ProfileDropdownRow(label = stringResource(CommonR.string.menu_history), icon = Icons.Filled.History, onClick = onHistory)
         if (showRequests) {
             ProfileDropdownRow(label = stringResource(CommonR.string.menu_requests), icon = Icons.Filled.Inbox, onClick = onRequests)
         }
@@ -2124,7 +2155,24 @@ private fun TvProfileDropdown(
         ProfileDropdownDivider()
 
         ProfileDropdownRow(label = stringResource(CommonR.string.menu_settings), icon = Icons.Filled.Settings, onClick = onSettings)
-        ProfileDropdownRow(label = stringResource(CommonR.string.menu_changeAccount), icon = Icons.Filled.SwitchAccount, onClick = onChangeAccount)
+        when (profileRow) {
+            ProfileMenuRow.SwitchProfile -> ProfileDropdownRow(
+                label = stringResource(CommonR.string.menu_switchProfile),
+                icon = Icons.Filled.People,
+                onClick = onSwitchProfile,
+            )
+            ProfileMenuRow.AddProfile -> ProfileDropdownRow(
+                label = stringResource(CommonR.string.menu_addProfile),
+                icon = Icons.Filled.PersonAdd,
+                onClick = onAddProfile,
+            )
+            ProfileMenuRow.None -> Unit
+        }
+        ProfileDropdownRow(
+            label = stringResource(CommonR.string.menu_changeAccount),
+            icon = Icons.Filled.SwitchAccount,
+            onClick = onChangeAccount,
+        )
         ProfileDropdownRow(
             label = stringResource(CommonR.string.menu_signOut),
             icon = Icons.AutoMirrored.Filled.Logout,

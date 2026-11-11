@@ -78,6 +78,12 @@ interface ServerRegistry {
     suspend fun setCachedProfiles(accountId: String, profiles: List<CachedProfile>) {}
 
     /**
+     * Stores how many profiles [accountId] may have, with the list it came
+     * with. Null: its server did not say.
+     */
+    suspend fun setMaxProfiles(accountId: String, maxProfiles: Int?) {}
+
+    /**
      * Record what a verified `/me` (or a sign-in) said about [accountId]. A
      * null argument leaves that field alone.
      */

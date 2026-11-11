@@ -74,6 +74,19 @@ class HouseholdManagementSession internal constructor(
     }
 
     /**
+     * Starts a session as [primary] from outside the picker (the profile
+     * menu's Add Profile), asking for its PIN first when it has one, through
+     * the [reverify] prompt. Returns false when that prompt was cancelled,
+     * which leaves no session.
+     */
+    suspend fun beginVerified(primary: Profile, scope: AuthScopeSnapshot?): Boolean {
+        begin(primary, profileToken = null, scope = scope)
+        if (!primary.hasPin) return true
+        val unverified = manager ?: return false
+        return renew(unverified) != null
+    }
+
+    /**
      * Ends the session, abandoning any open re-prompt. The null entry is sent
      * unconditionally: a re-prompt that is about to open (its held check
      * already passed) reads it and closes instead of waiting for input.

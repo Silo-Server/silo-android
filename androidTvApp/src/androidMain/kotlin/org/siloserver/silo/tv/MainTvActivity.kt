@@ -54,6 +54,7 @@ import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.requiresApproval
+import org.siloserver.silo.repository.AccountProfilesRefresher
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.ProfileRepository
@@ -76,6 +77,7 @@ import org.siloserver.silo.tv.ui.navigation.TvAppNavigation
 import org.siloserver.silo.tv.ui.navigation.TvRoute
 import org.siloserver.silo.tv.ui.screens.player.TvPlayerRemoteKeyBridge
 import org.siloserver.silo.tv.ui.theme.SiloTvTheme
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -285,8 +287,26 @@ class MainTvActivity : ComponentActivity() {
         val monitor = get<ServerReachabilityMonitor>(ServerReachabilityMonitor::class.java)
         monitor.startForeground()
         lifecycleScope.launch(Dispatchers.IO) { refresher.refreshIfStale() }
+        // A return to Silo: the open account's profiles may have changed
+        // elsewhere. The launch refreshes every account once its start
+        // route is resolved.
+        if (hasResolvedLaunchProfile) refreshOpenAccountProfiles()
         // A language chosen in system settings while Silo was away.
         get<AppLanguageStore>(AppLanguageStore::class.java).check(this)
+    }
+
+    /** Brings the open account's cached profiles and profile limit up to date, in the background. */
+    private fun refreshOpenAccountProfiles() {
+        val accountId = get<ServerRegistry>(ServerRegistry::class.java).activeAccountId.value ?: return
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                get<AccountProfilesRefresher>(AccountProfilesRefresher::class.java).refresh(accountId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Best effort: the cached list and limit stand.
+            }
+        }
     }
 
     // Before Android 13 the app language is applied here (from 13 the
@@ -424,10 +444,22 @@ class MainTvActivity : ComponentActivity() {
             authRepository.refreshActiveServerName(knownContract = knownContract)
         }
         // Accounts saved before multiple accounts existed lack their server
-        // user, which tells a new sign-in apart from a saved account. Best
-        // effort, never awaited.
+        // user, which tells a new sign-in apart from a saved account. Then
+        // every account's cached profiles and profile limit: an account
+        // whose only profile opens without the picker never loads them
+        // there, and the profile menu's row reads both. Best effort, never
+        // awaited.
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching { authRepository.backfillAccountIdentities() }
+            if (processStart) {
+                try {
+                    get<AccountProfilesRefresher>(AccountProfilesRefresher::class.java).refreshAll()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // Best effort: the cached lists and limits stand.
+                }
+            }
         }
 
         val cleartextConsent = get<org.siloserver.silo.network.CleartextOriginConsent>(

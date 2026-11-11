@@ -36,6 +36,8 @@ class AccountProfilesRefresher(
         val scope = AuthScopeSnapshot.profileless(account.serverId, url, generation, accountId)
         val result = profileApi.listProfiles(scope) as? ApiResult.Success ?: return
         registry.setCachedProfiles(accountId, result.data.profiles.map { it.toCached() })
+        // The profile menu's row needs the limit too (see profileMenuRow).
+        registry.setMaxProfiles(accountId, result.data.maxProfiles)
     }
 
     /**

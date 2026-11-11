@@ -56,6 +56,38 @@ class HouseholdManagementSessionTest {
         assertTrue(session.isActive.value)
     }
 
+    @Test fun beginVerifiedAsksForThePrimaryPinFirst() = runTest {
+        val started = async { session.beginVerified(primary, null) }
+        runCurrent()
+        assertEquals(primary, assertNotNull(session.reverify.value).profile)
+        assertNull(session.manager?.profileToken)
+        session.submitPin("0000")
+        runCurrent()
+        assertEquals(UiText.Key(SharedString.PinWrong), session.reverify.value?.error)
+        session.submitPin("1234")
+        runCurrent()
+        assertTrue(started.await())
+        assertEquals("fresh", session.manager?.profileToken)
+        assertNull(session.reverify.value)
+    }
+
+    @Test fun beginVerifiedCancelledLeavesNoSession() = runTest {
+        val started = async { session.beginVerified(primary, null) }
+        runCurrent()
+        session.cancelReverify()
+        runCurrent()
+        assertFalse(started.await())
+        assertFalse(session.isActive.value)
+        assertNull(session.manager)
+        assertTrue(pins.isEmpty())
+    }
+
+    @Test fun beginVerifiedWithoutAPinStartsAtOnce() = runTest {
+        assertTrue(session.beginVerified(primary.copy(hasPin = false), null))
+        assertNull(session.reverify.value)
+        assertTrue(session.isActive.value)
+    }
+
     @Test fun cancelEndsTheSessionWithoutRetrying() = runTest {
         session.begin(primary, "old", null)
         var calls = 0

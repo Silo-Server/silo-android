@@ -118,6 +118,9 @@ import org.siloserver.silo.android.ui.screens.player.PlayerViewModel
 import org.siloserver.silo.android.ui.screens.profiles.CreateProfileScreen
 import org.siloserver.silo.android.ui.screens.profiles.EditProfileScreen
 import org.siloserver.silo.android.ui.screens.profiles.ProfileSelectionScreen
+import org.siloserver.silo.android.ui.screens.profiles.toProfile
+import org.siloserver.silo.model.profile.householdPrimary
+import org.siloserver.silo.viewmodel.MenuAddProfileSession
 import org.siloserver.silo.android.ui.screens.requests.MyRequestsScreen
 import org.siloserver.silo.android.ui.screens.requests.RequestDiscoverRowScreen
 import org.siloserver.silo.android.ui.screens.requests.RequestDetailScreen
@@ -586,6 +589,33 @@ fun AppNavigation(
 
     val profileRepository: org.siloserver.silo.repository.ProfileRepository = koinInject()
     val playerSettingsStore: org.siloserver.silo.common.settings.PlayerSettingsStore = koinInject()
+
+    // The profile menu's "Add Profile", offered while the open account has
+    // one profile. Household management acts as the account's primary
+    // profile, as the picker's Add does, and asks for its PIN first when it
+    // has one (HouseholdReverifyHost shows the prompt). The new-profile form
+    // then opens over the screen the menu was on. With no primary known, the
+    // picker opens instead, where Add runs the same steps.
+    val addProfileJob = remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val addProfile: () -> Unit = remember(navController, profileRepository, switchProfile) {
+        {
+            if (addProfileJob.value?.isActive != true) {
+                addProfileJob.value = navScope.launch {
+                    val primary = serverRegistry.activeAccount.value?.cachedProfiles.orEmpty()
+                        .map { it.toProfile() }
+                        .householdPrimary()
+                    if (primary == null) {
+                        switchProfile()
+                        return@launch
+                    }
+                    val scope = profileRepository.captureIdentityScope()
+                    if (profileRepository.householdManagement.beginVerified(primary, scope)) {
+                        navController.navigate(Route.CreateProfile.route) { launchSingleTop = true }
+                    }
+                }
+            }
+        }
+    }
     val notificationTileSwitch = remember {
         org.siloserver.silo.android.push.NotificationTileSwitch(
             authRepository, serverRegistry, tokenManager, profileRepository, activeProfileReset, playerSettingsStore,
@@ -718,6 +748,7 @@ fun AppNavigation(
         LocalSharedTransitionScope provides this,
         LocalHeroSourceHandoff provides heroSourceHandoff,
         LocalProfileSwitch provides switchProfile,
+        LocalAddProfile provides addProfile,
     ) {
     Box(modifier = Modifier.fillMaxSize()) {
     // The first-run screens draw over one shared brand-light backdrop that
@@ -1362,13 +1393,34 @@ fun AppNavigation(
             )
         }
         composable(Route.CreateProfile.route) {
+            // Opened from the picker, or by the profile menu's Add Profile
+            // over the profile's screens. From the menu, a new profile leads
+            // to the picker as Switch profile opens it, Back returns to the
+            // screen the menu was on, and the management session the menu
+            // started ends once this entry leaves the back stack.
+            val fromPicker = remember {
+                navController.previousBackStackEntry?.destination?.route == Route.ProfileSelection.route
+            }
+            if (!fromPicker) {
+                androidx.lifecycle.viewmodel.compose.viewModel { MenuAddProfileSession(profileRepository) }
+            }
             CreateProfileScreen(
                 onNavigateBack = { navController.popBackStack() },
                 onProfileCreated = {
-                    navController.popBackStack(
-                        route = Route.ProfileSelection.route,
-                        inclusive = false,
-                    )
+                    if (fromPicker) {
+                        navController.popBackStack(
+                            route = Route.ProfileSelection.route,
+                            inclusive = false,
+                        )
+                    } else {
+                        navScope.launch {
+                            profileSwitchTeardown.switchProfile {
+                                navController.navigate(Route.ProfileSelection.route) {
+                                    popUpTo(Route.CreateProfile.route) { inclusive = true }
+                                }
+                            }
+                        }
+                    }
                 },
             )
         }
