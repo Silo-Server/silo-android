@@ -84,6 +84,7 @@ import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.repository.port.HomeCachePort
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -731,10 +732,14 @@ class MainActivity : ComponentActivity() {
     private fun refreshOpenAccountProfiles() {
         val accountId = get<ServerRegistry>(ServerRegistry::class.java).activeAccountId.value ?: return
         lifecycleScope.launch(Dispatchers.IO) {
-            runCatching {
+            try {
                 get<org.siloserver.silo.repository.AccountProfilesRefresher>(
                     org.siloserver.silo.repository.AccountProfilesRefresher::class.java,
                 ).refresh(accountId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Best effort: the cached list and limit stand.
             }
         }
     }
