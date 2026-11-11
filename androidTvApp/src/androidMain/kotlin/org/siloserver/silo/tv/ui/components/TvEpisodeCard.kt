@@ -156,7 +156,6 @@ fun TvEpisodeCard(
                         prefs = overlayState.prefs,
                         variant = CardOverlayVariant.Wide,
                         scale = TvCardOverlayScale,
-                        forceOpaqueBackground = false,
                         bottomInset = TvEpisodeCardOverlayBottomInset,
                         modifier = Modifier.fillMaxSize(),
                     )

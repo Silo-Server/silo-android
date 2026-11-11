@@ -35,6 +35,19 @@ interface DirtyOperationDao {
         serverId: String, accountId: String, profileId: String, contentIds: List<String>, sinceMs: Long,
     ): List<String>
 
+    /**
+     * Items whose local watched projection the server has not acknowledged yet:
+     * a legacy `SET_WATCHED` op is still queued (pending, in flight, or held).
+     * V2 personal writes project `watched` only after a verified 204, so an
+     * unresolved `PERSONAL_V2` row never stands behind the projected value.
+     */
+    @Query("SELECT DISTINCT targetContentId FROM dirty_operations WHERE serverId = :serverId AND accountId = :accountId " +
+        "AND profileId = :profileId AND targetContentId IN (:contentIds) AND opKind = 'SET_WATCHED' " +
+        "AND state != 'legacy_membership_quarantined'")
+    suspend fun contentIdsWithUnackedWatched(
+        serverId: String, accountId: String, profileId: String, contentIds: List<String>,
+    ): List<String>
+
     /** A newer desired-state write supersedes any v2 personal row the previous attempt left behind. */
     @Query("DELETE FROM dirty_operations WHERE opKind = 'PERSONAL_V2' AND serverId = :serverId " +
         "AND accountId = :accountId AND profileId = :profileId AND targetContentId = :contentId")

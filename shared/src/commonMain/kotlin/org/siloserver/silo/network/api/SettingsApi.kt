@@ -8,6 +8,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.apiv2.SettingsV2Api
 import kotlinx.serialization.Serializable
+import org.siloserver.silo.overlays.OverlayImage
 import kotlinx.serialization.json.JsonElement
 
 /**
@@ -22,6 +23,14 @@ import kotlinx.serialization.json.JsonElement
 data class OverlayConfigResponse(
     val enabled: Boolean = true,
     val defaults: String? = null,
+    /**
+     * Images administrators uploaded for badges, in upload order (OpenAPI
+     * `OverlayConfig.images`). [SettingsV2Api.overlayConfig] resolves each
+     * [OverlayImage.url] against the answering server, so it is absolute
+     * here. Cards drop refs this list no longer holds
+     * ([org.siloserver.silo.overlays.OverlaySchema.withoutUnlistedImages]).
+     */
+    val images: List<OverlayImage> = emptyList(),
 )
 
 open class SettingsApi(

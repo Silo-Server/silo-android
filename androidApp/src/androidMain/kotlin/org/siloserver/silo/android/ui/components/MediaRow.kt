@@ -370,6 +370,7 @@ fun MediaRow(
                             actions = cardActions(item),
                             modifier = Modifier.animateItem(),
                             sharedContentId = item.contentId,
+                            widthIsExact = true,
                         )
                     }
                 }

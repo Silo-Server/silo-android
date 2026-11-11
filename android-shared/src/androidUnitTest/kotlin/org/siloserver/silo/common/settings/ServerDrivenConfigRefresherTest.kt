@@ -142,6 +142,8 @@ class ServerDrivenConfigRefresherTest {
 private class FakeOverlayPrefsStore : OverlayPrefsStore {
     override val enabled: StateFlow<Boolean> = MutableStateFlow(true)
     override val prefs: StateFlow<CardOverlayPrefs> = MutableStateFlow(OverlaySchema.buildDefaults())
+    override val cardPrefs: StateFlow<CardOverlayPrefs> = prefs
+    override val images: StateFlow<List<org.siloserver.silo.overlays.OverlayImage>> = MutableStateFlow(emptyList())
     override val isLoading: StateFlow<Boolean> = MutableStateFlow(false)
     override val lastError: StateFlow<String?> = MutableStateFlow(null)
     override val hasUserOverride: Boolean = false

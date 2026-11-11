@@ -64,14 +64,14 @@ object OverlayRegistry {
 
         // Keep the first index a given ID appears at, so a malformed
         // order like [a, b, a] doesn't break ranking.
-        val rank: Map<OverlayId, Int> = buildMap {
+        val rank: Map<String, Int> = buildMap {
             prefs.order.forEachIndexed { index, id -> putIfAbsent(id, index) }
         }
         return candidates
             .sortedWith(
                 Comparator { lhs, rhs ->
-                    val lhsRank = rank[lhs.value.id] ?: Int.MAX_VALUE
-                    val rhsRank = rank[rhs.value.id] ?: Int.MAX_VALUE
+                    val lhsRank = rank[lhs.value.id.raw] ?: Int.MAX_VALUE
+                    val rhsRank = rank[rhs.value.id.raw] ?: Int.MAX_VALUE
                     if (lhsRank != rhsRank) lhsRank.compareTo(rhsRank)
                     // Equal ranks (typically both unranked) → fall back to
                     // registry order.
@@ -81,14 +81,24 @@ object OverlayRegistry {
             .map { it.value }
     }
 
+    /**
+     * Whether settings offer [def] (web `isOverlayOffered`): a rating badge
+     * only while the server shows its source, since cards leave the score out
+     * otherwise and the badge would never render.
+     */
+    fun isOffered(def: OverlayDef, shownRatingSources: Set<String>): Boolean =
+        def.ratingSource == null || def.ratingSource in shownRatingSources
+
     /** Badge text that is the file's own data ("4K", "TrueHD", "PG-13"). */
     private fun String?.raw(): UiText? = this?.let(UiText::Raw)
 
     // MARK: - Tech helpers
 
+    /** Web `prettyResolution` (`mediaFormat.ts`). */
     private fun prettyResolution(value: String?): String? {
         if (value.isNullOrEmpty()) return null
-        val v = value.lowercase()
+        val v = value.lowercase().trim()
+        if (v.isEmpty()) return null
         return when (v) {
             "2160p", "4k", "uhd" -> "4K"
             "4320p", "8k" -> "8K"
@@ -98,10 +108,23 @@ object OverlayRegistry {
         }
     }
 
+    /**
+     * Web `compactHdrSuffix`: any Dolby Vision variant is "DV", HDR10+ keeps
+     * its name, any other HDR variant is "HDR".
+     */
     private fun compactHdrSuffix(value: String?): String? {
         if (value.isNullOrEmpty()) return null
-        return if (value.contains("DV")) "DV" else "HDR"
+        if (value.contains("DV")) return "DV"
+        if (value.contains("HDR10+")) return "HDR10+"
+        return "HDR"
     }
+
+    /** The value as the API sent it, or `null` when empty (web `d.x || null`). */
+    private fun String?.key(): String? = this?.takeIf { it.isNotEmpty() }
+
+    /** Raw API parts joined by a space, or `null` when none is set. */
+    private fun joinedKey(vararg parts: String?): String? =
+        parts.filter { !it.isNullOrEmpty() }.joinToString(" ").ifEmpty { null }
 
     // Mirrors web's `hdrIcon`: only exact wordmark matches get a brand
     // mark; anything else (HLG, combined strings like "HDR10+") renders
@@ -120,11 +143,11 @@ object OverlayRegistry {
     private fun resolutionHdrIcon(value: String?): OverlayIconId? =
         if (value != null && value.contains("DV")) OverlayIconId.DolbyVision else null
 
+    // Web's `audioIcon`: only a value that is exactly Atmos gets the brand
+    // mark, which then stands in for the label.
     private fun audioIcon(value: String?): OverlayIconId? {
         if (value.isNullOrEmpty()) return null
-        // `contains` instead of equality so "TrueHD Atmos" still picks the
-        // brand mark.
-        return if (value.lowercase().contains("atmos")) OverlayIconId.Atmos else OverlayIconId.Volume
+        return if (value.lowercase() == "atmos") OverlayIconId.Atmos else OverlayIconId.Volume
     }
 
     private fun videoCodecIcon(value: String?): OverlayIconId? {
@@ -145,6 +168,8 @@ object OverlayRegistry {
             // `prettyResolution`, not raw uppercase: web renders "4K" for a
             // `2160p` payload and the standalone badge must match it.
             getValue = { prettyResolution(it.resolution).raw() },
+            getValueKey = { it.resolution.key() },
+            valueKeySuggestions = listOf("2160p", "1080p", "720p", "480p"),
         ),
         OverlayDef(
             id = OverlayId.Hdr,
@@ -155,6 +180,8 @@ object OverlayRegistry {
             defaultEnabled = true,
             iconCapable = true,
             getValue = { it.hdr.raw() },
+            getValueKey = { it.hdr.key() },
+            valueKeySuggestions = listOf("DV", "DV HDR10", "DV HDR10+", "HDR10", "HDR10+", "HLG", "HDR"),
             getIcon = { hdrIcon(it.hdr) },
         ),
         OverlayDef(
@@ -170,6 +197,9 @@ object OverlayRegistry {
                 val hdr = compactHdrSuffix(data.hdr)
                 (if (hdr != null) "$res $hdr" else res).raw()
             },
+            // The resolution and dynamic range as the API returns them,
+            // joined by a space: "2160p DV HDR10", or "1080p" without HDR.
+            getValueKey = { data -> data.resolution.key()?.let { joinedKey(it, data.hdr) } },
             getIcon = { resolutionHdrIcon(it.hdr) },
         ),
         OverlayDef(
@@ -180,6 +210,7 @@ object OverlayRegistry {
             defaultPosition = OverlayPosition.TopLeft,
             defaultEnabled = false,
             iconCapable = true,
+            introducedInManifest = OVERLAY_COMBINED_AUDIO_MANIFEST_REVISION,
             // The parts the file has, so a file without a known resolution
             // still shows its audio codec while the standalone audio badge
             // is hidden. Mirrors web's `resolution_hdr_audio.getValue`.
@@ -190,6 +221,8 @@ object OverlayRegistry {
                     data.audio?.takeIf { it.isNotEmpty() },
                 ).joinToString(" ").ifEmpty { null }.raw()
             },
+            // "2160p DV HDR10 Atmos", or only the parts the file has.
+            getValueKey = { joinedKey(it.resolution, it.hdr, it.audio) },
             getIcon = { resolutionHdrIcon(it.hdr) },
         ),
         OverlayDef(
@@ -201,6 +234,8 @@ object OverlayRegistry {
             defaultEnabled = true,
             iconCapable = true,
             getValue = { it.audio.raw() },
+            getValueKey = { it.audio.key() },
+            valueKeySuggestions = listOf("Atmos", "TrueHD", "DTS-HD", "DTS", "EAC3", "AC3", "AAC", "FLAC"),
             getIcon = { audioIcon(it.audio) },
         ),
         OverlayDef(
@@ -213,6 +248,7 @@ object OverlayRegistry {
             iconId = OverlayIconId.Volume,
             iconCapable = true,
             getValue = { it.audioChannels.raw() },
+            getValueKey = { it.audioChannels.key() },
         ),
         OverlayDef(
             id = OverlayId.VideoCodec,
@@ -224,6 +260,8 @@ object OverlayRegistry {
             iconId = OverlayIconId.Film,
             iconCapable = true,
             getValue = { it.videoCodec.raw() },
+            getValueKey = { it.videoCodec.key() },
+            valueKeySuggestions = listOf("H.265", "H.264", "AV1", "VP9"),
             getIcon = { videoCodecIcon(it.videoCodec) },
         ),
         OverlayDef(
@@ -235,6 +273,7 @@ object OverlayRegistry {
             defaultEnabled = false,
             iconCapable = false,
             getValue = { it.container.raw() },
+            getValueKey = { it.container.key() },
         ),
         OverlayDef(
             id = OverlayId.AspectRatio,
@@ -246,6 +285,7 @@ object OverlayRegistry {
             iconId = OverlayIconId.Layout,
             iconCapable = true,
             getValue = { it.aspectRatio.raw() },
+            getValueKey = { it.aspectRatio.key() },
         ),
         OverlayDef(
             id = OverlayId.ReleaseType,
@@ -256,6 +296,8 @@ object OverlayRegistry {
             defaultEnabled = true,
             iconCapable = false,
             getValue = { it.releaseType.raw() },
+            getValueKey = { it.releaseType.key() },
+            valueKeySuggestions = listOf("REMUX", "BluRay", "WEB-DL", "WEBRip", "HDTV", "DVD"),
         ),
         OverlayDef(
             id = OverlayId.Edition,
@@ -266,6 +308,7 @@ object OverlayRegistry {
             defaultEnabled = false,
             iconCapable = false,
             getValue = { it.edition.raw() },
+            getValueKey = { it.edition.key() },
         ),
         OverlayDef(
             id = OverlayId.MultiAudio,
@@ -293,70 +336,65 @@ object OverlayRegistry {
 
     // MARK: - Ratings helpers
 
-    private fun formatRating(value: Double?, max: Int, suffix: String? = null): String? {
-        if (value == null) return null
-        if (max == 100) {
-            val intValue = value.toInt()
-            return if (suffix != null) "$intValue% $suffix" else "$intValue%"
-        }
-        val formatted = formatOneDecimal(value)
-        return if (suffix != null) "$formatted $suffix" else formatted
+    // A rating badge carries its source's mark in the label ("IMDb 8.5",
+    // "RT 93%"), so a score is never shown without its source. Silo draws no
+    // source artwork: the owners of these scores restrict their logos.
+    // Mirrors web's `registry/ratings.ts`.
+
+    /** Web `formatOutOfTen`: one decimal, halves rounded away from zero (7.35 → "7.4"). */
+    internal fun formatOutOfTen(value: Double): String {
+        val tenths = kotlin.math.floor(value * 10.0 + 0.5).toLong()
+        val sign = if (tenths < 0) "-" else ""
+        val abs = kotlin.math.abs(tenths)
+        return "$sign${abs / 10}.${abs % 10}"
     }
 
-    private fun formatPercent(value: Int?, suffix: String? = null): String? {
-        if (value == null) return null
-        return if (suffix != null) "$value% $suffix" else "$value%"
-    }
+    /** Web `formatPercent`. */
+    internal fun formatPercent(value: Double): String = "${kotlin.math.floor(value + 0.5).toLong()}%"
+
+    private fun outOfTen(value: Double?): String? = value?.let(::formatOutOfTen)
+
+    private fun percent(value: Int?): String? = value?.let { formatPercent(it.toDouble()) }
+
+    // "RT Audience" is translated on web (`web.item.card.rtAudience`). The
+    // Android catalog has no key for it yet, so it stays English here, as on
+    // Apple; mark and label must move to the catalog together.
+    private const val RT_AUDIENCE_MARK = "RT Audience" // i18n-ignore
+
+    private fun rating(
+        id: OverlayId,
+        label: String,
+        description: String,
+        mark: String,
+        accent: String,
+        ratingSource: String? = null,
+        score: (OverlayData) -> String?,
+    ) = OverlayDef(
+        id = id,
+        category = OverlayCategory.Ratings,
+        label = label,
+        description = description,
+        defaultPosition = OverlayPosition.LeftEdge,
+        defaultEnabled = false,
+        defaultAccent = accent,
+        iconCapable = false,
+        ratingSource = ratingSource,
+        getValue = { data -> score(data)?.let { UiText.Raw("$mark $it") } },
+        sourceMark = UiText.Raw(mark),
+        getScore = { data -> score(data)?.let(UiText::Raw) },
+    )
 
     private val ratings: List<OverlayDef> = listOf(
-        OverlayDef(
-            id = OverlayId.RatingImdb,
-            category = OverlayCategory.Ratings,
-            label = "IMDb Rating",
-            description = "IMDb score out of 10",
-            defaultPosition = OverlayPosition.TopRight,
-            defaultEnabled = false,
-            iconId = OverlayIconId.Star,
-            defaultAccent = "#f5c518",
-            iconCapable = true,
-            getValue = { formatRating(it.ratingImdb, max = 10).raw() },
-        ),
-        OverlayDef(
-            id = OverlayId.RatingTmdb,
-            category = OverlayCategory.Ratings,
-            label = "TMDB Rating",
-            description = "TMDB score out of 10",
-            defaultPosition = OverlayPosition.TopRight,
-            defaultEnabled = false,
-            iconId = OverlayIconId.Star,
-            defaultAccent = "#01b4e4",
-            iconCapable = true,
-            getValue = { formatRating(it.ratingTmdb, max = 10).raw() },
-        ),
-        OverlayDef(
-            id = OverlayId.RatingRt,
-            category = OverlayCategory.Ratings,
-            label = "RT Critics",
-            description = "Rotten Tomatoes critic score",
-            defaultPosition = OverlayPosition.TopRight,
-            defaultEnabled = false,
-            iconId = OverlayIconId.Tomato,
-            defaultAccent = "#fa320a",
-            iconCapable = true,
-            getValue = { formatPercent(it.ratingRtCritic).raw() },
-        ),
-        OverlayDef(
-            id = OverlayId.RatingRtAudience,
-            category = OverlayCategory.Ratings,
-            label = "RT Audience",
-            description = "Rotten Tomatoes audience score",
-            defaultPosition = OverlayPosition.TopRight,
-            defaultEnabled = false,
-            iconId = OverlayIconId.Tomato,
-            defaultAccent = "#fa6400",
-            iconCapable = true,
-            getValue = { formatPercent(it.ratingRtAudience).raw() },
-        ),
+        rating(OverlayId.RatingImdb, "IMDb Rating", "IMDb score out of 10", "IMDb", "#f5c518") { outOfTen(it.ratingImdb) },
+        rating(OverlayId.RatingTmdb, "TMDB Rating", "TMDB score out of 10", "TMDB", "#01b4e4") { outOfTen(it.ratingTmdb) },
+        rating(
+            OverlayId.RatingRt, "RT Critics", "Rotten Tomatoes critic score", "RT", "#fa320a",
+            ratingSource = "rt_critic",
+        ) { percent(it.ratingRtCritic) },
+        rating(
+            OverlayId.RatingRtAudience, "RT Audience", "Rotten Tomatoes audience score", RT_AUDIENCE_MARK, "#fa6400",
+            ratingSource = "rt_audience",
+        ) { percent(it.ratingRtAudience) },
         OverlayDef(
             id = OverlayId.ContentRating,
             category = OverlayCategory.Ratings,
@@ -367,6 +405,7 @@ object OverlayRegistry {
             iconId = OverlayIconId.Shield,
             iconCapable = true,
             getValue = { it.contentRating.raw() },
+            getValueKey = { it.contentRating.key() },
         ),
     )
 
@@ -418,6 +457,7 @@ object OverlayRegistry {
             iconId = OverlayIconId.Globe,
             iconCapable = true,
             getValue = { data -> data.originalLanguage?.trim()?.takeIf { it.isNotEmpty() }?.let { UiText.LanguageName(it, uppercaseIfUnnamed = true) } },
+            getValueKey = { it.originalLanguage.key() },
         ),
         OverlayDef(
             id = OverlayId.Studio,
@@ -429,6 +469,7 @@ object OverlayRegistry {
             iconId = OverlayIconId.Building,
             iconCapable = true,
             getValue = { it.studio.raw() },
+            getValueKey = { it.studio.key() },
         ),
         OverlayDef(
             id = OverlayId.Network,
@@ -440,6 +481,7 @@ object OverlayRegistry {
             iconId = OverlayIconId.Tv,
             iconCapable = true,
             getValue = { it.network.raw() },
+            getValueKey = { it.network.key() },
         ),
     )
 
@@ -448,17 +490,32 @@ object OverlayRegistry {
     // Mirrors web's `formatShowStatus` — the recognized spellings and the
     // pass-through default must stay identical or the same library renders
     // different ribbons per platform.
-    private fun formatShowStatus(value: String?): UiText? {
-        val normalized = value?.trim().takeUnless { it.isNullOrEmpty() } ?: return null
-        return when (normalized.lowercase()) {
-            "returning", "returning series", "continuing", "in_production", "in production" ->
-                UiText.Key(SharedString.OverlayReturning)
-            "ended" -> UiText.Key(SharedString.OverlayEnded)
-            "cancelled", "canceled" -> UiText.Key(SharedString.OverlayCancelled)
-            "upcoming", "planned" -> UiText.Key(SharedString.OverlayUpcoming)
-            else -> UiText.Raw(normalized)
+    /**
+     * Web `showStatusKey`: the status as the English key a per-value image
+     * matches (Returning, Ended, Cancelled, Upcoming), or the API's own value,
+     * unchanged, when it is not one of those. An empty value is no status.
+     */
+    internal fun showStatusKey(value: String?): String? {
+        if (value.isNullOrEmpty()) return null
+        return when (value.lowercase()) {
+            "returning", "returning series", "continuing", "in_production", "in production" -> "Returning"
+            "ended" -> "Ended"
+            "cancelled", "canceled" -> "Cancelled"
+            "upcoming", "planned" -> "Upcoming"
+            else -> value
         }
     }
+
+    /** Web `formatShowStatus`: the known statuses translated, any other value as the API sent it. */
+    private fun formatShowStatus(value: String?): UiText? =
+        when (val key = showStatusKey(value)) {
+            null -> null
+            "Returning" -> UiText.Key(SharedString.OverlayReturning)
+            "Ended" -> UiText.Key(SharedString.OverlayEnded)
+            "Cancelled" -> UiText.Key(SharedString.OverlayCancelled)
+            "Upcoming" -> UiText.Key(SharedString.OverlayUpcoming)
+            else -> UiText.Raw(key)
+        }
 
     private val ribbons: List<OverlayDef> = listOf(
         OverlayDef(
@@ -466,19 +523,21 @@ object OverlayRegistry {
             category = OverlayCategory.Ribbons,
             label = "Show Status",
             description = "Series lifecycle: Returning, Ended, Cancelled",
-            defaultPosition = OverlayPosition.TopRight,
+            defaultPosition = OverlayPosition.RightEdge,
             defaultEnabled = false,
             iconId = OverlayIconId.Tv,
             iconCapable = true,
             availabilityNote = "Populated by metadata plugins (TMDB/TVDB updates pending)",
             getValue = { formatShowStatus(it.showStatus) },
+            getValueKey = { showStatusKey(it.showStatus) },
+            valueKeySuggestions = listOf("Returning", "Ended", "Cancelled", "Upcoming"),
         ),
         OverlayDef(
             id = OverlayId.ImdbTop250,
             category = OverlayCategory.Ribbons,
             label = "IMDb Top 250",
             description = "Rank when present in the IMDb Top 250 chart",
-            defaultPosition = OverlayPosition.TopRight,
+            defaultPosition = OverlayPosition.RightEdge,
             defaultEnabled = false,
             iconId = OverlayIconId.Ribbon,
             defaultAccent = "#f5c518",
@@ -494,7 +553,7 @@ object OverlayRegistry {
             category = OverlayCategory.Ribbons,
             label = "RT Certified Fresh",
             description = "Shown for Rotten Tomatoes Certified Fresh titles",
-            defaultPosition = OverlayPosition.TopRight,
+            defaultPosition = OverlayPosition.RightEdge,
             defaultEnabled = false,
             iconId = OverlayIconId.Tomato,
             defaultAccent = "#fa320a",
@@ -503,19 +562,4 @@ object OverlayRegistry {
             getValue = { if (it.rtCertifiedFresh == true) UiText.Key(SharedString.OverlayCertifiedFresh) else null },
         ),
     )
-
-    /**
-     * Format a double with exactly one decimal place, matching Apple's
-     * `String(format: "%.1f")`. Avoids platform locale dependence (always
-     * uses a `.` decimal separator) so the wire/label format is stable.
-     */
-    private fun formatOneDecimal(value: Double): String {
-        val rounded = kotlin.math.round(value * 10.0) / 10.0
-        val whole = rounded.toLong()
-        val frac = kotlin.math.round((rounded - whole) * 10.0).toLong().let {
-            // Guard against -0 / rounding to 10.
-            if (it < 0) -it else it
-        }
-        return if (frac >= 10) "${whole + 1}.0" else "$whole.$frac"
-    }
 }

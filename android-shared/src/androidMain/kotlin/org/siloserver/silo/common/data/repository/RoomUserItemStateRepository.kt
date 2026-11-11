@@ -563,9 +563,19 @@ class RoomUserItemStateRepository(
         if (contentIds.isEmpty()) return emptyMap()
         val snapshot = snapshotProvider() ?: return emptyMap()
         val profileId = snapshot.profileId ?: return emptyMap()
-        return contentIds.distinct().chunked(MAX_IN_LIST_IDS)
-            .flatMap { contentDao.getForContentIds(snapshot.serverId, snapshot.accountId.orEmpty(), profileId, it) }
-            .associate { it.contentId to LocalContentState(watched = it.watched, favorite = null) }
+        val accountId = snapshot.accountId.orEmpty()
+        val rows = contentIds.distinct().chunked(MAX_IN_LIST_IDS)
+            .flatMap { contentDao.getForContentIds(snapshot.serverId, accountId, profileId, it) }
+        val watchedIds = rows.filter { it.watched != null }.map { it.contentId }
+        val pending = watchedIds.chunked(MAX_IN_LIST_IDS)
+            .flatMapTo(HashSet()) { outboxDao.contentIdsWithUnackedWatched(snapshot.serverId, accountId, profileId, it) }
+        return rows.associate {
+            it.contentId to LocalContentState(
+                watched = it.watched,
+                favorite = null,
+                watchedPending = it.contentId in pending,
+            )
+        }
     }
 
     override suspend fun contentIdsWithPendingOrNewerUserState(contentIds: List<String>, sinceMs: Long): Set<String> {

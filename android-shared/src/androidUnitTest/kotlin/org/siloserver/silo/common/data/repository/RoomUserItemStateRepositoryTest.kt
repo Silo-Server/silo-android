@@ -314,6 +314,17 @@ class RoomUserItemStateRepositoryTest {
     }
 
     @Test
+    fun localWatchedIsPendingOnlyUntilTheServerAcknowledgesIt() = runTest {
+        val handle = repo.recordWatched("c1", watched = true)
+        assertEquals(true, repo.localContentStates(listOf("c1"))["c1"]?.watchedPending)
+        repo.resolve(handle, WriteOutcome.SYNCED)
+        val acked = repo.localContentStates(listOf("c1"))["c1"]
+        // The projection row outlives the acknowledgement; only the pending flag drops.
+        assertEquals(true, acked?.watched)
+        assertEquals(false, acked?.watchedPending)
+    }
+
+    @Test
     fun resolveRetriableKeepsOpPending() = runTest {
         val handle = repo.recordRating("c1", rating = 4)
         repo.resolve(handle, WriteOutcome.RETRIABLE)

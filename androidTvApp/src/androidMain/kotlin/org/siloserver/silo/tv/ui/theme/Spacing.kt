@@ -175,7 +175,6 @@ object RowDimens {
 
     /** Watched badge geometry scales with the active poster width. */
     const val WatchedBadgeSizeFraction = 0.24f
-    const val WatchedBadgeIconSizeFraction = 0.55f
     const val WatchedBadgePaddingFraction = 0.06f
     val WatchedBadgeMinSize = 20.dp
     val WatchedBadgeMaxSize = 32.dp
