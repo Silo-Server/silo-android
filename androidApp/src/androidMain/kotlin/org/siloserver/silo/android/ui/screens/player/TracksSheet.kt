@@ -97,18 +97,28 @@ fun TracksSheet(
             return@PlayerMenu
         }
 
-        PlayerPanelHeader(title = stringResource(CommonR.string.player_tracks_title), onClose = { controller.dismiss() })
-        if (audioTracks.isNotEmpty()) {
-            PlayerSegmentedControl(
-                segments = listOf(
-                    PlayerSegment(stringResource(CommonR.string.player_tracks_subtitles), subtitles.size),
-                    PlayerSegment(stringResource(CommonR.string.player_tracks_audio), audioTracks.size),
-                ),
-                selectedIndex = tab.ordinal,
-                onSelect = { tabOrdinal = it },
-                modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 8.dp),
-            )
-        }
+        // With audio to choose too, the Subtitles | Audio switch is the
+        // header: it names both, and the list gets the row a title took.
+        PlayerPanelHeader(
+            title = stringResource(CommonR.string.player_tracks_title),
+            onClose = { controller.dismiss() },
+            titleSlot = if (audioTracks.isNotEmpty()) {
+                {
+                    PlayerSegmentedControl(
+                        segments = listOf(
+                            PlayerSegment(stringResource(CommonR.string.player_tracks_subtitles), subtitles.size),
+                            PlayerSegment(stringResource(CommonR.string.player_tracks_audio), audioTracks.size),
+                        ),
+                        selectedIndex = tab.ordinal,
+                        onSelect = { tabOrdinal = it },
+                        // Clears the 48dp Close touch box beside it.
+                        modifier = Modifier.padding(end = 8.dp),
+                    )
+                }
+            } else {
+                null
+            },
+        )
 
         when (tab) {
             TracksTab.Subtitles -> {

@@ -11,6 +11,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.gestures.ScrollableState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -46,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
@@ -294,10 +296,35 @@ internal fun ColumnScope.PlayerMenuScrollColumn(
         modifier = modifier
             .weight(1f, fill = false)
             .fillMaxWidth()
+            // A scroll bar says the list continues without sitting on a row.
+            .playerScrollIndicator(scrollState)
             .playerFadingEdges(scrollState)
             .verticalScroll(scrollState)
             .padding(horizontal = horizontalPadding),
         content = content,
+    )
+}
+
+/**
+ * A thin bar at the list's right edge, sized to how much of the list shows
+ * and placed at the scroll position. Drawn over the faded content, so it
+ * stays clear while the rows fade.
+ */
+private fun Modifier.playerScrollIndicator(state: ScrollState): Modifier = drawWithContent {
+    drawContent()
+    val hidden = state.maxValue.toFloat()
+    if (hidden <= 0f || hidden == Float.MAX_VALUE) return@drawWithContent
+    val viewport = size.height
+    val inset = 6.dp.toPx()
+    val track = viewport - inset * 2
+    val thumb = (track * viewport / (viewport + hidden)).coerceAtLeast(28.dp.toPx())
+    val top = inset + (track - thumb) * (state.value / hidden)
+    val width = 3.dp.toPx()
+    drawRoundRect(
+        color = Color.White.copy(alpha = 0.45f),
+        topLeft = Offset(size.width - width - 3.dp.toPx(), top),
+        size = Size(width, thumb),
+        cornerRadius = CornerRadius(width / 2f),
     )
 }
 
@@ -309,7 +336,7 @@ internal fun ColumnScope.PlayerMenuScrollColumn(
 internal fun Modifier.playerFadingEdges(
     state: ScrollableState,
     top: Dp = 16.dp,
-    bottom: Dp = 40.dp,
+    bottom: Dp = 20.dp,
 ): Modifier = this
     .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
     .drawWithContent {
@@ -325,9 +352,11 @@ internal fun Modifier.playerFadingEdges(
         if (state.canScrollForward) {
             val height = bottom.toPx()
             drawRect(
+                // A light touch: the last row stays readable (and above 3:1)
+                // as a live option; the scroll bar says the list continues.
                 brush = Brush.verticalGradient(
                     0f to Color.Black,
-                    1f to Color.Transparent,
+                    1f to Color.Black.copy(alpha = 0.6f),
                     startY = size.height - height,
                     endY = size.height,
                 ),

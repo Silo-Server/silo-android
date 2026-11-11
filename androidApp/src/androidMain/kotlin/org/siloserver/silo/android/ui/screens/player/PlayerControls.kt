@@ -16,11 +16,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -70,11 +72,20 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.LeftToRight
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
 import org.siloserver.silo.common.R as CommonR
@@ -122,6 +133,9 @@ fun PlayerControls(
     isOrientationLocked: Boolean,
     orientationLockSupported: Boolean = true,
     tabletopMode: Boolean = false,
+    // Width / height of the fitted picture, or 0. In portrait the controls
+    // dock to the picture's edges instead of the screen's.
+    pictureAspect: Float = 0f,
     playbackSpeed: Double = 1.0,
     // False in a Watch Party, where speed is a session-only 1x.
     playbackSpeedEnabled: Boolean = true,
@@ -170,14 +184,17 @@ fun PlayerControls(
     // composable stays test-friendly and decoupled from the Cast SDK. The
     // modifier dresses it as a player disc.
     castSlot: @Composable (Modifier) -> Unit = {},
+    // How far the bottom group (timeline and actions) reaches up from the foot
+    // of the controls, so the overlay's skip pill and credits card sit above it.
+    onBottomGroupClearance: (Dp) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var isScrubbing by remember { mutableStateOf(false) }
-    val chromeAlpha by animateFloatAsState(
-        targetValue = if (isScrubbing) 0.12f else 1f,
-        animationSpec = tween(180),
-        label = "playerChromeAlpha",
-    )
+    val density = LocalDensity.current
+    // Read by the bottom group's position callback. Set while placing, which
+    // runs before any position callback.
+    val controlsCoordinates = remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val chromeAlpha = scrubChromeAlpha(isScrubbing)
     val scrimBoost by animateFloatAsState(
         targetValue = if (isScrubbing) 0.18f else 0f,
         animationSpec = tween(180),
@@ -187,6 +204,7 @@ fun PlayerControls(
     Box(
         modifier = modifier
             .fillMaxSize()
+            .onPlaced { controlsCoordinates.value = it }
             .playerScrim(boost = scrimBoost),
     ) {
         val contentModifier = if (tabletopMode) {
@@ -212,7 +230,6 @@ fun PlayerControls(
             // Pixel 9 Pro that is a 68dp "status bar" on top and a 36dp
             // "navigation bar" underneath, which dropped the toolbar a quarter
             // of the way down the screen and lifted the seek bar off the bottom.
-            val density = LocalDensity.current
             val layoutDirection = LocalLayoutDirection.current
             val safeDrawing = WindowInsets.safeDrawing
             val horizontalInset = with(density) {
@@ -227,8 +244,9 @@ fun PlayerControls(
                 .padding(horizontal = 18.dp, vertical = 6.dp)
         }
 
-        val topBar: @Composable () -> Unit = {
+        val topBar: @Composable (showTitle: Boolean) -> Unit = { showTitle ->
             PlayerTopBar(
+                showTitle = showTitle,
                 eyebrow = eyebrow,
                 title = title,
                 isOrientationLocked = isOrientationLocked,
@@ -241,8 +259,9 @@ fun PlayerControls(
                 modifier = Modifier.alpha(chromeAlpha),
             )
         }
-        val transport: @Composable () -> Unit = {
+        val transport: @Composable (compact: Boolean) -> Unit = { compact ->
             PlayerTransportControls(
+                compact = compact,
                 isPlaying = isPlaying,
                 isPaused = isPaused,
                 isLoading = isLoading,
@@ -256,8 +275,17 @@ fun PlayerControls(
                 modifier = Modifier.alpha(chromeAlpha),
             )
         }
-        val bottom: @Composable () -> Unit = {
-            Column(modifier = Modifier.padding(horizontal = 4.dp)) {
+        val bottom: @Composable (withTransport: Boolean) -> Unit = { withTransport ->
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 4.dp)
+                    .onGloballyPositioned { group ->
+                        val controls = controlsCoordinates.value ?: return@onGloballyPositioned
+                        if (!controls.isAttached) return@onGloballyPositioned
+                        val top = controls.localPositionOf(group, Offset.Zero).y
+                        onBottomGroupClearance(with(density) { (controls.size.height - top).toDp() })
+                    },
+            ) {
                 PlayerProgressBar(
                     position = position,
                     duration = duration,
@@ -276,6 +304,16 @@ fun PlayerControls(
                     thumbnail = scrubThumbnail,
                     onScrubTarget = onScrubTarget,
                 )
+                if (withTransport) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        transport(true)
+                    }
+                }
                 PlayerActionPillRow(
                     hasTracks = hasTracks,
                     hasChapters = hasChapters,
@@ -302,9 +340,9 @@ fun PlayerControls(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    topBar()
-                    transport()
-                    bottom()
+                    topBar(true)
+                    transport(false)
+                    bottom(false)
                     TabletopUtilityRow(
                         playbackSpeed = playbackSpeed,
                         playbackSpeedEnabled = playbackSpeedEnabled,
@@ -318,22 +356,95 @@ fun PlayerControls(
                 }
             }
         } else {
-            Column(modifier = contentModifier) {
-                topBar()
-                Spacer(modifier = Modifier.weight(1f))
-                bottom()
-            }
-            // The insets are asymmetric in landscape, so a transport row inside
-            // the padded column lands off-centre. Anchor it to the true centre.
-            Box(
-                modifier = Modifier.align(Alignment.Center),
-                contentAlignment = Alignment.Center,
-            ) {
-                transport()
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                // Portrait, fitted picture: the controls gather around the
+                // picture instead of pinning to the ends of a tall, mostly
+                // black screen. The bar and title sit on the picture's top
+                // edge; the timeline, a compact transport and the labelled
+                // actions sit under it, so nothing covers the small picture.
+                val pictureHeight = if (maxHeight > maxWidth && pictureAspect > 0f) {
+                    minOf(maxWidth / pictureAspect, maxHeight)
+                } else {
+                    null
+                }
+                val pictureTop = pictureHeight?.let { (maxHeight - it) / 2 }
+                if (pictureHeight != null && pictureTop != null && pictureTop >= PortraitDockBelow) {
+                    // One group on the picture's top edge: the bar (Back, Cast…),
+                    // then the title, so nothing is stranded at the screen's top.
+                    // Inside the padded column for its side insets, in a box as
+                    // tall as the space above the picture, aligned to its foot.
+                    Column(modifier = contentModifier) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(pictureTop - 18.dp),
+                            contentAlignment = Alignment.BottomStart,
+                        ) {
+                            Column {
+                                topBar(false)
+                                PlayerTitleBlock(
+                                    eyebrow = eyebrow,
+                                    title = title,
+                                    maxTitleLines = 2,
+                                    modifier = Modifier
+                                        .alpha(chromeAlpha)
+                                        .padding(start = 6.dp, end = 6.dp, top = 10.dp),
+                                )
+                            }
+                        }
+                    }
+                    Column(modifier = contentModifier) {
+                        // With the column's 6dp padding the timeline starts 12dp
+                        // under the picture: the gap the overlay keeps above it,
+                        // so the skip pill and credits card stand on the picture's foot.
+                        Spacer(modifier = Modifier.height(pictureTop + pictureHeight + 6.dp))
+                        bottom(true)
+                    }
+                } else {
+                    Column(modifier = contentModifier) {
+                        topBar(true)
+                        Spacer(modifier = Modifier.weight(1f))
+                        bottom(false)
+                    }
+                    // The insets are asymmetric in landscape, so a transport
+                    // row inside the padded column lands off-centre. Anchor it
+                    // to the true centre.
+                    Box(
+                        modifier = Modifier.align(Alignment.Center),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        transport(false)
+                    }
+                }
             }
         }
     }
 }
+
+/**
+ * The chrome's opacity around the timeline. Scrubbing hides it outright: a
+ * ghost of the transport was drawn across the preview it frames.
+ */
+@Composable
+internal fun scrubChromeAlpha(isScrubbing: Boolean): Float {
+    val alpha by animateFloatAsState(
+        targetValue = if (isScrubbing) 0f else 1f,
+        animationSpec = tween(180),
+        label = "playerChromeAlpha",
+    )
+    return alpha
+}
+
+/** Room a docked portrait picture needs under it: timeline, transport and actions. */
+private val PortraitDockBelow = 236.dp
+
+// The full-size transport. Under a docked portrait picture it is smaller.
+private val TransportSkipSize = 54.dp
+private val TransportPlaySize = 70.dp
+private val TransportGap = 46.dp
+
+/** Width of the full-size transport row, which sits on the true centre of the screen. */
+internal val PlayerTransportWidth = TransportSkipSize * 2 + TransportPlaySize + TransportGap * 2
 
 /**
  * Gradients instead of a flat dim: dark enough at the top and bottom edges for
@@ -342,16 +453,18 @@ fun PlayerControls(
  */
 private fun Modifier.playerScrim(boost: Float): Modifier = drawBehind {
     drawRect(Color.Black.copy(alpha = 0.12f + boost))
-    val top = 116.dp.toPx()
+    // Deep enough at both edges for the title, times and timeline to hold on
+    // a bright, busy frame.
+    val top = 132.dp.toPx()
     drawRect(
-        brush = Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.6f), 1f to Color.Transparent, endY = top),
+        brush = Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.7f), 1f to Color.Transparent, endY = top),
         size = Size(size.width, top),
     )
-    val bottom = 200.dp.toPx()
+    val bottom = 220.dp.toPx()
     drawRect(
         brush = Brush.verticalGradient(
             0f to Color.Transparent,
-            1f to Color.Black.copy(alpha = 0.78f),
+            1f to Color.Black.copy(alpha = 0.85f),
             startY = size.height - bottom,
             endY = size.height,
         ),
@@ -372,6 +485,8 @@ private fun PlayerTopBar(
     onToggleOrientationLock: () -> Unit,
     castSlot: @Composable (Modifier) -> Unit,
     modifier: Modifier = Modifier,
+    // False when the title sits elsewhere (on a docked portrait picture).
+    showTitle: Boolean = true,
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -383,26 +498,16 @@ private fun PlayerTopBar(
             contentDescription = stringResource(CommonR.string.common_back),
             onClick = onBack,
         )
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = 8.dp),
-        ) {
-            if (eyebrow.isNotBlank()) {
-                Text(
-                    text = eyebrow.uppercase(),
-                    style = PlayerType.Eyebrow,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Text(
-                text = title,
-                style = PlayerType.HudTitle,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 1.dp),
+        if (showTitle) {
+            PlayerTitleBlock(
+                eyebrow = eyebrow,
+                title = title,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 8.dp),
             )
+        } else {
+            Spacer(modifier = Modifier.weight(1f))
         }
         if (pictureInPictureAvailable) {
             PlayerIconDisc(
@@ -428,6 +533,33 @@ private fun PlayerTopBar(
     }
 }
 
+/** Eyebrow ("MOVIE · 1985") over the title. */
+@Composable
+private fun PlayerTitleBlock(
+    eyebrow: String,
+    title: String,
+    modifier: Modifier = Modifier,
+    maxTitleLines: Int = 1,
+) {
+    Column(modifier = modifier) {
+        if (eyebrow.isNotBlank()) {
+            Text(
+                text = eyebrow.uppercase(),
+                style = PlayerType.Eyebrow,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(
+            text = title,
+            style = PlayerType.HudTitle,
+            maxLines = maxTitleLines,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 1.dp),
+        )
+    }
+}
+
 /** Dresses a foreign button (Cast) as a player disc. */
 private fun Modifier.playerDiscSurface(): Modifier = this
     .minimumInteractiveComponentSize()
@@ -438,6 +570,8 @@ private fun Modifier.playerDiscSurface(): Modifier = this
 
 @Composable
 private fun PlayerTransportControls(
+    // Under a docked portrait picture rather than over it: smaller discs.
+    compact: Boolean,
     isPlaying: Boolean,
     isPaused: Boolean,
     isLoading: Boolean,
@@ -456,13 +590,14 @@ private fun PlayerTransportControls(
     LeftToRight {
         Row(
             modifier = modifier,
-            horizontalArrangement = Arrangement.spacedBy(46.dp, Alignment.CenterHorizontally),
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 36.dp else TransportGap, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            val skipSize = if (compact) 48.dp else TransportSkipSize
             PlayerDisc(
                 contentDescription = pluralStringResource(CommonR.plurals.player_controls_skipBack, skipBackSeconds, skipBackSeconds),
                 onClick = onSkipBackward,
-                size = 54.dp,
+                size = skipSize,
                 enabled = seekEnabled,
             ) {
                 SeekIntervalIcon(
@@ -478,15 +613,17 @@ private fun PlayerTransportControls(
             PlayerDisc(
                 contentDescription = stringResource(if (showPlay) CommonR.string.player_controls_play else CommonR.string.player_controls_pause),
                 onClick = onPlayPause,
-                size = 70.dp,
+                size = if (compact) 60.dp else TransportPlaySize,
                 enabled = playPauseEnabled,
-                fill = if (isLoading) Color.Transparent else PlayerChrome.Paper,
+                // Loading keeps the disc's shape (a dark plate and ring around
+                // the spinner): transparent, it all but vanished on a dark frame.
+                fill = if (isLoading) Color.Black.copy(alpha = 0.55f) else PlayerChrome.Paper,
                 contentColor = PlayerChrome.Ink,
-                stroke = Color.Transparent,
+                stroke = if (isLoading) PlayerChrome.Paper.copy(alpha = 0.35f) else Color.Transparent,
                 stateDescription = stringResource(CommonR.string.common_loading).takeIf { isLoading },
             ) {
                 if (isLoading) {
-                    PlayerLoadingSpinner()
+                    PlayerLoadingSpinner(size = if (compact) 34.dp else 40.dp)
                 } else {
                     Icon(
                         imageVector = if (showPlay) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
@@ -502,7 +639,7 @@ private fun PlayerTransportControls(
             PlayerDisc(
                 contentDescription = pluralStringResource(CommonR.plurals.player_controls_skipForward, skipForwardSeconds, skipForwardSeconds),
                 onClick = onSkipForward,
-                size = 54.dp,
+                size = skipSize,
                 enabled = seekEnabled,
             ) {
                 SeekIntervalIcon(
@@ -517,7 +654,7 @@ private fun PlayerTransportControls(
     }
 }
 
-/** How much of each action pill fits: label and value, label, or icon only. */
+/** How much of each action fits: a pill with label and value, a pill with the label, or icon-over-name tiles. */
 private enum class ActionPillDensity { Full, Labels, Icons }
 
 @Composable
@@ -540,6 +677,35 @@ private fun PlayerActionPillRow(
             maxWidth >= 480.dp -> ActionPillDensity.Labels
             else -> ActionPillDensity.Icons
         }
+        if (density == ActionPillDensity.Icons) {
+            // Too narrow for labelled pills (a portrait phone): labelled
+            // buttons, icon over name, rather than a row of bare icons.
+            Row(modifier = Modifier.fillMaxWidth()) {
+                PlayerActionTile(
+                    Icons.Rounded.Subtitles,
+                    stringResource(CommonR.string.player_tracks_title),
+                    onOpenTracks,
+                    enabled = hasTracks,
+                )
+                if (hasChapters) {
+                    PlayerActionTile(
+                        Icons.AutoMirrored.Rounded.FormatListBulleted,
+                        stringResource(CommonR.string.options_chapters),
+                        onOpenChapters,
+                    )
+                }
+                if (hasQualityMenu) {
+                    PlayerActionTile(Icons.Rounded.Tune, stringResource(CommonR.string.options_quality), onOpenQuality)
+                }
+                PlayerActionTile(
+                    Icons.Rounded.MoreHoriz,
+                    stringResource(CommonR.string.detail_more),
+                    onOpenSettings,
+                    description = stringResource(CommonR.string.player_controls_settings),
+                )
+            }
+            return@BoxWithConstraints
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -556,7 +722,6 @@ private fun PlayerActionPillRow(
                     icon = Icons.Rounded.Subtitles,
                     label = stringResource(CommonR.string.player_tracks_title),
                     value = tracksValue.takeIf { density == ActionPillDensity.Full },
-                    compact = density == ActionPillDensity.Icons,
                     enabled = hasTracks,
                     onClick = onOpenTracks,
                     modifier = Modifier.weight(1f, fill = false),
@@ -566,7 +731,6 @@ private fun PlayerActionPillRow(
                         icon = Icons.AutoMirrored.Rounded.FormatListBulleted,
                         label = stringResource(CommonR.string.options_chapters),
                         value = chapterValue.takeIf { density == ActionPillDensity.Full },
-                        compact = density == ActionPillDensity.Icons,
                         onClick = onOpenChapters,
                         modifier = Modifier.weight(1f, fill = false),
                     )
@@ -576,8 +740,7 @@ private fun PlayerActionPillRow(
                 PlayerActionPill(
                     icon = Icons.Rounded.Tune,
                     label = stringResource(CommonR.string.options_quality),
-                    value = qualityValue.takeIf { density != ActionPillDensity.Icons },
-                    compact = density == ActionPillDensity.Icons,
+                    value = qualityValue,
                     onClick = onOpenQuality,
                 )
             }
@@ -589,6 +752,47 @@ private fun PlayerActionPillRow(
                 iconSize = 21.dp,
             )
         }
+    }
+}
+
+/** One labelled action in the narrow (portrait) action row: icon over name. */
+@Composable
+private fun RowScope.PlayerActionTile(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    description: String = label,
+) {
+    Column(
+        modifier = Modifier
+            .weight(1f)
+            .heightIn(min = 64.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(enabled = enabled, role = Role.Button, onClickLabel = description, onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = description }
+            .alpha(if (enabled) 1f else 0.32f)
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(PlayerChrome.Disc)
+                .border(1.dp, PlayerChrome.DiscStroke, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(imageVector = icon, contentDescription = null, tint = PlayerChrome.Paper, modifier = Modifier.size(20.dp))
+        }
+        Text(
+            text = label,
+            style = PlayerType.PillLabel.copy(fontSize = 12.sp),
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

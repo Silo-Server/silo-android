@@ -15,3 +15,14 @@ fun markerSkipTarget(position: Double, markers: MarkerTimeline): MarkerSkipTarge
     markers.active(MarkerKind.Credits, position)?.let { return MarkerSkipTarget(ManualMarkerKind.Credits, it.end) }
     return null
 }
+
+/**
+ * True when [position] is in the credits that close the item, where Up Next
+ * opens ([MarkerTimeline.upNextCreditsStart]). An earlier credits range, before
+ * a mid-credits scene, only skips to its own end, so the scene still plays.
+ */
+fun inClosingCredits(position: Double, markers: MarkerTimeline): Boolean {
+    if (markerSkipTarget(position, markers)?.kind != ManualMarkerKind.Credits) return false
+    val start = markers.upNextCreditsStart() ?: return false
+    return position >= start
+}

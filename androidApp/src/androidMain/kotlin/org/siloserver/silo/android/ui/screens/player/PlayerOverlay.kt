@@ -7,17 +7,20 @@ import android.graphics.Rect
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -44,15 +47,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.common.player.allowsAudioDelay
+import org.siloserver.silo.common.player.video.inClosingCredits
 import org.siloserver.silo.common.player.video.markerSkipTarget
 import org.siloserver.silo.common.player.video.ManualMarkerKind
 import androidx.compose.ui.res.pluralStringResource
@@ -76,6 +84,15 @@ import org.siloserver.silo.common.i18n.text
 
 /** How long a failed AI subtitle job stays on screen when its sheet was closed. */
 private const val AI_FAILURE_NOTICE_MS = 8_000L
+
+// The bottom-end slot (skip pills, credits card) at rest, and the space it
+// keeps from the controls while they show.
+private val BottomEndSlotBottom = 120.dp
+private val BottomEndSlotEnd = 24.dp
+private val BottomEndSlotControlsGap = 12.dp
+
+/** The credits card never narrows below this beside the landscape transport. */
+private val CreditsUpNextCardMinWidth = 200.dp
 
 /**
  * Full-screen overlay composable that layers gesture handling, transport controls,
@@ -107,6 +124,9 @@ fun PlayerOverlay(
     orientationLockSupported: Boolean = true,
     alwaysShowControls: Boolean = false,
     tabletopMode: Boolean = false,
+    // Width / height of the picture on screen (0 when unknown, or when it
+    // fills the screen). Portrait docks the controls around it.
+    pictureAspect: Float = 0f,
     tabletopPaneHeight: Dp? = null,
     onNextUpVideoBoundsChanged: (Rect) -> Unit,
     brightnessFraction: Float,
@@ -361,6 +381,12 @@ fun PlayerOverlay(
         // item's first frame.
         val controlsShown = (alwaysShowControls || state.showControls) && !state.showUpNext && !menuDocked &&
             !state.awaitingFirstFrame
+        // How far the controls' timeline and actions reach up from the bottom;
+        // the bottom-end slot rises above them while they show.
+        var controlsBottomClearance by remember { mutableStateOf(0.dp) }
+        // True while the timeline is dragged: the bottom-end slot hides with
+        // the rest of the chrome, so nothing covers the scrub preview.
+        var timelineScrubbing by remember { mutableStateOf(false) }
         // Up Next draws the spinner in its own video frame.
         if (spinnerVisible && !controlsShown && !state.showUpNext) {
             PlayerLoadingSpinner(modifier = Modifier.align(Alignment.Center))
@@ -518,6 +544,7 @@ fun PlayerOverlay(
                 isOrientationLocked = isOrientationLocked,
                 orientationLockSupported = orientationLockSupported,
                 tabletopMode = tabletopMode,
+                pictureAspect = pictureAspect,
                 playbackSpeed = playbackSpeed,
                 // A party plays at 1x; the saved speed is never changed from it.
                 playbackSpeedEnabled = !inRoom,
@@ -548,18 +575,55 @@ fun PlayerOverlay(
                 onSetPlaybackSpeed = viewModel::onSetPlaybackSpeed,
                 onPlayNextEpisode = viewModel::playUpNextNow,
                 onSetBrightness = onSetBrightness,
-                onScrubbingChange = viewModel::onScrubbingChanged,
+                onScrubbingChange = {
+                    timelineScrubbing = it
+                    viewModel.onScrubbingChanged(it)
+                },
                 scrubThumbnail = trickplayThumbnail,
                 onScrubTarget = viewModel::showTrickplay,
                 castSlot = castSlot,
+                onBottomGroupClearance = { controlsBottomClearance = it },
             )
         }
 
+        // The skip pills and the credits card. While the controls show, the
+        // slot rises clear of their timeline and actions: on an upright phone
+        // that puts it on the foot of the picture, above the docked controls.
+        // Hidden controls leave it where it rests.
+        val density = LocalDensity.current
+        val layoutDirection = LocalLayoutDirection.current
+        val safeDrawing = WindowInsets.safeDrawing
+        val clearsControls = controlsShown && !tabletopMode
+        val slotLift by animateDpAsState(
+            targetValue = if (clearsControls) {
+                val restingBottom = BottomEndSlotBottom + with(density) { safeDrawing.getBottom(this).toDp() }
+                (controlsBottomClearance + BottomEndSlotControlsGap - restingBottom).coerceAtLeast(0.dp)
+            } else {
+                0.dp
+            },
+            label = "bottomEndSlotLift",
+        )
+        val slotAlpha = scrubChromeAlpha(timelineScrubbing)
         val bottomEndSlotModifier = Modifier
             .align(Alignment.BottomEnd)
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(bottom = 120.dp, end = 24.dp)
+            .windowInsetsPadding(safeDrawing)
+            .padding(bottom = BottomEndSlotBottom + slotLift, end = BottomEndSlotEnd)
             .zIndex(2f)
+            .alpha(slotAlpha)
+        // In landscape the transport sits on the true centre at the slot's
+        // height, so the credits card keeps to the space beside it.
+        val creditsCardMaxWidth = if (clearsControls && maxWidth > maxHeight) {
+            val endInset = with(density) {
+                when (layoutDirection) {
+                    LayoutDirection.Ltr -> safeDrawing.getRight(this, layoutDirection)
+                    LayoutDirection.Rtl -> safeDrawing.getLeft(this, layoutDirection)
+                }.toDp()
+            }
+            (maxWidth / 2 - PlayerTransportWidth / 2 - BottomEndSlotControlsGap - BottomEndSlotEnd - endInset)
+                .coerceIn(CreditsUpNextCardMinWidth, CreditsUpNextCardMaxWidth)
+        } else {
+            CreditsUpNextCardMaxWidth
+        }
 
         // Intro skip pill (Hidden / Asking / Skipped).
         // Shares the bottom-end slot with the Up Next card; intro and credits
@@ -589,11 +653,49 @@ fun PlayerOverlay(
         if (!state.showUpNext && !introSkipState.isVisible && seekEnabled && !state.isLoading) {
             val target = markerSkipTarget(state.position, state.markerTimeline)
             if (target != null) {
+                val autoPlayNext by viewModel.autoPlayNextEnabled.collectAsState()
+                val autoStartArmed by viewModel.upNextAutoStartArmed.collectAsState()
+                // The closing credits name what follows them, in series order
+                // only: a shuffle's pick is not this series' next episode, and
+                // credits before a mid-credits scene keep the plain Skip
+                // Credits, so the scene plays. "Not now" puts the card away
+                // for this item; Skip Credits stays.
+                val creditsUpNext = state.nextEpisode?.takeIf {
+                    it.isEpisode && state.shuffle == null && !state.creditsUpNextDeclined &&
+                        inClosingCredits(state.position, state.markerTimeline)
+                }
+                // Outside a room, which owns what plays next, the card carries
+                // the action and plays it now, as on the TVs.
+                val playsNext = creditsUpNext != null && !inRoom
                 Box(modifier = bottomEndSlotModifier, contentAlignment = Alignment.BottomEnd) {
-                    MarkerSkipPill(
-                        label = stringResource(if (target.kind == ManualMarkerKind.Recap) CommonR.string.marker_skipRecap else CommonR.string.marker_skipCredits),
-                        onClick = { gatedSeek(target.endSeconds) },
-                    )
+                    Column(horizontalAlignment = Alignment.End) {
+                        if (creditsUpNext != null) {
+                            CreditsUpNextCard(
+                                next = creditsUpNext,
+                                // Claims an automatic start only while one is armed.
+                                // Auto-play on but disarmed (Keep Watching, Not now,
+                                // the pass-out gate, a room) makes no claim either way.
+                                autoPlayLine = when {
+                                    autoStartArmed -> CommonR.string.player_creditsUpNext_autoPlay
+                                    !autoPlayNext -> CommonR.string.player_creditsUpNext_autoPlayOff
+                                    else -> null
+                                },
+                                // This episode only: the auto-play setting stays as it is.
+                                onNotNow = viewModel::declineCreditsUpNext,
+                                onPlayNext = viewModel::playUpNextNow.takeIf { playsNext },
+                                maxWidth = creditsCardMaxWidth,
+                            )
+                        }
+                        if (!playsNext) {
+                            if (creditsUpNext != null) Spacer(modifier = Modifier.height(10.dp))
+                            MarkerSkipPill(
+                                label = stringResource(
+                                    if (target.kind == ManualMarkerKind.Recap) CommonR.string.marker_skipRecap else CommonR.string.marker_skipCredits,
+                                ),
+                                onClick = { gatedSeek(target.endSeconds) },
+                            )
+                        }
+                    }
                 }
             }
         }

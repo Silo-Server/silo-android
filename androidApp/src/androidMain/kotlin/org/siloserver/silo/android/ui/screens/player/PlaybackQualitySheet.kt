@@ -61,15 +61,14 @@ fun PlaybackQualitySheet(
             }
             Spacer(Modifier.height(8.dp))
             PlayerGroup {
-                val autoLimitedLabel = stringResource(CommonR.string.bufferingQuality_autoLimited)
+                // A learned limit stays "Auto", with why underneath: replacing the
+                // label ("Auto · limited after buffering") read as an error.
+                val autoLimitedDetail = stringResource(CommonR.string.bufferingQuality_autoLimitedDetail)
                 options.forEachIndexed { index, option ->
+                    val limitedAuto = autoLimitedAfterBuffering && option.id == PLAYBACK_QUALITY_AUTO
                     PlayerCheckRow(
-                        label = if (autoLimitedAfterBuffering && option.id == PLAYBACK_QUALITY_AUTO) {
-                            autoLimitedLabel
-                        } else {
-                            option.name
-                        },
-                        detail = option.bitrateLabel,
+                        label = option.name,
+                        detail = if (limitedAuto) autoLimitedDetail else option.bitrateLabel,
                         selected = option.id == activeId,
                         onClick = {
                             onSelect(option.id)

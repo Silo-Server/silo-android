@@ -133,7 +133,6 @@ private fun ProgressBarContent(
 ) {
     var isSeeking by remember { mutableStateOf(false) }
     var seekPosition by remember { mutableDoubleStateOf(0.0) }
-    var scrubStart by remember { mutableDoubleStateOf(0.0) }
     var barWidthPx by remember { mutableFloatStateOf(0f) }
     var bubbleWidthPx by remember { mutableIntStateOf(0) }
     var lastChapter by remember { mutableIntStateOf(-1) }
@@ -235,7 +234,6 @@ private fun ProgressBarContent(
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         down.consume()
-                        scrubStart = latestPosition
                         seekPosition = positionAt(down.position.x)
                         lastChapter = chapterIndexAt(seekPosition)
                         isSeeking = true
@@ -303,8 +301,9 @@ private fun ProgressBarContent(
                     } else {
                         emptyList()
                     },
-                    startFraction = if (isSeeking && hasKnownDuration) (scrubStart / duration).toFloat() else null,
-                    showHead = seekable && !isSeeking,
+                    // The head stays on the target while scrubbing: one mark
+                    // for where playback will land.
+                    showHead = seekable,
                     dimmed = !enabled,
                 )
             }
@@ -313,7 +312,6 @@ private fun ProgressBarContent(
                 val x = barWidthPx * playedFraction
                 val half = bubbleWidthPx / 2f
                 val clampedX = if (barWidthPx > bubbleWidthPx) x.coerceIn(half, barWidthPx - half) else barWidthPx / 2f
-                val delta = seekPosition - scrubStart
                 val chapterTitle = chapterTitleAt(chapters, seekPosition)
                 // A preview grows the bubble upward: its bottom edge stays put.
                 val lift = if (thumbnail != null) 52.dp + ScrubThumbnailBlockHeight / 2 else 52.dp
@@ -353,15 +351,17 @@ private fun ProgressBarContent(
                         )
                     }
                     Text(text = formatClockTime(seekPosition), style = PlayerType.BubbleTime)
-                    Text(
-                        text = listOfNotNull(chapterTitle, formatSeekDelta(delta)).joinToString(" · "),
-                        style = PlayerType.BubbleDetail,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .padding(top = 2.dp)
-                            .widthIn(max = 220.dp),
-                    )
+                    chapterTitle?.let { chapter ->
+                        Text(
+                            text = chapter,
+                            style = PlayerType.BubbleDetail,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .padding(top = 2.dp)
+                                .widthIn(max = 220.dp),
+                        )
+                    }
                 }
             }
         }
@@ -383,7 +383,6 @@ private fun DrawScope.drawSeekBar(
     bufferedFraction: Float,
     chapterFractions: List<Float>,
     markers: List<Triple<Float, Float, Color>>,
-    startFraction: Float?,
     showHead: Boolean,
     dimmed: Boolean,
 ) {
@@ -396,8 +395,11 @@ private fun DrawScope.drawSeekBar(
     // falls back to one continuous bar.
     val boundaries = chapterFractions.filter { it > 0.001f && it < 0.999f }.sorted()
     val edges = (listOf(0f) + boundaries + listOf(1f)).map { it * width }
+    // A fixed minimum, not one tied to the bar's height: the bar thickens
+    // while scrubbing, and the segments vanished just when they help most.
+    val minSegment = 6.dp.toPx() + gap
     val useGaps = boundaries.isNotEmpty() &&
-        edges.zipWithNext().all { (a, b) -> b - a >= barHeightPx * 2f + gap }
+        edges.zipWithNext().all { (a, b) -> b - a >= minSegment }
     val segments = if (useGaps) edges.zipWithNext() else listOf(0f to width)
     val alpha = if (dimmed) 0.35f else 1f
 
@@ -425,28 +427,11 @@ private fun DrawScope.drawSeekBar(
         fill(PlayerChrome.Paper.copy(alpha = alpha), playedFraction * width)
     }
 
-    startFraction?.let { fraction ->
-        val x = fraction * width
-        val tickWidth = 2.dp.toPx()
-        drawRoundRect(
-            color = PlayerChrome.Paper.copy(alpha = 0.55f),
-            topLeft = Offset(x - tickWidth / 2f, top - 5.dp.toPx()),
-            size = Size(tickWidth, barHeightPx + 10.dp.toPx()),
-            cornerRadius = CornerRadius(tickWidth / 2f),
-        )
-    }
-
     if (showHead) {
         val center = Offset(playedFraction * width, size.height / 2f)
         drawCircle(color = Color.Black.copy(alpha = 0.35f), radius = 8.dp.toPx(), center = center)
         drawCircle(color = PlayerChrome.Paper, radius = 6.5.dp.toPx(), center = center)
     }
-}
-
-private fun formatSeekDelta(delta: Double): String? {
-    if (kotlin.math.abs(delta) < 1.0) return null
-    val sign = if (delta > 0) "+" else "−"
-    return sign + formatClockTime(kotlin.math.abs(delta))
 }
 
 internal fun remainingTimeLabel(position: Double, duration: Double): String =

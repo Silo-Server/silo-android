@@ -2061,6 +2061,12 @@ fun PlayerScreen(
                             orientationLockSupported && activeTabletopPaneLayout == null,
                         alwaysShowControls = activeTabletopPaneLayout != null,
                         tabletopMode = activeTabletopPaneLayout != null,
+                        // Only a fitted picture leaves bands to dock into.
+                        pictureAspect = when {
+                            videoGravity == "fill" || videoGravity == "stretch" -> 0f
+                            letterboxExpanding -> letterboxContentAspect
+                            else -> codedVideoAspect
+                        },
                         onNextUpVideoBoundsChanged = { nextUpVideoBounds = it },
                         tabletopPaneHeight = activeTabletopPaneLayout?.let { layout ->
                             with(density) { layout.controlsHeightPx.toDp() }

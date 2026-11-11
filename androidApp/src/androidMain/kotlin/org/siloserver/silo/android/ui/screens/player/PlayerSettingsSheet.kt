@@ -39,7 +39,7 @@ private fun SettingsRoute.title(): String = stringResource(
         SettingsRoute.Root -> CommonR.string.player_settings_title
         SettingsRoute.Speed -> CommonR.string.player_settings_speed
         SettingsRoute.PictureSize -> CommonR.string.player_settings_pictureSize
-        SettingsRoute.FillScreen -> CommonR.string.player_settings_fillScreen
+        SettingsRoute.FillScreen -> CommonR.string.player_settings_blackBars
         SettingsRoute.SkipIntros -> CommonR.string.settings_introSkip_title
         SettingsRoute.Sync -> CommonR.string.player_settings_syncTitle
     },
@@ -110,7 +110,8 @@ fun PlayerSettingsSheet(
         PlayerMenuScrollColumn(horizontalPadding = 12.dp) {
             when (route) {
                 SettingsRoute.Root -> {
-                    PlayerSectionHeader(stringResource(CommonR.string.player_settings_sectionPicture))
+                    // Quality, version and speed live here too: "Video", not "Picture".
+                    PlayerSectionHeader(stringResource(CommonR.string.options_tabVideo))
                     PlayerGroup {
                         if (showQuality) {
                             PlayerValueRow(stringResource(CommonR.string.options_quality), qualityLabel, onClick = { handOff(onOpenQuality) })
@@ -138,7 +139,7 @@ fun PlayerSettingsSheet(
                             separator = showQuality || showVersion || showPlaybackSpeed,
                         )
                         PlayerValueRow(
-                            label = stringResource(CommonR.string.player_settings_fillScreen),
+                            label = stringResource(CommonR.string.player_settings_blackBars),
                             value = letterboxExpansionLabel(letterboxExpansion),
                             onClick = { routeOrdinal = SettingsRoute.FillScreen.ordinal },
                             separator = true,
@@ -330,9 +331,9 @@ private fun pictureSizeLabel(value: String): String = stringResource(mobileVideo
 @Composable
 private fun letterboxExpansionLabel(value: String): String = stringResource(
     when (value) {
-        LetterboxExpansion.FullWidth -> CommonR.string.player_settings_fillScreenFullWidth
-        LetterboxExpansion.Off -> CommonR.string.player_settings_fillScreenOff
-        else -> CommonR.string.player_settings_fillScreenClearOfCamera
+        LetterboxExpansion.FullWidth -> CommonR.string.player_settings_blackBarsFillFullWidth
+        LetterboxExpansion.Off -> CommonR.string.player_settings_blackBarsKeep
+        else -> CommonR.string.player_settings_blackBarsAvoidCamera
     },
 )
 

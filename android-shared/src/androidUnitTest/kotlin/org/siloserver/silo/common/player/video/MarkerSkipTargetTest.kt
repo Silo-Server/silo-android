@@ -5,7 +5,9 @@ import org.siloserver.silo.model.catalog.MarkerSegment
 import org.siloserver.silo.model.catalog.TimeRange
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class MarkerSkipTargetTest {
     private fun legacy(recap: TimeRange?, credits: TimeRange?) =
@@ -34,6 +36,28 @@ class MarkerSkipTargetTest {
         assertEquals(MarkerSkipTarget(ManualMarkerKind.Credits, 3167.4), markerSkipTarget(3000.0, markers))
         assertNull(markerSkipTarget(3175.0, markers))
         assertEquals(MarkerSkipTarget(ManualMarkerKind.Credits, 3300.0), markerSkipTarget(3189.0, markers))
+    }
+
+    @Test fun onlyTheClosingCreditsLeadToUpNext() {
+        val markers = MarkerTimeline.resolve(
+            segments = listOf(
+                MarkerSegment("credits", 2975.5, 3167.4),
+                MarkerSegment("credits", 3189.0, 3300.0),
+            ),
+            intro = null, credits = TimeRange(2975.5, 3167.4), recap = null, preview = null,
+        )
+        // Credits before the mid-credits scene keep the plain skip, so the scene plays.
+        assertFalse(inClosingCredits(3000.0, markers))
+        assertFalse(inClosingCredits(3175.0, markers))
+        assertTrue(inClosingCredits(3189.0, markers))
+        assertFalse(inClosingCredits(3300.0, markers))
+        // Ranges that run into each other close the item together.
+        val touching = MarkerTimeline.resolve(
+            segments = listOf(MarkerSegment("credits", 1200.0, 1300.0), MarkerSegment("credits", 1300.5, 1400.0)),
+            intro = null, credits = null, recap = null, preview = null,
+        )
+        assertTrue(inClosingCredits(1250.0, touching))
+        assertFalse(inClosingCredits(1250.0, legacy(null, null)))
     }
 
     @Test fun invalidRangesCannotOfferASeek() {

@@ -15,8 +15,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -223,7 +221,7 @@ private fun BufferingQualityPillSlot(
     }
 }
 
-/** The intro pill's dark scrim and fill, in the notice pill's shape. */
+/** The intro pill's dark plate and countdown line, in the notice pill's shape. */
 @Composable
 private fun BufferingPillCard(
     progress: Float,
@@ -234,17 +232,10 @@ private fun BufferingPillCard(
         modifier = Modifier
             .widthIn(max = 360.dp)
             .clip(shape)
-            .background(Color.Black.copy(alpha = 0.65f), shape),
+            // Near-opaque: at 65% the card all but vanished on a dark frame.
+            .background(Color.Black.copy(alpha = 0.85f), shape),
     ) {
-        // matchParentSize so the fill takes the card's bounds, not the screen's.
-        Box(Modifier.matchParentSize()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(progress.coerceIn(0f, 1f))
-                    .fillMaxHeight()
-                    .background(Color.White.copy(alpha = 0.14f)),
-            )
-        }
+        PlayerCountdownLine(progress)
         Column(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             content = content,

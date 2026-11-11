@@ -11,11 +11,13 @@ import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -95,8 +97,11 @@ internal object PlayerChrome {
     /** Docked panels and sheets over the picture. */
     val Smoke = Color(0xFF131417).copy(alpha = 0.955f)
 
+    /** The near-black of every surface floating directly on the video. */
+    val Plate = Color(0xFF16171A)
+
     /** Resting fill of a disc or pill floating directly on the video. */
-    val Disc = Color(0xFF16171A).copy(alpha = 0.55f)
+    val Disc = Plate.copy(alpha = 0.55f)
     val DiscStroke = Color.White.copy(alpha = 0.13f)
     val PanelStroke = Color.White.copy(alpha = 0.09f)
 
@@ -111,6 +116,11 @@ internal object PlayerChrome {
 
     val DiscSize = 40.dp
     val TouchSize = 48.dp
+    /**
+     * Menu rows: 44dp, the iOS minimum, so a landscape sheet shows a row more
+     * (a deliberate choice below Material's 48dp; icon buttons keep 48dp).
+     */
+    val RowHeight = 44.dp
     val PanelRadius = 24.dp
     val PanelWidth = 372.dp
 }
@@ -220,14 +230,17 @@ internal fun PlayerDisc(
  * on the picture or in the play disc's place. Screen readers hear "Loading".
  */
 @Composable
-internal fun PlayerLoadingSpinner(modifier: Modifier = Modifier) {
+internal fun PlayerLoadingSpinner(modifier: Modifier = Modifier, size: Dp = 56.dp) {
     val loading = stringResource(CommonR.string.common_loading)
     CircularProgressIndicator(
         modifier = modifier
-            .size(56.dp)
+            .size(size)
             .semantics { contentDescription = loading },
         color = PlayerChrome.Paper,
         strokeWidth = 3.dp,
+        // A faint full ring, so the spinner reads as one even while its arc
+        // is short.
+        trackColor = PlayerChrome.Paper.copy(alpha = 0.2f),
     )
 }
 
@@ -259,8 +272,7 @@ internal fun PlayerIconDisc(
 
 /**
  * A labeled control on the bottom row: icon, what it opens, and what it is set
- * to now ("Chapters · Scene 10"). Compact mode keeps only the icon for narrow
- * windows, the way iOS falls back through `ViewThatFits`.
+ * to now ("Chapters · Scene 10").
  */
 @Composable
 internal fun PlayerActionPill(
@@ -269,7 +281,6 @@ internal fun PlayerActionPill(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     value: String? = null,
-    compact: Boolean = false,
     enabled: Boolean = true,
 ) {
     val shape = RoundedCornerShape(18.dp)
@@ -282,30 +293,28 @@ internal fun PlayerActionPill(
             .border(1.dp, PlayerChrome.DiscStroke, shape)
             .clickable(enabled = enabled, role = Role.Button, onClickLabel = label, onClick = onClick)
             .alpha(if (enabled) 1f else 0.32f)
-            .padding(start = if (compact) 8.5.dp else 11.dp, end = if (compact) 8.5.dp else 14.dp),
+            .padding(start = 11.dp, end = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         Icon(
             imageVector = icon,
-            contentDescription = if (compact) label else null,
+            contentDescription = null,
             tint = PlayerChrome.Paper,
             modifier = Modifier.size(19.dp),
         )
-        if (!compact) {
-            Text(text = label, style = PlayerType.PillLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (!value.isNullOrBlank()) {
-                // The value gives way first when the pill is squeezed.
-                Text(
-                    text = value,
-                    style = PlayerType.PillValue,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .weight(1f, fill = false)
-                        .widthIn(max = 160.dp),
-                )
-            }
+        Text(text = label, style = PlayerType.PillLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (!value.isNullOrBlank()) {
+            // The value gives way first when the pill is squeezed.
+            Text(
+                text = value,
+                style = PlayerType.PillValue,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .widthIn(max = 160.dp),
+            )
         }
     }
 }
@@ -321,11 +330,13 @@ internal fun PlayerPanelHeader(
     onClose: () -> Unit,
     onBack: (() -> Unit)? = null,
     backDescription: String = stringResource(CommonR.string.common_back),
+    /** Drawn in the title's place (a tab switch), which saves the sheet a row. */
+    titleSlot: (@Composable () -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = if (onBack != null) 4.dp else 18.dp, end = 6.dp, top = 6.dp),
+            .padding(start = if (onBack != null) 4.dp else 18.dp, end = 6.dp, top = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (onBack != null) {
@@ -344,13 +355,17 @@ internal fun PlayerPanelHeader(
                 )
             }
         }
-        Text(
-            text = title,
-            style = PlayerType.PanelTitle,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        if (titleSlot != null) {
+            Box(modifier = Modifier.weight(1f)) { titleSlot() }
+        } else {
+            Text(
+                text = title,
+                style = PlayerType.PanelTitle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
         PlayerDisc(
             contentDescription = stringResource(CommonR.string.player_menu_close),
             onClick = onClose,
@@ -407,7 +422,8 @@ internal fun PlayerSegmentedControl(
                     Text(
                         text = count.toString(),
                         style = PlayerType.Segment.copy(
-                            color = color.copy(alpha = color.alpha * 0.55f),
+                            // Dimmer than the label but still legible on the panel.
+                            color = color.copy(alpha = color.alpha * 0.8f),
                             fontWeight = FontWeight.Medium,
                             fontSize = 12.sp,
                         ),
@@ -520,7 +536,7 @@ internal fun PlayerTrackRow(
             .background(if (selected) PlayerChrome.Raised else Color.Transparent)
             .selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
             .alpha(if (enabled) 1f else 0.4f)
-            .heightIn(min = 46.dp)
+            .heightIn(min = PlayerChrome.RowHeight)
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -569,7 +585,8 @@ internal fun PlayerSectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text.uppercase(),
         style = PlayerType.Section,
-        modifier = modifier.padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 6.dp),
+        // Tight: in a landscape phone panel every header costs a row of options.
+        modifier = modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 4.dp),
     )
 }
 
@@ -613,7 +630,7 @@ private fun PlayerGroupRow(
         modifier = modifier
             .fillMaxWidth()
             .playerGroupSeparator(separator)
-            .heightIn(min = 44.dp)
+            .heightIn(min = PlayerChrome.RowHeight)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -766,8 +783,8 @@ internal fun PlayerFooterButton(
 ) {
     Row(
         modifier = modifier
-            .heightIn(min = 40.dp)
-            .clip(RoundedCornerShape(20.dp))
+            .heightIn(min = PlayerChrome.TouchSize)
+            .clip(RoundedCornerShape(24.dp))
             .background(PlayerChrome.Raised)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .alpha(if (enabled) 1f else 0.4f)
@@ -909,5 +926,33 @@ internal fun PlayerActionRow(
             modifier = Modifier.weight(1f),
         )
         PlayerRowChevron()
+    }
+}
+
+/**
+ * A countdown as a thin line along the foot of a pill or card, in place of a
+ * fill across it: a half-filled surface read as two backgrounds or a
+ * rendering glitch. Call inside the pill's Box; it takes the Box's bounds
+ * (matchParentSize), never the screen's.
+ */
+@Composable
+internal fun BoxScope.PlayerCountdownLine(progress: Float, horizontalInset: Dp = 14.dp) {
+    if (progress <= 0f) return
+    Box(Modifier.matchParentSize(), contentAlignment = Alignment.BottomCenter) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = horizontalInset, end = horizontalInset, bottom = 5.dp)
+                .height(2.dp)
+                .clip(RoundedCornerShape(1.dp))
+                .background(Color.White.copy(alpha = 0.2f)),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(progress.coerceIn(0f, 1f))
+                    .fillMaxHeight()
+                    .background(Color.White.copy(alpha = 0.85f)),
+            )
+        }
     }
 }

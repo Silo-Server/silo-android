@@ -696,10 +696,18 @@ class PlayerViewModel(
         // controls, only the spinner. A retry, renewal, reconnect or replan
         // keeps the content id, so only a new item brings that state back.
         val startedContentId: String? = null,
+        // The item whose credits Up Next card the viewer put away with "Not
+        // now". A retry or reload keeps the content id, so the card stays
+        // away; a new item clears it.
+        val creditsUpNextDeclinedFor: String? = null,
     ) {
         /** The current item has not shown its first frame yet; see [startedContentId]. */
         val awaitingFirstFrame: Boolean
             get() = startedContentId != contentId
+
+        /** "Not now" put the credits Up Next card away for this item; see [creditsUpNextDeclinedFor]. */
+        val creditsUpNextDeclined: Boolean
+            get() = creditsUpNextDeclinedFor == contentId
 
         /** The marker occurrences the skip controls and Up Next read. */
         val markerTimeline: MarkerTimeline by lazy {
@@ -1071,8 +1079,41 @@ class PlayerViewModel(
     // same VM persists across episodes and the guard accumulates the streak.
     // The guard reads the threshold lazily so a settings change applies live.
     private val autoPlayGuard = AutoPlayGuard(threshold = { passOutThreshold.value })
+    private val _upNextAutoStartArmed = MutableStateFlow(false)
+
+    /**
+     * The next episode still starts by itself when this one ends: auto-play is
+     * on, Up Next was not declined or kept for this item, the pass-out gate is
+     * open, and no Watch Party decides what plays. The credits card claims an
+     * automatic start only while this holds.
+     */
+    val upNextAutoStartArmed: StateFlow<Boolean> = _upNextAutoStartArmed.asStateFlow()
+
     // Once-per-episode guard for the credits/ended trigger; reset on each load.
     private var autoAdvanceHandled = false
+        set(value) {
+            field = value
+            refreshUpNextAutoStart()
+        }
+
+    init {
+        // The setting and the pass-out threshold change outside this player.
+        viewModelScope.launch {
+            combine(autoPlayNextEnabled, passOutThreshold) { _, _ -> }.collect { refreshUpNextAutoStart() }
+        }
+    }
+
+    private fun refreshUpNextAutoStart() {
+        _upNextAutoStartArmed.value = autoPlayNextEnabled.value && !autoAdvanceHandled &&
+            !autoPlayGuard.shouldGate() && !remoteTransportSuppressed
+    }
+
+    /** A deliberate interaction resets the pass-out streak. */
+    private fun recordAutoPlayUserAction() {
+        autoPlayGuard.recordUserAction()
+        refreshUpNextAutoStart()
+    }
+
     // End point fired before the next episode resolved — remember it (and the
     // strongest videoEnded flag seen) so resolveNextEpisode can commit the card.
     private var pendingApproachingEndVideoEnded: Boolean? = null
@@ -1621,6 +1662,7 @@ class PlayerViewModel(
                 upNextCountdownSeconds = null,
                 stats = PlayerStatsSnapshot(),
                 offlineAudioByPosition = false,
+                creditsUpNextDeclinedFor = it.creditsUpNextDeclinedFor?.takeIf { declined -> declined == contentId },
             )
         }
         localSubtitleState = null
@@ -1748,8 +1790,10 @@ class PlayerViewModel(
         introAutoSkipController.reset()
         beginBufferingQualityLoad(contentId)
         // New item: re-arm the once-per-episode auto-advance trigger. (The
-        // AutoPlayGuard streak intentionally PERSISTS across episodes.)
-        autoAdvanceHandled = false
+        // AutoPlayGuard streak intentionally PERSISTS across episodes.) A
+        // reload of an item whose credits card was declined keeps it disarmed,
+        // as the card promised.
+        autoAdvanceHandled = _uiState.value.creditsUpNextDeclinedFor == contentId
         pendingApproachingEndVideoEnded = null
         shuffleNextPartFileId = null
         shuffleRefreshedForPostRoll = false
@@ -3420,7 +3464,7 @@ class PlayerViewModel(
 
     /** Toggle play/pause — tracks user intent; PlayerScreen mirrors this to playWhenReady. */
     fun onPlayPause() {
-        autoPlayGuard.recordUserAction() // deliberate interaction resets the pass-out streak
+        recordAutoPlayUserAction() // deliberate interaction resets the pass-out streak
         // A deliberate pause while the Up Next countdown is running opts out of
         // auto-advance: stop the countdown but keep the card so Play Now /
         // dismiss remain available (the card is non-modal, so transport input
@@ -3442,7 +3486,7 @@ class PlayerViewModel(
         _uiState.value.chapters.getOrNull(chapterIndex)?.startSeconds
 
     fun onSeek(position: Double) {
-        autoPlayGuard.recordUserAction() // deliberate interaction resets the pass-out streak
+        recordAutoPlayUserAction() // deliberate interaction resets the pass-out streak
         pendingApproachingEndVideoEnded = null
         // A deliberate scrub while the Up Next card is showing is the user
         // taking back control (e.g. rewinding to rewatch) — dismiss the card
@@ -3457,7 +3501,7 @@ class PlayerViewModel(
     /** Apple-parity quick skip: preview every tap, commit one engine command
      * after the 200ms trailing edge, and base repeats on the pending target. */
     fun onSkipBy(deltaSeconds: Double) {
-        autoPlayGuard.recordUserAction()
+        recordAutoPlayUserAction()
         pendingApproachingEndVideoEnded = null
         if (_uiState.value.showUpNext) dismissUpNext()
         val state = _uiState.value
@@ -4050,6 +4094,7 @@ class PlayerViewModel(
     fun setInWatchTogetherRoom(value: Boolean) {
         inWatchTogetherRoom = value
         syncBufferingQualityEnabled()
+        refreshUpNextAutoStart()
     }
     /** True in a Watch Party: the room, not this device, decides transport. */
     val remoteTransportSuppressed: Boolean get() = inRoom
@@ -4176,6 +4221,7 @@ class PlayerViewModel(
         }
         currentRoomContext = room
         syncBufferingQualityEnabled()
+        refreshUpNextAutoStart()
         _roomRefusal.value = null
         roomObservedSessionId = null
         roomLastUiSessionId = _uiState.value.sessionId
@@ -6059,7 +6105,7 @@ class PlayerViewModel(
     fun playOnDeckItemNow(contentId: String) {
         // Only the room chooses what a Watch Party plays.
         if (inRoom) return
-        autoPlayGuard.recordUserAction()
+        recordAutoPlayUserAction()
         upNextCountdownJob?.cancel()
         upNextCountdownJob = null
         // An On Deck item is outside the shuffle: playback leaves it, but the
@@ -6258,6 +6304,7 @@ class PlayerViewModel(
                 // so a long unattended binge eventually trips the gate. An explicit
                 // Play Now (below) resets the streak instead.
                 autoPlayGuard.recordAutoAdvance()
+                refreshUpNextAutoStart()
                 advanceToNextEpisode()
                 return@launch
             }
@@ -6266,7 +6313,7 @@ class PlayerViewModel(
 
     /** Up Next "Play Now" — an explicit choice, so it resets the pass-out streak. */
     fun playUpNextNow() {
-        autoPlayGuard.recordUserAction()
+        recordAutoPlayUserAction()
         advanceToNextEpisode()
     }
 
@@ -6280,6 +6327,16 @@ class PlayerViewModel(
         upNextCountdownJob?.cancel()
         upNextCountdownJob = null
         _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }
+    }
+
+    /**
+     * Credits card "Not now": this item won't start the next by itself, and the
+     * card stays away for it until another item loads, through reloads and
+     * seeks. Skip Credits stays; the auto-play setting is unchanged.
+     */
+    fun declineCreditsUpNext() {
+        dismissUpNext()
+        _uiState.update { it.copy(creditsUpNextDeclinedFor = it.contentId) }
     }
 
     /**

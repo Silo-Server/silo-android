@@ -66,16 +66,38 @@ fun ChaptersSheet(
         PlayerPanelHeader(title = stringResource(CommonR.string.options_chapters), onClose = { controller.dismiss() })
         val current = chapters.getOrNull(currentChapterIndex)
         val countLabel = pluralStringResource(CommonR.plurals.player_chapters_count, chapters.size, chapters.size)
-        Text(
-            text = if (current != null) {
-                val left = (chapterEnd(chapters, currentChapterIndex, duration) - position).coerceAtLeast(0.0)
-                "$countLabel · " + stringResource(CommonR.string.player_chapters_timeLeft, formatClockTime(left))
-            } else {
-                countLabel
-            },
-            style = PlayerType.RowDetail.copy(fontFeatureSettings = "tnum"),
+        // The summary, with the two time columns named over the rows' own
+        // column widths.
+        Row(
             modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 6.dp),
-        )
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            Text(
+                text = if (current != null) {
+                    val left = (chapterEnd(chapters, currentChapterIndex, duration) - position).coerceAtLeast(0.0)
+                    "$countLabel · " + stringResource(CommonR.string.player_chapters_timeLeft, formatClockTime(left))
+                } else {
+                    countLabel
+                },
+                style = PlayerType.RowDetail.copy(fontFeatureSettings = "tnum"),
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            if (chapters.isNotEmpty()) {
+                Text(
+                    text = stringResource(CommonR.string.player_chapters_columnStarts).uppercase(),
+                    style = PlayerType.Eyebrow,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.width(64.dp),
+                )
+                Text(
+                    text = stringResource(CommonR.string.player_chapters_columnLength).uppercase(),
+                    style = PlayerType.Eyebrow,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.width(56.dp),
+                )
+            }
+        }
         if (chapters.isEmpty()) {
             PlayerFootnote(stringResource(CommonR.string.player_chapters_empty))
             return@PlayerMenu
@@ -139,7 +161,7 @@ private fun ChapterRow(
             .clip(RoundedCornerShape(12.dp))
             .background(if (isCurrent) PlayerChrome.Raised else androidx.compose.ui.graphics.Color.Transparent)
             .clickable(role = Role.Button, onClickLabel = playFromLabel, onClick = onClick)
-            .heightIn(min = 44.dp)
+            .heightIn(min = PlayerChrome.RowHeight)
             .padding(horizontal = 10.dp),
         verticalArrangement = Arrangement.Center,
     ) {

@@ -2,8 +2,6 @@ package org.siloserver.silo.android.ui.screens.player
 
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.TimerOff
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
@@ -15,11 +13,11 @@ import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.player.SleepTimerState
 
 /**
- * Arms the sleep timer. Mirrors iOS `SleepTimerSheet` semantics:
+ * Arms the sleep timer:
+ *  - "Off" is checked while no timer runs and cancels one that does,
  *  - preset rows (15/30/45/60/90) call [onStart] and close the menu,
- *  - "Cancel timer" appears while the timer is [SleepTimerState.Active],
- *  - the preset matching [defaultMinutes] carries the check, so the user's
- *    last choice is the obvious next pick.
+ *  - while a timer runs, the preset matching [defaultMinutes] (the length it
+ *    was started with) carries the check.
  */
 @Composable
 fun SleepTimerSheet(
@@ -54,30 +52,29 @@ fun SleepTimerSheet(
                 )
             }
             Spacer(Modifier.height(8.dp))
+            val active = activeState is SleepTimerState.Active
             PlayerGroup {
-                PRESET_MINUTES.forEachIndexed { index, minutes ->
+                // Off is a choice like the others: checked while no timer
+                // runs, and the way to stop one that does.
+                PlayerCheckRow(
+                    label = stringResource(CommonR.string.player_sleepTimer_off),
+                    selected = !active,
+                    onClick = {
+                        if (active) onCancel()
+                        controller.dismiss()
+                    },
+                    separator = false,
+                )
+                PRESET_MINUTES.forEach { minutes ->
                     PlayerCheckRow(
                         label = formatDuration(minutes * 60),
-                        selected = minutes == defaultMinutes,
+                        // The running timer's length; never a preset while off.
+                        selected = active && minutes == defaultMinutes,
                         onClick = {
                             onStart(minutes)
                             controller.dismiss()
                         },
-                        separator = index > 0,
-                    )
-                }
-            }
-            if (activeState is SleepTimerState.Active) {
-                Spacer(Modifier.height(12.dp))
-                PlayerGroup {
-                    PlayerActionRow(
-                        icon = Icons.Rounded.TimerOff,
-                        label = stringResource(CommonR.string.player_sleepTimer_cancel),
-                        tint = PlayerChrome.Stop,
-                        onClick = {
-                            onCancel()
-                            controller.dismiss()
-                        },
+                        separator = true,
                     )
                 }
             }
