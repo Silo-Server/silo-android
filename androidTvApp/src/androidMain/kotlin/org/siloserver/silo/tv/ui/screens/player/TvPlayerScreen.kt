@@ -390,8 +390,8 @@ fun TvPlayerScreen(
     val sessionState by viewModel.sessionState.collectAsState()
     val introSkipState by viewModel.introSkipState.collectAsState()
     val activeMarkerSkipTarget by viewModel.manualMarkerSkipTarget.collectAsState()
-    val introSkipCountdownRun by viewModel.introSkipCountdownRun.collectAsState()
-    val introSkipTimerRunning by viewModel.introSkipTimerRunning.collectAsState()
+    val creditsUpNext by viewModel.creditsUpNext.collectAsState()
+    val nextUpAutoStarts by viewModel.nextUpAutoStarts.collectAsState()
     val bufferingPill by viewModel.bufferingPill.collectAsState()
     val bufferingCountdownRun by viewModel.bufferingCountdownRun.collectAsState()
     val bufferingTimerRunning by viewModel.bufferingTimerRunning.collectAsState()
@@ -446,7 +446,7 @@ fun TvPlayerScreen(
     val rootFocus = remember { FocusRequester() }
     var playerRootHasFocus by remember { mutableStateOf(false) }
     var exitRequested by remember { mutableStateOf(false) }
-    var requestedHudTab by remember { mutableStateOf(HudTab.Info) }
+    var requestedHudTab by remember { mutableStateOf(HudTab.Subtitles) }
     var showQuickSubtitlePicker by remember { mutableStateOf(false) }
     var subtitleFocusedStableId by remember { mutableStateOf<String?>(null) }
     // Captured PlayerView reference so subtitleManager.applyAppearance can hit
@@ -795,6 +795,14 @@ fun TvPlayerScreen(
     fun handleManualMarkerSelect() {
         val current = viewModel.uiState.value
         val target = markerSkipTarget(current.position, current.markerTimeline) ?: return
+        // During the credits with a next episode named on the card, OK plays
+        // it now (the card's "Play next episode"). Read from the view model,
+        // not composition: this runs from a key handler built once. A room
+        // owns what plays next, so there it still skips the credits.
+        if (watchParty == null && current.creditsUpNext() != null) {
+            viewModel.playNextEpisodeNow()
+            return
+        }
         if (watchParty != null) {
             if (!watchParty.canSeek()) return
             watchParty.seek(target.endSeconds)
@@ -2509,6 +2517,8 @@ fun TvPlayerScreen(
                         TvPlayerClockScope(viewModel, roomPendingSeekSeconds) { clock ->
                         TvPlayerHud(
                             title = state.title,
+                            eyebrow = tvPlayerEyebrow(state),
+                            overview = state.overview,
                             positionSec = clock.position,
                             durationSec = clock.duration,
                             seasonNumber = state.seasonNumber,
@@ -2546,6 +2556,7 @@ fun TvPlayerScreen(
                             onIntroSkipModeChanged = viewModel::onSetIntroSkipMode,
                             autoPlayNext = autoPlayNextEnabled,
                             onAutoPlayNextChanged = viewModel::onSetAutoPlayNext,
+                            autoPlayNextApplies = state.nextEpisode != null || state.shuffle != null,
                             audioDelayMs = audioDelayMs,
                             audioDelayEnabled = audioOutputPath.allowsAudioDelay(
                                 planClaimsPassthrough = state.playbackPlan?.claims?.audio?.passthrough,
@@ -2730,6 +2741,12 @@ fun TvPlayerScreen(
         }
         TvPlayerOverlays(
             isInPictureInPictureMode = isInPictureInPictureMode,
+            playbackClock = viewModel.playbackClock,
+            creditsUpNext = creditsUpNext,
+            nextUpAutoStarts = nextUpAutoStarts,
+            // The card turns into the plain Skip Credits pill, which takes the
+            // focus "Not now" held (TvMarkerSkipPill), so nothing is aimed here.
+            onCreditsNotNow = viewModel::declineCreditsUpNext,
             // Lifecycle notices (an outage, say) win over buffering ones.
             notice = notice ?: bufferingPlayerNotice,
             bufferingPill = bufferingPill,
@@ -2755,9 +2772,6 @@ fun TvPlayerScreen(
             introSkipState = visibleIntroSkipState,
             manualSkipTarget = manualSkipTarget,
             onManualMarkerSelect = { handleManualMarkerSelect() },
-            introSkipCountdownRun = introSkipCountdownRun,
-            introSkipTimerRunning = introSkipTimerRunning,
-            introSkipTotalSeconds = viewModel.introSkipTotalSeconds,
             // The scrubber commits its seek on focus loss, so the prompt must
             // not take focus out from under an active scrub.
             introBannerMayTakeFocus = !state.isScrubbing && cleanSeekRate == 0,
@@ -3199,18 +3213,24 @@ private fun TvPlayerIdleOverlay(
                 }
             },
     ) {
-        // Bottom gradient scrim — 270dp tall, darkest at the bottom edge where
+        // Bottom gradient scrim — 340dp tall, darkest at the bottom edge where
         // the controls sit, clear above so the paused picture stays visible.
+        // Eased (several stops) so the eyebrow and title (from ~200dp up) sit
+        // on ~70% black and the clock row on ~80%: even the dimmed eyebrow
+        // keeps 4.5:1 over white credits, without a visible band.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(270.dp)
+                .height(340.dp)
                 .align(Alignment.BottomCenter)
                 .background(
                     Brush.verticalGradient(
                         0.00f to Color.Transparent,
-                        0.56f to Color.Black.copy(alpha = 0.55f),
-                        1.00f to Color.Black.copy(alpha = 0.86f),
+                        0.20f to Color.Black.copy(alpha = 0.24f),
+                        0.40f to Color.Black.copy(alpha = 0.70f),
+                        0.56f to Color.Black.copy(alpha = 0.76f),
+                        0.76f to Color.Black.copy(alpha = 0.82f),
+                        1.00f to Color.Black.copy(alpha = 0.90f),
                     ),
                 ),
         )
@@ -4285,6 +4305,13 @@ private fun TvPlayerClockScope(
 @Composable
 private fun TvPlayerOverlays(
     isInPictureInPictureMode: Boolean,
+    /** Read only while the credits card shows, for the time left. */
+    playbackClock: StateFlow<PlaybackClock>,
+    /** The episode the credits card names ([TvPlayerViewModel.UiState.creditsUpNext]), or null. */
+    creditsUpNext: NextEpisodeState?,
+    /** The next item will start by itself ([TvPlayerViewModel.nextUpAutoStarts]). */
+    nextUpAutoStarts: Boolean,
+    onCreditsNotNow: () -> Unit,
     notice: PlayerNotice?,
     subtitleSyncNotice: StateFlow<SubtitleSyncNotice?>,
     remoteMessage: RemoteMessage?,
@@ -4302,11 +4329,6 @@ private fun TvPlayerOverlays(
     introSkipState: IntroAutoSkipState,
     manualSkipTarget: MarkerSkipTarget?,
     onManualMarkerSelect: () -> Unit,
-    /** Bumps when the pill's timer (re)starts, so its fill re-anchors. */
-    introSkipCountdownRun: Int,
-    /** False while the pill is up but its timer is frozen by a pause. */
-    introSkipTimerRunning: Boolean,
-    introSkipTotalSeconds: Int,
     /** False while a scrub owns focus — see TvIntroAutoSkipBanner.mayTakeFocus. */
     introBannerMayTakeFocus: Boolean,
     /** True only while the video branch is composed — not loading, not errored. */
@@ -4503,21 +4525,57 @@ private fun TvPlayerOverlays(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(bottom = introSkipBottomInset, end = 32.dp),
+                        // The controls' side inset, so the pill and card share their edge.
+                        .padding(bottom = introSkipBottomInset, end = TvPlayerChrome.SideInset),
                     contentAlignment = Alignment.BottomEnd,
                 ) {
                     if (manualSkipTarget != null) {
+                        // In the credits Up Next follows, name the episode after them.
+                        val upNext = creditsUpNext
+                            .takeIf { manualSkipTarget.kind == ManualMarkerKind.Credits && !roomActive }
+                        // To the end of the credits range the card describes.
+                        val creditsLeft = upNext?.let {
+                            val clock by playbackClock.collectAsState()
+                            formatTimelineClock(manualSkipTarget.endSeconds - clock.position)
+                        }
                         TvMarkerSkipPill(
-                            label = stringResource(if (manualSkipTarget.kind == ManualMarkerKind.Recap) CommonR.string.marker_skipRecap else CommonR.string.marker_skipCredits),
+                            label = stringResource(
+                                when {
+                                    manualSkipTarget.kind == ManualMarkerKind.Recap -> CommonR.string.marker_skipRecap
+                                    upNext != null -> CommonR.string.marker_playNextEpisode
+                                    else -> CommonR.string.marker_skipCredits
+                                },
+                            ),
                             onSelect = onManualMarkerSelect,
+                            upNext = upNext?.let { next ->
+                                // "S1:E2", as the player's eyebrow writes it.
+                                val code = stringResource(
+                                    CommonR.string.player_eyebrow_episode,
+                                    LocaleFormat.codeNumber(next.seasonNumber),
+                                    LocaleFormat.codeNumber(next.episodeNumber),
+                                )
+                                val rtl = isRightToLeftText()
+                                listOfNotNull(code, next.title?.let { bidiIsolated(it, rtl) }).joinToString(" · ")
+                            },
+                            // When it starts, with the time the credits have left
+                            // (Next Up and its countdown follow the credits).
+                            upNextTiming = upNext?.let { stringResource(CommonR.string.marker_creditsCard_endsIn) },
+                            upNextAfter = upNext?.let {
+                                when {
+                                    !autoPlayNextEnabled -> stringResource(CommonR.string.marker_creditsCard_autoPlayOff)
+                                    nextUpAutoStarts -> stringResource(CommonR.string.marker_creditsCard_thenItPlays)
+                                    // Keep Watching or the pass-out gate: nothing
+                                    // starts by itself, though the setting is on.
+                                    else -> null
+                                }
+                            },
+                            creditsLeft = creditsLeft,
+                            onNotNow = onCreditsNotNow.takeIf { upNext != null },
                         )
                     }
                     TvIntroAutoSkipBanner(
                         state = introSkipState,
                         onSelect = onIntroPromptSelect,
-                        totalSeconds = introSkipTotalSeconds,
-                        countdownRun = introSkipCountdownRun,
-                        timerRunning = introSkipTimerRunning,
                         // Not while the viewer is working the timeline: the
                         // scrubber commits its seek on focus loss, so taking
                         // focus here would land a seek they never confirmed.

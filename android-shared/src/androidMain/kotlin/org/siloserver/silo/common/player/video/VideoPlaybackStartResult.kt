@@ -68,6 +68,8 @@ sealed interface VideoPlaybackStartResult {
         val year: Int? = null,
         /** Catalog item type ("movie", "episode", …); the same line names a film. */
         val contentType: String? = null,
+        /** The title's synopsis, for the player's Info panel. */
+        val overview: String? = null,
     ) : VideoPlaybackStartResult
 
     data class Error(

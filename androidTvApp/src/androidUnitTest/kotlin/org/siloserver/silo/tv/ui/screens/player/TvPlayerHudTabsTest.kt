@@ -1,6 +1,5 @@
 package org.siloserver.silo.tv.ui.screens.player
 
-import org.siloserver.silo.common.player.PlayerStatsSnapshot
 import org.siloserver.silo.model.catalog.VersionChapter
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -15,33 +14,17 @@ class TvPlayerHudTabsTest {
     )
 
     @Test
-    fun emptyDataShowsInfoVideoAndSubtitles() {
+    fun emptyDataShowsSubtitlesSettingsAndInfo() {
         // Subtitles is always available (it hosts Search / AI-Translate / style
-        // even with no current tracks); Stats/Audio/Chapters hide when empty.
+        // even with no current tracks); Audio/Chapters hide when empty.
         val tabs = visibleHudTabs(
-            stats = PlayerStatsSnapshot(),
             audioTracks = emptyList(),
             subtitleTracks = emptyList(),
             chapters = emptyList(),
         )
 
         assertEquals(
-            listOf(HudTab.Info, HudTab.Video, HudTab.Subtitles),
-            tabs,
-        )
-    }
-
-    @Test
-    fun statsTabShowsWhenStatsHaveRenderableData() {
-        val tabs = visibleHudTabs(
-            stats = PlayerStatsSnapshot(videoCodec = "video/avc"),
-            audioTracks = emptyList(),
-            subtitleTracks = emptyList(),
-            chapters = emptyList(),
-        )
-
-        assertEquals(
-            listOf(HudTab.Info, HudTab.Stats, HudTab.Video, HudTab.Subtitles),
+            listOf(HudTab.Subtitles, HudTab.Video, HudTab.Info),
             tabs,
         )
     }
@@ -49,14 +32,13 @@ class TvPlayerHudTabsTest {
     @Test
     fun audioTabShowsWhenAudioTracksExist() {
         val tabs = visibleHudTabs(
-            stats = PlayerStatsSnapshot(),
             audioTracks = listOf(track(0)),
             subtitleTracks = emptyList(),
             chapters = emptyList(),
         )
 
         assertEquals(
-            listOf(HudTab.Info, HudTab.Video, HudTab.Audio, HudTab.Subtitles),
+            listOf(HudTab.Subtitles, HudTab.Audio, HudTab.Video, HudTab.Info),
             tabs,
         )
     }
@@ -64,14 +46,13 @@ class TvPlayerHudTabsTest {
     @Test
     fun subtitlesTabShowsWhenSubtitleTracksExist() {
         val tabs = visibleHudTabs(
-            stats = PlayerStatsSnapshot(),
             audioTracks = emptyList(),
             subtitleTracks = listOf(track(0)),
             chapters = emptyList(),
         )
 
         assertEquals(
-            listOf(HudTab.Info, HudTab.Video, HudTab.Subtitles),
+            listOf(HudTab.Subtitles, HudTab.Video, HudTab.Info),
             tabs,
         )
     }
@@ -79,7 +60,6 @@ class TvPlayerHudTabsTest {
     @Test
     fun chaptersTabShowsWhenSelectedVersionHasChapters() {
         val tabs = visibleHudTabs(
-            stats = PlayerStatsSnapshot(),
             audioTracks = emptyList(),
             subtitleTracks = emptyList(),
             chapters = listOf(
@@ -88,7 +68,7 @@ class TvPlayerHudTabsTest {
         )
 
         assertEquals(
-            listOf(HudTab.Info, HudTab.Video, HudTab.Subtitles, HudTab.Chapters),
+            listOf(HudTab.Subtitles, HudTab.Chapters, HudTab.Video, HudTab.Info),
             tabs,
         )
     }
@@ -96,7 +76,6 @@ class TvPlayerHudTabsTest {
     @Test
     fun allTabsShowInStableHudOrderWhenEveryoneHasData() {
         val tabs = visibleHudTabs(
-            stats = PlayerStatsSnapshot(audioUnderruns = 1),
             audioTracks = listOf(track(0)),
             subtitleTracks = listOf(track(0)),
             chapters = listOf(
@@ -106,12 +85,11 @@ class TvPlayerHudTabsTest {
 
         assertEquals(
             listOf(
-                HudTab.Info,
-                HudTab.Stats,
-                HudTab.Video,
-                HudTab.Audio,
                 HudTab.Subtitles,
+                HudTab.Audio,
                 HudTab.Chapters,
+                HudTab.Video,
+                HudTab.Info,
             ),
             tabs,
         )

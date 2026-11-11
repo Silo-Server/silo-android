@@ -101,6 +101,8 @@ sealed interface VideoPlayerUiState {
         val year: Int? = null,
         /** Catalog item type ("movie", "episode", …); the same line names a film. */
         val contentType: String? = null,
+        /** The title's synopsis, for the player's Info panel. */
+        val overview: String? = null,
     ) : VideoPlayerUiState {
         override val hasPlayableMedia: Boolean = true
 

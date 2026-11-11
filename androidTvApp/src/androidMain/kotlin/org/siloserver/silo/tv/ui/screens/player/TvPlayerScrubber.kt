@@ -60,6 +60,9 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -291,6 +294,12 @@ fun TvPlayerScrubber(
         )
         android.text.format.DateFormat.getTimeFormat(localized)
     }
+    val positionLabel = stringResource(CommonR.string.player_progress_position)
+    val positionState = stringResource(
+        CommonR.string.player_progress_positionState,
+        formatScrubberTime(labelPositionSec),
+        formatScrubberTime(durationSec),
+    )
     Column(modifier = modifier) {
         Box(modifier = Modifier.fillMaxWidth().height(28.dp)) {
 
@@ -302,6 +311,11 @@ fun TvPlayerScrubber(
                 .focusRequester(onRequestFocus)
                 .onFocusChanged { /* state collected via interactionSource */ }
                 .focusable(interactionSource = interactionSource)
+                // Named for screen readers; the state reads the time.
+                .semantics {
+                    contentDescription = positionLabel
+                    stateDescription = positionState
+                }
                 .onPreviewKeyEvent { event ->
                     val isDown = event.type == KeyEventType.KeyDown
                     val isUp = event.type == KeyEventType.KeyUp
@@ -442,9 +456,9 @@ fun TvPlayerScrubber(
                 )
             }
 
-            // Puck — only while focused so the bar stays passive when
-            // attention is elsewhere on the overlay.
-            if (isFocused || isTimelineScrubbing) {
+            // Puck — always marks where playback is (the segmented bar alone
+            // reads as many bars); it grows while focused or scrubbing.
+            run {
                 Box(
                     modifier = Modifier
                         .align(Alignment.CenterStart)
@@ -639,7 +653,7 @@ private fun formatScrubberTime(seconds: Double): String = formatTimelineClock(se
 private fun formatRemainingTime(secondsRemaining: Double): String =
     "−${formatTimelineClock(secondsRemaining.coerceAtLeast(0.0))}"
 
-private fun formatTimelineClock(seconds: Double): String {
+internal fun formatTimelineClock(seconds: Double): String {
     if (seconds <= 0 || seconds.isNaN()) return LocaleFormat.clock(0, 0, 0)
     val total = seconds.toInt()
     val h = total / 3600

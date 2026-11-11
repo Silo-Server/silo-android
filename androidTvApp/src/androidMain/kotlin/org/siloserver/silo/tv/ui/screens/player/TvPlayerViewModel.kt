@@ -64,6 +64,7 @@ import org.siloserver.silo.common.player.seek.replanMountPositionForSource
 import org.siloserver.silo.common.player.seek.sourcePositionForPlayer
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.player.video.MarkerReconciliationFence
+import org.siloserver.silo.common.player.video.ManualMarkerKind
 import org.siloserver.silo.common.player.video.MarkerSkipTarget
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.markerSkipTarget
@@ -1299,6 +1300,8 @@ class TvPlayerViewModel(
         val seriesTitle: String? = null,
         val year: Int? = null,
         val contentType: String? = null,
+        /** The playing title's synopsis, shown on the HUD's Info panel. */
+        val overview: String? = null,
         /**
          * Artwork URL for Now Playing lock-screen / Bluetooth / Wear surfaces.
          * Sourced from `WatchDetail.posterUrl` with `backdropUrl` fallback.
@@ -1466,10 +1469,22 @@ class TvPlayerViewModel(
         val nextUpVideoEnded: Boolean = false,
         val nextUpCountdownSeconds: Int? = null,
         val nextUpCountdownTotalSeconds: Int = NEXT_UP_COUNTDOWN_SECONDS,
+        /**
+         * Up Next was dismissed for this item (Keep Watching, or "Not now" on
+         * the credits card), so the next item won't start by itself. Cleared
+         * when another item loads.
+         */
+        val nextUpDismissed: Boolean = false,
+        /**
+         * "Not now" on the credits card: the card stays away for this item and
+         * OK skips the credits instead of playing the next episode. Cleared
+         * when another item loads.
+         */
+        val creditsUpNextDeclined: Boolean = false,
         val shuffle: TvShuffleUiState? = null,
         // Live player statistics — reduced from [PlaybackAnalyticsListener.Event]s
-        // by [reducePlayerStats]. Always non-null so the HUD Stats pane has a
-        // snapshot to read; populates field-by-field as events arrive.
+        // by [reducePlayerStats]. Always non-null so the HUD's Technical details
+        // have a snapshot to read; populates field-by-field as events arrive.
         val stats: PlayerStatsSnapshot = PlayerStatsSnapshot(),
         // Video surface fill mode (letterbox vs zoom). Session-scoped — resets
         // to Fit on each new playback to match tvOS video-gravity behavior.
@@ -1526,6 +1541,12 @@ class TvPlayerViewModel(
     // Marker controls use source time; presentationState deliberately omits the clock.
     val manualMarkerSkipTarget: StateFlow<MarkerSkipTarget?> = uiState
         .map { markerSkipTarget(it.position, it.markerTimeline) }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** The episode the credits card names and OK plays; see [UiState.creditsUpNext]. */
+    val creditsUpNext: StateFlow<NextEpisodeState?> = uiState
+        .map { it.creditsUpNext() }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
@@ -1757,15 +1778,6 @@ class TvPlayerViewModel(
     /** Intro skip pill state. The screen consumes this directly. */
     val introSkipState: StateFlow<IntroAutoSkipState> = introAutoSkipController.state
 
-    /** Bumps whenever the pill's timer (re)starts, so the fill can re-anchor. */
-    val introSkipCountdownRun: StateFlow<Int> = introAutoSkipController.countdownRun
-
-    /** False while the pill is up but its timer is frozen by a pause. */
-    val introSkipTimerRunning: StateFlow<Boolean> = introAutoSkipController.timerRunning
-
-    /** Total seconds a fresh intro prompt runs for, for the fill's arithmetic. */
-    val introSkipTotalSeconds: Int = introAutoSkipController.totalCountdownSeconds
-
     // ---- Buffering quality (server docs/design/2026-10-17-buffering-quality.md) ----
 
     /**
@@ -1884,7 +1896,7 @@ class TvPlayerViewModel(
     val remoteMessage: StateFlow<RemoteMessage?> = _remoteMessage.asStateFlow()
 
     // ---- Next-episode auto-advance (F2) ----
-    private var autoAdvanceCount: Int = launchArgs.autoAdvanceCount
+    private val autoAdvanceCount = MutableStateFlow(launchArgs.autoAdvanceCount)
     private var autoAdvanceHandled = false // once-per-item guard
     // The credits or the end of this item was reached. Unlike autoAdvanceHandled,
     // opening Up Next by hand or Keep Watching never sets it.
@@ -2033,6 +2045,21 @@ class TvPlayerViewModel(
     // Per-profile "Still watching?" threshold (default 3; 0 = off).
     val passOutThreshold: StateFlow<Int> = playerSettingsStore.passOutThresholdFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, 3)
+
+    /**
+     * Whether the next item will start by itself when this one ends: auto-play
+     * is on, Up Next wasn't dismissed for this item, and the pass-out gate
+     * isn't holding the countdown back. The credits card says "then it plays"
+     * only while this holds.
+     */
+    val nextUpAutoStarts: StateFlow<Boolean> = combine(
+        _uiState.map { it.nextUpDismissed }.distinctUntilChanged(),
+        autoAdvanceCount,
+        autoPlayNextEnabled,
+        passOutThreshold,
+    ) { dismissed, streak, autoPlay, threshold -> autoPlay && !dismissed && !passOutGated(streak, threshold) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     val hdrEnabled: StateFlow<Boolean> = playerSettingsStore.hdrEnabledFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val dolbyVisionEnabled: StateFlow<Boolean> = playerSettingsStore.dolbyVisionEnabledFlow
@@ -3038,6 +3065,7 @@ class TvPlayerViewModel(
                                 seriesTitle = result.seriesTitle,
                                 year = result.year,
                                 contentType = result.contentType,
+                                overview = result.overview,
                                 artworkUrl = result.artworkUrl,
                                 sessionId = result.sessionId,
                                 playMethod = result.playMethod,
@@ -4907,7 +4935,9 @@ class TvPlayerViewModel(
         reachedCreditsOrEnd = false
         pendingApproachingEndVideoEnded = null
         episodeSelectionHandoffSlot.invalidate()
-        _uiState.update { it.copy(contentId = newContentId, nextEpisode = null) }
+        _uiState.update {
+            it.copy(contentId = newContentId, nextEpisode = null, nextUpDismissed = false, creditsUpNextDeclined = false)
+        }
     }
 
     /** A room seek. Maps onto the mounted stream or re-anchors; never user intent. */
@@ -5480,13 +5510,19 @@ class TvPlayerViewModel(
         }
     }
 
+    /**
+     * The pass-out gate: after [threshold] automatic advances in a row, Up Next
+     * waits for a press. A threshold of 0 (or less) is off.
+     */
+    private fun passOutGated(
+        streak: Int = autoAdvanceCount.value,
+        threshold: Int = passOutThreshold.value,
+    ): Boolean = threshold > 0 && streak >= threshold
+
     private fun commitApproachingEnd(next: NextEpisodeState, videoEnded: Boolean) {
         autoAdvanceHandled = true
         pendingApproachingEndVideoEnded = null
-        // Threshold 0 (or less) = off: never gate, always allow auto-countdown.
-        val threshold = passOutThreshold.value
-        val passOutGated = threshold > 0 && autoAdvanceCount >= threshold
-        val autoCountdown = autoPlayNextEnabled.value && !passOutGated
+        val autoCountdown = autoPlayNextEnabled.value && !passOutGated()
         val current = _uiState.value
         // Pre-end commits anchor the countdown to the remaining playback time
         // (see startNextUpCountdown); only an at-end commit uses the wall clock.
@@ -5558,7 +5594,7 @@ class TvPlayerViewModel(
                 // Automatic countdown-expiry advance: increment the pass-out streak
                 // so a long unattended binge eventually trips the "still watching?"
                 // gate. An explicit Play Now (below) resets the streak instead.
-                advanceToNextEpisode(nextAutoAdvanceCount = autoAdvanceCount + 1)
+                advanceToNextEpisode(nextAutoAdvanceCount = autoAdvanceCount.value + 1)
                 return@launch
             }
         }
@@ -5661,10 +5697,11 @@ class TvPlayerViewModel(
             pendingInitialSubtitleAutoResolved = false
             pendingInitialSubtitleAttempts = 0
             autoTextSubtitleSelectionAttempted = false
-            autoAdvanceCount = nextAutoAdvanceCount
+            autoAdvanceCount.value = nextAutoAdvanceCount
             autoAdvanceHandled = false
             reachedCreditsOrEnd = false
             pendingApproachingEndVideoEnded = null
+            _uiState.update { it.copy(nextUpDismissed = false, creditsUpNextDeclined = false) }
             shuffleNextPartFileId = null
             shuffleRefreshedForPostRoll = false
             episodeSelectionHandoffSlot.replace(handoff)
@@ -5794,7 +5831,7 @@ class TvPlayerViewModel(
     /** Plays the next part of a multi-part pick from its start, without the overlay. */
     private fun playNextShufflePart(fileId: Int) {
         shuffleNextPartFileId = null
-        playInPlace(contentId, targetFileId = fileId, nextAutoAdvanceCount = autoAdvanceCount, showCard = false)
+        playInPlace(contentId, targetFileId = fileId, nextAutoAdvanceCount = autoAdvanceCount.value, showCard = false)
     }
 
     /**
@@ -5873,7 +5910,17 @@ class TvPlayerViewModel(
         autoAdvanceHandled = true
         nextUpCountdownJob?.cancel()
         nextUpCountdownJob = null
-        _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
+        _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null, nextUpDismissed = true) }
+    }
+
+    /**
+     * "Not now" on the credits card: as Keep Watching, and the card stays away
+     * for this item, so OK skips the credits. The auto-play setting is untouched.
+     */
+    fun declineCreditsUpNext() {
+        if (nextUpTransitionGate.isActive) return
+        dismissNextUp()
+        _uiState.update { it.copy(creditsUpNextDeclined = true) }
     }
 
     /**
@@ -8110,3 +8157,17 @@ internal fun TvPlayerViewModel.UiState.withoutPlaybackClock(): TvPlayerViewModel
 
 internal fun TvPlayerViewModel.UiState.toPlaybackClock(): PlaybackClock =
     PlaybackClock(position = position, duration = duration)
+
+/**
+ * The episode the credits card names, which OK then plays: in the credits Up
+ * Next follows ([MarkerTimeline.upNextCreditsStart]), when the next item is an
+ * episode and no shuffle picks it, until "Not now". An earlier credits range,
+ * before a mid-credits scene, keeps Skip Credits so the scene still plays.
+ */
+internal fun TvPlayerViewModel.UiState.creditsUpNext(): NextEpisodeState? {
+    if (creditsUpNextDeclined || shuffle != null) return null
+    val next = nextEpisode?.takeIf { it.isEpisode } ?: return null
+    val upNextStart = markerTimeline.upNextCreditsStart() ?: return null
+    if (position < upNextStart) return null
+    return next.takeIf { markerSkipTarget(position, markerTimeline)?.kind == ManualMarkerKind.Credits }
+}

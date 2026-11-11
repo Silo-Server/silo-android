@@ -448,6 +448,7 @@ class TvVideoPlaybackStarter(
                 seriesTitle = watchDetail.seriesTitle,
                 year = watchDetail.year,
                 contentType = watchDetail.type,
+                overview = watchDetail.overview?.takeIf { it.isNotBlank() },
                 seasonNumber = watchDetail.seasonNumber,
                 episodeNumber = watchDetail.episodeNumber,
                 resolvedEpisodeSelection = resolvedEpisodeSelection,

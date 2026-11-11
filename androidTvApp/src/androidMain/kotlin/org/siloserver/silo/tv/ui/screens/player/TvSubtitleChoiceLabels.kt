@@ -211,15 +211,18 @@ private val AUDIO_FILENAME_SUFFIXES = listOf(
 )
 
 /** Media3 audio mimes / codec ids → the short names users know. */
-internal fun audioFormatShortName(codecOrMime: String?): String? =
-    when (codecOrMime?.trim()?.lowercase(Locale.US)?.substringAfterLast('/')) {
+internal fun audioFormatShortName(codecOrMime: String?): String? {
+    val key = codecOrMime?.trim()?.lowercase(Locale.US)?.substringAfterLast('/')
+    // Codec strings carry the object type: "mp4a.40.2" is AAC-LC.
+    if (key?.startsWith("mp4a.") == true) return "AAC"
+    return when (key) {
         null, "" -> null
         "mp4a-latm", "aac", "mp4a" -> "AAC"
         "ac3" -> "AC3"
         "eac3" -> "E-AC3"
         "eac3-joc" -> "Atmos"
         "true-hd", "truehd" -> "TrueHD"
-        "vnd.dts", "dts" -> "DTS"
+        "vnd.dts", "dts", "dca" -> "DTS"
         "vnd.dts.hd", "dts.hd" -> "DTS-HD"
         "vnd.dts.uhd;profile=p2", "dts.uhd" -> "DTS:X"
         "opus" -> "Opus"
@@ -229,6 +232,7 @@ internal fun audioFormatShortName(codecOrMime: String?): String? =
         "raw", "pcm", "wav" -> "PCM"
         else -> codecOrMime.substringAfterLast('/').uppercase(Locale.US).take(12)
     }
+}
 
 /** Channel count → familiar layout name. */
 private val AUDIO_LAYOUT_TOKENS = mapOf(1 to "Mono", 2 to "Stereo")

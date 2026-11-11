@@ -1,6 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -19,7 +21,8 @@ import org.siloserver.silo.tv.ui.theme.InterFamily
 internal object TvPlayerChrome {
     val Paper = Color(0xFFEDEDED)
     val Ink = Color(0xFF0B0B0C)
-    val Graphite = Paper.copy(alpha = 0.60f)
+    /** Secondary text and values. 72%: 60% read as disabled at TV distance. */
+    val Graphite = Paper.copy(alpha = 0.72f)
     val Faint = Paper.copy(alpha = 0.38f)
     val InkMuted = Ink.copy(alpha = 0.58f)
 
@@ -31,8 +34,8 @@ internal object TvPlayerChrome {
     val PanelStroke = Color.White.copy(alpha = 0.10f)
 
     /** Transport buttons at rest: a dark disc and a ring, so they read on letterbox bars. */
-    val ButtonRest = Color.Black.copy(alpha = 0.38f)
-    val ButtonRing = Color.White.copy(alpha = 0.24f)
+    val ButtonRest = Color.Black.copy(alpha = 0.45f)
+    val ButtonRing = Color.White.copy(alpha = 0.38f)
 
     /** A selected row that does not have focus. */
     val Selected = Color.White.copy(alpha = 0.075f)
@@ -68,7 +71,15 @@ internal object TvPlayerType {
         color = TvPlayerChrome.Graphite,
     )
     val Title = base.copy(fontSize = 27.sp, lineHeight = 33.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.018).em)
-    val Time = base.copy(fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum")
+    /** The clock row sits on the picture itself; a soft shadow keeps it
+     *  legible where the scrim thins out over a bright frame. */
+    val Time = base.copy(
+        fontSize = 14.sp,
+        lineHeight = 18.sp,
+        fontWeight = FontWeight.SemiBold,
+        fontFeatureSettings = "tnum",
+        shadow = Shadow(color = Color.Black.copy(alpha = 0.75f), offset = Offset(0f, 1f), blurRadius = 8f),
+    )
     val ButtonLabel = base.copy(fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold)
     val ButtonValue = ButtonLabel.copy(fontWeight = FontWeight.Medium)
     val Tab = base.copy(fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold)
@@ -90,4 +101,6 @@ internal object TvPlayerType {
     val ConfirmTitle = base.copy(fontSize = 24.sp, lineHeight = 30.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.015).em)
     val Body = base.copy(fontSize = 15.sp, lineHeight = 22.sp, color = TvPlayerChrome.Graphite)
     val Button = base.copy(fontSize = 15.sp, lineHeight = 19.sp, fontWeight = FontWeight.SemiBold)
+    /** The skip pills over the picture and the credits card's episode line. */
+    val Prompt = base.copy(fontSize = 18.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold)
 }
