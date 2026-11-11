@@ -115,6 +115,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import org.siloserver.silo.common.diagnostics.DiagnosticsFocusLogger
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.components.ProfileAvatarRef
+import org.siloserver.silo.tv.ui.screens.player.TvPlayerChrome
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.DarkBackground
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
@@ -2067,7 +2068,9 @@ private fun cascadePanelOffset(
  * Skyline panel chrome ([tvSkylinePanelChrome]) floats under the avatar on its
  * own shadow — NO full-screen page scrim. The panel is a focus group that
  * consumes input and focuses its first row on open; Back/Menu closes it and
- * returns focus to the avatar via [onDismiss].
+ * returns focus to the avatar via [onDismiss]. As on tvOS and Roku, nothing
+ * divides the header from the first row, one divider splits the two groups,
+ * and Sign Out is drawn in the destructive red.
  *
  * Row set + order mirrors tvOS and Roku: History · Requests (while the
  * server has it enabled) · Watch Party (Settings → Experimental), then
@@ -2133,8 +2136,6 @@ private fun TvProfileDropdown(
     ) {
         ProfileDropdownHeader(accountState)
 
-        ProfileDropdownDivider()
-
         ProfileDropdownRow(
             label = stringResource(CommonR.string.menu_history),
             icon = Icons.Filled.History,
@@ -2176,12 +2177,17 @@ private fun TvProfileDropdown(
         ProfileDropdownRow(
             label = stringResource(CommonR.string.menu_signOut),
             icon = Icons.AutoMirrored.Filled.Logout,
+            destructive = true,
             onClick = onSignOut,
         )
     }
 }
 
-/** Avatar + display name + subtitle + server name header (tvOS §5.8). */
+/**
+ * Avatar and display name over one line: the server's name, then the
+ * account's role or username when there is one (tvOS §5.8 puts the server
+ * first).
+ */
 @Composable
 private fun ProfileDropdownHeader(accountState: TvAccountState) {
     val displayName = accountState.shownName()
@@ -2237,7 +2243,7 @@ private fun ProfileDropdownHeader(accountState: TvAccountState) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            val subtitle = listOf(accountState.subtitle?.text().orEmpty(), accountState.serverName)
+            val subtitle = listOf(accountState.serverName, accountState.subtitle?.text().orEmpty())
                 .filter { it.isNotBlank() }
                 .joinToString("  ·  ")
             if (subtitle.isNotEmpty()) {
@@ -2308,7 +2314,9 @@ private fun TvServerOfflinePill(
 /**
  * Inverted-capsule dropdown row (tvOS §5.8 / cascade grammar): a leading icon
  * and label that invert to a solid [SiloOnSurface] fill with
- * [DarkBackground] content on focus, bare at rest.
+ * [DarkBackground] content on focus, bare at rest. A [destructive] row draws
+ * its icon and label in the destructive red at rest, as tvOS and Roku do,
+ * and inverts like the others on focus.
  */
 @Composable
 private fun ProfileDropdownRow(
@@ -2316,10 +2324,15 @@ private fun ProfileDropdownRow(
     icon: ImageVector,
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
+    destructive: Boolean = false,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-    val contentColor = if (isFocused) DarkBackground else SiloOnSurface.copy(alpha = 0.9f)
+    val contentColor = when {
+        isFocused -> DarkBackground
+        destructive -> TvPlayerChrome.StopText
+        else -> SiloOnSurface.copy(alpha = 0.9f)
+    }
     val rowShape = RoundedCornerShape(TvSkyline.profileMenuRowCornerRadius)
 
     Surface(

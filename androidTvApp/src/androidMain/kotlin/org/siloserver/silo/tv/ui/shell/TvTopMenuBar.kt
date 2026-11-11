@@ -673,9 +673,9 @@ data class TvAccountState(
     val displayName: String? = null,
     /** Avatar ref + server-resolved URL, kept together so neither is lost. */
     val avatar: ProfileAvatarRef = ProfileAvatarRef.None,
-    /** Secondary line under the name in the dropdown header (role / username); null shows none. */
+    /** Shown after the server's name in the dropdown header (role / username); null shows none. */
     val subtitle: UiText? = null,
-    /** Active server display name, shown in the dropdown header. */
+    /** Active server display name, first on the line under the name in the dropdown header. */
     val serverName: String = "",
 )
 
