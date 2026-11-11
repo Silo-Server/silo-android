@@ -39,6 +39,7 @@ import org.siloserver.silo.android.downloads.hasLegacyPublicDownloadPermission
 import org.siloserver.silo.android.auth.ActiveProfileReset
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.profiles.ProfileLaunchAction
+import org.siloserver.silo.android.profiles.launchOnlyProfileId
 import org.siloserver.silo.android.profiles.profileLaunchAction
 import org.siloserver.silo.android.push.PushNotificationPresenter
 import org.siloserver.silo.android.ui.navigation.AppNavigation
@@ -137,6 +138,13 @@ class MainActivity : ComponentActivity() {
         /** Saved-state key for [consumedExternalRoute]. */
         private const val STATE_CONSUMED_EXTERNAL_ROUTE =
             "org.siloserver.silo.CONSUMED_EXTERNAL_ROUTE"
+
+        /**
+         * Longest a launch with no remembered profile waits for the server's
+         * profile list before the cached list decides. The splash is still
+         * playing meanwhile.
+         */
+        private const val LAUNCH_PROFILE_LIST_TIMEOUT_MS = 3_000L
     }
 
     private val externalRouteRequestFactory = ExternalRouteRequestFactory()
@@ -645,16 +653,16 @@ class MainActivity : ComponentActivity() {
             if (prompt == ProfileSelectionPrompt.ChangeAccount) return Route.ChangeAccount.ROUTE
             // The open account's only profile, with no PIN, opens here, so
             // a one-tile picker is never drawn.
-            val only = registry.onlyOpenTile() ?: return Route.ProfileSelection.route
-            val opened = get<ProfileRepository>(ProfileRepository::class.java).selectProfile(only.id)
-            if (opened != ProfileCommitResult.Committed) return Route.ProfileSelection.route
-            only.id
+            openOnlyProfileAtLaunch(registry) ?: return Route.ProfileSelection.route
         }
-        // With one account saved, its only profile, with no PIN, is never asked for.
+        // With one account saved, its only profile, with no PIN, is never
+        // asked for. A profile opened just above is that profile, by the
+        // list that decided it, whatever the cached list says.
+        val openedOnlyProfile = rememberedProfileId.isNullOrBlank()
         val prompt = profileSelectionPrompt(
             selectionRequired = selectionRequired,
             savedAccounts = savedAccounts,
-            onlyProfileNeedsNoChoice = registry.hasSingleOpenTile(),
+            onlyProfileNeedsNoChoice = openedOnlyProfile || registry.hasSingleOpenTile(),
         )
 
         // Offline-with-downloads fast path: if local media exists and either
@@ -719,6 +727,24 @@ class MainActivity : ComponentActivity() {
         }
 
         return Route.Home.route
+    }
+
+    /**
+     * Opens the open account's only profile, when it has no PIN, and returns
+     * its id; null sends the launch to the picker. The server's current list
+     * decides when it answers within [LAUNCH_PROFILE_LIST_TIMEOUT_MS], as the
+     * picker's own load does on TV; the account's cached list decides when
+     * it does not (see [launchOnlyProfileId]).
+     */
+    private suspend fun openOnlyProfileAtLaunch(registry: ServerRegistry): String? {
+        val profileRepository = get<ProfileRepository>(ProfileRepository::class.java)
+        val scope = profileRepository.captureIdentityScope()
+        val fresh = kotlinx.coroutines.withTimeoutOrNull(LAUNCH_PROFILE_LIST_TIMEOUT_MS) {
+            kotlinx.coroutines.withContext(Dispatchers.IO) { profileRepository.listProfiles() }
+        }
+        val onlyId = launchOnlyProfileId(fresh, registry.onlyOpenTile()?.id) ?: return null
+        val opened = profileRepository.selectProfile(onlyId, expectedScope = scope)
+        return onlyId.takeIf { opened == ProfileCommitResult.Committed }
     }
 
     private fun launchAuthenticatedStartupWarmup(startRoute: String) {

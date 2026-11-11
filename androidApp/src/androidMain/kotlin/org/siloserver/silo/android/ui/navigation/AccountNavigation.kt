@@ -35,9 +35,10 @@ internal fun ServerRegistry.routeAfterSignOut(): String = when {
 /**
  * The open account's only profile, when it has no PIN: the picker never shows
  * for it. With one account saved, launch and return rules keep that profile
- * instead of asking, and a launch with no profile remembered opens it. With
- * several saved, Profile Selection asks whose account instead (see
- * `profileSelectionPrompt`).
+ * instead of asking. A launch with no profile remembered opens it when the
+ * server does not answer; when it does, its current list decides (see
+ * `launchOnlyProfileId`). With several saved, Profile Selection asks whose
+ * account instead (see `profileSelectionPrompt`).
  */
 internal fun ServerRegistry.onlyOpenTile(): CachedProfile? {
     val account = activeAccount.value ?: return null
