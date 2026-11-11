@@ -250,11 +250,10 @@ class OverlayRegistryTest {
         assertEquals(UiText.Key(SharedString.OverlayCancelled), def.getValue(OverlayData(showStatus = "canceled")))
         assertEquals(UiText.Raw("Limited Series"), def.getValue(OverlayData(showStatus = "Limited Series")))
         assertNull(def.getValue(OverlayData(showStatus = "")))
-        // Android trims (web does not): a padded value is the same status, a blank one none.
-        assertEquals(UiText.Key(SharedString.OverlayReturning), def.getValue(OverlayData(showStatus = "  returning series  ")))
-        assertEquals(UiText.Raw("Limited Series"), def.getValue(OverlayData(showStatus = "  Limited Series  ")))
-        assertEquals("Ended", def.getValueKey?.invoke(OverlayData(showStatus = " ended ")))
-        assertNull(def.getValue(OverlayData(showStatus = "   ")))
+        // As on web, the value is not trimmed: a padded value is passed through as sent.
+        assertEquals(UiText.Raw("  returning series  "), def.getValue(OverlayData(showStatus = "  returning series  ")))
+        assertEquals(" ended ", def.getValueKey?.invoke(OverlayData(showStatus = " ended ")))
+        assertEquals(UiText.Raw("   "), def.getValue(OverlayData(showStatus = "   ")))
         assertNull(def.getValue(OverlayData(showStatus = null)))
     }
 

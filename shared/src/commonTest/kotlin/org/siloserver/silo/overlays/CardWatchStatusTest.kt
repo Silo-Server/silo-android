@@ -74,7 +74,15 @@ class CardWatchStatusTest {
         )
         fun overlaid(state: LocalContentState) =
             applyLocalStateOverlay(listOf(section), mapOf("s1" to state), emptyMap()).single().items.single().userState
-        assertEquals(CardWatchStatus.None, CardWatchStatus.of(overlaid(LocalContentState(watched = false, favorite = null))))
+        // An unacknowledged local change hides the counts; an acknowledged one leaves the server's.
+        assertEquals(
+            CardWatchStatus.None,
+            CardWatchStatus.of(overlaid(LocalContentState(watched = false, favorite = null, watchedPending = true))),
+        )
+        assertEquals(
+            CardWatchStatus.EpisodesLeft(6),
+            CardWatchStatus.of(overlaid(LocalContentState(watched = false, favorite = null))),
+        )
         // A favorite-only change leaves the counts alone.
         val favorite = overlaid(LocalContentState(watched = null, favorite = true))
         assertEquals(started.copy(isFavorite = true), favorite)

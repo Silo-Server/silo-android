@@ -146,7 +146,11 @@ internal class OverlayMetrics(
     /** The badge font size at the reference scale, before the system font scale. */
     val fontPx: Float = px(preset.fontSize)
 
-    /** The badge font size; it follows the system font scale, as web's follows the in-app text size. */
+    /**
+     * The badge font size. It follows the system font scale, as web's badge
+     * font follows the browser and in-app text size (`--ui-root-text-ratio`
+     * in `CardOverlays.tsx`); padding, icons and wordmarks do not, on either.
+     */
     val fontSize: TextUnit = (fontPx / density.density).sp
 
     /** The rendered font size, the badge's `em`. */
@@ -316,6 +320,7 @@ private fun TextBadge(
     }
     val policy = BadgeMeasurePolicy(
         hasLeading = hasLeading,
+        leadingIsImage = iconImageUrl != null,
         hasText = hasText,
         textNeverTruncates = scoreOnly,
         paddingLeft = (leftBorder + metrics.paddingInline).roundToInt(),
@@ -358,13 +363,17 @@ private fun TextBadge(
 }
 
 /**
- * A badge's row: an optional leading icon, chip or image at its own size,
- * then the text, `gap` apart, centred vertically inside the padding (which
- * includes the border). The text takes what width is left and truncates,
- * unless it is a bare score, which keeps its width.
+ * A badge's row: an optional leading icon, chip or image, then the text,
+ * `gap` apart, centred vertically inside the padding (which includes the
+ * border). A glyph and a chip keep their own size (web `shrink-0`); an
+ * uploaded image is at most the badge's content width (web `max-w-full` on
+ * the `<img>`), so a wide logo cannot push the badge past its slot. The text
+ * takes what width is left and truncates, unless it is a bare score, which
+ * keeps its width.
  */
 private data class BadgeMeasurePolicy(
     val hasLeading: Boolean,
+    val leadingIsImage: Boolean,
     val hasText: Boolean,
     val textNeverTruncates: Boolean,
     val paddingLeft: Int,
@@ -373,10 +382,15 @@ private data class BadgeMeasurePolicy(
     val gap: Int,
 ) : MeasurePolicy {
     override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
-        val lead = if (hasLeading) measurables.getOrNull(0)?.measure(Constraints()) else null
+        val chrome = paddingLeft + paddingRight
+        val leadConstraints = if (leadingIsImage && constraints.hasBoundedWidth) {
+            Constraints(maxWidth = max(0, constraints.maxWidth - chrome))
+        } else {
+            Constraints()
+        }
+        val lead = if (hasLeading) measurables.getOrNull(0)?.measure(leadConstraints) else null
         val textMeasurable = if (hasText) measurables.getOrNull(if (hasLeading) 1 else 0) else null
         val gapWidth = if (lead != null && textMeasurable != null) gap else 0
-        val chrome = paddingLeft + paddingRight
         val leadWidth = lead?.width ?: 0
         val text = textMeasurable?.measure(
             if (textNeverTruncates || !constraints.hasBoundedWidth) {
@@ -461,6 +475,10 @@ private class BadgeFrame(
         } else {
             null
         }
+        // A hardware canvas draws a shadow layer under shapes only from API 28;
+        // before that it draws text shadows only. On API 24-27 badges draw no
+        // box shadow: the black shape the layer hangs off is clipped away
+        // below, so nothing else shows. Text shadows draw on every level.
         val shadowPaint = boxShadow?.let { shadow ->
             android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
                 color = android.graphics.Color.BLACK
@@ -516,8 +534,8 @@ private fun SourceChip(mark: String, color: OverlayColor, metrics: OverlayMetric
 
 /**
  * An overlay icon at the preset's icon size: a wordmark as heavy text
- * whose line is the icon size tall (web draws it as SVG text, font 10 on
- * a 12-unit-high view box), any other icon as a glyph.
+ * whose line is the icon size tall (web draws it as SVG text on a
+ * 12-unit-high view box: font 10, ATMOS font 9), any other icon as a glyph.
  */
 @Composable
 private fun OverlayIcon(iconId: OverlayIconId, wordmark: String?, tint: Color, metrics: OverlayMetrics, shadow: Shadow?) {
@@ -526,7 +544,7 @@ private fun OverlayIcon(iconId: OverlayIconId, wordmark: String?, tint: Color, m
         val style = remember(metrics, tint, shadow) {
             metrics.textStyle(
                 color = tint,
-                size = metrics.fixedSize(size * WORDMARK_FONT_SHARE),
+                size = metrics.fixedSize(size * if (iconId == OverlayIconId.Atmos) ATMOS_FONT_SHARE else WORDMARK_FONT_SHARE),
                 weight = FontWeight.Black,
                 shadow = shadow,
                 letterSpacingEm = if (iconId == OverlayIconId.Atmos) ATMOS_TRACKING else 0.0,
@@ -539,16 +557,21 @@ private fun OverlayIcon(iconId: OverlayIconId, wordmark: String?, tint: Color, m
     }
 }
 
-/** Web's wordmarks: font size 10 on a view box 12 high. */
+/** Web's HDR, HDR10 and AV1 marks: font size 10 on a view box 12 high. */
 private const val WORDMARK_FONT_SHARE = 10f / 12f
 
-/** Web's ATMOS mark: letter spacing 0.5 at font size 9. */
+/** Web's ATMOS mark: font size 9 on a view box 12 high. */
+private const val ATMOS_FONT_SHARE = 9f / 12f
+
+/** Web's ATMOS mark: letter spacing 0.5 view-box units at font size 9, in `em`. */
 private const val ATMOS_TRACKING = 0.5 / 9.0
 
 /**
  * An administrator's uploaded image, [height] pixels tall and as wide as its
- * aspect ratio makes it, at most the available width (contained). Zero wide
- * until it loads, as an `<img>` with `width: auto`.
+ * aspect ratio makes it, at most the available width. As web's `<img>` with
+ * `height` set, `width: auto`, `max-width: 100%` and `object-contain`, a
+ * clamped box keeps its height and the image is scaled down to fit inside
+ * it, centred. Zero wide until it loads.
  */
 @Composable
 private fun UploadedImage(url: String, height: Int, contentDescription: String?, onFailed: () -> Unit) {

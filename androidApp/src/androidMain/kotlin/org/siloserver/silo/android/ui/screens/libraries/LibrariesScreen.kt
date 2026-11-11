@@ -145,7 +145,7 @@ import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.util.formatCardDate
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.BrowseItem
-import org.siloserver.silo.model.catalog.MediaItemUserState
+import org.siloserver.silo.viewmodel.withLocalContentState
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.section.LibraryCollection
@@ -883,9 +883,7 @@ class LibrariesViewModel(
         if (local.isEmpty()) return items
         return items.map { item ->
             val ls = local[item.contentId] ?: return@map item
-            val base = item.userState ?: MediaItemUserState()
-            val watched = ls.watched?.let(base::withPlayed) ?: base
-            item.copy(userState = watched.copy(isFavorite = ls.favorite ?: base.isFavorite))
+            item.copy(userState = item.userState.withLocalContentState(ls))
         }
     }
 

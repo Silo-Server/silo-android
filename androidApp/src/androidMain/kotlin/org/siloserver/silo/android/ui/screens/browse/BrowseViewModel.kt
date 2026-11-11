@@ -12,7 +12,7 @@ import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.settings.BrowsePrefsStore
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
-import org.siloserver.silo.model.catalog.MediaItemUserState
+import org.siloserver.silo.viewmodel.withLocalContentState
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
@@ -187,9 +187,7 @@ class BrowseViewModel(
         if (local.isEmpty()) return items
         return items.map { item ->
             val ls = local[item.contentId] ?: return@map item
-            val base = item.userState ?: MediaItemUserState()
-            val watched = ls.watched?.let(base::withPlayed) ?: base
-            item.copy(userState = watched.copy(isFavorite = ls.favorite ?: base.isFavorite))
+            item.copy(userState = item.userState.withLocalContentState(ls))
         }
     }
 

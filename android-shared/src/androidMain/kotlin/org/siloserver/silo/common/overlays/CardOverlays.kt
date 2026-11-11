@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import org.siloserver.silo.overlays.CardOverlayPrefs
 import org.siloserver.silo.overlays.EDGE_GAP
 import org.siloserver.silo.overlays.EDGE_INSET
@@ -90,6 +91,11 @@ enum class CardOverlayVariant {
  * @param hasProgressBar set by hosts that draw a watch-progress bar along
  *   the artwork's bottom edge: the bottom badges rise one edge step clear
  *   of it.
+ * @param cardWidth the poster artwork box's width, when the host knows it
+ *   exactly. Posters then scale from it without measuring first (a
+ *   subcomposition per card); left null, the layer measures itself. Pass it
+ *   only when the layout cannot give the box another width, or the badges
+ *   are drawn at the wrong scale.
  */
 @Composable
 fun CardOverlays(
@@ -100,6 +106,7 @@ fun CardOverlays(
     scale: Float = 1f,
     bottomInset: Dp? = null,
     hasProgressBar: Boolean = false,
+    cardWidth: Dp? = null,
 ) {
     val uiState = LocalCardOverlayUiState.current
     val preset = remember(prefs.preset, prefs.style) { OverlayPresets.resolved(prefs) }
@@ -112,7 +119,12 @@ fun CardOverlays(
 
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         val density = LocalDensity.current
-        if (variant == CardOverlayVariant.Poster) {
+        if (variant == CardOverlayVariant.Poster && cardWidth != null && cardWidth.isSpecified && cardWidth > 0.dp) {
+            Box(modifier = modifier.fillMaxSize()) {
+                val unit = with(density) { cardWidth.toPx() } / POSTER_REFERENCE_WIDTH.toFloat()
+                OverlayLayer(badges, preset, unit, density, variant, scale, bottomInset, hasProgressBar)
+            }
+        } else if (variant == CardOverlayVariant.Poster) {
             BoxWithConstraints(modifier = modifier.fillMaxSize()) {
                 val unit = if (constraints.hasBoundedWidth && constraints.maxWidth > 0) {
                     constraints.maxWidth / POSTER_REFERENCE_WIDTH.toFloat()

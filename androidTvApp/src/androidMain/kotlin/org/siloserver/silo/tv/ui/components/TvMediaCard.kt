@@ -211,6 +211,8 @@ fun TvMediaCard(
                             variant = CardOverlayVariant.Poster,
                             hasProgressBar = hasProgressBar,
                             modifier = Modifier.fillMaxSize(),
+                            // The card is sized width x height unless it fills its cell.
+                            cardWidth = if (fillWidth) null else width,
                         )
                     }
 

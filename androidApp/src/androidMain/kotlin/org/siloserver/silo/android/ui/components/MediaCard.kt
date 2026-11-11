@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.navigation.LocalHeroSourceHandoff
 import org.siloserver.silo.android.ui.navigation.heroSharedKeyPrefix
@@ -115,6 +116,12 @@ fun MediaCard(
     sleeves: BoxSetSleeveColors? = null,
     /** Outlines the artwork, such as the movie being viewed in its box set row. */
     highlighted: Boolean = false,
+    /**
+     * Set by hosts whose layout always gives the card exactly [width], such
+     * as a lazy row (unbounded width). A grid cell or a fill modifier
+     * overrides [width], so those hosts leave it false.
+     */
+    widthIsExact: Boolean = false,
 ) {
     val overlayState = LocalCardOverlayUiState.current
     var menuExpanded by remember { mutableStateOf(false) }
@@ -189,6 +196,7 @@ fun MediaCard(
                     variant = CardOverlayVariant.Poster,
                     hasProgressBar = hasProgressBar,
                     modifier = Modifier.fillMaxSize(),
+                    cardWidth = width.takeIf { widthIsExact && it.isSpecified },
                 )
             }
 

@@ -492,20 +492,17 @@ object OverlayRegistry {
     // different ribbons per platform.
     /**
      * Web `showStatusKey`: the status as the English key a per-value image
-     * matches (Returning, Ended, Cancelled, Upcoming), or the API's own value
-     * when it is not one of those. Unlike web, the value is trimmed first and
-     * a blank one is no status, so a padded value never draws a padded or
-     * empty badge.
+     * matches (Returning, Ended, Cancelled, Upcoming), or the API's own value,
+     * unchanged, when it is not one of those. An empty value is no status.
      */
     internal fun showStatusKey(value: String?): String? {
-        val trimmed = value?.trim()
-        if (trimmed.isNullOrEmpty()) return null
-        return when (trimmed.lowercase()) {
+        if (value.isNullOrEmpty()) return null
+        return when (value.lowercase()) {
             "returning", "returning series", "continuing", "in_production", "in production" -> "Returning"
             "ended" -> "Ended"
             "cancelled", "canceled" -> "Cancelled"
             "upcoming", "planned" -> "Upcoming"
-            else -> trimmed
+            else -> value
         }
     }
 

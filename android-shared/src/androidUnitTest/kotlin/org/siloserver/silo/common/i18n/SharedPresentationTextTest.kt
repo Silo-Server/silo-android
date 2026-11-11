@@ -229,7 +229,7 @@ class SharedPresentationTextTest {
         assertEquals("Ended", value(OverlayId.ShowStatus, OverlayData(showStatus = "ended")))
         assertEquals("Cancelled", value(OverlayId.ShowStatus, OverlayData(showStatus = "canceled")))
         assertEquals("Upcoming", value(OverlayId.ShowStatus, OverlayData(showStatus = "planned")))
-        assertEquals("Limited Series", value(OverlayId.ShowStatus, OverlayData(showStatus = " Limited Series ")))
+        assertEquals("Limited Series", value(OverlayId.ShowStatus, OverlayData(showStatus = "Limited Series")))
         assertEquals("Multi-Audio", value(OverlayId.MultiAudio, OverlayData(multiAudio = true)))
         assertEquals("CC", value(OverlayId.MultiSub, OverlayData(multiSub = true)))
         assertEquals("Certified Fresh", value(OverlayId.RtCertifiedFresh, OverlayData(rtCertifiedFresh = true)))

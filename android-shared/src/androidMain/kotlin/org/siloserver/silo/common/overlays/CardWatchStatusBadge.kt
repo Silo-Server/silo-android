@@ -197,7 +197,12 @@ private fun shadowPaint(radius: Float, dy: Float) =
         setShadowLayer(max(radius, Float.MIN_VALUE), 0f, dy, ShadowColor)
     }
 
-/** The `shadow-sm` layers around a rounded box, outside the box only, as CSS draws them. */
+/**
+ * The `shadow-sm` layers around a rounded box, outside the box only, as CSS
+ * draws them. A hardware canvas draws a shadow layer under shapes only from
+ * API 28, so on API 24-27 the status corner draws no shadow; the black shape
+ * the layer hangs off is clipped away, so nothing else shows.
+ */
 private fun DrawScope.drawShadows(paints: Array<android.graphics.Paint>, topLeft: Offset, size: Size, radius: Float) {
     val box = RoundRect(Rect(topLeft, size), CornerRadius(radius))
     val clip = Path().apply { addRoundRect(box) }

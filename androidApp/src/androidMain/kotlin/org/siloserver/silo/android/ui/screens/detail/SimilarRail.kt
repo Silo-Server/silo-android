@@ -76,6 +76,7 @@ private fun SimilarRailContent(
                 onClick = { onSelect(item.contentId) },
                 overlay = org.siloserver.silo.overlays.OverlayDataExtractor.fromBrowseItem(item),
                 sharedContentId = item.contentId,
+                widthIsExact = true,
             )
         }
     }
