@@ -2069,18 +2069,19 @@ private fun cascadePanelOffset(
  * consumes input and focuses its first row on open; Back/Menu closes it and
  * returns focus to the avatar via [onDismiss].
  *
- * Row set + order mirrors tvOS and Roku: the profile row · Change Account ·
- * History · Requests (while the server has it enabled) · Watch Party
- * (Settings → Experimental) · Settings · Sign Out. Watchlist and Favorites
- * live under For You only. Change Account replaces Switch Server (owner
- * decision 2026-11-02): the saved servers and their accounts, directly under
- * the profile row. Sign Out leaves the account in use.
+ * Row set + order mirrors tvOS and Roku: History · Requests (while the
+ * server has it enabled) · Watch Party (Settings → Experimental), then
+ * Settings · the profile row · Change Account · Sign Out, the second group's
+ * order on the phones too. Watchlist and Favorites live under For You only.
+ * Change Account replaces Switch Server (owner decision 2026-11-02): the
+ * saved servers and their accounts, directly under the profile row. Sign Out
+ * leaves the account in use.
  *
  * The profile row follows the open account ([profileRow]): Switch Profile
  * opens its picker while it has several profiles; Add Profile opens the
  * new-profile form while it has one and room for another; there is no row
- * while it has one and its limit is one. Focus opens on the first row, which
- * is Change Account when the profile row is absent.
+ * while it has one and its limit is one. Focus opens on the first row,
+ * History.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -2104,7 +2105,7 @@ private fun TvProfileDropdown(
 ) {
     val firstFocus = remember { FocusRequester() }
     // Also when the profile row changes while the menu is open, so focus
-    // never stays on a row that has gone.
+    // never stays on a row that has gone: it returns to the first row.
     LaunchedEffect(entersMenu, focusEntryToken, profileRow) {
         if (entersMenu && focusEntryToken > 0) {
             runCatching { firstFocus.requestFocus() }
@@ -2134,28 +2135,12 @@ private fun TvProfileDropdown(
 
         ProfileDropdownDivider()
 
-        when (profileRow) {
-            ProfileMenuRow.SwitchProfile -> ProfileDropdownRow(
-                label = stringResource(CommonR.string.menu_switchProfile),
-                icon = Icons.Filled.People,
-                focusRequester = firstFocus,
-                onClick = onSwitchProfile,
-            )
-            ProfileMenuRow.AddProfile -> ProfileDropdownRow(
-                label = stringResource(CommonR.string.menu_addProfile),
-                icon = Icons.Filled.PersonAdd,
-                focusRequester = firstFocus,
-                onClick = onAddProfile,
-            )
-            ProfileMenuRow.None -> Unit
-        }
         ProfileDropdownRow(
-            label = stringResource(CommonR.string.menu_changeAccount),
-            icon = Icons.Filled.SwitchAccount,
-            focusRequester = firstFocus.takeIf { profileRow == ProfileMenuRow.None },
-            onClick = onChangeAccount,
+            label = stringResource(CommonR.string.menu_history),
+            icon = Icons.Filled.History,
+            focusRequester = firstFocus,
+            onClick = onHistory,
         )
-        ProfileDropdownRow(label = stringResource(CommonR.string.menu_history), icon = Icons.Filled.History, onClick = onHistory)
         if (showRequests) {
             ProfileDropdownRow(label = stringResource(CommonR.string.menu_requests), icon = Icons.Filled.Inbox, onClick = onRequests)
         }
@@ -2170,6 +2155,24 @@ private fun TvProfileDropdown(
         ProfileDropdownDivider()
 
         ProfileDropdownRow(label = stringResource(CommonR.string.menu_settings), icon = Icons.Filled.Settings, onClick = onSettings)
+        when (profileRow) {
+            ProfileMenuRow.SwitchProfile -> ProfileDropdownRow(
+                label = stringResource(CommonR.string.menu_switchProfile),
+                icon = Icons.Filled.People,
+                onClick = onSwitchProfile,
+            )
+            ProfileMenuRow.AddProfile -> ProfileDropdownRow(
+                label = stringResource(CommonR.string.menu_addProfile),
+                icon = Icons.Filled.PersonAdd,
+                onClick = onAddProfile,
+            )
+            ProfileMenuRow.None -> Unit
+        }
+        ProfileDropdownRow(
+            label = stringResource(CommonR.string.menu_changeAccount),
+            icon = Icons.Filled.SwitchAccount,
+            onClick = onChangeAccount,
+        )
         ProfileDropdownRow(
             label = stringResource(CommonR.string.menu_signOut),
             icon = Icons.AutoMirrored.Filled.Logout,
