@@ -7,10 +7,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.drawscope.clipRect
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
-import org.siloserver.silo.common.R as CommonR
 import android.os.SystemClock
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -67,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.player.rememberPlayerEndTimeLabel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -74,7 +71,6 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import org.siloserver.silo.common.i18n.LocaleFormat
-import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.i18n.isRightToLeftText
 
 /**
@@ -279,18 +275,6 @@ fun TvPlayerScrubber(
 
     // The bar sits above its clock row, as on tvOS: elapsed on the left, time
     // left and the wall-clock finish on the right.
-    val context = LocalContext.current
-    // In the formatting locale, with the device's 12/24-hour setting. Keyed on
-    // the configuration: the activity keeps its context across an in-place
-    // language change.
-    val configuration = LocalConfiguration.current
-    val formatLocale = currentFormatLocale()
-    val timeFormat = remember(context, configuration, formatLocale) {
-        val localized = context.createConfigurationContext(
-            android.content.res.Configuration(configuration).apply { setLocale(formatLocale) },
-        )
-        android.text.format.DateFormat.getTimeFormat(localized)
-    }
     Column(modifier = modifier) {
         Box(modifier = Modifier.fillMaxWidth().height(28.dp)) {
 
@@ -543,7 +527,7 @@ fun TvPlayerScrubber(
                 modifier = Modifier.weight(1f),
             )
             val remainingSec = (durationSec - labelPositionSec).coerceAtLeast(0.0)
-            val wallClockRemainingSec = if (playbackSpeed > 0.0) remainingSec / playbackSpeed else remainingSec
+            val endTimeLabel = rememberPlayerEndTimeLabel(remainingSec, playbackSpeed)
             // In an Arabic sentence the "−" would move to the far end of the
             // time, so right-to-left text keeps the time in its own run.
             val remaining = formatRemainingTime(remainingSec)
@@ -551,9 +535,7 @@ fun TvPlayerScrubber(
             Text(
                 text = listOfNotNull(
                     remaining,
-                    finishTimeLabel(timeFormat, wallClockRemainingSec)?.let {
-                        stringResource(CommonR.string.player_scrubber_endsAt, it)
-                    },
+                    endTimeLabel,
                 ).joinToString(" · "),
                 style = TvPlayerType.Time.copy(color = TvPlayerChrome.Graphite),
             )
@@ -598,13 +580,6 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTvSegmentedTrac
         bands.forEach { (from, to, color) -> fill(color, untilX = to * width, fromX = maxOf(start, from * width)) }
         fill(playedColor, playedFraction * width)
     }
-}
-
-/** "11:42 PM" in the device's 12/24-hour [timeFormat], [remainingSec] of wall-clock time from now. */
-private fun finishTimeLabel(timeFormat: java.text.DateFormat, remainingSec: Double): String? {
-    if (remainingSec <= 0.0 || !remainingSec.isFinite()) return null
-    val finish = java.util.Date(System.currentTimeMillis() + (remainingSec * 1000).toLong())
-    return timeFormat.format(finish)
 }
 
 @Composable

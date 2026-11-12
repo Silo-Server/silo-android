@@ -275,6 +275,7 @@ fun PlayerControls(
                     },
                     thumbnail = scrubThumbnail,
                     onScrubTarget = onScrubTarget,
+                    playbackSpeed = playbackSpeed,
                 )
                 PlayerActionPillRow(
                     hasTracks = hasTracks,

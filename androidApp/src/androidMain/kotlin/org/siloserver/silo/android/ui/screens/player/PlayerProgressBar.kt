@@ -67,6 +67,8 @@ import kotlin.math.roundToInt
 import org.siloserver.silo.android.ui.components.LeftToRight
 import org.siloserver.silo.android.ui.util.formatClockTime
 import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.isRightToLeftText
+import org.siloserver.silo.common.player.rememberPlayerEndTimeLabel
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.common.R as CommonR
@@ -102,13 +104,14 @@ fun PlayerProgressBar(
     onScrubbingChange: (Boolean) -> Unit = {},
     thumbnail: ImageBitmap? = null,
     onScrubTarget: (Double?) -> Unit = {},
+    playbackSpeed: Double = 1.0,
 ) {
     // A timeline runs left to right in every language: the bar is drawn and
     // hit-tested from the left edge, so its times sit the same way round.
     LeftToRight {
         ProgressBarContent(
             position, duration, onSeek, modifier, bufferedPosition, enabled, chapters, intro, credits, recap,
-            preview, showTimes, onScrubbingChange, thumbnail, onScrubTarget,
+            preview, showTimes, onScrubbingChange, thumbnail, onScrubTarget, playbackSpeed,
         )
     }
 }
@@ -130,6 +133,7 @@ private fun ProgressBarContent(
     onScrubbingChange: (Boolean) -> Unit,
     thumbnail: ImageBitmap?,
     onScrubTarget: (Double?) -> Unit,
+    playbackSpeed: Double,
 ) {
     var isSeeking by remember { mutableStateOf(false) }
     var seekPosition by remember { mutableDoubleStateOf(0.0) }
@@ -171,6 +175,10 @@ private fun ProgressBarContent(
 
     fun chapterIndexAt(seconds: Double): Int = latestChapters.indexOfLast { it.startSeconds <= seconds }
 
+    val endTimeLabel = rememberPlayerEndTimeLabel(
+        remainingSec = if (hasKnownDuration) duration - displayPosition else 0.0,
+        speed = playbackSpeed,
+    )
     val positionDescription = stringResource(CommonR.string.player_progress_position)
     // Formatted inside semantics, as before, rather than on every position tick.
     val resources = LocalResources.current
@@ -189,12 +197,20 @@ private fun ProgressBarContent(
                     modifier = Modifier.weight(1f),
                 )
                 // Tap to switch between time left and total length (iOS).
+                val time = if (showTotal && hasKnownDuration) {
+                    formatClockTime(duration)
+                } else {
+                    remainingTimeLabel(displayPosition, duration)
+                }
+                // Beside a right-to-left "Ends" label the "−" would move to
+                // the far end of the time, so the time keeps its own run.
+                val isolatedTime = if (endTimeLabel != null && isRightToLeftText()) {
+                    "\u2066$time\u2069" // i18n-ignore: isolate marks
+                } else {
+                    time
+                }
                 Text(
-                    text = if (showTotal && hasKnownDuration) {
-                        formatClockTime(duration)
-                    } else {
-                        remainingTimeLabel(displayPosition, duration)
-                    },
+                    text = listOfNotNull(isolatedTime, endTimeLabel).joinToString(" · "),
                     style = PlayerType.Time.copy(color = PlayerChrome.Graphite),
                     modifier = Modifier.clickable(
                         interactionSource = remember { MutableInteractionSource() },
@@ -316,7 +332,9 @@ private fun ProgressBarContent(
                 val delta = seekPosition - scrubStart
                 val chapterTitle = chapterTitleAt(chapters, seekPosition)
                 // A preview grows the bubble upward: its bottom edge stays put.
-                val lift = if (thumbnail != null) 52.dp + ScrubThumbnailBlockHeight / 2 else 52.dp
+                // The end time line does the same.
+                val lift = (if (thumbnail != null) 52.dp + ScrubThumbnailBlockHeight / 2 else 52.dp) +
+                    (if (endTimeLabel != null) 9.dp else 0.dp)
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
@@ -362,6 +380,7 @@ private fun ProgressBarContent(
                             .padding(top = 2.dp)
                             .widthIn(max = 220.dp),
                     )
+                    endTimeLabel?.let { Text(text = it, style = PlayerType.BubbleDetail, maxLines = 1) }
                 }
             }
         }

@@ -518,8 +518,8 @@ fun PlayerOverlay(
                 isOrientationLocked = isOrientationLocked,
                 orientationLockSupported = orientationLockSupported,
                 tabletopMode = tabletopMode,
-                playbackSpeed = playbackSpeed,
                 // A party plays at 1x; the saved speed is never changed from it.
+                playbackSpeed = if (inRoom) 1.0 else playbackSpeed,
                 playbackSpeedEnabled = !inRoom,
                 // A shuffle replaces the series order: no sequential next episode.
                 nextEpisode = state.nextEpisode.takeUnless { inRoom || state.shuffle != null },
