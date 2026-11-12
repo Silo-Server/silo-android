@@ -3283,7 +3283,7 @@ class TvPlayerViewModel(
                 .map { state -> "${state.sessionId}:${state.selectedFileId}" }
                 .distinctUntilChanged(),
             // Only reachable outside a room, where the mode is pinned to `ask`.
-            onSeek = { seekToSec -> seekImmediate(seekToSec) },
+            onSeek = { seekToSec -> seekWithoutViewerAction(seekToSec) },
             // Filtered, not raw: isPlaying dips for a rebuffer exactly as it
             // does for a deliberate pause, and a pause that reaches the
             // controller freezes the timer. Unfiltered, a stuttering stream
@@ -4309,11 +4309,17 @@ class TvPlayerViewModel(
         _uiState.update { it.copy(isBuffering = isBuffering || outageRecoveryJob?.isActive == true) }
     }
 
+    /** A deliberate interaction shows someone is still watching. */
+    private fun resetPassOutStreak() {
+        autoAdvanceCount = 0
+    }
+
     /** Toggle user-intent pause state. Screen mirrors this to player.play/pause. */
     fun onPlayPause() {
         // In a Watch Party every toggle goes through the room; a local flip
         // here would fork this viewer from everyone else.
         if (roomId != null) return
+        resetPassOutStreak()
         _uiState.update { it.copy(isPaused = !it.isPaused) }
     }
 
@@ -4328,16 +4334,34 @@ class TvPlayerViewModel(
     }
 
     /**
-     * Deadband-free seek, also used for Watch Party room seeks
-     * ([applyRoomSeek]). Updates `uiState.position` AND emits on
-     * [seekRequests] (or re-anchors), which the screen applies to the
-     * MediaController unconditionally, so sub-second corrections are never
-     * swallowed. Named to mirror the mobile `PlayerViewModel.seekImmediate`
-     * contract.
+     * A viewer's deadband-free seek: it resets the still-watching count.
+     * Every caller outside this ViewModel is a viewer's seek: scrubber,
+     * chapters, intro and marker skips, a cast phone, a remote command.
+     * Unlike the mobile `PlayerViewModel.seekImmediate`, which room
+     * corrections use, automatic seeks here go through
+     * [seekWithoutViewerAction].
      */
     fun seekImmediate(positionSec: Double) {
+        resetPassOutStreak()
+        seekWithoutViewerAction(positionSec)
+    }
+
+    /**
+     * An automatic seek (intro auto-skip, Watch Party room seeks via
+     * [applyRoomSeek]); not viewer activity. Updates `uiState.position` AND
+     * emits on [seekRequests] (or re-anchors), which the screen applies to
+     * the MediaController unconditionally, so sub-second corrections are
+     * never swallowed.
+     */
+    private fun seekWithoutViewerAction(positionSec: Double) {
         cancelPendingQuickSkip()
         beginAndExecuteSeek(positionSec)
+    }
+
+    /** Explicit play or pause from a viewer: a cast phone or a remote control command. */
+    fun setPausedByViewer(paused: Boolean) {
+        resetPassOutStreak()
+        setPaused(paused)
     }
 
     /**
@@ -4354,6 +4378,7 @@ class TvPlayerViewModel(
 
     /** Coalesces rapid remote/button skips into one route-aware seek. */
     fun onSkipBy(deltaSeconds: Double): Double {
+        resetPassOutStreak()
         val state = _uiState.value
         val nowMs = SystemClock.elapsedRealtime()
         if (quickSkipAccumulator.pending == null) {
@@ -4913,7 +4938,7 @@ class TvPlayerViewModel(
     /** A room seek. Maps onto the mounted stream or re-anchors; never user intent. */
     fun applyRoomSeek(sourceSeconds: Double) {
         if (roomId == null || !sourceSeconds.isFinite()) return
-        seekImmediate(sourceSeconds.coerceAtLeast(0.0))
+        seekWithoutViewerAction(sourceSeconds.coerceAtLeast(0.0))
         publishRoomObservation()
     }
 
@@ -5108,8 +5133,8 @@ class TvPlayerViewModel(
     /** True while this player belongs to a Watch Party: the room owns transport. */
     val inWatchParty: Boolean get() = roomId != null
 
-    fun remotePause() = setPaused(true)
-    fun remoteUnpause() = setPaused(false)
+    fun remotePause() = setPausedByViewer(true)
+    fun remoteUnpause() = setPausedByViewer(false)
     fun remoteTogglePlayPause() = onPlayPause()
     fun remoteSeek(positionSeconds: Double) = seekImmediate(positionSeconds)
     fun remoteStop(notice: String? = null) { _remoteStopRequests.tryEmit(notice) }
@@ -5558,7 +5583,10 @@ class TvPlayerViewModel(
                 // Automatic countdown-expiry advance: increment the pass-out streak
                 // so a long unattended binge eventually trips the "still watching?"
                 // gate. An explicit Play Now (below) resets the streak instead.
-                advanceToNextEpisode(nextAutoAdvanceCount = autoAdvanceCount + 1)
+                // Counted now, not when the handoff lands, so viewer activity
+                // during the handoff still resets it.
+                autoAdvanceCount += 1
+                advanceToNextEpisode()
                 return@launch
             }
         }
@@ -5571,10 +5599,11 @@ class TvPlayerViewModel(
      * prompt. The automatic countdown-expiry path keeps incrementing the streak.
      */
     fun playNextEpisodeNow() {
-        advanceToNextEpisode(nextAutoAdvanceCount = 0)
+        resetPassOutStreak()
+        advanceToNextEpisode()
     }
 
-    private fun advanceToNextEpisode(nextAutoAdvanceCount: Int) {
+    private fun advanceToNextEpisode() {
         nextUpCountdownJob?.cancel()
         nextUpCountdownJob = null
         // Watch Together owns the room timeline. The previous navigation
@@ -5582,11 +5611,11 @@ class TvPlayerViewModel(
         // in place so a remote Next command cannot desynchronise the room.
         if (!shouldNavigateToLocalNext(inWatchTogetherRoom = roomId != null)) return
         if (shufflePlayback != null) {
-            advanceShuffle(nextAutoAdvanceCount)
+            advanceShuffle()
             return
         }
         val next = _uiState.value.nextEpisode ?: return
-        playInPlace(next.contentId, targetFileId = null, nextAutoAdvanceCount = nextAutoAdvanceCount)
+        playInPlace(next.contentId, targetFileId = null)
     }
 
     /**
@@ -5598,7 +5627,6 @@ class TvPlayerViewModel(
     private fun playInPlace(
         targetContentId: String,
         targetFileId: Int?,
-        nextAutoAdvanceCount: Int,
         showCard: Boolean = true,
     ) {
         val state = _uiState.value
@@ -5661,7 +5689,6 @@ class TvPlayerViewModel(
             pendingInitialSubtitleAutoResolved = false
             pendingInitialSubtitleAttempts = 0
             autoTextSubtitleSelectionAttempted = false
-            autoAdvanceCount = nextAutoAdvanceCount
             autoAdvanceHandled = false
             reachedCreditsOrEnd = false
             pendingApproachingEndVideoEnded = null
@@ -5794,7 +5821,7 @@ class TvPlayerViewModel(
     /** Plays the next part of a multi-part pick from its start, without the overlay. */
     private fun playNextShufflePart(fileId: Int) {
         shuffleNextPartFileId = null
-        playInPlace(contentId, targetFileId = fileId, nextAutoAdvanceCount = autoAdvanceCount, showCard = false)
+        playInPlace(contentId, targetFileId = fileId, showCard = false)
     }
 
     /**
@@ -5802,7 +5829,7 @@ class TvPlayerViewModel(
      * pick from the beginning. The server moves on only while that item is
      * still current, so a repeated press or a retry plays the same pick.
      */
-    private fun advanceShuffle(nextAutoAdvanceCount: Int) {
+    private fun advanceShuffle() {
         val shuffle = shufflePlayback ?: return
         if (_uiState.value.nextEpisode == null) return
         if (shuffleAdvanceJob?.isActive == true || nextUpTransitionGate.isActive) return
@@ -5821,7 +5848,7 @@ class TvPlayerViewModel(
                 return@launch
             }
             // Like the first pick, every shuffled item plays from the start.
-            playInPlace(target, targetFileId = null, nextAutoAdvanceCount = nextAutoAdvanceCount)
+            playInPlace(target, targetFileId = null)
         }
     }
 
@@ -6508,6 +6535,7 @@ class TvPlayerViewModel(
     }
 
     fun commitScrub(): Double {
+        resetPassOutStreak()
         val target = _uiState.value.scrubPreviewSec
         _uiState.update { it.copy(isScrubbing = false) }
         return target
