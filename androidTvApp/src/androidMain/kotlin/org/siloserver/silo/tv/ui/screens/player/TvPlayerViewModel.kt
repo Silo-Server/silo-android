@@ -4203,21 +4203,25 @@ class TvPlayerViewModel(
     }
 
     /**
-     * Deadband-free seek, also used for Watch Party room seeks
-     * ([applyRoomSeek]). Updates `uiState.position` AND emits on
-     * [seekRequests] (or re-anchors), which the screen applies to the
-     * MediaController unconditionally, so sub-second corrections are never
-     * swallowed. Named to mirror the mobile `PlayerViewModel.seekImmediate`
-     * contract.
+     * A viewer's deadband-free seek: it resets the still-watching count.
+     * Every caller outside this ViewModel is a viewer's seek: scrubber,
+     * chapters, intro and marker skips, a cast phone, a remote command.
+     * Unlike the mobile `PlayerViewModel.seekImmediate`, which room
+     * corrections use, automatic seeks here go through
+     * [seekWithoutViewerAction].
      */
     fun seekImmediate(positionSec: Double) {
-        // Every caller outside this ViewModel is a viewer's seek: scrubber,
-        // chapters, intro and marker skips, a cast phone.
         resetPassOutStreak()
         seekWithoutViewerAction(positionSec)
     }
 
-    /** An automatic seek (intro auto-skip, Watch Party sync); not viewer activity. */
+    /**
+     * An automatic seek (intro auto-skip, Watch Party room seeks via
+     * [applyRoomSeek]); not viewer activity. Updates `uiState.position` AND
+     * emits on [seekRequests] (or re-anchors), which the screen applies to
+     * the MediaController unconditionally, so sub-second corrections are
+     * never swallowed.
+     */
     private fun seekWithoutViewerAction(positionSec: Double) {
         cancelPendingQuickSkip()
         beginAndExecuteSeek(positionSec)
@@ -5448,7 +5452,10 @@ class TvPlayerViewModel(
                 // Automatic countdown-expiry advance: increment the pass-out streak
                 // so a long unattended binge eventually trips the "still watching?"
                 // gate. An explicit Play Now (below) resets the streak instead.
-                advanceToNextEpisode(nextAutoAdvanceCount = autoAdvanceCount + 1)
+                // Counted now, not when the handoff lands, so viewer activity
+                // during the handoff still resets it.
+                autoAdvanceCount += 1
+                advanceToNextEpisode()
                 return@launch
             }
         }
@@ -5461,10 +5468,11 @@ class TvPlayerViewModel(
      * prompt. The automatic countdown-expiry path keeps incrementing the streak.
      */
     fun playNextEpisodeNow() {
-        advanceToNextEpisode(nextAutoAdvanceCount = 0)
+        resetPassOutStreak()
+        advanceToNextEpisode()
     }
 
-    private fun advanceToNextEpisode(nextAutoAdvanceCount: Int) {
+    private fun advanceToNextEpisode() {
         nextUpCountdownJob?.cancel()
         nextUpCountdownJob = null
         // Watch Together owns the room timeline. The previous navigation
@@ -5472,11 +5480,11 @@ class TvPlayerViewModel(
         // in place so a remote Next command cannot desynchronise the room.
         if (!shouldNavigateToLocalNext(inWatchTogetherRoom = roomId != null)) return
         if (shufflePlayback != null) {
-            advanceShuffle(nextAutoAdvanceCount)
+            advanceShuffle()
             return
         }
         val next = _uiState.value.nextEpisode ?: return
-        playInPlace(next.contentId, targetFileId = null, nextAutoAdvanceCount = nextAutoAdvanceCount)
+        playInPlace(next.contentId, targetFileId = null)
     }
 
     /**
@@ -5488,7 +5496,6 @@ class TvPlayerViewModel(
     private fun playInPlace(
         targetContentId: String,
         targetFileId: Int?,
-        nextAutoAdvanceCount: Int,
         showCard: Boolean = true,
     ) {
         val state = _uiState.value
@@ -5551,7 +5558,6 @@ class TvPlayerViewModel(
             pendingInitialSubtitleAutoResolved = false
             pendingInitialSubtitleAttempts = 0
             autoTextSubtitleSelectionAttempted = false
-            autoAdvanceCount = nextAutoAdvanceCount
             autoAdvanceHandled = false
             reachedCreditsOrEnd = false
             pendingApproachingEndVideoEnded = null
@@ -5684,7 +5690,7 @@ class TvPlayerViewModel(
     /** Plays the next part of a multi-part pick from its start, without the overlay. */
     private fun playNextShufflePart(fileId: Int) {
         shuffleNextPartFileId = null
-        playInPlace(contentId, targetFileId = fileId, nextAutoAdvanceCount = autoAdvanceCount, showCard = false)
+        playInPlace(contentId, targetFileId = fileId, showCard = false)
     }
 
     /**
@@ -5692,7 +5698,7 @@ class TvPlayerViewModel(
      * pick from the beginning. The server moves on only while that item is
      * still current, so a repeated press or a retry plays the same pick.
      */
-    private fun advanceShuffle(nextAutoAdvanceCount: Int) {
+    private fun advanceShuffle() {
         val shuffle = shufflePlayback ?: return
         if (_uiState.value.nextEpisode == null) return
         if (shuffleAdvanceJob?.isActive == true || nextUpTransitionGate.isActive) return
@@ -5711,7 +5717,7 @@ class TvPlayerViewModel(
                 return@launch
             }
             // Like the first pick, every shuffled item plays from the start.
-            playInPlace(target, targetFileId = null, nextAutoAdvanceCount = nextAutoAdvanceCount)
+            playInPlace(target, targetFileId = null)
         }
     }
 
