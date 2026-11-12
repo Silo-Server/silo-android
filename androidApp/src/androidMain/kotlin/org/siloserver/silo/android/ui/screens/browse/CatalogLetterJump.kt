@@ -69,9 +69,10 @@ class CatalogLetterJump(
     /** Null while the list is not in title order, before an index exists, and from a server without one. */
     val state: StateFlow<CatalogLetterJumpState?> = _state.asStateFlow()
 
-    private var query: CatalogLetterQuery? = null
     private var firstPage: List<BrowseItem>? = null
     private var lettersJob: Job? = null
+    /** Bumps on every reset; a read only answers for the reset that started it. */
+    private var generation = 0
     private var serverHasIndex = true
 
     /**
@@ -80,15 +81,15 @@ class CatalogLetterJump(
      */
     fun reset(next: CatalogLetterQuery?) {
         lettersJob?.cancel()
+        val myGeneration = ++generation
         firstPage = null
-        query = next
         drop()
         if (next == null || !serverHasIndex) return
         lettersJob = scope.launch {
-            repository.cachedCatalogLetters(next.libraryId, next.mediaType, next.order, next.queryGroups, next.match)
-                ?.let { install(next, it) }
+            val cached = repository.cachedCatalogLetters(next.libraryId, next.mediaType, next.order, next.queryGroups, next.match)
+            if (cached != null && myGeneration == generation) install(next, cached)
             val result = repository.catalogLetters(next.libraryId, next.mediaType, next.order, next.queryGroups, next.match)
-            if (query != next) return@launch
+            if (myGeneration != generation) return@launch
             when (result) {
                 is ApiResult.Success -> {
                     val index = result.data

@@ -111,7 +111,9 @@ fun CatalogGrid(
         }
     }
 
-    LaunchedEffect(shouldLoadMore) {
+    // Keyed on the pager too: when the letter index goes away, cursor paging
+    // must resume even if the grid was already near its end.
+    LaunchedEffect(shouldLoadMore, letterJump == null) {
         if (shouldLoadMore && letterJump == null) {
             onLoadMore()
         }

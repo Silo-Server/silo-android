@@ -44,7 +44,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -201,6 +203,11 @@ internal fun CatalogLetterRail(
                 .semantics {
                     contentDescription = railLabel
                     jumped?.let { stateDescription = it }
+                    // Every letter with titles, including those a short rail
+                    // draws as dots, is reachable from TalkBack's actions.
+                    customActions = LetterRailEntries.filter { it in available }.map { letter ->
+                        CustomAccessibilityAction(letter) { jump(letter); true }
+                    }
                 }
                 .pointerInput(railHeightPx) {
                     awaitEachGesture {
