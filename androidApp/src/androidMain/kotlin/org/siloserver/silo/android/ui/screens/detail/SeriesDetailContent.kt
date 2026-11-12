@@ -74,6 +74,7 @@ fun SeriesDetailContent(
     isLoadingSelectedEpisodeDetail: Boolean,
     selectedVersionIndex: Int,
     isAutoVersion: Boolean,
+    preferredQuality: String? = null,
     selectedAudioIndex: Int?,
     selectedSubtitleIndex: Int?,
     onVersionSelected: (Int?) -> Unit,
@@ -203,6 +204,7 @@ fun SeriesDetailContent(
                             selectedVersionIndex = selectedVersionIndex,
                             isAutoVersion = isAutoVersion,
                             onVersionSelected = onVersionSelected,
+                            preferredQuality = preferredQuality,
                         )
                         PlaybackSelectorDivider()
                         TrackSelectorRow(

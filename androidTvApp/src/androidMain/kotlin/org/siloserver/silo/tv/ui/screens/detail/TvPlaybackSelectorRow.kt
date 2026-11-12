@@ -14,6 +14,7 @@ import org.siloserver.silo.model.catalog.PlaybackVariant
 import org.siloserver.silo.model.catalog.playbackEditions
 import org.siloserver.silo.model.catalog.hasEditionChoices
 import org.siloserver.silo.model.catalog.FileVersion
+import org.siloserver.silo.playback.selectPlaybackVersion
 import org.siloserver.silo.tv.ui.components.TvAnchoredSelectorMenu
 import org.siloserver.silo.tv.ui.components.TvSelectorOption
 import org.siloserver.silo.tv.ui.components.TvSelectorTriggerStyle
@@ -81,6 +82,8 @@ internal fun TvPlaybackActionSelectors(
      * what the preview says.
      */
     subtitleAutoContextFor: ((audioLanguage: String?) -> TvPlaybackFormatting.SubtitleAutoContext)? = null,
+    /** The playback quality preference; picking an edition pins its Auto file. */
+    preferredQuality: String? = null,
     onSelectVersion: (Int?) -> Unit,
     onSelectAudioTrack: (Int?) -> Unit,
     onSelectSubtitleTrack: (Int?) -> Unit,
@@ -97,8 +100,8 @@ internal fun TvPlaybackActionSelectors(
         ?: editions.firstOrNull()
     val scopedVersions = if (showEditions) currentEdition?.versions.orEmpty() else versions
     val versionOptions = buildList {
-        // Auto is global; omitting it here keeps quality changes within the edition.
-        if (!showEditions) add(
+        // Auto chooses across every edition, as on Apple and Roku.
+        add(
             TvSelectorOption(
                 key = "version:auto",
                 title = text.auto,
@@ -113,7 +116,7 @@ internal fun TvPlaybackActionSelectors(
                     key = "version:${version.fileId}",
                     title = TvPlaybackFormatting.versionShortLabel(version, text),
                     detail = TvPlaybackFormatting.versionDetailLabel(version, text),
-                    selected = (selectedVersionFileId ?: currentVersion?.fileId.takeIf { showEditions }) == version.fileId,
+                    selected = selectedVersionFileId == version.fileId,
                     onSelect = { onSelectVersion(version.fileId) },
                 ),
             )
@@ -183,7 +186,7 @@ internal fun TvPlaybackActionSelectors(
         }
     }
     val versionValue = currentVersion?.let {
-        TvPlaybackFormatting.versionValueLabel(it, selectedVersionFileId ?: it.fileId.takeIf { showEditions }, text)
+        TvPlaybackFormatting.versionValueLabel(it, selectedVersionFileId, text)
     }.orEmpty()
     val audioValue = currentVersion?.let {
         if (selectedAudioTrackIndex == null && !automaticAudioResolutionKnown) {
@@ -226,12 +229,15 @@ internal fun TvPlaybackActionSelectors(
             label = stringResource(CommonR.string.detail_edition),
             value = currentEdition?.label.orEmpty(),
             options = editions.map { edition ->
+                // Picking an edition turns Auto off and pins the file Auto
+                // would choose within it, as on Apple and Roku.
+                val editionVersion = selectPlaybackVersion(edition.versions, null, preferredQuality)
                 TvSelectorOption(
                     key = "edition:${edition.id}",
                     title = edition.label,
-                    detail = TvPlaybackFormatting.versionShortLabel(edition.defaultVersion, text),
+                    detail = TvPlaybackFormatting.versionShortLabel(editionVersion, text),
                     selected = edition.id == currentEdition?.id,
-                    onSelect = { onSelectVersion(edition.defaultVersion.fileId) },
+                    onSelect = { onSelectVersion(editionVersion.fileId) },
                 )
             },
             triggerFocusRequester = versionFocusRequester,

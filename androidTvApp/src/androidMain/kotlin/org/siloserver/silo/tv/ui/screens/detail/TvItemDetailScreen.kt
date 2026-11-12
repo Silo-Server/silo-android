@@ -2040,6 +2040,7 @@ private fun HeroActionRow(
                             audioLanguage = audioLanguage,
                         )
                     },
+                    preferredQuality = state.preferredQuality,
                     onSelectVersion = if (isSeriesOrSeason) {
                         viewModel::onNextUpVersionSelected
                     } else {

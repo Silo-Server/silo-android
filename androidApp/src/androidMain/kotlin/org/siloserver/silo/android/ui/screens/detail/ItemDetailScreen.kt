@@ -753,6 +753,7 @@ fun ItemDetailScreen(
                             seriesResume
                         }
                         SeriesDetailContent(
+                            preferredQuality = preferredQuality,
                             translatingSeasonContentId = translatingSeasonContentId,
                             translation = translationSlot,
                             detail = detail,
@@ -999,6 +1000,7 @@ fun ItemDetailScreen(
 
                         val movieResume = playbackResumePosition(detail.userData)
                         MovieDetailContent(
+                            preferredQuality = preferredQuality,
                             translation = translationSlot,
                             detail = state.withPickedSeriesChoices(detail),
                             similarItems = state.similarItems,

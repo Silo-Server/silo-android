@@ -213,6 +213,8 @@ fun EditionVersionSelectorRows(
     selectedVersionIndex: Int,
     isAutoVersion: Boolean,
     onVersionSelected: (Int?) -> Unit,
+    /** The playback quality preference; picking an edition pins its Auto file. */
+    preferredQuality: String? = null,
 ) {
     var showEditionPicker by remember(detail.contentId) { mutableStateOf(false) }
     var showVersionPicker by remember(detail.contentId) { mutableStateOf(false) }
@@ -236,7 +238,7 @@ fun EditionVersionSelectorRows(
     TrackSelectorRow(
         icon = Icons.Outlined.HighQuality,
         label = stringResource(CommonR.string.detail_version),
-        value = formatVersionValueLabel(resources, selectedVersion, isAutoVersion && !showEditions),
+        value = formatVersionValueLabel(resources, selectedVersion, isAutoVersion),
         onClick = { showVersionPicker = true },
         interactive = versions.size > 1,
     )
@@ -246,13 +248,16 @@ fun EditionVersionSelectorRows(
             onDismiss = { showEditionPicker = false },
         ) {
             itemsIndexed(editions) { index, edition ->
+                // Picking an edition turns Auto off and pins the file Auto
+                // would choose within it, as on Apple and Roku.
+                val editionVersion = selectPlaybackVersion(edition.versions, null, preferredQuality)
                 PickerItem(
                     title = edition.label,
-                    subtitle = formatVersionMenuLabel(resources, edition.defaultVersion),
+                    subtitle = formatVersionMenuLabel(resources, editionVersion),
                     badges = emptyList(),
                     isSelected = edition.id == currentEdition?.id,
                     onClick = {
-                        detail.versions.indexOfFirst { it.fileId == edition.defaultVersion.fileId }
+                        detail.versions.indexOfFirst { it.fileId == editionVersion.fileId }
                             .takeIf { it >= 0 }?.let(onVersionSelected)
                         showEditionPicker = false
                     },
@@ -265,7 +270,7 @@ fun EditionVersionSelectorRows(
         VersionPickerSheet(
             versions = versions,
             selectedIndex = versions.indexOfFirst { it.fileId == selectedVersion?.fileId }
-                .takeIf { it >= 0 && (!isAutoVersion || showEditions) },
+                .takeIf { it >= 0 && !isAutoVersion },
             onSelect = { index ->
                 if (index == null) {
                     onVersionSelected(null)
@@ -276,8 +281,6 @@ fun EditionVersionSelectorRows(
                 showVersionPicker = false
             },
             onDismiss = { showVersionPicker = false },
-            // A global Auto reset could switch away from the chosen edition.
-            allowAuto = !showEditions,
         )
     }
 }

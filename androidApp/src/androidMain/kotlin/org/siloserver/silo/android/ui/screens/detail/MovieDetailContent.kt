@@ -78,6 +78,7 @@ fun MovieDetailContent(
     isInWatchlist: Boolean,
     selectedVersionIndex: Int,
     isAutoVersion: Boolean,
+    preferredQuality: String? = null,
     selectedAudioIndex: Int?,
     selectedSubtitleIndex: Int?,
     onPlayClick: () -> Unit,
@@ -192,6 +193,7 @@ fun MovieDetailContent(
                                 selectedVersionIndex = selectedVersionIndex,
                                 isAutoVersion = isAutoVersion,
                                 onVersionSelected = onVersionSelected,
+                                preferredQuality = preferredQuality,
                             )
                             if (audioTracks.isNotEmpty()) {
                                 PlaybackSelectorDivider()
