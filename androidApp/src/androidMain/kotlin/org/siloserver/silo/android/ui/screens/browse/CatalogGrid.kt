@@ -74,6 +74,11 @@ fun CatalogGrid(
     onLoadMore: () -> Unit,
     modifier: Modifier = Modifier,
     letterJump: CatalogLetterJumpState? = null,
+    /**
+     * Names the list shown, such as its filter state. A change starts the
+     * grid at its top, even while the old items stay up as the new list loads.
+     */
+    listKey: Any? = null,
     /** The finger is on a letter in the rail; read where a jump would land. */
     onPrepareLetterJump: (String) -> Unit = {},
     /** List position of a letter's first title, once its titles are read or briefly awaited. */
@@ -155,14 +160,13 @@ fun CatalogGrid(
         }
     }
     // Another list in the same grid starts at its top; the old scroll offset
-    // means nothing in it. Leaving title order counts; the index first
-    // arriving for the list already shown does not.
-    val shownQuery = remember { arrayOfNulls<CatalogLetterQuery>(1) }
-    LaunchedEffect(letterJump?.query) {
-        val query = letterJump?.query
-        val previous = shownQuery[0]
-        shownQuery[0] = query
-        if (previous != null && previous != query) gridState.scrollToItem(0)
+    // means nothing in it. Keyed on the list, not on the letter index, so the
+    // index arriving later for the list already shown leaves the scroll alone.
+    val shownList = remember { arrayOfNulls<Any>(1) }
+    LaunchedEffect(listKey) {
+        val previous = shownList[0]
+        shownList[0] = listKey
+        if (previous != null && previous != listKey) gridState.scrollToItem(0)
     }
 
     Box(modifier = modifier) {

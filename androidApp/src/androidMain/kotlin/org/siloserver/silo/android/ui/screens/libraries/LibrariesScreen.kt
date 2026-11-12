@@ -1427,6 +1427,7 @@ private fun BrowseTabContent(
                         else -> null
                     },
                     letterJump = letterJump,
+                    listKey = state.filterState,
                     onPrepareLetterJump = onPrepareLetterJump,
                     letterJumpPosition = letterJumpPosition,
                     viewDensity = state.catalogDensity,

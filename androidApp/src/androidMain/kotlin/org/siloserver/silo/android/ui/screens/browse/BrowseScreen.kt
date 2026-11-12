@@ -273,6 +273,7 @@ fun BrowseScreen(
                             else -> null
                         },
                         letterJump = letterJump,
+                        listKey = state.filterState,
                         onPrepareLetterJump = viewModel::prepareLetterJump,
                         letterJumpPosition = viewModel::letterJumpPosition,
                         viewDensity = state.catalogDensity,
