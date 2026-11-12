@@ -16,6 +16,7 @@ import org.siloserver.silo.model.catalog.SeasonsResponse
 import org.siloserver.silo.model.catalog.WatchDetail
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.apiv2.CatalogContinuationV2
+import org.siloserver.silo.network.apiv2.CatalogLettersV2
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.api.CatalogApi
@@ -38,6 +39,9 @@ import kotlinx.coroutines.sync.withLock
  * beside it, once the titles are in. Past it the query shows no box sets.
  */
 const val BOX_SET_SEARCH_GRACE_MILLIS = 1_500L
+
+/** Letter indexes kept for the session, one per library and filter set. */
+private const val LETTERS_CACHE_ENTRIES = 32
 
 class CatalogRepository(
     private val catalogApi: CatalogApi,
@@ -106,6 +110,8 @@ class CatalogRepository(
         yearMax: Int? = null,
         queryGroups: List<CatalogQueryGroup> = emptyList(),
         match: String? = null,
+        /** Zero-based list position to read from; see [CatalogApi.getCatalog]. */
+        seek: Int? = null,
     ): ApiResult<CatalogResponse> {
         val requestIdentityGeneration = identityTransitions.generation.value
         val sized = if (continuation == null) artwork.sizedRead(ArtworkSurface.BROWSE) else null
@@ -127,12 +133,13 @@ class CatalogRepository(
             yearMax = yearMax,
             queryGroups = queryGroups,
             match = match,
+            seek = seek,
         )
 
         // Only the unfiltered, first-page default browse of a single library is
         // cached for offline (every request-shaping param must be at its default).
         val cacheableLibraryId = libraryId?.takeIf {
-            continuation == null &&
+            continuation == null && (seek == null || seek == 0) &&
                 query == null && genre == null && contentRating == null &&
                 namePrefix == null && yearMin == null && yearMax == null &&
                 source == null && mediaType == null &&
@@ -153,6 +160,65 @@ class CatalogRepository(
         }
         return result
     }
+
+    /** The scope and rules a letter index counts; one entry of [lettersCache]. */
+    private data class LettersKey(
+        val identityGeneration: Long,
+        val languageRevision: Long,
+        val libraryId: Int?,
+        val mediaType: String?,
+        val order: String?,
+        val queryGroups: List<CatalogQueryGroup>,
+        val match: String?,
+    )
+    private val lettersCacheMutex = Mutex()
+    private val lettersCache = LinkedHashMap<LettersKey, CatalogLettersV2>()
+
+    /**
+     * Where each letter starts in the title-ordered list [browse] pages for
+     * the same library, media type, rules and [order]. Success(null) means the
+     * server has no letter index.
+     */
+    suspend fun catalogLetters(
+        libraryId: Int?,
+        mediaType: String? = null,
+        order: String? = null,
+        queryGroups: List<CatalogQueryGroup> = emptyList(),
+        match: String? = null,
+    ): ApiResult<CatalogLettersV2?> {
+        val key = lettersKey(libraryId, mediaType, order, queryGroups, match)
+        val result = catalogApi.getCatalogLetters(libraryId, mediaType, order, queryGroups, match)
+        if (result is ApiResult.Success) {
+            lettersCacheMutex.withLock {
+                // Only an answer for the identity and language still current.
+                if (key == lettersKey(libraryId, mediaType, order, queryGroups, match)) {
+                    val index = result.data
+                    if (index == null) lettersCache.remove(key) else lettersCache[key] = index
+                    while (lettersCache.size > LETTERS_CACHE_ENTRIES) lettersCache.remove(lettersCache.keys.first())
+                }
+            }
+        }
+        return result
+    }
+
+    /**
+     * The letter index [catalogLetters] last returned for this list in this
+     * session, for showing the rail at once while a fresh read runs.
+     */
+    suspend fun cachedCatalogLetters(
+        libraryId: Int?,
+        mediaType: String? = null,
+        order: String? = null,
+        queryGroups: List<CatalogQueryGroup> = emptyList(),
+        match: String? = null,
+    ): CatalogLettersV2? = lettersCacheMutex.withLock {
+        lettersCache[lettersKey(libraryId, mediaType, order, queryGroups, match)]
+    }
+
+    private fun lettersKey(
+        libraryId: Int?, mediaType: String?, order: String?,
+        queryGroups: List<CatalogQueryGroup>, match: String?,
+    ) = LettersKey(identityTransitions.generation.value, currentLanguageRevision, libraryId, mediaType, order, queryGroups, match)
 
     /**
      * A box set's movies in one library, in collection order. Live only: a box

@@ -22,7 +22,7 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         continuation: CatalogContinuationV2? = null, limit: Int? = null,
         namePrefix: String? = null, yearMin: Int? = null, yearMax: Int? = null,
         queryGroups: List<CatalogQueryGroup> = emptyList(), match: String? = null,
-        skipTotal: Boolean = false, widths: ArtworkWidths? = null,
+        skipTotal: Boolean = false, widths: ArtworkWidths? = null, seek: Int? = null,
     ): ApiResult<CatalogResponse> {
         val groups = queryGroups.toV2Groups().toMutableList()
         val implicit = buildList {
@@ -40,9 +40,21 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         }
         return v2.browse(CatalogQueryV2(source = source ?: "query", q = query, type = mediaType,
             libraryId = libraryId?.toString(), sort = sort, order = order, limit = limit ?: 50,
-            namePrefix = namePrefix, groups = groups, match = match, skipTotal = skipTotal), continuation, widths = widths)
+            namePrefix = namePrefix, groups = groups, match = match, skipTotal = skipTotal), continuation, widths = widths, seek = seek)
             .map { it.toCatalogResponse() }
     }
+
+    /**
+     * Where each letter starts in a title-ordered browse of [libraryId], in
+     * [order]; null from a server without a letter index.
+     */
+    suspend fun getCatalogLetters(
+        libraryId: Int?, mediaType: String?, order: String?,
+        queryGroups: List<CatalogQueryGroup>, match: String?,
+    ): ApiResult<CatalogLettersV2?> = v2.letters(CatalogLettersQueryV2(
+        libraryId = libraryId?.toString(), type = mediaType, match = match,
+        groups = queryGroups.toV2Groups(), order = order,
+    ))
 
     suspend fun getAudiobookGroups(libraryId: Int, groupBy: String, sort: String = "name",
         continuation: CatalogContinuationV2? = null, limit: Int? = null, query: String? = null,

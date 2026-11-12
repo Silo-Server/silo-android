@@ -76,6 +76,7 @@ fun BrowseScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val letterJump by viewModel.letterJump.collectAsState()
     var showFilterSheet by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -271,8 +272,9 @@ fun BrowseScreen(
                             "release_date" -> { item -> formatCardDate(item.releaseDate, dateLocale) }
                             else -> null
                         },
-                        selectedNamePrefix = state.selectedNamePrefix,
-                        onNamePrefixSelected = viewModel::selectNamePrefix,
+                        letterJump = letterJump,
+                        onPrepareLetterJump = viewModel::prepareLetterJump,
+                        letterJumpPosition = viewModel::letterJumpPosition,
                         viewDensity = state.catalogDensity,
                         modifier = Modifier.fillMaxSize(),
                     )

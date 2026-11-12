@@ -127,7 +127,9 @@ import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.android.ui.screens.browse.CatalogViewDensity
 import org.siloserver.silo.android.ui.screens.browse.FilterSheet
 import org.siloserver.silo.android.ui.screens.browse.facetValueLabel
-import org.siloserver.silo.android.ui.screens.browse.normalizeCatalogNamePrefix
+import org.siloserver.silo.android.ui.screens.browse.CatalogLetterJump
+import org.siloserver.silo.android.ui.screens.browse.CatalogLetterJumpState
+import org.siloserver.silo.android.ui.screens.browse.CatalogLetterQuery
 import org.siloserver.silo.catalog.filter.BrowseFacetMediaType
 import org.siloserver.silo.catalog.scopeLibrarySection
 import org.siloserver.silo.catalog.filter.CatalogFacet
@@ -221,7 +223,6 @@ data class LibrariesUiState(
     val availableFilters: CatalogFiltersResponse? = null,
     val browseMediaType: BrowseFacetMediaType = BrowseFacetMediaType.Video,
     val preserveFilters: Boolean = true,
-    val selectedNamePrefix: String? = null,
     val catalogDensity: CatalogViewDensity = CatalogViewDensity.Normal,
     val browseSort: LibraryBrowseSort = LibraryBrowseSort.RecentlyAdded,
     val catalogError: UiText? = null,
@@ -270,6 +271,14 @@ class LibrariesViewModel(
     private var serverLibraries: List<UserLibrary> = emptyList()
     private var pendingContentReload = false
     private val pageSize = 42
+
+    /** The A–Z jump while the Browse grid is in title order; see [CatalogLetterJump]. */
+    private val letterJumpController = CatalogLetterJump(
+        scope = viewModelScope,
+        repository = catalogRepository,
+        overlay = { overlayLocalState(it) },
+    )
+    val letterJump: StateFlow<CatalogLetterJumpState?> = letterJumpController.state
 
     /** Bumps when the profile hides or shows a library on another device. */
     val hiddenLibrariesRevision: StateFlow<Int> = personalDataRepository.hiddenLibrariesRevision
@@ -433,6 +442,7 @@ class LibrariesViewModel(
         ++catalogQueryGeneration
         ++collectionsRequestGeneration
         catalogContinuation = null
+        letterJumpController.reset(null)
         _uiState.update {
             it.copy(
                 sections = emptyList(),
@@ -503,6 +513,7 @@ class LibrariesViewModel(
         ++catalogQueryGeneration
         ++collectionsRequestGeneration
         catalogContinuation = null
+        letterJumpController.reset(null)
         val restoredFilterState = libraryId?.let { browsePrefs?.savedState(it, mediaScope) } ?: CatalogFilterState()
         _uiState.update {
             it.copy(
@@ -520,7 +531,6 @@ class LibrariesViewModel(
                 browseSort = LibraryBrowseSort.fromFilterState(restoredFilterState),
                 availableFilters = null,
                 preserveFilters = libraryId?.let { id -> browsePrefs?.preserveEnabled(id, mediaScope) } ?: true,
-                selectedNamePrefix = null,
                 catalogError = null,
                 collections = emptyList(),
                 collectionsError = null,
@@ -585,19 +595,11 @@ class LibrariesViewModel(
         _uiState.value.selectedLibraryId?.let { loadCatalog(it, reset = true, force = true) }
     }
 
-    fun selectNamePrefix(prefix: String?) {
-        val normalizedPrefix = normalizeCatalogNamePrefix(prefix)
-        if (_uiState.value.selectedNamePrefix == normalizedPrefix) return
-        _uiState.update {
-            it.copy(
-                selectedNamePrefix = normalizedPrefix,
-                catalogItems = emptyList(),
-                catalogTotal = 0,
-                catalogHasMore = false,
-            )
-        }
-        _uiState.value.selectedLibraryId?.let { loadCatalog(it, reset = true, force = true) }
-    }
+    /** The finger rests on [letter] in the rail: read where a jump would land. */
+    fun prepareLetterJump(letter: String) = letterJumpController.prepareJump(letter)
+
+    /** List position of [letter]'s first title, once the titles there are read or briefly awaited. */
+    suspend fun letterJumpPosition(letter: String): Int? = letterJumpController.positionForJump(letter)
 
     fun selectViewDensity(density: CatalogViewDensity) {
         if (_uiState.value.catalogDensity == density) return
@@ -740,9 +742,17 @@ class LibrariesViewModel(
             libraryId = libraryId,
             mediaScope = requestState.mediaScope,
             browseSort = requestState.browseSort,
-            selectedNamePrefix = requestState.selectedNamePrefix,
             filterState = requestState.filterState,
         )
+        val titleOrdered = requestState.browseSort.sortField == CatalogLetterJump.TITLE_SORT
+        // The letter index is read beside the first page, so the rail is
+        // ready when the grid is.
+        if (reset) {
+            letterJumpController.reset(
+                CatalogLetterQuery.of(libraryId, requestState.mediaScope, requestState.browseSort.sortOrder, requestState.filterState)
+                    .takeIf { titleOrdered },
+            )
+        }
         val requestGeneration = ++catalogRequestGeneration
         val queryGeneration =
             if (reset) ++catalogQueryGeneration else catalogQueryGeneration
@@ -790,8 +800,9 @@ class LibrariesViewModel(
                     sort = requestState.browseSort.sortField,
                     order = requestState.browseSort.sortOrder,
                     continuation = if (reset) null else catalogContinuation,
-                    limit = pageSize,
-                    namePrefix = requestState.selectedNamePrefix,
+                    // In title order the first page is one whole pager page, so
+                    // the full-length grid need not read it again.
+                    limit = if (titleOrdered) CatalogLetterJump.TITLE_FIRST_PAGE_SIZE else pageSize,
                     // Full facet filtering (genre/decade/rating/studio/language/...)
                     // via the shared query builder — replaces the single-genre param.
                     queryGroups = CatalogFilterQueryBuilder.buildGroups(requestState.filterState),
@@ -810,11 +821,12 @@ class LibrariesViewModel(
                     // Loading stays up meanwhile, so the wrong message never flashes.
                     val libraryHasItems = when {
                         !reset || overlaid.isNotEmpty() -> null
-                        !requestState.filterState.hasActiveFilters && requestState.selectedNamePrefix == null -> false
+                        !requestState.filterState.hasActiveFilters -> false
                         else -> catalogRepository.libraryHasItems(libraryId, requestState.mediaScope)
                     }
                     if (!isCatalogRequestCurrent(requestGeneration, requestIdentity)) return@launch
                     catalogContinuation = result.data.continuation
+                    if (reset) letterJumpController.seed(overlaid)
                     // Audiobook libraries expose book-native facets
                     // (author/narrator/series) — detected from the first item.
                     val detectedMediaType = overlaid.firstOrNull()?.let { first ->
@@ -978,7 +990,6 @@ class LibrariesViewModel(
         state.selectedLibraryId == libraryId &&
             state.mediaScope == mediaScope &&
             state.browseSort == browseSort &&
-            state.selectedNamePrefix == selectedNamePrefix &&
             state.filterState == filterState
 
     private fun isCollectionsRequestCurrent(
@@ -992,7 +1003,6 @@ class LibrariesViewModel(
         val libraryId: Int,
         val mediaScope: String?,
         val browseSort: LibraryBrowseSort,
-        val selectedNamePrefix: String?,
         val filterState: CatalogFilterState,
     )
 }
@@ -1018,6 +1028,7 @@ fun LibrariesScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val letterJump by viewModel.letterJump.collectAsState()
     val selectedLibrary = state.libraries.firstOrNull { it.id == state.selectedLibraryId }
     // Movie, TV, and mixed libraries shuffle from the Browse tab when the
     // server offers it.
@@ -1145,7 +1156,9 @@ fun LibrariesScreen(
                             onRetry = viewModel::retryCurrentTab,
                             onLoadMore = viewModel::loadMoreCatalog,
                             onSortChanged = viewModel::selectBrowseSort,
-                            onNamePrefixChanged = viewModel::selectNamePrefix,
+                            letterJump = letterJump,
+                            onPrepareLetterJump = viewModel::prepareLetterJump,
+                            letterJumpPosition = viewModel::letterJumpPosition,
                             onDensityChanged = viewModel::selectViewDensity,
                             onApplyFilter = viewModel::applyFilterState,
                             onSetPreserve = viewModel::setPreserveFilters,
@@ -1300,15 +1313,16 @@ private fun BrowseTabContent(
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onSortChanged: (LibraryBrowseSort) -> Unit,
-    onNamePrefixChanged: (String?) -> Unit,
+    letterJump: CatalogLetterJumpState?,
+    onPrepareLetterJump: (String) -> Unit,
+    letterJumpPosition: suspend (String) -> Int?,
     onDensityChanged: (CatalogViewDensity) -> Unit,
     onApplyFilter: (CatalogFilterState) -> Unit,
     onSetPreserve: (Boolean) -> Unit,
 ) {
     var showFilterSheet by remember { mutableStateOf(false) }
     val isCustomised = state.browseSort != LibraryBrowseSort.RecentlyAdded ||
-        state.filterState.hasActiveFilters ||
-        state.selectedNamePrefix != null
+        state.filterState.hasActiveFilters
 
     // Sort ▾ / Filter (n) / Reset — the same control row as the saved lists —
     // plus removable chips for active facets. Rendered as the grid's header
@@ -1327,7 +1341,6 @@ private fun BrowseTabContent(
                 onReset = {
                     onSortChanged(LibraryBrowseSort.RecentlyAdded)
                     onApplyFilter(state.filterState.resetFilters())
-                    onNamePrefixChanged(null)
                 },
             )
             if (state.filterState.hasActiveFilters) {
@@ -1413,8 +1426,9 @@ private fun BrowseTabContent(
                         "release_date" -> { item -> formatCardDate(item.releaseDate, dateLocale) }
                         else -> null
                     },
-                    selectedNamePrefix = state.selectedNamePrefix,
-                    onNamePrefixSelected = onNamePrefixChanged,
+                    letterJump = letterJump,
+                    onPrepareLetterJump = onPrepareLetterJump,
+                    letterJumpPosition = letterJumpPosition,
                     viewDensity = state.catalogDensity,
                     bottomContentInset = LocalBottomChromeInset.current,
                     topContentInset = topInset,
