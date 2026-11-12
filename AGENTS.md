@@ -60,7 +60,17 @@ follow-up work.
 
 - Keep one concern per pull request. If an honest description needs the word
   "also," split the work.
-- Every pull request that changes what a user sees must include evidence, as
+- Pull requests are welcome from people who have had one merged in a Silo
+  repository, or when a maintainer asks for one; the contribution-gate workflow
+  closes others without review. A feature (`feat`) pull request from someone
+  without triage or write access must link an issue in the same repository
+  labeled `accepted`. For anyone without triage or write access, the gate also
+  closes drafts, and the evidence-deadline workflow closes a pull request whose
+  `Evidence` check still asks for evidence 24 hours after it opens, so open it
+  ready for review and publish evidence right away. Feature ideas go in
+  Discussions → Ideas, not issues.
+- Every pull request must include evidence. One that changes what a user sees
+  shows the change, as
   [Show visible changes](CONTRIBUTING.md#show-visible-changes) defines. That
   covers UI and UX changes and changes to which items appear or what they show,
   such as search results, home sections, recommendations, sorting, filtering,
@@ -68,8 +78,8 @@ follow-up work.
   same data, and a short recording when motion, timing, or focus matters.
   Capture each device the change can reach: an Android phone, an Android
   tablet, an Android foldable (folded and open), and Android TV, or say why a
-  device is unaffected. Write
-  `Evidence: none, no user-visible change` only when that is true.
+  device is unaffected. A change nobody sees shows the steps run, the build or
+  commit, and trimmed test results.
 - Attach evidence on GitHub under the PR body's Evidence heading, or publish it
   with `npx @silo-server/evidence publish <folder> --pr <number>` and put its
   `Evidence:` link there. Only Silo maintainers and the pull request's author can
