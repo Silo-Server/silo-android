@@ -9,8 +9,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.MediaCard
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.catalog.BrowseItem
 
@@ -36,7 +38,7 @@ fun SimilarRail(
             verticalArrangement = Arrangement.spacedBy(14.dp),
             modifier = modifier,
         ) {
-            SectionHeader(title = "More Like This")
+            SectionHeader(title = stringResource(CommonR.string.detail_moreLikeThis))
             SimilarRailContent(items = items, onSelect = onSelect)
         }
     }
@@ -74,6 +76,7 @@ private fun SimilarRailContent(
                 onClick = { onSelect(item.contentId) },
                 overlay = org.siloserver.silo.overlays.OverlayDataExtractor.fromBrowseItem(item),
                 sharedContentId = item.contentId,
+                widthIsExact = true,
             )
         }
     }

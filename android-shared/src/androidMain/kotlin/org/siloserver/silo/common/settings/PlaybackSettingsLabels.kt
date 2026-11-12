@@ -9,6 +9,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import kotlinx.coroutines.delay
 import org.siloserver.silo.common.R
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.network.apiv2.PlaybackLearnedLimitV2
 
@@ -34,33 +35,33 @@ fun rememberMinuteClock(): State<Long> = produceState(System.currentTimeMillis()
  */
 @Composable
 fun connectionSpeedLabel(reading: ConnectionSpeedReading?, nowEpochMs: Long): String {
-    reading ?: return stringResource(R.string.settings_connection_not_measured)
+    reading ?: return stringResource(R.string.settings_connection_notMeasured)
     val text = connectionSpeedText(reading.measuredAtEpochMs, nowEpochMs, reading.transport)
     val rate = connectionRateLabel(reading.kbps)
     val ago = text.age?.let { age ->
         when (age.unit) {
-            ConnectionSpeedText.AgeUnit.JUST_NOW -> stringResource(R.string.settings_connection_age_just_now)
+            ConnectionSpeedText.AgeUnit.JUST_NOW -> stringResource(R.string.settings_connection_age_justNow)
             ConnectionSpeedText.AgeUnit.MINUTES -> pluralStringResource(R.plurals.settings_connection_age_minutes, age.count, age.count)
             ConnectionSpeedText.AgeUnit.HOURS -> pluralStringResource(R.plurals.settings_connection_age_hours, age.count, age.count)
             ConnectionSpeedText.AgeUnit.DAYS -> pluralStringResource(R.plurals.settings_connection_age_days, age.count, age.count)
         }
     }
     if (reading.duringPlayback) {
-        return if (ago == null) stringResource(R.string.settings_connection_seen_during_playback_undated, rate)
-        else stringResource(R.string.settings_connection_seen_during_playback, rate, ago)
+        return if (ago == null) stringResource(R.string.settings_connection_duringPlaybackUndated, rate)
+        else stringResource(R.string.settings_connection_duringPlayback, rate, ago)
     }
     val transport = stringResource(
         when (text.transport) {
             ConnectionSpeedText.Transport.WIFI -> R.string.settings_connection_transport_wifi
             ConnectionSpeedText.Transport.ETHERNET -> R.string.settings_connection_transport_ethernet
             ConnectionSpeedText.Transport.CELLULAR -> R.string.settings_connection_transport_cellular
-            ConnectionSpeedText.Transport.OTHER -> R.string.settings_connection_transport_other
+            ConnectionSpeedText.Transport.OTHER -> R.string.settings_connection_transport_otherNetwork
         },
     )
     return when {
-        ago == null && reading.lowerBound -> stringResource(R.string.settings_connection_measured_lower_bound_undated, rate, transport)
-        ago == null -> stringResource(R.string.settings_connection_measured_undated, rate, transport)
-        reading.lowerBound -> stringResource(R.string.settings_connection_measured_lower_bound, rate, ago, transport)
+        ago == null && reading.lowerBound -> stringResource(R.string.settings_connection_lowerBoundUndated, rate, transport)
+        ago == null -> stringResource(R.string.settings_connection_measuredUndated, rate, transport)
+        reading.lowerBound -> stringResource(R.string.settings_connection_lowerBound, rate, ago, transport)
         else -> stringResource(R.string.settings_connection_measured, rate, ago, transport)
     }
 }
@@ -79,8 +80,8 @@ fun connectionRateLabel(kbps: Int): String {
 @Composable
 fun connectionSpeedSkipLabel(skip: ConnectionSpeedSkip): String = stringResource(
     when (skip) {
-        ConnectionSpeedSkip.CELLULAR -> R.string.settings_connection_skipped_cellular
-        ConnectionSpeedSkip.METERED -> R.string.settings_connection_skipped_metered
+        ConnectionSpeedSkip.CELLULAR -> R.string.settings_connection_skippedCellular
+        ConnectionSpeedSkip.METERED -> R.string.settings_connection_skippedMetered
     },
 )
 
@@ -88,25 +89,26 @@ fun connectionSpeedSkipLabel(skip: ConnectionSpeedSkip): String = stringResource
 @Composable
 fun connectionSpeedMessageLabel(message: ConnectionSpeedMessage): String = when (message) {
     is ConnectionSpeedMessage.TryAgainIn ->
-        pluralStringResource(R.plurals.settings_connection_try_again, message.seconds, message.seconds)
-    ConnectionSpeedMessage.StopPlayback -> stringResource(R.string.settings_connection_stop_playback)
-    ConnectionSpeedMessage.Failed -> stringResource(R.string.settings_connection_failed)
-    ConnectionSpeedMessage.NotSaved -> stringResource(R.string.settings_connection_not_saved)
+        pluralStringResource(R.plurals.settings_connection_retry, message.seconds, message.seconds)
+    ConnectionSpeedMessage.StopPlayback -> stringResource(R.string.settings_connection_stopPlayback)
+    ConnectionSpeedMessage.Failed -> stringResource(R.string.settings_connection_measureFailed)
+    ConnectionSpeedMessage.NotSaved -> stringResource(R.string.settings_connection_notSavedShort)
 }
 
 /** The label each buffering-quality mode is offered under. */
 @StringRes
 fun bufferingQualityModeLabel(mode: BufferingQualityMode): Int = when (mode) {
-    BufferingQualityMode.NEVER -> R.string.settings_buffering_quality_never
-    BufferingQualityMode.ASK -> R.string.settings_buffering_quality_ask
-    BufferingQualityMode.ALWAYS -> R.string.settings_buffering_quality_always
+    BufferingQualityMode.NEVER -> R.string.settings_bufferingQuality_never
+    BufferingQualityMode.ASK -> R.string.settings_bufferingQuality_ask
+    BufferingQualityMode.ALWAYS -> R.string.settings_bufferingQuality_always
 }
 
 /** "Limited to 44 Mbps after buffering on Oct 17", in this device's locale and time zone. */
 @Composable
 fun learnedLimitLabel(limit: PlaybackLearnedLimitV2): String {
     val rate = connectionRateLabel(limit.kbps)
-    val date = remember(limit) { learnedLimitDate(limit.observedAt) }
-    return date?.let { stringResource(R.string.settings_learned_limit, rate, it) }
-        ?: stringResource(R.string.settings_learned_limit_undated, rate)
+    val locale = currentFormatLocale()
+    val date = remember(limit, locale) { learnedLimitDate(limit.observedAt, locale) }
+    return date?.let { stringResource(R.string.settings_learnedLimit, rate, it) }
+        ?: stringResource(R.string.settings_learnedLimit_undated, rate)
 }

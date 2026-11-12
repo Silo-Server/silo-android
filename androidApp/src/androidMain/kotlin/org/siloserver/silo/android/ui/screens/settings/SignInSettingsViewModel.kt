@@ -17,6 +17,7 @@ import org.siloserver.silo.android.auth.NativeSignInPurpose
 import org.siloserver.silo.android.auth.NativeSignInResult
 import org.siloserver.silo.android.auth.NativeSignInStart
 import org.siloserver.silo.android.ui.screens.auth.ProviderRefusalText
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.auth.AccountIdentity
 import org.siloserver.silo.model.auth.NetworkSignInFailure
 import org.siloserver.silo.model.auth.OAuthHandshakeCapabilities
@@ -58,13 +59,13 @@ data class SignInSettingsUiState(
     val networkPrompt: SignInProvider? = null,
     /** Asking for the local password before connecting this provider. */
     val passwordPrompt: SignInProvider? = null,
-    val passwordError: String? = null,
+    val passwordError: SettingsText? = null,
     /** Asking before disconnecting this identity. */
     val confirmDisconnect: AccountIdentity? = null,
     /** A connect or disconnect is under way. */
     val busy: Boolean = false,
-    val message: String? = null,
-    val error: String? = null,
+    val message: SettingsText? = null,
+    val error: SettingsText? = null,
     /** A start URL for the screen to open in a Custom Tab, once. */
     val browserLaunch: String? = null,
 ) {
@@ -190,7 +191,7 @@ class SignInSettingsViewModel(
         val installationId = provider.installationId ?: return
         if (_uiState.value.busy) return
         if (password.isEmpty() || username.isBlank() || directoryPassword.isEmpty()) {
-            _uiState.update { it.copy(passwordError = "Fill in all three fields.") }
+            _uiState.update { it.copy(passwordError = settingsText(CommonR.string.settings_signIn_fillAllFields)) }
             return
         }
         linkInOneCall(
@@ -216,7 +217,7 @@ class SignInSettingsViewModel(
         val installationId = provider.installationId ?: return
         if (_uiState.value.busy) return
         if (password.isEmpty()) {
-            _uiState.update { it.copy(passwordError = "Enter your password.") }
+            _uiState.update { it.copy(passwordError = settingsText(CommonR.string.settings_signIn_enterPassword)) }
             return
         }
         linkInOneCall(
@@ -234,7 +235,7 @@ class SignInSettingsViewModel(
     private fun linkInOneCall(
         provider: SignInProvider,
         closePrompt: (SignInSettingsUiState) -> SignInSettingsUiState,
-        refusal: (ApiResult.Error) -> String,
+        refusal: (ApiResult.Error) -> SettingsText,
         link: suspend (AuthScopeSnapshot) -> ApiResult<AccountIdentity>,
     ) {
         _uiState.update { it.copy(busy = true, passwordError = null) }
@@ -247,7 +248,9 @@ class SignInSettingsViewModel(
             when (val linked = link(scope)) {
                 is ApiResult.Success -> {
                     load()
-                    _uiState.update { closePrompt(it).copy(busy = false, message = "Connected ${provider.displayName}.") }
+                    _uiState.update {
+                        closePrompt(it).copy(busy = false, message = settingsText(CommonR.string.settings_signIn_connected, provider.displayName))
+                    }
                 }
                 is ApiResult.Error -> {
                     val message = refusal(linked)
@@ -258,7 +261,7 @@ class SignInSettingsViewModel(
                     }
                 }
                 is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(busy = false, passwordError = NativeSignInMessages.forNetworkError(linked, provider.displayName))
+                    it.copy(busy = false, passwordError = SettingsText.Ui(NativeSignInMessages.text(NativeSignInMessages.networkReason(linked), provider.displayName)))
                 }
             }
         }
@@ -293,7 +296,7 @@ class SignInSettingsViewModel(
         val startPath = provider.nativeStartPath ?: return
         if (_uiState.value.busy) return
         if (password.isEmpty()) {
-            _uiState.update { it.copy(passwordError = "Enter your password.") }
+            _uiState.update { it.copy(passwordError = settingsText(CommonR.string.settings_signIn_enterPassword)) }
             return
         }
         _uiState.update { it.copy(busy = true, passwordError = null) }
@@ -318,7 +321,7 @@ class SignInSettingsViewModel(
                 }
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(busy = false, passwordError = NativeSignInMessages.forNetworkError(issued, provider.displayName))
+                        it.copy(busy = false, passwordError = SettingsText.Ui(NativeSignInMessages.text(NativeSignInMessages.networkReason(issued), provider.displayName)))
                     }
                     return@launch
                 }
@@ -326,7 +329,7 @@ class SignInSettingsViewModel(
             val serverId = serverIdentities.identityOf(entry, refresh = true)
             if (serverId == null) {
                 _uiState.update {
-                    it.copy(busy = false, passwordPrompt = null, error = "Couldn't confirm this server's identity. Try again.")
+                    it.copy(busy = false, passwordPrompt = null, error = settingsText(CommonR.string.settings_signIn_serverIdentityFailed))
                 }
                 return@launch
             }
@@ -343,7 +346,7 @@ class SignInSettingsViewModel(
             when (start) {
                 is NativeSignInStart.Open -> _uiState.update { it.copy(passwordPrompt = null, browserLaunch = start.url) }
                 is NativeSignInStart.Refused ->
-                    _uiState.update { it.copy(busy = false, passwordPrompt = null, error = start.message) }
+                    _uiState.update { it.copy(busy = false, passwordPrompt = null, error = SettingsText.Ui(NativeSignInMessages.text(start.reason, start.providerName))) }
             }
         }
     }
@@ -354,7 +357,7 @@ class SignInSettingsViewModel(
             it.copy(
                 browserLaunch = null,
                 busy = false,
-                error = if (opened) it.error else NativeSignInMessages.forReason(NativeSignInMessages.NO_BROWSER),
+                error = if (opened) it.error else SettingsText.Ui(NativeSignInMessages.text(NativeSignInMessages.NO_BROWSER)),
             )
         }
     }
@@ -380,10 +383,12 @@ class SignInSettingsViewModel(
             when (val result = externalSignIn.disconnect(scope, identity.id)) {
                 is ApiResult.Success -> {
                     load()
-                    _uiState.update { it.copy(busy = false, message = "Disconnected ${providerLabel(identity)}.") }
+                    _uiState.update { it.copy(busy = false, message = settingsText(CommonR.string.settings_signIn_disconnected, providerLabel(identity))) }
                 }
                 is ApiResult.Error -> _uiState.update { it.copy(busy = false, error = disconnectMessage(result, identity)) }
-                is ApiResult.NetworkError -> _uiState.update { it.copy(busy = false, error = NativeSignInMessages.forNetworkError(result)) }
+                is ApiResult.NetworkError -> _uiState.update {
+                    it.copy(busy = false, error = SettingsText.Ui(NativeSignInMessages.text(NativeSignInMessages.networkReason(result))))
+                }
             }
         }
     }
@@ -404,12 +409,12 @@ class SignInSettingsViewModel(
                 val here = result.serverEntryId == serverRegistry.activeServerId.value &&
                     tokenManager.loginSessionId(result.serverEntryId) == loginSessionId
                 _uiState.update {
-                    it.copy(busy = false, message = if (here) "Connected ${result.providerName}." else it.message)
+                    it.copy(busy = false, message = if (here) settingsText(CommonR.string.settings_signIn_connected, result.providerName) else it.message)
                 }
             }
             is NativeSignInResult.Failed -> {
                 nativeSignIn.consume(result)
-                _uiState.update { it.copy(busy = false, error = result.message) }
+                _uiState.update { it.copy(busy = false, error = SettingsText.Ui(NativeSignInMessages.text(result.reason, result.providerName))) }
             }
             is NativeSignInResult.SignedIn -> Unit
         }
@@ -426,34 +431,33 @@ class SignInSettingsViewModel(
     )
 
     companion object {
-        const val ACCOUNT_CHANGED = "The account changed. Open Settings again and retry."
-        private const val CHECK_ENTRIES = "Check what you entered, then try again."
+        val ACCOUNT_CHANGED: SettingsText = settingsText(CommonR.string.settings_signIn_accountChanged)
+        private val CHECK_ENTRIES: SettingsText = settingsText(CommonR.string.settings_signIn_checkEntries)
+        private val WRONG_PASSWORD: SettingsText = settingsText(CommonR.string.settings_signIn_wrongPassword)
 
         /** "Connect <provider>": what the account gives up by connecting. */
-        fun connectDescription(providerName: String): String =
-            "After connecting, you sign in with $providerName instead of your password. You'll confirm your password first."
+        fun connectDescription(providerName: String): SettingsText =
+            settingsText(CommonR.string.settings_signIn_connectDescription, providerName)
 
         /**
          * "Connect <provider>" for a network provider. The account keeps its
          * password only on a server that says so ([keepsPassword]).
          */
-        fun connectNetworkDescription(providerName: String, keepsPassword: Boolean): String =
+        fun connectNetworkDescription(providerName: String, keepsPassword: Boolean): SettingsText =
             if (keepsPassword) {
-                "After connecting, you can sign in with $providerName or your password. You'll confirm your password first."
+                settingsText(CommonR.string.settings_signIn_connectNetworkDescriptionKeepsPassword, providerName)
             } else {
                 connectDescription(providerName)
             }
 
-        fun connectDirectoryDescription(providerName: String): String =
-            "After connecting, you sign in with your $providerName username and password instead of this account's password."
+        fun connectDirectoryDescription(providerName: String): SettingsText =
+            settingsText(CommonR.string.settings_signIn_connectDirectoryDescription, providerName)
 
-        fun connectPrompt(providerName: String): String =
-            "Enter this account's password, then sign in with $providerName in your browser. " +
-                "After connecting, you sign in with $providerName instead of your password."
+        fun connectPrompt(providerName: String): SettingsText =
+            settingsText(CommonR.string.settings_signIn_connectPrompt, providerName)
 
-        fun connectDirectoryPrompt(providerName: String): String =
-            "Confirm this account's password, then enter your $providerName username and password. " +
-                "After connecting, you sign in with your $providerName username and password instead."
+        fun connectDirectoryPrompt(providerName: String): SettingsText =
+            settingsText(CommonR.string.settings_signIn_connectDirectoryPrompt, providerName)
 
         /**
          * The password prompt for a network provider. [owner] is who the
@@ -461,14 +465,12 @@ class SignInSettingsViewModel(
          * account keeps its password only on a server that says so
          * ([keepsPassword]).
          */
-        fun connectNetworkPrompt(providerName: String, owner: String?, keepsPassword: Boolean): String {
-            val who = owner?.let { "$it on $providerName" } ?: "the $providerName account this device uses"
-            return "Enter this account's password to connect $who. " +
-                if (keepsPassword) {
-                    "You can then sign in with $providerName or your password."
-                } else {
-                    "After connecting, you sign in with $providerName instead of your password."
-                }
+        fun connectNetworkPrompt(providerName: String, owner: String?, keepsPassword: Boolean): SettingsText = when {
+            owner != null && keepsPassword ->
+                settingsText(CommonR.string.settings_signIn_connectNetworkPrompt_ownerKeepsPassword, owner, providerName)
+            owner != null -> settingsText(CommonR.string.settings_signIn_connectNetworkPrompt_owner, owner, providerName)
+            keepsPassword -> settingsText(CommonR.string.settings_signIn_connectNetworkPrompt_deviceKeepsPassword, providerName)
+            else -> settingsText(CommonR.string.settings_signIn_connectNetworkPrompt_device, providerName)
         }
 
         /**
@@ -476,18 +478,15 @@ class SignInSettingsViewModel(
          * promise it unless the server said up front ([canUnlink]) that the
          * account keeps another way to sign in.
          */
-        fun disconnectConfirmBody(identity: AccountIdentity, canUnlink: Boolean? = null): String {
-            val lost = "You won't be able to sign in to this account with ${providerLabel(identity)} until you connect it again."
-            return if (canUnlink == true) {
-                lost
+        fun disconnectConfirmBody(identity: AccountIdentity, canUnlink: Boolean? = null): SettingsText =
+            if (canUnlink == true) {
+                settingsText(CommonR.string.settings_signIn_disconnectConfirm_body, providerLabel(identity))
             } else {
-                "$lost Disconnecting works only while the account has another way to sign in; otherwise an admin must set one up first."
+                settingsText(CommonR.string.settings_signIn_disconnectConfirm_bodyNeedsAnother, providerLabel(identity))
             }
-        }
 
         /** `can_unlink` is false: the identity is the account's only way to sign in. */
-        const val ONLY_SIGN_IN_METHOD =
-            "This is your only way to sign in, so it can't be disconnected. Ask an admin to set a password for your account first."
+        val ONLY_SIGN_IN_METHOD: SettingsText = settingsText(CommonR.string.settings_signIn_onlySignInMethod)
 
         /**
          * The section on a server that serves the account's identities
@@ -528,41 +527,47 @@ class SignInSettingsViewModel(
             )
         }
 
-        fun providerLabel(identity: AccountIdentity): String =
-            identity.providerName.ifBlank { "this sign-in" }
+        /** The identity's provider name, or "this sign-in" when it has none, for the middle of a sentence. */
+        fun providerLabel(identity: AccountIdentity): SettingsText =
+            identity.providerName.takeIf { it.isNotBlank() }?.let { SettingsText.Plain(it) }
+                ?: settingsText(CommonR.string.settings_signIn_thisSignIn)
 
         /** Whether a refused connect leaves the password dialog open to correct what was typed. */
         internal fun keepsPromptOpen(error: ApiResult.Error): Boolean = error.code == 422 || error.code == 429
 
         private fun noLocalPassword(providerName: String) =
-            "This account has no password to confirm with. Ask an admin to connect it to $providerName."
+            settingsText(CommonR.string.settings_signIn_noLocalPassword, providerName)
 
-        private fun noLongerAvailable(providerName: String) = ProviderRefusalText.providerGone(providerName)
+        private fun noLongerAvailable(providerName: String) = SettingsText.Plain(ProviderRefusalText.providerGone(providerName))
+
+        private fun couldNotConnect(error: ApiResult.Error, providerName: String): SettingsText =
+            NativeSignInMessages.problemReason(error)?.let { SettingsText.Ui(NativeSignInMessages.text(it, providerName)) }
+                ?: settingsText(CommonR.string.settings_signIn_connectFailed, providerName)
 
         /** Text for a refused link ticket (`createAccountIdentityLinkTicket`). */
-        fun linkTicketMessage(error: ApiResult.Error, providerName: String): String = when {
-            error.error == DefaultExternalSignInApi.WRONG_PASSWORD -> "That password is incorrect."
+        fun linkTicketMessage(error: ApiResult.Error, providerName: String): SettingsText = when {
+            error.error == DefaultExternalSignInApi.WRONG_PASSWORD -> WRONG_PASSWORD
             error.code == 422 -> CHECK_ENTRIES
             error.error == "local_password_required" || error.code == 409 -> noLocalPassword(providerName)
             error.code == 404 -> noLongerAvailable(providerName)
-            else -> NativeSignInMessages.forProblem(error, providerName) ?: "Couldn't connect $providerName. Try again."
+            else -> couldNotConnect(error, providerName)
         }
 
         /**
          * Text for a refused directory link (`linkAccountIdentityWithCredentials`),
          * by problem code: the contract names one for every refusal.
          */
-        fun directoryLinkMessage(error: ApiResult.Error, providerName: String): String = when (error.error) {
-            DefaultExternalSignInApi.WRONG_PASSWORD -> "That password is incorrect."
-            DefaultExternalSignInApi.DIRECTORY_REFUSED -> "$providerName didn't accept that username and password."
+        fun directoryLinkMessage(error: ApiResult.Error, providerName: String): SettingsText = when (error.error) {
+            DefaultExternalSignInApi.WRONG_PASSWORD -> WRONG_PASSWORD
+            DefaultExternalSignInApi.DIRECTORY_REFUSED -> settingsText(CommonR.string.settings_signIn_directoryRefused, providerName)
             "local_password_required" -> noLocalPassword(providerName)
-            "account_disabled" -> "Your $providerName account is disabled or locked."
-            "password_expired" -> "Your $providerName password has expired. Change it, then try again."
+            "account_disabled" -> settingsText(CommonR.string.settings_signIn_directoryAccountDisabled, providerName)
+            "password_expired" -> settingsText(CommonR.string.settings_signIn_directoryPasswordExpired, providerName)
             "not_found" -> noLongerAvailable(providerName)
             else -> when {
                 error.code == 422 -> CHECK_ENTRIES
                 error.code == 404 -> noLongerAvailable(providerName)
-                else -> NativeSignInMessages.forProblem(error, providerName) ?: "Couldn't connect $providerName. Try again."
+                else -> couldNotConnect(error, providerName)
             }
         }
 
@@ -570,29 +575,32 @@ class SignInSettingsViewModel(
          * Text for a refused network link (`linkAccountIdentityWithNetwork`),
          * by problem code: the contract names one for every refusal.
          */
-        fun networkLinkMessage(error: ApiResult.Error, providerName: String): String = when (error.error) {
-            DefaultExternalSignInApi.WRONG_PASSWORD -> "That password is incorrect."
+        fun networkLinkMessage(error: ApiResult.Error, providerName: String): SettingsText = when (error.error) {
+            DefaultExternalSignInApi.WRONG_PASSWORD -> WRONG_PASSWORD
             "local_password_required" -> noLocalPassword(providerName)
             else -> when (NetworkSignInFailure.of(error.code, error.error)) {
-                NetworkSignInFailure.NetworkIdentityRequired -> ProviderRefusalText.addressRequired(providerName, "connect $providerName")
-                NetworkSignInFailure.NotPermitted -> ProviderRefusalText.notPermitted(providerName)
-                NetworkSignInFailure.NotFound -> ProviderRefusalText.providerGone(providerName)
-                else -> if (error.code == 422) {
-                    CHECK_ENTRIES
-                } else {
-                    NativeSignInMessages.forProblem(error, providerName) ?: "Couldn't connect $providerName. Try again."
-                }
+                // The action wording goes into ProviderRefusalText's English sentence;
+                // it is converted with that helper (auth).
+                NetworkSignInFailure.NetworkIdentityRequired ->
+                    SettingsText.Plain(ProviderRefusalText.addressRequired(providerName, "connect $providerName"))
+                NetworkSignInFailure.NotPermitted -> SettingsText.Plain(ProviderRefusalText.notPermitted(providerName))
+                NetworkSignInFailure.NotFound -> SettingsText.Plain(ProviderRefusalText.providerGone(providerName))
+                else -> if (error.code == 422) CHECK_ENTRIES else couldNotConnect(error, providerName)
             }
         }
 
         /** Text for a refused disconnect (`deleteAccountIdentity`). */
-        fun disconnectMessage(error: ApiResult.Error, identity: AccountIdentity): String = when {
-            error.error == "last_sign_in_method" || error.code == 409 ->
-                "${providerLabel(identity).replaceFirstChar { it.uppercase() }} is this account's only way to sign in, " +
-                    "so it can't be disconnected. Ask an admin to set a password for your account first."
-            error.code == 404 -> "That sign-in is already disconnected."
-            error.code == 503 -> "The server can't be reached right now. Try again later."
-            else -> NativeSignInMessages.forProblem(error) ?: "Couldn't disconnect. Try again."
+        fun disconnectMessage(error: ApiResult.Error, identity: AccountIdentity): SettingsText = when {
+            error.error == "last_sign_in_method" || error.code == 409 -> settingsText(
+                CommonR.string.settings_signIn_lastSignInMethod,
+                identity.providerName.takeIf { it.isNotBlank() }
+                    ?.let { name -> SettingsText.Plain(name.replaceFirstChar { it.uppercase() }) }
+                    ?: settingsText(CommonR.string.settings_signIn_thisSignInStart),
+            )
+            error.code == 404 -> settingsText(CommonR.string.settings_signIn_alreadyDisconnected)
+            error.code == 503 -> settingsText(CommonR.string.settings_signIn_serverUnreachable)
+            else -> NativeSignInMessages.problemReason(error)?.let { SettingsText.Ui(NativeSignInMessages.text(it)) }
+                ?: settingsText(CommonR.string.settings_signIn_disconnectFailed)
         }
     }
 }

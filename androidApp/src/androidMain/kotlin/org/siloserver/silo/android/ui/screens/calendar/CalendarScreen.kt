@@ -63,14 +63,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.chrisbanes.haze.HazeTint
@@ -82,6 +84,8 @@ import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.common.calendar.localDisplayAirTime
 import org.siloserver.silo.common.cards.LocalCardPresentation
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -92,8 +96,9 @@ import org.siloserver.silo.viewmodel.CalendarUiState
 import org.siloserver.silo.viewmodel.CalendarViewModel
 import org.koin.compose.viewmodel.koinViewModel
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 import java.util.Locale
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 // iOS SiloTheme tokens (phone).
 private val CornerRadius = 8.dp
@@ -136,7 +141,7 @@ fun CalendarScreen(
     val state by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
     val density = LocalDensity.current
-    val locale = LocalConfiguration.current.locales[0]
+    val locale = currentFormatLocale()
 
     // The card floats over the agenda; its measured height is the top inset
     // the list scrolls under. Local blur source so the card can be glass.
@@ -210,7 +215,7 @@ fun CalendarScreen(
                     when {
                         state.error != null && !state.hasAnyItems -> item(key = "error") {
                             ErrorView(
-                                message = state.error ?: "Something went wrong",
+                                message = state.error?.text() ?: stringResource(CommonR.string.status_errorGeneric),
                                 onRetry = viewModel::load,
                                 modifier = Modifier.fillMaxWidth().padding(vertical = LargePadding),
                             )
@@ -350,7 +355,7 @@ private fun TodayPill(onClick: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = "Today",
+            text = stringResource(CommonR.string.calendar_today),
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface,
@@ -374,9 +379,9 @@ private fun CalendarFilterBar(
     modifier: Modifier = Modifier,
 ) {
     val presets = listOf(
-        CalendarFilter.Following to "Following",
-        CalendarFilter.Trending to "Trending",
-        CalendarFilter.Everything to "All",
+        CalendarFilter.Following to stringResource(CommonR.string.calendar_filter_following),
+        CalendarFilter.Trending to stringResource(CommonR.string.calendar_filter_trending),
+        CalendarFilter.Everything to stringResource(CommonR.string.calendar_filter_all),
     )
     val selectedIndex = presets.indexOfFirst { (value, _) ->
         value == selected ||
@@ -385,7 +390,9 @@ private fun CalendarFilterBar(
     }.coerceAtLeast(0)
 
     // Segment geometry, measured so the pill can slide to the selected one.
+    // `offset` is start-relative, so x is measured from the start edge.
     val density = LocalDensity.current
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val segmentX = remember { mutableStateOf(List(presets.size) { 0.dp }) }
     val segmentW = remember { mutableStateOf(List(presets.size) { 0.dp }) }
     val pillX by animateDpAsState(segmentX.value[selectedIndex], CalendarSpring, label = "filterPillX")
@@ -420,7 +427,10 @@ private fun CalendarFilterBar(
                             indication = null,
                         ) { onSelect(value) }
                         .onGloballyPositioned { coords ->
-                            val x = with(density) { coords.positionInParent().x.toDp() }
+                            val left = coords.positionInParent().x
+                            val rowWidth = coords.parentLayoutCoordinates?.size?.width ?: 0
+                            val start = if (isRtl) rowWidth - left - coords.size.width else left
+                            val x = with(density) { start.toDp() }
                             val w = with(density) { coords.size.width.toDp() }
                             if (segmentX.value[index] != x) {
                                 segmentX.value = segmentX.value.toMutableList().also { it[index] = x }
@@ -471,7 +481,7 @@ private fun CalendarWeekStrip(
     ) {
         ChevronButton(
             icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-            contentDescription = "Previous week",
+            contentDescription = stringResource(CommonR.string.calendar_previousWeek),
             onClick = onPrevWeek,
         )
         Row(modifier = Modifier.weight(1f)) {
@@ -489,7 +499,7 @@ private fun CalendarWeekStrip(
         }
         ChevronButton(
             icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = "Next week",
+            contentDescription = stringResource(CommonR.string.calendar_nextWeek),
             onClick = onNextWeek,
         )
     }
@@ -536,7 +546,7 @@ private fun DayCell(
     modifier: Modifier = Modifier,
 ) {
     val localDate = remember(date) { LocalDate.parse(date) }
-    val weekdayFormatter = remember(locale) { DateTimeFormatter.ofPattern("EEE", locale) }
+    val weekdayFormatter = remember(locale) { LocaleFormat.dateFormatter("EEE", "EEE", locale) }
     val numberShape = RoundedCornerShape(11.dp)
     Column(
         modifier = modifier
@@ -570,7 +580,7 @@ private fun DayCell(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = localDate.dayOfMonth.toString(),
+                text = LocaleFormat.integer(localDate.dayOfMonth, locale),
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = if (isSelected) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.onSurface,
@@ -586,7 +596,7 @@ private fun DayCell(
         ) {
             if (eventCount > 0) {
                 Text(
-                    text = eventCount.toString(),
+                    text = LocaleFormat.integer(eventCount, locale),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
@@ -651,7 +661,7 @@ private fun DayShelf(
                     modifier = Modifier.size(14.dp),
                 )
                 Text(
-                    text = "Nothing scheduled",
+                    text = stringResource(CommonR.string.calendar_nothingScheduled),
                     fontSize = 12.sp, // iOS siloCaption = 12
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -718,7 +728,7 @@ private fun CalendarEventCard(
                         .padding(6.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp), // iOS badgeSpacing = 4
                 ) {
-                    badges.forEach { BadgePill(it) }
+                    badges.forEach { BadgePill(it.text()) }
                 }
             }
 
@@ -735,7 +745,7 @@ private fun CalendarEventCard(
                 ) {
                     Icon(
                         imageVector = androidx.compose.material.icons.Icons.Filled.Check,
-                        contentDescription = "Watched",
+                        contentDescription = stringResource(CommonR.string.calendar_watched),
                         tint = MaterialTheme.colorScheme.background,
                         modifier = Modifier.size(12.dp),
                     )
@@ -814,12 +824,12 @@ private fun BadgePill(label: String) {
  * screen (silo-server #1494, silo-apple #513). "all" is the legacy spelling of
  * Everything; any other legacy filter links to all three views.
  */
-private fun emptyStateLinks(filter: String): List<Pair<String, String>> {
+private fun emptyStateLinks(filter: String): List<Pair<String, Int>> {
     val view = if (filter == CalendarFilter.All) CalendarFilter.Everything else filter
     return listOf(
-        CalendarFilter.Following to "Following",
-        CalendarFilter.Trending to "Trending",
-        CalendarFilter.Everything to "All",
+        CalendarFilter.Following to CommonR.string.calendar_filter_following,
+        CalendarFilter.Trending to CommonR.string.calendar_filter_trending,
+        CalendarFilter.Everything to CommonR.string.calendar_filter_all,
     ).filter { (value, _) -> value != view }
 }
 
@@ -845,13 +855,13 @@ private fun EmptyState(filter: String, onSelectFilter: (String) -> Unit) {
             modifier = Modifier.size(44.dp),
         )
         Text(
-            text = emptyTitle(filter),
+            text = stringResource(emptyTitle(filter)),
             fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
-            text = emptySubtitle(filter),
+            text = stringResource(emptySubtitle(filter)),
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.fillMaxWidth(),
@@ -874,7 +884,7 @@ private fun EmptyState(filter: String, onSelectFilter: (String) -> Unit) {
                         contentColor = MaterialTheme.colorScheme.background,
                     ),
                 ) {
-                    Text(label, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text(stringResource(label), fontWeight = FontWeight.SemiBold, maxLines = 1)
                 }
             }
         }
@@ -882,21 +892,22 @@ private fun EmptyState(filter: String, onSelectFilter: (String) -> Unit) {
 }
 
 /** iOS CalendarViewModel.sectionHeading: Today / Tomorrow / "Monday, June 9". */
+@Composable
 private fun sectionHeading(date: String, today: String, locale: Locale): String {
     val localDate = LocalDate.parse(date)
     if (today.isNotBlank()) {
         val todayDate = LocalDate.parse(today)
-        if (localDate == todayDate) return "Today"
-        if (localDate == todayDate.plusDays(1)) return "Tomorrow"
+        if (localDate == todayDate) return stringResource(CommonR.string.calendar_today)
+        if (localDate == todayDate.plusDays(1)) return stringResource(CommonR.string.calendar_tomorrow)
     }
-    return localDate.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", locale))
+    return localDate.format(LocaleFormat.dateFormatter("MMMMEEEEd", "EEEE, MMMM d", locale))
 }
 
 /** iOS monthLabel: month + year of the week's Thursday (startDate + 3). */
 private fun monthLabel(weekDates: List<String>, locale: Locale): String {
     val anchorStr = weekDates.getOrNull(3) ?: weekDates.firstOrNull() ?: return ""
     val anchor = LocalDate.parse(anchorStr)
-    return anchor.format(DateTimeFormatter.ofPattern("MMMM yyyy", locale))
+    return anchor.format(LocaleFormat.dateFormatter("yMMMM", "MMMM yyyy", locale))
 }
 
 /** Local viewer time, preferring the server's absolute RFC3339 instant. */
@@ -906,32 +917,34 @@ private fun displayAirTime(item: CalendarItem): String? = item.localDisplayAirTi
  * iOS CalendarCardCaption.subtitle: "S5 · E14 · Title" for episodes,
  * "Season 2" for season premieres, "Movie" for movies, joined with " · ".
  */
+@Composable
 private fun cardSubtitle(item: CalendarItem): String? {
     val parts = mutableListOf<String>()
     when (item.type) {
         "episode" -> {
             val season = item.seasonNumber
             val episode = item.episodeNumber
-            if (season != null && episode != null) parts.add("S$season · E$episode")
+            if (season != null && episode != null) {
+                parts.add(stringResource(CommonR.string.catalog_episodeCaption, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode)))
+            }
             item.episodeTitle?.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
         }
         "season_premiere" -> {
-            item.seasonNumber?.let { parts.add("Season $it") }
+            item.seasonNumber?.let { parts.add(stringResource(CommonR.string.calendar_season, LocaleFormat.integer(it))) }
         }
-        "movie" -> parts.add("Movie")
+        "movie" -> parts.add(stringResource(CommonR.string.calendar_movie))
     }
     return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
-private fun emptyTitle(filter: String): String = when (filter) {
-    CalendarFilter.Following -> "Nothing from shows you follow"
-    CalendarFilter.Trending -> "Nothing trending this week"
-    else -> "Nothing scheduled this week"
+private fun emptyTitle(filter: String): Int = when (filter) {
+    CalendarFilter.Following -> CommonR.string.calendar_empty_following
+    CalendarFilter.Trending -> CommonR.string.calendar_empty_trending
+    else -> CommonR.string.calendar_empty_everything
 }
 
-private fun emptySubtitle(filter: String): String = when (filter) {
-    CalendarFilter.Following ->
-        "No upcoming releases this week from shows you watch, favorite, or watchlist."
-    CalendarFilter.Trending -> "No trending releases this week."
-    else -> "No movie releases or episode airings in this week."
+private fun emptySubtitle(filter: String): Int = when (filter) {
+    CalendarFilter.Following -> CommonR.string.calendar_empty_followingBody
+    CalendarFilter.Trending -> CommonR.string.calendar_empty_trendingReleasesBody
+    else -> CommonR.string.calendar_empty_everythingBody
 }

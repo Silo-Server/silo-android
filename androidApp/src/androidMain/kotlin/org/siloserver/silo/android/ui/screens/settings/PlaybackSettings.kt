@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.settings
 
+import org.siloserver.silo.common.i18n.text
 import androidx.annotation.StringRes
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -10,12 +11,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import org.siloserver.silo.android.R
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 import org.siloserver.silo.common.settings.UseProfileSettingsCopy
 import org.siloserver.silo.common.settings.bufferingQualityModeLabel
 import org.siloserver.silo.common.settings.learnedLimitLabel
@@ -33,44 +36,55 @@ import org.siloserver.silo.network.apiv2.PlaybackLearnedLimitV2
 // (a resolution cap) and playback.max_bitrate_kbps (a bandwidth cap, null =
 // uncapped). Cellular quality is one preset picker over its own pair.
 
-// Discrete choices for the two behavior settings (0 = off). The label↔value
-// maps below convert.
+// Discrete choices for the two behavior settings (0 = off). The pickers map a
+// position in these lists back to the value.
 private val resumeRewindOptions = listOf(0, 3, 5, 7, 10, 15, 20, 30)
 private val passOutThresholdOptions = listOf(0, 2, 3, 4, 5)
 // Up-Next prompt timing (seconds before end; 0 = at end). Mirrors TV/tvOS.
 private val nextUpPromptOptions = listOf(0, 10, 30, 60, 120)
-private fun resumeRewindLabel(seconds: Int) = if (seconds <= 0) "Off" else "${seconds}s"
-private fun passOutThresholdLabel(count: Int) = if (count <= 0) "Off" else count.toString()
+
+@Composable
+private fun resumeRewindLabel(seconds: Int) =
+    if (seconds <= 0) stringResource(CommonR.string.settings_off) else stringResource(CommonR.string.settings_resumeRewind_seconds, seconds)
+
+@Composable
+private fun passOutThresholdLabel(count: Int) = if (count <= 0) stringResource(CommonR.string.settings_off) else LocaleFormat.integer(count, currentNumberLocale())
+
+@Composable
 private fun nextUpPromptLabel(seconds: Int): String = when {
-    seconds <= 0 -> "At end"
-    seconds < 60 -> "$seconds seconds before end"
-    seconds == 60 -> "1 minute before end"
-    else -> "${seconds / 60} minutes before end"
+    seconds <= 0 -> stringResource(CommonR.string.settings_nextUp_atEnd)
+    seconds < 60 -> pluralStringResource(CommonR.plurals.settings_nextUp_secondsBeforeEnd, seconds, seconds)
+    else -> pluralStringResource(CommonR.plurals.settings_nextUp_minutesBeforeEnd, seconds / 60, seconds / 60)
 }
 
 /**
  * The menu for a profile-layered picker: "Use profile setting" first, then
  * [options]. Routes that first option to [onUseProfileSetting] and checks it
- * while the device has no value of its own.
+ * while the device has no value of its own; otherwise checks [selectedIndex]
+ * of [options] (none when out of range). [onIndexSelected] gets a position in
+ * [options].
  */
 @Composable
 private fun ProfileLayeredDropdownRow(
     label: String,
     value: String,
     options: List<String>,
+    selectedIndex: Int,
     overridden: Boolean,
-    onOptionSelected: (String) -> Unit,
+    onIndexSelected: (Int) -> Unit,
     onUseProfileSetting: () -> Unit,
     description: String? = null,
 ) {
-    SettingsDropdownRow(
+    SettingsIndexedDropdownRow(
         label = label,
         value = value,
-        options = listOf(UseProfileSettingsCopy.OPTION) + options,
-        selectedOption = if (overridden) value else UseProfileSettingsCopy.OPTION,
-        onOptionSelected = { option ->
-            if (option == UseProfileSettingsCopy.OPTION) onUseProfileSetting() else onOptionSelected(option)
+        options = listOf(UseProfileSettingsCopy.option) + options,
+        selectedIndex = when {
+            !overridden -> 0
+            selectedIndex in options.indices -> selectedIndex + 1
+            else -> -1
         },
+        onIndexSelected = { index -> if (index == 0) onUseProfileSetting() else onIndexSelected(index - 1) },
         description = description,
     )
 }
@@ -91,11 +105,12 @@ internal fun ProfileLayeredSwitchRow(
 ) {
     SettingsSwitchRow(label = label, checked = checked, onCheckedChange = onCheckedChange)
     if (overridden) {
+        val rowDescription = UseProfileSettingsCopy.rowDescription(label)
         SettingsNavigationRow(
-            label = UseProfileSettingsCopy.ROW,
+            label = UseProfileSettingsCopy.row,
             onClick = onUseProfileSetting,
             showChevron = false,
-            modifier = Modifier.semantics { contentDescription = UseProfileSettingsCopy.rowDescription(label) },
+            modifier = Modifier.semantics { contentDescription = rowDescription },
         )
     }
 }
@@ -152,29 +167,31 @@ fun PlaybackStreamingSection(
     val bufferingQualityOptions =
         BufferingQualityMode.entries.map { it to stringResource(bufferingQualityModeLabel(it)) }
     SettingsSection(
-        title = "Streaming",
-        footer = QualityChoices.description(qualityResolution, maxBitrateKbps),
+        title = stringResource(CommonR.string.settings_section_streaming),
+        footer = QualityChoices.description(qualityResolution, maxBitrateKbps).text(),
         modifier = modifier,
     ) {
+        val resolutionValue = QualityChoices.resolutionLabel(qualityResolution)
+        val resolutionOptions = QualityChoices.RESOLUTIONS.map { it.label }
         ProfileLayeredDropdownRow(
-            label = "Resolution",
-            value = QualityChoices.resolutionLabel(qualityResolution),
-            options = QualityChoices.RESOLUTIONS.map { it.label },
+            label = stringResource(CommonR.string.settings_control_resolution),
+            value = resolutionValue.text(),
+            options = resolutionOptions.map { it.text() },
+            selectedIndex = resolutionOptions.indexOf(resolutionValue),
             overridden = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, PlaybackSettingsKeys.PreferredQuality),
-            onOptionSelected = { label ->
-                QualityChoices.RESOLUTIONS.firstOrNull { it.label == label }?.let { onResolutionSelected(it.value) }
-            },
+            onIndexSelected = { onResolutionSelected(QualityChoices.RESOLUTIONS[it].value) },
             onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.PreferredQuality) },
         )
 
+        val bitrateValue = QualityChoices.bitrateLabel(maxBitrateKbps)
+        val bitrateOptions = bitrateChoices.map { it.label }
         ProfileLayeredDropdownRow(
-            label = "Maximum Bitrate",
-            value = QualityChoices.bitrateLabel(maxBitrateKbps),
-            options = bitrateChoices.map { it.label },
+            label = stringResource(CommonR.string.settings_control_bitrate),
+            value = bitrateValue.text(),
+            options = bitrateOptions.map { it.text() },
+            selectedIndex = bitrateOptions.indexOf(bitrateValue),
             overridden = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, PlaybackSettingsKeys.MaxBitrateKbps),
-            onOptionSelected = { label ->
-                bitrateChoices.firstOrNull { it.label == label }?.let { onMaxBitrateSelected(it.value) }
-            },
+            onIndexSelected = { onMaxBitrateSelected(bitrateChoices[it].value) },
             onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.MaxBitrateKbps) },
         )
 
@@ -182,57 +199,57 @@ fun PlaybackStreamingSection(
         // copy is the spec's.
         if (bufferingQualityModeSupported) {
             ProfileLayeredDropdownRow(
-                label = stringResource(CommonR.string.settings_buffering_quality_title),
+                label = stringResource(CommonR.string.settings_bufferingQuality_title),
                 value = stringResource(bufferingQualityModeLabel(bufferingQualityMode)),
                 options = bufferingQualityOptions.map { it.second },
+                selectedIndex = bufferingQualityOptions.indexOfFirst { it.first == bufferingQualityMode },
                 overridden = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, PlaybackSettingsKeys.BufferingQualityMode),
-                onOptionSelected = { label ->
-                    bufferingQualityOptions.firstOrNull { it.second == label }?.let { onBufferingQualityModeChanged(it.first) }
-                },
+                onIndexSelected = { onBufferingQualityModeChanged(bufferingQualityOptions[it].first) },
                 onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.BufferingQualityMode) },
-                description = stringResource(CommonR.string.settings_buffering_quality_description),
+                description = stringResource(CommonR.string.settings_bufferingQuality_description),
             )
         }
 
         if (learnedLimit != null) {
             SettingsRow(label = learnedLimitLabel(learnedLimit)) {
                 TextButton(onClick = onResetLearnedLimit) {
-                    Text(stringResource(CommonR.string.settings_learned_limit_reset))
+                    Text(stringResource(CommonR.string.settings_learnedLimit_reset))
                 }
             }
             if (learnedLimitResetFailed) {
-                SettingsProse(body = stringResource(CommonR.string.settings_learned_limit_reset_failed))
+                SettingsProse(body = stringResource(CommonR.string.settings_learnedLimit_resetFailed))
             }
         }
 
+        val audioLanguageValue = LanguageOptions.label(audioLanguage, SettingKeys.PLAYBACK_AUDIO_LANGUAGE)
+        val audioLanguageLabels = audioLanguageOptions.map { it.second }
         ProfileLayeredDropdownRow(
-            label = "Audio Language",
-            value = LanguageOptions.label(audioLanguage, SettingKeys.PLAYBACK_AUDIO_LANGUAGE),
-            options = audioLanguageOptions.map { it.second },
+            label = stringResource(CommonR.string.settings_control_audioLanguage),
+            value = audioLanguageValue.text(),
+            options = audioLanguageLabels.map { it.text() },
+            selectedIndex = audioLanguageLabels.indexOf(audioLanguageValue),
             overridden = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, PlaybackSettingsKeys.AudioLanguage),
-            onOptionSelected = { label ->
-                audioLanguageOptions.firstOrNull { it.second == label }?.let { onAudioLanguageChanged(it.first) }
-            },
+            onIndexSelected = { onAudioLanguageChanged(audioLanguageOptions[it].first) },
             onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.AudioLanguage) },
         )
 
         // Dolby Vision (off plays the HDR10 base layer) with the Profile 7
         // fallback under it — the P7 row only shows while Dolby Vision is on.
         SettingsSwitchRow(
-            label = "Dolby Vision",
+            label = stringResource(CommonR.string.settingsManifest_player_dolby_vision_enabled_label),
             checked = dolbyVisionEnabled,
             onCheckedChange = onDolbyVisionEnabledChanged,
         )
         if (dolbyVisionEnabled) {
             SettingsSwitchRow(
-                label = "Profile 7 HDR10 Fallback",
+                label = stringResource(CommonR.string.settings_video_dvProfile7Fallback),
                 checked = dvProfile7HDR10Fallback,
                 onCheckedChange = onDvProfile7HDR10FallbackChanged,
             )
         }
 
         SettingsSwitchRow(
-            label = "Picture-in-Picture",
+            label = stringResource(CommonR.string.settings_playback_pictureInPicture),
             checked = pictureInPictureEnabled,
             onCheckedChange = onPictureInPictureEnabledChanged,
         )
@@ -259,15 +276,15 @@ fun PlaybackCellularSection(
 ) {
     val label = CellularQuality.label(resolution, maxBitrateKbps)
     val custom = label.takeIf { QualityPresets.presetFor(resolution, maxBitrateKbps) == null }
-    SettingsSection(title = "Cellular", footer = CellularQuality.FOOTER, modifier = modifier) {
+    val options = QualityPresets.ALL.map { it.label } + listOfNotNull(custom)
+    SettingsSection(title = stringResource(CommonR.string.settings_playback_cellular), footer = CellularQuality.FOOTER.text(), modifier = modifier) {
         ProfileLayeredDropdownRow(
-            label = "Cellular Quality",
-            value = label,
-            options = QualityPresets.ALL.map { it.label } + listOfNotNull(custom),
+            label = stringResource(CommonR.string.settings_playback_cellularQuality),
+            value = label.text(),
+            options = options.map { it.text() },
+            selectedIndex = options.indexOf(label),
             overridden = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, PlaybackSettingsKeys.CellularPreferredQuality),
-            onOptionSelected = { option ->
-                QualityPresets.ALL.firstOrNull { it.label == option }?.let { onPresetSelected(it.id) }
-            },
+            onIndexSelected = { index -> QualityPresets.ALL.getOrNull(index)?.let { onPresetSelected(it.id) } },
             onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.CellularPreferredQuality) },
         )
     }
@@ -300,13 +317,12 @@ fun PlaybackEpisodesSection(
     fun overridden(key: String) = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, key)
     val introSkipOptions = IntroSkipMode.entries.map { it to stringResource(introSkipModeLabel(it)) }
     SettingsSection(
-        title = "Episodes",
-        footer = "Rewind on Resume skips back when you return to a partly watched title. Still Watching " +
-            "Prompt sets how many episodes play in a row before Silo asks whether you're still watching.",
+        title = stringResource(CommonR.string.settings_section_episodes),
+        footer = stringResource(CommonR.string.settings_episodes_footer),
         modifier = modifier,
     ) {
         ProfileLayeredSwitchRow(
-            label = "Auto-Play Next Episode",
+            label = stringResource(CommonR.string.settings_control_autoplay),
             checked = autoPlayNext,
             overridden = overridden(PlaybackSettingsKeys.AutoPlayNext),
             onCheckedChange = onAutoPlayNextChanged,
@@ -314,53 +330,49 @@ fun PlaybackEpisodesSection(
         )
 
         ProfileLayeredDropdownRow(
-            label = "Show Next Up",
-            value = nextUpPromptLabel(nextUpPromptSeconds),
-            options = nextUpPromptOptions.map(::nextUpPromptLabel),
-            overridden = overridden(PlaybackSettingsKeys.NextUpPromptSeconds),
-            onOptionSelected = { label ->
-                nextUpPromptOptions.firstOrNull { nextUpPromptLabel(it) == label }?.let(onNextUpPromptSecondsChanged)
-            },
+        label = stringResource(CommonR.string.settings_nextUp_title),
+        value = nextUpPromptLabel(nextUpPromptSeconds),
+        options = nextUpPromptOptions.map { nextUpPromptLabel(it) },
+        selectedIndex = nextUpPromptOptions.indexOf(nextUpPromptSeconds.coerceAtLeast(0)),
+        overridden = overridden(PlaybackSettingsKeys.NextUpPromptSeconds),
+        onIndexSelected = { onNextUpPromptSecondsChanged(nextUpPromptOptions[it]) },
             onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.NextUpPromptSeconds) },
         )
 
         // Three-way, not a switch: the boolean this replaced could not say
         // "never". Option labels and semantics are fixed by the contract.
         ProfileLayeredDropdownRow(
-            label = "Skip Intros",
-            value = stringResource(introSkipModeLabel(introSkipMode)),
-            options = introSkipOptions.map { it.second },
-            overridden = overridden(PlaybackSettingsKeys.IntroSkipMode),
-            onOptionSelected = { label ->
-                introSkipOptions.firstOrNull { it.second == label }?.let { onIntroSkipModeChanged(it.first) }
-            },
+        label = stringResource(CommonR.string.settings_control_intros),
+        value = stringResource(introSkipModeLabel(introSkipMode)),
+        options = introSkipOptions.map { it.second },
+        selectedIndex = introSkipOptions.indexOfFirst { it.first == introSkipMode },
+        overridden = overridden(PlaybackSettingsKeys.IntroSkipMode),
+        onIndexSelected = { onIntroSkipModeChanged(introSkipOptions[it].first) },
             onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.IntroSkipMode) },
         )
 
         ProfileLayeredSwitchRow(
-            label = "Skip Credits",
+            label = stringResource(CommonR.string.settings_control_credits),
             checked = autoSkipCredits,
             overridden = overridden(PlaybackSettingsKeys.AutoSkipCredits),
             onCheckedChange = onAutoSkipCreditsChanged,
             onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.AutoSkipCredits) },
         )
 
-        SettingsDropdownRow(
-            label = "Rewind on Resume",
+        SettingsIndexedDropdownRow(
+            label = stringResource(CommonR.string.settings_resumeRewind_title),
             value = resumeRewindLabel(resumeRewindSeconds),
-            options = resumeRewindOptions.map(::resumeRewindLabel),
-            onOptionSelected = { label ->
-                onResumeRewindSecondsChanged(resumeRewindOptions.first { resumeRewindLabel(it) == label })
-            },
+            options = resumeRewindOptions.map { resumeRewindLabel(it) },
+            selectedIndex = resumeRewindOptions.indexOf(resumeRewindSeconds.coerceAtLeast(0)),
+            onIndexSelected = { onResumeRewindSecondsChanged(resumeRewindOptions[it]) },
         )
 
-        SettingsDropdownRow(
-            label = "Still Watching Prompt",
+        SettingsIndexedDropdownRow(
+            label = stringResource(CommonR.string.settings_stillWatching_title),
             value = passOutThresholdLabel(passOutThreshold),
-            options = passOutThresholdOptions.map(::passOutThresholdLabel),
-            onOptionSelected = { label ->
-                onPassOutThresholdChanged(passOutThresholdOptions.first { passOutThresholdLabel(it) == label })
-            },
+            options = passOutThresholdOptions.map { passOutThresholdLabel(it) },
+            selectedIndex = passOutThresholdOptions.indexOf(passOutThreshold.coerceAtLeast(0)),
+            onIndexSelected = { onPassOutThresholdChanged(passOutThresholdOptions[it]) },
         )
     }
 }
@@ -374,19 +386,19 @@ fun PlaybackResetSection(onResetPlaybackOverrides: () -> Unit, modifier: Modifie
     var confirming by rememberSaveable { mutableStateOf(false) }
     SettingsSection(
         title = null,
-        footer = UseProfileSettingsCopy.FOOTER,
+        footer = UseProfileSettingsCopy.footer,
         modifier = modifier,
     ) {
         SettingsDestructiveRow(
-            label = UseProfileSettingsCopy.RESET_ALL_ROW,
+            label = UseProfileSettingsCopy.resetAllRow,
             onClick = { confirming = true },
         )
     }
     if (confirming) {
         SiloConfirmDialog(
-            title = UseProfileSettingsCopy.CONFIRM_TITLE,
-            body = UseProfileSettingsCopy.CONFIRM_MESSAGE,
-            confirmLabel = UseProfileSettingsCopy.CONFIRM_BUTTON,
+            title = UseProfileSettingsCopy.confirmTitle,
+            body = UseProfileSettingsCopy.confirmMessage,
+            confirmLabel = UseProfileSettingsCopy.confirmButton,
             onConfirm = {
                 confirming = false
                 onResetPlaybackOverrides()
@@ -399,7 +411,7 @@ fun PlaybackResetSection(onResetPlaybackOverrides: () -> Unit, modifier: Modifie
 /** The label each intro-skip mode is offered under; the copy is contract-fixed. */
 @StringRes
 private fun introSkipModeLabel(mode: IntroSkipMode): Int = when (mode) {
-    IntroSkipMode.NEVER -> R.string.settings_intro_skip_never
-    IntroSkipMode.ASK -> R.string.settings_intro_skip_ask
-    IntroSkipMode.ALWAYS -> R.string.settings_intro_skip_always
+    IntroSkipMode.NEVER -> CommonR.string.settings_introSkip_never
+    IntroSkipMode.ASK -> CommonR.string.settings_introSkip_ask
+    IntroSkipMode.ALWAYS -> CommonR.string.settings_introSkip_always
 }

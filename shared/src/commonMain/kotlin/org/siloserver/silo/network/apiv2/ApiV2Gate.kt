@@ -31,6 +31,7 @@ class ApiV2Gate(
                 code = 0, // no HTTP exchange happened; distinguishes the gate from any server status
                 error = UPDATE_REQUIRED_ERROR,
                 message = ServerContract.UPDATE_REQUIRED_MESSAGE,
+                text = ServerContract.UPDATE_REQUIRED_TEXT,
             )
         } else {
             null

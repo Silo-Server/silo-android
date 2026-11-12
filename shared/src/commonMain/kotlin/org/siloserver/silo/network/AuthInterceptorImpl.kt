@@ -917,6 +917,7 @@ private suspend fun HttpRequestBuilder.attachSiloDeviceMetadataHeaders(
     device.clientBuild?.takeIf { it.isNotBlank() }?.let { header("X-Silo-Client-Build", it) }
     device.clientChannel?.takeIf { it.isNotBlank() }?.let { header("X-Silo-Client-Channel", it) }
     device.clientFamily?.takeIf { it.isNotBlank() }?.let { header("X-Silo-Client-Family", it) }
+    device.acceptLanguage?.takeIf { it.isNotBlank() }?.let { header(HttpHeaders.AcceptLanguage, it) }
 }
 
 private fun URLBuilder.rebaseRelativeApiUrl(serverUrl: String) {

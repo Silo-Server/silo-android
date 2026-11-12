@@ -1,5 +1,10 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.i18n.UiText
+import android.content.res.Resources
+import androidx.annotation.StringRes
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
@@ -24,10 +29,9 @@ internal data class TvSubtitleHudRow(
     val focused: Boolean,
     /** Shown disabled with an "Unsupported format" line; Select ignores it. */
     val unplayable: Boolean = false,
-) {
-    val status: String?
-        get() = if (applying) "Applying…" else null
-}
+    /** The row's status line, "Applying…" while [applying]; set by [buildTvSubtitleHudPresentation]. */
+    val status: String? = null,
+)
 
 /**
  * What the HUD's Subtitles pane shows about subtitle sync: the selected
@@ -37,10 +41,10 @@ internal data class TvSubtitleHudRow(
  */
 internal data class TvHudSubtitleSync(
     val timing: SubtitleTimingActions? = null,
-    val statusByServerIndex: Map<Int, String> = emptyMap(),
-    val statusByDownloadId: Map<Int, String> = emptyMap(),
+    val statusByServerIndex: Map<Int, UiText> = emptyMap(),
+    val statusByDownloadId: Map<Int, UiText> = emptyMap(),
 ) {
-    fun statusFor(identity: SubtitleIdentity): String? = when (identity) {
+    fun statusFor(identity: SubtitleIdentity): UiText? = when (identity) {
         is SubtitleIdentity.ServerSidecar -> statusByServerIndex[identity.serverIndex]
         is SubtitleIdentity.Downloaded -> statusByDownloadId[identity.downloadId]
         else -> null
@@ -75,7 +79,7 @@ internal data class TvSubtitleAppearanceApplicability(
     /** Font, Background, Opacity, Outline and the colour swatches. */
     val stylingApplies: Boolean,
     /** One-line explanation for the pane, or null when everything applies. */
-    val note: String?,
+    @StringRes val note: Int?,
 )
 
 internal fun tvSubtitleAppearanceApplicability(
@@ -84,13 +88,13 @@ internal fun tvSubtitleAppearanceApplicability(
     identity is SubtitleIdentity.ServerBurnIn -> TvSubtitleAppearanceApplicability(
         geometryApplies = false,
         stylingApplies = false,
-        note = "Burned-in subtitles are part of the video and keep the server's styling.",
+        note = CommonR.string.player_subtitles_burnedInNote,
     )
     isBitmapSubtitleCodecFamily(identity?.subtitleMediaIdentityOrNull()?.codecFamily) ->
         TvSubtitleAppearanceApplicability(
             geometryApplies = true,
             stylingApplies = false,
-            note = "Image subtitles keep their own styling — only Position and Size apply.",
+            note = CommonR.string.player_subtitles_imageStylingNote,
         )
     else -> TvSubtitleAppearanceApplicability(
         geometryApplies = true,
@@ -108,9 +112,11 @@ internal fun buildTvSubtitleHudPresentation(
     pendingIdentity: SubtitleIdentity?,
     hudOpen: Boolean,
     focusedStableId: String?,
+    resources: Resources,
     onSelect: (SubtitleIdentity) -> Unit = {},
     onFocused: (String) -> Unit = {},
 ): TvSubtitleHudPresentation {
+    val applyingLabel = resources.getString(CommonR.string.player_hud_applying)
     // A disabled row cannot take focus, so it never anchors the pane.
     val optionIds = options.filterNot(TvSubtitleHudOption::unplayable)
         .mapTo(mutableSetOf(), TvSubtitleHudOption::stableId)
@@ -120,15 +126,17 @@ internal fun buildTvSubtitleHudPresentation(
         ?: options.firstOrNull { !it.unplayable }?.stableId
     return TvSubtitleHudPresentation(
         rows = options.map { option ->
+            val applying = option.identity == pendingIdentity &&
+                pendingIdentity != committedIdentity
             TvSubtitleHudRow(
                 stableId = option.stableId,
                 identity = option.identity,
                 label = option.label,
                 checked = option.identity == committedIdentity,
-                applying = option.identity == pendingIdentity &&
-                    pendingIdentity != committedIdentity,
+                applying = applying,
                 focused = option.stableId == resolvedFocus,
                 unplayable = option.unplayable,
+                status = applyingLabel.takeIf { applying },
             )
         },
         hudOpen = hudOpen,
@@ -142,6 +150,7 @@ internal fun buildTvSubtitleHudPresentation(
 internal fun buildTvSubtitleHudOptions(
     subtitleUrls: List<PlayerSubtitleInfo>,
     subtitleTracks: List<PlayerTrackEntry>,
+    resources: Resources,
 ): List<TvSubtitleHudOption> {
     val mountedTrackIndexes = resolvedMountedSubtitleTrackIndexes(subtitleTracks, subtitleUrls)
     val playerOnlyTracks = if (subtitleUrls.isEmpty()) {
@@ -150,12 +159,12 @@ internal fun buildTvSubtitleHudOptions(
         subtitleTracks.filterNot { it.index in mountedTrackIndexes }
     }
     return buildList {
-        add(tvSubtitleHudOption(SubtitleIdentity.Off, "Off"))
+        add(tvSubtitleHudOption(SubtitleIdentity.Off, resources.getString(CommonR.string.player_tracks_subtitlesOff)))
         subtitleUrls.forEachIndexed { position, row ->
             add(
                 tvSubtitleHudOption(
                     tvSubtitleIdentity(row),
-                    subtitleChoiceLabel(row, position),
+                    subtitleChoiceLabel(row, position, resources),
                     unplayable = row.unplayable,
                 ),
             )
@@ -164,7 +173,9 @@ internal fun buildTvSubtitleHudOptions(
             add(
                 tvSubtitleHudOption(
                     tvSubtitleIdentity(track),
-                    track.displayLabel.ifBlank { "Track ${position + 1}" },
+                    track.displayLabel.ifBlank {
+                        resources.getString(CommonR.string.options_track, LocaleFormat.integer(position + 1))
+                    },
                 ),
             )
         }

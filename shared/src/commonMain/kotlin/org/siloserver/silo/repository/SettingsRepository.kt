@@ -87,8 +87,11 @@ class SettingsRepository(
     suspend fun setMigrationDeviceValue(key: String, value: JsonElement, authority: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<StoredSettingValue> =
         settingsApi.putValue(key, SettingScopeIdentity.profileDevice(), value, authority.profileId, authority)
 
-    suspend fun clearProfileDeviceValue(key: String): ApiResult<Unit> =
-        treatMissingAsCleared(settingsApi.deleteValue(key, SettingScopeIdentity.profileDevice()))
+    suspend fun clearProfileDeviceValue(
+        key: String,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot? = null,
+    ): ApiResult<Unit> =
+        treatMissingAsCleared(settingsApi.deleteValue(key, SettingScopeIdentity.profileDevice(), authority = authority))
 
     /**
      * 404 on a DELETE means nothing was stored there, which is the state the

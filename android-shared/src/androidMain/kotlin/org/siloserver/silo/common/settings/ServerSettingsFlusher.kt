@@ -674,8 +674,7 @@ class DefaultServerSettingsFlusher(
          * transport handles scoped auth refresh; a remaining 401 requires user
          * recovery. Invalid key/value/scope and stale authority are terminal.
          */
-        fun isTransientHttp(code: Int): Boolean =
-            code >= 500 || code == 408 || code == 429
+        fun isTransientHttp(code: Int): Boolean = isTransientSettingsWrite(code)
 
         const val MAX_AUTO_RETRIES = 5
         const val RETRY_BASE_DELAY_MS = 1_000L
@@ -737,3 +736,11 @@ internal fun encodeSettingWireValue(key: String, raw: String): JsonElement? = wh
     key in NULLABLE_LANGUAGE_KEYS && raw.isEmpty() -> JsonNull
     else -> JsonPrimitive(raw)
 }
+
+/**
+ * Whether a failed settings write may succeed if sent again: network, server
+ * and throttling failures. Invalid key, value or scope and stale authority are
+ * terminal.
+ */
+internal fun isTransientSettingsWrite(code: Int): Boolean =
+    code >= 500 || code == 408 || code == 429

@@ -15,11 +15,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.common.R as CommonR
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
 import org.siloserver.silo.tv.ui.components.TvCatalogGrid
@@ -60,7 +63,7 @@ fun TvSectionBrowseScreen(
         isLoadingMore = state.isLoadingMore,
         // Retry reloads the row from its first page.
         isReplacingContent = state.isLoading,
-        errorMessage = state.error ?: state.loadMoreError,
+        errorMessage = (state.error ?: state.loadMoreError)?.text(),
         surfaceKey = sectionBrowseKey(args),
         onLoadMore = viewModel::loadMore,
         // The title is a spanning grid item ahead of the cards.
@@ -77,10 +80,10 @@ fun TvSectionBrowseScreen(
         when {
             state.unavailable -> PageMessage(
                 title = args.title,
-                message = "This row is no longer available.",
+                message = stringResource(CommonR.string.rowPage_unavailableBody),
             )
             state.isLoading && state.items.isEmpty() -> TvLoadingScreen()
-            state.error != null -> TvErrorScreen(message = state.error!!, onRetry = viewModel::retry)
+            state.error != null -> TvErrorScreen(message = state.error!!.text(), onRetry = viewModel::retry)
             else -> TvCatalogGrid(
                 items = state.items,
                 isLoading = state.isLoadingMore,
@@ -114,7 +117,7 @@ fun TvSectionBrowseScreen(
                     }
                 },
                 header = { PageTitle(args.title) },
-                emptyState = { TvCatalogEmptyState(message = "This row has no titles right now.") },
+                emptyState = { TvCatalogEmptyState(message = stringResource(CommonR.string.rowPage_noTitles)) },
             )
         }
     }

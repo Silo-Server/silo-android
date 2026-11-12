@@ -2,6 +2,8 @@
 
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.playback.SubtitleSyncNotice
 import android.app.Activity
 import android.content.ComponentName
@@ -74,6 +76,8 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -183,6 +187,9 @@ import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
+import org.siloserver.silo.tv.ui.components.bidiIsolated
+import org.siloserver.silo.common.i18n.isRightToLeftText
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 private const val CONTROLS_AUTO_HIDE_MS = 5_000L
 // Pre-revision-9 relative seeks: 10s back, 30s forward, matching tvOS
@@ -689,15 +696,18 @@ fun TvPlayerScreen(
         showQuickSubtitlePicker = chrome.pickerVisible
         viewModel.setControlsVisible(chrome.controlsVisible)
     }
+    val labelResources = tvLabelResources()
     val subtitlePresentation = buildTvSubtitleHudPresentation(
         options = buildTvSubtitleHudOptions(
             subtitleUrls = state.subtitleUrls,
             subtitleTracks = state.subtitleTracks,
+            resources = labelResources,
         ),
         committedIdentity = state.committedSubtitleIdentity,
         pendingIdentity = state.pendingSubtitleIdentity,
         hudOpen = state.hudOpen || showQuickSubtitlePicker,
         focusedStableId = subtitleFocusedStableId,
+        resources = labelResources,
         onSelect = selectTvSubtitle,
         onFocused = { stableId -> subtitleFocusedStableId = stableId },
     )
@@ -884,10 +894,10 @@ fun TvPlayerScreen(
         if (cleanSeekRate != 0 || mediaController == null) return
         if (watchParty != null && !watchParty.canSeek()) {
             // Guests never seek: say so instead of scanning a preview nobody can commit.
+            val denied = org.siloserver.silo.watchtogether.RoomPlaybackNotice.Denied(RoomTransportIntent.Seek)
             viewModel.showPlayerMessage(
-                org.siloserver.silo.common.player.watchparty.watchPartyNoticeText(
-                    org.siloserver.silo.watchtogether.RoomPlaybackNotice.Denied(RoomTransportIntent.Seek),
-                ),
+                org.siloserver.silo.common.player.watchparty.watchPartyNoticeText(denied),
+                textRes = org.siloserver.silo.common.player.watchparty.watchPartyNoticeRes(denied),
             )
             return
         }
@@ -1478,7 +1488,10 @@ fun TvPlayerScreen(
     // they were equally silent.
     LaunchedEffect(state.subtitleFailureId) {
         val message = state.subtitleFailureMessage ?: return@LaunchedEffect
-        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        // A catalog string a shared producer named, only while it still belongs to this message.
+        val text = state.subtitleFailureRes?.takeIf { it.message == message }?.let { context.getString(it.res) }
+            ?: context.resources.tvPlayerMessage(message)
+        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
         viewModel.onSubtitleFailureShown(state.subtitleFailureId)
     }
 
@@ -2299,14 +2312,14 @@ fun TvPlayerScreen(
     ) {
         when {
             state.error != null -> TvErrorScreen(
-                message = state.error!!,
+                message = tvPlayerErrorText(state.error!!, state.errorRes),
                 // Server-unreachable: Retry re-probes then reloads, and Try Anyway
                 // bypasses the gate (issue #33). Other errors keep the plain retry.
                 onRetry = {
                     if (state.serverUnreachable) viewModel.retryServerReachability()
                     else viewModel.retry()
                 },
-                secondaryActionLabel = "Try Anyway".takeIf { state.serverUnreachable },
+                secondaryActionLabel = stringResource(CommonR.string.player_tryAnyway).takeIf { state.serverUnreachable },
                 onSecondaryAction = { viewModel.playIgnoringServerReachability() }
                     .takeIf { state.serverUnreachable },
             )
@@ -2386,7 +2399,7 @@ fun TvPlayerScreen(
                         subtitlesValue = subtitlePresentation.rows
                             .firstOrNull { row -> row.checked }
                             ?.let { row -> tvSubtitleRowParts(row.label).title }
-                            ?: "Off",
+                            ?: stringResource(CommonR.string.player_tracks_subtitlesOff),
                         positionSec = clock.position,
                         durationSec = clock.duration,
                         isPaused = state.isPaused,
@@ -2710,9 +2723,9 @@ fun TvPlayerScreen(
 
         val bufferingPlayerNotice = when (bufferingNoticeKind) {
             BufferingQualityNotice.LOWERED ->
-                PlayerNotice(stringResource(R.string.buffering_quality_lowered), NoticeTone.Info)
+                PlayerNotice(stringResource(CommonR.string.bufferingQuality_lowered), NoticeTone.Info)
             BufferingQualityNotice.CANT_LOWER ->
-                PlayerNotice(stringResource(R.string.buffering_quality_cant_lower), NoticeTone.Info)
+                PlayerNotice(stringResource(CommonR.string.bufferingQuality_cantLower), NoticeTone.Info)
             null -> null
         }
         TvPlayerOverlays(
@@ -3314,21 +3327,31 @@ private fun TvPlayerIdleOverlay(
  * The small line above the player title: "SEVERANCE · S2:E4" for an episode
  * (whose title is the episode's own), "MOVIE · 2026" for a film.
  */
+@Composable
 internal fun tvPlayerEyebrow(state: TvPlayerViewModel.UiState): String? {
     val series = state.seriesTitle?.takeIf { it.isNotBlank() }
     if (series != null) {
-        val code = state.seasonNumber?.let { season -> state.episodeNumber?.let { "S$season:E$it" } }
+        val code = state.seasonNumber?.let { season ->
+            state.episodeNumber?.let {
+                stringResource(CommonR.string.player_eyebrow_episode, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(it))
+            }
+        }
         return listOfNotNull(series, code).joinToString(" · ")
     }
-    val kind = "Movie".takeIf { state.contentType == "movie" }
-    return listOfNotNull(kind, state.year?.toString()).joinToString(" · ").ifBlank { null }
+    val kind = stringResource(CommonR.string.player_eyebrow_movie).takeIf { state.contentType == "movie" }
+    return listOfNotNull(kind, state.year?.let { LocaleFormat.integer(it, currentNumberLocale()) }).joinToString(" · ").ifBlank { null }
 }
 
+@Composable
 private fun formatSleepCountdown(seconds: Int): String {
     val s = seconds.coerceAtLeast(0)
     val m = s / 60
-    val sec = s % 60
-    return if (m > 0) "${m}m ${sec}s" else "${sec}s"
+    val sec = LocaleFormat.integer(s % 60)
+    return if (m > 0) {
+        stringResource(CommonR.string.catalog_runtimeMinutesSeconds, LocaleFormat.integer(m), sec)
+    } else {
+        stringResource(CommonR.string.catalog_runtimeSeconds, sec)
+    }
 }
 
 @Composable
@@ -3340,11 +3363,12 @@ private fun TvQuickSubtitlePicker(
 ) {
     val checkedRow = presentation.rows.firstOrNull { row -> row.checked }
     val focusedRow = presentation.rows.firstOrNull { row -> row.focused }
-    val unsupportedFormat = stringResource(CommonR.string.subtitle_track_unsupported_format)
+    val unsupportedFormat = stringResource(CommonR.string.subtitle_trackUnsupportedFormat)
+    val applying = stringResource(CommonR.string.player_hud_applying)
     val options = presentation.rows.map { row ->
         HudPickerOption(
             id = row.stableId,
-            label = if (row.applying) "${row.label} · Applying…" else row.label,
+            label = if (row.applying) "${row.label} · $applying" else row.label,
             detail = unsupportedFormat.takeIf { row.unplayable },
             enabled = !row.unplayable,
         )
@@ -3366,7 +3390,7 @@ private fun TvQuickSubtitlePicker(
     ) {
         HudPickerDialog(
             presentation = HudPickerPresentation(
-                title = "Subtitles",
+                title = stringResource(CommonR.string.player_hud_subtitles),
                 options = options,
                 selectedId = checkedRow?.stableId
                     ?: presentation.rows.firstOrNull()?.stableId.orEmpty(),
@@ -3407,13 +3431,13 @@ private fun TvRoomIndicator(
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         androidx.tv.material3.Text(
-            text = "Watch Party · $memberCount watching",
+            text = pluralStringResource(CommonR.plurals.player_watchParty_watching, memberCount, memberCount),
             color = Color.White,
             style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
         )
         if (joinCode != null) {
             androidx.tv.material3.Text(
-                text = "Party code $joinCode",
+                text = stringResource(CommonR.string.player_watchParty_partyCode, joinCode),
                 color = Color.White.copy(alpha = 0.80f),
                 style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
             )
@@ -3581,19 +3605,25 @@ private fun TvPlayerNextUpOverlay(
                                     modifier = Modifier.size(16.dp),
                                 )
                                 androidx.tv.material3.Text(
-                                    text = "Shuffling $scope",
+                                    text = stringResourceWithNames(CommonR.string.upNext_shuffling, scope),
                                     color = Color.White.copy(alpha = 0.75f),
                                     style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
                                     maxLines = 1,
                                 )
                             }
                         }
-                        val eyebrow = when {
-                            nextEpisode == null -> if (videoEnded) "Finished" else "More To Watch"
-                            shuffle != null -> "Up Next at Random"
-                            videoEnded -> "Playing Next"
-                            else -> "Up Next"
-                        }
+                        val eyebrow = stringResource(
+                            when {
+                                nextEpisode == null -> if (videoEnded) {
+                                    CommonR.string.upNext_headingFinished
+                                } else {
+                                    CommonR.string.upNext_headingNothing
+                                }
+                                shuffle != null -> CommonR.string.upNext_headingShuffle
+                                videoEnded -> CommonR.string.upNext_headingEnded
+                                else -> CommonR.string.upNext_heading
+                            },
+                        )
                         androidx.tv.material3.Text(
                             text = eyebrow.uppercase(),
                             color = Color.White.copy(alpha = 0.52f),
@@ -3615,12 +3645,16 @@ private fun TvPlayerNextUpOverlay(
                                 }
                                 if (nextEpisode.isEpisode) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     androidx.tv.material3.Text(
-                                        text = "S${nextEpisode.seasonNumber}·E${nextEpisode.episodeNumber}",
+                                        text = stringResource(
+                                            CommonR.string.upNext_episodeCode,
+                                            LocaleFormat.codeNumber(nextEpisode.seasonNumber),
+                                            LocaleFormat.codeNumber(nextEpisode.episodeNumber),
+                                        ),
                                         color = Color.White.copy(alpha = 0.62f),
                                         style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
                                     )
                                     androidx.tv.material3.Text(
-                                        text = nextEpisode.title ?: "Next Episode",
+                                        text = nextEpisode.title ?: stringResource(CommonR.string.upNext_nextEpisode),
                                         color = Color.White,
                                         style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
                                         maxLines = 1,
@@ -3629,7 +3663,13 @@ private fun TvPlayerNextUpOverlay(
                                     // Runtime shares the episode line to keep the panel short.
                                     if (nextEpisode.runtimeMinutes > 0) {
                                         androidx.tv.material3.Text(
-                                            text = "· ${nextEpisode.runtimeMinutes} min",
+                                            text = "· ${
+                                                pluralStringResource(
+                                                    CommonR.plurals.upNext_runtime,
+                                                    nextEpisode.runtimeMinutes,
+                                                    nextEpisode.runtimeMinutes,
+                                                )
+                                            }",
                                             color = Color.White.copy(alpha = 0.46f),
                                             style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
                                         )
@@ -3637,7 +3677,11 @@ private fun TvPlayerNextUpOverlay(
                                 }
                                 if (!nextEpisode.isEpisode && nextEpisode.runtimeMinutes > 0) {
                                     androidx.tv.material3.Text(
-                                        text = "${nextEpisode.runtimeMinutes} min",
+                                        text = pluralStringResource(
+                                            CommonR.plurals.upNext_runtime,
+                                            nextEpisode.runtimeMinutes,
+                                            nextEpisode.runtimeMinutes,
+                                        ),
                                         color = Color.White.copy(alpha = 0.46f),
                                         style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
                                     )
@@ -3659,7 +3703,7 @@ private fun TvPlayerNextUpOverlay(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 TvDialogActionRow(
-                                    title = "Play Now",
+                                    title = stringResource(CommonR.string.upNext_playNow),
                                     onClick = onPlayNow,
                                     modifier = Modifier
                                         .width(220.dp)
@@ -3675,7 +3719,7 @@ private fun TvPlayerNextUpOverlay(
 
                             if (shuffle != null) {
                                 TvDialogActionRow(
-                                    title = "Pick Another",
+                                    title = stringResource(CommonR.string.upNext_pickAnother),
                                     onClick = onPickAnother,
                                     enabled = !shuffle.pickingAnother,
                                     modifier = Modifier.width(260.dp),
@@ -3684,20 +3728,20 @@ private fun TvPlayerNextUpOverlay(
                             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 if (!videoEnded) {
                                     TvDialogActionRow(
-                                        title = "Keep Watching",
+                                        title = stringResource(CommonR.string.upNext_keepWatching),
                                         onClick = onKeepWatching,
                                         modifier = Modifier.width(220.dp),
                                     )
                                 }
                                 TvDialogActionRow(
-                                    title = "Back",
+                                    title = stringResource(CommonR.string.common_back),
                                     onClick = onBack,
                                     modifier = Modifier.width(140.dp),
                                 )
                             }
                             shuffle?.message?.let { message ->
                                 androidx.tv.material3.Text(
-                                    text = message,
+                                    text = tvPlayerMessageText(message),
                                     color = Color(0xFFFFB4AB),
                                     style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
                                 )
@@ -3708,7 +3752,9 @@ private fun TvPlayerNextUpOverlay(
                             var autoPlayToggleFocused by remember { mutableStateOf(false) }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 androidx.tv.material3.Text(
-                                    text = "Auto-play is ${if (autoPlayEnabled) "On" else "Off"}",
+                                    text = stringResource(
+                                        if (autoPlayEnabled) CommonR.string.upNext_autoPlayOn else CommonR.string.upNext_autoPlayOff,
+                                    ),
                                     color = if (autoPlayToggleFocused) Color.Black else Color.White.copy(alpha = 0.54f),
                                     style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
                                     modifier = Modifier
@@ -3726,7 +3772,7 @@ private fun TvPlayerNextUpOverlay(
                                         style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
                                     )
                                     androidx.tv.material3.Text(
-                                        text = "Stop shuffling",
+                                        text = stringResource(CommonR.string.upNext_stopShuffling),
                                         color = if (stopFocused) Color.Black else Color.White.copy(alpha = 0.54f),
                                         style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
                                         modifier = Modifier
@@ -3741,31 +3787,35 @@ private fun TvPlayerNextUpOverlay(
                         } else {
                             // Finished / no-next-episode state.
                             androidx.tv.material3.Text(
-                                text = if (videoEnded) "End of playback" else "Almost finished",
+                                text = stringResource(
+                                    if (videoEnded) CommonR.string.upNext_endOfPlayback else CommonR.string.upNext_almostFinished,
+                                ),
                                 color = Color.White,
                                 style = androidx.tv.material3.MaterialTheme.typography.headlineSmall,
                             )
                             androidx.tv.material3.Text(
-                                text = if (shuffle != null) "Nothing else in this shuffle can play." else "No next episode is available.",
+                                text = stringResource(
+                                    if (shuffle != null) CommonR.string.upNext_shuffleDone else CommonR.string.upNext_noNext,
+                                ),
                                 color = Color.White.copy(alpha = 0.62f),
                                 style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
                             )
                             if (!videoEnded) {
                                 TvDialogActionRow(
-                                    title = "Keep Watching",
+                                    title = stringResource(CommonR.string.upNext_keepWatching),
                                     onClick = onKeepWatching,
                                     modifier = Modifier
                                         .width(260.dp)
                                         .focusRequester(primaryFocus),
                                 )
                                 TvDialogActionRow(
-                                    title = "Back",
+                                    title = stringResource(CommonR.string.common_back),
                                     onClick = onBack,
                                     modifier = Modifier.width(160.dp),
                                 )
                             } else {
                                 TvDialogActionRow(
-                                    title = "Back",
+                                    title = stringResource(CommonR.string.common_back),
                                     onClick = onBack,
                                     modifier = Modifier
                                         .width(160.dp)
@@ -3866,7 +3916,7 @@ private fun TvNextUpOnDeckRow(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         androidx.tv.material3.Text(
-            text = "On Deck",
+            text = stringResource(CommonR.string.upNext_onDeck),
             color = Color.White.copy(alpha = 0.86f),
             style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(horizontal = 80.dp),
@@ -3892,7 +3942,7 @@ private fun TvNextUpOnDeckRow(
                             artworkAspectRatio = 16f / 9f,
                             width = cardWidth,
                         )
-                        item.subtitle?.let { subtitle ->
+                        tvOnDeckSubtitle(item)?.let { subtitle ->
                             androidx.tv.material3.Text(
                                 text = subtitle,
                                 color = Color.White.copy(alpha = 0.52f),
@@ -3939,7 +3989,7 @@ private fun TvCountdownRing(seconds: Int, totalSeconds: Int) {
             )
         }
         androidx.tv.material3.Text(
-            text = "$seconds",
+            text = LocaleFormat.integer(seconds, currentNumberLocale()),
             color = Color.White,
             style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
         )
@@ -4348,7 +4398,7 @@ private fun TvPlayerOverlays(
                         .padding(horizontal = 24.dp, vertical = 14.dp),
                 ) {
                     Text(
-                        text = message.text,
+                        text = message.textRes?.let { stringResource(it) } ?: tvPlayerMessageText(message.text),
                         color = Color.White,
                         style = MaterialTheme.typography.titleMedium,
                     )
@@ -4458,7 +4508,7 @@ private fun TvPlayerOverlays(
                 ) {
                     if (manualSkipTarget != null) {
                         TvMarkerSkipPill(
-                            label = stringResource(if (manualSkipTarget.kind == ManualMarkerKind.Recap) R.string.marker_skip_recap else R.string.marker_skip_credits),
+                            label = stringResource(if (manualSkipTarget.kind == ManualMarkerKind.Recap) CommonR.string.marker_skipRecap else CommonR.string.marker_skipCredits),
                             onSelect = onManualMarkerSelect,
                         )
                     }
@@ -4493,7 +4543,7 @@ private fun TvPlayerOverlays(
                         .padding(horizontal = 20.dp, vertical = 10.dp),
                 ) {
                     Text(
-                        text = "Keeps buffering? Press OK to switch to $qualityOfferLabel.",
+                        text = stringResource(CommonR.string.buffering_watchPartyOffer, qualityOfferLabel),
                         color = Color.White,
                         style = MaterialTheme.typography.labelLarge,
                     )
@@ -4522,13 +4572,49 @@ private fun TvPlayerOverlays(
 /** The player's one loading indicator: a plain spinner with no label. Screen readers hear "Loading". */
 @Composable
 private fun TvPlayerLoadingSpinner() {
+    val loading = stringResource(CommonR.string.common_loading)
     CircularProgressIndicator(
         color = TvPlayerChrome.Paper,
         strokeWidth = 4.dp,
         modifier = Modifier
             .size(64.dp)
-            .semantics { contentDescription = "Loading" },
+            .semantics { contentDescription = loading },
     )
+}
+
+/**
+ * A player error or notice in the interface language when the player wrote it
+ * ([TvPlayerErrors]); text from the server or the shared module as it is.
+ */
+@Composable
+internal fun tvPlayerMessageText(message: String): String {
+    return LocalResources.current.tvPlayerMessage(message)
+}
+
+/** [tvPlayerMessageText] outside composition, for a toast. */
+internal fun android.content.res.Resources.tvPlayerMessage(message: String): String {
+    TvPlayerErrors.res(message)?.let { return getString(it) }
+    TvSubtitleFailure.messageFor(message)?.let { return getString(it) }
+    val (id, detail) = TvPlayerErrors.prefixed(message) ?: return message
+    return getString(id, TvPlayerErrors.res(detail)?.let { getString(it) } ?: detail)
+}
+
+/**
+ * The error screen's text: the catalog string a shared producer named for
+ * exactly this [error] ([errorRes]), else [tvPlayerMessageText].
+ */
+@Composable
+private fun tvPlayerErrorText(error: String, errorRes: TvPlayerErrorRes?): String =
+    if (errorRes != null && errorRes.message == error) stringResource(errorRes.res) else tvPlayerMessageText(error)
+
+/** An On Deck card's second line: "S2·E5 — Title" for an episode, else the year. */
+@Composable
+private fun tvOnDeckSubtitle(item: TvOnDeckItem): String? {
+    val season = item.seasonNumber
+    val episode = item.episodeNumber
+    if (season == null || episode == null) return item.year?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: item.subtitle
+    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode))
+    return code + (item.subtitle?.let { " — ${bidiIsolated(it, isRightToLeftText())}" } ?: "")
 }
 
 /**

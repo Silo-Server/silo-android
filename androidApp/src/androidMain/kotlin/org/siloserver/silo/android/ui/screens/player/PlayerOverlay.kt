@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.catalog.editionLabel
 import android.graphics.Rect
 import android.widget.Toast
@@ -53,8 +55,8 @@ import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.common.player.allowsAudioDelay
 import org.siloserver.silo.common.player.video.markerSkipTarget
 import org.siloserver.silo.common.player.video.ManualMarkerKind
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import org.siloserver.silo.android.R
 import org.siloserver.silo.common.player.NoticeTone
 import org.siloserver.silo.common.player.PlayerNotice
 import org.siloserver.silo.common.player.SleepTimerState
@@ -70,6 +72,7 @@ import org.siloserver.silo.watchtogether.RoomTransportIntent
 import org.siloserver.silo.watchtogether.roomTransportAuthorized
 import org.siloserver.silo.playback.statusLabelFor
 import org.siloserver.silo.playback.timingActionsFor
+import org.siloserver.silo.common.i18n.text
 
 /** How long a failed AI subtitle job stays on screen when its sheet was closed. */
 private const val AI_FAILURE_NOTICE_MS = 8_000L
@@ -235,8 +238,8 @@ fun PlayerOverlay(
         PlayerNotice(
             stringResource(
                 when (kind) {
-                    BufferingQualityNotice.LOWERED -> R.string.buffering_quality_lowered
-                    BufferingQualityNotice.CANT_LOWER -> R.string.buffering_quality_cant_lower
+                    BufferingQualityNotice.LOWERED -> CommonR.string.bufferingQuality_lowered
+                    BufferingQualityNotice.CANT_LOWER -> CommonR.string.bufferingQuality_cantLower
                 },
             ),
             NoticeTone.Info,
@@ -261,7 +264,7 @@ fun PlayerOverlay(
         }
         if (nextGravity != videoGravity) {
             viewModel.onSetVideoGravity(nextGravity)
-            Toast.makeText(context, mobileVideoGravityLabel(nextGravity), Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(mobileVideoGravityLabel(nextGravity)), Toast.LENGTH_SHORT).show()
         }
     }
     // Remote "display_message" from the control socket — show transiently.
@@ -281,7 +284,10 @@ fun PlayerOverlay(
         aiJobFailure?.let { failure ->
             // An open sheet shows the reason itself.
             if (!aiTranslateVisible) {
-                aiFailureNotice = PlayerNotice("AI subtitles failed. ${failure.message}", NoticeTone.Warning)
+                aiFailureNotice = PlayerNotice(
+                    context.getString(CommonR.string.player_notice_aiSubtitlesFailed, failure.message.text(context)),
+                    NoticeTone.Warning,
+                )
             }
             viewModel.consumeAiJobFailure(failure)
         }
@@ -461,7 +467,8 @@ fun PlayerOverlay(
                         modifier = Modifier.size(15.dp),
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    val label = roomStatus ?: "${roomSnapshot.memberCount} watching"
+                    val label = roomStatus
+                        ?: pluralStringResource(CommonR.plurals.player_watchParty_memberCount, roomSnapshot.memberCount, roomSnapshot.memberCount)
                     Text(
                         text = label,
                         style = PlayerType.PillLabel.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
@@ -470,7 +477,7 @@ fun PlayerOverlay(
                     )
                     if (isRoomHost && roomSnapshot.code.isNotBlank()) {
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = "Code ${roomSnapshot.code}", style = PlayerType.Time.copy(color = PlayerChrome.Graphite))
+                        Text(text = stringResource(CommonR.string.player_watchParty_code, roomSnapshot.code), style = PlayerType.Time.copy(color = PlayerChrome.Graphite))
                     }
                 }
             }
@@ -487,11 +494,11 @@ fun PlayerOverlay(
         ) {
             PlayerControls(
                 title = state.title,
-                subtitle = state.subtitle,
+                subtitle = state.displaySubtitle(),
                 eyebrow = playerEyebrow(state),
                 tracksValue = playerTracksValue(state),
                 chapterValue = chapterTitleAt(state.chapters, shownPosition),
-                qualityValue = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference),
+                qualityValue = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference).text(),
                 pictureInPictureAvailable = pictureInPictureAvailable,
                 onEnterPictureInPicture = onEnterPictureInPicture,
                 isPlaying = state.isPlaying,
@@ -584,7 +591,7 @@ fun PlayerOverlay(
             if (target != null) {
                 Box(modifier = bottomEndSlotModifier, contentAlignment = Alignment.BottomEnd) {
                     MarkerSkipPill(
-                        label = stringResource(if (target.kind == ManualMarkerKind.Recap) R.string.marker_skip_recap else R.string.marker_skip_credits),
+                        label = stringResource(if (target.kind == ManualMarkerKind.Recap) CommonR.string.marker_skipRecap else CommonR.string.marker_skipCredits),
                         onClick = { gatedSeek(target.endSeconds) },
                     )
                 }
@@ -793,7 +800,7 @@ fun PlayerOverlay(
             // A party hides speed (session-only 1x) and the version picker.
             showPlaybackSpeed = !inRoom,
             showQuality = hasQualityMenu,
-            qualityLabel = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference),
+            qualityLabel = playbackQualityValueLabel(qualityOptions, activeQualityId, state.qualityPreference).text(),
             onOpenQuality = {
                 settingsSheetVisible = false
                 qualitySheetVisible = true
@@ -910,7 +917,7 @@ private fun SleepTimerChip(remainingSeconds: Int) {
     PlayerStatusChip {
         Icon(
             imageVector = Icons.Rounded.Bedtime,
-            contentDescription = "Sleep timer active",
+            contentDescription = stringResource(CommonR.string.player_sleepTimer_active),
             tint = PlayerChrome.Paper,
             modifier = Modifier.size(14.dp),
         )
@@ -937,46 +944,57 @@ private fun PlayerStatusChip(content: @Composable RowScope.() -> Unit) {
  * The small line above the title: "MOVIE · 2026", or "SEVERANCE · S2:E4" for
  * an episode, whose title is then the episode's own.
  */
+@Composable
 internal fun playerEyebrow(state: PlayerViewModel.PlayerUiState): String {
     val series = state.seriesTitle?.takeIf { it.isNotBlank() }
     if (series != null) {
         val code = if (state.seasonNumber != null && state.episodeNumber != null) {
-            "S${state.seasonNumber}:E${state.episodeNumber}"
+            stringResource(CommonR.string.player_eyebrow_episode, LocaleFormat.codeNumber(state.seasonNumber), LocaleFormat.codeNumber(state.episodeNumber))
         } else {
             null
         }
         return listOfNotNull(series, code).joinToString(" · ")
     }
     val kind = when {
-        state.contentType == "movie" -> "Movie"
+        state.contentType == "movie" -> stringResource(CommonR.string.player_eyebrow_movie)
         else -> null
     }
     return listOfNotNull(kind, state.subtitle.takeIf { it.isNotBlank() }).joinToString(" · ")
 }
 
 /** The value on the Audio & Subtitles pill: the subtitle language when one is on. */
+@Composable
 internal fun playerTracksValue(state: PlayerViewModel.PlayerUiState): String? =
     if (state.selectedSubtitleIndex >= 0) {
-        subtitleTrackShortLabel(state.subtitleTracks.getOrNull(state.selectedSubtitleIndex), state.selectedSubtitleIndex)
+        subtitleTrackShortLabel(
+            state.subtitleTracks.getOrNull(state.selectedSubtitleIndex),
+            state.selectedSubtitleIndex,
+            trackLabelStrings(),
+        )
     } else {
         null
     }
 
 /** "Large · White · Box" for the settings menu's Subtitle style row. */
+@Composable
 internal fun subtitleStyleSummary(appearance: org.siloserver.silo.model.settings.SubtitleAppearance): String {
-    val size = when (appearance.fontSize) {
-        org.siloserver.silo.model.settings.SubtitleFontSizePreset.Small -> "Small"
-        org.siloserver.silo.model.settings.SubtitleFontSizePreset.Medium -> "Medium"
-        org.siloserver.silo.model.settings.SubtitleFontSizePreset.Large -> "Large"
-        org.siloserver.silo.model.settings.SubtitleFontSizePreset.XLarge -> "Extra large"
-        else -> "Largest"
-    }
-    val background = when (appearance.backgroundStyle) {
-        org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset.Box -> "Box"
-        org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset.Shadow -> "Shadow"
-        org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset.Outline -> "Outline"
-        else -> "No background"
-    }
+    val size = stringResource(
+        when (appearance.fontSize) {
+            org.siloserver.silo.model.settings.SubtitleFontSizePreset.Small -> CommonR.string.player_subtitles_size_small
+            org.siloserver.silo.model.settings.SubtitleFontSizePreset.Medium -> CommonR.string.player_subtitles_size_medium
+            org.siloserver.silo.model.settings.SubtitleFontSizePreset.Large -> CommonR.string.player_subtitles_size_large
+            org.siloserver.silo.model.settings.SubtitleFontSizePreset.XLarge -> CommonR.string.player_subtitles_size_extraLarge
+            else -> CommonR.string.player_subtitles_size_largest
+        },
+    )
+    val background = stringResource(
+        when (appearance.backgroundStyle) {
+            org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset.Box -> CommonR.string.player_subtitles_background_box
+            org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset.Shadow -> CommonR.string.player_subtitles_background_shadow
+            org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset.Outline -> CommonR.string.player_subtitles_background_outline
+            else -> CommonR.string.player_hud_subtitleBackgroundNone
+        },
+    )
     return "$size · $background"
 }
 
@@ -995,10 +1013,11 @@ internal fun previousMobileVideoGravity(current: String): String = when (current
     else -> "fit"
 }
 
-internal fun mobileVideoGravityLabel(value: String): String = when (value) {
-    "fill" -> "Fill"
-    "stretch" -> "Stretch"
-    else -> "Fit"
+@androidx.annotation.StringRes
+internal fun mobileVideoGravityLabel(value: String): Int = when (value) {
+    "fill" -> CommonR.string.player_aspect_fill
+    "stretch" -> CommonR.string.player_aspect_stretch
+    else -> CommonR.string.player_aspect_fit
 }
 
 /**
@@ -1006,33 +1025,39 @@ internal fun mobileVideoGravityLabel(value: String): String = when (value) {
  * and tracks sheets show when opened, so the menu can state the current pick
  * without the user having to open anything.
  */
+@Composable
 internal fun playerVersionLabel(
     versions: List<org.siloserver.silo.model.catalog.FileVersion>,
     selectedIndex: Int,
 ): String {
-    val version = versions.getOrNull(selectedIndex) ?: return "Auto"
+    val version = versions.getOrNull(selectedIndex) ?: return stringResource(CommonR.string.player_versions_auto)
+    val unknownResolution = stringResource(CommonR.string.player_versions_unknownResolution)
     return buildString {
         version.editionLabel?.let { append(it).append(" · ") }
-        append(version.resolution ?: "Unknown")
+        append(version.resolution ?: unknownResolution)
         if (version.hdr) append(" HDR")
     }
 }
 
+@Composable
 internal fun playerAudioLabel(
     tracks: List<org.siloserver.silo.model.catalog.AudioTrack>,
     selectedIndex: Int,
 ): String {
-    val track = tracks.getOrNull(selectedIndex) ?: return "Default"
+    val track = tracks.getOrNull(selectedIndex) ?: return stringResource(CommonR.string.player_tracks_audioDefault)
     // Language first, not title: a container's audio title is often the full
     // codec string ("ATSC A/52B (AC-3, E-AC-3)") and swamps the row.
-    val presentation = audioTrackPresentation(track, selectedIndex)
-    return listOfNotNull(presentation.title, audioChannelsDisplayName(track.channels)).joinToString(" · ")
+    val strings = trackLabelStrings()
+    val presentation = audioTrackPresentation(track, selectedIndex, strings)
+    return listOfNotNull(presentation.title, audioChannelsDisplayName(track.channels, strings)).joinToString(" · ")
 }
 
+@Composable
 internal fun playerSubtitleLabel(
     tracks: List<org.siloserver.silo.model.playback.PlayerSubtitleInfo>,
     selectedIndex: Int,
 ): String {
-    if (selectedIndex < 0) return "Off"
-    return subtitleTrackShortLabel(tracks.getOrNull(selectedIndex), selectedIndex) ?: "Off"
+    val off = stringResource(CommonR.string.player_tracks_subtitlesOff)
+    if (selectedIndex < 0) return off
+    return subtitleTrackShortLabel(tracks.getOrNull(selectedIndex), selectedIndex, trackLabelStrings()) ?: off
 }

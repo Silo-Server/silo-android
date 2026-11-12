@@ -1,10 +1,12 @@
 package org.siloserver.silo.tv.ui.screens.collections
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.common.i18n.detailedErrorText
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.network.map
 import org.siloserver.silo.network.api.CollectionContinuation
 import org.siloserver.silo.network.api.CollectionEditor
@@ -16,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * ViewModel for an individual collection's item grid. Receives `collectionId`
@@ -35,10 +38,10 @@ class TvCollectionDetailViewModel(
         val items: List<BrowseItem> = emptyList(),
         val hasMore: Boolean = false,
         val total: Int = 0,
-        val error: String? = null,
+        val error: UiText? = null,
         val showDeleteConfirm: Boolean = false,
         val isDeleting: Boolean = false,
-        val deleteError: String? = null,
+        val deleteError: UiText? = null,
         /** Set once the collection is deleted so the screen can pop back. */
         val deleted: Boolean = false,
     )
@@ -73,7 +76,7 @@ class TvCollectionDetailViewModel(
                     deleteEditor = result.data
                     _uiState.update { it.copy(showDeleteConfirm = true, deleteError = null) }
                 }
-                else -> _uiState.update { it.copy(error = result.errorMessage("Could not load collection")) }
+                else -> _uiState.update { it.copy(error = result.errorText(CommonR.string.collections_error_load)) }
             }
         }
     }
@@ -91,10 +94,10 @@ class TvCollectionDetailViewModel(
                 // Keep the confirm dialog open and surface the reason rather than
                 // closing silently (the grid behind may still show items).
                 is ApiResult.Error -> _uiState.update {
-                    it.copy(isDeleting = false, deleteError = r.message.ifBlank { "Failed to delete" })
+                    it.copy(isDeleting = false, deleteError = r.errorText(CommonR.string.collections_error_deleteFailed))
                 }
                 is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(isDeleting = false, deleteError = "Network error")
+                    it.copy(isDeleting = false, deleteError = UiText.Res(CommonR.string.catalog_error_networkShort))
                 }
             }
         }
@@ -125,14 +128,14 @@ class TvCollectionDetailViewModel(
                     it.copy(
                         isLoading = false,
                         isLoadingMore = false,
-                        error = r.message.ifBlank { "Failed to load collection" },
+                        error = r.errorText(CommonR.string.collections_error_loadFailed),
                     )
                 }
                 is ApiResult.NetworkError -> _uiState.update {
                     it.copy(
                         isLoading = false,
                         isLoadingMore = false,
-                        error = "Network error: ${r.exception.message ?: "unknown"}",
+                        error = r.detailedErrorText(),
                     )
                 }
             }

@@ -31,11 +31,13 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -45,6 +47,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Generic single-field text-input dialog for TV. Text entry intentionally uses
@@ -114,7 +117,7 @@ fun TvTextInputDialog(
                         },
                         label = { Text(label) },
                         singleLine = true,
-                        textStyle = androidx.compose.material3.LocalTextStyle.current.copy(textDirection = TextDirection.Content),
+                        textStyle = androidx.compose.material3.LocalTextStyle.current.copy(textDirection = TextDirection.Content, textAlign = TextAlign.Left),
                         enabled = !isBusy,
                         visualTransformation = if (keyboardType.isPasswordKeyboardType()) {
                             PasswordVisualTransformation()
@@ -151,7 +154,7 @@ fun TvTextInputDialog(
                             onClick = onDismiss,
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                         ) {
-                            Text(text = "Cancel", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text(text = stringResource(CommonR.string.common_cancel), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                         }
                         Button(
                             onClick = submit,

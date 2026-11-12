@@ -1,5 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.people
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
@@ -17,16 +20,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.R as CommonR
 
 private const val TvPersonWorksPageSize = 60
 
 /** Filmography media-type filter for ten-foot surfaces, mirroring the phone filter where applicable. */
-enum class TvPersonMediaFilter(val key: String, val title: String, val mediaType: String?) {
-    All("all", "All", null),
-    Movies("movie", "Movies", "movie"),
-    Series("series", "Series", "series"),
-    Audiobooks("audiobook", "Audiobooks", "audiobook"),
-    Music("music", "Music", "music");
+enum class TvPersonMediaFilter(val key: String, @StringRes val title: Int, val mediaType: String?) {
+    All("all", CommonR.string.person_filter_all, null),
+    Movies("movie", CommonR.string.person_filter_movies, "movie"),
+    Series("series", CommonR.string.person_filter_series, "series"),
+    Audiobooks("audiobook", CommonR.string.person_filter_audiobooks, "audiobook"),
+    Music("music", CommonR.string.person_filter_music, "music");
 
     companion object {
         fun fromKey(key: String): TvPersonMediaFilter? =
@@ -47,8 +51,8 @@ data class TvPersonDetailUiState(
         TvPersonMediaFilters.filterNot { it == TvPersonMediaFilter.Audiobooks },
     val totalItems: Int = 0,
     val hasMore: Boolean = false,
-    val pagingError: String? = null,
-    val error: String? = null,
+    val pagingError: UiText? = null,
+    val error: UiText? = null,
 )
 
 /**
@@ -171,13 +175,13 @@ class TvPersonDetailViewModel(
                 is ApiResult.Error -> _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = result.message.ifBlank { "Failed to load person" },
+                        error = result.errorText(CommonR.string.person_error_loadFailed),
                     )
                 }
                 is ApiResult.NetworkError -> _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = "Network error. Check your connection.",
+                        error = UiText.Res(CommonR.string.catalog_error_network),
                     )
                 }
             }
@@ -254,7 +258,7 @@ class TvPersonDetailViewModel(
                 is ApiResult.Error -> _uiState.update {
                     it.copy(
                         isLoadingItems = false,
-                        pagingError = result.message.ifBlank { "Failed to load works" },
+                        pagingError = result.errorText(CommonR.string.person_error_worksFailed),
                         // A failed reset-load left hasMore=false, which permanently
                         // disables loadMoreIfNeeded and dead-ends the grid on an
                         // empty "No titles found." with no way back. Keep the paging
@@ -265,7 +269,7 @@ class TvPersonDetailViewModel(
                 is ApiResult.NetworkError -> _uiState.update {
                     it.copy(
                         isLoadingItems = false,
-                        pagingError = "Network error. Check your connection.",
+                        pagingError = UiText.Res(CommonR.string.catalog_error_network),
                         hasMore = if (reset) true else it.hasMore,
                     )
                 }

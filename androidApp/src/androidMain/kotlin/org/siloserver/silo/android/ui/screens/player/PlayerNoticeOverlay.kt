@@ -41,9 +41,10 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.siloserver.silo.android.R
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.player.NoticeTone
 import org.siloserver.silo.common.player.PlayerNotice
+import org.siloserver.silo.common.player.text
 import org.siloserver.silo.common.ui.components.rememberNoticeCountdownFill
 import org.siloserver.silo.domain.player.BufferingQualityController
 import org.siloserver.silo.domain.player.BufferingQualityPill
@@ -136,7 +137,7 @@ private fun NoticePill(notice: PlayerNotice) {
             )
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-                text = notice.message,
+                text = notice.text(),
                 color = Color.White,
                 fontSize = 13.sp,
                 lineHeight = 17.sp,
@@ -183,7 +184,7 @@ private fun BufferingQualityPillSlot(
             0 -> Spacer(Modifier.size(0.dp))
             1 -> BufferingPillCard(progress = fill.floatValue) {
                 Text(
-                    text = stringResource(R.string.buffering_quality_prompt_title),
+                    text = stringResource(CommonR.string.bufferingQuality_prompt_title),
                     color = Color.White,
                     fontSize = 13.sp,
                     lineHeight = 17.sp,
@@ -192,12 +193,12 @@ private fun BufferingQualityPillSlot(
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     BufferingPillAction(
-                        label = stringResource(R.string.buffering_quality_prompt_lower),
+                        label = stringResource(CommonR.string.bufferingQuality_prompt_lower),
                         primary = true,
                         onClick = onLower,
                     )
                     BufferingPillAction(
-                        label = stringResource(R.string.buffering_quality_prompt_keep),
+                        label = stringResource(CommonR.string.bufferingQuality_prompt_keep),
                         primary = false,
                         onClick = onKeep,
                     )
@@ -206,14 +207,14 @@ private fun BufferingQualityPillSlot(
             else -> BufferingPillCard(progress = fill.floatValue) {
                 // The caption is its own element, outside the action.
                 Text(
-                    text = stringResource(R.string.buffering_quality_lowered),
+                    text = stringResource(CommonR.string.bufferingQuality_lowered),
                     color = Color.White.copy(alpha = 0.75f),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 BufferingPillAction(
-                    label = stringResource(R.string.buffering_quality_restore),
+                    label = stringResource(CommonR.string.bufferingQuality_restore),
                     primary = true,
                     onClick = onRestore,
                 )

@@ -77,7 +77,10 @@ fun TvFocusMarquee(
     /** An extra line under the block for pages that preview more than catalog
      *  items (the Requests page's status and stage track). */
     footer: (@Composable (TvMarqueeContent) -> Unit)? = null,
+    /** The air date opening the detail line as "Aired …"; travels with [detailLine]. */
+    airDate: String? = content?.airDate,
 ) {
+    val shownDetailLine = tvMarqueeDetailLine(airDate, detailLine)
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -124,7 +127,7 @@ fun TvFocusMarquee(
                             } else {
                                 value.underPrefs(spoilerPrefs)
                             },
-                            detailLine = detailLine.takeIf { value.id == content?.id },
+                            detailLine = shownDetailLine.takeIf { value.id == content?.id },
                             translation = translation.takeIf { it?.contentId == value.contentId },
                             footer = footer,
                         )
@@ -134,7 +137,7 @@ fun TvFocusMarquee(
         } else if (content != null) {
             TvMarqueeBlock(
                 content = content,
-                detailLine = detailLine,
+                detailLine = shownDetailLine,
                 translation = translation.takeIf { it?.contentId == content.contentId },
                 footer = footer,
             )

@@ -1,16 +1,30 @@
 package org.siloserver.silo.tv.ui.screens.auth
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.model.auth.SetupStatusResponse
 import org.siloserver.silo.model.auth.SignupStatusResponse
 import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import org.siloserver.silo.common.i18n.text
 
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 class TvServerSetupUrlProbeTest {
+    private val resources = ApplicationProvider.getApplicationContext<Application>().resources
+
+    /** Setup text as the screen shows it in English. */
+    private fun UiText.inEnglish(): String = text(resources)
+
     @Test
     fun probeCandidatesContinueToHttpFallbackAfterHttpsHttpError() = runTest {
         val setupRequests = mutableListOf<String>()
@@ -48,7 +62,7 @@ class TvServerSetupUrlProbeTest {
         )
 
         val failure = assertIs<TvServerSetupProbeResult.Failure>(result)
-        assertEquals("Could not reach a Silo server at that address.", failure.message)
+        assertEquals("Could not reach a Silo server at that address.", failure.message.inEnglish())
     }
 
     @Test
@@ -60,7 +74,7 @@ class TvServerSetupUrlProbeTest {
         )
 
         val failure = assertIs<TvServerSetupProbeResult.Failure>(result)
-        assertEquals("Could not reach server: Server is starting", failure.message)
+        assertEquals("Could not reach server: Server is starting", failure.message.inEnglish())
     }
 
     @Test
@@ -90,7 +104,7 @@ class TvServerSetupUrlProbeTest {
         )
 
         val failure = assertIs<TvServerSetupProbeResult.Failure>(result)
-        assertEquals(ServerContract.UPDATE_REQUIRED_MESSAGE, failure.message)
+        assertEquals(ServerContract.UPDATE_REQUIRED_MESSAGE, failure.message.inEnglish())
         assertEquals(0, setupCalls)
     }
 }

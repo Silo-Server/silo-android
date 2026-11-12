@@ -14,11 +14,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.screens.auth.AuthColors
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.components.isEmojiAvatar
@@ -62,6 +65,7 @@ object AvatarOptions {
  * @param size Circle diameter.
  * @param selected Whether to show a highlight border.
  * @param onClick Optional click handler.
+ * @param contentDescription What a screen reader reads for an avatar image: by default "<name> avatar".
  */
 @Composable
 fun ProfileAvatar(
@@ -71,6 +75,7 @@ fun ProfileAvatar(
     size: Dp = 72.dp,
     selected: Boolean = false,
     onClick: (() -> Unit)? = null,
+    contentDescription: String = stringResourceWithNames(CommonR.string.profiles_avatar_description, name),
 ) {
     val displayText = profileAvatarDisplayText(avatar = avatar, name = name)
     // iOS ProfileAvatarView uses a single flat siloSurfaceVariant (#0E0F12).
@@ -96,7 +101,7 @@ fun ProfileAvatar(
             ThumbhashImage(
                 url = avatarImage.url,
                 thumbhash = null,
-                contentDescription = "$name avatar",
+                contentDescription = contentDescription,
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(CircleShape),
@@ -134,11 +139,14 @@ fun AvatarPickerItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // The choice's whole label: passed as `name` alone it read "Profile avatar avatar".
+    val label = stringResource(CommonR.string.profiles_avatar_pickerName)
     ProfileAvatar(
         // Picker entries are always preset refs, never uploads, so there is no
         // server URL to carry alongside them.
         avatar = ProfileAvatarRef(avatarRef),
-        name = "Profile avatar",
+        name = label,
+        contentDescription = label,
         modifier = modifier,
         size = 40.dp,
         selected = isSelected,

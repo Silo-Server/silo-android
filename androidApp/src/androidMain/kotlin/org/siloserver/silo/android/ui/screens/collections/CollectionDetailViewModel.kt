@@ -1,5 +1,8 @@
 package org.siloserver.silo.android.ui.screens.collections
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.common.i18n.detailedErrorText
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -7,7 +10,6 @@ import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.personal.Collection
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.apiv2.CatalogContinuationV2
-import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.network.map
 import org.siloserver.silo.network.api.CollectionContinuation
 import org.siloserver.silo.network.api.CollectionEditor
@@ -18,15 +20,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.R as CommonR
 
 data class CollectionDetailUiState(
     val collection: Collection? = null,
-    val title: String = "Collection",
+    /** The collection's name; null until it loads, when the screen shows a generic title. */
+    val title: String? = null,
     val items: List<BrowseItem> = emptyList(),
     val isLoading: Boolean = false,
     val isLoadingMore: Boolean = false,
     val isRefreshing: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val hasMore: Boolean = true,
     val total: Int = 0,
     val showDeleteConfirm: Boolean = false,
@@ -94,7 +98,7 @@ class CollectionDetailViewModel(
                     _uiState.update {
                         it.copy(
                             collection = collection,
-                            title = collection?.name ?: "Collection",
+                            title = collection?.name,
                         )
                     }
                 }
@@ -117,12 +121,12 @@ class CollectionDetailViewModel(
                 }
                 is ApiResult.Error -> {
                     _uiState.update {
-                        it.copy(isLoading = false, error = result.message.ifBlank { "Failed to load items" })
+                        it.copy(isLoading = false, error = result.errorText(CommonR.string.collections_error_loadItems))
                     }
                 }
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(isLoading = false, error = "Network error. Please check your connection.")
+                        it.copy(isLoading = false, error = UiText.Res(CommonR.string.catalog_error_networkPleaseCheck))
                     }
                 }
             }
@@ -145,7 +149,7 @@ class CollectionDetailViewModel(
                     val collection = collectionsResult.data.find { it.id == collectionId }
                     _uiState.update {
                         it.copy(
-                            title = collection?.name ?: "Collection",
+                            title = collection?.name,
                             total = collection?.itemCount ?: it.total,
                         )
                     }
@@ -192,7 +196,7 @@ class CollectionDetailViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = result.message.ifBlank { "Failed to load collection items" },
+                            error = result.errorText(CommonR.string.collections_error_loadCollectionItems),
                         )
                     }
                 }
@@ -200,7 +204,7 @@ class CollectionDetailViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = "Network error: ${result.exception.message ?: "unknown"}",
+                            error = result.detailedErrorText(),
                         )
                     }
                 }
@@ -245,7 +249,7 @@ class CollectionDetailViewModel(
                     }
                 }
                 is ApiResult.Error, is ApiResult.NetworkError -> {
-                    _uiState.update { it.copy(isLoadingMore = false, error = result.errorMessage("Could not load more. Refresh to try again.")) }
+                    _uiState.update { it.copy(isLoadingMore = false, error = result.errorText(CommonR.string.collections_error_loadMore)) }
                 }
             }
         }
@@ -272,7 +276,7 @@ class CollectionDetailViewModel(
                     }
                 }
                 is ApiResult.Error, is ApiResult.NetworkError -> {
-                    _uiState.update { it.copy(isRefreshing = false, error = result.errorMessage("Could not reload collection")) }
+                    _uiState.update { it.copy(isRefreshing = false, error = result.errorText(CommonR.string.collections_error_reload)) }
                 }
             }
         }
@@ -283,7 +287,7 @@ class CollectionDetailViewModel(
         viewModelScope.launch {
             val result = collectionRepository.removeItem(collectionId, itemId)
             if (result !is ApiResult.Success) {
-                _uiState.update { it.copy(error = result.errorMessage("Could not remove item")) }
+                _uiState.update { it.copy(error = result.errorText(CommonR.string.collections_error_removeItem)) }
                 return@launch
             }
             _uiState.update { state ->
@@ -303,7 +307,7 @@ class CollectionDetailViewModel(
                     deleteEditor = result.data
                     _uiState.update { it.copy(showDeleteConfirm = true, error = null) }
                 }
-                else -> _uiState.update { it.copy(error = result.errorMessage("Could not load collection")) }
+                else -> _uiState.update { it.copy(error = result.errorText(CommonR.string.collections_error_load)) }
             }
         }
     }
@@ -322,7 +326,7 @@ class CollectionDetailViewModel(
                     _uiState.update { it.copy(isDeleting = false, deleted = true, showDeleteConfirm = false) }
                 }
                 is ApiResult.Error, is ApiResult.NetworkError -> {
-                    _uiState.update { it.copy(isDeleting = false, error = result.errorMessage("Could not delete collection")) }
+                    _uiState.update { it.copy(isDeleting = false, error = result.errorText(CommonR.string.collections_error_delete)) }
                 }
             }
         }

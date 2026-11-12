@@ -2,6 +2,8 @@ package org.siloserver.silo.tv.ui.screens.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.AuthRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -9,13 +11,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.errorText
 
 data class TvSetupUiState(
     val username: String = "",
     val email: String = "",
     val password: String = "",
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val setupSuccess: Boolean = false,
 )
 
@@ -61,7 +64,7 @@ class TvSetupViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = result.message.ifBlank { "Setup failed" },
+                            error = result.errorText(CommonR.string.setup_error_failed),
                         )
                     }
                 }
@@ -69,7 +72,7 @@ class TvSetupViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = "Network error. Please check your connection.",
+                            error = UiText.Res(CommonR.string.signIn_error_networkConnection),
                         )
                     }
                 }
@@ -81,12 +84,12 @@ class TvSetupViewModel(
         _uiState.update { it.copy(setupSuccess = false) }
     }
 
-    private fun validateFields(state: TvSetupUiState): String? {
-        if (state.username.isBlank()) return "Username is required"
-        if (state.email.isBlank()) return "Email is required"
-        if (!state.email.contains("@")) return "Please enter a valid email address"
-        if (state.password.isBlank()) return "Password is required"
-        if (state.password.length < 8) return "Password must be at least 8 characters"
-        return null
-    }
+    private fun validateFields(state: TvSetupUiState): UiText? = when {
+        state.username.isBlank() -> CommonR.string.tvSignIn_error_usernameRequired
+        state.email.isBlank() -> CommonR.string.account_create_error_emailRequired
+        !state.email.contains("@") -> CommonR.string.account_create_error_emailInvalid
+        state.password.isBlank() -> CommonR.string.tvSignIn_error_passwordRequired
+        state.password.length < 8 -> CommonR.string.account_create_error_passwordShort
+        else -> null
+    }?.let { UiText.Res(it) }
 }

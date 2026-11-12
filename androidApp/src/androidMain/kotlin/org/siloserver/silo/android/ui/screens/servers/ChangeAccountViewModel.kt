@@ -21,7 +21,10 @@ import org.siloserver.silo.repository.ProfileRepository
 
 /** Where Change Account sends the person once a choice has been applied. */
 enum class ChangeAccountDestination {
-    /** Another account is now open: its "Who's watching?", waiting for a choice. */
+    /**
+     * An account was opened (another one, or the open one while no profile
+     * is): its "Who's watching?", waiting for a choice.
+     */
     Picker,
 
     /** The open account was chosen: back to its picker. */
@@ -43,7 +46,9 @@ data class ChangeAccountUiState(
  * Change Account (owner decision 2026-11-02, Roku spec §7.5): every saved
  * server's accounts with their profile counts, to open another account, sign
  * one in again, or add an account or a server. Profile counts come from each
- * account's cached list, refreshed while the screen is open.
+ * account's cached list, refreshed while the screen is open. It is also what
+ * Profile Selection shows in the picker's place when several accounts are
+ * saved.
  */
 class ChangeAccountViewModel(
     private val registry: ServerRegistry,
@@ -79,11 +84,21 @@ class ChangeAccountViewModel(
      * sign in again opens sign-in with its username filled in; any other
      * becomes active on its server and shows its picker, which waits for a
      * choice (a single profile without a PIN still opens).
+     *
+     * [noProfileOpen]: this screen is the root in the picker's place
+     * (Profile Selection asked with several accounts saved), so the open
+     * account is chosen like any other.
      */
-    fun onAccount(card: AccountCard) {
+    fun onAccount(card: AccountCard, noProfileOpen: Boolean = false) {
         val account = card.account
         if (card.isCurrent && !account.needsSignIn) {
-            _uiState.update { it.copy(destination = ChangeAccountDestination.CurrentPicker) }
+            val destination = if (noProfileOpen) {
+                SignInHandoff.skipsSingleProfilePicker = true
+                ChangeAccountDestination.Picker
+            } else {
+                ChangeAccountDestination.CurrentPicker
+            }
+            _uiState.update { it.copy(destination = destination) }
             return
         }
         switchTo(account.serverId, account.localAccountId)

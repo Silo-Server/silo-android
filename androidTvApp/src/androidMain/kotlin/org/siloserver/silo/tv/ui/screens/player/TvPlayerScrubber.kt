@@ -70,6 +70,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.isRightToLeftText
 
 /**
  * Glass-capsule scrubber matching `iosApp/.../tvOS/TVPlayerScrubber.swift`.
@@ -526,9 +528,13 @@ fun TvPlayerScrubber(
             )
             val remainingSec = (durationSec - labelPositionSec).coerceAtLeast(0.0)
             val endTimeLabel = rememberPlayerEndTimeLabel(remainingSec, playbackSpeed)
+            // In an Arabic sentence the "−" would move to the far end of the
+            // time, so right-to-left text keeps the time in its own run.
+            val remaining = formatRemainingTime(remainingSec)
+                .let { if (isRightToLeftText()) "\u2066$it\u2069" else it } // i18n-ignore: isolate marks
             Text(
                 text = listOfNotNull(
-                    formatRemainingTime(remainingSec),
+                    remaining,
                     endTimeLabel,
                 ).joinToString(" · "),
                 style = TvPlayerType.Time.copy(color = TvPlayerChrome.Graphite),
@@ -594,7 +600,7 @@ private fun TvScrubberAutoSeekChip(rate: Int, modifier: Modifier = Modifier) {
             modifier = Modifier.size(12.dp),
         )
         Text(
-            text = "${abs(rate)}x",
+            text = "${abs(rate)}x", // i18n-ignore
             color = Color.Black,
             maxLines = 1,
             softWrap = false,
@@ -609,10 +615,10 @@ private fun formatRemainingTime(secondsRemaining: Double): String =
     "−${formatTimelineClock(secondsRemaining.coerceAtLeast(0.0))}"
 
 private fun formatTimelineClock(seconds: Double): String {
-    if (seconds <= 0 || seconds.isNaN()) return "0:00"
+    if (seconds <= 0 || seconds.isNaN()) return LocaleFormat.clock(0, 0, 0)
     val total = seconds.toInt()
     val h = total / 3600
     val m = (total % 3600) / 60
     val s = total % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    return LocaleFormat.clock(h, m, s)
 }

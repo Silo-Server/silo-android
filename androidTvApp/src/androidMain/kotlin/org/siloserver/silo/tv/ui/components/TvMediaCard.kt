@@ -26,8 +26,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,13 +46,14 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
-import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.overlays.CardOverlayVariant
 import org.siloserver.silo.common.overlays.CardOverlays
+import org.siloserver.silo.common.overlays.CardWatchStatusBadge
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.model.catalog.MediaItemUserState
+import org.siloserver.silo.overlays.CardWatchStatus
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.tv.ui.theme.ProgressTrack
 import org.siloserver.silo.tv.ui.theme.ProgressFill
@@ -62,11 +61,13 @@ import org.siloserver.silo.tv.ui.theme.RowDimens
 import org.siloserver.silo.tv.ui.theme.cardScaled
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
 import org.siloserver.silo.tv.ui.util.tvArtworkAspectRatioForMediaType
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /**
  * The core focusable media card used throughout the TV app.
  *
- * Displays a 2:3 poster with progress bar overlay, watched badge, favorite
+ * Displays a 2:3 poster with progress bar overlay, watch status, favorite
  * indicator, and a title/year caption below. Uses Compose for TV's [Card]
  * with [siloCardDefaults], so a focused card lifts slightly and gains a
  * white outline, as on tvOS.
@@ -117,11 +118,6 @@ fun TvMediaCard(
         ?: tvArtworkAspectRatioForMediaType(mediaType)
         ?: (2f / 3f)
     val height = width / effectiveAspectRatio
-    val watchedBadgeSize = (width * RowDimens.WatchedBadgeSizeFraction)
-        .coerceIn(RowDimens.WatchedBadgeMinSize, RowDimens.WatchedBadgeMaxSize)
-    val watchedBadgeIconSize = watchedBadgeSize * RowDimens.WatchedBadgeIconSizeFraction
-    val watchedBadgePadding = (width * RowDimens.WatchedBadgePaddingFraction)
-        .coerceIn(RowDimens.WatchedBadgeMinPadding, RowDimens.WatchedBadgeMaxPadding)
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
 
@@ -206,33 +202,25 @@ fun TvMediaCard(
                     )
 
                     // Card-overlay badge layer. Over the poster, under the
-                    // watched badge + progress bar. Never intercepts focus.
+                    // watch status + progress bar. Never intercepts focus.
+                    val hasProgressBar = progress != null && progress > 0f
                     if (overlayState.enabled && overlay != null) {
                         CardOverlays(
                             data = overlay,
                             prefs = overlayState.prefs,
                             variant = CardOverlayVariant.Poster,
-                            forceOpaqueBackground = false,
+                            hasProgressBar = hasProgressBar,
                             modifier = Modifier.fillMaxSize(),
+                            // The card is sized width x height unless it fills its cell.
+                            cardWidth = if (fillWidth) null else width,
                         )
                     }
 
-                    if (userState?.played == true) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(watchedBadgePadding)
-                                .size(watchedBadgeSize)
-                                .background(Color.White, CircleShape),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = "Watched",
-                                tint = Color.Black,
-                                modifier = Modifier.size(watchedBadgeIconSize),
-                            )
-                        }
+                    // Watched check or episodes left, top-right, on
+                    // poster-shaped artwork whether or not badges are on
+                    // (web CardWatchStatus); landscape artwork never shows it.
+                    if (effectiveAspectRatio <= 1f) {
+                        CardWatchStatusBadge(CardWatchStatus.of(userState), Modifier.fillMaxSize())
                     }
 
                     if (badge != null) {
@@ -268,7 +256,7 @@ fun TvMediaCard(
                         )
                     }
 
-                    if (progress != null && progress > 0f) {
+                    if (hasProgressBar) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -307,7 +295,7 @@ fun TvMediaCard(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        val metadata = caption ?: year?.takeIf { it > 0 }?.toString()
+        val metadata = caption ?: year?.takeIf { it > 0 }?.let { LocaleFormat.integer(it, currentNumberLocale()) }
         if (metadata != null) {
             Text(
                 text = metadata,

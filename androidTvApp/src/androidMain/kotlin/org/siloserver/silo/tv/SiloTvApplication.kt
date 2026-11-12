@@ -35,6 +35,10 @@ class SiloTvApplication : Application(), Configuration.Provider, SingletonImageL
     override fun onCreate() {
         super.onCreate()
         DiagnosticsStartup.installCrashCapture(this)
+        // Before any request: v2 problem details show in the app's language.
+        org.siloserver.silo.common.i18n.ServerText.install(this)
+        org.siloserver.silo.common.i18n.LocaleFormat.refresh(this)
+        org.siloserver.silo.common.i18n.EnglishText.install(this)
         val koinApp = startKoin {
             androidContext(this@SiloTvApplication)
             modules(sharedModules() + playerModule + playerInfraModule + marqueeModule + watchPartyModule + androidTvModule + diagnosticsModule)

@@ -68,8 +68,12 @@ import org.siloserver.silo.common.ebook.ReaderShellUiState
 import org.siloserver.silo.common.ebook.ReaderSheet
 import org.siloserver.silo.common.ebook.ReaderTheme
 import org.siloserver.silo.common.ebook.reduceReaderShellState
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 import org.siloserver.silo.model.ebook.EbookAnnotation
 import kotlin.math.roundToInt
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -238,7 +242,7 @@ private fun ReaderTopChrome(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBackClick) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(CommonR.string.common_back))
                 }
                 Text(
                     text = state.title,
@@ -247,22 +251,22 @@ private fun ReaderTopChrome(
                     modifier = Modifier.weight(1f),
                 )
                 IconButton(onClick = onBookmarksClick, enabled = state.capabilities.supportsBookmarks) {
-                    Icon(Icons.Default.Bookmarks, contentDescription = "Bookmarks")
+                    Icon(Icons.Default.Bookmarks, contentDescription = stringResource(CommonR.string.reader_bookmarks_title))
                 }
                 IconButton(
                     onClick = onSectionsClick,
                     enabled = state.capabilities.supportsSections && state.sections.isNotEmpty(),
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "Sections")
+                    Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = stringResource(CommonR.string.reader_sections_title))
                 }
                 IconButton(onClick = onSettingsClick, enabled = supportsSettings) {
-                    Icon(Icons.Default.Tune, contentDescription = "Reader settings")
+                    Icon(Icons.Default.Tune, contentDescription = stringResource(CommonR.string.reader_settings_title))
                 }
                 IconButton(
                     onClick = onAddBookmark,
                     enabled = state.fileId != null && state.capabilities.supportsBookmarks,
                 ) {
-                    Icon(Icons.Default.BookmarkAdd, contentDescription = "Add bookmark")
+                    Icon(Icons.Default.BookmarkAdd, contentDescription = stringResource(CommonR.string.reader_bookmarks_add))
                 }
             }
         }
@@ -296,7 +300,15 @@ private fun FloatingReaderChromeContainer(
 
 @Composable
 private fun BoxScope.ReaderBottomChrome(state: ReaderUiState) {
-    val progressLabel = readerBottomChromeLabel(state)
+    val progressPercent = LocaleFormat.integer((state.progressPercent * 100).toInt(), currentNumberLocale())
+    val currentPage = state.currentPage + 1
+    val progressLabel = readerBottomChromeLabel(
+        state = state,
+        pageProgressLabel = state.pageCount
+            ?.let { stringResource(CommonR.string.reader_progress_pageOf, progressPercent, currentPage, it) }
+            ?: stringResource(CommonR.string.reader_progress_page, progressPercent, currentPage),
+        externalReaderLabel = stringResource(CommonR.string.reader_progress_externalReader),
+    )
     val syncError = state.syncError
     val systemDark = isSystemInDarkTheme()
     val surfaceColor = state.displaySettings.readerChromeSurface(systemDark)
@@ -323,13 +335,13 @@ private fun BoxScope.ReaderBottomChrome(state: ReaderUiState) {
             }
             if (syncError != null) {
                 Text(
-                    text = syncError,
+                    text = stringResource(syncError),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.error,
                 )
             } else if (state.isSyncing) {
                 Text(
-                    text = "Syncing reading progress",
+                    text = stringResource(CommonR.string.reader_progress_syncing),
                     style = MaterialTheme.typography.labelMedium,
                     color = contentColor.copy(alpha = 0.72f),
                 )
@@ -338,14 +350,22 @@ private fun BoxScope.ReaderBottomChrome(state: ReaderUiState) {
     }
 }
 
-internal fun readerBottomChromeLabel(state: ReaderUiState): String? {
+/**
+ * Bottom chrome progress line. The composable caller resolves the
+ * translated page line ("12% - Page 3 of 40") and the external-reader
+ * fallback; the defaults keep this callable from plain JVM tests.
+ */
+internal fun readerBottomChromeLabel(
+    state: ReaderUiState,
+    pageProgressLabel: String,
+    externalReaderLabel: String,
+): String? {
     val progressPercent = (state.progressPercent * 100).toInt()
     return when (state.capabilities.engineKind) {
-        ReaderEngineKind.Reflowable -> "$progressPercent%"
+        ReaderEngineKind.Reflowable -> "${LocaleFormat.integer(progressPercent)}%"
         ReaderEngineKind.FixedDocument,
-        ReaderEngineKind.ComicManga -> "$progressPercent% - Page ${state.currentPage + 1}" +
-            state.pageCount?.let { " of $it" }.orEmpty()
-        ReaderEngineKind.External -> state.formatDisplayName.ifBlank { "External reader" }
+        ReaderEngineKind.ComicManga -> pageProgressLabel
+        ReaderEngineKind.External -> state.formatDisplayName.ifBlank { externalReaderLabel }
     }
 }
 
@@ -363,19 +383,19 @@ private fun BookmarkSheet(
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Text("Bookmarks", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(16.dp))
+        Text(stringResource(CommonR.string.reader_bookmarks_title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(16.dp))
         if (bookmarks.isEmpty()) {
-            Text("No bookmarks yet", modifier = Modifier.padding(16.dp))
+            Text(stringResource(CommonR.string.reader_bookmarks_empty), modifier = Modifier.padding(16.dp))
         } else {
             LazyColumn {
                 items(bookmarks, key = { it.id }) { bookmark ->
                     ListItem(
-                        headlineContent = { Text(bookmark.location ?: "Saved bookmark") },
+                        headlineContent = { Text(bookmark.location ?: stringResource(CommonR.string.reader_bookmarks_savedFallback)) },
                         supportingContent = { Text(bookmark.createdAt.orEmpty()) },
                         modifier = Modifier.clickable { onJumpTo(bookmark) },
                         trailingContent = {
                             IconButton(onClick = { onDelete(bookmark) }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete bookmark")
+                                Icon(Icons.Default.Delete, contentDescription = stringResource(CommonR.string.reader_bookmarks_delete))
                             }
                         },
                     )
@@ -393,12 +413,14 @@ private fun SectionsSheet(
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Text("Sections", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(16.dp))
+        Text(stringResource(CommonR.string.reader_sections_title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(16.dp))
         LazyColumn {
             items(sections, key = { it.index }) { section ->
                 ListItem(
-                    headlineContent = { Text(section.title.ifBlank { "Section ${section.index + 1}" }) },
-                    supportingContent = { Text("Page ${section.index + 1}") },
+                    headlineContent = {
+                        Text(section.title.ifBlank { stringResource(CommonR.string.reader_sections_numbered, section.index + 1) })
+                    },
+                    supportingContent = { Text(stringResource(CommonR.string.reader_pageNumber, section.index + 1)) },
                     modifier = Modifier.clickable { onJumpTo(section) },
                 )
             }
@@ -421,16 +443,16 @@ private fun ReaderSettingsSheet(
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            Text("Reader settings", style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(CommonR.string.reader_settings_title), style = MaterialTheme.typography.titleLarge)
             if (capabilities.supportsTheme) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Theme", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(CommonR.string.reader_settings_theme), style = MaterialTheme.typography.titleMedium)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(ReaderTheme.System, ReaderTheme.Light, ReaderTheme.Sepia, ReaderTheme.Dark).forEach { theme ->
                             FilterChip(
                                 selected = settings.theme == theme,
                                 onClick = { onSettingsChange(settings.copy(theme = theme).normalized()) },
-                                label = { Text(theme.name) },
+                                label = { Text(theme.displayLabel()) },
                             )
                         }
                     }
@@ -438,7 +460,7 @@ private fun ReaderSettingsSheet(
             }
             if (capabilities.supportsTextSize) {
                 ReaderSettingSlider(
-                    label = "Text size",
+                    label = stringResource(CommonR.string.reader_settings_textSize),
                     valueLabel = settings.textScale.readerPercentLabel(),
                     value = settings.textScale,
                     valueRange = 0.6f..3.0f,
@@ -447,7 +469,7 @@ private fun ReaderSettingsSheet(
             }
             if (capabilities.supportsMargins) {
                 ReaderSettingSlider(
-                    label = "Margins",
+                    label = stringResource(CommonR.string.reader_settings_margins),
                     valueLabel = settings.marginScale.readerPercentLabel(),
                     value = settings.marginScale,
                     valueRange = 0.75f..1.5f,
@@ -456,7 +478,7 @@ private fun ReaderSettingsSheet(
             }
             if (capabilities.supportsTextSize) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Font", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(CommonR.string.reader_settings_font), style = MaterialTheme.typography.titleMedium)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ReaderFontFamily.entries.forEach { family ->
                             FilterChip(
@@ -468,7 +490,7 @@ private fun ReaderSettingsSheet(
                     }
                 }
                 ReaderSettingSlider(
-                    label = "Line spacing",
+                    label = stringResource(CommonR.string.reader_settings_lineSpacing),
                     valueLabel = "%.2f".format(settings.lineHeight),
                     value = settings.lineHeight,
                     valueRange = 1.1f..2.2f,
@@ -504,16 +526,26 @@ private fun ReaderSettingSlider(
     }
 }
 
-private fun ReaderFontFamily.displayLabel(): String = when (this) {
-    ReaderFontFamily.Serif -> "Serif"
-    ReaderFontFamily.SansSerif -> "Sans Serif"
-    ReaderFontFamily.Slab -> "Slab"
-    ReaderFontFamily.Dyslexic -> "Dyslexic"
+@Composable
+private fun ReaderTheme.displayLabel(): String = when (this) {
+    ReaderTheme.System -> stringResource(CommonR.string.reader_settings_theme_system)
+    ReaderTheme.Light -> stringResource(CommonR.string.reader_settings_theme_light)
+    ReaderTheme.Sepia -> stringResource(CommonR.string.reader_settings_theme_sepia)
+    ReaderTheme.Dark -> stringResource(CommonR.string.reader_settings_theme_dark)
 }
 
+@Composable
+private fun ReaderFontFamily.displayLabel(): String = when (this) {
+    ReaderFontFamily.Serif -> stringResource(CommonR.string.reader_settings_font_serif)
+    ReaderFontFamily.SansSerif -> stringResource(CommonR.string.reader_settings_font_sansSerif)
+    ReaderFontFamily.Slab -> stringResource(CommonR.string.reader_settings_font_slab)
+    ReaderFontFamily.Dyslexic -> stringResource(CommonR.string.reader_settings_font_dyslexic)
+}
+
+@Composable
 private fun Float.readerPercentLabel(): String {
     val percent = (this * 100).roundToInt()
-    return if (percent == 100) "Normal (100%)" else "$percent%"
+    return if (percent == 100) stringResource(CommonR.string.reader_settings_normalPercent) else "$percent%"
 }
 
 private fun ReaderDisplaySettings.readerSystemBarBackground(systemDark: Boolean): Color =

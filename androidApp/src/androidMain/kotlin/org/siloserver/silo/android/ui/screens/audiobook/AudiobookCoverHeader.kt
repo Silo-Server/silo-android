@@ -21,6 +21,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 
 private const val AudiobookCoverArtSizeDp = 280
@@ -93,7 +95,7 @@ fun AudiobookCoverHeader(
         narrator?.takeIf { it.isNotBlank() }?.let {
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "Narrated by $it",
+                text = stringResourceWithNames(CommonR.string.audiobook_narratedBy, it),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.primary,

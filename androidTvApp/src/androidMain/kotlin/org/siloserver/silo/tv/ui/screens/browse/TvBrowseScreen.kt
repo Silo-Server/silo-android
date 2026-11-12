@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.browse
 
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -46,6 +48,9 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.tv.ui.focus.TvRestoreFocusOnModalDismiss
 import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
 import org.siloserver.silo.tv.ui.components.TvCatalogGrid
@@ -113,7 +118,7 @@ fun TvBrowseScreen(
         initialFocusRequested = true
     }
 
-    val sortLabel = TvBrowseSortOption.fromWire(state.filter.sort).label
+    val sortLabel = stringResource(TvBrowseSortOption.fromWire(state.filter.sort).labelRes)
 
     Box(
         modifier = Modifier
@@ -136,7 +141,7 @@ fun TvBrowseScreen(
                     ),
                 )
                 TvErrorScreen(
-                    message = state.error.orEmpty(),
+                    message = state.error?.text().orEmpty(),
                     onRetry = viewModel::retry,
                     modifier = Modifier.padding(
                         start = Spacing.safeArea,
@@ -184,14 +189,14 @@ fun TvBrowseScreen(
                 verticalArrangement = Arrangement.spacedBy(Spacing.lg),
             ) {
                 // --- Genre ---
-                FilterSectionHeader("Genre")
+                FilterSectionHeader(stringResource(CommonR.string.filters_facet_genre))
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                 ) {
                     FilterChoiceChip(
-                        label = "All",
+                        label = stringResource(CommonR.string.filters_all),
                         selected = state.filter.genre == null,
                         onClick = { viewModel.onGenreChanged(null) },
                     )
@@ -206,14 +211,14 @@ fun TvBrowseScreen(
 
                 // --- Content rating (the dimension the library browse lacks) ---
                 if (state.contentRatings.isNotEmpty()) {
-                    FilterSectionHeader("Content Rating")
+                    FilterSectionHeader(stringResource(CommonR.string.filters_facet_contentRating))
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                     ) {
                         FilterChoiceChip(
-                            label = "All",
+                            label = stringResource(CommonR.string.filters_all),
                             selected = state.filter.contentRating == null,
                             onClick = { viewModel.onContentRatingChanged(null) },
                         )
@@ -228,7 +233,7 @@ fun TvBrowseScreen(
                 }
 
                 // --- Sort ---
-                FilterSectionHeader("Sort")
+                FilterSectionHeader(stringResource(CommonR.string.library_sort))
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
@@ -236,7 +241,7 @@ fun TvBrowseScreen(
                 ) {
                     TvBrowseSortOption.entries.forEach { option ->
                         FilterChoiceChip(
-                            label = option.label,
+                            label = stringResource(option.labelRes),
                             selected = state.filter.sort == option.wireValue,
                             onClick = { viewModel.onSortChanged(option) },
                         )
@@ -244,19 +249,19 @@ fun TvBrowseScreen(
                 }
 
                 // --- Order (phone parity) ---
-                FilterSectionHeader("Order")
+                FilterSectionHeader(stringResource(CommonR.string.filters_order))
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                 ) {
                     FilterChoiceChip(
-                        label = "Descending",
+                        label = stringResource(CommonR.string.filters_descending),
                         selected = state.filter.order == "desc",
                         onClick = { viewModel.onOrderChanged("desc") },
                     )
                     FilterChoiceChip(
-                        label = "Ascending",
+                        label = stringResource(CommonR.string.filters_ascending),
                         selected = state.filter.order == "asc",
                         onClick = { viewModel.onOrderChanged("asc") },
                     )
@@ -265,9 +270,9 @@ fun TvBrowseScreen(
                 // --- Reset (phone parity) ---
                 // Filters apply reactively as chips are picked, so there's no
                 // Apply; Reset clears back to defaults in one action.
-                FilterSectionHeader("Reset")
+                FilterSectionHeader(stringResource(CommonR.string.filters_resetShort))
                 FilterChoiceChip(
-                    label = "Reset filters",
+                    label = stringResource(CommonR.string.filters_reset),
                     selected = false,
                     onClick = { viewModel.resetFilters() },
                 )
@@ -320,7 +325,7 @@ private fun BrowseGrid(
             )
         },
         emptyState = {
-            TvCatalogEmptyState(message = "No titles match the current filters.")
+            TvCatalogEmptyState(message = stringResource(CommonR.string.library_noTitlesMatchFilters))
         },
     )
 }
@@ -344,7 +349,7 @@ private fun BrowseHeader(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                text = "Browse",
+                text = stringResource(CommonR.string.nav_browse),
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
                 fontSize = 21.sp,
@@ -392,18 +397,18 @@ private fun FilterRow(
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
     ) {
         FilterEntryButton(
-            label = "Filter",
+            label = stringResource(CommonR.string.library_filterPill),
             onClick = onOpenFilters,
             modifier = filterOpenerModifier,
         )
 
         if (filter.genre != null) {
-            ActiveFilterPill(label = "Genre: ${filter.genre}")
+            ActiveFilterPill(label = stringResource(CommonR.string.filters_pill_genre, filter.genre))
         }
         if (filter.contentRating != null) {
-            ActiveFilterPill(label = "Rating: ${filter.contentRating}")
+            ActiveFilterPill(label = stringResource(CommonR.string.filters_pill_rating, filter.contentRating))
         }
-        ActiveFilterPill(label = "Sort: $sortLabel")
+        ActiveFilterPill(label = stringResource(CommonR.string.filters_pill_sort, sortLabel))
     }
 }
 
@@ -572,15 +577,16 @@ private fun InlineLoadingState(verticalPadding: androidx.compose.ui.unit.Dp = 48
     }
 }
 
+@Composable
 private fun browseSubtitle(state: TvBrowseViewModel.UiState): String {
-    val parts = buildList {
-        state.filter.genre?.let { add(it) }
-        state.filter.contentRating?.let { add(it) }
-        if (state.items.isNotEmpty()) {
-            add("${state.items.size}${if (state.hasMore) "+" else ""} titles")
-        }
+    val count = state.items.size
+    val titles = when {
+        count == 0 -> null
+        state.hasMore -> pluralStringResource(CommonR.plurals.library_titleCountMore, count, count, LocaleFormat.integer(count))
+        else -> pluralStringResource(CommonR.plurals.library_titleCount, count, count, LocaleFormat.integer(count))
     }
-    return parts.joinToString(" · ").ifBlank { "Everything across your libraries" }
+    val parts = listOfNotNull(state.filter.genre, state.filter.contentRating, titles)
+    return parts.joinToString(" · ").ifBlank { stringResource(CommonR.string.library_browseAllSubtitle) }
 }
 
 private const val BrowseGridColumns = 6

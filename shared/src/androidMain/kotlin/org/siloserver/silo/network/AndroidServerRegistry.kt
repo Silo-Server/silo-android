@@ -165,6 +165,10 @@ class AndroidServerRegistry(
         mutex.withLock { updateAccountLocked(accountId) { it.copy(cachedProfiles = profiles) } }
     }
 
+    override suspend fun setMaxProfiles(accountId: String, maxProfiles: Int?) {
+        mutex.withLock { updateAccountLocked(accountId) { it.copy(maxProfiles = maxProfiles) } }
+    }
+
     override suspend fun setAccountIdentity(accountId: String, serverUserId: String?, username: String?) {
         mutex.withLock {
             updateAccountLocked(accountId) {

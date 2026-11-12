@@ -11,7 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import org.siloserver.silo.android.R
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.player.PlayerStatsSnapshot
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.common.settings.LetterboxExpansion
@@ -31,18 +31,19 @@ private enum class SettingsRoute {
     FillScreen,
     SkipIntros,
     Sync,
-    ;
-
-    val title: String
-        get() = when (this) {
-            Root -> "Settings"
-            Speed -> "Speed"
-            PictureSize -> "Picture size"
-            FillScreen -> "Fill the screen"
-            SkipIntros -> "Skip intros"
-            Sync -> "Audio & subtitle sync"
-        }
 }
+
+@Composable
+private fun SettingsRoute.title(): String = stringResource(
+    when (this) {
+        SettingsRoute.Root -> CommonR.string.player_settings_title
+        SettingsRoute.Speed -> CommonR.string.player_settings_speed
+        SettingsRoute.PictureSize -> CommonR.string.player_settings_pictureSize
+        SettingsRoute.FillScreen -> CommonR.string.player_settings_fillScreen
+        SettingsRoute.SkipIntros -> CommonR.string.settings_introSkip_title
+        SettingsRoute.Sync -> CommonR.string.player_settings_syncTitle
+    },
+)
 
 /** Playback settings menu shared by regular phones and tabletop mode. */
 @Composable
@@ -101,22 +102,22 @@ fun PlayerSettingsSheet(
 
     PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
         PlayerPanelHeader(
-            title = route.title,
+            title = route.title(),
             onClose = { controller.dismiss() },
             onBack = if (route == SettingsRoute.Root) null else toRoot,
-            backDescription = "Back to settings",
+            backDescription = stringResource(CommonR.string.player_menu_backToSettings),
         )
         PlayerMenuScrollColumn(horizontalPadding = 12.dp) {
             when (route) {
                 SettingsRoute.Root -> {
-                    PlayerSectionHeader("Picture")
+                    PlayerSectionHeader(stringResource(CommonR.string.player_settings_sectionPicture))
                     PlayerGroup {
                         if (showQuality) {
-                            PlayerValueRow("Quality", qualityLabel, onClick = { handOff(onOpenQuality) })
+                            PlayerValueRow(stringResource(CommonR.string.options_quality), qualityLabel, onClick = { handOff(onOpenQuality) })
                         }
                         if (showVersion) {
                             PlayerValueRow(
-                                label = "Version",
+                                label = stringResource(CommonR.string.detail_version),
                                 value = versionLabel,
                                 onClick = { handOff(onOpenVersion) },
                                 separator = showQuality,
@@ -124,71 +125,71 @@ fun PlayerSettingsSheet(
                         }
                         if (showPlaybackSpeed) {
                             PlayerValueRow(
-                                label = "Speed",
+                                label = stringResource(CommonR.string.player_settings_speed),
                                 value = speedLabel(playbackSpeed),
                                 onClick = { routeOrdinal = SettingsRoute.Speed.ordinal },
                                 separator = showQuality || showVersion,
                             )
                         }
                         PlayerValueRow(
-                            label = "Picture size",
+                            label = stringResource(CommonR.string.player_settings_pictureSize),
                             value = pictureSizeLabel(videoGravity),
                             onClick = { routeOrdinal = SettingsRoute.PictureSize.ordinal },
                             separator = showQuality || showVersion || showPlaybackSpeed,
                         )
                         PlayerValueRow(
-                            label = "Fill the screen",
+                            label = stringResource(CommonR.string.player_settings_fillScreen),
                             value = letterboxExpansionLabel(letterboxExpansion),
                             onClick = { routeOrdinal = SettingsRoute.FillScreen.ordinal },
                             separator = true,
                         )
                     }
 
-                    PlayerSectionHeader("Audio & subtitles")
+                    PlayerSectionHeader(stringResource(CommonR.string.player_settings_sectionTracks))
                     PlayerGroup {
-                        PlayerValueRow("Subtitles", subtitleLabel, onClick = { handOff { onOpenTracks(TracksTab.Subtitles) } })
+                        PlayerValueRow(stringResource(CommonR.string.player_tracks_subtitles), subtitleLabel, onClick = { handOff { onOpenTracks(TracksTab.Subtitles) } })
                         PlayerValueRow(
-                            label = "Audio",
+                            label = stringResource(CommonR.string.player_tracks_audio),
                             value = audioLabel,
                             onClick = { handOff { onOpenTracks(TracksTab.Audio) } },
                             separator = true,
                         )
                         PlayerValueRow(
-                            label = "Subtitle style",
+                            label = stringResource(CommonR.string.player_subtitles_style_title),
                             value = subtitleStyleLabel,
                             onClick = { handOff(onOpenSubtitleStyle) },
                             separator = true,
                         )
                         PlayerValueRow(
-                            label = "Sync",
+                            label = stringResource(CommonR.string.player_settings_sync),
                             value = "${formatDelayMs(audioDelayMs)} · ${formatDelayMs(subtitleDelayMs)}",
                             onClick = { routeOrdinal = SettingsRoute.Sync.ordinal },
                             separator = true,
                         )
                     }
 
-                    PlayerSectionHeader("This session")
+                    PlayerSectionHeader(stringResource(CommonR.string.player_settings_sectionSession))
                     PlayerGroup {
                         PlayerValueRow(
-                            label = stringResource(R.string.settings_intro_skip_title),
+                            label = stringResource(CommonR.string.settings_introSkip_title),
                             value = introSkipLabel(introSkipMode),
                             onClick = { routeOrdinal = SettingsRoute.SkipIntros.ordinal },
                         )
                         PlayerSwitchRow(
-                            label = "Auto-play next",
+                            label = stringResource(CommonR.string.options_autoplayNext),
                             checked = autoPlayNextEnabled,
                             onCheckedChange = onSetAutoPlayNext,
                             separator = true,
                         )
                         PlayerValueRow(
-                            label = "Sleep timer",
+                            label = stringResource(CommonR.string.player_sleepTimer_title),
                             value = formatSleepTimerSubtitle(sleepTimerState),
                             onClick = { handOff(onOpenSleepTimer) },
                             separator = true,
                         )
                     }
 
-                    PlayerSectionHeader("Advanced")
+                    PlayerSectionHeader(stringResource(CommonR.string.player_settings_sectionAdvanced))
                     PlayerGroup {
                         PlayerSwitchRow(label = "HDR", checked = hdrEnabled, onCheckedChange = onSetHdrEnabled)
                         PlayerSwitchRow(
@@ -198,7 +199,7 @@ fun PlayerSettingsSheet(
                             separator = true,
                         )
                         PlayerValueRow(
-                            label = "Playback stats",
+                            label = stringResource(CommonR.string.player_stats_title),
                             value = stats.summaryLabel(),
                             onClick = { handOff(onOpenPlaybackStats) },
                             separator = true,
@@ -207,46 +208,46 @@ fun PlayerSettingsSheet(
                 }
 
                 SettingsRoute.Speed -> if (showPlaybackSpeed) {
+                    val normalSpeed = stringResource(CommonR.string.player_settings_speedNormal)
                     ChoiceGroup(
                         options = SPEEDS,
                         isSelected = { isSameSpeed(it, playbackSpeed) },
                         label = { speedLabel(it) },
-                        detail = { if (it == 1.0) "Normal" else null },
+                        detail = { if (it == 1.0) normalSpeed else null },
                         onSelect = onSetPlaybackSpeed,
                     )
                 }
 
-                SettingsRoute.PictureSize -> ChoiceGroup(
-                    options = listOf("fit", "fill", "stretch"),
-                    isSelected = { videoGravity == it },
-                    label = ::pictureSizeLabel,
-                    onSelect = onSetVideoGravity,
-                )
+                SettingsRoute.PictureSize -> {
+                    val labels = listOf("fit", "fill", "stretch").map { it to pictureSizeLabel(it) }
+                    ChoiceGroup(
+                        options = labels,
+                        isSelected = { videoGravity == it.first },
+                        label = { it.second },
+                        onSelect = { onSetVideoGravity(it.first) },
+                    )
+                }
 
                 SettingsRoute.FillScreen -> {
+                    val labels = listOf(
+                        LetterboxExpansion.ClearOfCamera,
+                        LetterboxExpansion.FullWidth,
+                        LetterboxExpansion.Off,
+                    ).map { it to letterboxExpansionLabel(it) }
                     ChoiceGroup(
-                        options = listOf(
-                            LetterboxExpansion.ClearOfCamera,
-                            LetterboxExpansion.FullWidth,
-                            LetterboxExpansion.Off,
-                        ),
-                        isSelected = { letterboxExpansion == it },
-                        label = ::letterboxExpansionLabel,
-                        onSelect = onSetLetterboxExpansion,
+                        options = labels,
+                        isSelected = { letterboxExpansion == it.first },
+                        label = { it.second },
+                        onSelect = { onSetLetterboxExpansion(it.first) },
                     )
-                    PlayerFootnote(
-                        "Widescreen films are expanded past the black bars stored in the " +
-                            "file, never into the picture itself. Full width uses the whole " +
-                            "display and lets the camera sit on the image. Video without " +
-                            "stored bars already fits and does not change.",
-                    )
+                    PlayerFootnote(stringResource(CommonR.string.player_settings_fillScreenNote))
                 }
 
                 SettingsRoute.SkipIntros -> {
                     val labels = listOf(
-                        IntroSkipMode.NEVER to stringResource(R.string.settings_intro_skip_never),
-                        IntroSkipMode.ASK to stringResource(R.string.settings_intro_skip_ask),
-                        IntroSkipMode.ALWAYS to stringResource(R.string.settings_intro_skip_always),
+                        IntroSkipMode.NEVER to stringResource(CommonR.string.settings_introSkip_never),
+                        IntroSkipMode.ASK to stringResource(CommonR.string.settings_introSkip_ask),
+                        IntroSkipMode.ALWAYS to stringResource(CommonR.string.settings_introSkip_always),
                     )
                     ChoiceGroup(
                         options = labels,
@@ -254,31 +255,36 @@ fun PlayerSettingsSheet(
                         label = { it.second },
                         onSelect = { onSetIntroSkipMode(it.first) },
                     )
-                    PlayerFootnote(
-                        "What happens when a detected intro starts: leave it alone, " +
-                            "offer a Skip Intro button, or skip it and offer an undo.",
-                    )
+                    PlayerFootnote(stringResource(CommonR.string.player_settings_skipIntrosNote))
                 }
 
                 SettingsRoute.Sync -> {
                     Spacer(Modifier.height(8.dp))
                     PlayerGroup {
                         PlayerStepperRow(
-                            label = "Audio delay",
+                            label = stringResource(CommonR.string.player_settings_audioDelay),
                             // Audio delay is always this device's own (its output path).
-                            detail = if (audioDelayEnabled) "PCM audio only · This device" else "Off for passthrough audio",
+                            detail = stringResource(
+                                if (audioDelayEnabled) {
+                                    CommonR.string.player_settings_audioDelayDetail
+                                } else {
+                                    CommonR.string.player_settings_audioDelayPassthrough
+                                },
+                            ),
                             value = formatDelayMs(audioDelayMs),
                             enabled = audioDelayEnabled,
                             onDecrease = { onSetAudioDelay((audioDelayMs - 50).coerceIn(-5000, 5000)) },
                             onIncrease = { onSetAudioDelay((audioDelayMs + 50).coerceIn(-5000, 5000)) },
                         )
                         PlayerStepperRow(
-                            label = "Subtitle delay",
-                            detail = if (subtitleDelaySavedToProfile) {
-                                "Saved for this profile on all devices"
-                            } else {
-                                "Only on this device"
-                            },
+                            label = stringResource(CommonR.string.player_settings_subtitleDelay),
+                            detail = stringResource(
+                                if (subtitleDelaySavedToProfile) {
+                                    CommonR.string.player_settings_subtitleDelaySaved
+                                } else {
+                                    CommonR.string.player_settings_subtitleDelayDevice
+                                },
+                            ),
                             value = formatDelayMs(subtitleDelayMs),
                             onDecrease = { onSetSubtitleDelay((subtitleDelayMs - 50).coerceIn(-10000, 10000)) },
                             onIncrease = { onSetSubtitleDelay((subtitleDelayMs + 50).coerceIn(-10000, 10000)) },
@@ -318,36 +324,40 @@ private val SPEEDS = listOf(0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0)
 
 private fun speedLabel(speed: Double): String = "${formatPlaybackSpeed(speed)}×"
 
-private fun pictureSizeLabel(value: String): String = when (value) {
-    "fill" -> "Fill"
-    "stretch" -> "Stretch"
-    else -> "Fit"
-}
+@Composable
+private fun pictureSizeLabel(value: String): String = stringResource(mobileVideoGravityLabel(value))
 
-private fun letterboxExpansionLabel(value: String): String = when (value) {
-    LetterboxExpansion.FullWidth -> "Full width"
-    LetterboxExpansion.Off -> "Off"
-    else -> "Clear of camera"
-}
+@Composable
+private fun letterboxExpansionLabel(value: String): String = stringResource(
+    when (value) {
+        LetterboxExpansion.FullWidth -> CommonR.string.player_settings_fillScreenFullWidth
+        LetterboxExpansion.Off -> CommonR.string.player_settings_fillScreenOff
+        else -> CommonR.string.player_settings_fillScreenClearOfCamera
+    },
+)
 
 @Composable
 private fun introSkipLabel(mode: IntroSkipMode): String = when (mode) {
-    IntroSkipMode.NEVER -> stringResource(R.string.settings_intro_skip_never)
-    IntroSkipMode.ASK -> stringResource(R.string.settings_intro_skip_ask)
-    IntroSkipMode.ALWAYS -> stringResource(R.string.settings_intro_skip_always)
+    IntroSkipMode.NEVER -> stringResource(CommonR.string.settings_introSkip_never)
+    IntroSkipMode.ASK -> stringResource(CommonR.string.settings_introSkip_ask)
+    IntroSkipMode.ALWAYS -> stringResource(CommonR.string.settings_introSkip_always)
 }
 
+@Composable
 private fun formatSleepTimerSubtitle(state: SleepTimerState): String = when (state) {
-    is SleepTimerState.Idle -> "Off"
-    is SleepTimerState.Active -> "Pausing in ${formatRemaining(state.remainingSeconds)}"
+    is SleepTimerState.Idle -> stringResource(CommonR.string.player_sleepTimer_off)
+    is SleepTimerState.Active ->
+        stringResource(CommonR.string.player_sleepTimer_pausingIn, formatRemaining(state.remainingSeconds))
 }
 
+@Composable
 private fun PlayerStatsSnapshot.summaryLabel(): String {
     val route = backendRoute ?: backendDisplayName
+    val waiting = stringResource(CommonR.string.player_stats_waiting)
     return listOfNotNull(resolution, route, bitrateBps?.let(::formatStatsBitrate))
         .take(2)
         .joinToString(" · ")
-        .ifBlank { "Waiting for player data" }
+        .ifBlank { waiting }
 }
 
 private fun isSameSpeed(a: Double, b: Double): Boolean = kotlin.math.abs(a - b) < 0.001

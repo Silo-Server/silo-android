@@ -1,5 +1,10 @@
 package org.siloserver.silo.tv.ui.screens.library
 
+import org.siloserver.silo.common.i18n.uppercaseForUi
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.localizedResources
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -41,8 +46,10 @@ import kotlinx.coroutines.delay
 import org.koin.compose.koinInject
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.errorMessage
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,6 +73,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -82,6 +90,8 @@ import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.components.tvShowImeOnSelect
 import org.siloserver.silo.tv.ui.components.tvSkylinePanelChrome
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /**
  * Sort + Filter controls for the library Browse grid, 1:1 with tvOS
@@ -140,7 +150,7 @@ fun TvBrowseControlRow(
                 modifier = Modifier.size(16.dp),
             )
             Text(
-                text = "Sort · $sortLabel",
+                text = stringResource(CommonR.string.library_sortPill, sortLabel),
                 style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp, lineHeight = 18.sp),
                 color = foreground,
                 fontWeight = FontWeight.Medium,
@@ -171,7 +181,7 @@ fun TvBrowseControlRow(
                 modifier = Modifier.size(16.dp),
             )
             Text(
-                text = "Filter",
+                text = stringResource(CommonR.string.library_filterPill),
                 style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp, lineHeight = 18.sp),
                 color = foreground,
                 fontWeight = FontWeight.Medium,
@@ -184,7 +194,7 @@ fun TvBrowseControlRow(
                         .padding(horizontal = 6.dp, vertical = 1.dp),
                 ) {
                     Text(
-                        text = filterCount.toString(),
+                        text = LocaleFormat.integer(filterCount, currentNumberLocale()),
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
@@ -215,7 +225,7 @@ fun TvBrowseControlRow(
                     modifier = Modifier.size(16.dp),
                 )
                 Text(
-                    text = "Clear filters",
+                    text = stringResource(CommonR.string.library_clearFilters),
                     style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp, lineHeight = 18.sp),
                     color = foreground,
                     fontWeight = FontWeight.Medium,
@@ -239,7 +249,7 @@ fun TvShufflePill(onClick: () -> Unit, modifier: Modifier = Modifier) {
             modifier = Modifier.size(16.dp),
         )
         Text(
-            text = "Shuffle",
+            text = stringResource(CommonR.string.library_shufflePill),
             style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp, lineHeight = 18.sp),
             color = foreground,
             fontWeight = FontWeight.Medium,
@@ -335,7 +345,7 @@ fun TvBrowseSortPanel(
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             BrowsePanelMonoHeader(
-                text = "SORT BY",
+                text = stringResource(CommonR.string.library_sortBy).uppercaseForUi(),
                 modifier = Modifier.padding(start = 10.dp, top = 4.dp, bottom = 6.dp),
             )
             options.forEach { option ->
@@ -408,9 +418,10 @@ fun TvBrowseFilterPanel(
     // null = top-level facet list; non-null = that facet's value list.
     var openFacet by remember { mutableStateOf<TvCatalogFacet?>(null) }
 
+    val resources = localizedResources()
     val availableFacets = remember(libraryType, facetOptions) {
         TvCatalogFacet.availableFor(libraryType)
-            .filter { it.optionPairs(facetOptions).isNotEmpty() }
+            .filter { it.optionPairs(facetOptions, resources).isNotEmpty() }
     }
 
     val commitAndClose = {
@@ -461,9 +472,13 @@ fun TvBrowseFilterPanel(
                 .padding(16.dp),
         ) {
             // Header
-            BrowsePanelMonoHeader(text = if (openFacet == null) "FILTER BY" else "FILTER")
+            BrowsePanelMonoHeader(
+                text = stringResource(
+                    if (openFacet == null) CommonR.string.filters_eyebrowList else CommonR.string.filters_eyebrowValues,
+                ).uppercaseForUi(),
+            )
             Text(
-                text = openFacet?.title ?: "Filters",
+                text = stringResource(openFacet?.titleRes ?: CommonR.string.filters_title),
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontSize = 19.sp,
                     lineHeight = 23.sp,
@@ -526,7 +541,7 @@ private fun FilterListScreen(
 ) {
     if (availableFacets.isEmpty()) {
         Text(
-            text = "No filters available",
+            text = stringResource(CommonR.string.filters_none),
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
             color = BrowseSecondaryText,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -538,7 +553,7 @@ private fun FilterListScreen(
             focusRequester = firstRowFocusRequester.takeIf { index == 0 },
         ) { foreground ->
             Text(
-                text = facet.title,
+                text = stringResource(facet.titleRes),
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
                 color = foreground,
                 maxLines = 1,
@@ -562,22 +577,22 @@ private fun FilterListScreen(
     }
 
     BrowsePanelMonoHeader(
-        text = "MATCH",
+        text = stringResource(CommonR.string.filters_match).uppercaseForUi(),
         modifier = Modifier.padding(start = 12.dp, top = 14.dp, bottom = 4.dp),
     )
     MatchRow(
-        title = "All selected filters",
+        title = stringResource(CommonR.string.filters_matchAll),
         isSelected = draft.matchAll,
         onClick = { onDraftChanged(draft.copy(matchAll = true)) },
     )
     MatchRow(
-        title = "Any selected filter",
+        title = stringResource(CommonR.string.filters_matchAny),
         isSelected = !draft.matchAll,
         onClick = { onDraftChanged(draft.copy(matchAll = false)) },
     )
 
     BrowsePanelMonoHeader(
-        text = "OPTIONS",
+        text = stringResource(CommonR.string.filters_options).uppercaseForUi(),
         modifier = Modifier.padding(start = 12.dp, top = 14.dp, bottom = 4.dp),
     )
     if (preserve != null) {
@@ -592,7 +607,7 @@ private fun FilterListScreen(
                 modifier = Modifier.size(15.dp),
             )
             Text(
-                text = "Preserve sort & filters",
+                text = stringResource(CommonR.string.filters_preserve),
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
                 color = foreground,
                 maxLines = 1,
@@ -612,7 +627,7 @@ private fun FilterListScreen(
             modifier = Modifier.size(15.dp),
         )
         Text(
-            text = "Reset filters",
+            text = stringResource(CommonR.string.filters_reset),
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
             color = foreground,
             maxLines = 1,
@@ -626,7 +641,7 @@ private fun FilterListScreen(
             modifier = Modifier.size(15.dp),
         )
         Text(
-            text = "Done",
+            text = stringResource(CommonR.string.filters_done),
             style = MaterialTheme.typography.bodyMedium.copy(
                 fontSize = 14.sp,
                 lineHeight = 17.sp,
@@ -655,7 +670,7 @@ private fun FacetValuesScreen(
             modifier = Modifier.size(15.dp),
         )
         Text(
-            text = "All filters",
+            text = stringResource(CommonR.string.filters_allFilters),
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
             color = foreground,
             maxLines = 1,
@@ -671,7 +686,7 @@ private fun FacetValuesScreen(
                 modifier = Modifier.size(15.dp),
             )
             Text(
-                text = "Clear ${facet.title}",
+                text = stringResource(CommonR.string.filters_clearFacet, stringResource(facet.titleRes)),
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
                 color = foreground,
                 maxLines = 1,
@@ -684,18 +699,18 @@ private fun FacetValuesScreen(
     val repository: CatalogRepository = koinInject()
     var query by remember(facet, scope) { mutableStateOf("") }
     var remoteValues by remember(facet, scope) { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
-    var note by remember(facet, scope) { mutableStateOf<String?>(null) }
+    var note by remember(facet, scope) { mutableStateOf<FacetSearchNote?>(null) }
     LaunchedEffect(query, facet, scope) {
         if (remoteField != null && scope != null) {
             remoteValues = emptyList()
-            note = "Searching…"
+            note = FacetSearchNote.Searching
             delay(250)
             when (val result = repository.searchFacet(scope, remoteField, query.trim())) {
                 is ApiResult.Success -> {
                     remoteValues = result.data.matches.map { it to it }
-                    note = if (result.data.hasMore) "More matches are available. Refine your search." else null
+                    note = if (result.data.hasMore) FacetSearchNote.MoreMatches else null
                 }
-                else -> note = result.errorMessage("Could not search filter values")
+                else -> note = FacetSearchNote.Failed(result.errorText(CommonR.string.filters_searchFailed))
             }
         }
     }
@@ -703,14 +718,22 @@ private fun FacetValuesScreen(
         // tvShowImeOnSelect: a plain text field keeps vertical D-pad for caret
         // moves, so focus could never reach the matches below it.
         OutlinedTextField(value = query, onValueChange = { query = it }, singleLine = true,
-            textStyle = androidx.compose.material3.LocalTextStyle.current.copy(textDirection = TextDirection.Content),
-            placeholder = { androidx.compose.material3.Text("Search ${facet.title}") },
+            textStyle = androidx.compose.material3.LocalTextStyle.current.copy(textDirection = TextDirection.Content, textAlign = TextAlign.Left),
+            placeholder = {
+                androidx.compose.material3.Text(stringResource(CommonR.string.filters_searchFacet, stringResource(facet.titleRes)))
+            },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, showKeyboardOnFocus = false),
             modifier = Modifier.fillMaxWidth().tvShowImeOnSelect(),
             colors = tvOutlinedTextFieldColors())
-        Text(note ?: if (scope == null) "Showing a limited list. Reload filters to search all values." else "Search by the beginning of a name.")
+        Text(
+            note?.text() ?: if (scope == null) {
+                stringResource(CommonR.string.filters_limitedList)
+            } else {
+                stringResource(CommonR.string.filters_searchByPrefix)
+            },
+        )
     }
-    val choices = if (remoteField != null && scope != null) remoteValues else facet.optionPairs(facetOptions)
+    val choices = if (remoteField != null && scope != null) remoteValues else facetOptionPairs(facet, facetOptions)
     choices.forEach { (value, label) ->
         val isSelected = draft.isSelected(facet, value)
         BrowsePanelRow(onClick = { onDraftChanged(draft.toggled(facet, value)) }) { foreground ->
@@ -753,18 +776,41 @@ private fun MatchRow(
     }
 }
 
+@Composable
 private fun facetSummary(
     facet: TvCatalogFacet,
     draft: TvCatalogFacetSelection,
     facetOptions: CatalogFiltersResponse?,
 ): String {
     val values = draft.selectedValues(facet)
-    if (values.isEmpty()) return "Any"
+    if (values.isEmpty()) return stringResource(CommonR.string.filters_any)
     if (values.size == 1) {
         val only = values.first()
-        return facet.optionPairs(facetOptions).firstOrNull { it.first == only }?.second ?: only
+        return facetOptionPairs(facet, facetOptions).firstOrNull { it.first == only }?.second ?: only
     }
-    return "${values.size} selected"
+    return pluralStringResource(CommonR.plurals.filters_selected, values.size, values.size)
+}
+
+/** [TvCatalogFacet.optionPairs] in the interface language, refreshed when it changes. */
+@Composable
+private fun facetOptionPairs(facet: TvCatalogFacet, facetOptions: CatalogFiltersResponse?): List<Pair<String, String>> {
+    return facet.optionPairs(facetOptions, localizedResources())
+}
+
+/** The status line under a facet's search field while server-side search runs. */
+private sealed interface FacetSearchNote {
+    data object Searching : FacetSearchNote
+    data object MoreMatches : FacetSearchNote
+
+    /** The server's message, or the catalog's search-failed or network text. */
+    data class Failed(val message: UiText) : FacetSearchNote
+}
+
+@Composable
+private fun FacetSearchNote.text(): String = when (this) {
+    FacetSearchNote.Searching -> stringResource(CommonR.string.filters_searching)
+    FacetSearchNote.MoreMatches -> stringResource(CommonR.string.filters_moreMatches)
+    is FacetSearchNote.Failed -> message.text()
 }
 
 // ============================================================================

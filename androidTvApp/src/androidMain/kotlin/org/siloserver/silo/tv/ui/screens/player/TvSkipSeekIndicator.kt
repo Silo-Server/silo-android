@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.i18n.LocaleFormat
 
 /** One hidden-controls D-pad skip: what it did and where it landed. */
 data class SkipSeekFeedback(
@@ -122,11 +123,11 @@ internal fun formatSkipDelta(deltaSeconds: Int): String =
     if (deltaSeconds < 0) "−${-deltaSeconds}s" else "+${deltaSeconds}s"
 
 private fun formatSkipTime(seconds: Double, durationSec: Double): String {
-    if (!seconds.isFinite() || seconds < 0) return "0:00"
+    if (!seconds.isFinite() || seconds < 0) return LocaleFormat.clock(0, 0, 0)
     val total = seconds.toInt()
     val h = total / 3600
     val m = (total % 3600) / 60
     val s = total % 60
     val showHours = h > 0 || durationSec >= 3600.0
-    return if (showHours) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    return LocaleFormat.clock(h, m, s, showHours)
 }

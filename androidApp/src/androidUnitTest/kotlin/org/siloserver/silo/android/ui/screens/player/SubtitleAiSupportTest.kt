@@ -1,5 +1,10 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.subtitles.SubtitleAiQuota
 import kotlin.test.Test
@@ -7,7 +12,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
 class SubtitleAiSupportTest {
+
+    private val resources get() = ApplicationProvider.getApplicationContext<Application>().resources
 
     private fun track(codec: String?, source: String?) = PlayerSubtitleInfo(
         index = 0, language = "en", codec = codec, label = null,
@@ -44,7 +53,7 @@ class SubtitleAiSupportTest {
     @Test
     fun quotaLineShowsRemaining() {
         val q = SubtitleAiQuota(limited = true, limit = 10, used = 3, remaining = 7, period = "week")
-        assertEquals("7 of 10 transcriptions left for the last 7 days.", quotaLineText(q))
+        assertEquals("7 of 10 transcriptions left for the last 7 days.", quotaLineText(q, resources))
     }
 
     @Test
@@ -52,13 +61,13 @@ class SubtitleAiSupportTest {
         val q = SubtitleAiQuota(limited = true, limit = 5, used = 5, remaining = 0, period = "day")
         assertEquals(
             "You've used all 5 transcriptions for the last 24 hours. Try again later.",
-            quotaLineText(q),
+            quotaLineText(q, resources),
         )
     }
 
     @Test
     fun unknownPeriodFallsThrough() {
         val q = SubtitleAiQuota(limited = true, limit = 2, used = 0, remaining = 2, period = "fortnight")
-        assertEquals("2 of 2 transcriptions left for the last fortnight.", quotaLineText(q))
+        assertEquals("2 of 2 transcriptions left for the last fortnight.", quotaLineText(q, resources))
     }
 }

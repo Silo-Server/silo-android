@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.isRightToLeftText
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -40,6 +42,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -79,6 +82,13 @@ import org.siloserver.silo.viewmodel.WatchPartyItem
 import org.siloserver.silo.viewmodel.WatchPartyPickerViewModel
 import org.siloserver.silo.viewmodel.WatchPartySpoilers
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.watchparty.watchPartyDisplayName
+import org.siloserver.silo.common.watchparty.watchPartyEpisodeLine
+import org.siloserver.silo.common.watchparty.watchPartyHistoryLabel
+import org.siloserver.silo.common.watchparty.watchPartyRuntimeText
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /** One Home-style shelf of the picker. */
 private data class TvPickerShelf(
@@ -94,17 +104,27 @@ private data class TvPickerShelf(
         entries.associate { (item, _) -> item.contentId to WatchPartySpoilers.of(item).unwatchedEpisode }
 }
 
-/** What the confirmation page shows, and the item it stages or suggests. */
+/**
+ * What the confirmation page shows, and the item it stages or suggests. The
+ * page's episode line and facts are kept as parts and worded where they are
+ * shown; [item] is sent to the server and stays English.
+ */
 private data class TvPickerChoice(
     val item: WatchPartyItem,
     val title: String,
-    val subtitle: String?,
+    /** "S1 · E2", then [episodeTitle]; null for a movie. */
+    val season: Int? = null,
+    val episode: Int? = null,
+    val episodeTitle: String? = null,
     val posterUrl: String?,
     val posterThumbhash: String?,
     val backdropUrl: String?,
     val backdropThumbhash: String?,
     val overview: String?,
-    val facts: List<String>,
+    val year: String? = null,
+    val runtimeMinutes: Int? = null,
+    /** Rating and genre, after the runtime. */
+    val otherFacts: List<String> = emptyList(),
     val spoilers: WatchPartySpoilers = item.spoilers,
 )
 
@@ -146,17 +166,20 @@ internal fun TvWatchPartyPicker(
     LaunchedEffect(viewModel) { viewModel.loadRows() }
 
     val searching = state.query.isNotBlank()
+    val resultsTitle = stringResource(CommonR.string.watchParty_picker_resultsFor, state.query.trim())
+    val togetherTitle = stringResource(CommonR.string.watchParty_picker_continueTogether)
+    val watchlistTitle = stringResource(CommonR.string.watchParty_picker_watchlists)
     val shelves: List<TvPickerShelf> = if (searching) {
-        listOf(TvPickerShelf("results", "Results for “${state.query.trim()}”", state.results.map { it to null }))
+        listOf(TvPickerShelf("results", resultsTitle, state.results.map { it to null }))
     } else {
         listOf(
             TvPickerShelf(
                 "together",
-                "Continue Together",
+                togetherTitle,
                 state.rows?.continueTogether.orEmpty().map { it.item to it },
                 showProgress = true,
             ),
-            TvPickerShelf("watchlist", "On Your Watchlists", state.rows?.watchlistUnion.orEmpty().map { it.item to it }),
+            TvPickerShelf("watchlist", watchlistTitle, state.rows?.watchlistUnion.orEmpty().map { it.item to it }),
         )
     }.filter { it.entries.isNotEmpty() }
     val shelfKeys = shelves.joinToString { it.key }
@@ -168,6 +191,7 @@ internal fun TvWatchPartyPicker(
             item.type == "series" && nextUp != null -> {
                 choiceShelf = shelf.key
                 choice = TvPickerChoice(
+                    // Sent to the server as the suggestion's title and subtitle: stays English.
                     item = WatchPartyItem(
                         contentId = nextUp.contentId,
                         contentType = "episode",
@@ -178,14 +202,14 @@ internal fun TvWatchPartyPicker(
                         spoilers = WatchPartySpoilers(unwatchedEpisode = true, posterIsEpisodeStill = false, backdropIsEpisodeStill = false),
                     ),
                     title = item.title,
-                    subtitle = "S${nextUp.seasonNumber} · E${nextUp.episodeNumber}" +
-                        nextUp.title.takeIf { it.isNotBlank() }?.let { " · ${bidiIsolated(it)}" }.orEmpty(),
+                    season = nextUp.seasonNumber,
+                    episode = nextUp.episodeNumber,
+                    episodeTitle = nextUp.title.takeIf { it.isNotBlank() },
                     posterUrl = item.posterUrl,
                     posterThumbhash = item.posterThumbhash,
                     backdropUrl = item.backdropUrl,
                     backdropThumbhash = item.backdropThumbhash,
                     overview = null,
-                    facts = emptyList(),
                 )
             }
             item.type == "series" -> onOpenSeries(item.contentId)
@@ -201,15 +225,14 @@ internal fun TvWatchPartyPicker(
                         spoilers = WatchPartySpoilers.of(item),
                     ),
                     title = item.title,
-                    subtitle = null,
                     posterUrl = item.posterUrl,
                     posterThumbhash = item.posterThumbhash,
                     backdropUrl = item.backdropUrl,
                     backdropThumbhash = item.backdropThumbhash,
                     overview = item.overview?.takeIf { it.isNotBlank() },
-                    facts = listOfNotNull(
-                        item.year.takeIf { it > 0 }?.toString(),
-                        item.runtime?.takeIf { it > 0 }?.let(::tvWatchPartyRuntime),
+                    year = item.year.takeIf { it > 0 }?.toString(),
+                    runtimeMinutes = item.runtime?.takeIf { it > 0 },
+                    otherFacts = listOfNotNull(
                         item.contentRating?.takeIf { it.isNotBlank() },
                         item.genres.firstOrNull(),
                     ),
@@ -270,7 +293,7 @@ internal fun TvWatchPartyPicker(
                 horizontalArrangement = Arrangement.spacedBy(TvSkyline.barTrailingSpacing),
             ) {
                 Text(
-                    text = if (stages) "Choose a title" else "Suggest a title",
+                    text = stringResource(if (stages) CommonR.string.watchParty_picker_select else CommonR.string.watchParty_picker_suggest),
                     fontSize = TvSkyline.tabLabelSize,
                     fontWeight = FontWeight.SemiBold,
                     color = Color.White,
@@ -278,7 +301,7 @@ internal fun TvWatchPartyPicker(
                 Spacer(modifier = Modifier.weight(1f))
                 if (searching) {
                     TvPartyButton(
-                        label = "Clear search",
+                        label = stringResource(CommonR.string.watchParty_picker_clearSearch),
                         kind = TvPartyButtonKind.Secondary,
                         onClick = { viewModel.onQuery("") },
                         height = TvSkyline.barIconSize,
@@ -287,13 +310,13 @@ internal fun TvWatchPartyPicker(
                 }
                 ChromeIcon(
                     icon = Icons.Filled.Search,
-                    label = "Search",
+                    label = stringResource(CommonR.string.watchParty_picker_search),
                     onClick = { searchOpen = true },
                     modifier = Modifier
                         .focusRequester(searchFocus)
                         .onFocusChanged { searchFocused = it.isFocused },
                 )
-                ChromeIcon(icon = Icons.Filled.Close, label = "Close", onClick = onDismiss)
+                ChromeIcon(icon = Icons.Filled.Close, label = stringResource(CommonR.string.watchParty_picker_close), onClick = onDismiss)
             }
 
             // ---- Shelves -----------------------------------------------------
@@ -305,10 +328,10 @@ internal fun TvWatchPartyPicker(
                     .padding(top = 12.dp, bottom = 24.dp),
             ) {
                 val status = when {
-                    searching && state.error != null && shelves.isEmpty() -> state.error
-                    searching && state.searching && shelves.isEmpty() -> "Searching…"
-                    searching && shelves.isEmpty() -> "No titles match “${state.query.trim()}”."
-                    !searching && state.rowsLoading && shelves.isEmpty() -> "Loading…"
+                    searching && state.error != null && shelves.isEmpty() -> state.error?.text()
+                    searching && state.searching && shelves.isEmpty() -> stringResource(CommonR.string.search_searching)
+                    searching && shelves.isEmpty() -> stringResource(CommonR.string.watchParty_picker_noMatch, state.query.trim())
+                    !searching && state.rowsLoading && shelves.isEmpty() -> stringResource(CommonR.string.status_loading)
                     else -> null
                 }
                 if (status != null) {
@@ -318,16 +341,16 @@ internal fun TvWatchPartyPicker(
                         modifier = Modifier.padding(horizontal = TvSkyline.safeAreaX, vertical = 40.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text(text = "Nothing to pick from yet", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = SiloOnSurface)
+                        Text(text = stringResource(CommonR.string.watchParty_picker_emptyTitle), fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = SiloOnSurface)
                         Text(
-                            text = "Search for a title, or add something to a watchlist.",
+                            text = stringResource(CommonR.string.watchParty_picker_emptyBody),
                             fontSize = TvPartyMetrics.body,
                             color = SiloSecondaryText,
                         )
                         state.error?.let { message ->
-                            TvPartyBanner(message = message, warning = true)
+                            TvPartyBanner(message = message.text(), warning = true)
                             TvPartyButton(
-                                label = "Try again",
+                                label = stringResource(CommonR.string.common_tryAgain),
                                 kind = TvPartyButtonKind.Secondary,
                                 onClick = viewModel::loadRows,
                             )
@@ -356,9 +379,9 @@ internal fun TvWatchPartyPicker(
 
     if (searchOpen) {
         TvTextInputDialog(
-            title = "Search titles",
-            label = "Title",
-            confirmLabel = "Search",
+            title = stringResource(CommonR.string.watchParty_picker_searchTitle),
+            label = stringResource(CommonR.string.watchParty_picker_searchLabel),
+            confirmLabel = stringResource(CommonR.string.watchParty_picker_search),
             initialValue = state.query,
             allowBlank = true,
             onConfirm = { text ->
@@ -451,7 +474,9 @@ private fun TvPickerConfirmation(
                         hidden = choice.spoilers.hidesPoster(spoilerPrefs),
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        TvPartyEyebrow(if (stages) "Watch together" else "Suggest to the party")
+                        TvPartyEyebrow(
+                            stringResource(if (stages) CommonR.string.watchParty_picker_watchTogether else CommonR.string.watchParty_picker_suggestToParty),
+                        )
                         Text(
                             text = choice.title,
                             fontSize = 44.sp,
@@ -462,7 +487,12 @@ private fun TvPickerConfirmation(
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        val facts = listOfNotNull(choice.subtitle) + choice.facts
+                        val code = choice.season?.let { season -> choice.episode?.let { watchPartyEpisodeLine(season, it) } }
+                        val rtl = isRightToLeftText()
+                        val episodeTitle = choice.episodeTitle?.let { if (code != null) bidiIsolated(it, rtl) else it }
+                        val subtitle = listOfNotNull(code, episodeTitle).joinToString(" · ").ifBlank { null }
+                        val facts = listOfNotNull(subtitle, choice.year?.toIntOrNull()?.let { LocaleFormat.integer(it, currentNumberLocale()) }, choice.runtimeMinutes?.let { watchPartyRuntimeText(it) }) +
+                            choice.otherFacts
                         if (facts.isNotEmpty()) {
                             Text(text = facts.joinToString(" · "), fontSize = TvPartyMetrics.body, color = SiloSecondaryText)
                         }
@@ -480,7 +510,7 @@ private fun TvPickerConfirmation(
                     )
                 }
                 TvPartyButton(
-                    label = if (stages) "Choose for the party" else "Add suggestion",
+                    label = stringResource(if (stages) CommonR.string.watchParty_confirm_choose else CommonR.string.watchParty_confirm_addSuggestion),
                     icon = if (stages) Icons.Filled.Check else Icons.Filled.Add,
                     onClick = onConfirm,
                     modifier = Modifier.focusRequester(confirmFocus),
@@ -489,7 +519,7 @@ private fun TvPickerConfirmation(
                     MemberStateLoad.Unavailable -> Unit
                     MemberStateLoad.Loading -> if (memberState != null) {
                         WhoSeenSection {
-                            Text(text = "Checking viewing history…", fontSize = TvPartyMetrics.caption, color = SiloSecondaryText)
+                            Text(text = stringResource(CommonR.string.watchParty_whoSeen_checking), fontSize = TvPartyMetrics.caption, color = SiloSecondaryText)
                         }
                     }
                     is MemberStateLoad.Loaded -> WhoSeenSection {
@@ -499,7 +529,7 @@ private fun TvPickerConfirmation(
                             }
                             Row(modifier = Modifier.fillMaxWidth()) {
                                 Text(
-                                    text = tvWatchPartyMemberName(member),
+                                    text = watchPartyDisplayName(member.displayName.trim()),
                                     fontSize = TvPartyMetrics.body,
                                     color = SiloOnSurface,
                                     modifier = Modifier.weight(1f),
@@ -523,21 +553,19 @@ private sealed interface MemberStateLoad {
 @Composable
 private fun WhoSeenSection(content: @Composable () -> Unit) {
     Column(modifier = Modifier.width(420.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        TvPartyEyebrow("Who's seen it")
+        TvPartyEyebrow(stringResource(CommonR.string.watchParty_whoSeen_title))
         content()
     }
 }
 
 /** "Watched", "In progress · Watchlist", "No viewing history". */
-internal fun tvWatchPartyHistoryLabel(state: MemberWatchState?): String {
-    state ?: return "No viewing history"
-    val label = when {
-        state.state in setOf("watched", "completed", "played") -> "Watched"
-        state.state in setOf("in_progress", "inprogress") || (state.positionSeconds ?: 0.0) > 0.0 -> "In progress"
-        else -> "Not watched"
-    }
-    return if (state.onWatchlist) "$label · Watchlist" else label
-}
+@Composable
+internal fun tvWatchPartyHistoryLabel(state: MemberWatchState?): String = watchPartyHistoryLabel(
+    watched = state?.let { it.state in setOf("watched", "completed", "played") },
+    inProgress = state != null &&
+        (state.state in setOf("in_progress", "inprogress") || (state.positionSeconds ?: 0.0) > 0.0),
+    onWatchlist = state?.onWatchlist == true,
+)
 
 /** Capsule icon in the strip, the same geometry as the app's top bar. */
 @OptIn(ExperimentalTvMaterial3Api::class)

@@ -9,11 +9,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.siloserver.silo.catalog.matchesLibraryMediaScope
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.apiv2.CatalogContinuationV2
-import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.SectionRepository
 
 /** Which row a section page shows. */
@@ -32,9 +34,9 @@ data class SectionBrowseUiState(
     val isLoadingMore: Boolean = false,
     val hasMore: Boolean = false,
     /** The first page failed; the page shows this with a retry. */
-    val error: String? = null,
+    val error: UiText? = null,
     /** A later page failed; the items stay and paging can be retried. */
-    val loadMoreError: String? = null,
+    val loadMoreError: UiText? = null,
     /** The server answered 404: the row was removed, hidden, or is no longer visible to this profile. */
     val unavailable: Boolean = false,
 )
@@ -90,7 +92,7 @@ class SectionBrowseViewModel(
             val scope = owner ?: repository.captureHomeAuthority()
             if (requestGeneration != generation) return@launch
             if (scope == null) {
-                state.update { it.copy(isLoading = false, isLoadingMore = false, error = "Sign in to browse this row.") }
+                state.update { it.copy(isLoading = false, isLoadingMore = false, error = UiText.Key(SharedString.RowSignedOut)) }
                 return@launch
             }
             owner = scope
@@ -123,7 +125,7 @@ class SectionBrowseViewModel(
                     }
                     is ApiResult.Error, is ApiResult.NetworkError -> {
                         val notFound = result is ApiResult.Error && result.code == 404
-                        val message = result.errorMessage("Couldn't load this row.")
+                        val message = result.errorText(SharedString.RowLoadFailed)
                         state.update { current ->
                             when {
                                 notFound -> current.copy(isLoading = false, isLoadingMore = false, hasMore = false, unavailable = true)

@@ -3,9 +3,12 @@ package org.siloserver.silo.viewmodel
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.LeafItemUserData
+import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.repository.port.LocalContentState
 import org.siloserver.silo.repository.port.LocalPlaybackProgress
+import org.siloserver.silo.overlays.CardWatchStatus
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -138,5 +141,43 @@ class LocalUserStateOverlayTest {
         assertEquals(1_200.0, overlaid.userData?.durationSeconds)
         assertEquals(22, overlaid.userData?.lastFileId)
         assertEquals(true, overlaid.userData?.isInProgress)
+    }
+
+    private fun overlaidSeries(server: MediaItemUserState, local: LocalContentState): MediaItemUserState? {
+        val section = ResolvedSection(
+            id = "row",
+            sectionType = "recently_added",
+            title = "Row",
+            items = listOf(SectionItem(contentId = "s1", type = "series", title = "Show", userState = server)),
+        )
+        return applyLocalStateOverlay(listOf(section), mapOf("s1" to local), emptyMap()).single().items.single().userState
+    }
+
+    @Test
+    fun `acknowledged unwatched row keeps the server's later episode counts`() {
+        // Marked unwatched long ago (acknowledged), then 2 of 10 episodes watched.
+        val server = MediaItemUserState(played = false, watchedCount = 2, unplayedCount = 8)
+        val overlaid = overlaidSeries(server, LocalContentState(watched = false, favorite = null))
+        assertEquals(server, overlaid)
+        assertEquals(CardWatchStatus.EpisodesLeft(8), CardWatchStatus.of(overlaid))
+    }
+
+    @Test
+    fun `pending watched change hides the counts it has outdated`() {
+        val server = MediaItemUserState(played = false, watchedCount = 2, unplayedCount = 8)
+        val unwatched = overlaidSeries(server, LocalContentState(watched = false, favorite = null, watchedPending = true))
+        assertEquals(MediaItemUserState(played = false, watchedCount = 0, unplayedCount = 0), unwatched)
+        assertEquals(CardWatchStatus.None, CardWatchStatus.of(unwatched))
+
+        val watched = overlaidSeries(server, LocalContentState(watched = true, favorite = null, watchedPending = true))
+        assertEquals(true, watched?.played)
+        assertEquals(CardWatchStatus.Watched, CardWatchStatus.of(watched))
+    }
+
+    @Test
+    fun `local watched value still overrides played once acknowledged`() {
+        val server = MediaItemUserState(played = false, watchedCount = 2, unplayedCount = 8)
+        val overlaid = overlaidSeries(server, LocalContentState(watched = true, favorite = null))
+        assertEquals(server.copy(played = true), overlaid)
     }
 }

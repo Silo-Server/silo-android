@@ -29,9 +29,6 @@ data class LocalRoute(
     fun coversLocal(scheme: String, host: String, port: Int): Boolean = localOrigin.isAt(scheme, host, port)
 
     companion object {
-        /** Shown under the active server while its requests use the local route. */
-        const val STATUS_TEXT = "Connected on your local network"
-
         /**
          * The local-route origin for a server address on the local network:
          * `https` on the same host and port, since the API port answers TLS

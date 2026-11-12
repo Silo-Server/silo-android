@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.text
+import androidx.annotation.StringRes
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -57,6 +59,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -76,6 +80,13 @@ import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.android.ui.theme.SiloPageBackground
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.sectionTitle
+import org.siloserver.silo.common.watchparty.watchPartyDisplayName
+import org.siloserver.silo.common.watchparty.watchPartyEpisodeLine
+import org.siloserver.silo.common.watchparty.watchPartyHistoryLabel
+import org.siloserver.silo.common.watchparty.watchPartyNameList
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.model.watchtogether.ItemMemberState
@@ -89,14 +100,27 @@ import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.viewmodel.WatchPartyItem
 import org.siloserver.silo.viewmodel.WatchPartySpoilers
 import org.siloserver.silo.viewmodel.WatchPartyPickerViewModel
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /** What choosing a title in the picker does. */
-internal enum class WatchPartyPickMode(val title: String, val eyebrow: String, val confirmLabel: String) {
+internal enum class WatchPartyPickMode(
+    @StringRes val title: Int,
+    @StringRes val eyebrow: Int,
+    @StringRes val confirmLabel: Int,
+) {
     /** Host Picks host: stage it as the next title. */
-    Stage("Choose a title", "Watch together", "Choose for the party"),
+    Stage(
+        CommonR.string.watchParty_picker_select,
+        CommonR.string.watchParty_picker_watchTogether,
+        CommonR.string.watchParty_confirm_choose,
+    ),
 
     /** Everyone else, and vote rooms: suggest it. */
-    Suggest("Suggest a title", "Suggest to the party", "Add suggestion"),
+    Suggest(
+        CommonR.string.watchParty_picker_suggest,
+        CommonR.string.watchParty_picker_suggestToParty,
+        CommonR.string.watchParty_confirm_addSuggestion,
+    ),
 }
 
 /**
@@ -182,17 +206,28 @@ internal fun WatchPartyPicker(
 
 // MARK: Data
 
-/** A title on the confirmation page, and how the lobby should show it once chosen. */
+/**
+ * A title on the confirmation page, and how the lobby should show it once
+ * chosen. The page's subtitle and facts are kept as parts and worded where
+ * they are shown; [lobbyItem] is sent to the server and stays English.
+ */
 private data class WatchPartyChoice(
     val contentId: String,
     val title: String,
-    val subtitle: String?,
+    /** "S1 · E2" when both are known. */
+    val season: Int?,
+    val episode: Int?,
+    /** Shown after the episode code. */
+    val episodeTitle: String?,
     val posterUrl: String?,
     val posterThumbhash: String?,
     val backdropUrl: String?,
     val backdropThumbhash: String?,
     val overview: String?,
-    val facts: List<String>,
+    val year: String? = null,
+    val runtimeMinutes: Int? = null,
+    /** Rating and genre, after the runtime. */
+    val otherFacts: List<String> = emptyList(),
     /** The series to browse from here, for an episode. */
     val seriesId: String?,
     val lobbyItem: WatchPartyItem,
@@ -202,15 +237,17 @@ private data class WatchPartyChoice(
         fun title(item: SectionItem) = WatchPartyChoice(
             contentId = item.contentId,
             title = item.title,
-            subtitle = null,
+            season = null,
+            episode = null,
+            episodeTitle = null,
             posterUrl = item.posterUrl,
             posterThumbhash = item.posterThumbhash,
             backdropUrl = item.backdropUrl,
             backdropThumbhash = item.backdropThumbhash,
             overview = item.overview,
-            facts = listOfNotNull(
-                item.year.takeIf { it > 0 }?.toString(),
-                watchPartyRuntime(item.runtime),
+            year = item.year.takeIf { it > 0 }?.toString(),
+            runtimeMinutes = item.runtime,
+            otherFacts = listOfNotNull(
                 item.contentRating?.takeIf { it.isNotBlank() },
                 item.genres.firstOrNull(),
             ),
@@ -230,22 +267,24 @@ private data class WatchPartyChoice(
             val series = item.seriesTitle?.takeIf { it.isNotBlank() }
             val season = item.seasonNumber
             val number = item.episodeNumber
-            val code = if (season != null && number != null) "S$season · E$number" else null
             return WatchPartyChoice(
                 contentId = item.contentId,
                 title = series ?: item.title,
-                subtitle = listOfNotNull(code, item.title.takeIf { series != null }).joinToString(" · ").ifBlank { null },
+                season = season,
+                episode = number,
+                episodeTitle = item.title.takeIf { series != null },
                 posterUrl = item.posterUrl,
                 posterThumbhash = item.posterThumbhash,
                 backdropUrl = item.backdropUrl,
                 backdropThumbhash = item.backdropThumbhash,
                 overview = item.overview,
-                facts = listOfNotNull(watchPartyRuntime(item.runtime)),
+                runtimeMinutes = item.runtime,
                 seriesId = item.seriesId?.takeIf { it.isNotBlank() },
                 lobbyItem = WatchPartyItem(
                     contentId = item.contentId,
                     contentType = "episode",
                     title = item.title,
+                    // Sent to the server as the suggestion's subtitle: stays English.
                     subtitle = if (series != null && season != null && number != null) {
                         "$series · S$season:E$number"
                     } else {
@@ -259,18 +298,19 @@ private data class WatchPartyChoice(
 
         /** A series whose group next-up episode the server named. */
         fun nextUp(series: SectionItem, next: PickerNextUp): WatchPartyChoice {
+            // Sent to the server as the suggestion's title and subtitle: stays English.
             val episodeTitle = next.title.ifBlank { "Episode ${next.episodeNumber}" }
             return WatchPartyChoice(
                 contentId = next.contentId,
                 title = series.title,
-                subtitle = "S${next.seasonNumber} · E${next.episodeNumber}" +
-                    next.title.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(),
+                season = next.seasonNumber,
+                episode = next.episodeNumber,
+                episodeTitle = next.title.takeIf { it.isNotBlank() },
                 posterUrl = series.posterUrl,
                 posterThumbhash = series.posterThumbhash,
                 backdropUrl = series.backdropUrl,
                 backdropThumbhash = series.backdropThumbhash,
                 overview = null,
-                facts = emptyList(),
                 seriesId = series.contentId,
                 lobbyItem = WatchPartyItem(
                     contentId = next.contentId,
@@ -333,6 +373,7 @@ private const val MAX_HOME_SECTIONS = 4
 private fun rememberPickerHomeShelves(): androidx.compose.runtime.State<PickerHomeShelves> {
     val sections: SectionRepository = koinInject()
     val catalog: CatalogRepository = koinInject()
+    val context = LocalContext.current
     return produceState(PickerHomeShelves()) {
         suspend fun recent(type: String): List<SectionItem> =
             when (val result = catalog.browse(mediaType = type, sort = "added_at", order = "desc", limit = 24)) {
@@ -356,7 +397,7 @@ private fun rememberPickerHomeShelves(): androidx.compose.runtime.State<PickerHo
                     .filter { it.sectionType.lowercase() !in skippedHomeSectionTypes }
                     .mapNotNull { section ->
                         val items = section.items.filter { it.type == "movie" || it.type == "series" }
-                        if (items.isEmpty()) null else section.title to items
+                        if (items.isEmpty()) null else context.sectionTitle(section) to items
                     }
                     .take(MAX_HOME_SECTIONS),
                 recentMovies = movies.await(),
@@ -375,8 +416,11 @@ private data class PickerShelf(
     val progress: Map<String, Float> = emptyMap(),
 )
 
-private fun memberNames(entry: PickerEntry): String? =
-    entry.members.map { it.displayName.ifBlank { "Someone" } }.takeIf { it.isNotEmpty() }?.let(::formatWatchPartyNames)
+@Composable
+private fun memberNames(entry: PickerEntry): String? {
+    if (entry.members.isEmpty()) return null
+    return watchPartyNameList(entry.members.map { watchPartyDisplayName(it.displayName) })
+}
 
 // MARK: Shelves page
 
@@ -391,17 +435,28 @@ private fun PickerShelvesPage(
     onClose: () -> Unit,
 ) {
     val rows = state.rows
+    val togetherTitle = stringResource(CommonR.string.watchParty_picker_continueTogether)
+    val togetherCaptions = rows?.continueTogether.orEmpty().mapNotNull { entry ->
+        val caption = entry.nextUp?.let {
+            stringResource(CommonR.string.watchParty_picker_nextEpisode, LocaleFormat.codeNumber(it.seasonNumber), LocaleFormat.codeNumber(it.episodeNumber))
+        } ?: memberNames(entry)
+        caption?.let { entry.item.contentId to it }
+    }.toMap()
+    val watchlistCaptions = rows?.watchlistUnion.orEmpty()
+        .mapNotNull { entry -> memberNames(entry)?.let { entry.item.contentId to it } }
+        .toMap()
+    val resumeTitle = stringResource(CommonR.string.home_section_continueWatching)
+    val watchlistTitle = stringResource(CommonR.string.watchParty_picker_watchlists)
+    val moviesTitle = stringResource(CommonR.string.watchParty_picker_recentMovies)
+    val seriesTitle = stringResource(CommonR.string.watchParty_picker_recentSeries)
     val list = buildList {
         rows?.continueTogether?.takeIf { it.isNotEmpty() }?.let { entries ->
             add(
                 PickerShelf(
                     id = "together",
-                    title = "Continue Together",
+                    title = togetherTitle,
                     items = entries.map { it.item.toSectionItem() },
-                    captions = entries.mapNotNull { entry ->
-                        val caption = entry.nextUp?.let { "Next: S${it.seasonNumber} · E${it.episodeNumber}" } ?: memberNames(entry)
-                        caption?.let { entry.item.contentId to it }
-                    }.toMap(),
+                    captions = togetherCaptions,
                     progress = entries.mapNotNull { entry ->
                         val position = entry.members.mapNotNull { it.positionSeconds }.maxOrNull()
                         val duration = entry.members.mapNotNull { it.durationSeconds }.maxOrNull()
@@ -414,20 +469,20 @@ private fun PickerShelvesPage(
                 ),
             )
         }
-        if (shelves.resume.isNotEmpty()) add(PickerShelf("resume", "Continue Watching", shelves.resume, stills = true))
+        if (shelves.resume.isNotEmpty()) add(PickerShelf("resume", resumeTitle, shelves.resume, stills = true))
         rows?.watchlistUnion?.takeIf { it.isNotEmpty() }?.let { entries ->
             add(
                 PickerShelf(
                     id = "watchlist",
-                    title = "On Your Watchlists",
+                    title = watchlistTitle,
                     items = entries.map { it.item.toSectionItem() },
-                    captions = entries.mapNotNull { entry -> memberNames(entry)?.let { entry.item.contentId to it } }.toMap(),
+                    captions = watchlistCaptions,
                 ),
             )
         }
         shelves.discovery.forEachIndexed { index, (title, items) -> add(PickerShelf("home-$index", title, items)) }
-        if (shelves.recentMovies.isNotEmpty()) add(PickerShelf("movies", "Recently Added Movies", shelves.recentMovies))
-        if (shelves.recentSeries.isNotEmpty()) add(PickerShelf("series", "Recently Added Series", shelves.recentSeries))
+        if (shelves.recentMovies.isNotEmpty()) add(PickerShelf("movies", moviesTitle, shelves.recentMovies))
+        if (shelves.recentSeries.isNotEmpty()) add(PickerShelf("series", seriesTitle, shelves.recentSeries))
     }
     val searching = state.query.isNotBlank()
 
@@ -440,14 +495,14 @@ private fun PickerShelvesPage(
         Box(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 16.dp)) {
             WatchPartyCircleButton(
                 icon = Icons.Filled.Close,
-                contentDescription = "Close",
+                contentDescription = stringResource(CommonR.string.watchParty_picker_close),
                 onClick = onClose,
                 size = 44.dp,
                 modifier = Modifier.align(Alignment.CenterStart),
             )
         }
         Text(
-            mode.title,
+            stringResource(mode.title),
             fontSize = 30.sp,
             fontWeight = FontWeight.Bold,
             color = SiloOnSurface,
@@ -459,7 +514,7 @@ private fun PickerShelvesPage(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
         )
         state.error?.let {
-            WatchPartyBanner(it, tone = WatchPartyBannerTone.Warning, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            WatchPartyBanner(it.text(), tone = WatchPartyBannerTone.Warning, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
         }
         when {
             searching -> PickerSearchResults(state, onOpen)
@@ -469,9 +524,14 @@ private fun PickerShelvesPage(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth().padding(top = 80.dp, start = 32.dp, end = 32.dp),
             ) {
-                Text("Nothing to pick from yet", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = SiloOnSurface)
                 Text(
-                    "Search for a title, or add something to a watchlist.",
+                    stringResource(CommonR.string.watchParty_picker_emptyTitle),
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = SiloOnSurface,
+                )
+                Text(
+                    stringResource(CommonR.string.watchParty_picker_emptyBody),
                     fontSize = WatchPartyMetrics.BODY.sp,
                     color = SiloSecondaryText,
                 )
@@ -510,13 +570,22 @@ private fun PickerSearchField(query: String, onQuery: (String) -> Unit, modifier
                 Spacer(Modifier.width(8.dp))
                 Box(Modifier.weight(1f)) {
                     if (query.isEmpty()) {
-                        Text("Search movies and series", style = style.copy(color = SiloSecondaryText), maxLines = 1)
+                        Text(
+                            stringResource(CommonR.string.watchParty_picker_searchHint),
+                            style = style.copy(color = SiloSecondaryText),
+                            maxLines = 1,
+                        )
                     }
                     inner()
                 }
                 if (query.isNotEmpty()) {
                     IconButton(onClick = { onQuery("") }, modifier = Modifier.size(36.dp)) {
-                        Icon(Icons.Filled.Close, contentDescription = "Clear search", tint = SiloSecondaryText, modifier = Modifier.size(18.dp))
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = stringResource(CommonR.string.watchParty_picker_clearSearch),
+                            tint = SiloSecondaryText,
+                            modifier = Modifier.size(18.dp),
+                        )
                     }
                 }
             }
@@ -615,8 +684,17 @@ private fun PickerSearchResults(state: WatchPartyPickerViewModel.PickerState, on
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth().padding(top = 80.dp),
         ) {
-            Text("No results", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = SiloOnSurface)
-            Text("Try a different search term.", fontSize = WatchPartyMetrics.BODY.sp, color = SiloSecondaryText)
+            Text(
+                stringResource(CommonR.string.watchParty_picker_noResults),
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = SiloOnSurface,
+            )
+            Text(
+                stringResource(CommonR.string.watchParty_picker_noResultsHint),
+                fontSize = WatchPartyMetrics.BODY.sp,
+                color = SiloSecondaryText,
+            )
         }
     }
 }
@@ -662,7 +740,7 @@ private fun PickerChoicePage(
             Box(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 16.dp)) {
                 WatchPartyCircleButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(CommonR.string.common_back),
                     onClick = onBack,
                     size = 44.dp,
                     modifier = Modifier.align(Alignment.CenterStart),
@@ -681,9 +759,12 @@ private fun PickerChoicePage(
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(WatchPartyMetrics.BODY.dp)) {
                     WatchPartyHeroPoster(choice.posterUrl, choice.posterThumbhash, 120.dp, choice.spoilers.hidesPoster(spoilerPrefs))
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-                        WatchPartyEyebrow(mode.eyebrow)
+                        WatchPartyEyebrow(stringResource(mode.eyebrow))
                         WatchPartyHeroTitle(choice.title, size = WatchPartyMetrics.HERO_TITLE * 0.9f)
-                        val facts = listOfNotNull(choice.subtitle) + choice.facts
+                        val code = choice.season?.let { season -> choice.episode?.let { watchPartyEpisodeLine(season, it) } }
+                        val subtitle = listOfNotNull(code, choice.episodeTitle).joinToString(" · ").ifBlank { null }
+                        val facts = listOfNotNull(subtitle, choice.year?.toIntOrNull()?.let { LocaleFormat.integer(it, currentNumberLocale()) }, watchPartyRuntime(choice.runtimeMinutes)) +
+                            choice.otherFacts
                         if (facts.isNotEmpty()) {
                             Text(facts.joinToString(" · "), fontSize = WatchPartyMetrics.BODY.sp, color = SiloSecondaryText)
                         }
@@ -693,14 +774,14 @@ private fun PickerChoicePage(
                     Text(it, fontSize = WatchPartyMetrics.BODY.sp, color = SiloSecondaryText, maxLines = 6)
                 }
                 WatchPartyButton(
-                    text = mode.confirmLabel,
+                    text = stringResource(mode.confirmLabel),
                     icon = if (mode == WatchPartyPickMode.Suggest) Icons.Filled.Add else Icons.Filled.Check,
                     onClick = onConfirm,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 if (onSeeAllEpisodes != null) {
                     WatchPartyButton(
-                        text = "See all episodes",
+                        text = stringResource(CommonR.string.watchParty_confirm_allEpisodes),
                         icon = Icons.AutoMirrored.Filled.List,
                         kind = WatchPartyButtonKind.Secondary,
                         onClick = onSeeAllEpisodes,
@@ -710,16 +791,16 @@ private fun PickerChoicePage(
                 // Hidden when the server has no member-state read.
                 if (loadingHistory || history != null) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        WatchPartyEyebrow("Who's seen it")
+                        WatchPartyEyebrow(stringResource(CommonR.string.watchParty_whoSeen_title))
                         if (loadingHistory) {
-                            Text("Checking viewing history…", fontSize = WatchPartyMetrics.CAPTION.sp, color = SiloSecondaryText)
+                            Text(stringResource(CommonR.string.watchParty_whoSeen_checking), fontSize = WatchPartyMetrics.CAPTION.sp, color = SiloSecondaryText)
                         } else {
                             val states = history?.members.orEmpty()
                             roomMembers.forEach { member ->
                                 val watch = states.firstOrNull { it.userId == member.userId && it.profileId == member.profileId }
                                 Row {
                                     Text(
-                                        watchPartyMemberName(member),
+                                        watchPartyDisplayName(member.displayName),
                                         fontSize = WatchPartyMetrics.BODY.sp,
                                         color = SiloOnSurface,
                                         modifier = Modifier.weight(1f),
@@ -735,12 +816,9 @@ private fun PickerChoicePage(
     }
 }
 
-private fun watchHistoryLabel(state: MemberWatchState?): String {
-    state ?: return "No viewing history"
-    val label = when (state.state) {
-        "watched", "completed", "played" -> "Watched"
-        "in_progress", "inprogress" -> "In progress"
-        else -> "Not watched"
-    }
-    return if (state.onWatchlist) "$label · Watchlist" else label
-}
+@Composable
+private fun watchHistoryLabel(state: MemberWatchState?): String = watchPartyHistoryLabel(
+    watched = state?.let { it.state in setOf("watched", "completed", "played") },
+    inProgress = state?.state in setOf("in_progress", "inprogress"),
+    onWatchlist = state?.onWatchlist == true,
+)

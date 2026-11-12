@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.search
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -30,6 +31,8 @@ import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestMediaType
 import org.siloserver.silo.model.request.withoutLibraryTitles
 import org.siloserver.silo.viewmodel.RequestSearchViewModel
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 
 @Composable
 fun RequestSearchSection(
@@ -77,7 +80,7 @@ fun RequestSearchSection(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
-            text = "Available to request",
+            text = stringResource(CommonR.string.search_requests_title),
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface,
@@ -105,9 +108,9 @@ fun RequestSearchSection(
                 }
                 }
             }
-            state.isLoading -> RequestSearchFeedback("Checking requestable titles...", showProgress = true)
-            state.error != null -> RequestSearchFeedback(state.error ?: "Request search failed.")
-            state.hasSubmittedQuery -> RequestSearchFeedback("No requestable matches found.")
+            state.isLoading -> RequestSearchFeedback(stringResource(CommonR.string.search_requests_checking), showProgress = true)
+            state.error != null -> RequestSearchFeedback(state.error?.text() ?: stringResource(CommonR.string.search_requests_failed))
+            state.hasSubmittedQuery -> RequestSearchFeedback(stringResource(CommonR.string.search_requests_empty))
         }
     }
 }

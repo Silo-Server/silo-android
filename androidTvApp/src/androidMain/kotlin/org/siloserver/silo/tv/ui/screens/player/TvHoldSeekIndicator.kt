@@ -31,11 +31,14 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 
 /**
  * Floating chip shown during a hold-to-seek session. Mirrors the iOS
@@ -109,7 +112,7 @@ fun TvHoldSeekIndicator(
                     horizontalArrangement = Arrangement.spacedBy(9.dp),
                 ) {
                     Text(
-                        text = formatRate(rate),
+                        text = if (rate == 0) stringResource(CommonR.string.player_seek_paused) else formatRate(rate),
                         color = Color.White,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Black,
@@ -146,7 +149,7 @@ fun TvHoldSeekIndicator(
 
             // Hint row.
             Text(
-                text = "← → speed  ·  ◉ play  ·  ↩ cancel",
+                text = stringResource(CommonR.string.player_seek_holdHint),
                 color = Color.White.copy(alpha = 0.55f),
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
@@ -155,18 +158,18 @@ fun TvHoldSeekIndicator(
     }
 }
 
+/** The signed scan rate, such as "-4×"; a paused scan (0) shows its catalog word instead. */
 private fun formatRate(rate: Int): String {
-    if (rate == 0) return "Paused"
     val sign = if (rate < 0) "-" else ""
     return "$sign${kotlin.math.abs(rate)}×"
 }
 
 private fun formatTime(seconds: Double, durationSec: Double): String {
-    if (!seconds.isFinite() || seconds < 0) return "0:00"
+    if (!seconds.isFinite() || seconds < 0) return LocaleFormat.clock(0, 0, 0)
     val total = seconds.toInt()
     val h = total / 3600
     val m = (total % 3600) / 60
     val s = total % 60
     val showHours = h > 0 || durationSec >= 3600.0
-    return if (showHours) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    return LocaleFormat.clock(h, m, s, showHours)
 }

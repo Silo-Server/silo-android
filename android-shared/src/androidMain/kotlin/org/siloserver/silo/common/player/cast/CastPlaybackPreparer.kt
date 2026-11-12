@@ -1,5 +1,8 @@
 package org.siloserver.silo.common.player.cast
 
+import org.siloserver.silo.common.i18n.AppLocales
+import android.content.Context
+import org.siloserver.silo.common.R
 import android.util.Log
 import java.net.URLEncoder
 import java.util.concurrent.atomic.AtomicBoolean
@@ -41,6 +44,7 @@ import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.PlaybackRepository
+import org.siloserver.silo.common.i18n.LocaleFormat
 
 /**
  * Tier-2 Google Cast session preparation.
@@ -63,6 +67,8 @@ import org.siloserver.silo.repository.PlaybackRepository
  * phone's own audio sink.
  */
 class CastPlaybackPreparer(
+    /** Resolves the subtitle menu's catalog wording ([castSubtitleLabels]). */
+    private val context: Context,
     private val playbackRepository: PlaybackRepository,
     private val tokenManager: TokenManager,
     private val networkEvidenceProvider: PlaybackNetworkEvidenceProvider =
@@ -279,24 +285,26 @@ class CastPlaybackPreparer(
      * counter ("English 2") so every menu row is distinct.
      */
     private fun castSubtitleLabels(items: List<PlaybackSubtitleInventoryItemV3>): List<String> {
+        // The app's strings and digits (D64, D75), as an activity shows them.
+        val text = AppLocales.wrap(context)
         val bases = items.map { item ->
             val code = item.language?.trim()?.takeIf { it.isNotBlank() }
             val display = code?.let { c ->
                 val locale = java.util.Locale.forLanguageTag(c.replace('_', '-').lowercase())
-                locale.displayLanguage
+                locale.getDisplayLanguage(LocaleFormat.interfaceLocale())
                     .takeIf { it.isNotBlank() && !it.equals(locale.language, ignoreCase = true) }
             }
             val base = display
                 ?: code?.replaceFirstChar { it.uppercase() }
-                ?: "Subtitle"
-            if (item.forced) "$base (Forced)" else base
+                ?: text.getString(R.string.cast_subtitles_unnamed)
+            if (item.forced) text.getString(R.string.cast_subtitles_forced, base) else base
         }
         val totals = bases.groupingBy { it }.eachCount()
         val seen = mutableMapOf<String, Int>()
         return bases.map { base ->
             val n = (seen[base] ?: 0) + 1
             seen[base] = n
-            if ((totals[base] ?: 0) > 1) "$base $n" else base
+            if ((totals[base] ?: 0) > 1) text.getString(R.string.cast_subtitles_numbered, base, n) else base
         }
     }
 

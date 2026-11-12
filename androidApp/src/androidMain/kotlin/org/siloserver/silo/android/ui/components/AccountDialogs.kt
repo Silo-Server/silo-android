@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.runtime.Composable
@@ -14,9 +15,9 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import org.koin.compose.koinInject
-import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.theme.SiloDestructive
 import org.siloserver.silo.android.ui.util.formatBytes
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.downloads.DownloadMetadataStore
 import org.siloserver.silo.common.downloads.DownloadSummary
 import org.siloserver.silo.network.ServerRegistry
@@ -52,7 +53,7 @@ fun rememberDownloadSummary(serverId: String?, accountId: String?): DownloadSumm
 @Composable
 fun downloadsSentence(template: Int, summary: DownloadSummary?): String? {
     if (summary == null || summary.count <= 0) return null
-    val count = pluralStringResource(R.plurals.account_downloads_count, summary.count, summary.count)
+    val count = pluralStringResource(CommonR.plurals.account_downloads_count, summary.count, summary.count)
     return stringResource(template, count, formatBytes(summary.totalBytes))
 }
 
@@ -88,22 +89,22 @@ fun SignOutConfirmDialog(
     val server = entries.firstOrNull { it.id == targetServer }
     val account = accounts.firstOrNull { it.localAccountId == targetAccount }
     val summary = rememberDownloadSummary(targetServer, targetAccount)
-    val accountName = account?.username?.takeIf { it.isNotBlank() } ?: stringResource(R.string.account_fallback_name)
+    val accountName = account?.username?.takeIf { it.isNotBlank() } ?: stringResource(CommonR.string.account_fallbackName)
     val serverName = server?.displayName.orEmpty()
-    val downloads = downloadsSentence(R.string.account_sign_out_downloads, summary)
+    val downloads = downloadsSentence(CommonR.string.account_signOut_downloads, summary)
     val serverHasOtherAccount = accounts.any { it.serverId == targetServer && it.localAccountId != targetAccount }
     SiloDialog(
-        title = stringResource(R.string.account_sign_out_question, accountName, serverName),
+        title = stringResourceWithNames(CommonR.string.account_signOut_question, accountName, serverName),
         message = downloads,
         onDismissRequest = onDismiss,
         icon = Icons.AutoMirrored.Rounded.Logout,
         iconTint = SiloDestructive,
         actions = buildList {
-            add(SiloDialogAction(stringResource(R.string.account_sign_out_confirm), onConfirm, SiloDialogActionStyle.DestructiveQuiet))
+            add(SiloDialogAction(stringResource(CommonR.string.common_signOut), onConfirm, SiloDialogActionStyle.DestructiveQuiet))
             if (onConfirmAndRemoveServer != null && server != null && !serverHasOtherAccount) {
                 add(
                     SiloDialogAction(
-                        stringResource(R.string.account_sign_out_remove_server),
+                        stringResource(CommonR.string.account_signOut_removeServer),
                         onConfirmAndRemoveServer,
                         SiloDialogActionStyle.DestructiveQuiet,
                     ),
@@ -111,7 +112,7 @@ fun SignOutConfirmDialog(
             }
             add(
                 SiloDialogAction(
-                    stringResource(R.string.action_cancel),
+                    stringResource(CommonR.string.common_cancel),
                     onDismiss,
                     SiloDialogActionStyle.Primary,
                     focusedByDefault = true,

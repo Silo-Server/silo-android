@@ -58,14 +58,20 @@ import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
+import org.siloserver.silo.android.ui.components.LeftToRight
 import org.siloserver.silo.android.ui.util.formatClockTime
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.isRightToLeftText
 import org.siloserver.silo.common.player.rememberPlayerEndTimeLabel
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * The seek bar. Like iOS, the whole bar is the handle: it grows from 5 to
@@ -99,6 +105,35 @@ fun PlayerProgressBar(
     thumbnail: ImageBitmap? = null,
     onScrubTarget: (Double?) -> Unit = {},
     playbackSpeed: Double = 1.0,
+) {
+    // A timeline runs left to right in every language: the bar is drawn and
+    // hit-tested from the left edge, so its times sit the same way round.
+    LeftToRight {
+        ProgressBarContent(
+            position, duration, onSeek, modifier, bufferedPosition, enabled, chapters, intro, credits, recap,
+            preview, showTimes, onScrubbingChange, thumbnail, onScrubTarget, playbackSpeed,
+        )
+    }
+}
+
+@Composable
+private fun ProgressBarContent(
+    position: Double,
+    duration: Double,
+    onSeek: (Double) -> Unit,
+    modifier: Modifier,
+    bufferedPosition: Double,
+    enabled: Boolean,
+    chapters: List<VersionChapter>,
+    intro: TimeRange?,
+    credits: TimeRange?,
+    recap: TimeRange?,
+    preview: TimeRange?,
+    showTimes: Boolean,
+    onScrubbingChange: (Boolean) -> Unit,
+    thumbnail: ImageBitmap?,
+    onScrubTarget: (Double?) -> Unit,
+    playbackSpeed: Double,
 ) {
     var isSeeking by remember { mutableStateOf(false) }
     var seekPosition by remember { mutableDoubleStateOf(0.0) }
@@ -144,6 +179,9 @@ fun PlayerProgressBar(
         remainingSec = if (hasKnownDuration) duration - displayPosition else 0.0,
         speed = playbackSpeed,
     )
+    val positionDescription = stringResource(CommonR.string.player_progress_position)
+    // Formatted inside semantics, as before, rather than on every position tick.
+    val resources = LocalResources.current
 
     Column(modifier = modifier.fillMaxWidth()) {
         if (showTimes) {
@@ -159,20 +197,25 @@ fun PlayerProgressBar(
                     modifier = Modifier.weight(1f),
                 )
                 // Tap to switch between time left and total length (iOS).
+                val time = if (showTotal && hasKnownDuration) {
+                    formatClockTime(duration)
+                } else {
+                    remainingTimeLabel(displayPosition, duration)
+                }
+                // Beside a right-to-left "Ends" label the "−" would move to
+                // the far end of the time, so the time keeps its own run.
+                val isolatedTime = if (endTimeLabel != null && isRightToLeftText()) {
+                    "\u2066$time\u2069" // i18n-ignore: isolate marks
+                } else {
+                    time
+                }
                 Text(
-                    text = listOfNotNull(
-                        if (showTotal && hasKnownDuration) {
-                            formatClockTime(duration)
-                        } else {
-                            remainingTimeLabel(displayPosition, duration)
-                        },
-                        endTimeLabel,
-                    ).joinToString(" · "),
+                    text = listOfNotNull(isolatedTime, endTimeLabel).joinToString(" · "),
                     style = PlayerType.Time.copy(color = PlayerChrome.Graphite),
                     modifier = Modifier.clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                        onClickLabel = "Switch between time left and total length",
+                        onClickLabel = stringResource(CommonR.string.player_progress_toggleTime),
                     ) { showTotal = !showTotal },
                 )
             }
@@ -184,8 +227,12 @@ fun PlayerProgressBar(
                 .height(36.dp)
                 .onSizeChanged { barWidthPx = it.width.toFloat() }
                 .semantics {
-                    contentDescription = "Playback position"
-                    stateDescription = "${formatClockTime(displayPosition)} of ${formatClockTime(duration)}"
+                    contentDescription = positionDescription
+                    stateDescription = resources.getString(
+                        CommonR.string.player_progress_positionState,
+                        formatClockTime(displayPosition),
+                        formatClockTime(duration),
+                    )
                     if (hasKnownDuration) {
                         progressBarRangeInfo = ProgressBarRangeInfo(
                             current = displayPosition.toFloat(),
@@ -430,7 +477,10 @@ internal fun remainingTimeLabel(position: Double, duration: Double): String =
 
 /** iOS `chapterTitle(at:)`: the last chapter starting at or before [seconds],
  *  falling back to "Chapter N" when the chapter is untitled. */
+@Composable
 internal fun chapterTitleAt(chapters: List<VersionChapter>, seconds: Double): String? {
     val chapter = chapters.lastOrNull { it.startSeconds <= seconds } ?: return null
-    return chapter.title.ifBlank { "Chapter ${chapter.index + 1}" }
+    return chapter.title.ifBlank {
+        stringResource(CommonR.string.options_chapterNumbered, LocaleFormat.integer(chapter.index + 1))
+    }
 }

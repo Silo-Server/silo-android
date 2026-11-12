@@ -37,9 +37,10 @@
     <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
     <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
 
-    <!-- supportsRtl="false": the TV UI is English only, so it stays left to right in
-         right-to-left system languages, as on tvOS. Text still follows its own direction
-         (TextDirection.Content in the TV typography). Revisit when RTL translations ship. -->
+    <!-- supportsRtl="false": the TV layout stays left to right in right-to-left languages,
+         as on tvOS, until the TV mirroring pass. Text still follows its own direction
+         (TextDirection.Content in the TV typography), and title isolates follow the
+         interface language, not the layout (isRightToLeftText). -->
     <application
         android:name=".SiloTvApplication"
         android:allowBackup="false"
@@ -57,7 +58,7 @@
             android:name=".MainTvActivity"
             android:exported="true"
             android:banner="@drawable/tv_banner"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|locale|layoutDirection"
             android:label="@string/app_name"
             android:launchMode="singleTask"
             android:supportsPictureInPicture="false"

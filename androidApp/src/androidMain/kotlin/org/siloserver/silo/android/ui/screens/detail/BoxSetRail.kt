@@ -10,6 +10,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -18,6 +19,7 @@ import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.CardStyle
 import org.siloserver.silo.android.ui.components.ExploreAllCard
 import org.siloserver.silo.android.ui.components.MediaCard
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogBoxSet
@@ -121,7 +123,7 @@ private fun BoxSetRailCard(item: BrowseItem, width: Dp, isCurrent: Boolean, onCl
         overlay = OverlayDataExtractor.fromBrowseItem(item),
         sharedContentId = item.contentId.takeUnless { isCurrent },
         // Bottom corner: the top corners hold the quality overlays and watched check.
-        cornerLabel = "THIS FILM".takeIf { isCurrent },
+        cornerLabel = stringResource(CommonR.string.boxSets_thisFilm).takeIf { isCurrent },
         highlighted = isCurrent,
     )
 }

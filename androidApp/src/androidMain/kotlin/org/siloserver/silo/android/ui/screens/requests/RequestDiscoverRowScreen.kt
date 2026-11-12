@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.requests
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,6 +25,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
@@ -33,6 +35,7 @@ import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.components.skeleton
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.viewmodel.RequestDiscoverRowViewModel
 
@@ -68,14 +71,14 @@ fun RequestDiscoverRowScreen(
         when {
             state.notFound -> item(key = "gone") {
                 EmptyStateView(
-                    title = "This row is gone",
-                    subtitle = "The server's Discover page no longer shows it",
+                    title = stringResource(CommonR.string.requests_discoverRow_goneTitle),
+                    subtitle = stringResource(CommonR.string.requests_discoverRow_goneBody),
                     icon = Icons.Outlined.Search,
                     modifier = Modifier.padding(top = 80.dp),
                 )
             }
             state.error != null && state.results.isEmpty() -> item(key = "error") {
-                ErrorView(message = state.error.orEmpty(), onRetry = viewModel::loadMore, modifier = Modifier.padding(top = 60.dp))
+                ErrorView(message = state.error?.text().orEmpty(), onRetry = viewModel::loadMore, modifier = Modifier.padding(top = 60.dp))
             }
             state.isLoading && state.results.isEmpty() -> item(key = "loading") {
                 val progress = rememberShimmerProgress()
@@ -88,8 +91,8 @@ fun RequestDiscoverRowScreen(
             }
             state.results.isEmpty() -> item(key = "empty") {
                 EmptyStateView(
-                    title = "Nothing here yet",
-                    subtitle = "This row has no titles right now",
+                    title = stringResource(CommonR.string.requests_discoverRow_emptyTitle),
+                    subtitle = stringResource(CommonR.string.requests_discoverRow_emptyBody),
                     icon = Icons.Outlined.Search,
                     modifier = Modifier.padding(top = 80.dp),
                 )
@@ -110,7 +113,7 @@ fun RequestDiscoverRowScreen(
                     item(key = "more") {
                         Box(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
                             if (state.moreFailed) {
-                                TextButton(onClick = viewModel::loadMore) { Text("Couldn't load more. Try again") }
+                                TextButton(onClick = viewModel::loadMore) { Text(stringResource(CommonR.string.requests_discoverRow_loadMoreFailed)) }
                             } else {
                                 // Composed once scrolled into view: read the next page.
                                 LaunchedEffect(state.results.size) { viewModel.loadMore() }

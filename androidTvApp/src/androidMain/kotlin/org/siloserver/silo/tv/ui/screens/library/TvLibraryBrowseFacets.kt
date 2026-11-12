@@ -1,7 +1,11 @@
 package org.siloserver.silo.tv.ui.screens.library
 
+import android.content.res.Resources
+import androidx.annotation.StringRes
 import org.siloserver.silo.catalog.filter.CatalogFacet
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.catalog.filter.CatalogFilterState
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.model.catalog.CatalogQueryGroup
 import org.siloserver.silo.model.catalog.CatalogQueryRule
@@ -11,12 +15,12 @@ import org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType
  * Personalized watch-status facet, mirroring tvOS `WatchStatusFilter`. Each
  * lowers to one boolean server rule (see [TvCatalogFacetSelection.toQueryGroups]).
  */
-enum class TvWatchStatusFilter(val wireValue: String, val label: String) {
-    Unwatched("unwatched", "Unwatched"),
-    InProgress("in_progress", "In Progress"),
-    Watched("watched", "Watched"),
-    Favorited("favorited", "Favorited"),
-    Watchlist("watchlist", "Watchlist"),
+enum class TvWatchStatusFilter(val wireValue: String, @StringRes val labelRes: Int) {
+    Unwatched("unwatched", CommonR.string.filters_value_unwatched),
+    InProgress("in_progress", CommonR.string.filters_value_inProgress),
+    Watched("watched", CommonR.string.filters_value_watched),
+    Favorited("favorited", CommonR.string.filters_value_favorited),
+    Watchlist("watchlist", CommonR.string.filters_value_watchlist),
 }
 
 /**
@@ -25,22 +29,22 @@ enum class TvWatchStatusFilter(val wireValue: String, val label: String) {
  * `/catalog/filters`; decade / dynamic range / watch status are fixed
  * client-side vocabularies.
  */
-enum class TvCatalogFacet(val title: String) {
-    Genre("Genre"),
-    Decade("Decade"),
-    WatchStatus("Watch Status"),
-    ContentRating("Content Rating"),
-    Resolution("Resolution"),
-    DynamicRange("Dynamic Range"),
-    Studio("Studio"),
-    Network("Network"),
-    Country("Country"),
-    AudioLanguage("Audio Language"),
-    SubtitleLanguage("Subtitle Language"),
-    OriginalLanguage("Original Language"),
-    Author("Author"),
-    Narrator("Narrator"),
-    SeriesName("Series");
+enum class TvCatalogFacet(@StringRes val titleRes: Int) {
+    Genre(CommonR.string.filters_facet_genre),
+    Decade(CommonR.string.filters_facet_decade),
+    WatchStatus(CommonR.string.filters_facet_watchStatus),
+    ContentRating(CommonR.string.filters_facet_contentRating),
+    Resolution(CommonR.string.filters_facet_resolution),
+    DynamicRange(CommonR.string.filters_facet_dynamicRange),
+    Studio(CommonR.string.filters_facet_studio),
+    Network(CommonR.string.filters_facet_network),
+    Country(CommonR.string.filters_facet_country),
+    AudioLanguage(CommonR.string.filters_facet_audioLanguage),
+    SubtitleLanguage(CommonR.string.filters_facet_subtitleLanguage),
+    OriginalLanguage(CommonR.string.filters_facet_originalLanguage),
+    Author(CommonR.string.filters_facet_author),
+    Narrator(CommonR.string.filters_facet_narrator),
+    SeriesName(CommonR.string.filters_facet_series);
 
     companion object {
         /** Facets offered for a library media type, in tvOS display order. */
@@ -62,11 +66,12 @@ enum class TvCatalogFacet(val title: String) {
     /**
      * (value, label) options for this facet — fixed vocab for derived facets,
      * server vocab otherwise. Facets whose list resolves empty are hidden.
+     * [resources] supplies the fixed-vocabulary labels.
      */
-    fun optionPairs(options: CatalogFiltersResponse?): List<Pair<String, String>> = when (this) {
-        Decade -> DecadeLadder.map { it.toString() to "${it}s" }
+    fun optionPairs(options: CatalogFiltersResponse?, resources: Resources): List<Pair<String, String>> = when (this) {
+        Decade -> DecadeLadder.map { it.toString() to resources.getString(CommonR.string.filters_decade, LocaleFormat.integer(it)) }
         DynamicRange -> listOf("hdr" to "HDR", "dolby_vision" to "Dolby Vision")
-        WatchStatus -> TvWatchStatusFilter.entries.map { it.wireValue to it.label }
+        WatchStatus -> TvWatchStatusFilter.entries.map { it.wireValue to resources.getString(it.labelRes) }
         Genre -> options?.genres.orEmpty().map { it to it }
         ContentRating -> options?.contentRatings.orEmpty().map { it to it }
         Resolution -> options?.resolutions.orEmpty().map { it to it }

@@ -43,8 +43,12 @@ class SettingsV2Api(
 
     // ---- reads ----
 
-    suspend fun overlayConfig(): ApiResult<OverlayConfigResponse> = read("/api/v2/settings/overlay-config") { body, _ ->
-        SiloJson.decodeFromJsonElement(OverlayConfigResponse.serializer(), body)
+    // Image urls are server-relative (`/api/v2/overlay-images/{ref}`); resolve
+    // them against the server that answered, as artwork is, so cards load
+    // them through the image loader without consulting the active server.
+    suspend fun overlayConfig(): ApiResult<OverlayConfigResponse> = read("/api/v2/settings/overlay-config") { body, scope ->
+        val config = SiloJson.decodeFromJsonElement(OverlayConfigResponse.serializer(), body)
+        config.copy(images = config.images.map { it.copy(url = resolveArtworkUrl(it.url, scope.serverUrl)) })
     }
 
     suspend fun effectiveValues(keys: List<String>, libraries: List<Int>, series: List<String>, expected: AuthScopeSnapshot? = null): ApiResult<EffectiveSettingValuesResponse> =

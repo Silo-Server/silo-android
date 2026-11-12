@@ -23,6 +23,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CalendarViewModelTest {
@@ -173,14 +175,14 @@ class CalendarViewModelTest {
     fun `error surfaces the server message with fallback for blank messages`() = runTest(dispatcher) {
         val api = FakeCalendarApi(ApiResult.Error(code = 500, error = "internal", message = ""))
 
-        assertEquals("Failed to load calendar", viewModel(api).uiState.value.error)
+        assertEquals(UiText.Key(SharedString.CalendarLoadFailed), viewModel(api).uiState.value.error)
     }
 
     @Test
     fun `network failure surfaces the standard network copy`() = runTest(dispatcher) {
         val api = FakeCalendarApi(ApiResult.NetworkError(IllegalStateException("offline")))
 
-        assertEquals("Network error. Check your connection.", viewModel(api).uiState.value.error)
+        assertEquals(UiText.Key(SharedString.NetworkError), viewModel(api).uiState.value.error)
     }
 
     /**

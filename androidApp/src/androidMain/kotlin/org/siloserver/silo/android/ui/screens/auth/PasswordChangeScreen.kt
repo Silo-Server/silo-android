@@ -14,6 +14,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -31,6 +32,8 @@ import org.siloserver.silo.android.ui.components.marquee.MarqueeHeadline
 import org.siloserver.silo.android.ui.components.marquee.MarqueeSeparator
 import org.siloserver.silo.android.ui.components.marquee.MarqueeStage
 import org.siloserver.silo.android.ui.components.marquee.MarqueeTextField
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeScene
 import org.siloserver.silo.common.ui.marquee.MarqueeScrimStyle
@@ -76,30 +79,30 @@ fun PasswordChangeScreen(
     MarqueeStage(scrim = MarqueeScrimStyle.BottomDeep, frostStart = 0.40f) {
         when (val phase = state.phase) {
             is PasswordChangePhase.RefreshFailed -> Outcome(
-                title = "Password changed",
-                lead = "Your new password is saved, but signing you in didn't finish.",
-                action = if (phase.retrying) "Trying again…" else "Try again",
+                title = stringResource(CommonR.string.signIn_passwordChange_changedTitle),
+                lead = stringResource(CommonR.string.signIn_passwordChange_changedLead),
+                action = stringResource(if (phase.retrying) CommonR.string.signIn_passwordChange_tryingAgain else CommonR.string.common_tryAgain),
                 busy = phase.retrying,
                 onAction = viewModel::retryRefresh,
                 onSignOut = onSignOut,
             )
             is PasswordChangePhase.Unconfirmed -> Outcome(
-                title = "Password not confirmed",
-                lead = "Silo couldn't check whether your new password was saved. Try again in a moment.",
-                action = if (phase.checking) "Checking…" else "Try again",
+                title = stringResource(CommonR.string.signIn_passwordChange_unconfirmedTitle),
+                lead = stringResource(CommonR.string.signIn_passwordChange_unconfirmedLead),
+                action = stringResource(if (phase.checking) CommonR.string.signIn_passwordChange_checking else CommonR.string.common_tryAgain),
                 busy = phase.checking,
                 onAction = viewModel::confirmChange,
                 onSignOut = onSignOut,
             )
             PasswordChangePhase.Editing, PasswordChangePhase.Saving -> {
-                MarqueeHeadline(title = "Choose a new password", lead = state.lead)
+                MarqueeHeadline(title = stringResource(CommonR.string.signIn_passwordChange_title), lead = state.lead.text())
                 Column(Modifier.fillMaxWidth().padding(top = 24.dp).animateContentSize()) {
                     MarqueeFieldGroup(isError = state.error != null, modifier = Modifier.marqueeShake(state.errorCount)) {
                         MarqueeTextField(
                             value = state.currentPassword,
                             onValueChange = viewModel::onCurrentPasswordChanged,
                             icon = Icons.Outlined.Key,
-                            placeholder = "Temporary password",
+                            placeholder = stringResource(CommonR.string.signIn_passwordChange_temporary),
                             keyboardType = KeyboardType.Password,
                             isSecure = true,
                             enabled = !state.isBusy,
@@ -109,7 +112,7 @@ fun PasswordChangeScreen(
                             value = state.newPassword,
                             onValueChange = viewModel::onNewPasswordChanged,
                             icon = Icons.Outlined.Lock,
-                            placeholder = "New password",
+                            placeholder = stringResource(CommonR.string.signIn_passwordChange_new),
                             keyboardType = KeyboardType.Password,
                             isSecure = true,
                             enabled = !state.isBusy,
@@ -119,7 +122,7 @@ fun PasswordChangeScreen(
                             value = state.confirmation,
                             onValueChange = viewModel::onConfirmationChanged,
                             icon = Icons.Outlined.Lock,
-                            placeholder = "Confirm new password",
+                            placeholder = stringResource(CommonR.string.signIn_passwordChange_confirm),
                             keyboardType = KeyboardType.Password,
                             isSecure = true,
                             enabled = !state.isBusy,
@@ -128,14 +131,14 @@ fun PasswordChangeScreen(
                         )
                     }
                     Text(
-                        state.requirementsHint,
+                        state.requirementsHint.text(),
                         color = MarqueeColors.InkTertiary,
                         fontSize = 13.sp,
                         modifier = Modifier.padding(top = 10.dp, start = 4.dp),
                     )
-                    state.error?.let { MarqueeErrorText(it, Modifier.padding(top = 10.dp, start = 4.dp).then(announced)) }
+                    state.error?.let { MarqueeErrorText(it.text.text(), Modifier.padding(top = 10.dp, start = 4.dp).then(announced)) }
                     MarqueeButton(
-                        text = if (state.isBusy) "Saving…" else "Save password",
+                        text = stringResource(if (state.isBusy) CommonR.string.signIn_passwordChange_saving else CommonR.string.signIn_passwordChange_save),
                         onClick = save,
                         isLoading = state.isBusy,
                         enabled = !state.isBusy,
@@ -168,7 +171,7 @@ private fun Outcome(
 @Composable
 private fun SignOutButton(enabled: Boolean, onSignOut: () -> Unit) {
     MarqueeButton(
-        text = "Sign out",
+        text = stringResource(CommonR.string.common_signOut),
         onClick = onSignOut,
         kind = MarqueeButtonKind.Plain,
         enabled = enabled,

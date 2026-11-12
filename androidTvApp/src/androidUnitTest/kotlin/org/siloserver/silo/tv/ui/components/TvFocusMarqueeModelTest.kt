@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.components
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import java.io.File
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.model.catalog.DisplayRating
@@ -7,12 +9,19 @@ import org.siloserver.silo.model.catalog.OverlaySummary
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 class TvFocusMarqueeModelTest {
+    private val resources = ApplicationProvider.getApplicationContext<Application>().resources
+
     @Test
     fun anEpisodeHeroUsesItsCardsSeriesBackdropEvenWhenStillsAreHidden() {
         val episode = SectionItem(
@@ -219,7 +228,7 @@ class TvFocusMarqueeModelTest {
         assertEquals(listOf("TV-MA"), content.badges)
         assertEquals(
             listOf(TvHeroFactToken.TextToken("S01E03"), TvHeroFactToken.TextToken("Long, Long Time", truncates = true)),
-            content.metaParts,
+            content.metaParts.map { it.inEnglish() },
         )
         assertEquals("1080P · EAC3", content.specLine)
     }
@@ -370,9 +379,17 @@ class TvFocusMarqueeModelTest {
         assertEquals(listOf("1h 56m"), content.metaText())
     }
 
+    private fun TvHeroFactToken.ResToken.englishText(): String = resources.getString(id, *formatArgs(java.util.Locale.US))
+
+    /** A catalog-string token as the plain text token it shows as, in English. */
+    private fun TvHeroFactToken.inEnglish(): TvHeroFactToken =
+        if (this is TvHeroFactToken.ResToken) TvHeroFactToken.TextToken(englishText()) else this
+
     private fun TvMarqueeContent.metaText(): List<String> = metaParts.map { token ->
         when (token) {
             is TvHeroFactToken.TextToken -> token.value
+            is TvHeroFactToken.ResToken -> token.englishText()
+            is TvHeroFactToken.NumberToken -> token.value.value.toString()
             is TvHeroFactToken.ExternalRating -> "${token.rating.name} ${token.rating.display}"
             is TvHeroFactToken.Rating -> token.value
             is TvHeroFactToken.Chip -> token.value

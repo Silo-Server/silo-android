@@ -60,6 +60,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalDensity
@@ -70,6 +71,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -92,6 +94,13 @@ import org.siloserver.silo.tv.ui.theme.InterFamily
 import org.siloserver.silo.tv.ui.theme.CardOutline
 import org.siloserver.silo.tv.ui.theme.cardFocusedScale
 import org.siloserver.silo.tv.ui.theme.cardScaled
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.localizedResources
+import androidx.compose.ui.platform.LocalConfiguration
+import java.util.Locale
+import org.siloserver.silo.common.i18n.isRightToLeftText
 
 /** Includes the still, the two-line caption, and vertical rail padding from the first frame. */
 @Composable
@@ -413,7 +422,9 @@ private fun TvEpisodeBoundaryPlaceholder(failed: Boolean) {
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = if (failed) "Press again to retry" else "Loading episodes…",
+                text = stringResource(
+                    if (failed) CommonR.string.detail_episodes_pressToRetry else CommonR.string.detail_episodes_loading,
+                ),
                 fontSize = 14.sp,
                 color = SiloSecondaryText,
             )
@@ -568,14 +579,20 @@ private fun TvDetailEpisodeCard(
         // episode is marked by its still's border, as on tvOS. The card
         // recomposes on every frame of its focus animation, so the text is built
         // once per episode.
-        val title = remember(episode) {
-            EpisodeCardCaption.title(episode.copy(title = episode.title?.trim()?.let(::bidiIsolated)))
+        val resources = localizedResources()
+        val configuration = LocalConfiguration.current
+        val dateLocale = currentFormatLocale()
+        // A right-to-left interface isolates the title as a catalog placeholder (D28).
+        val rtl = isRightToLeftText()
+        val title = remember(episode, configuration) {
+            val episodeForCaption = if (rtl) episode else episode.copy(title = episode.title?.trim()?.let { bidiIsolated(it, false) })
+            EpisodeCardCaption.title(episodeForCaption).text(resources)
         }
-        val metadata = remember(episode) {
+        val metadata = remember(episode, configuration, dateLocale) {
             EpisodeCardCaption.metadata(
-                airDate = abbreviatedEpisodeDate(episode.airDate),
+                airDate = abbreviatedEpisodeDate(episode.airDate, dateLocale),
                 runtimeMinutes = episode.runtime,
-            )
+            )?.text(resources)
         }
         Column(verticalArrangement = Arrangement.spacedBy(if (usesSeriesGeometry) SeriesCaptionLineGap else 4.dp)) {
             Text(
@@ -635,6 +652,7 @@ private val SeriesCaptionTitleStyle = TextStyle(
     lineHeight = 14.sp,
     fontWeight = FontWeight.SemiBold,
     textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
 )
 private val SeriesCaptionMetadataStyle = TextStyle(
     fontFamily = InterFamily,
@@ -648,6 +666,7 @@ private val CaptionTitleStyle = TextStyle(
     lineHeight = 22.sp,
     fontWeight = FontWeight.SemiBold,
     textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
 )
 private val CaptionMetadataStyle = TextStyle(
     fontFamily = InterFamily,
@@ -661,11 +680,12 @@ private val CaptionOverviewStyle = TextStyle(
     lineHeight = 20.sp,
     fontWeight = FontWeight.Normal,
     textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
 )
 
 // Shared with the hero facts row (tvOS parity), so the card dates agree with it.
-private fun abbreviatedEpisodeDate(raw: String?): String? =
-    TvDetailMetadata.abbreviatedDate(raw)
+private fun abbreviatedEpisodeDate(raw: String?, locale: Locale): String? =
+    TvDetailMetadata.abbreviatedDate(raw, locale = locale)
 
 private fun EpisodeListItem.progressFraction(): Float? {
     val user = userData ?: return null

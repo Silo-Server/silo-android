@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.requests
 
+import org.siloserver.silo.common.i18n.text
+import androidx.annotation.PluralsRes
 import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +23,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.koin.compose.koinInject
@@ -31,6 +35,8 @@ import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.components.skeleton
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.requests.RequestRouter
 import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.model.request.RequestMediaResult
@@ -56,7 +62,7 @@ fun RequestsScreen(
     val router = rememberRequestRouter(koinInject(), onLibraryItemClick, onRequestDetailClick)
 
     RequestsLargeTitlePage(
-        title = "Requests",
+        title = stringResource(CommonR.string.requests_title),
         onBackClick = onBackClick,
         isRefreshing = state.isRefreshing,
         onRefresh = viewModel::refresh,
@@ -71,19 +77,19 @@ fun RequestsScreen(
         when {
             !state.isShowingDiscover -> searchResults(state, router::openResult)
             state.error != null -> item(key = "error") {
-                ErrorView(message = state.error.orEmpty(), onRetry = viewModel::load, modifier = Modifier.padding(top = 60.dp))
+                ErrorView(message = state.error?.text().orEmpty(), onRetry = viewModel::load, modifier = Modifier.padding(top = 60.dp))
             }
             state.isLoading -> item(key = "loading") {
                 val progress = rememberShimmerProgress()
                 Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
-                    RequestRailSkeleton(progress, title = "Your requests")
+                    RequestRailSkeleton(progress, title = stringResource(CommonR.string.requests_yourRequests))
                     RequestRailSkeleton(progress)
                 }
             }
             state.myRequests.isEmpty() && state.sections.isEmpty() -> item(key = "empty") {
                 EmptyStateView(
-                    title = "Nothing here yet",
-                    subtitle = "Search for a movie or series to request it",
+                    title = stringResource(CommonR.string.requests_empty),
+                    subtitle = stringResource(CommonR.string.requests_hub_emptyBody),
                     icon = Icons.Outlined.AutoAwesome,
                     modifier = Modifier.padding(top = 80.dp),
                 )
@@ -108,7 +114,11 @@ private fun LazyListScope.discover(
     if (state.myRequests.isNotEmpty()) {
         item(key = "mine", contentType = "rail") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                RequestsSectionHeader(title = "Your requests", trailing = "See all", onTrailingClick = onMyRequestsClick)
+                RequestsSectionHeader(
+                    title = stringResource(CommonR.string.requests_yourRequests),
+                    trailing = stringResource(CommonR.string.requests_seeAll),
+                    onTrailingClick = onMyRequestsClick,
+                )
                 RequestCardRail(items = state.myRequests, key = { it.id }) { record ->
                     RequestRecordCard(record = record, onClick = { router.openRecord(record) })
                 }
@@ -125,8 +135,8 @@ private fun LazyListScope.discover(
                     (section.totalPages > 1 || section.totalResults > section.results.size)
                 RequestsSectionHeader(
                     title = section.title,
-                    label = if (index == 0) "Discover" else null,
-                    trailing = if (browsable) "See all" else null,
+                    label = if (index == 0) stringResource(CommonR.string.requests_hub_discover) else null,
+                    trailing = if (browsable) stringResource(CommonR.string.requests_seeAll) else null,
                     onTrailingClick = if (browsable) ({ onDiscoverRowClick(section.key, section.title) }) else null,
                 )
                 RequestCardRail(items = section.results, key = { "${it.mediaType}:${it.tmdbId}" }) { result ->
@@ -137,19 +147,31 @@ private fun LazyListScope.discover(
     }
 }
 
+@Composable
 private fun summaryTitle(state: RequestsUiState): String {
     val count = state.inProgressCount
-    return when (count) {
-        0 -> "Your requests need you"
-        1 -> "1 request in progress"
-        else -> "$count requests in progress"
+    return if (count == 0) {
+        stringResource(CommonR.string.requests_summary_needYouTitle)
+    } else {
+        requestCount(CommonR.plurals.requests_summary_inProgress, count)
     }
 }
 
+/** A plural whose count can pass 999: the count also goes in as text, so every language groups it alike. */
+@Composable
+private fun requestCount(@PluralsRes id: Int, count: Int): String = pluralStringResource(id, count, count, LocaleFormat.integer(count))
+
+@Composable
 private fun summaryParts(state: RequestsUiState): List<Pair<RequestStatusTint, String>> = buildList {
-    if (state.onTheWayCount > 0) add(RequestStatusTint.Sky to "${state.onTheWayCount} on the way")
-    if (state.pendingCount > 0) add(RequestStatusTint.Amber to "${state.pendingCount} pending")
-    if (state.needsAttentionCount > 0) add(RequestStatusTint.Rose to "${state.needsAttentionCount} need you")
+    if (state.onTheWayCount > 0) {
+        add(RequestStatusTint.Sky to requestCount(CommonR.plurals.requests_summary_onTheWay, state.onTheWayCount))
+    }
+    if (state.pendingCount > 0) {
+        add(RequestStatusTint.Amber to requestCount(CommonR.plurals.requests_summary_pending, state.pendingCount))
+    }
+    if (state.needsAttentionCount > 0) {
+        add(RequestStatusTint.Rose to requestCount(CommonR.plurals.requests_summary_needYou, state.needsAttentionCount))
+    }
 }
 
 /** Library search's grid: adaptive columns from the card presentation, placeholders in the same cells while searching. */
@@ -170,8 +192,8 @@ private fun LazyListScope.searchResults(state: RequestsUiState, onOpen: (Request
         }
         state.hasSearched && state.searchResults.isEmpty() -> item(key = "search-empty") {
             EmptyStateView(
-                title = "No matches",
-                subtitle = "Nothing on TMDB matched that search",
+                title = stringResource(CommonR.string.requests_search_emptyTitle),
+                subtitle = stringResource(CommonR.string.requests_search_emptyBody),
                 icon = Icons.Outlined.Search,
                 modifier = Modifier.padding(top = 80.dp),
             )
@@ -179,7 +201,7 @@ private fun LazyListScope.searchResults(state: RequestsUiState, onOpen: (Request
         else -> {
             item(key = "search-count") {
                 Text(
-                    text = "${state.searchTotal} result${if (state.searchTotal == 1) "" else "s"}",
+                    text = requestCount(CommonR.plurals.requests_search_resultCount, state.searchTotal),
                     fontSize = 12.sp,
                     color = SiloSecondaryText,
                     modifier = Modifier.padding(horizontal = 16.dp),

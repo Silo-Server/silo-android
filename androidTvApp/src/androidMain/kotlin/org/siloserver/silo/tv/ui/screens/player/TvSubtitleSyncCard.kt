@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.player.titleText
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -92,8 +94,8 @@ private fun TvSubtitleSyncCardContent(notice: SubtitleSyncNotice) {
                     Icon(Icons.Outlined.Warning, contentDescription = null, tint = SyncWarningColor, modifier = iconModifier)
             }
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(text = notice.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                notice.detail?.let { Text(text = it, color = Color.White.copy(alpha = 0.72f), fontSize = 15.sp) }
+                Text(text = notice.titleText(), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                notice.detail?.let { Text(text = it.text(), color = Color.White.copy(alpha = 0.72f), fontSize = 15.sp) }
                 val percent = notice.percent
                 if (running && percent != null) {
                     TvSyncProgressBar(percent = percent, modifier = Modifier.padding(top = 6.dp))
@@ -119,6 +121,6 @@ internal fun TvSyncProgressBar(percent: Int, modifier: Modifier = Modifier) {
             strokeCap = StrokeCap.Round,
             modifier = Modifier.weight(1f),
         )
-        Text(text = "$percent%", color = Color.White.copy(alpha = 0.62f), fontSize = 14.sp)
+        Text(text = "$percent%", color = Color.White.copy(alpha = 0.62f), fontSize = 14.sp) // i18n-ignore
     }
 }

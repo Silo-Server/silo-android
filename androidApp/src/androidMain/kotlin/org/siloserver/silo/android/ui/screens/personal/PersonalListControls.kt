@@ -10,6 +10,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.activity.compose.LocalActivity
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelStoreOwner
@@ -20,8 +22,10 @@ import org.siloserver.silo.android.ui.components.SortFilterControlsRow
 import org.siloserver.silo.android.ui.components.SortMenuOption
 import org.siloserver.silo.android.ui.screens.browse.FilterSheet
 import org.siloserver.silo.catalog.filter.BrowseFacetMediaType
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.viewmodel.PersonalListQuery
+import org.siloserver.silo.common.R as CommonR
 
 /** `/catalog?source=` values the saved lists fetch through. */
 object PersonalListSource {
@@ -80,13 +84,14 @@ fun PersonalListControlsRow(
 
     SortFilterControlsRow(
         modifier = modifier,
-        sortLabel = state.sort.label,
+        sortLabel = stringResource(state.sort.label),
         sortActive = state.sort != PersonalListSort.ListOrder,
         sortOptions = PersonalListSort.entries.mapIndexed { index, sort ->
+            val label = stringResource(sort.label)
             SortMenuOption(
                 id = sort.name,
-                label = sort.label,
-                selectedLabel = if (sort.hasDirection) "${sort.label}  ·  ${sort.directionLabel(state.order)}" else sort.label,
+                label = label,
+                selectedLabel = if (sort.hasDirection) "$label  ·  ${stringResource(sort.directionLabel(state.order))}" else label,
                 flipsOnReselect = sort.hasDirection,
                 dividerAbove = index == 1,
             )
@@ -100,7 +105,7 @@ fun PersonalListControlsRow(
         trailing = {
             if (total != null && total > 0) {
                 Text(
-                    text = if (total == 1) "1 title" else "$total titles",
+                    text = pluralStringResource(CommonR.plurals.personal_titleCount, total, total, LocaleFormat.integer(total)),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

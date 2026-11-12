@@ -51,6 +51,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil3.imageLoader
 import coil3.request.ImageRequest
@@ -75,6 +76,7 @@ import org.siloserver.silo.android.ui.components.MediaRowSkeleton
 import org.siloserver.silo.android.ui.components.ProfileMenu
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.diagnostics.DiagnosticsHomeContentState
 import org.siloserver.silo.common.diagnostics.DiagnosticsHomeLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsHomeScrollRegion
@@ -94,6 +96,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.i18n.text
 
 private data class SeriesWarmTarget(
     val seriesId: String,
@@ -332,19 +335,19 @@ fun HomeScreen(
         when {
             state.isLoading && regularSections.isEmpty() -> HomeLoadingSkeleton()
             state.error != null && regularSections.isEmpty() -> ErrorView(
-                message = state.error ?: "Something went wrong",
+                message = state.error?.text() ?: stringResource(CommonR.string.status_errorGeneric),
                 onRetry = { viewModel.loadSections() },
             )
             regularSections.isEmpty() -> {
                 if (populatedServerSections.isNotEmpty()) {
                     EmptyStateView(
-                        title = "Home sections are hidden",
-                        subtitle = "Choose which rows appear in Settings → Interface → Home Sections.",
+                        title = stringResource(CommonR.string.home_hiddenSections),
+                        subtitle = stringResource(CommonR.string.home_hiddenSectionsBody),
                     )
                 } else {
                     EmptyStateView(
-                        title = "Nothing to watch yet",
-                        subtitle = "Add media to your libraries or start watching to see it here.",
+                        title = stringResource(CommonR.string.home_empty),
+                        subtitle = stringResource(CommonR.string.home_emptyBody),
                     )
                 }
             }

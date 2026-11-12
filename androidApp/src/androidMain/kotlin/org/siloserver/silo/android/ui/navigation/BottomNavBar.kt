@@ -16,6 +16,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -42,7 +45,8 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
@@ -54,13 +58,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import androidx.navigation.NavOptionsBuilder
+import androidx.annotation.StringRes
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.android.ui.theme.SiloNavPillBorder
 import org.siloserver.silo.android.ui.theme.SiloNavPillContent
 import org.siloserver.silo.android.ui.theme.SiloNavPillSelected
@@ -81,17 +89,17 @@ val LocalBottomChromeInset = compositionLocalOf { 0.dp }
  */
 enum class Tab(
     val route: String,
-    val label: String,
+    @StringRes val labelRes: Int,
     val icon: ImageVector,
     val selectedIcon: ImageVector,
 ) {
-    Home(Route.Home.route, "Home", Icons.Outlined.Home, Icons.Filled.Home),
-    Libraries(Route.Libraries.route, "Libraries", Icons.Outlined.GridView, Icons.Filled.GridView),
-    ForYou(Route.Recommendations.route, "For You", Icons.Outlined.AutoAwesome, Icons.Filled.AutoAwesome),
-    Calendar(Route.Calendar.route, "Calendar", Icons.Outlined.CalendarMonth, Icons.Filled.CalendarMonth),
+    Home(Route.Home.route, CommonR.string.tab_home, Icons.Outlined.Home, Icons.Filled.Home),
+    Libraries(Route.Libraries.route, CommonR.string.shell_tab_libraries, Icons.Outlined.GridView, Icons.Filled.GridView),
+    ForYou(Route.Recommendations.route, CommonR.string.topBar_forYou, Icons.Outlined.AutoAwesome, Icons.Filled.AutoAwesome),
+    Calendar(Route.Calendar.route, CommonR.string.topBar_calendar, Icons.Outlined.CalendarMonth, Icons.Filled.CalendarMonth),
     Downloads(
         Route.Downloads.route,
-        "Downloads",
+        CommonR.string.tab_downloads,
         Icons.Outlined.Download,
         Icons.Filled.Download,
     ),
@@ -363,36 +371,58 @@ private fun PillTabItem(
         label = "tabTint",
     )
     val interaction = remember { MutableInteractionSource() }
-    Column(
-        modifier = modifier
-            .clip(CircleShape)
-            .background(chip)
-            // selectable (not clickable) so TalkBack announces which tab is
-            // active — the chip and filled icon alone are not perceivable.
-            .selectable(
-                selected = selected,
-                interactionSource = interaction,
-                indication = ripple(bounded = true, color = tint),
-                role = Role.Tab,
-                onClick = onClick,
-            ),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+    // selectable (not clickable) so TalkBack announces which tab is active —
+    // the chip and filled icon alone are not perceivable.
+    Box(
+        modifier = modifier.selectable(
+            selected = selected,
+            interactionSource = interaction,
+            indication = null,
+            role = Role.Tab,
+            onClick = onClick,
+        ),
+        contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = if (selected) tab.selectedIcon else tab.icon,
-            contentDescription = tab.label,
-            tint = tint,
-            modifier = Modifier.size(25.dp),
+        // Only the chip and the ripple are clipped to the pill shape. Clipping
+        // the content too cut the ends off a wide label such as "Downloads"
+        // or "Bibliotecas" where the shape curves in.
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clip(CircleShape)
+                .background(chip)
+                .indication(interaction, ripple(bounded = true, color = tint)),
         )
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = tab.label,
-            color = tint,
-            fontSize = 11.sp,
-            lineHeight = 13.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-            maxLines = 1,
-        )
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+        ) {
+            val label = stringResource(tab.labelRes)
+            Icon(
+                imageVector = if (selected) tab.selectedIcon else tab.icon,
+                contentDescription = label,
+                tint = tint,
+                modifier = Modifier.size(25.dp),
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            // Steps down from 11sp only when a translated label is wider than
+            // its tab or, on the chip, than the chip where the label sits: low
+            // in the chip, its round ends take about 5dp a side at mid-letter
+            // height, at any tab width.
+            BasicText(
+                text = label,
+                modifier = Modifier.padding(horizontal = if (onLightChip) 5.dp else 0.dp),
+                style = LocalTextStyle.current.merge(
+                    TextStyle(
+                        color = tint,
+                        fontSize = 11.sp,
+                        lineHeight = 13.sp,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                    ),
+                ),
+                maxLines = 1,
+                autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = 11.sp, stepSize = 0.5.sp),
+            )
+        }
     }
 }

@@ -30,6 +30,9 @@ import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.util.formatClockTime
 import org.siloserver.silo.audiobook.audiobookChapterLabel
 import org.siloserver.silo.model.catalog.VersionChapter
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Chapters bottom sheet. Replaces the always-expanded inline list. Highlights
@@ -63,7 +66,7 @@ fun ChaptersSheet(
     ) {
         Column(modifier = Modifier.padding(horizontal = 24.dp).fillMaxWidth()) {
             Text(
-                text = "Chapters",
+                text = stringResource(CommonR.string.options_chapters),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -92,13 +95,13 @@ fun ChaptersSheet(
                         if (isCurrent) {
                             Icon(
                                 imageVector = Icons.Filled.GraphicEq,
-                                contentDescription = "Now playing",
+                                contentDescription = stringResource(CommonR.string.player_chapters_nowPlaying),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.width(24.dp).height(16.dp),
                             )
                         } else {
                             Text(
-                                text = "${idx + 1}",
+                                text = "${idx + 1}", // i18n-ignore
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -107,7 +110,7 @@ fun ChaptersSheet(
                         }
                         Spacer(modifier = Modifier.width(14.dp))
                         Text(
-                            text = audiobookChapterLabel(idx, chapter.title),
+                            text = audiobookChapterLabel(idx, chapter.title).text(),
                             style = MaterialTheme.typography.bodyLarge,
                             fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
                             color = if (isCurrent) MaterialTheme.colorScheme.primary

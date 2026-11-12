@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.components
 
+import org.siloserver.silo.common.i18n.sectionTitle
 import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -965,6 +966,7 @@ fun TvSkylineSectionFeed(
             TvFocusMarquee(
                 content = marquee.content,
                 detailLine = marquee.enrichment?.detailLine,
+                airDate = marquee.enrichment?.airDate,
                 translation = rememberTvMarqueeTranslation(
                     item = marquee.content?.source,
                     autoTranslate = isFeaturedMarqueeContent(marquee.content, rows),
@@ -1007,7 +1009,7 @@ fun TvSkylineSectionFeed(
                         val showProgress = showProgressForSection(section)
                         val isReturnRow = locatedReturn?.sectionIndex == rowIndex
                         TvMediaRow(
-                            title = section.title,
+                            title = sectionTitle(section),
                             items = section.items,
                             onItemClick = { contentId ->
                                 val item = section.items.firstOrNull { it.contentId == contentId }

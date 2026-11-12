@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
@@ -11,6 +13,7 @@ import org.siloserver.silo.model.catalog.CatalogBoxSet
 import org.siloserver.silo.model.catalog.boxSetFilmCount
 import org.siloserver.silo.model.catalog.cardCaption
 import org.siloserver.silo.model.catalog.watchedFraction
+import org.siloserver.silo.common.i18n.text
 
 /**
  * The card of a movie box set: one poster for the movies TMDB lists in one
@@ -31,15 +34,15 @@ fun BoxSetCard(
         title = boxSet.title,
         posterUrl = posterUrl,
         posterThumbhash = posterThumbhash,
-        subtitle = boxSet.cardCaption(),
+        subtitle = boxSet.cardCaption().text(),
         type = "movie",
         progress = boxSet.watchedFraction,
         onClick = onClick,
         width = width,
         detailBackdropUrl = boxSet.backdropUrl,
         detailBackdropThumbhash = boxSet.backdropThumbhash,
-        badge = "Box set",
-        cornerLabel = boxSetFilmCount(boxSet.movieCount),
+        badge = stringResource(CommonR.string.shell_card_boxSet),
+        cornerLabel = boxSetFilmCount(boxSet.movieCount).text(),
         sleeves = BoxSetSleeves,
         modifier = modifier,
     )

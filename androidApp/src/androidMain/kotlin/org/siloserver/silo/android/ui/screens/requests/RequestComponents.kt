@@ -1,10 +1,12 @@
 package org.siloserver.silo.android.ui.screens.requests
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -46,6 +48,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -53,10 +57,12 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.android.ui.components.skeleton
 import org.siloserver.silo.android.ui.theme.SiloNavPillBorder
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
@@ -75,6 +81,8 @@ import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestProgress
 import org.siloserver.silo.model.request.RequestStatusTint
 import org.siloserver.silo.model.request.requestPosterUrl
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 /** Card geometry shared with the library rows ([org.siloserver.silo.android.ui.components.MediaCard]). */
 internal const val RequestPosterAspect = 2f / 3.3f
@@ -144,7 +152,7 @@ private fun RequestPosterCard(
     modifier: Modifier,
     width: Dp,
 ) {
-    val label = listOfNotNull(title, year?.takeIf { it > 0 }?.toString(), progress?.shortLabel).joinToString(", ")
+    val label = listOfNotNull(title, year?.takeIf { it > 0 }?.let { LocaleFormat.integer(it, currentNumberLocale()) }, progress?.shortText?.text()).joinToString(", ")
     Column(
         modifier = modifier
             .width(width)
@@ -202,7 +210,7 @@ private fun RequestPosterCard(
         when {
             showsStatusInCaption && progress != null -> RequestStatusLabel(progress = progress)
             year != null && year > 0 -> Text(
-                text = year.toString(),
+                text = LocaleFormat.integer(year, currentNumberLocale()),
                 fontSize = 12.sp,
                 color = SiloSecondaryText,
                 maxLines = 1,
@@ -246,7 +254,7 @@ fun RequestPosterBadge(
 fun RequestStatusLabel(
     progress: RequestProgress,
     modifier: Modifier = Modifier,
-    text: String = progress.shortLabel,
+    text: String = progress.shortText.text(),
     fontSize: TextUnit = 12.sp,
     fontWeight: FontWeight = FontWeight.Normal,
     color: Color = SiloSecondaryText,
@@ -336,7 +344,7 @@ internal fun RequestsSectionHeader(
         }
         if (trailing != null && onTrailingClick != null) {
             Text(
-                text = "$trailing ›",
+                text = "$trailing ${forwardChevron()}", // i18n-ignore: a translated label and a chevron
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
                 color = SiloSecondaryText,
@@ -379,7 +387,7 @@ internal fun RequestsLargeTitleBar(
                 .background(SiloOverlayPillSurface)
                 .border(1.dp, SiloNavPillBorder, CircleShape),
         ) {
-            Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+            Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(CommonR.string.common_back), tint = Color.White)
         }
         Text(
             text = title,
@@ -424,12 +432,12 @@ internal fun RequestsSearchField(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
-        placeholder = { Text("Search movies & series", color = SiloSecondaryText) },
+        placeholder = { Text(stringResource(CommonR.string.requests_search_placeholder), color = SiloSecondaryText) },
         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = SiloSecondaryText) },
         trailingIcon = if (query.isNotEmpty()) {
             {
                 IconButton(onClick = { onQueryChange("") }) {
-                    Icon(Icons.Filled.Close, contentDescription = "Clear search", tint = SiloSecondaryText)
+                    Icon(Icons.Filled.Close, contentDescription = stringResource(CommonR.string.requests_search_clear), tint = SiloSecondaryText)
                 }
             }
         } else {
@@ -475,19 +483,30 @@ internal fun RequestSummaryCard(
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(text = title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = SiloOnSurface)
             if (parts.isNotEmpty()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                // A status that doesn't fit moves to the next line whole.
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     parts.forEach { (tint, text) ->
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                             Box(modifier = Modifier.size(6.dp).background(tint.uiColor(), CircleShape))
-                            Text(text = text, fontSize = 12.sp, color = SiloSecondaryText)
+                            Text(text = text, fontSize = 12.sp, color = SiloSecondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
             }
         }
-        Text(text = "›", fontSize = 20.sp, color = SiloSecondaryText)
+        Text(text = forwardChevron(), fontSize = 20.sp, color = SiloSecondaryText)
     }
 }
+
+/**
+ * The "open" chevron after a row or link, pointing toward the reading end.
+ * Android mirrors a lone `›` in a right-to-left layout but not one that
+ * follows Arabic text, so right to left draws `‹` in a left-to-right isolate,
+ * which no bidi pass mirrors back.
+ */
+@Composable
+internal fun forwardChevron(): String =
+    if (LocalLayoutDirection.current == LayoutDirection.Rtl) "\u2066\u2039\u2069" else "\u203A" // i18n-ignore: chevron glyphs
 
 /** Space above each grouped section on pages that pass zero item spacing. */
 internal val RequestGroupGap = 24.dp
@@ -513,7 +532,7 @@ internal fun <T> LazyListScope.requestGroupedSection(
                 .padding(horizontal = 32.dp, vertical = 8.dp),
         ) {
             Text(text = title, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SiloSecondaryText, modifier = Modifier.weight(1f))
-            Text(text = items.size.toString(), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SiloSecondaryText)
+            Text(text = LocaleFormat.integer(items.size, currentNumberLocale()), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SiloSecondaryText)
         }
     }
     itemsIndexed(items, key = { _, item -> "$key:${itemKey(item)}" }, contentType = { _, _ -> "group-row" }) { index, item ->

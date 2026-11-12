@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.watchparty
 
+import org.siloserver.silo.common.watchparty.text
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -51,6 +53,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -87,7 +90,9 @@ import org.siloserver.silo.watchtogether.watchPartyPresenceSummary
 import org.siloserver.silo.watchtogether.watchPartySeatOrder
 import org.siloserver.silo.watchtogether.watchPartySeatState
 import org.siloserver.silo.watchtogether.watchPartySeatStatus
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.components.SpoilerImage
+import org.siloserver.silo.common.watchparty.watchPartyDisplayName
 
 /*
  * The Watch Party look, ported from the tvOS clients (`WatchPartyComponents`
@@ -343,7 +348,7 @@ internal fun TvPartyCodePill(code: String, onClick: () -> Unit, modifier: Modifi
             horizontalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             Text(
-                text = "JOIN WITH",
+                text = stringResource(CommonR.string.watchParty_codePill_label),
                 fontSize = TvPartyMetrics.caption,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 1.4.sp,
@@ -359,7 +364,7 @@ internal fun TvPartyCodePill(code: String, onClick: () -> Unit, modifier: Modifi
             )
             Icon(
                 imageVector = Icons.Filled.QrCode2,
-                contentDescription = "Invite friends",
+                contentDescription = stringResource(CommonR.string.watchParty_invite_friends),
                 tint = if (isFocused) Color.Black.copy(alpha = 0.6f) else SiloSecondaryText,
                 modifier = Modifier.size(16.dp),
             )
@@ -399,7 +404,7 @@ internal fun TvPartyOptionsButton(onClick: () -> Unit, modifier: Modifier = Modi
         Box(modifier = Modifier.size(width = 68.dp, height = 38.dp), contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = Icons.Filled.MoreHoriz,
-                contentDescription = "Party options",
+                contentDescription = stringResource(CommonR.string.watchParty_options_title),
                 tint = if (isFocused) FocusedContent else SiloOnSurface,
                 modifier = Modifier.size(22.dp),
             )
@@ -505,7 +510,7 @@ internal fun TvPartySeat(member: RoomMember, state: WatchPartySeatState, size: D
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = tvWatchPartyMemberName(member).take(1).uppercase(),
+                    text = watchPartyDisplayName(member.displayName.trim()).take(1).uppercase(),
                     fontSize = (size.value * 0.36f / 0.86f).sp,
                     fontWeight = FontWeight.SemiBold,
                     color = SiloOnSurface,
@@ -530,7 +535,7 @@ internal fun TvPartySeat(member: RoomMember, state: WatchPartySeatState, size: D
             }
             if (member.isHost) {
                 Text(
-                    text = "HOST",
+                    text = stringResource(CommonR.string.watchParty_seat_hostTag),
                     fontSize = MIN_SP.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp,
@@ -568,7 +573,7 @@ internal fun TvPartySeat(member: RoomMember, state: WatchPartySeatState, size: D
             }
         }
         Text(
-            text = tvWatchPartyMemberName(member),
+            text = watchPartyDisplayName(member.displayName.trim()),
             fontSize = nameSize,
             fontWeight = FontWeight.Medium,
             color = SiloOnSurface,
@@ -577,7 +582,7 @@ internal fun TvPartySeat(member: RoomMember, state: WatchPartySeatState, size: D
             textAlign = TextAlign.Center,
         )
         // "you · not ready": the role rides with the state so long names keep their width.
-        listOfNotNull("you".takeIf { member.isSelf }, watchPartySeatStatus(state))
+        listOfNotNull(stringResource(CommonR.string.watchParty_seat_youLower).takeIf { member.isSelf }, watchPartySeatStatus(state)?.text())
             .takeIf { it.isNotEmpty() }
             ?.let { detail ->
                 Text(text = detail.joinToString(" · "), fontSize = detailSize, color = SiloSecondaryText, maxLines = 1)
@@ -626,14 +631,14 @@ internal fun TvPartyInviteSeat(onClick: () -> Unit, modifier: Modifier = Modifie
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = Icons.Filled.Add,
-                    contentDescription = "Invite friends",
+                    contentDescription = stringResource(CommonR.string.watchParty_invite_friends),
                     tint = if (isFocused) FocusedContent else SiloSecondaryText,
                     modifier = Modifier.size(size * 0.42f),
                 )
             }
         }
         Text(
-            text = "Invite",
+            text = stringResource(CommonR.string.watchParty_seat_invite),
             fontSize = (size.value * 0.19f / 0.86f).coerceAtLeast(MIN_SP).sp,
             fontWeight = FontWeight.Medium,
             color = SiloSecondaryText,
@@ -652,9 +657,9 @@ internal fun TvPartySeatsRow(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(seatSize * 0.2f)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            TvPartyEyebrow("Here now")
+            TvPartyEyebrow(stringResource(CommonR.string.watchParty_seats_hereNow))
             Text(
-                text = watchPartyPresenceSummary(members, phase),
+                text = watchPartyPresenceSummary(members, phase).text(),
                 fontSize = TvPartyMetrics.caption,
                 color = SiloSecondaryText.copy(alpha = 0.7f),
                 maxLines = 1,
@@ -814,7 +819,7 @@ internal fun TvPartyMenuOverlay(
                 )
                 content()
                 TvPartyOptionRow(
-                    title = "Close",
+                    title = stringResource(CommonR.string.watchParty_options_close),
                     onClick = onDismiss,
                     modifier = Modifier
                         .focusRequester(closeFocus)

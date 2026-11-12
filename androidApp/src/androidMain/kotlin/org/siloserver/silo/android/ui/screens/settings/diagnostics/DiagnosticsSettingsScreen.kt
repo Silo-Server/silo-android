@@ -21,6 +21,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import java.text.DateFormat
@@ -29,7 +31,7 @@ import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.android.ui.screens.settings.SILO_PRIVACY_POLICY_URL
 import org.siloserver.silo.android.ui.screens.settings.SettingsDestructiveRow
-import org.siloserver.silo.android.ui.screens.settings.SettingsDropdownRow
+import org.siloserver.silo.android.ui.screens.settings.SettingsIndexedDropdownRow
 import org.siloserver.silo.android.ui.screens.settings.SettingsNavigationRow
 import org.siloserver.silo.android.ui.screens.settings.SettingsPageScaffold
 import org.siloserver.silo.android.ui.screens.settings.SettingsRow
@@ -46,6 +48,12 @@ import org.siloserver.silo.common.diagnostics.DiagnosticsDestinationKind
 import org.siloserver.silo.model.diagnostics.DiagnosticsReportType
 import org.siloserver.silo.common.diagnostics.DiagnosticsUiState
 import org.siloserver.silo.common.diagnostics.TimedCaptureStatus
+import org.siloserver.silo.common.diagnostics.diagnosticsAvailabilityTitle
+import org.siloserver.silo.common.diagnostics.diagnosticsConsentTitle
+import org.siloserver.silo.common.diagnostics.diagnosticsReportStateLabel
+import org.siloserver.silo.common.diagnostics.diagnosticsReportTypeTitle
+import org.siloserver.silo.common.diagnostics.diagnosticsSizeLabel
+import org.siloserver.silo.common.R as CommonR
 
 @Composable
 fun DiagnosticsSettingsScreen(
@@ -106,75 +114,83 @@ internal fun DiagnosticsSettingsContent(
     val consentOptions = DiagnosticsConsentMode.entries
         .filter { it != DiagnosticsConsentMode.ALWAYS || state.allowsAutomaticUpload }
     val captureActive = state.timedCapture.status == TimedCaptureStatus.ACTIVE
-    SettingsPageScaffold(title = "Diagnostics", onBackClick = onBackClick) {
+    val destinationLabels = DiagnosticsDestinationKind.entries.associateWith { destinationLabel(it) }
+    SettingsPageScaffold(title = stringResource(CommonR.string.settings_diagnostics), onBackClick = onBackClick) {
         item(key = "state") {
-            SettingsSection(title = "Feature State", footer = availabilityDetail(state)) {
-                SettingsNavigationRow(label = "Status", value = availabilityTitle(state.availability))
-                SettingsNavigationRow(label = "Destination", value = destinationLabel(state.destinationKind))
+            SettingsSection(
+                title = stringResource(CommonR.string.diagnostics_section_featureState),
+                footer = availabilityDetail(state)?.let { stringResource(it) },
+            ) {
+                SettingsNavigationRow(
+                    label = stringResource(CommonR.string.diagnostics_row_status),
+                    value = stringResource(diagnosticsAvailabilityTitle(state.availability)),
+                )
+                SettingsNavigationRow(
+                    label = stringResource(CommonR.string.diagnostics_row_destination),
+                    value = destinationLabels.getValue(state.destinationKind),
+                )
             }
         }
         item(key = "capture") {
             SettingsSection(
-                title = "Capture",
+                title = stringResource(CommonR.string.diagnostics_section_capture),
                 footer = if (hosted) {
-                    "Reports include the Silo app version and build, Android version, device model, " +
-                        "crash details, and diagnostic logs you review. A pseudonymous installation " +
-                        "credential is not linked to an account on your self-hosted server. Username, " +
-                        "email, profile, server address, and playback session IDs are omitted. Reports " +
-                        "are never sent automatically and may be retained for up to " +
-                        "${state.retentionDays} days."
+                    pluralStringResource(
+                        CommonR.plurals.diagnostics_capture_hostedFooter,
+                        state.retentionDays,
+                        state.retentionDays,
+                    )
                 } else {
-                    "Crash report consent is tied to this server account. Debug logging is a setting " +
-                        "for this device."
+                    stringResource(CommonR.string.diagnostics_capture_selfHostedFooter)
                 },
             ) {
-                SettingsDropdownRow(
-                    label = "Send Reports To",
-                    value = destinationLabel(state.destinationKind),
-                    options = DiagnosticsDestinationKind.entries.map(::destinationLabel),
-                    onOptionSelected = { label ->
-                        DiagnosticsDestinationKind.entries
-                            .firstOrNull { destinationLabel(it) == label }
-                            ?.let(onDestinationChanged)
-                    },
+                SettingsIndexedDropdownRow(
+                    label = stringResource(CommonR.string.diagnostics_row_sendReportsTo),
+                    value = destinationLabels.getValue(state.destinationKind),
+                    options = destinationLabels.values.toList(),
+                    selectedIndex = DiagnosticsDestinationKind.entries.indexOf(state.destinationKind),
+                    onIndexSelected = { onDestinationChanged(DiagnosticsDestinationKind.entries[it]) },
                 )
                 SettingsSwitchRow(
-                    label = "Debug Logging",
+                    label = stringResource(CommonR.string.diagnostics_row_debugLogging),
                     checked = state.debugLogging,
                     enabled = state.consent != DiagnosticsConsentMode.NEVER,
                     onCheckedChange = onDebugLoggingChanged,
                 )
-                SettingsDropdownRow(
-                    label = "Crash Reports",
-                    value = consentLabel(effectiveConsent),
-                    options = consentOptions.map(::consentLabel),
-                    onOptionSelected = { label ->
-                        consentOptions.firstOrNull { consentLabel(it) == label }?.let { mode ->
-                            if (consentActionModel(state.consent, mode).requiresConfirmation) {
-                                confirmAlways = true
-                            } else {
-                                onConsentChanged(mode)
-                            }
+                SettingsIndexedDropdownRow(
+                    label = stringResource(CommonR.string.diagnostics_row_crashReports),
+                    value = stringResource(diagnosticsConsentTitle(effectiveConsent)),
+                    options = consentOptions.map { stringResource(diagnosticsConsentTitle(it)) },
+                    selectedIndex = consentOptions.indexOf(effectiveConsent),
+                    onIndexSelected = { index ->
+                        val mode = consentOptions[index]
+                        if (consentActionModel(state.consent, mode).requiresConfirmation) {
+                            confirmAlways = true
+                        } else {
+                            onConsentChanged(mode)
                         }
                     },
                 )
                 // The policy behind the consent above, one tap away where the
                 // choice is made (Settings → About links it too).
                 SettingsNavigationRow(
-                    label = "Privacy Policy",
+                    label = stringResource(CommonR.string.settings_about_privacyPolicy),
                     onClick = { uriHandler.openUri(SILO_PRIVACY_POLICY_URL) },
                 )
             }
         }
         item(key = "pending") {
-            SettingsSection(title = "Pending Reports (${state.pending.size})") {
+            SettingsSection(title = stringResource(CommonR.string.diagnostics_section_pending, state.pending.size)) {
                 if (state.pending.isEmpty()) {
-                    SettingsNavigationRow(label = "No pending reports", labelColor = SiloSecondaryText)
+                    SettingsNavigationRow(
+                        label = stringResource(CommonR.string.diagnostics_pending_none),
+                        labelColor = SiloSecondaryText,
+                    )
                 }
                 state.pending.forEach { report ->
                     SettingsNavigationRow(
                         label = report.type.displayName(),
-                        description = "${report.capturedAt} · ${formatDiagnosticBytes(report.evidenceBytes)}",
+                        description = "${report.capturedAt} · ${diagnosticsSizeLabel(report.evidenceBytes)}",
                         onClick = { onReportSelected(report.id) },
                     )
                 }
@@ -183,28 +199,34 @@ internal fun DiagnosticsSettingsContent(
         item(key = "send") {
             SettingsSection(
                 title = null,
-                footer = when {
-                    captureActive -> "Capture is running. Reproduce the issue, then stop to review exactly " +
-                        "what will be sent."
-                    !state.debugLogging -> "Debug logging is off. This report contains only the last few " +
-                        "minutes of basic logs. Timed capture records more detail until you stop it."
-                    else -> "A one-time report uses the recent in-memory log. Timed capture records more " +
-                        "detail until you stop it."
-                },
+                footer = stringResource(
+                    when {
+                        captureActive -> CommonR.string.diagnostics_send_captureRunningFooter
+                        !state.debugLogging -> CommonR.string.diagnostics_send_debugOffFooter
+                        else -> CommonR.string.diagnostics_send_oneTimeFooter
+                    },
+                ),
                 footerColor = if (!captureActive && !state.debugLogging) SiloWarning else SiloSecondaryText,
             ) {
                 if (captureActive) {
-                    SettingsNavigationRow(label = "Stop & Review", onClick = onStopCapture, showChevron = false)
-                    SettingsDestructiveRow(label = "Cancel Capture", onClick = onCancelCapture)
+                    SettingsNavigationRow(
+                        label = stringResource(CommonR.string.diagnostics_capture_stopReview),
+                        onClick = onStopCapture,
+                        showChevron = false,
+                    )
+                    SettingsDestructiveRow(
+                        label = stringResource(CommonR.string.diagnostics_capture_cancel),
+                        onClick = onCancelCapture,
+                    )
                 } else {
                     SettingsNavigationRow(
-                        label = "Send Diagnostics Now",
+                        label = stringResource(CommonR.string.settings_diagnostics_send),
                         onClick = onSendNow,
                         enabled = model.canCapture,
                         showChevron = false,
                     )
                     SettingsNavigationRow(
-                        label = "Start Diagnostic Capture",
+                        label = stringResource(CommonR.string.diagnostics_capture_start),
                         onClick = onStartCapture,
                         enabled = model.canCapture,
                         showChevron = false,
@@ -214,21 +236,23 @@ internal fun DiagnosticsSettingsContent(
         }
         item(key = "sent") {
             SettingsSection(
-                title = "Sent History",
+                title = stringResource(CommonR.string.diagnostics_section_sentHistory),
                 footer = if (state.sentHistory.isEmpty()) {
                     null
                 } else {
-                    "Sent reports are removed from this device once the selected destination has a copy. " +
-                        "Use the reference ID when asking for help."
+                    stringResource(CommonR.string.diagnostics_sentHistory_footer)
                 },
             ) {
                 if (state.sentHistory.isEmpty()) {
-                    SettingsNavigationRow(label = "No reports sent yet", labelColor = SiloSecondaryText)
+                    SettingsNavigationRow(
+                        label = stringResource(CommonR.string.diagnostics_sentHistory_none),
+                        labelColor = SiloSecondaryText,
+                    )
                 }
                 state.sentHistory.forEach { sent ->
                     SettingsRow(
                         label = sent.shortId,
-                        description = "${sent.state.replace('_', ' ')} · " +
+                        description = "${diagnosticsReportStateLabel(sent.state)} · " +
                             formatDiagnosticDate(sent.sentAtEpochMs),
                     ) {
                         IconButton(
@@ -236,7 +260,7 @@ internal fun DiagnosticsSettingsContent(
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.ContentCopy,
-                                contentDescription = "Copy reference ID",
+                                contentDescription = stringResource(CommonR.string.diagnostics_copyReferenceId),
                                 tint = SiloSecondaryText,
                                 modifier = Modifier.size(18.dp),
                             )
@@ -249,9 +273,9 @@ internal fun DiagnosticsSettingsContent(
 
     if (confirmAlways && state.allowsAutomaticUpload) {
         SiloConfirmDialog(
-            title = "Always send crash reports?",
-            body = "Future eligible crash reports may be uploaded automatically. You can inspect pending reports and change this at any time.",
-            confirmLabel = "Always send",
+            title = stringResource(CommonR.string.diagnostics_alwaysSend_title),
+            body = stringResource(CommonR.string.diagnostics_alwaysSend_settingsBody),
+            confirmLabel = stringResource(CommonR.string.diagnostics_alwaysSend_action),
             destructive = false,
             onConfirm = {
                 confirmAlways = false
@@ -262,36 +286,24 @@ internal fun DiagnosticsSettingsContent(
     }
 }
 
-private fun destinationLabel(destination: DiagnosticsDestinationKind): String = when (destination) {
-    DiagnosticsDestinationKind.HOSTED -> "Silo Diagnostics"
-    DiagnosticsDestinationKind.SELF_HOSTED -> "My Silo Server"
-}
-
-private fun consentLabel(mode: DiagnosticsConsentMode): String = when (mode) {
-    DiagnosticsConsentMode.ASK -> "Ask"
-    DiagnosticsConsentMode.ALWAYS -> "Always"
-    DiagnosticsConsentMode.NEVER -> "Never"
-}
-
-private fun availabilityTitle(availability: DiagnosticsAvailabilityUi): String = when (availability) {
-    DiagnosticsAvailabilityUi.AVAILABLE -> "Available"
-    DiagnosticsAvailabilityUi.DISABLED -> "Disabled by server"
-    DiagnosticsAvailabilityUi.STORAGE_UNAVAILABLE -> "Storage unavailable"
-    DiagnosticsAvailabilityUi.OFFLINE -> "Offline"
-    DiagnosticsAvailabilityUi.INELIGIBLE -> "Unavailable"
-}
+@Composable
+private fun destinationLabel(destination: DiagnosticsDestinationKind): String = stringResource(
+    when (destination) {
+        DiagnosticsDestinationKind.HOSTED -> CommonR.string.diagnostics_destination_hosted
+        DiagnosticsDestinationKind.SELF_HOSTED -> CommonR.string.diagnostics_destination_myServer
+    },
+)
 
 /**
  * The Feature State footer: what a degraded availability means for reports.
  * Like the Apple page, a working state needs no footer.
  */
-private fun availabilityDetail(state: DiagnosticsUiState): String? = when (state.availability) {
+private fun availabilityDetail(state: DiagnosticsUiState): Int? = when (state.availability) {
     DiagnosticsAvailabilityUi.AVAILABLE -> null
-    DiagnosticsAvailabilityUi.DISABLED -> "Local reports remain available to inspect or delete."
-    DiagnosticsAvailabilityUi.STORAGE_UNAVAILABLE -> "Local reports remain on this device."
-    DiagnosticsAvailabilityUi.OFFLINE ->
-        "Showing the last known diagnostics state. Reports stay on this device while the server is offline."
-    DiagnosticsAvailabilityUi.INELIGIBLE -> "Diagnostics are not available for this profile."
+    DiagnosticsAvailabilityUi.DISABLED -> CommonR.string.diagnostics_availability_disabledDetail
+    DiagnosticsAvailabilityUi.STORAGE_UNAVAILABLE -> CommonR.string.diagnostics_availability_storageUnavailableDetail
+    DiagnosticsAvailabilityUi.OFFLINE -> CommonR.string.diagnostics_availability_offlineDetail
+    DiagnosticsAvailabilityUi.INELIGIBLE -> CommonR.string.diagnostics_availability_ineligibleDetail
 }
 
 @Composable
@@ -299,7 +311,7 @@ private fun DiagnosticsUnavailableScreen(onBackClick: () -> Unit) {
     Scaffold(
         topBar = {
             SiloTopBar(
-                title = "Diagnostics",
+                title = stringResource(CommonR.string.settings_diagnostics),
                 onBackClick = onBackClick,
                 containerColor = SiloSettingsBackground,
                 centerTitle = true,
@@ -309,7 +321,7 @@ private fun DiagnosticsUnavailableScreen(onBackClick: () -> Unit) {
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(Spacing.xxl)) {
             Text(
-                "Diagnostics aren't available for this profile.",
+                stringResource(CommonR.string.diagnostics_unavailableForProfile),
                 style = MaterialTheme.typography.titleMedium,
                 color = SiloForeground,
             )
@@ -318,18 +330,8 @@ private fun DiagnosticsUnavailableScreen(onBackClick: () -> Unit) {
 }
 
 /** The Apple apps' report titles; Android's ANR and native crash fold into them. */
-internal fun DiagnosticsReportType.displayName(): String = when (this) {
-    DiagnosticsReportType.CRASH, DiagnosticsReportType.NATIVE_CRASH -> "Crash"
-    DiagnosticsReportType.HANG, DiagnosticsReportType.ANR -> "Not Responding"
-    DiagnosticsReportType.ABNORMAL_EXIT -> "Unclean Shutdown"
-    DiagnosticsReportType.MANUAL -> "Manual Report"
-}
-
-internal fun formatDiagnosticBytes(bytes: Long): String = when {
-    bytes >= 1_048_576 -> "%.1f MB".format(bytes / 1_048_576.0)
-    bytes >= 1_024 -> "%.1f KB".format(bytes / 1_024.0)
-    else -> "$bytes B"
-}
+@Composable
+internal fun DiagnosticsReportType.displayName(): String = stringResource(diagnosticsReportTypeTitle(this))
 
 internal fun formatDiagnosticDate(epochMs: Long): String =
     DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(epochMs))

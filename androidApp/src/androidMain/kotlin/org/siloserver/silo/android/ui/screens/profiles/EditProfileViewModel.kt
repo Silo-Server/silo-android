@@ -2,8 +2,9 @@ package org.siloserver.silo.android.ui.screens.profiles
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.model.profile.AssignableLibraries
-import org.siloserver.silo.model.profile.CHOOSE_A_LIBRARY_MESSAGE
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.ProfileAccessLimits
 import org.siloserver.silo.model.profile.UpdateProfileRequest
@@ -17,6 +18,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.model.profile.CHOOSE_A_LIBRARY_TEXT
 
 data class EditProfileUiState(
     val profileId: String = "",
@@ -39,7 +42,7 @@ data class EditProfileUiState(
     val subtitleMode: String? = null,
     val isLoading: Boolean = false,
     val isSaving: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val saveSuccess: Boolean = false,
 )
 
@@ -97,20 +100,20 @@ class EditProfileViewModel(
                         }
                     } else {
                         _uiState.update {
-                            it.copy(isLoading = false, error = "Profile not found")
+                            it.copy(isLoading = false, error = UiText.Res(CommonR.string.profiles_error_notFound))
                         }
                     }
                 }
 
                 is ApiResult.Error -> {
                     _uiState.update {
-                        it.copy(isLoading = false, error = "Failed to load profile")
+                        it.copy(isLoading = false, error = UiText.Res(CommonR.string.profiles_error_loadOne))
                     }
                 }
 
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(isLoading = false, error = "Network error. Please try again.")
+                        it.copy(isLoading = false, error = UiText.Res(CommonR.string.profiles_error_network))
                     }
                 }
             }
@@ -187,19 +190,19 @@ class EditProfileViewModel(
         val current = _uiState.value
 
         if (current.name.isBlank()) {
-            _uiState.update { it.copy(error = "Profile name is required") }
+            _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_nameRequired)) }
             return
         }
         if (existingProfiles.hasProfileNamed(current.name, excludeId = current.profileId)) {
-            _uiState.update { it.copy(error = "A profile with this name already exists") }
+            _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_nameTaken)) }
             return
         }
         if (current.pinEnabled && current.pin.isNotEmpty() && current.pin.length != 4) {
-            _uiState.update { it.copy(error = "PIN must be 4 digits") }
+            _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_pinLength)) }
             return
         }
         if (current.access.needsLibrary(loadedAccess, current.libraries.ids)) {
-            _uiState.update { it.copy(error = CHOOSE_A_LIBRARY_MESSAGE) }
+            _uiState.update { it.copy(error = CHOOSE_A_LIBRARY_TEXT) }
             return
         }
 
@@ -238,14 +241,14 @@ class EditProfileViewModel(
                     _uiState.update {
                         it.copy(
                             isSaving = false,
-                            error = result.message.ifBlank { "Failed to update profile" },
+                            error = result.errorText(CommonR.string.profiles_error_updateFailed),
                         )
                     }
                 }
 
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(isSaving = false, error = "Network error. Please try again.")
+                        it.copy(isSaving = false, error = UiText.Res(CommonR.string.profiles_error_network))
                     }
                 }
             }

@@ -51,6 +51,8 @@ import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.components.TvFactsRow
 import org.siloserver.silo.tv.ui.components.TvHeroFactToken
+import org.siloserver.silo.tv.ui.components.bidiIsolated
+import org.siloserver.silo.tv.ui.components.hasRightToLeftScript
 
 /**
  * Approved tvOS detail hero, mapped onto Android TV's half-scale layout
@@ -280,9 +282,14 @@ private fun EditorialColumn(
                             tagline = tagline.takeUnless { isCombinedSeriesEpisode },
                             collapsedMaxLines = 3,
                             dialogTitle = title,
-                            // The title is always isolated so the overview, not the
-                            // title, sets the paragraph direction.
-                            previewText = if (isCombinedSeriesEpisode) "\u2068$title\u2069 · $line" else line,
+                            // The title is isolated whenever any of it reads right to left,
+                            // so the overview, not the title, sets the paragraph direction.
+                            // Left-to-right text keeps its bytes (D28).
+                            previewText = if (isCombinedSeriesEpisode) {
+                                "${bidiIsolated(title, line.hasRightToLeftScript())} · $line"
+                            } else {
+                                line
+                            },
                         )
                     }
                 }
@@ -585,6 +592,7 @@ private val heroDisplayHero = TextStyle(
     lineHeight = 46.sp,
     letterSpacing = 0.sp,
     textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
     // Apple shadows the hero title (black@0.55, r16, y4) for legibility on
     // bright backdrops. Inherited by the subtitle/episode `.copy()` variants.
     shadow = Shadow(color = Color.Black.copy(alpha = 0.55f), offset = Offset(0f, 4f), blurRadius = 16f),

@@ -216,8 +216,19 @@ interface UserItemStatePort {
     suspend fun contentIdsWithPendingOrNewerUserState(contentIds: List<String>, sinceMs: Long): Set<String> = emptySet()
 }
 
-/** Local optimistic content-level state; null fields = "no local opinion" (defer to server). */
-data class LocalContentState(val watched: Boolean?, val favorite: Boolean?)
+/**
+ * Local optimistic content-level state; null fields = "no local opinion" (defer to server).
+ *
+ * [watchedPending] is true while the server has not acknowledged the local
+ * [watched] value yet (an unresolved watched op is still in the outbox). The
+ * projection row outlives the acknowledgement, so a [watched] value alone does
+ * not say whether the server's episode counts already reflect it.
+ */
+data class LocalContentState(
+    val watched: Boolean?,
+    val favorite: Boolean?,
+    val watchedPending: Boolean = false,
+)
 
 /** Local per-file track choices; null fields mean "no local override". */
 data class LocalTrackSelection(val audioFingerprint: String?, val subtitleFingerprint: String?)

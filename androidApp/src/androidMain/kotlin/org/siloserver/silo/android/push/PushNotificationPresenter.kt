@@ -13,6 +13,9 @@ import androidx.core.app.NotificationManagerCompat
 import org.siloserver.silo.android.MainActivity
 import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.navigation.Route
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.AppLocales
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.notifications.NotificationRow
 import org.siloserver.silo.model.notifications.NotificationType
 import org.siloserver.silo.network.ApiResult
@@ -28,6 +31,13 @@ class PushNotificationPresenter internal constructor(
     private val targets: PushTargetResolver,
     private val registry: ServerRegistry? = null,
 ) {
+    /**
+     * Context for notification text. Before Android 13 the application context
+     * keeps the device language, so this applies the app language the way the
+     * activities do ([AppLocales.wrap]); from 13 it is [context] itself.
+     */
+    private val text: Context get() = AppLocales.wrap(context)
+
     suspend fun present(
         deliveryId: String,
         issuer: PushIssuer? = null,
@@ -218,33 +228,33 @@ class PushNotificationPresenter internal constructor(
     ): PushNotificationContent {
         if (row == null) {
             return PushNotificationContent(
-                title = fallbackTitle?.takeIf { it.isNotBlank() } ?: "Silo notification",
+                title = fallbackTitle?.takeIf { it.isNotBlank() } ?: text.getString(CommonR.string.notifications_push_genericTitle),
                 // Deliberately does not promise this specific event is visible
                 // under the active identity — it may not be ours to show.
                 body = fallbackBody?.takeIf { it.isNotBlank() }
-                    ?: "Open Silo to check notifications.",
+                    ?: text.getString(CommonR.string.notifications_push_genericBody),
                 route = Route.Inbox.route,
             )
         }
 
         val episodeTag = row.seasonNumber?.let { season ->
-            row.episodeNumber?.let { episode -> "S${season}E$episode" }
+            row.episodeNumber?.let { episode -> text.getString(CommonR.string.catalog_episodeTag, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode)) }
         }
         val route = notificationRouteFor(row)
         return when (row.type) {
             NotificationType.EpisodeAvailable -> PushNotificationContent(
-                title = row.seriesTitle.ifBlank { "New episode available" },
+                title = row.seriesTitle.ifBlank { text.getString(CommonR.string.notifications_type_newEpisode) },
                 body = listOfNotNull(
                     episodeTag,
                     row.episodeTitle.ifBlank { null },
-                ).joinToString(" - ").ifBlank { "Open Silo to watch." },
+                ).joinToString(" - ").ifBlank { text.getString(CommonR.string.notifications_push_episodeBody) },
                 route = route,
             )
             NotificationType.RequestFulfilled -> PushNotificationContent(
-                title = "Request fulfilled",
+                title = text.getString(CommonR.string.notifications_type_requestFulfilled),
                 body = row.episodeTitle.ifBlank { null }
                     ?: row.seriesTitle.ifBlank { null }
-                    ?: "Your requested title is ready.",
+                    ?: text.getString(CommonR.string.notifications_push_requestBody),
                 route = route,
             )
             NotificationType.Unknown -> PushNotificationContent(
@@ -252,11 +262,11 @@ class PushNotificationPresenter internal constructor(
                     ?: row.rawType.substringBefore('.')
                         .replace('_', ' ')
                         .replaceFirstChar { it.uppercase() }
-                        .ifBlank { "Silo notification" },
+                        .ifBlank { text.getString(CommonR.string.notifications_push_genericTitle) },
                 body = fallbackBody?.takeIf { it.isNotBlank() }
                     ?: row.episodeTitle.ifBlank { null }
                     ?: row.seriesTitle.ifBlank { null }
-                    ?: "Open Silo to view it.",
+                    ?: text.getString(CommonR.string.notifications_push_otherBody),
                 route = route,
             )
         }
@@ -268,15 +278,17 @@ class PushNotificationPresenter internal constructor(
             ?: row.seriesId?.takeIf { it.isNotBlank() }?.let { Route.ItemDetail(it).route }
             ?: Route.Inbox.route
 
+    // Re-created on every post, so the channel's name and description follow
+    // the app language; CHANNEL_ID stays fixed.
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Notifications",
+            text.getString(CommonR.string.notifications_channel_name),
             NotificationManager.IMPORTANCE_DEFAULT,
         ).apply {
-            description = "Private Silo notification alerts"
+            description = text.getString(CommonR.string.notifications_channel_description)
         }
         manager.createNotificationChannel(channel)
     }

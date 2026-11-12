@@ -69,6 +69,9 @@ import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.screens.personal.currentQuery
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Phone Recommendations ("For You") screen.
@@ -174,19 +177,19 @@ fun RecommendationsScreen(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = state.error ?: "Failed to load recommendations",
+                    text = state.error?.text() ?: stringResource(CommonR.string.home_forYou_loadFailed),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Try reloading your personalized feed.",
+                    text = stringResource(CommonR.string.home_forYou_loadFailedBody),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(modifier = Modifier.height(20.dp))
                 Button(onClick = { viewModel.loadRecommendations() }) {
-                    Text("Retry")
+                    Text(stringResource(CommonR.string.common_retry))
                 }
             }
         }
@@ -206,7 +209,7 @@ fun RecommendationsScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "No recommendations yet — showing your saved titles.",
+                        text = stringResource(CommonR.string.home_forYou_savedFallback),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -215,7 +218,7 @@ fun RecommendationsScreen(
                     // embedded grids carry their own pull-to-refresh, so we do
                     // NOT wrap them in another PullToRefreshBox (nesting misbehaves).
                     OutlinedButton(onClick = { viewModel.refresh() }) {
-                        Text("Check again")
+                        Text(stringResource(CommonR.string.home_forYou_checkAgain))
                     }
                 }
             }
@@ -304,11 +307,14 @@ fun RecommendationsScreen(
 enum class ForYouList { Watchlist, Favorites }
 
 /** Header title for the current For You content. */
-fun ForYouList?.headerTitle(): String = when (this) {
-    null -> "For You"
-    ForYouList.Watchlist -> "Watchlist"
-    ForYouList.Favorites -> "Favorites"
-}
+@Composable
+fun ForYouList?.headerTitle(): String = stringResource(
+    when (this) {
+        null -> CommonR.string.home_forYou_title
+        ForYouList.Watchlist -> CommonR.string.personal_watchlist_title
+        ForYouList.Favorites -> CommonR.string.personal_favorites_title
+    },
+)
 
 @Composable
 private fun SavedListGrid(
@@ -375,13 +381,13 @@ private fun SavedShortcutsRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SavedShortcutPill(
-            title = "Watchlist",
+            title = stringResource(CommonR.string.personal_watchlist_title),
             icon = Icons.Filled.Bookmark,
             onClick = onWatchlistClick,
             selected = selection == ForYouList.Watchlist,
         )
         SavedShortcutPill(
-            title = "Favorites",
+            title = stringResource(CommonR.string.personal_favorites_title),
             icon = Icons.Filled.Favorite,
             onClick = onFavoritesClick,
             selected = selection == ForYouList.Favorites,

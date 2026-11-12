@@ -1,5 +1,8 @@
 package org.siloserver.silo.model.request
 
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+
 /**
  * The five user-facing request states, shared by every request surface on
  * phone and TV (and matching the Apple clients' `RequestDisplayState`), so a
@@ -29,15 +32,6 @@ sealed interface RequestDisplayState {
      */
     data class Unavailable(val reason: String?) : RequestDisplayState
 
-    val label: String
-        get() = when (this) {
-            Pending -> "Pending"
-            OnTheWay -> "On the way"
-            InLibrary -> "In library"
-            is NeedsAttention -> "Needs attention"
-            is Unavailable -> "Unavailable"
-        }
-
     val tint: RequestStatusTint
         get() = when (this) {
             Pending -> RequestStatusTint.Amber
@@ -50,16 +44,6 @@ sealed interface RequestDisplayState {
     /** The owner may cancel only while the request waits for approval. */
     val isCancelable: Boolean
         get() = this == Pending
-
-    /** The detail page's status line, which has room to say more than a caption. */
-    val detailTitle: String
-        get() = when (this) {
-            Pending -> "Requested · Pending"
-            OnTheWay -> "On the way"
-            InLibrary -> "In your library"
-            is NeedsAttention -> requestReasonCopy(reason)?.let { "${attention.title} · $it" } ?: attention.title
-            is Unavailable -> requestReasonCopy(reason) ?: "Unavailable"
-        }
 
     /**
      * The catalog item to open instead of the request, when there is nothing
@@ -147,27 +131,46 @@ sealed interface RequestDisplayState {
 }
 
 /** Why a request needs attention. A declined request and a failed one need different things from the user. */
-enum class RequestAttention(val title: String) {
-    Declined("Declined"),
-    Failed("Request failed"),
-}
+enum class RequestAttention { Declined, Failed }
 
 /** The status color; the UI layer maps each to its theme color. */
 enum class RequestStatusTint { Amber, Sky, Emerald, Rose, Neutral }
 
 /** The four steps every request walks through, drawn as the stage track. */
-enum class RequestStep(val title: String) {
-    Requested("Requested"),
-    Approval("Approved"),
-    Download("Downloading"),
-    Library("In your library"),
+enum class RequestStep(private val title: SharedString) {
+    Requested(SharedString.RequestStepRequested),
+    Approval(SharedString.RequestStepApproved),
+    Download(SharedString.RequestStepDownloading),
+    Library(SharedString.RequestStepLibrary),
+    ;
+
+    /** The label under the step. */
+    val text: UiText get() = UiText.Key(title)
 }
 
 /**
- * Where a request sits on the stage track, plus the finer labels the five
- * display states can't express ("Queued" vs "Downloading" vs "Adding to
- * library"). Derived from [RequestDisplayState], so the track, the dot color,
- * and My Requests bucketing always agree.
+ * Where a request is, in the finer words the five display states can't
+ * express ("Queued" vs "Downloading" vs "Adding to library"): a short form for
+ * card captions and a long one for list rows and the TV preview panel. Only
+ * [Unavailable] has no fixed long form; [RequestProgress.longText] gives its reason.
+ */
+enum class RequestProgressPhase(internal val short: SharedString, internal val long: SharedString?) {
+    Pending(SharedString.RequestShortPending, SharedString.RequestLongPending),
+    Queued(SharedString.RequestShortQueued, SharedString.RequestLongQueued),
+    Downloading(SharedString.RequestShortDownloading, SharedString.RequestLongDownloading),
+    Adding(SharedString.RequestShortAdding, SharedString.RequestLongAdding),
+    Partly(SharedString.RequestShortPartly, SharedString.RequestLongPartly),
+    OnTheWay(SharedString.RequestShortOnTheWay, SharedString.RequestLongOnTheWay),
+    InLibrary(SharedString.RequestShortInLibrary, SharedString.RequestLongInLibrary),
+    Declined(SharedString.RequestShortDeclined, SharedString.RequestLongDeclined),
+    Failed(SharedString.RequestShortFailed, SharedString.RequestLongFailed),
+    Unavailable(SharedString.RequestShortUnavailable, null),
+}
+
+/**
+ * Where a request sits on the stage track, plus its [phase]. Derived from
+ * [RequestDisplayState], so the track, the dot color, and My Requests
+ * bucketing always agree.
  */
 data class RequestProgress(
     val display: RequestDisplayState,
@@ -175,12 +178,20 @@ data class RequestProgress(
     val completedSteps: Int,
     /** The step the request is on, drawn in [tint]. Null once every step is done, or off the track. */
     val currentStep: RequestStep?,
-    /** One or two words for card captions. */
-    val shortLabel: String,
-    /** A plain-language phrase for list rows and the TV preview panel. */
-    val longLabel: String,
+    val phase: RequestProgressPhase,
 ) {
     val tint: RequestStatusTint get() = display.tint
+
+    /** One or two words for card captions. */
+    val shortText: UiText get() = UiText.Key(phase.short)
+
+    /** A plain-language phrase for list rows and the TV preview panel; an unavailable title gives its reason. */
+    val longText: UiText
+        get() {
+            phase.long?.let { return UiText.Key(it) }
+            val reason = (display as? RequestDisplayState.Unavailable)?.reason
+            return requestReasonText(reason) ?: UiText.Key(SharedString.RequestTitleUnavailable)
+        }
 
     companion object {
         /** From a full request record. */
@@ -194,19 +205,19 @@ data class RequestProgress(
         /** The display state decides the bucket and color; `state` and `status` only place an in-flight request. */
         fun of(display: RequestDisplayState, state: String?, status: String?): RequestProgress = when (display) {
             RequestDisplayState.Pending ->
-                RequestProgress(display, 1, RequestStep.Approval, "Pending", "Waiting for approval")
+                RequestProgress(display, 1, RequestStep.Approval, RequestProgressPhase.Pending)
             RequestDisplayState.OnTheWay -> {
-                val (step, short, long) = inFlightPhase(state, status)
-                RequestProgress(display, step.ordinal, step, short, long)
+                val (step, phase) = inFlightPhase(state, status)
+                RequestProgress(display, step.ordinal, step, phase)
             }
             RequestDisplayState.InLibrary ->
-                RequestProgress(display, RequestStep.entries.size, null, "In library", "In your library")
+                RequestProgress(display, RequestStep.entries.size, null, RequestProgressPhase.InLibrary)
             is RequestDisplayState.NeedsAttention -> when (display.attention) {
-                RequestAttention.Declined -> RequestProgress(display, 1, RequestStep.Approval, "Declined", "Declined")
-                RequestAttention.Failed -> RequestProgress(display, 2, RequestStep.Download, "Failed", "Request failed")
+                RequestAttention.Declined -> RequestProgress(display, 1, RequestStep.Approval, RequestProgressPhase.Declined)
+                RequestAttention.Failed -> RequestProgress(display, 2, RequestStep.Download, RequestProgressPhase.Failed)
             }
             is RequestDisplayState.Unavailable ->
-                RequestProgress(display, 0, null, display.label, display.detailTitle)
+                RequestProgress(display, 0, null, RequestProgressPhase.Unavailable)
         }
 
         /**
@@ -214,15 +225,13 @@ data class RequestProgress(
          * a finished download the library hasn't picked up yet are both on the
          * last step; everything else is queued or downloading.
          */
-        private fun inFlightPhase(state: String?, status: String?): Triple<RequestStep, String, String> {
-            if (state == RequestUserState.PartiallyAvailable) {
-                return Triple(RequestStep.Library, "Partly in library", "Partly in your library")
-            }
+        private fun inFlightPhase(state: String?, status: String?): Pair<RequestStep, RequestProgressPhase> {
+            if (state == RequestUserState.PartiallyAvailable) return RequestStep.Library to RequestProgressPhase.Partly
             return when (status) {
-                RequestStatus.Downloading -> Triple(RequestStep.Download, "Downloading", "Downloading")
-                RequestStatus.Completed -> Triple(RequestStep.Library, "Adding to library", "Adding to your library")
-                RequestStatus.Approved, RequestStatus.Queued -> Triple(RequestStep.Download, "Queued", "Queued for download")
-                else -> Triple(RequestStep.Download, "On the way", "On the way")
+                RequestStatus.Downloading -> RequestStep.Download to RequestProgressPhase.Downloading
+                RequestStatus.Completed -> RequestStep.Library to RequestProgressPhase.Adding
+                RequestStatus.Approved, RequestStatus.Queued -> RequestStep.Download to RequestProgressPhase.Queued
+                else -> RequestStep.Download to RequestProgressPhase.OnTheWay
             }
         }
     }
@@ -233,11 +242,14 @@ data class RequestProgress(
  * Requests that need the user sit above finished ones. Cancelled requests drop
  * off the list.
  */
-enum class MyRequestsBucket(val title: String) {
-    InMotion("In progress"),
-    NeedsAttention("Needs you"),
-    Landed("Available"),
+enum class MyRequestsBucket(private val title: SharedString) {
+    InMotion(SharedString.RequestBucketInProgress),
+    NeedsAttention(SharedString.RequestBucketNeedsYou),
+    Landed(SharedString.RequestBucketAvailable),
     ;
+
+    /** The section heading and filter option. */
+    val text: UiText get() = UiText.Key(title)
 
     companion object {
         fun of(state: RequestDisplayState): MyRequestsBucket? = when (state) {
@@ -264,49 +276,75 @@ object RequestTargetSummary {
      * one quality. Null for single-target requests, whose one state is the
      * request's own.
      */
-    fun text(targets: List<RequestTarget>): String? {
+    fun text(targets: List<RequestTarget>): UiText? {
         if (targets.size <= 1) return null
         val parts = targets.mapNotNull { target ->
             val quality = target.quality.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             val word = when (target.status) {
-                RequestStatus.Completed -> "done"
-                RequestStatus.Downloading -> "downloading"
-                RequestStatus.Queued, RequestStatus.Approved -> "queued"
-                RequestStatus.Pending -> "pending"
-                RequestStatus.Failed -> "failed"
+                RequestStatus.Completed -> SharedString.RequestTargetDone
+                RequestStatus.Downloading -> SharedString.RequestTargetDownloading
+                RequestStatus.Queued, RequestStatus.Approved -> SharedString.RequestTargetQueued
+                RequestStatus.Pending -> SharedString.RequestTargetPending
+                RequestStatus.Failed -> SharedString.RequestTargetFailed
                 else -> return@mapNotNull null
             }
-            "$quality $word"
+            UiText.Key(word, listOf(quality))
         }
-        return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+        return parts.reduceOrNull { joined, part -> UiText.Key(SharedString.RequestTargetJoin, listOf(joined, part)) }
     }
 
-    /** The requested qualities, for rows that aren't in flight: "1080p · 4K". */
+    /** The requested qualities, for rows that aren't in flight: "1080p · 4K" (server names, joined). */
     fun qualities(targets: List<RequestTarget>): String? =
         targets.map { it.quality }.filter { it.isNotBlank() }.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
+/** "Request failed · No indexer": a status and more about it. */
+fun requestStatusWithDetail(status: UiText, detail: UiText): UiText =
+    UiText.Key(SharedString.RequestStatusWithDetail, listOf(status, detail))
+
+/** The request reasons this client words itself, from the server's token (`quota_exceeded`, …). */
+enum class RequestReasonKind(private val copy: SharedString) {
+    AlreadyRequested(SharedString.RequestReasonAlreadyRequested),
+    AlreadyAvailable(SharedString.RequestReasonAlreadyAvailable),
+    LimitReached(SharedString.RequestReasonLimitReached),
+    RequestsOff(SharedString.RequestReasonRequestsOff),
+    Blocked(SharedString.RequestReasonBlocked),
+    NotSubmitted(SharedString.RequestReasonNotSubmitted),
+    CannotChange(SharedString.RequestReasonCannotChange),
+    NotFound(SharedString.RequestReasonNotFound),
+    Unconfirmed(SharedString.RequestReasonUnconfirmed),
+    ;
+
+    val text: UiText get() = UiText.Key(copy)
+
+    companion object {
+        /** The kind a token names, or null for anything else (a server sentence, an unknown code). */
+        fun of(token: String?): RequestReasonKind? = when (token?.trim()) {
+            RequestReason.AlreadyRequested -> AlreadyRequested
+            RequestReason.AlreadyAvailable -> AlreadyAvailable
+            RequestReason.QuotaExceeded, "limit_reached" -> LimitReached
+            RequestReason.RequestsDisabled -> RequestsOff
+            RequestReason.Blocked, "requesting_blocked" -> Blocked
+            "validation_failed" -> NotSubmitted
+            "invalid_state" -> CannotChange
+            "not_found" -> NotFound
+            RequestUnconfirmedToken -> Unconfirmed
+            else -> null
+        }
+    }
+}
+
 /**
- * Copy for a request reason: a server token (`quota_exceeded`, …) becomes a
+ * Text for a request reason: a known token ([RequestReasonKind]) becomes a
  * phrase; readable text from the server (a `last_error` sentence) shows as
  * written; an unknown code shows nothing rather than a raw code.
  */
-fun requestReasonCopy(token: String?): String? {
+fun requestReasonText(token: String?): UiText? {
     val value = token?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-    return when (value) {
-        RequestReason.AlreadyRequested -> "Already requested"
-        RequestReason.AlreadyAvailable -> "Already in your library"
-        RequestReason.QuotaExceeded, "limit_reached" -> "Request limit reached"
-        RequestReason.RequestsDisabled -> "Requests are turned off"
-        RequestReason.Blocked, "requesting_blocked" -> "You can't request media right now"
-        "validation_failed" -> "That request couldn't be submitted"
-        "invalid_state" -> "This request can no longer be changed"
-        "not_found" -> "This title is no longer available"
-        RequestUnconfirmedToken -> "Not confirmed yet"
-        // Server sentences can arrive lowercase ("one or more fulfillment
-        // targets failed"); they read as their own line.
-        else -> value.takeUnless { RequestReasonCodePattern.matches(it) }?.replaceFirstChar { it.uppercase() }
-    }
+    RequestReasonKind.of(value)?.let { return it.text }
+    // Server sentences can arrive lowercase ("one or more fulfillment
+    // targets failed"); they read as their own line.
+    return value.takeUnless { RequestReasonCodePattern.matches(it) }?.replaceFirstChar { it.uppercase() }?.let(UiText::Raw)
 }
 
 /** Local reason for a create whose outcome is not known yet; shown on the held primary action. */

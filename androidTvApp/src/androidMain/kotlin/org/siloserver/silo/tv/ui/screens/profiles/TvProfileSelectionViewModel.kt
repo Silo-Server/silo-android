@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 import org.siloserver.silo.common.ui.marquee.SignInHandoff
 import org.siloserver.silo.model.auth.isPasswordChangeRequired
 import org.siloserver.silo.model.profile.Profile
@@ -29,7 +32,7 @@ data class TvProfileSelectionUiState(
     val profiles: List<Profile> = emptyList(),
     val canManageProfiles: Boolean = false,
     val isLoading: Boolean = true,
-    val error: String? = null,
+    val error: UiText? = null,
     val selectedProfileId: String? = null,
     // Manage mode: tapping a profile opens edit, plus a delete affordance shows.
     val isManageMode: Boolean = false,
@@ -38,7 +41,7 @@ data class TvProfileSelectionUiState(
     /** The open PIN prompt is the primary profile's, unlocking manage mode rather than selecting it. */
     val pinForManagement: Boolean = false,
     val isVerifyingPin: Boolean = false,
-    val pinError: String? = null,
+    val pinError: UiText? = null,
     // Profile pending delete confirmation (manage mode).
     val deleteCandidate: Profile? = null,
     val isDeleting: Boolean = false,
@@ -88,8 +91,8 @@ internal fun CachedProfile.asProfile(): Profile = Profile(
  * has no form for it: the password is changed on a phone or the web, which
  * ends this TV's session, so Retry then leads to sign-in.
  */
-internal const val TV_PASSWORD_CHANGE_REQUIRED_MESSAGE =
-    "Your password needs to be reset. Use the Silo mobile app or website to set a new one, then come back."
+internal val TV_PASSWORD_CHANGE_REQUIRED_MESSAGE: UiText =
+    UiText.Res(CommonR.string.profiles_error_passwordReset)
 
 /**
  * TV profile picker. PIN-protected profiles now work: selecting one opens a
@@ -339,9 +342,9 @@ class TvProfileSelectionViewModel(
                     // replaced, so the cached grid is not offered either.
                     _uiState.update { it.copy(isLoading = false, error = TV_PASSWORD_CHANGE_REQUIRED_MESSAGE) }
                 } else {
-                    showCachedProfiles(scope, result.message.ifBlank { "Failed to load profiles" })
+                    showCachedProfiles(scope, result.errorText(CommonR.string.profiles_error_loadFailed))
                 }
-                is ApiResult.NetworkError -> showCachedProfiles(scope, "Network error. Please try again.")
+                is ApiResult.NetworkError -> showCachedProfiles(scope, UiText.Res(CommonR.string.profiles_error_network))
             }
         }
     }
@@ -350,7 +353,7 @@ class TvProfileSelectionViewModel(
      * The server couldn't be reached: the account's last list stands in, with
      * the error under it, so the picker still shows who is on this account.
      */
-    private fun showCachedProfiles(scope: AuthScopeSnapshot?, error: String) {
+    private fun showCachedProfiles(scope: AuthScopeSnapshot?, error: UiText) {
         val cached = serverRegistry?.activeAccount?.value?.cachedProfiles.orEmpty()
         if (_uiState.value.profiles.isEmpty() && cached.isNotEmpty()) {
             gridScope = scope
@@ -399,7 +402,7 @@ class TvProfileSelectionViewModel(
     private fun enterManageMode(thenAdd: Boolean) {
         val primary = _uiState.value.profiles.householdPrimary()
         if (primary == null) {
-            _uiState.update { it.copy(error = "Couldn't find the primary profile needed to manage profiles.") }
+            _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_noPrimary)) }
             return
         }
         pinAttempt++
@@ -552,19 +555,19 @@ class TvProfileSelectionViewModel(
                         commitSelection(profile, token, scope)
                         _uiState.update { it.copy(pinProfile = null, isVerifyingPin = false) }
                     } else {
-                        _uiState.update { it.copy(isVerifyingPin = false, pinError = "Wrong PIN. Try again.") }
+                        _uiState.update { it.copy(isVerifyingPin = false, pinError = UiText.Res(CommonR.string.pin_wrong)) }
                     }
                 }
                 is ApiResult.Error -> _uiState.update {
                     it.copy(
                         isVerifyingPin = false,
-                        pinError = r.message.ifBlank { "Incorrect PIN" },
+                        pinError = r.errorText(CommonR.string.pin_error_incorrect),
                     )
                 }
                 is ApiResult.NetworkError -> _uiState.update {
                     it.copy(
                         isVerifyingPin = false,
-                        pinError = "Network error. Please try again.",
+                        pinError = UiText.Res(CommonR.string.pin_error_network),
                     )
                 }
             }
@@ -659,14 +662,14 @@ class TvProfileSelectionViewModel(
                     it.copy(
                         isDeleting = false,
                         deleteCandidate = null,
-                        error = result.message.ifBlank { "Failed to delete profile" },
+                        error = result.errorText(CommonR.string.profiles_error_deleteFailed),
                     )
                 }
                 is ApiResult.NetworkError -> _uiState.update {
                     it.copy(
                         isDeleting = false,
                         deleteCandidate = null,
-                        error = "Network error. Please try again.",
+                        error = UiText.Res(CommonR.string.profiles_error_network),
                     )
                 }
             }

@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -38,6 +39,7 @@ import androidx.tv.material3.Glow
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
 import org.siloserver.silo.tv.ui.focus.TvControlState
 import org.siloserver.silo.tv.ui.focus.tvControlSemantics
@@ -121,9 +123,9 @@ fun TvJoinCodeDialog(
                     .then(rememberTvDialogInitialFocus(firstKeyFocus)),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                TvPartyEyebrow("Join a Watch Party")
+                TvPartyEyebrow(stringResource(CommonR.string.watchParty_joinCode_eyebrow))
                 Text(
-                    text = "Enter the party code",
+                    text = stringResource(CommonR.string.watchParty_joinCode_title),
                     fontSize = 20.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = SiloOnSurface,
@@ -199,14 +201,14 @@ fun TvJoinCodeDialog(
                     horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
                 ) {
                     TvPartyButton(
-                        label = "Delete",
+                        label = stringResource(CommonR.string.watchParty_code_delete),
                         kind = TvPartyButtonKind.Secondary,
                         state = TvControlState.transient(!isBusy && state.code.isNotEmpty()),
                         onClick = { state = state.backspace() },
                         height = 34.dp,
                     )
                     TvPartyButton(
-                        label = if (isBusy) "Joining…" else "Join party",
+                        label = stringResource(if (isBusy) CommonR.string.watchParty_code_joining else CommonR.string.watchParty_code_joinParty),
                         state = TvControlState.transient(state.isComplete && !isBusy),
                         onClick = { state.normalized?.let(onJoin) },
                         height = 34.dp,

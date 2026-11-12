@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.navigation
 
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.tv.ui.screens.boxset.TvBoxSetScreen
 import androidx.compose.foundation.layout.fillMaxWidth
 import android.net.Uri
@@ -59,6 +61,9 @@ import org.siloserver.silo.tv.ui.screens.library.TvSectionBrowseScreen
 import org.siloserver.silo.viewmodel.SectionBrowseArgs
 import org.siloserver.silo.tv.ui.screens.player.TvPlayerScreen
 import org.siloserver.silo.tv.ui.screens.profiles.TvProfileSelectionScreen
+import org.siloserver.silo.tv.ui.screens.profiles.asProfile
+import org.siloserver.silo.model.profile.householdPrimary
+import org.siloserver.silo.viewmodel.MenuAddProfileSession
 import org.siloserver.silo.tv.ui.screens.servers.TvAccountsScreen
 import org.siloserver.silo.tv.ui.screens.servers.TvChangeAccountScreen
 import org.siloserver.silo.tv.ui.screens.servers.TvServerSwitchDestination
@@ -87,6 +92,8 @@ import org.siloserver.silo.tv.auth.TvSignOut
 import org.siloserver.silo.tv.auth.TvSignOutResult
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
+import org.siloserver.silo.common.profiles.ProfileSelectionPrompt
+import org.siloserver.silo.common.profiles.profileSelectionPrompt
 import org.siloserver.silo.tv.profiles.TvActiveProfileReset
 import org.siloserver.silo.common.profiles.ProfileAwayTracker
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
@@ -543,12 +550,15 @@ fun TvAppNavigation(
     val remotePlaybackIdentityManager: RemotePlaybackIdentityManager = koinInject()
     val tvSignOut: TvSignOut = koinInject()
     val playbackLifecycle: PlaybackSessionLifecycle = koinInject()
+    /** The profile menu's Add Profile in progress; a second press waits for it. */
+    val addProfileJob = remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     // Android can restore Silo's previous back stack over the start route
     // MainTvActivity chose: after a configuration change while Silo was away,
     // or after its process was killed in the background. When Profile
     // Selection has already cleared the profile, that brings back Home with
-    // no profile behind it, so go to Who's Watching instead.
+    // no profile behind it, so go to Who's Watching instead, or to Change
+    // Account when that is the start route MainTvActivity chose.
     LaunchedEffect(navController) {
         navController.currentBackStackEntryFlow.first()
         val restoredMain = runCatching { navController.getBackStackEntry(TvRoute.Main.route) }.isSuccess
@@ -556,7 +566,9 @@ fun TvAppNavigation(
             !tokenManager.getAccessToken().isNullOrBlank() &&
             tokenManager.getProfileId().isNullOrBlank()
         ) {
-            navController.navigate(TvRoute.ProfileSelection.route) {
+            val changeAccount = TvRoute.ChangeAccount().route
+            val target = if (startDestination == changeAccount) changeAccount else TvRoute.ProfileSelection.route
+            navController.navigate(target) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
             }
@@ -565,7 +577,8 @@ fun TvAppNavigation(
 
     // Profile Selection's return rule (silo-apple `applyProfileReturnPolicy`):
     // when Silo comes back from the background and the setting asks, Who's
-    // Watching replaces whatever was on screen, as Switch Profile does.
+    // Watching replaces whatever was on screen, as Switch Profile does. With
+    // several accounts saved, Change Account replaces it instead.
     LaunchedEffect(profileAwayTracker) {
         kotlinx.coroutines.flow.combine(
             profileAwayTracker.selectionRequired,
@@ -607,17 +620,28 @@ fun TvAppNavigation(
                 profileAwayTracker.onSelectionHandled()
                 return@collect
             }
-            // The open account's only profile, with no PIN, is never asked
-            // for (multi-account spec §4.2): it is still the one open.
-            if (serverRegistry.onlyOpenTileIsActive(tokenManager)) {
+            val prompt = profileSelectionPrompt(
+                selectionRequired = true,
+                savedAccounts = serverRegistry.accounts.value.size,
+                onlyProfileNeedsNoChoice = serverRegistry.onlyOpenTileIsActive(tokenManager),
+            )
+            // With one account saved, its only profile, with no PIN, is never
+            // asked for (multi-account spec §4.2): it is still the one open.
+            if (prompt == ProfileSelectionPrompt.None) {
                 profileLaunchPreferences.clearBackgroundedAt()
                 profileAwayTracker.onSelectionHandled()
                 return@collect
             }
             // Leave the profile's screens before clearing its state (see
             // onSwitchProfile). MainTvActivity.onStop already flushed pending
-            // device-setting writes under this profile.
-            navController.navigate(TvRoute.ProfileSelection.route) {
+            // device-setting writes under this profile. Several accounts are
+            // saved: Change Account asks whose account first.
+            val target = if (prompt == ProfileSelectionPrompt.ChangeAccount) {
+                TvRoute.ChangeAccount().route
+            } else {
+                TvRoute.ProfileSelection.route
+            }
+            navController.navigate(target) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
             }
@@ -626,7 +650,10 @@ fun TvAppNavigation(
             // it once the previous profile's screens have faded out.
             withTimeoutOrNull(PROFILE_COVER_MAX_MS) {
                 navController.visibleEntries.first { entries ->
-                    entries.all { it.destination.route in preMainAuthRoutes }
+                    entries.all {
+                        val shown = it.destination.route
+                        shown in preMainAuthRoutes || shown == TvRoute.ChangeAccount.ROUTE
+                    }
                 }
             }
             profileAwayTracker.onSelectionHandled()
@@ -726,6 +753,10 @@ fun TvAppNavigation(
             // never go stale on an authenticated session.
             val route = entry.destination.route
             if (route == null || route in preMainAuthRoutes) return@collect // unauthenticated flow: keep queued until Main
+            // Change Account with no profile open stands in for Who's
+            // Watching (a launch or return with several accounts saved): keep
+            // the link queued until a profile is chosen, as the picker does.
+            if (route == TvRoute.ChangeAccount.ROUTE && tokenManager.getProfileId().isNullOrBlank()) return@collect
             // Profile Selection (silo-apple `handleDeepLink`): a link that
             // arrives while Silo is returning must not open the previous
             // profile's data before Who's Watching replaces it. Keep it queued
@@ -1265,7 +1296,8 @@ fun TvAppNavigation(
 
         // Change Account (owner decision 2026-11-02, Roku spec §7.5): pushed
         // from the picker and the profile menu, and the root while no account
-        // is open but another has a session.
+        // is open but another has a session, or while Profile Selection asks
+        // with several accounts saved (no profile is open then).
         composable(
             route = TvRoute.ChangeAccount.ROUTE,
             arguments = listOf(
@@ -1284,7 +1316,8 @@ fun TvAppNavigation(
                     val behind = navController.previousBackStackEntry?.destination?.route
                     when {
                         // Another account: the screens behind belong to the old one.
-                        switched -> navController.navigate(TvRoute.ProfileSelection.route) {
+                        // As the root, nothing is behind and no profile is open.
+                        switched || isRoot -> navController.navigate(TvRoute.ProfileSelection.route) {
                             popUpTo(0) { inclusive = true }
                         }
                         behind == TvRoute.ProfileSelection.route -> navController.popBackStack()
@@ -1314,9 +1347,31 @@ fun TvAppNavigation(
         }
 
         composable(TvRoute.CreateProfile.route) {
+            // Opened from the picker, or by the profile menu's Add Profile
+            // over Home. From the menu, a new profile leads to the picker as
+            // Switch Profile opens it, Back returns to the screen the menu
+            // was on, and the management session the menu started ends once
+            // this entry leaves the back stack.
+            val fromPicker = remember {
+                navController.previousBackStackEntry?.destination?.route == TvRoute.ProfileSelection.route
+            }
+            if (!fromPicker) {
+                androidx.lifecycle.viewmodel.compose.viewModel { MenuAddProfileSession(profileRepository) }
+            }
             TvCreateProfileScreen(
                 onNavigateBack = { navController.popBackStack() },
-                onProfileCreated = { navController.popBackStack() },
+                onProfileCreated = {
+                    if (fromPicker) {
+                        navController.popBackStack()
+                    } else {
+                        scope.launch {
+                            navController.navigate(TvRoute.ProfileSelection.route) {
+                                popUpTo(TvRoute.Main.route) { inclusive = true }
+                            }
+                            activeProfileReset.clearActiveProfile()
+                        }
+                    }
+                },
             )
         }
 
@@ -1391,6 +1446,33 @@ fun TvAppNavigation(
                 // Where Switch Server was: other accounts and servers.
                 onChangeAccount = {
                     navController.navigate(TvRoute.ChangeAccount().route) { launchSingleTop = true }
+                },
+                // The profile menu's Add Profile, offered while the open
+                // account has one profile. Household management acts as the
+                // account's primary profile, as the picker's Add does, and
+                // asks for its PIN first when it has one
+                // (TvHouseholdReverifyHost shows the prompt). With no primary
+                // known, the picker opens instead, where Add runs the same
+                // steps.
+                onAddProfile = {
+                    if (addProfileJob.value?.isActive != true) {
+                        addProfileJob.value = scope.launch {
+                            val primary = serverRegistry.activeAccount.value?.cachedProfiles.orEmpty()
+                                .map { it.asProfile() }
+                                .householdPrimary()
+                            if (primary == null) {
+                                navController.navigate(TvRoute.ProfileSelection.route) {
+                                    popUpTo(TvRoute.Main.route) { inclusive = true }
+                                }
+                                activeProfileReset.clearActiveProfile()
+                                return@launch
+                            }
+                            val identity = profileRepository.captureIdentityScope()
+                            if (profileRepository.householdManagement.beginVerified(primary, identity)) {
+                                navController.navigate(TvRoute.CreateProfile.route) { launchSingleTop = true }
+                            }
+                        }
+                    }
                 },
                 onSwitchProfile = {
                     scope.launch {
@@ -2163,7 +2245,10 @@ fun TvAppNavigation(
             message = notice.message,
             onDismissRequest = notice.onDismiss,
             actions = listOf(
-                org.siloserver.silo.tv.ui.components.TvDialogAction(label = "OK", onClick = notice.onDismiss),
+                org.siloserver.silo.tv.ui.components.TvDialogAction(
+                    label = stringResource(CommonR.string.shell_notice_ok),
+                    onClick = notice.onDismiss,
+                ),
                 org.siloserver.silo.tv.ui.components.TvDialogAction(
                     label = notice.actionLabel,
                     onClick = notice.onAction,

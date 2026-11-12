@@ -25,7 +25,6 @@ class TvRequestActionsTest {
     @Test fun aRemovableRequestCardOffersRemove() {
         val actions = TvRequestItem.Record(failed).actions(canCancel = { false }, canRemove = { it.id == "r-1" })
         assertEquals(listOf(TvRequestAction.Remove), actions)
-        assertEquals("Remove request", TvRequestAction.Remove.label)
     }
 
     @Test fun aCardThatCannotBeRemovedOrCancelledOffersNothing() {

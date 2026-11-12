@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.settings
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -25,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.toColorInt
 import org.siloserver.silo.android.ui.theme.SettingsDimens
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -56,31 +59,30 @@ fun SubtitleProfileSection(
         )
     }
     SettingsSection(
-        title = "Profile",
-        footer = "Used to pick a matching track when one is available. Forced subtitles cover " +
-            "foreign-language dialogue even when subtitles are off or set to auto.",
+        title = stringResource(CommonR.string.settings_subtitles_profile),
+        footer = stringResource(CommonR.string.settings_subtitles_languageFooter),
         modifier = modifier,
     ) {
-        SettingsDropdownRow(
-            label = "Language",
-            value = LanguageOptions.label(subtitleLanguage, SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE),
-            options = subtitleLanguageOptions.map { it.second },
-            onOptionSelected = { label ->
-                onLanguageChanged(LanguageOptions.wireValue(label, subtitleLanguageOptions))
-            },
+        val languageValue = LanguageOptions.label(subtitleLanguage, SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE)
+        val languageLabels = subtitleLanguageOptions.map { it.second }
+        SettingsIndexedDropdownRow(
+            label = stringResource(CommonR.string.settings_control_language),
+            value = languageValue.text(),
+            options = languageLabels.map { it.text() },
+            selectedIndex = languageLabels.indexOf(languageValue),
+            onIndexSelected = { onLanguageChanged(subtitleLanguageOptions[it].first) },
         )
 
-        SettingsDropdownRow(
-            label = "Behavior",
-            value = subtitleMode.label,
-            options = SubtitleMode.entries.map { it.label },
-            onOptionSelected = { label ->
-                SubtitleMode.entries.find { it.label == label }?.let(onModeChanged)
-            },
+        SettingsIndexedDropdownRow(
+            label = stringResource(CommonR.string.settings_control_behavior),
+            value = stringResource(subtitleMode.label),
+            options = SubtitleMode.entries.map { stringResource(it.label) },
+            selectedIndex = subtitleMode.ordinal,
+            onIndexSelected = { onModeChanged(SubtitleMode.entries[it]) },
         )
 
         SettingsSwitchRow(
-            label = "Show Forced Subtitles",
+            label = stringResource(CommonR.string.settings_control_forced),
             checked = showForcedSubtitles,
             onCheckedChange = onForcedSubtitlesChanged,
         )
@@ -106,17 +108,18 @@ fun SubtitleMetadataSection(
         )
     }
     SettingsSection(
-        title = "Metadata",
-        footer = "Fallback language Silo prefers for titles, descriptions, and artwork.",
+        title = stringResource(CommonR.string.settings_section_metadata),
+        footer = stringResource(CommonR.string.settingsManifest_catalog_metadata_language_description),
         modifier = modifier,
     ) {
-        SettingsDropdownRow(
-            label = "Metadata Language",
-            value = LanguageOptions.label(metadataLanguage, SettingKeys.CATALOG_METADATA_LANGUAGE),
-            options = metadataLanguageOptions.map { it.second },
-            onOptionSelected = { label ->
-                onMetadataLanguageChanged(LanguageOptions.wireValue(label, metadataLanguageOptions))
-            },
+        val metadataValue = LanguageOptions.label(metadataLanguage, SettingKeys.CATALOG_METADATA_LANGUAGE)
+        val metadataLabels = metadataLanguageOptions.map { it.second }
+        SettingsIndexedDropdownRow(
+            label = stringResource(CommonR.string.settings_control_metadataLanguage),
+            value = metadataValue.text(),
+            options = metadataLabels.map { it.text() },
+            selectedIndex = metadataLabels.indexOf(metadataValue),
+            onIndexSelected = { onMetadataLanguageChanged(metadataLanguageOptions[it].first) },
         )
     }
 }
@@ -140,25 +143,26 @@ fun SubtitleAppearanceSection(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
-        SettingsSectionHeader("Appearance")
+        SettingsSectionHeader(stringResource(CommonR.string.settings_subtitles_appearance))
         SubtitleAppearancePreview(previewAppearance)
         Spacer(modifier = Modifier.height(SettingsDimens.sectionGap))
         SettingsSection(
             title = null,
-            footer = when {
-                subtitleMatchesDevice ->
-                    "Subtitles follow this device's caption style from Android's accessibility settings."
-                subtitleUsesDeviceOverride -> "Only on this device."
-                else -> "Saved for this profile on all devices."
-            },
+            footer = stringResource(
+                when {
+                    subtitleMatchesDevice -> CommonR.string.settings_subtitles_appearance_followsDevice
+                    subtitleUsesDeviceOverride -> CommonR.string.settings_subtitles_scopeDevice
+                    else -> CommonR.string.settings_subtitles_scopeProfile
+                },
+            ),
         ) {
             SettingsSwitchRow(
-                label = "Use Device Settings",
+                label = stringResource(CommonR.string.settings_subtitles_useDeviceSettings),
                 checked = subtitleMatchesDevice,
                 onCheckedChange = onSubtitleMatchesDeviceChanged,
             )
             SettingsSwitchRow(
-                label = "Only on This Device",
+                label = stringResource(CommonR.string.settings_subtitles_onlyOnThisDevice),
                 checked = subtitleUsesDeviceOverride,
                 onCheckedChange = onSubtitleDeviceOverrideChanged,
                 enabled = !subtitleMatchesDevice,
@@ -179,64 +183,50 @@ fun SubtitleTextSection(
     onEdit: ((SubtitleAppearance) -> SubtitleAppearance) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    SettingsSection(title = "Text", modifier = modifier) {
-        SettingsDropdownRow(
-            label = "Font Size",
-            value = SubtitleOptionLabels.fontSize(appearance.fontSize),
-            options = SubtitleOptionLabels.FONT_SIZES.map { it.second },
+    SettingsSection(title = stringResource(CommonR.string.settings_subtitles_text), modifier = modifier) {
+        SubtitleChoiceRow(
+            label = stringResource(CommonR.string.settings_subtitles_fontSize),
+            choices = SubtitleOptionLabels.FONT_SIZES,
+            current = appearance.fontSize,
             enabled = enabled,
-            onOptionSelected = { label ->
-                SubtitleOptionLabels.FONT_SIZES.firstOrNull { it.second == label }
-                    ?.let { (size, _) -> onEdit { it.copy(fontSize = size) } }
-            },
+            onSelected = { size -> onEdit { it.copy(fontSize = size) } },
         )
-        SettingsDropdownRow(
-            label = "Font Family",
-            value = SubtitleOptionLabels.fontFamily(appearance.fontFamily),
-            options = SubtitleOptionLabels.FONT_FAMILIES.map { it.second },
+        SubtitleChoiceRow(
+            label = stringResource(CommonR.string.settings_subtitles_fontFamily),
+            choices = SubtitleOptionLabels.FONT_FAMILIES,
+            current = SubtitleOptionLabels.FONT_FAMILIES.firstOrNull { it.first.equals(appearance.fontFamily, ignoreCase = true) }?.first,
+            fallback = appearance.fontFamily,
             enabled = enabled,
-            onOptionSelected = { label ->
-                SubtitleOptionLabels.FONT_FAMILIES.firstOrNull { it.second == label }
-                    ?.let { (family, _) -> onEdit { it.copy(fontFamily = family) } }
-            },
+            onSelected = { family -> onEdit { it.copy(fontFamily = family) } },
         )
-        SettingsDropdownRow(
-            label = "Font Color",
-            value = SubtitleOptionLabels.colorName(appearance.fontColor, SubtitleOptionLabels.FONT_COLORS),
-            options = SubtitleOptionLabels.FONT_COLORS.map { it.second },
+        SubtitleColorRow(
+            label = stringResource(CommonR.string.settings_subtitles_fontColor),
+            palette = SubtitleOptionLabels.FONT_COLORS,
+            hex = appearance.fontColor,
             enabled = enabled,
-            onOptionSelected = { label ->
-                SubtitleOptionLabels.FONT_COLORS.firstOrNull { it.second == label }
-                    ?.let { (hex, _) -> onEdit { it.copy(fontColor = hex) } }
-            },
+            onSelected = { hex -> onEdit { it.copy(fontColor = hex) } },
         )
         if (showTextOpacity) {
             val steps = SubtitleOptionLabels.percentSteps(5, appearance.textOpacity)
-            SettingsDropdownRow(
-                label = "Opacity",
-                value = "${appearance.textOpacity}%",
-                options = steps.map { "$it%" },
+            SubtitlePercentRow(
+                steps = steps,
+                current = appearance.textOpacity,
                 enabled = enabled,
-                onOptionSelected = { label ->
-                    label.removeSuffix("%").toIntOrNull()?.let { percent -> onEdit { it.copy(textOpacity = percent) } }
-                },
+                onSelected = { percent -> onEdit { it.copy(textOpacity = percent) } },
             )
         }
         SettingsSwitchRow(
-            label = "Text Outline",
+            label = stringResource(CommonR.string.settings_subtitles_textOutline),
             checked = appearance.textOutline,
             enabled = enabled,
             onCheckedChange = { outline -> onEdit { it.copy(textOutline = outline) } },
         )
-        SettingsDropdownRow(
-            label = "Outline Color",
-            value = SubtitleOptionLabels.colorName(appearance.textOutlineColor, SubtitleOptionLabels.DARK_COLORS),
-            options = SubtitleOptionLabels.DARK_COLORS.map { it.second },
+        SubtitleColorRow(
+            label = stringResource(CommonR.string.settings_subtitles_outlineColor),
+            palette = SubtitleOptionLabels.DARK_COLORS,
+            hex = appearance.textOutlineColor,
             enabled = enabled && appearance.textOutline,
-            onOptionSelected = { label ->
-                SubtitleOptionLabels.DARK_COLORS.firstOrNull { it.second == label }
-                    ?.let { (hex, _) -> onEdit { it.copy(textOutlineColor = hex) } }
-            },
+            onSelected = { hex -> onEdit { it.copy(textOutlineColor = hex) } },
         )
     }
 }
@@ -250,36 +240,27 @@ fun SubtitleBackgroundSection(
     modifier: Modifier = Modifier,
 ) {
     val boxed = appearance.backgroundStyle == SubtitleBackgroundStylePreset.Box
-    SettingsSection(title = "Background", modifier = modifier) {
-        SettingsDropdownRow(
-            label = "Style",
-            value = SubtitleOptionLabels.backgroundStyle(appearance.backgroundStyle),
-            options = SubtitleOptionLabels.BACKGROUND_STYLES.map { it.second },
+    SettingsSection(title = stringResource(CommonR.string.settings_subtitles_background), modifier = modifier) {
+        SubtitleChoiceRow(
+            label = stringResource(CommonR.string.settings_subtitles_backgroundStyleShort),
+            choices = SubtitleOptionLabels.BACKGROUND_STYLES,
+            current = appearance.backgroundStyle,
             enabled = enabled,
-            onOptionSelected = { label ->
-                SubtitleOptionLabels.BACKGROUND_STYLES.firstOrNull { it.second == label }
-                    ?.let { (style, _) -> onEdit { it.copy(backgroundStyle = style) } }
-            },
+            onSelected = { style -> onEdit { it.copy(backgroundStyle = style) } },
         )
         val steps = SubtitleOptionLabels.percentSteps(0, appearance.backgroundOpacity)
-        SettingsDropdownRow(
-            label = "Opacity",
-            value = "${appearance.backgroundOpacity}%",
-            options = steps.map { "$it%" },
+        SubtitlePercentRow(
+            steps = steps,
+            current = appearance.backgroundOpacity,
             enabled = enabled && boxed,
-            onOptionSelected = { label ->
-                label.removeSuffix("%").toIntOrNull()?.let { percent -> onEdit { it.copy(backgroundOpacity = percent) } }
-            },
+            onSelected = { percent -> onEdit { it.copy(backgroundOpacity = percent) } },
         )
-        SettingsDropdownRow(
-            label = "Color",
-            value = SubtitleOptionLabels.colorName(appearance.backgroundColor, SubtitleOptionLabels.DARK_COLORS),
-            options = SubtitleOptionLabels.DARK_COLORS.map { it.second },
+        SubtitleColorRow(
+            label = stringResource(CommonR.string.settings_subtitles_backgroundColorShort),
+            palette = SubtitleOptionLabels.DARK_COLORS,
+            hex = appearance.backgroundColor,
             enabled = enabled && boxed,
-            onOptionSelected = { label ->
-                SubtitleOptionLabels.DARK_COLORS.firstOrNull { it.second == label }
-                    ?.let { (hex, _) -> onEdit { it.copy(backgroundColor = hex) } }
-            },
+            onSelected = { hex -> onEdit { it.copy(backgroundColor = hex) } },
         )
     }
 }
@@ -292,21 +273,18 @@ fun SubtitleLayoutSection(
     onEdit: ((SubtitleAppearance) -> SubtitleAppearance) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    SettingsSection(title = "Layout", modifier = modifier) {
-        SettingsDropdownRow(
-            label = "Position",
-            value = SubtitleOptionLabels.position(appearance.position),
-            options = SubtitleOptionLabels.POSITIONS.map { it.second },
+    SettingsSection(title = stringResource(CommonR.string.settings_subtitles_layout), modifier = modifier) {
+        SubtitleChoiceRow(
+            label = stringResource(CommonR.string.settings_subtitles_position),
+            choices = SubtitleOptionLabels.POSITIONS,
+            current = appearance.position,
             enabled = enabled,
-            onOptionSelected = { label ->
-                SubtitleOptionLabels.POSITIONS.firstOrNull { it.second == label }
-                    ?.let { (position, _) -> onEdit { it.copy(position = position) } }
-            },
+            onSelected = { position -> onEdit { it.copy(position = position) } },
         )
     }
 }
 
-private const val SubtitlePreviewText = "Subtitles will look like this"
+
 
 /**
  * The Apple page's live preview: sample text over a dark gradient, drawn with
@@ -314,6 +292,7 @@ private const val SubtitlePreviewText = "Subtitles will look like this"
  */
 @Composable
 private fun SubtitleAppearancePreview(appearance: SubtitleAppearance) {
+    val previewText = stringResource(CommonR.string.settings_subtitles_preview)
     val safe = appearance.sanitized()
     val fontFamily = when (safe.fontFamily.lowercase()) {
         SubtitleAppearance.SERIF -> FontFamily.Serif
@@ -357,7 +336,7 @@ private fun SubtitleAppearancePreview(appearance: SubtitleAppearance) {
             if (showOutline) {
                 listOf(-1 to -1, -1 to 1, 1 to -1, 1 to 1).forEach { (x, y) ->
                     Text(
-                        text = SubtitlePreviewText,
+                        text = previewText,
                         color = outline,
                         fontFamily = fontFamily,
                         fontSize = fontSize,
@@ -367,7 +346,7 @@ private fun SubtitleAppearancePreview(appearance: SubtitleAppearance) {
                 }
             }
             Text(
-                text = SubtitlePreviewText,
+                text = previewText,
                 color = foreground,
                 fontFamily = fontFamily,
                 fontSize = fontSize,
@@ -382,6 +361,65 @@ private fun previewColor(hex: String): Color =
     runCatching { Color(hex.toColorInt()) }.getOrDefault(Color.White)
 
 /**
+ * A picker over [choices] (value to label), checking [current]. A value the
+ * palette doesn't name shows as [fallback] with nothing checked.
+ */
+@Composable
+private fun <T> SubtitleChoiceRow(
+    label: String,
+    choices: List<Pair<T, Int>>,
+    current: T?,
+    enabled: Boolean,
+    onSelected: (T) -> Unit,
+    fallback: String = "",
+) {
+    val index = choices.indexOfFirst { it.first == current }
+    SettingsIndexedDropdownRow(
+        label = label,
+        value = if (index >= 0) stringResource(choices[index].second) else fallback,
+        options = choices.map { stringResource(it.second) },
+        selectedIndex = index,
+        enabled = enabled,
+        onIndexSelected = { onSelected(choices[it].first) },
+    )
+}
+
+/** A colour picker over [palette]; a colour set elsewhere shows as its hex. */
+@Composable
+private fun SubtitleColorRow(
+    label: String,
+    palette: List<Pair<String, Int>>,
+    hex: String,
+    enabled: Boolean,
+    onSelected: (String) -> Unit,
+) = SubtitleChoiceRow(
+    label = label,
+    choices = palette,
+    current = palette.firstOrNull { it.first.equals(hex, ignoreCase = true) }?.first,
+    fallback = hex,
+    enabled = enabled,
+    onSelected = onSelected,
+)
+
+/** An "Opacity" picker over percent [steps], checking [current]. */
+@Composable
+private fun SubtitlePercentRow(
+    steps: List<Int>,
+    current: Int,
+    enabled: Boolean,
+    onSelected: (Int) -> Unit,
+) {
+    SettingsIndexedDropdownRow(
+        label = stringResource(CommonR.string.settings_subtitles_opacity),
+        value = stringResource(CommonR.string.settings_subtitles_percent, current),
+        options = steps.map { stringResource(CommonR.string.settings_subtitles_percent, it) },
+        selectedIndex = steps.indexOf(current),
+        enabled = enabled,
+        onIndexSelected = { onSelected(steps[it]) },
+    )
+}
+
+/**
  * Option labels for the Text / Background / Layout groups, in the Apple apps'
  * wording. The palettes match silo-apple `SubtitleAppearance` and the TV app's
  * `TvSubtitleAppearanceOptions`. Android also offers the outline background
@@ -389,65 +427,52 @@ private fun previewColor(hex: String): Color =
  */
 private object SubtitleOptionLabels {
     val FONT_SIZES = listOf(
-        SubtitleFontSizePreset.Small to "Small",
-        SubtitleFontSizePreset.Medium to "Medium",
-        SubtitleFontSizePreset.Large to "Large",
-        SubtitleFontSizePreset.XLarge to "X-Large",
-        SubtitleFontSizePreset.XXLarge to "XX-Large",
+        SubtitleFontSizePreset.Small to CommonR.string.settings_subtitles_size_small,
+        SubtitleFontSizePreset.Medium to CommonR.string.settings_subtitles_size_medium,
+        SubtitleFontSizePreset.Large to CommonR.string.settings_subtitles_size_large,
+        SubtitleFontSizePreset.XLarge to CommonR.string.settings_subtitles_size_xLarge,
+        SubtitleFontSizePreset.XXLarge to CommonR.string.settings_subtitles_size_xxLarge,
     )
 
     val FONT_FAMILIES = listOf(
-        SubtitleAppearance.SANS_SERIF to "Sans-serif",
-        SubtitleAppearance.SERIF to "Serif",
-        SubtitleAppearance.MONOSPACE to "Monospace",
+        SubtitleAppearance.SANS_SERIF to CommonR.string.settings_subtitles_font_sansSerif,
+        SubtitleAppearance.SERIF to CommonR.string.settings_subtitles_font_serif,
+        SubtitleAppearance.MONOSPACE to CommonR.string.settings_subtitles_font_monospace,
     )
 
     val FONT_COLORS = listOf(
-        "#ffffff" to "White",
-        "#facc15" to "Yellow",
-        "#22c55e" to "Green",
-        "#06b6d4" to "Cyan",
-        "#d946ef" to "Magenta",
-        "#ef4444" to "Red",
-        "#3b82f6" to "Blue",
-        "#9ca3af" to "Gray",
-        "#000000" to "Black",
+        "#ffffff" to CommonR.string.settings_subtitles_color_white,
+        "#facc15" to CommonR.string.settings_subtitles_color_yellow,
+        "#22c55e" to CommonR.string.settings_subtitles_color_green,
+        "#06b6d4" to CommonR.string.settings_subtitles_color_cyan,
+        "#d946ef" to CommonR.string.settings_subtitles_color_magenta,
+        "#ef4444" to CommonR.string.settings_subtitles_color_red,
+        "#3b82f6" to CommonR.string.settings_subtitles_color_blue,
+        "#9ca3af" to CommonR.string.settings_subtitles_color_gray,
+        "#000000" to CommonR.string.settings_subtitles_color_black,
     )
 
     /** Background and outline palette (Apple `backgroundColors` / `outlineColors`). */
     val DARK_COLORS = listOf(
-        "#000000" to "Black",
-        "#374151" to "Dark Gray",
-        "#1e3a5f" to "Navy",
-        "#7f1d1d" to "Dark Red",
-        "#14532d" to "Dark Green",
+        "#000000" to CommonR.string.settings_subtitles_color_black,
+        "#374151" to CommonR.string.settings_subtitles_color_darkGray,
+        "#1e3a5f" to CommonR.string.settings_subtitles_color_navy,
+        "#7f1d1d" to CommonR.string.settings_subtitles_color_darkRed,
+        "#14532d" to CommonR.string.settings_subtitles_color_darkGreen,
     )
 
     val BACKGROUND_STYLES = listOf(
-        SubtitleBackgroundStylePreset.Box to "Box",
-        SubtitleBackgroundStylePreset.Shadow to "Drop Shadow",
-        SubtitleBackgroundStylePreset.Outline to "Outline",
-        SubtitleBackgroundStylePreset.None to "None",
+        SubtitleBackgroundStylePreset.Box to CommonR.string.settings_subtitles_style_box,
+        SubtitleBackgroundStylePreset.Shadow to CommonR.string.settings_subtitles_style_dropShadow,
+        SubtitleBackgroundStylePreset.Outline to CommonR.string.settings_subtitles_style_outline,
+        SubtitleBackgroundStylePreset.None to CommonR.string.settings_subtitles_style_none,
     )
 
     val POSITIONS = listOf(
-        SubtitlePositionPreset.Bottom to "Bottom",
-        SubtitlePositionPreset.LowerThird to "Lower Third",
-        SubtitlePositionPreset.Top to "Top",
+        SubtitlePositionPreset.Bottom to CommonR.string.settings_subtitles_position_bottom,
+        SubtitlePositionPreset.LowerThird to CommonR.string.settings_subtitles_position_lowerThird,
+        SubtitlePositionPreset.Top to CommonR.string.settings_subtitles_position_top,
     )
-
-    fun fontSize(value: SubtitleFontSizePreset) = FONT_SIZES.first { it.first == value }.second
-
-    fun fontFamily(value: String) =
-        FONT_FAMILIES.firstOrNull { it.first.equals(value, ignoreCase = true) }?.second ?: value
-
-    fun backgroundStyle(value: SubtitleBackgroundStylePreset) = BACKGROUND_STYLES.first { it.first == value }.second
-
-    fun position(value: SubtitlePositionPreset) = POSITIONS.first { it.first == value }.second
-
-    /** A palette name for [hex], or the hex itself for a colour set elsewhere. */
-    fun colorName(hex: String, palette: List<Pair<String, String>>) =
-        palette.firstOrNull { it.first.equals(hex, ignoreCase = true) }?.second ?: hex
 
     /**
      * Percent steps of five from [from] to 100, plus the saved value so one set

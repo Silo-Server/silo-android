@@ -4,6 +4,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.SharedPlural
 
 class PersonPresentationTest {
     @Test
@@ -16,7 +19,11 @@ class PersonPresentationTest {
         )
 
         assertEquals(
-            listOf("Born Jun 16, 1972", "54 years old", "Davis, California"),
+            listOf(
+                UiText.Key(SharedString.PersonBorn, listOf(UiText.CalendarDate(1972, 6, 16))),
+                UiText.Plural(SharedPlural.PersonYearsOld, 54),
+                UiText.Raw("Davis, California"),
+            ),
             personMetadataBadges(person, todayIso = "2026-06-19"),
         )
     }
@@ -31,9 +38,19 @@ class PersonPresentationTest {
         )
 
         assertEquals(
-            listOf("Born Jan 10, 1950", "Died Jan 9, 2020 (age 69)"),
+            listOf(
+                UiText.Key(SharedString.PersonBorn, listOf(UiText.CalendarDate(1950, 1, 10))),
+                UiText.Key(SharedString.PersonDiedAge, listOf(UiText.CalendarDate(2020, 1, 9), UiText.Number(69))),
+            ),
             personMetadataBadges(person, todayIso = "2026-06-19"),
         )
+    }
+
+    @Test
+    fun aDateThatIsNotOnTheCalendarShowsAsWritten() {
+        assertEquals(UiText.Raw("1980-02-30"), formattedPersonDate("1980-02-30"))
+        assertEquals(UiText.Raw("1980"), formattedPersonDate("1980"))
+        assertEquals(UiText.CalendarDate(1980, 2, 29), formattedPersonDate("1980-02-29"))
     }
 
     @Test
@@ -45,9 +62,12 @@ class PersonPresentationTest {
 
     @Test
     fun worksCountLabelDistinguishesLoadedTotalAndMore() {
-        assertEquals("12 titles", personWorksCountLabel(total = 12, loaded = 12, hasMore = false))
-        assertEquals("60 of 120 titles", personWorksCountLabel(total = 120, loaded = 60, hasMore = true))
-        assertEquals("60+ titles", personWorksCountLabel(total = 0, loaded = 60, hasMore = true))
+        assertEquals(UiText.Plural(SharedPlural.PersonTitles, 12), personWorksCountLabel(total = 12, loaded = 12, hasMore = false))
+        assertEquals(
+            UiText.Plural(SharedPlural.PersonTitlesOf, 120, listOf(UiText.Number(120), UiText.Number(60))),
+            personWorksCountLabel(total = 120, loaded = 60, hasMore = true),
+        )
+        assertEquals(UiText.Plural(SharedPlural.PersonTitlesMore, 60), personWorksCountLabel(total = 0, loaded = 60, hasMore = true))
         assertEquals(null, personWorksCountLabel(total = 0, loaded = 0, hasMore = false))
     }
 

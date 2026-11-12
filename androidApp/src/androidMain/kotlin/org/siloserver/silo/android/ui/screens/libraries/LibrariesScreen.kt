@@ -1,5 +1,12 @@
 package org.siloserver.silo.android.ui.screens.libraries
 
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.currentFormatLocale
+import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.common.i18n.detailedErrorText
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -68,6 +75,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.annotation.StringRes
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -113,6 +123,7 @@ import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import androidx.compose.material.icons.filled.Cancel
 import org.siloserver.silo.common.settings.BrowsePrefsStore
 import org.siloserver.silo.android.ui.screens.browse.CatalogGrid
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.android.ui.screens.browse.CatalogViewDensity
 import org.siloserver.silo.android.ui.screens.browse.FilterSheet
 import org.siloserver.silo.android.ui.screens.browse.facetValueLabel
@@ -134,7 +145,7 @@ import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.util.formatCardDate
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.BrowseItem
-import org.siloserver.silo.model.catalog.MediaItemUserState
+import org.siloserver.silo.viewmodel.withLocalContentState
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.section.LibraryCollection
@@ -163,13 +174,13 @@ enum class LibrariesSubtab {
 }
 
 enum class LibraryBrowseSort(
-    val label: String,
+    @StringRes val labelRes: Int,
     val sortField: String,
     val sortOrder: String,
 ) {
-    RecentlyAdded("Recently Added", "added_at", "desc"),
-    Title("Title", "title", "asc"),
-    ReleaseDate("Release Date", "release_date", "desc");
+    RecentlyAdded(CommonR.string.catalog_sort_recentlyAdded, "added_at", "desc"),
+    Title(CommonR.string.catalog_sort_title, "title", "asc"),
+    ReleaseDate(CommonR.string.catalog_sort_released, "release_date", "desc");
 
     companion object {
         /**
@@ -194,7 +205,7 @@ data class LibrariesUiState(
     val selectedTab: LibrariesSubtab = LibrariesSubtab.Recommended,
     val isLoadingSections: Boolean = false,
     val sections: List<ResolvedSection> = emptyList(),
-    val sectionsError: String? = null,
+    val sectionsError: UiText? = null,
     val isLoadingCatalog: Boolean = false,
     val isLoadingMoreCatalog: Boolean = false,
     val catalogItems: List<BrowseItem> = emptyList(),
@@ -213,11 +224,11 @@ data class LibrariesUiState(
     val selectedNamePrefix: String? = null,
     val catalogDensity: CatalogViewDensity = CatalogViewDensity.Normal,
     val browseSort: LibraryBrowseSort = LibraryBrowseSort.RecentlyAdded,
-    val catalogError: String? = null,
+    val catalogError: UiText? = null,
     val isLoadingCollections: Boolean = false,
     val collections: List<LibraryCollection> = emptyList(),
-    val collectionsError: String? = null,
-    val librariesError: String? = null,
+    val collectionsError: UiText? = null,
+    val librariesError: UiText? = null,
 )
 
 class LibrariesViewModel(
@@ -395,7 +406,7 @@ class LibrariesViewModel(
                         isLoadingLibraries = false,
                         libraries = emptyList(),
                         sections = emptyList(),
-                        librariesError = result.message.ifBlank { "Failed to load libraries" },
+                        librariesError = result.errorText(CommonR.string.library_error_loadLibraries),
                     )
                 }
             }
@@ -405,7 +416,7 @@ class LibrariesViewModel(
                         isLoadingLibraries = false,
                         libraries = emptyList(),
                         sections = emptyList(),
-                        librariesError = "Network error: ${result.exception.message ?: "unknown"}",
+                        librariesError = result.detailedErrorText(),
                     )
                 }
             }
@@ -641,7 +652,7 @@ class LibrariesViewModel(
             if (!isRecommendedRequestCurrent(requestGeneration, libraryId)) return@launch
             if (owner == null) {
                 recommendedLoadedLibraryId = null
-                _uiState.update { it.copy(isLoadingSections = false, sections = emptyList(), sectionsError = "Sign in to load library sections.") }
+                _uiState.update { it.copy(isLoadingSections = false, sections = emptyList(), sectionsError = UiText.Res(CommonR.string.library_error_signInForSections)) }
                 return@launch
             }
             val result = sectionRepository.getLibrarySections(libraryId, owner)
@@ -676,8 +687,11 @@ class LibrariesViewModel(
                             it.copy(
                                 isLoadingSections = false,
                                 sections = scoped.map { it.section }.filter { it.items.isNotEmpty() },
-                                sectionsError = if (scoped.any { it.incomplete })
-                                    "Some shelves could not be fully loaded. Retry or open Library to browse all titles." else null,
+                                sectionsError = if (scoped.any { it.incomplete }) {
+                                    UiText.Res(CommonR.string.library_error_someShelves)
+                                } else {
+                                    null
+                                },
                             )
                         } else {
                             it
@@ -691,7 +705,7 @@ class LibrariesViewModel(
                             it.copy(
                                 isLoadingSections = false,
                                 sections = emptyList(),
-                                sectionsError = result.message.ifBlank { "Failed to load recommendations" },
+                                sectionsError = result.errorText(CommonR.string.library_error_loadRecommendations),
                             )
                         } else {
                             it
@@ -705,7 +719,7 @@ class LibrariesViewModel(
                             it.copy(
                                 isLoadingSections = false,
                                 sections = emptyList(),
-                                sectionsError = "Network error: ${result.exception.message ?: "unknown"}",
+                                sectionsError = result.detailedErrorText(),
                             )
                         } else {
                             it
@@ -834,7 +848,7 @@ class LibrariesViewModel(
                             it.copy(
                                 isLoadingCatalog = false,
                                 isLoadingMoreCatalog = false,
-                                catalogError = result.message.ifBlank { "Failed to load catalog" },
+                                catalogError = result.errorText(CommonR.string.library_error_loadCatalog),
                             )
                         } else {
                             it
@@ -848,7 +862,7 @@ class LibrariesViewModel(
                             it.copy(
                                 isLoadingCatalog = false,
                                 isLoadingMoreCatalog = false,
-                                catalogError = "Network error: ${result.exception.message ?: "unknown"}",
+                                catalogError = result.detailedErrorText(),
                             )
                         } else {
                             it
@@ -869,13 +883,7 @@ class LibrariesViewModel(
         if (local.isEmpty()) return items
         return items.map { item ->
             val ls = local[item.contentId] ?: return@map item
-            val base = item.userState ?: MediaItemUserState()
-            item.copy(
-                userState = base.copy(
-                    played = ls.watched ?: base.played,
-                    isFavorite = ls.favorite ?: base.isFavorite,
-                ),
-            )
+            item.copy(userState = item.userState.withLocalContentState(ls))
         }
     }
 
@@ -919,7 +927,7 @@ class LibrariesViewModel(
                         if (isCollectionsRequestCurrent(requestGeneration, libraryId, it)) {
                             it.copy(
                                 isLoadingCollections = false,
-                                collectionsError = result.message.ifBlank { "Failed to load collections" },
+                                collectionsError = result.errorText(CommonR.string.collections_error_loadCollections),
                             )
                         } else {
                             it
@@ -932,7 +940,7 @@ class LibrariesViewModel(
                         if (isCollectionsRequestCurrent(requestGeneration, libraryId, it)) {
                             it.copy(
                                 isLoadingCollections = false,
-                                collectionsError = "Network error: ${result.exception.message ?: "unknown"}",
+                                collectionsError = result.detailedErrorText(),
                             )
                         } else {
                             it
@@ -1104,15 +1112,15 @@ fun LibrariesScreen(
                     }
                     state.librariesError != null && state.libraries.isEmpty() -> {
                         ErrorView(
-                            message = state.librariesError ?: "Failed to load libraries",
+                            message = state.librariesError?.text() ?: stringResource(CommonR.string.library_error_loadLibraries),
                             onRetry = viewModel::refresh,
                             modifier = Modifier.fillMaxSize().padding(top = topInset),
                         )
                     }
                     selectedLibrary == null -> {
                         EmptyStateView(
-                            title = "No libraries available",
-                            subtitle = "Libraries visible to this profile will show up here",
+                            title = stringResource(CommonR.string.library_noLibraries),
+                            subtitle = stringResource(CommonR.string.library_noLibrariesBody),
                             icon = Icons.Default.VideoLibrary,
                             modifier = Modifier.fillMaxSize().padding(top = topInset),
                         )
@@ -1227,15 +1235,15 @@ private fun RecommendedTabContent(
         }
         state.sectionsError != null && state.sections.isEmpty() -> {
             ErrorView(
-                message = state.sectionsError ?: "Failed to load recommendations",
+                message = state.sectionsError?.text() ?: stringResource(CommonR.string.library_error_loadRecommendations),
                 onRetry = onRetry,
                 modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         state.sections.isEmpty() -> {
             EmptyStateView(
-                title = "No recommendations yet",
-                subtitle = "Try switching libraries or browsing the full catalog",
+                title = stringResource(CommonR.string.library_noRecommendations),
+                subtitle = stringResource(CommonR.string.library_noRecommendationsBody),
                 icon = libraryIcon(state.libraries.firstOrNull { it.id == state.selectedLibraryId }?.type.orEmpty()),
                 modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
@@ -1256,11 +1264,11 @@ private fun RecommendedTabContent(
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
 
-                if (state.sectionsError != null) {
+                state.sectionsError?.let { sectionsError ->
                     item(key = "scope-load-error") {
                         Column(Modifier.padding(horizontal = 16.dp)) {
-                            Text(state.sectionsError, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            TextButton(onClick = onRetry) { Text("Retry") }
+                            Text(sectionsError.text(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            TextButton(onClick = onRetry) { Text(stringResource(CommonR.string.common_retry)) }
                         }
                     }
                 }
@@ -1308,9 +1316,9 @@ private fun BrowseTabContent(
     val controlsHeader: @Composable () -> Unit = {
         Column(modifier = Modifier.padding(bottom = 4.dp)) {
             SortFilterControlsRow(
-                sortLabel = state.browseSort.label,
+                sortLabel = stringResource(state.browseSort.labelRes),
                 sortActive = state.browseSort != LibraryBrowseSort.RecentlyAdded,
-                sortOptions = LibraryBrowseSort.entries.map { SortMenuOption(id = it.name, label = it.label) },
+                sortOptions = LibraryBrowseSort.entries.map { SortMenuOption(id = it.name, label = stringResource(it.labelRes)) },
                 selectedSortId = state.browseSort.name,
                 onSelectSort = { id -> onSortChanged(LibraryBrowseSort.valueOf(id)) },
                 filterCount = state.filterState.activeFacetCount,
@@ -1357,7 +1365,7 @@ private fun BrowseTabContent(
                 Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {
                     Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { controlsHeader() }
                     ErrorView(
-                        message = state.catalogError ?: "Failed to load catalog",
+                        message = state.catalogError?.text() ?: stringResource(CommonR.string.library_error_loadCatalog),
                         onRetry = onRetry,
                         modifier = Modifier.weight(1f),
                     )
@@ -1367,22 +1375,31 @@ private fun BrowseTabContent(
                 Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {
                     Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { controlsHeader() }
                     EmptyStateView(
-                        title = when (state.catalogLibraryHasItems) {
-                            false -> "This library is empty"
-                            true -> "No matches"
-                            null -> if (isCustomised) "No matches" else "No items found"
-                        },
-                        subtitle = when (state.catalogLibraryHasItems) {
-                            false -> "There is nothing in this library yet."
-                            true -> "No titles match the current filters."
-                            null -> if (isCustomised) "No titles match the current sort or filters." else "Try switching libraries"
-                        },
+                        title = stringResource(
+                            when (state.catalogLibraryHasItems) {
+                                false -> CommonR.string.library_empty
+                                true -> CommonR.string.library_noMatchesShort
+                                null -> if (isCustomised) CommonR.string.library_noMatchesShort else CommonR.string.library_noItems
+                            },
+                        ),
+                        subtitle = stringResource(
+                            when (state.catalogLibraryHasItems) {
+                                false -> CommonR.string.library_emptyBody
+                                true -> CommonR.string.library_noTitlesMatchFilters
+                                null -> if (isCustomised) {
+                                    CommonR.string.library_noTitlesMatchSortOrFilters
+                                } else {
+                                    CommonR.string.library_trySwitchingLibraries
+                                }
+                            },
+                        ),
                         icon = libraryIcon(state.libraries.firstOrNull { it.id == state.selectedLibraryId }?.type.orEmpty()),
                         modifier = Modifier.weight(1f),
                     )
                 }
             }
             else -> {
+                val dateLocale = currentFormatLocale()
                 CatalogGrid(
                     items = state.catalogItems,
                     isLoadingMore = state.isLoadingMoreCatalog,
@@ -1392,8 +1409,8 @@ private fun BrowseTabContent(
                     // Date sorts surface the sorted-by date under each card
                     // (mirrors the standalone BrowseScreen), Jim QA 2026-07-09.
                     cardSubtitle = when (state.browseSort.sortField) {
-                        "added_at" -> { item -> formatCardDate(item.addedAt) }
-                        "release_date" -> { item -> formatCardDate(item.releaseDate) }
+                        "added_at" -> { item -> formatCardDate(item.addedAt, dateLocale) }
+                        "release_date" -> { item -> formatCardDate(item.releaseDate, dateLocale) }
                         else -> null
                     },
                     selectedNamePrefix = state.selectedNamePrefix,
@@ -1448,7 +1465,7 @@ private fun LibraryActiveFilterChip(
         )
         Icon(
             imageVector = Icons.Filled.Cancel,
-            contentDescription = "Remove filter",
+            contentDescription = stringResource(CommonR.string.filters_remove),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
                 .size(14.dp)
@@ -1473,15 +1490,15 @@ private fun CollectionsTabContent(
         }
         state.collectionsError != null && state.collections.isEmpty() -> {
             ErrorView(
-                message = state.collectionsError ?: "Failed to load collections",
+                message = state.collectionsError?.text() ?: stringResource(CommonR.string.collections_error_loadCollections),
                 onRetry = onRetry,
                 modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         state.collections.isEmpty() -> {
             EmptyStateView(
-                title = "No collections found",
-                subtitle = "This library does not have any collections yet",
+                title = stringResource(CommonR.string.library_noCollections),
+                subtitle = stringResource(CommonR.string.library_noCollectionsBody),
                 icon = Icons.Default.VideoLibrary,
                 modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
@@ -1554,7 +1571,7 @@ private fun InlineLibraryCollectionCard(
                 modifier = Modifier.fillMaxSize(),
             )
             if (showItemCount) Text(
-                text = collection.itemCount?.takeIf { it > 0 }?.toString() ?: "Smart",
+                text = collection.itemCount?.takeIf { it > 0 }?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: stringResource(CommonR.string.collections_type_smart),
                 fontSize = 12.sp,
                 color = Color.White,
                 modifier = Modifier
@@ -1573,7 +1590,9 @@ private fun InlineLibraryCollectionCard(
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            text = if (showItemCount) collection.itemCount?.let { "$it items" } ?: "Collection" else "Collection",
+            text = collection.itemCount?.takeIf { showItemCount }
+                ?.let { pluralStringResource(CommonR.plurals.collections_itemCount, it, it, LocaleFormat.integer(it)) }
+                ?: stringResource(CommonR.string.collections_collection),
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -1659,8 +1678,8 @@ private fun LibrariesFloatingChrome(
 
         if (mediaScope != null) {
             Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = mediaScope == "movie", onClick = { onMediaScopeSelected("movie") }, label = { Text("Movies") })
-                FilterChip(selected = mediaScope == "series", onClick = { onMediaScopeSelected("series") }, label = { Text("Series") })
+                FilterChip(selected = mediaScope == "movie", onClick = { onMediaScopeSelected("movie") }, label = { Text(stringResource(CommonR.string.filters_value_movie)) })
+                FilterChip(selected = mediaScope == "series", onClick = { onMediaScopeSelected("series") }, label = { Text(stringResource(CommonR.string.filters_value_series)) })
             }
         }
 
@@ -1709,7 +1728,7 @@ private fun LibrarySelectorButton(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
-                text = library?.name ?: "Libraries",
+                text = library?.name ?: stringResource(CommonR.string.library_libraries),
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -1727,7 +1746,7 @@ private fun LibrarySelectorButton(
             }
         }
         Text(
-            text = library?.typeLabel() ?: "Choose a library",
+            text = library?.typeLabel() ?: stringResource(CommonR.string.library_chooseLibrary),
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -1757,7 +1776,7 @@ fun LibrariesSelectorSheet(
         // The title stays put and the rows scroll, so every library is reachable
         // when the list is taller than the screen.
         Text(
-            text = "Libraries",
+            text = stringResource(CommonR.string.library_libraries),
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp),
@@ -1794,17 +1813,17 @@ private fun LibrarySubtabRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         LibrarySubtabChip(
-            label = "Recommended",
+            label = stringResource(CommonR.string.library_recommended),
             selected = selectedTab == LibrariesSubtab.Recommended,
             onClick = onRecommendedClick,
         )
         LibrarySubtabChip(
-            label = "Library",
+            label = stringResource(CommonR.string.library_libraryTab),
             selected = selectedTab == LibrariesSubtab.Browse,
             onClick = onBrowseClick,
         )
         LibrarySubtabChip(
-            label = "Collections",
+            label = stringResource(CommonR.string.library_collections),
             selected = selectedTab == LibrariesSubtab.Collections,
             onClick = onCollectionsClick,
         )
@@ -1828,7 +1847,7 @@ private fun LibrarySubtabRow(
                         contentDescription = null,
                         modifier = Modifier.size(14.dp),
                     )
-                    Text(text = "Shuffle", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(text = stringResource(CommonR.string.library_shufflePill), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -1952,11 +1971,14 @@ internal fun libraryIcon(type: String): ImageVector = when (type.lowercase()) {
     else -> Icons.Default.VideoLibrary
 }
 
-private fun UserLibrary.typeLabel(): String = when (type.lowercase()) {
-    "movies", "movie" -> "Movies library"
-    "series", "tv", "shows" -> "TV library"
-    "audiobook", "audiobooks" -> "Audiobooks library"
-    "book", "books", "ebook", "ebooks" -> "Books library"
-    "comic", "comics", "manga" -> "Comics / manga library"
-    else -> "Library"
-}
+@Composable
+private fun UserLibrary.typeLabel(): String = stringResource(
+    when (type.lowercase()) {
+        "movies", "movie" -> CommonR.string.library_type_movies
+        "series", "tv", "shows" -> CommonR.string.library_type_tv
+        "audiobook", "audiobooks" -> CommonR.string.library_type_audiobooks
+        "book", "books", "ebook", "ebooks" -> CommonR.string.library_type_books
+        "comic", "comics", "manga" -> CommonR.string.library_type_comics
+        else -> CommonR.string.library_type_generic
+    },
+)

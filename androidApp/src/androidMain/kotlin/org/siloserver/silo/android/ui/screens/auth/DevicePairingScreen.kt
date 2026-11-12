@@ -1,10 +1,18 @@
 package org.siloserver.silo.android.ui.screens.auth
 
 import androidx.compose.material.icons.rounded.Dns
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.ui.marquee.ServerBranding
 import org.siloserver.silo.android.ui.components.SiloMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import android.text.format.DateUtils
+import android.icu.text.DisplayContext
+import android.icu.text.NumberFormat
+import android.icu.text.RelativeDateTimeFormatter
+import android.icu.text.RelativeDateTimeFormatter.RelativeUnit
+import android.icu.util.ULocale
+import androidx.compose.ui.platform.LocalConfiguration
+import org.siloserver.silo.common.i18n.LocaleFormat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -71,7 +79,6 @@ import org.siloserver.silo.android.ui.components.SiloDialog
 import org.siloserver.silo.android.ui.components.SiloDialogAction
 import org.siloserver.silo.repository.ExternalSignInRepository
 import org.koin.core.parameter.parametersOf
-import org.siloserver.silo.android.R
 import org.siloserver.silo.model.auth.DeviceCodeFormat
 import org.siloserver.silo.model.auth.DeviceLoginLookupResponse
 import org.siloserver.silo.model.auth.SignInOptions
@@ -194,7 +201,7 @@ fun DevicePairingScreen(
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(stringResource(R.string.sign_in_tv_sign_in_first))
+                        Text(stringResource(CommonR.string.signInTv_signInFirst))
                     }
                 }
                 if (state.notFound) {
@@ -204,7 +211,7 @@ fun DevicePairingScreen(
                             onClick = { viewModel.selectServer(server.id) },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text(stringResource(R.string.sign_in_tv_try_server, server.displayName))
+                            Text(stringResource(CommonR.string.signInTv_tryServer, server.displayName))
                         }
                     }
                 }
@@ -229,14 +236,14 @@ private fun CodeEntry(
     onSelectServer: (String) -> Unit,
 ) {
     Text(
-        text = stringResource(R.string.sign_in_tv_title),
+        text = stringResource(CommonR.string.signInTv_title),
         style = MaterialTheme.typography.headlineMedium,
         color = AuthColors.OnBackground,
         fontWeight = FontWeight.SemiBold,
     )
     Spacer(modifier = Modifier.height(8.dp))
     Text(
-        text = stringResource(R.string.sign_in_tv_subtitle),
+        text = stringResource(CommonR.string.signInTv_subtitle),
         style = MaterialTheme.typography.bodyMedium,
         color = AuthColors.OnSurfaceVariant,
         textAlign = TextAlign.Center,
@@ -254,7 +261,7 @@ private fun CodeEntry(
         value = state.code,
         onValueChange = onCodeChanged,
         enabled = state.token.isNullOrBlank(),
-        label = { Text(stringResource(R.string.sign_in_tv_code_label)) },
+        label = { Text(stringResource(CommonR.string.signInTv_codeLabel)) },
         placeholder = { Text("4821 7730") },
         singleLine = true,
         textStyle = MaterialTheme.typography.headlineSmall.copy(
@@ -283,7 +290,7 @@ private fun CodeEntry(
         if (state.isLoading) {
             CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
         } else {
-            Text(stringResource(R.string.sign_in_tv_continue))
+            Text(stringResource(CommonR.string.signInTv_continue))
         }
     }
 }
@@ -297,7 +304,7 @@ private fun ServerChooser(
     val selected = state.selectedServer
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = stringResource(R.string.sign_in_tv_server_label),
+            text = stringResource(CommonR.string.signInTv_serverLabel),
             style = MaterialTheme.typography.labelMedium,
             color = AuthColors.OnSurfaceVariant,
         )
@@ -333,7 +340,7 @@ private fun ServerChooser(
             }
         }
         Text(
-            text = stringResource(R.string.sign_in_tv_server_hint),
+            text = stringResource(CommonR.string.signInTv_serverHint),
             style = MaterialTheme.typography.bodySmall,
             color = AuthColors.OnSurfaceVariant,
         )
@@ -367,8 +374,8 @@ private fun ApprovalCard(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                text = deviceName?.let { stringResource(R.string.sign_in_tv_card_title, it) }
-                    ?: stringResource(R.string.sign_in_tv_card_title_generic),
+                text = deviceName?.let { stringResource(CommonR.string.signInTv_cardTitle, it) }
+                    ?: stringResource(CommonR.string.signInTv_cardTitleGeneric),
                 style = MaterialTheme.typography.titleLarge,
                 color = AuthColors.OnBackground,
                 fontWeight = FontWeight.SemiBold,
@@ -379,9 +386,9 @@ private fun ApprovalCard(
             val requested = requestedLabel(lookup.requestedAt)
             val deviceLine = when {
                 platform != null && requested != null ->
-                    stringResource(R.string.sign_in_tv_platform_requested, platform, requested)
+                    stringResource(CommonR.string.signInTv_platformRequested, platform, requested)
                 platform != null -> platform
-                requested != null -> stringResource(R.string.sign_in_tv_requested, requested)
+                requested != null -> stringResource(CommonR.string.signInTv_requested, requested)
                 else -> null
             }
             deviceLine?.let {
@@ -394,7 +401,7 @@ private fun ApprovalCard(
             }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = stringResource(R.string.sign_in_tv_check_code),
+                text = stringResource(CommonR.string.signInTv_checkCode),
                 style = MaterialTheme.typography.bodyMedium,
                 color = AuthColors.OnSurfaceVariant,
             )
@@ -431,7 +438,7 @@ private fun ApprovalCard(
             if (state.accountUnconfirmed) {
                 Text(
                     text = state.accountError?.message() ?: stringResource(
-                        R.string.sign_in_tv_account_unconfirmed,
+                        CommonR.string.signInTv_accountUnconfirmed,
                         serverLabel ?: state.selectedServer?.displayName.orEmpty(),
                     ),
                     style = MaterialTheme.typography.bodyMedium,
@@ -439,25 +446,26 @@ private fun ApprovalCard(
                     textAlign = TextAlign.Center,
                 )
                 TextButton(onClick = onRetryAccount) {
-                    Text(stringResource(R.string.sign_in_tv_account_retry))
+                    Text(stringResource(CommonR.string.common_tryAgain))
                 }
             }
             TextButton(onClick = { confirmsSwitchAccount = true }, enabled = !state.isSubmitting) {
-                Text(stringResource(R.string.sign_in_tv_switch_account))
+                Text(stringResource(CommonR.string.signInTv_switchAccount))
             }
             if (confirmsSwitchAccount) {
                 // Another saved account on this server, or a new one; the
                 // phone's current account stays signed in (spec §4.6).
                 val switchServerName = serverName ?: state.selectedServer?.displayName
-                    ?: stringResource(R.string.sign_in_tv_switch_this_server)
-                val signInAgain = stringResource(R.string.picker_sign_in_again)
+                    ?: stringResource(CommonR.string.signInTv_switchThisServer)
+                val signInAgain = stringResource(CommonR.string.picker_signInAgain)
+                val unnamedAccount = stringResource(CommonR.string.account_unnamed)
                 SiloDialog(
-                    title = stringResource(R.string.sign_in_tv_choose_account_title),
-                    message = stringResource(R.string.sign_in_tv_choose_account_body, switchServerName),
+                    title = stringResource(CommonR.string.signInTv_chooseAccountTitle),
+                    message = stringResource(CommonR.string.signInTv_chooseAccountBody, switchServerName),
                     onDismissRequest = { confirmsSwitchAccount = false },
                     actions = buildList {
                         otherAccounts.forEach { account ->
-                            val name = account.username?.takeIf { it.isNotBlank() } ?: "Account"
+                            val name = account.username?.takeIf { it.isNotBlank() } ?: unnamedAccount
                             add(
                                 SiloDialogAction(
                                     label = if (account.needsSignIn) "$name · $signInAgain" else name,
@@ -470,32 +478,32 @@ private fun ApprovalCard(
                         }
                         add(
                             SiloDialogAction(
-                                label = stringResource(R.string.sign_in_tv_add_account, switchServerName),
+                                label = stringResource(CommonR.string.signInTv_addAccount, switchServerName),
                                 onClick = {
                                     confirmsSwitchAccount = false
                                     onSwitchAccount(null)
                                 },
                             ),
                         )
-                        add(SiloDialogAction(stringResource(R.string.action_cancel), { confirmsSwitchAccount = false }))
+                        add(SiloDialogAction(stringResource(CommonR.string.common_cancel), { confirmsSwitchAccount = false }))
                     },
                 )
             }
             Text(
-                text = stringResource(R.string.sign_in_tv_profiles_note),
+                text = stringResource(CommonR.string.signInTv_profilesNote),
                 style = MaterialTheme.typography.bodySmall,
                 color = AuthColors.OnSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
             Text(
-                text = stringResource(R.string.sign_in_tv_warning),
+                text = stringResource(CommonR.string.signInTv_warning),
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFFFFC107),
                 textAlign = TextAlign.Center,
             )
             lookup.ipAddressHint?.takeIf { it.isNotBlank() }?.let { network ->
                 Text(
-                    text = stringResource(R.string.sign_in_tv_network, network),
+                    text = stringResource(CommonR.string.signInTv_network, network),
                     style = MaterialTheme.typography.bodySmall,
                     color = AuthColors.OnSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -511,11 +519,11 @@ private fun ApprovalCard(
                 if (state.isSubmitting) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                 } else {
-                    Text(stringResource(R.string.sign_in_tv_approve))
+                    Text(stringResource(CommonR.string.signInTv_approve))
                 }
             }
             TextButton(onClick = onDeny, enabled = state.canDecide, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.sign_in_tv_not_now), color = AuthColors.OnSurfaceVariant)
+                Text(stringResource(CommonR.string.signInTv_notNow), color = AuthColors.OnSurfaceVariant)
             }
         }
     }
@@ -536,14 +544,14 @@ private fun DecisionResult(state: DevicePairingUiState, onDone: () -> Unit) {
     Text(
         text = stringResource(
             when {
-                !approved -> R.string.sign_in_tv_declined
-                outcome == null -> R.string.sign_in_tv_signing_in
+                !approved -> CommonR.string.signInTv_declined
+                outcome == null -> CommonR.string.signInTv_signingIn
                 else -> when (outcome) {
-                    DeviceFollowOutcome.SignedIn -> R.string.sign_in_tv_signed_in
-                    DeviceFollowOutcome.Canceled -> R.string.sign_in_tv_follow_canceled
-                    DeviceFollowOutcome.Expired -> R.string.sign_in_tv_follow_expired
-                    DeviceFollowOutcome.Denied -> R.string.sign_in_tv_follow_denied
-                    DeviceFollowOutcome.TimedOut -> R.string.sign_in_tv_follow_timed_out
+                    DeviceFollowOutcome.SignedIn -> CommonR.string.signInTv_signedIn
+                    DeviceFollowOutcome.Canceled -> CommonR.string.signInTv_followCanceled
+                    DeviceFollowOutcome.Expired -> CommonR.string.signInTv_followExpired
+                    DeviceFollowOutcome.Denied -> CommonR.string.signInTv_followDenied
+                    DeviceFollowOutcome.TimedOut -> CommonR.string.signInTv_followTimedOut
                 }
             },
         ),
@@ -558,37 +566,53 @@ private fun DecisionResult(state: DevicePairingUiState, onDone: () -> Unit) {
         modifier = Modifier.fillMaxWidth(),
         colors = ButtonDefaults.buttonColors(containerColor = AuthColors.Primary),
     ) {
-        Text(stringResource(R.string.sign_in_tv_done))
+        Text(stringResource(CommonR.string.common_done))
     }
 }
 
 @Composable
 private fun DevicePairingError.message(): String = when (this) {
-    DevicePairingError.EnterCode -> stringResource(R.string.sign_in_tv_error_enter_code)
-    DevicePairingError.SignInFirst -> stringResource(R.string.sign_in_tv_error_sign_in_first)
-    DevicePairingError.NotFound -> stringResource(R.string.sign_in_tv_error_not_found)
-    is DevicePairingError.NotFoundOn -> stringResource(R.string.sign_in_tv_error_not_found_on, serverName)
-    DevicePairingError.Expired -> stringResource(R.string.sign_in_tv_error_expired)
-    DevicePairingError.AlreadySignedIn -> stringResource(R.string.sign_in_tv_error_already_signed_in)
-    DevicePairingError.Declined -> stringResource(R.string.sign_in_tv_error_declined)
-    DevicePairingError.Canceled -> stringResource(R.string.sign_in_tv_error_canceled)
-    DevicePairingError.Network -> stringResource(R.string.sign_in_tv_error_network)
-    DevicePairingError.ProviderUnavailable -> stringResource(R.string.sign_in_tv_error_provider_unavailable)
-    is DevicePairingError.Server -> message ?: stringResource(R.string.sign_in_tv_error_generic)
+    DevicePairingError.EnterCode -> stringResource(CommonR.string.signInTv_error_enterCode)
+    DevicePairingError.SignInFirst -> stringResource(CommonR.string.signInTv_error_signInFirst)
+    DevicePairingError.NotFound -> stringResource(CommonR.string.signInTv_error_notFound)
+    is DevicePairingError.NotFoundOn -> stringResource(CommonR.string.signInTv_error_notFoundOn, serverName)
+    DevicePairingError.Expired -> stringResource(CommonR.string.signInTv_error_expired)
+    DevicePairingError.AlreadySignedIn -> stringResource(CommonR.string.signInTv_error_alreadySignedIn)
+    DevicePairingError.Declined -> stringResource(CommonR.string.signInTv_error_declined)
+    DevicePairingError.Canceled -> stringResource(CommonR.string.signInTv_error_canceled)
+    DevicePairingError.Network -> stringResource(CommonR.string.signInTv_error_network)
+    DevicePairingError.ProviderUnavailable -> stringResource(CommonR.string.signInTv_error_providerUnavailable)
+    is DevicePairingError.Server -> message ?: stringResource(CommonR.string.signInTv_error_generic)
 }
 
 /** "just now" / "5 minutes ago" for a lookup's `requested_at`; null when absent or unreadable. */
 @Composable
 private fun requestedLabel(requestedAt: String?): String? {
     val at = requestedAt?.let(::parseRfc3339ToEpochMillis) ?: return null
-    val now = System.currentTimeMillis()
+    val elapsed = System.currentTimeMillis() - at
     // Clocks differ a little between phone and server: a time "in the future"
     // is just now too.
-    return if (now - at < DateUtils.MINUTE_IN_MILLIS) {
-        stringResource(R.string.sign_in_tv_requested_just_now)
-    } else {
-        DateUtils.getRelativeTimeSpanString(at, now, DateUtils.MINUTE_IN_MILLIS).toString()
+    if (elapsed < DateUtils.MINUTE_IN_MILLIS) return stringResource(CommonR.string.signInTv_requestedJustNow)
+    LocalConfiguration.current // recompose on an in-place language change
+    val locale = LocaleFormat.interfaceLocale()
+    val numberLocale = LocaleFormat.numberLocale()
+    // The phrase sits mid-sentence ("requested 5 minutes ago"), in the
+    // interface language; DateUtils capitalizes it for a sentence start.
+    val formatter = remember(locale, numberLocale) {
+        RelativeDateTimeFormatter.getInstance(
+            ULocale.forLocale(locale),
+            // Digits as the app's other numbers in text (D55).
+            NumberFormat.getInstance(ULocale.forLocale(numberLocale)),
+            RelativeDateTimeFormatter.Style.LONG,
+            DisplayContext.CAPITALIZATION_FOR_MIDDLE_OF_SENTENCE,
+        )
     }
+    val (count, unit) = when {
+        elapsed < DateUtils.HOUR_IN_MILLIS -> elapsed / DateUtils.MINUTE_IN_MILLIS to RelativeUnit.MINUTES
+        elapsed < DateUtils.DAY_IN_MILLIS -> elapsed / DateUtils.HOUR_IN_MILLIS to RelativeUnit.HOURS
+        else -> elapsed / DateUtils.DAY_IN_MILLIS to RelativeUnit.DAYS
+    }
+    return formatter.format(count.toDouble(), RelativeDateTimeFormatter.Direction.LAST, unit)
 }
 
 /** "Android TV" / "Apple TV" for the platform strings TVs send; anything else as sent. */
@@ -596,8 +620,8 @@ private fun requestedLabel(requestedAt: String?): String? {
 private fun platformLabel(platform: String?): String? {
     val raw = platform?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     return when (raw.lowercase().replace("_", "-")) {
-        "android-tv", "androidtv" -> stringResource(R.string.platform_android_tv)
-        "tvos", "apple-tv", "appletv" -> stringResource(R.string.platform_apple_tv)
+        "android-tv", "androidtv" -> stringResource(CommonR.string.platform_androidTv)
+        "tvos", "apple-tv", "appletv" -> stringResource(CommonR.string.platform_appleTv)
         else -> raw
     }
 }
@@ -628,9 +652,9 @@ private object GroupedCodeTransformation : VisualTransformation {
 internal fun tvSignInLine(serverName: String?, serverHost: String?, accountName: String?): String? {
     val server = tvSignInServerLabel(serverName, serverHost) ?: return null
     return if (accountName != null) {
-        stringResource(R.string.sign_in_tv_server_account, server, accountName)
+        stringResource(CommonR.string.signInTv_serverAccount, server, accountName)
     } else {
-        stringResource(R.string.sign_in_tv_server_only, server)
+        stringResource(CommonR.string.signInTv_serverOnly, server)
     }
 }
 
@@ -642,7 +666,7 @@ internal fun tvSignInServerLabel(serverName: String?, serverHost: String?): Stri
     return when {
         name == null -> host
         host == null || host.equals(name, ignoreCase = true) -> name
-        else -> stringResource(R.string.sign_in_tv_server_with_host, name, host)
+        else -> stringResource(CommonR.string.signInTv_serverWithHost, name, host)
     }
 }
 

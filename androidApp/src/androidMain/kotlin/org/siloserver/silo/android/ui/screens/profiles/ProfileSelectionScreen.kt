@@ -1,6 +1,5 @@
 package org.siloserver.silo.android.ui.screens.profiles
 
-import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import org.siloserver.silo.android.ui.components.SignOutConfirmDialog
 import org.siloserver.silo.android.ui.components.SiloDialogColors
@@ -102,6 +101,9 @@ import org.siloserver.silo.android.ui.components.marquee.MarqueeServerChip
 import org.siloserver.silo.android.ui.components.marquee.MarqueeTopBarSpacer
 import org.siloserver.silo.android.ui.components.marquee.MarqueeWordmark
 import org.siloserver.silo.android.ui.components.marquee.marqueePressHaptic
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeProfileAvatar
 import org.siloserver.silo.common.ui.marquee.MarqueeScene
@@ -217,16 +219,13 @@ fun ProfileSelectionScreen(
     state.deleteDialogProfile?.let { profile ->
         val deletingActive = profile.id == state.activeProfileId
         SiloConfirmDialog(
-            title = "Delete \"${profile.name}\"?",
+            title = stringResourceWithNames(CommonR.string.profiles_delete_titleQuoted, profile.name),
             body = if (deletingActive) {
-                "You're signed in as this profile. Deleting it removes its " +
-                    "watch history and preferences, and you'll pick another " +
-                    "profile to continue."
+                stringResource(CommonR.string.profiles_delete_activeBody)
             } else {
-                "This removes the profile's watch history and preferences. " +
-                    "This can't be undone."
+                stringResource(CommonR.string.profiles_delete_body)
             },
-            confirmLabel = "Delete",
+            confirmLabel = stringResource(CommonR.string.profiles_delete_action),
             onConfirm = viewModel::confirmDeleteProfile,
             onDismiss = viewModel::dismissDeleteDialog,
         )
@@ -291,7 +290,7 @@ fun ProfileSelectionScreen(
                     name = server.name,
                     hostLabel = server.hostLabel,
                     markUrl = server.branding?.markUrl,
-                    actionLabel = stringResource(R.string.picker_change_account),
+                    actionLabel = stringResource(CommonR.string.picker_changeAccount),
                     onAction = onChangeAccount,
                     enabled = !busy,
                 )
@@ -326,11 +325,11 @@ fun ProfileSelectionScreen(
                 PINEntryOverlay(
                     profile = profile,
                     isVerifying = state.pinIsVerifying,
-                    error = state.pinError,
+                    error = state.pinError?.text(),
                     errorCount = state.pinErrorCount,
                     onPinComplete = viewModel::onPinEntered,
                     onDismiss = viewModel::dismissPinDialog,
-                    prompt = if (state.pinForManagement) "Enter this PIN to manage profiles" else "Enter your PIN",
+                    prompt = stringResource(if (state.pinForManagement) CommonR.string.pin_prompt_manage else CommonR.string.pin_prompt),
                 )
             }
         }
@@ -367,7 +366,7 @@ private fun AddChoiceSheet(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                stringResource(R.string.picker_add),
+                stringResource(CommonR.string.picker_add),
                 color = MarqueeColors.Ink,
                 fontSize = 22.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -376,21 +375,21 @@ private fun AddChoiceSheet(
             if (canAddProfile) {
                 AddChoiceRow(
                     icon = Icons.Outlined.PersonAdd,
-                    title = stringResource(R.string.picker_add_profile),
-                    detail = stringResource(R.string.picker_add_profile_detail),
+                    title = stringResource(CommonR.string.picker_addProfile),
+                    detail = stringResource(CommonR.string.picker_addProfileDetail),
                     onClick = onAddProfile,
                 )
             }
             AddChoiceRow(
                 icon = Icons.Outlined.ManageAccounts,
-                title = stringResource(R.string.picker_add_account),
-                detail = stringResource(R.string.picker_add_account_detail),
+                title = stringResource(CommonR.string.picker_addAccount),
+                detail = stringResource(CommonR.string.picker_addAccountDetail),
                 onClick = onAddAccount,
             )
             AddChoiceRow(
                 icon = Icons.Outlined.Dns,
-                title = stringResource(R.string.picker_add_server),
-                detail = stringResource(R.string.picker_add_server_detail),
+                title = stringResource(CommonR.string.picker_addServer),
+                detail = stringResource(CommonR.string.picker_addServerDetail),
                 onClick = onAddServer,
             )
             Box(
@@ -403,7 +402,7 @@ private fun AddChoiceSheet(
                     .clickable(role = Role.Button, onClick = onDismiss),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(stringResource(R.string.action_cancel), color = MarqueeColors.Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Text(stringResource(CommonR.string.common_cancel), color = MarqueeColors.Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium)
             }
             Spacer(Modifier.windowInsetsPadding(WindowInsets.navigationBars))
         }
@@ -506,16 +505,16 @@ private fun Picker(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    MarqueeHeadline("Who's watching?", centered = true)
+                    MarqueeHeadline(stringResource(CommonR.string.profiles_headline), centered = true)
                     // Keeps its height while the account loads so the picker doesn't shift.
                     Text(
-                        state.accountName?.let { "Signed in as $it" } ?: " ",
+                        state.accountName?.let { stringResourceWithNames(CommonR.string.profiles_signedInAs, it) } ?: " ",
                         color = MarqueeColors.InkSecondary,
                         fontSize = MarqueeMetrics.LeadFont,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    state.error?.let { MarqueeErrorText(it) }
+                    state.error?.let { MarqueeErrorText(it.text()) }
                 }
                 Spacer(Modifier.height(GridGap))
                 if (state.isLoading && state.shownProfiles.isEmpty()) {
@@ -540,7 +539,7 @@ private fun Picker(
                     horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
                 ) {
                     MarqueeButton(
-                        text = stringResource(R.string.picker_change_account),
+                        text = stringResource(CommonR.string.picker_changeAccount),
                         onClick = onChangeAccount,
                         kind = MarqueeButtonKind.Plain,
                         fullWidth = false,
@@ -549,7 +548,7 @@ private fun Picker(
                         enabled = enabled,
                     )
                     MarqueeButton(
-                        text = "Sign out",
+                        text = stringResource(CommonR.string.common_signOut),
                         onClick = onSignOut,
                         kind = MarqueeButtonKind.Plain,
                         fullWidth = false,
@@ -559,7 +558,7 @@ private fun Picker(
                     )
                     if (state.canManageProfiles) {
                         MarqueeButton(
-                            text = if (state.isManageMode) "Done" else "Manage",
+                            text = stringResource(if (state.isManageMode) CommonR.string.common_done else CommonR.string.profiles_manage),
                             onClick = onToggleManage,
                             kind = MarqueeButtonKind.Plain,
                             fullWidth = false,
@@ -611,13 +610,13 @@ private fun TileRows(
                             )
                             PickerItem.Add -> AddProfileTile(
                                 size = addSize,
-                                label = stringResource(R.string.picker_add),
+                                label = stringResource(CommonR.string.picker_add),
                                 enabled = enabled,
                                 onClick = { onItemTap(item) },
                             )
                             PickerItem.AddProfile -> AddProfileTile(
                                 size = addSize,
-                                label = "Add profile",
+                                label = stringResource(CommonR.string.profiles_addProfile),
                                 enabled = enabled,
                                 onClick = { onItemTap(item) },
                             )
@@ -646,6 +645,11 @@ private fun ProfileTile(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     LaunchedEffect(pressed) { onPressChange(pressed) }
+    val deleteLabel = stringResourceWithNames(CommonR.string.profiles_delete_named, profile.name)
+    val lastUsed = stringResource(CommonR.string.profiles_tile_lastUsed)
+    val pinProtected = stringResource(CommonR.string.profiles_pinProtected)
+    val kidsProfile = stringResource(CommonR.string.profiles_kidsProfile)
+    val editing = stringResource(CommonR.string.profiles_tile_edit)
     Column(
         Modifier
             .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null, onClick = onTap)
@@ -657,13 +661,13 @@ private fun ProfileTile(
                 // The tile merges its children, so the delete badge is
                 // reached as an action rather than its own node.
                 if (isManageMode && !profile.isPrimary) {
-                    customActions = listOf(CustomAccessibilityAction("Delete ${profile.name}") { onDelete(); true })
+                    customActions = listOf(CustomAccessibilityAction(deleteLabel) { onDelete(); true })
                 }
                 stateDescription = listOfNotNull(
-                    "Last used".takeIf { isLastUsed },
-                    "PIN protected".takeIf { profile.hasPin },
-                    "Kids profile".takeIf { profile.isChild },
-                    "Edit".takeIf { isManageMode },
+                    lastUsed.takeIf { isLastUsed },
+                    pinProtected.takeIf { profile.hasPin },
+                    kidsProfile.takeIf { profile.isChild },
+                    editing.takeIf { isManageMode },
                 ).joinToString(", ")
             },
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -684,7 +688,7 @@ private fun ProfileTile(
                             .clip(CircleShape)
                             .background(MarqueeColors.Error)
                             .clickable(role = Role.Button, onClick = onDelete)
-                            .semantics { contentDescription = "Delete ${profile.name}" },
+                            .semantics { contentDescription = deleteLabel },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(Icons.Filled.Close, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
@@ -703,7 +707,7 @@ private fun ProfileTile(
             modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
         )
         if (isLastUsed) {
-            Text("Last used", color = MarqueeColors.InkTertiary, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
+            Text(lastUsed, color = MarqueeColors.InkTertiary, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
         }
     }
 }

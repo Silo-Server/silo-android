@@ -1,5 +1,9 @@
 package org.siloserver.silo.android.ui.screens.collections
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.common.i18n.detailedErrorText
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -59,6 +64,7 @@ import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.ui.OnViewerAccessChanged
 import org.siloserver.silo.network.AccessChangeSignals
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * One named or anonymous section as it should appear on screen, in the
@@ -74,7 +80,7 @@ data class LibraryCollectionsUiState(
     val sections: List<LibraryCollectionSection> = emptyList(),
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
 ) {
     val isEmpty: Boolean get() = sections.all { it.collections.isEmpty() }
 }
@@ -104,7 +110,7 @@ class LibraryCollectionsViewModel(
                 it.copy(
                     isLoading = false,
                     isRefreshing = false,
-                    error = "Missing library selection",
+                    error = UiText.Res(CommonR.string.collections_error_missingLibrary),
                 )
             }
             return
@@ -146,14 +152,14 @@ class LibraryCollectionsViewModel(
                 it.copy(
                     isLoading = false,
                     isRefreshing = false,
-                    error = result.message.ifBlank { "Failed to load collections" },
+                    error = result.errorText(CommonR.string.collections_error_loadCollections),
                 )
             }
             is ApiResult.NetworkError -> _uiState.update {
                 it.copy(
                     isLoading = false,
                     isRefreshing = false,
-                    error = "Network error: ${result.exception.message ?: "unknown"}",
+                    error = result.detailedErrorText(),
                 )
             }
         }
@@ -215,7 +221,7 @@ fun LibraryCollectionsScreen(
     androidx.compose.material3.Scaffold(
         topBar = {
             SiloTopBar(
-                title = "Collections",
+                title = stringResource(CommonR.string.collections_title),
                 onBackClick = onBackClick,
             )
         },
@@ -227,15 +233,15 @@ fun LibraryCollectionsScreen(
             }
             state.error != null && state.isEmpty -> {
                 ErrorView(
-                    message = state.error ?: "Unknown error",
+                    message = state.error?.text() ?: stringResource(CommonR.string.catalog_error_unknown),
                     onRetry = viewModel::loadCollections,
                     modifier = Modifier.padding(padding),
                 )
             }
             state.isEmpty -> {
                 EmptyStateView(
-                    title = "No collections yet",
-                    subtitle = "Create library collections in the web app to feature curated shelves here.",
+                    title = stringResource(CommonR.string.collections_empty),
+                    subtitle = stringResource(CommonR.string.collections_emptyLibraryHint),
                     icon = Icons.Outlined.CollectionsBookmark,
                     modifier = Modifier.padding(padding),
                 )
@@ -296,12 +302,13 @@ private fun LibraryCollectionCard(
     collection: LibraryCollection,
     onClick: () -> Unit,
 ) {
-    val countLabel = collection.itemCount?.takeIf { it > 0 }?.toString() ?: "Smart"
+    val countLabel = collection.itemCount?.takeIf { it > 0 }?.toString()
+        ?: stringResource(CommonR.string.collections_type_smart)
     val typeLabel = when {
-        collection.kind == "user_collections" -> "User collection"
+        collection.kind == "user_collections" -> stringResource(CommonR.string.collections_userCollection)
         else -> collection.collectionType
             ?.replaceFirstChar { it.uppercase() }
-            ?: "Collection"
+            ?: stringResource(CommonR.string.collections_collection)
     }
 
     Column(

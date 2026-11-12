@@ -8,6 +8,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.stringResource
+import java.time.ZoneId
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.LocaleInteger
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.model.catalog.ExternalRatings
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.OverlaySummary
@@ -43,7 +49,7 @@ data class TvMarqueeContent(
      */
     val metaParts: List<TvHeroFactToken>,
     val synopsis: String?,
-    /** A quieter detail line: cast / air-date when carried by the payload. */
+    /** A quieter detail line: the cast when carried by the payload (the air date is [airDate]). */
     val detailLine: String?,
     /**
      * Playback format, `4K · Dolby Vision · EAC3 5.1`, from the section
@@ -64,6 +70,8 @@ data class TvMarqueeContent(
     val hidesStills: Boolean = false,
     /** Whether [backdropUrl], from the section item or enrichment, is an episode still; null when unknown. */
     val backdropIsEpisodeStill: Boolean? = null,
+    /** The server's air date the detail line opens with as "Aired Mar 12, 2026"; null when unknown. */
+    val airDate: String? = null,
 ) {
     /** Backdrop art for the root hero. Like tvOS, the section artwork is shown
      *  immediately; an episode can later upgrade to its higher-resolution series
@@ -120,8 +128,10 @@ data class TvMarqueeContent(
         val upgradeBackdrop = isEpisode && source.seriesHeroBackdrop() == null &&
             !enrichment.backdropUrl.isNullOrBlank() &&
             (!hidesStills || enrichment.backdropIsEpisodeStill == false)
+        val enrichedLine = enrichment.detailLine != null || enrichment.airDate != null
         return copy(
-            detailLine = enrichment.detailLine ?: detailLine,
+            detailLine = if (enrichedLine) enrichment.detailLine else detailLine,
+            airDate = if (enrichedLine) enrichment.airDate else airDate,
             backdropUrl = if (upgradeBackdrop) enrichment.backdropUrl else backdropUrl,
             backdropThumbhash = if (upgradeBackdrop) {
                 enrichment.backdropThumbhash ?: backdropThumbhash
@@ -150,11 +160,11 @@ data class TvMarqueeContent(
 
             val meta = mutableListOf<TvHeroFactToken>()
             if (isEpisode) {
-                episodeToken(item.seasonNumber, item.episodeNumber)?.let { meta += TvHeroFactToken.TextToken(it) }
+                episodeToken(item.seasonNumber, item.episodeNumber)?.let { meta += it }
                 if (item.title.isNotBlank()) meta += TvHeroFactToken.TextToken(item.title, truncates = true)
             } else {
-                if (item.year > 0) meta += TvHeroFactToken.TextToken(item.year.toString())
-                lengthText(item.runtime, item.durationSeconds)?.let { meta += TvHeroFactToken.TextToken(it) }
+                if (item.year > 0) meta += TvHeroFactToken.NumberToken(LocaleInteger(item.year))
+                lengthText(item.runtime, item.durationSeconds)?.let { meta += it }
                 ExternalRatings.primary(item.ratingImdb, item.ratingTmdb)?.let { meta += TvHeroFactToken.ExternalRating(it) }
                 item.genres.firstOrNull { it.isNotBlank() }?.let { meta += TvHeroFactToken.TextToken(it) }
             }
@@ -210,10 +220,10 @@ data class TvMarqueeContent(
             )
         }
 
-        private fun episodeToken(season: Int?, episode: Int?): String? = when {
-            season != null && episode != null -> tvEpisodeTag(season, episode)
-            season != null -> "Season $season"
-            episode != null -> "Episode $episode"
+        private fun episodeToken(season: Int?, episode: Int?): TvHeroFactToken? = when {
+            season != null && episode != null -> tvEpisodeTagToken(season, episode)
+            season != null -> TvHeroFactToken.ResToken(CommonR.string.home_seasonOnly, listOf(LocaleInteger(season)))
+            episode != null -> TvHeroFactToken.ResToken(CommonR.string.home_episodeOnly, listOf(LocaleInteger(episode)))
             else -> null
         }
 
@@ -254,24 +264,40 @@ data class TvMarqueeContent(
 
         /** Episode/movie length: the metadata runtime when present, else
          *  derived from the file duration the payload already carries. */
-        private fun lengthText(runtimeMinutes: Int?, durationSeconds: Double?): String? {
+        private fun lengthText(runtimeMinutes: Int?, durationSeconds: Double?): TvHeroFactToken? {
             runtimeText(runtimeMinutes)?.let { return it }
             val duration = durationSeconds?.takeIf { it.isFinite() && it > 0.0 }
                 ?: return null
             return runtimeText((duration / 60.0).roundToInt())
         }
 
-        private fun runtimeText(minutes: Int?): String? {
+        private fun runtimeText(minutes: Int?): TvHeroFactToken? {
             if (minutes == null || minutes <= 0) return null
             return if (minutes >= 60) {
                 val hours = minutes / 60
                 val rest = minutes % 60
-                if (rest == 0) "${hours}h" else "${hours}h ${rest}m"
+                if (rest == 0) {
+                    TvHeroFactToken.ResToken(CommonR.string.catalog_runtimeHours, listOf(LocaleInteger(hours)))
+                } else {
+                    TvHeroFactToken.ResToken(CommonR.string.catalog_runtimeHoursMinutes, listOf(LocaleInteger(hours), LocaleInteger(rest)))
+                }
             } else {
-                "$minutes min"
+                TvHeroFactToken.ResToken(CommonR.string.catalog_runtimeMinutes, listOf(LocaleInteger(minutes)))
             }
         }
     }
+}
+
+/**
+ * The marquee's quieter line: "Aired [airDate]" and [detailLine] (the cast)
+ * joined by " · "; null when both are absent. [airDate] is the server's
+ * date, formatted here so it follows a language change.
+ */
+@Composable
+internal fun tvMarqueeDetailLine(airDate: String?, detailLine: String?): String? {
+    val locale = currentFormatLocale()
+    val aired = TvMarqueeEnrichment.airDateText(airDate, locale)?.let { stringResource(CommonR.string.shell_marquee_aired, it) }
+    return listOfNotNull(aired, detailLine?.takeIf { it.isNotEmpty() }).joinToString(" · ").ifEmpty { null }
 }
 
 /**
@@ -282,10 +308,12 @@ data class TvMarqueeContent(
  * res than the episode still the section payload carries), so the hero upgrades
  * to it once enrichment lands.
  *
- * @property detailLine `Aired Mar 12, 2026 · Pedro Pascal, Bella Ramsey, Anna Torv`
- *  — the abbreviated air date (omitted if unparseable/absent) and up to 3 cast
- *  names sorted by [org.siloserver.silo.model.catalog.CastMember.order], joined
- *  by " · ". `null` when both are empty.
+ * @property detailLine `Pedro Pascal, Bella Ramsey, Anna Torv` — up to 3 cast
+ *  names sorted by [org.siloserver.silo.model.catalog.CastMember.order].
+ *  `null` when there are none.
+ * @property airDate the server's air date (`2026-03-12`), shown as
+ *  "Aired Mar 12, 2026" before the cast ([tvMarqueeDetailLine]); `null` if
+ *  unparseable/absent.
  */
 data class TvMarqueeEnrichment(
     val detailLine: String?,
@@ -293,31 +321,31 @@ data class TvMarqueeEnrichment(
     val backdropThumbhash: String?,
     /** The detail's provenance for [backdropUrl]; null when unknown. */
     val backdropIsEpisodeStill: Boolean? = null,
+    val airDate: String? = null,
 ) {
     companion object {
         fun from(detail: ItemDetail): TvMarqueeEnrichment {
-            val parts = mutableListOf<String>()
-            airDateText(detail.airDate)?.let { parts.add("Aired $it") }
             val cast = detail.cast
                 .sortedBy { it.order }
                 .take(3)
                 .map { it.name }
                 .filter { it.isNotBlank() }
-            if (cast.isNotEmpty()) parts.add(cast.joinToString(", "))
             return TvMarqueeEnrichment(
-                detailLine = if (parts.isEmpty()) null else parts.joinToString(" · "),
+                detailLine = if (cast.isEmpty()) null else cast.joinToString(", "),
                 backdropUrl = detail.backdropUrl?.takeIf { it.isNotBlank() },
                 backdropThumbhash = detail.backdropThumbhash,
                 backdropIsEpisodeStill = detail.backdropIsEpisodeStill,
+                airDate = detail.airDate?.takeIf { airDateText(it) != null },
             )
         }
 
         /**
-         * Abbreviated "MMM d, yyyy" from the server's `yyyy-MM-dd` (or full ISO
-         * timestamp). Mirrors tvOS `.abbreviated` date formatting; returns `null`
-         * if the string is absent or unparseable, so the "Aired" part is omitted.
+         * Abbreviated date ("Jul 8, 2026" in US English) from the server's
+         * `yyyy-MM-dd` (or full ISO timestamp). Mirrors tvOS `.abbreviated` date
+         * formatting; returns `null` if the string is absent or unparseable, so
+         * the "Aired" part is omitted.
          */
-        private fun airDateText(raw: String?): String? {
+        internal fun airDateText(raw: String?, locale: Locale = LocaleFormat.locale()): String? {
             val value = raw?.takeIf { it.isNotBlank() } ?: return null
             // The payload is usually `yyyy-MM-dd`; full ISO timestamps carry the
             // date as their first 10 chars, so truncate to the date component.
@@ -326,7 +354,8 @@ data class TvMarqueeEnrichment(
                 SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }
                     .parse(datePart)
             }.getOrNull() ?: return null
-            return SimpleDateFormat("MMM d, yyyy", Locale.US).format(parsed)
+            val date = parsed.toInstant().atZone(ZoneId.systemDefault()).toLocalDate()
+            return date.format(LocaleFormat.dateFormatter("yMMMd", "MMM d, yyyy", locale))
         }
     }
 }

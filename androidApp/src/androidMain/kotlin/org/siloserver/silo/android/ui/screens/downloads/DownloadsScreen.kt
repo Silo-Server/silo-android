@@ -60,14 +60,19 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.LoadingIndicator
+import org.siloserver.silo.common.R as CommonR
 import kotlinx.coroutines.launch
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentFormatLocale
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -132,7 +137,7 @@ fun DownloadsScreen(
     // was never rendered anywhere.
     LaunchedEffect(state.error) {
         val message = state.error ?: return@LaunchedEffect
-        snackbarHostState.showSnackbar(message)
+        snackbarHostState.showSnackbar(message.resolve(context.resources))
         viewModel.clearError()
     }
 
@@ -140,7 +145,7 @@ fun DownloadsScreen(
         topBar = {
             if (showTopBar) {
                 org.siloserver.silo.android.ui.components.SiloTopBar(
-                    title = "Downloads",
+                    title = stringResource(CommonR.string.tab_downloads),
                     onBackClick = onBackClick,
                 )
             }
@@ -241,7 +246,7 @@ fun DownloadsScreen(
                             onOpenExternalDownload = { item ->
                                 if (!openDownloadInExternalApp(context, item)) {
                                     coroutineScope.launch {
-                                        snackbarHostState.showSnackbar("No app found to open this file.")
+                                        snackbarHostState.showSnackbar(context.getString(CommonR.string.reader_external_noApp))
                                     }
                                 }
                             },
@@ -281,7 +286,7 @@ fun DownloadsScreen(
                                 bottom = 16.dp + LocalBottomChromeInset.current,
                             ),
                     ) {
-                        Text("Delete ${selectedEntryIds.size} · Free ${formatBytes(selectedBytes)}")
+                        Text(stringResource(CommonR.string.downloads_bulk_deleteButton, LocaleFormat.integer(selectedEntryIds.size), formatBytes(selectedBytes)))
                     }
                 }
             }
@@ -290,10 +295,9 @@ fun DownloadsScreen(
 
     pendingBulkDelete?.let { (ids, _) ->
         SiloConfirmDialog(
-            title = "Delete downloaded files?",
-            body = "This removes the downloaded cop${if (ids.size == 1) "y" else "ies"} from this device. " +
-                "Nothing is deleted from the server library.",
-            confirmLabel = if (ids.size == 1) "Delete Download" else "Delete ${ids.size} Downloads",
+            title = stringResource(CommonR.string.downloads_bulk_title),
+            body = pluralStringResource(CommonR.plurals.downloads_bulk_body, ids.size),
+            confirmLabel = pluralStringResource(CommonR.plurals.downloads_bulk_confirm, ids.size, ids.size, LocaleFormat.integer(ids.size)),
             onConfirm = {
                 viewModel.removeDownloadIds(ids)
                 pendingBulkDelete = null
@@ -305,25 +309,30 @@ fun DownloadsScreen(
 
     state.reclaimPlan?.let { plan ->
         SiloDialog(
-            title = "Reclaim Watched",
+            title = stringResource(CommonR.string.downloads_reclaim_watched),
             message = if (plan.count == 0) {
-                "No watched downloads are ready to reclaim."
+                stringResource(CommonR.string.downloads_reclaim_none)
             } else {
-                "Delete ${plan.count} watched download${if (plan.count == 1) "" else "s"} and free ${formatBytes(plan.totalBytes)}?"
+                pluralStringResource(CommonR.plurals.downloads_reclaim_message, plan.count, plan.count, formatBytes(plan.totalBytes), LocaleFormat.integer(plan.count))
             },
             onDismissRequest = viewModel::clearReclaimPlan,
             actions = buildList {
                 if (plan.count > 0) {
                     add(
                         SiloDialogAction(
-                            label = "Reclaim",
+                            label = stringResource(CommonR.string.downloads_reclaim_confirm),
                             onClick = viewModel::reclaimWatched,
                             style = SiloDialogActionStyle.Destructive,
                             enabled = !state.isReclaiming,
                         ),
                     )
                 }
-                add(SiloDialogAction(if (plan.count == 0) "Close" else "Cancel", viewModel::clearReclaimPlan))
+                add(
+                    SiloDialogAction(
+                        stringResource(if (plan.count == 0) CommonR.string.downloads_reclaim_close else CommonR.string.common_cancel),
+                        viewModel::clearReclaimPlan,
+                    ),
+                )
             },
         )
     }
@@ -351,19 +360,19 @@ private fun DownloadsTotalCard(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Downloads",
+                text = stringResource(CommonR.string.tab_downloads),
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 16.sp,
             )
             Text(
-                text = "$sectionCount media type${if (sectionCount == 1) "" else "s"}",
+                text = pluralStringResource(CommonR.plurals.downloads_total_mediaTypes, sectionCount, sectionCount),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 13.sp,
             )
         }
         Text(
-            text = formatBytes(totalBytesUsed),
+            text = formatBytes(totalBytesUsed, currentFormatLocale()),
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.Medium,
             fontSize = 14.sp,
@@ -392,18 +401,18 @@ private fun DownloadsSelectBar(
     ) {
         if (isSelecting) {
             TextButton(onClick = onToggleSelectAll) {
-                Text(if (allSelected) "Clear" else "Select All")
+                Text(stringResource(if (allSelected) CommonR.string.downloads_select_clear else CommonR.string.downloads_select_all))
             }
             Spacer(modifier = Modifier.weight(1f))
             Text(
-                text = "$selectedCount Selected",
+                text = pluralStringResource(CommonR.plurals.downloads_select_count, selectedCount, selectedCount, LocaleFormat.integer(selectedCount)),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 13.sp,
             )
-            TextButton(onClick = onDone) { Text("Done") }
+            TextButton(onClick = onDone) { Text(stringResource(CommonR.string.common_done)) }
         } else {
             Spacer(modifier = Modifier.weight(1f))
-            TextButton(onClick = onEnterSelect) { Text("Select") }
+            TextButton(onClick = onEnterSelect) { Text(stringResource(CommonR.string.downloads_select_start)) }
         }
     }
 }
@@ -428,7 +437,11 @@ private fun DownloadsActionRow(
             enabled = hasMonitoredDownloads && !isRunningMonitoredDownloads,
             modifier = Modifier.weight(1f),
         ) {
-            Text(if (isRunningMonitoredDownloads) "Checking..." else "Check Monitored")
+            Text(
+                stringResource(
+                    if (isRunningMonitoredDownloads) CommonR.string.downloads_monitored_checking else CommonR.string.downloads_monitored_checkAll,
+                ),
+            )
         }
         if (showReclaimWatched) {
             Button(
@@ -436,7 +449,11 @@ private fun DownloadsActionRow(
                 enabled = !isReclaiming,
                 modifier = Modifier.weight(1f),
             ) {
-                Text(if (isReclaiming) "Reclaiming..." else "Reclaim Watched")
+                Text(
+                    stringResource(
+                        if (isReclaiming) CommonR.string.downloads_reclaim_reclaiming else CommonR.string.downloads_reclaim_watched,
+                    ),
+                )
             }
         }
     }
@@ -460,16 +477,16 @@ private fun MonitoredDownloadsCard(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Monitored",
+                    text = stringResource(CommonR.string.downloads_monitored_title),
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 16.sp,
                 )
                 Text(
                     text = if (subscriptions.isEmpty()) {
-                        "No monitored downloads yet"
+                        stringResource(CommonR.string.downloads_monitored_none)
                     } else {
-                        "${subscriptions.size} active monitor${if (subscriptions.size == 1) "" else "s"}"
+                        pluralStringResource(CommonR.plurals.downloads_monitored_active, subscriptions.size, subscriptions.size)
                     },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.sp,
@@ -479,7 +496,11 @@ private fun MonitoredDownloadsCard(
                 onClick = onRunNow,
                 enabled = subscriptions.isNotEmpty() && !isRunning,
             ) {
-                Text(if (isRunning) "Checking..." else "Check Now")
+                Text(
+                    stringResource(
+                        if (isRunning) CommonR.string.downloads_monitored_checking else CommonR.string.downloads_monitored_checkNow,
+                    ),
+                )
             }
         }
 
@@ -537,13 +558,13 @@ private fun DownloadsEmptyState(
     val accent: Color
     if (isOnline) {
         icon = Icons.Outlined.DownloadForOffline
-        title = "No downloads yet"
-        subtitle = "Tap Download on a movie, show, audiobook, or book to save the original file here for offline use."
+        title = stringResource(CommonR.string.downloads_empty_title)
+        subtitle = stringResource(CommonR.string.downloads_empty_body)
         accent = MaterialTheme.colorScheme.primary
     } else {
         icon = Icons.Outlined.CloudOff
-        title = "You're offline"
-        subtitle = "Nothing is downloaded on this device yet. Save media while online and it will be available here without a connection."
+        title = stringResource(CommonR.string.downloads_offline_title)
+        subtitle = stringResource(CommonR.string.downloads_offline_body)
         accent = Color(0xFFFFB86B)  // warm amber for offline state
     }
 

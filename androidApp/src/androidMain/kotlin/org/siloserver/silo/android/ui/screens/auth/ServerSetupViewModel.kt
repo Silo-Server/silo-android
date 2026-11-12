@@ -2,7 +2,10 @@ package org.siloserver.silo.android.ui.screens.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.discovery.DiscoveredServer
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.uiText
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.common.network.ServerSetupScheme
 import org.siloserver.silo.common.network.ServerSetupValidationException
@@ -27,14 +30,14 @@ data class ServerSetupUiState(
     val selectedScheme: ServerSetupScheme = ServerSetupScheme.Auto,
     val port: String = "",
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     /** Destination after successful server validation. */
     val navigateTo: ServerSetupDestination? = null,
     val pendingCleartextUrl: String? = null,
     /** The found server being connected to, so its row can show progress while [isLoading]. */
     val connectingServerUrl: String? = null,
     /** A failure connecting to a found server; shown beside the found list, not on the address field. */
-    val discoveryError: String? = null,
+    val discoveryError: UiText? = null,
 ) {
     /** True when the entered address will connect over unencrypted HTTP.
      *  Informational only — does not block connecting to LAN/IP servers. */
@@ -130,7 +133,7 @@ class ServerSetupViewModel(
         val candidates = try {
             candidateUrls(current)
         } catch (error: ServerSetupValidationException) {
-            _uiState.update { it.copy(error = error.message) }
+            _uiState.update { it.copy(error = error.message?.let { message -> UiText.Raw(message) }) }
             return
         }
 
@@ -166,7 +169,7 @@ class ServerSetupViewModel(
                 // server is reported as update-server, never retried on v1.
                 val probe = probeContract(candidate)
                 if (probe is ApiV2ProbeResult.UpdateServer) {
-                    fail(ServerContract.UPDATE_REQUIRED_MESSAGE, found)
+                    fail(ServerContract.UPDATE_REQUIRED_TEXT, found)
                     return@launch
                 }
                 // Anything else the probe said (V2, a transient failure, or a
@@ -209,14 +212,14 @@ class ServerSetupViewModel(
             fail(
                 lastError
                     ?.takeIf { message -> message.isNotBlank() }
-                    ?.let { message -> "Could not connect: $message" }
-                    ?: "Could not reach a Silo server at that address.",
+                    ?.let { message -> uiText(CommonR.string.setup_error_couldNotConnect, message) }
+                    ?: uiText(CommonR.string.setup_error_unreachable),
                 found,
             )
         }
     }
 
-    private fun fail(message: String, found: DiscoveredServer?) {
+    private fun fail(message: UiText, found: DiscoveredServer?) {
         _uiState.update {
             if (found == null) {
                 it.copy(isLoading = false, error = message)
@@ -261,7 +264,7 @@ class ServerSetupViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = "Could not safely identify this HTTP server.",
+                        error = uiText(CommonR.string.setup_error_cleartextIdentity),
                         pendingCleartextUrl = null,
                         navigateTo = null,
                     )

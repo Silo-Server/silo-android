@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.settings
 
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.SwitchAccount
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -46,7 +48,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.BuildConfig
-import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.components.SignOutConfirmDialog
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsViewModel
@@ -56,8 +57,12 @@ import org.siloserver.silo.android.ui.theme.SettingsTextStyles
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSettingsBackground
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.network.clientVersionLabel
+import org.siloserver.silo.common.diagnostics.diagnosticsAvailabilityTitle
+import org.siloserver.silo.common.settings.profileLaunchTitle
 import org.siloserver.silo.common.settings.CardPresentationSupport
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.QualityChoices
@@ -126,44 +131,28 @@ fun SettingsScreen(
 
     val search = SettingsSearch(query)
     val versionLabel = clientVersionLabel(BuildConfig.VERSION_NAME, BuildConfig.BUILD_NUMBER)
-    val serverLabel = state.serverName.ifBlank { serverHost(state.serverUrl) ?: "Not connected" }
+    val serverLabel = state.serverName.ifBlank { serverHost(state.serverUrl) ?: stringResource(CommonR.string.settings_overview_notConnected) }
     val showDiagnostics = shouldShowDiagnosticsEntry(diagnosticsState) &&
-        search.matches("diagnostics", "support", "reports", "debug", "crash")
+        search.matches(*searchTerms(CommonR.string.settings_search_terms_diagnostics, "diagnostics", "support", "reports", "debug", "crash"))
 
-    val matchesInterface = search.matches(
-        "interface", "appearance", "cards", "posters", "home", "sections",
-        "title art", "logos",
-    )
-    val matchesNotifications = state.notificationsAvailable && search.matches(
-        "notifications", "alerts", "favorites", "watchlist", "continue watching", "next up",
-    )
-    val matchesProfileSelection = search.matches(
-        "profile selection", "profiles", "who's watching", "launch", "pin",
-    )
-    val matchesPlayback = search.matches(
-        "playback", "quality", "resolution", "bitrate", "cellular", "mobile data", "audio", "dolby vision",
-        "picture-in-picture", "episodes", "next up",
-        "skip", "intros", "credits", "rewind", "still watching", "skip interval", "audiobooks",
-        "spoilers", "unwatched", "blur", "descriptions",
-    )
-    val matchesSubtitles = search.matches(
-        "subtitles", "captions", "language", "behavior", "appearance", "forced", "metadata",
-    )
-    val matchesDownloads = search.matches("downloads", "offline", "quality", "wi-fi", "cleanup", "storage")
-    val matchesWatchlist = search.matches("library", "watchlist")
-    val matchesFavorites = search.matches("library", "favorites")
-    val matchesHistory = search.matches("library", "history", "watch history")
-    val matchesCollections = search.matches("library", "collections")
-    val matchesServer = search.matches("server", "connection", "accounts", serverLabel)
-    val matchesPairDevice = search.matches("connection", "pair", "device", "tv", "link", "sign in")
+    val matchesInterface = search.matches(*searchTerms(CommonR.string.settings_search_terms_interface, "interface", "appearance", "cards", "posters", "home", "sections", "title art", "logos", "language"))
+    val matchesNotifications = state.notificationsAvailable && search.matches(*searchTerms(CommonR.string.settings_search_terms_notifications, "notifications", "alerts", "favorites", "watchlist", "continue watching", "next up"))
+    val matchesProfileSelection = search.matches(*searchTerms(CommonR.string.settings_search_terms_profileSelection, "profile selection", "profiles", "who's watching", "launch", "pin"))
+    val matchesPlayback = search.matches(*searchTerms(CommonR.string.settings_search_terms_playback, "playback", "quality", "resolution", "bitrate", "cellular", "mobile data", "audio", "dolby vision", "picture-in-picture", "episodes", "next up", "skip", "intros", "credits", "rewind", "still watching", "skip interval", "audiobooks", "spoilers", "unwatched", "blur", "descriptions"))
+    val matchesSubtitles = search.matches(*searchTerms(CommonR.string.settings_search_terms_subtitles, "subtitles", "captions", "language", "behavior", "appearance", "forced", "metadata"))
+    val matchesDownloads = search.matches(*searchTerms(CommonR.string.settings_search_terms_downloads, "downloads", "offline", "quality", "wi-fi", "cleanup", "storage"))
+    val matchesWatchlist = search.matches(*searchTerms(CommonR.string.settings_search_terms_watchlist, "library", "watchlist"))
+    val matchesFavorites = search.matches(*searchTerms(CommonR.string.settings_search_terms_favorites, "library", "favorites"))
+    val matchesHistory = search.matches(*searchTerms(CommonR.string.settings_search_terms_history, "library", "history", "watch history"))
+    val matchesCollections = search.matches(*searchTerms(CommonR.string.settings_search_terms_collections, "library", "collections"))
+    val matchesServer = search.matches(*searchTerms(CommonR.string.settings_search_terms_server, "server", "connection", "accounts"), serverLabel)
+    val matchesPairDevice = search.matches(*searchTerms(CommonR.string.settings_search_terms_pairDevice, "connection", "pair", "device", "tv", "link", "sign in"))
     // External sign-in (OIDC/LDAP): shown only on servers that have it.
     val matchesSignIn = signInState.visible &&
-        search.matches("sign-in", "sign in", "account", "provider", "connect", "disconnect", "sso")
-    val matchesExperimental = search.matches(
-        "experimental", "beta", "testing", "audiobooks", "navigation", "watch party", "party",
-    )
-    val matchesAbout = search.matches("about", "version", versionLabel, "privacy", "policy", "information")
-    val matchesSignOut = search.matches("sign out", "account")
+        search.matches(*searchTerms(CommonR.string.settings_search_terms_signIn, "sign-in", "sign in", "account", "provider", "connect", "disconnect", "sso"))
+    val matchesExperimental = search.matches(*searchTerms(CommonR.string.settings_search_terms_experimental, "experimental", "beta", "testing", "audiobooks", "navigation", "watch party", "party"))
+    val matchesAbout = search.matches(*searchTerms(CommonR.string.settings_search_terms_about, "about", "version", "privacy", "policy", "information"), versionLabel)
+    val matchesSignOut = search.matches(*searchTerms(CommonR.string.settings_search_terms_signOut, "sign out", "account"))
 
     val hasResults = matchesInterface || matchesNotifications || matchesProfileSelection || matchesPlayback || matchesSubtitles ||
         matchesDownloads || matchesWatchlist || matchesFavorites || matchesHistory || matchesCollections ||
@@ -173,7 +162,7 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             SiloTopBar(
-                title = if (titleScrolledAway) "Settings" else "",
+                title = if (titleScrolledAway) stringResource(CommonR.string.settings_title) else "",
                 onBackClick = onBackClick,
                 containerColor = SiloSettingsBackground,
                 centerTitle = true,
@@ -196,7 +185,7 @@ fun SettingsScreen(
             item(key = "title") {
                 Column {
                     Text(
-                        text = "Settings",
+                        text = stringResource(CommonR.string.settings_title),
                         style = SettingsTextStyles.largeTitle,
                         color = SiloOnSurface,
                     )
@@ -217,7 +206,7 @@ fun SettingsScreen(
             if (!hasResults) {
                 item(key = "no-results") {
                     Text(
-                        text = "No Results for “${query.trim()}”",
+                        text = stringResourceWithNames(CommonR.string.settings_search_noResults, query.trim()),
                         style = SettingsTextStyles.rowLabel,
                         color = SiloSecondaryText,
                         textAlign = TextAlign.Center,
@@ -230,30 +219,30 @@ fun SettingsScreen(
 
             if (matchesInterface || matchesNotifications || matchesProfileSelection) {
                 item(key = "preferences") {
-                    SettingsSection(title = "Preferences") {
+                    SettingsSection(title = stringResource(CommonR.string.settings_overview_preferences)) {
                         if (matchesInterface) {
                             SettingsNavigationRow(
-                                label = "Interface",
+                                label = stringResource(CommonR.string.settings_interface_title),
                                 icon = Icons.Filled.Dashboard,
                                 value = state.cardPresentation.takeIf {
                                     it.support != CardPresentationSupport.Unsupported
-                                }?.presentation?.posterSize?.displayName,
+                                }?.presentation?.posterSize?.displayName?.text(),
                                 onClick = onOpenInterface,
                             )
                         }
                         if (matchesNotifications) {
                             SettingsNavigationRow(
-                                label = "Notifications",
+                                label = stringResource(CommonR.string.settings_notifications_title),
                                 icon = Icons.Filled.Notifications,
-                                value = if (state.notificationsEnabled) "On" else "Off",
+                                value = stringResource(if (state.notificationsEnabled) CommonR.string.settings_on else CommonR.string.settings_off),
                                 onClick = onOpenNotifications,
                             )
                         }
                         if (matchesProfileSelection) {
                             SettingsNavigationRow(
-                                label = "Profile Selection",
+                                label = stringResource(CommonR.string.settings_control_profileSelection),
                                 icon = Icons.Filled.SwitchAccount,
-                                value = profileLaunchState.behavior.title,
+                                value = stringResource(profileLaunchTitle(profileLaunchState.behavior)),
                                 onClick = onOpenProfileSelection,
                             )
                         }
@@ -263,26 +252,26 @@ fun SettingsScreen(
 
             if (matchesPlayback || matchesSubtitles || matchesDownloads) {
                 item(key = "playback") {
-                    SettingsSection(title = "Playback") {
+                    SettingsSection(title = stringResource(CommonR.string.settings_playback)) {
                         if (matchesPlayback) {
                             SettingsNavigationRow(
-                                label = "Playback",
+                                label = stringResource(CommonR.string.settings_playback),
                                 icon = Icons.Filled.PlayArrow,
-                                value = QualityChoices.summary(state.qualityResolution, state.maxBitrateKbps),
+                                value = QualityChoices.summary(state.qualityResolution, state.maxBitrateKbps).text(),
                                 onClick = onOpenPlayback,
                             )
                         }
                         if (matchesSubtitles) {
                             SettingsNavigationRow(
-                                label = "Subtitles",
+                                label = stringResource(CommonR.string.settings_subtitles),
                                 icon = Icons.Filled.Subtitles,
-                                value = LanguageOptions.label(state.subtitleLanguage, SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE),
+                                value = LanguageOptions.label(state.subtitleLanguage, SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE).text(),
                                 onClick = onOpenSubtitles,
                             )
                         }
                         if (matchesDownloads) {
                             SettingsNavigationRow(
-                                label = "Downloads",
+                                label = stringResource(CommonR.string.settings_downloads_title),
                                 icon = Icons.Filled.ArrowCircleDown,
                                 onClick = onOpenDownloads,
                             )
@@ -293,31 +282,31 @@ fun SettingsScreen(
 
             if (matchesWatchlist || matchesFavorites || matchesHistory || matchesCollections) {
                 item(key = "library") {
-                    SettingsSection(title = "Library") {
+                    SettingsSection(title = stringResource(CommonR.string.settings_overview_library)) {
                         if (matchesWatchlist) {
                             SettingsNavigationRow(
-                                label = "Watchlist",
+                                label = stringResource(CommonR.string.menu_watchlist),
                                 icon = Icons.Filled.Bookmark,
                                 onClick = onNavigateToWatchlist,
                             )
                         }
                         if (matchesFavorites) {
                             SettingsNavigationRow(
-                                label = "Favorites",
+                                label = stringResource(CommonR.string.menu_favorites),
                                 icon = Icons.Filled.Favorite,
                                 onClick = onNavigateToFavorites,
                             )
                         }
                         if (matchesHistory) {
                             SettingsNavigationRow(
-                                label = "Watch History",
+                                label = stringResource(CommonR.string.settings_overview_watchHistory),
                                 icon = Icons.Filled.History,
                                 onClick = onNavigateToHistory,
                             )
                         }
                         if (matchesCollections) {
                             SettingsNavigationRow(
-                                label = "Collections",
+                                label = stringResource(CommonR.string.library_collections),
                                 icon = Icons.Filled.CollectionsBookmark,
                                 onClick = onNavigateToCollections,
                             )
@@ -328,9 +317,9 @@ fun SettingsScreen(
 
             if (showDiagnostics) {
                 item(key = "support") {
-                    SettingsSection(title = "Support") {
+                    SettingsSection(title = stringResource(CommonR.string.settings_overview_support)) {
                         SettingsNavigationRow(
-                            label = "Diagnostics",
+                            label = stringResource(CommonR.string.settings_diagnostics),
                             icon = Icons.Filled.MonitorHeart,
                             value = diagnosticsAvailabilityLabel(diagnosticsState.availability),
                             onClick = onNavigateToDiagnostics,
@@ -341,11 +330,11 @@ fun SettingsScreen(
 
             if (matchesServer || matchesPairDevice) {
                 item(key = "connection") {
-                    SettingsSection(title = "Connection") {
+                    SettingsSection(title = stringResource(CommonR.string.settings_overview_connection)) {
                         if (matchesServer) {
                             // Settings › Accounts: every saved server and account (spec §4.5).
                             SettingsNavigationRow(
-                                label = stringResource(R.string.accounts_title),
+                                label = stringResource(CommonR.string.accounts_title),
                                 icon = Icons.Filled.Dns,
                                 value = serverLabel,
                                 onClick = onNavigateToServers,
@@ -353,7 +342,7 @@ fun SettingsScreen(
                         }
                         if (matchesPairDevice) {
                             SettingsNavigationRow(
-                                label = stringResource(R.string.sign_in_tv_settings_label),
+                                label = stringResource(CommonR.string.signInTv_settingsLabel),
                                 icon = Icons.Filled.ConnectedTv,
                                 onClick = onPairDevice,
                             )
@@ -370,17 +359,17 @@ fun SettingsScreen(
 
             if (matchesExperimental) {
                 item(key = "experimental") {
-                    SettingsSection(title = "Experimental") {
+                    SettingsSection(title = stringResource(CommonR.string.settings_experimental_title)) {
                         SettingsSwitchRow(
-                            label = "Show Audiobooks",
+                            label = stringResource(CommonR.string.settings_experimental_showAudiobooks),
                             icon = Icons.AutoMirrored.Filled.MenuBook,
                             checked = state.showAudiobooks,
                             onCheckedChange = viewModel::setShowAudiobooks,
                         )
                         // Device-local; never synced with the server's settings.
                         SettingsSwitchRow(
-                            label = "Watch Party",
-                            description = "Try Watch Party before it's finished. Turning it off leaves any party you're in.",
+                            label = stringResource(CommonR.string.settings_experimental_watchParty),
+                            description = stringResource(CommonR.string.settings_experimental_watchPartyFooter),
                             icon = Icons.Filled.Groups,
                             checked = watchPartyEnabled,
                             onCheckedChange = watchPartyExperiment::setEnabled,
@@ -391,18 +380,18 @@ fun SettingsScreen(
 
             if (matchesAbout) {
                 item(key = "about") {
-                    SettingsSection(title = "About") {
+                    SettingsSection(title = stringResource(CommonR.string.settings_about_title)) {
                         // Includes the build number so a support report and the
                         // server's admin Activity page name the exact same build,
                         // in the "1.0.0 (5)" form Play, TestFlight and the server's
                         // diagnostics page all use.
                         SettingsNavigationRow(
-                            label = "Version",
+                            label = stringResource(CommonR.string.settings_about_version),
                             icon = Icons.Filled.Info,
                             value = versionLabel,
                         )
                         SettingsNavigationRow(
-                            label = "Privacy Policy",
+                            label = stringResource(CommonR.string.settings_about_privacyPolicy),
                             icon = Icons.Filled.PanTool,
                             onClick = { uriHandler.openUri(SILO_PRIVACY_POLICY_URL) },
                         )
@@ -413,7 +402,7 @@ fun SettingsScreen(
             if (matchesSignOut) {
                 item(key = "sign-out") {
                     SettingsSectionCard {
-                        SettingsButtonRow(label = "Sign Out", onClick = { confirmSignOut = true })
+                        SettingsButtonRow(label = stringResource(CommonR.string.settings_signOut), onClick = { confirmSignOut = true })
                     }
                 }
             }
@@ -453,11 +442,19 @@ private fun serverHost(serverUrl: String): String? {
         .ifBlank { serverUrl }
 }
 
-/** The Diagnostics row's value, in the Apple apps' wording. */
-private fun diagnosticsAvailabilityLabel(availability: DiagnosticsAvailabilityUi): String? = when (availability) {
-    DiagnosticsAvailabilityUi.AVAILABLE -> "Available"
-    DiagnosticsAvailabilityUi.DISABLED -> "Disabled by server"
-    DiagnosticsAvailabilityUi.STORAGE_UNAVAILABLE -> "Storage unavailable"
-    DiagnosticsAvailabilityUi.OFFLINE -> "Offline"
-    DiagnosticsAvailabilityUi.INELIGIBLE -> null
-}
+/**
+ * A row's search keywords: the [english] ones, which always match (they are
+ * matching data and stay English in every language), plus the catalog
+ * message's comma-separated words for the app language.
+ */
+@Composable
+private fun searchTerms(@StringRes id: Int, vararg english: String): Array<String> =
+    (english.asList() + stringResource(id).split(',').map { it.trim() }.filter { it.isNotEmpty() })
+        .distinct()
+        .toTypedArray()
+
+/** The Diagnostics row's value, in the Apple apps' wording; none when diagnostics can't apply. */
+@Composable
+private fun diagnosticsAvailabilityLabel(availability: DiagnosticsAvailabilityUi): String? =
+    availability.takeIf { it != DiagnosticsAvailabilityUi.INELIGIBLE }
+        ?.let { stringResource(diagnosticsAvailabilityTitle(it)) }

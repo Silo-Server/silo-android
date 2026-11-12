@@ -1,5 +1,8 @@
 package org.siloserver.silo.model.book
 
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+
 /**
  * Recognised ebook / comic / manga container formats. The renderer
  * dispatches on this to pick the right reader implementation:
@@ -15,19 +18,20 @@ package org.siloserver.silo.model.book
  * Wire strings match the file extension (lowercase, no dot) so the
  * server can return them unchanged when surfacing book metadata.
  */
-enum class BookFormat(val wire: String, val displayName: String) {
-    Epub("epub", "EPUB"),
-    Pdf("pdf", "PDF"),
-    Cbz("cbz", "Comic (CBZ)"),
-    Cbr("cbr", "Comic (CBR)"),
-    Mobi("mobi", "MOBI"),
-    Azw("azw", "Kindle (AZW)"),
-    Azw3("azw3", "Kindle (AZW3)"),
-    Txt("txt", "Plain text"),
-    Markdown("md", "Markdown"),
-    Fb2("fb2", "FictionBook"),
-    Fbz("fbz", "FictionBook ZIP"),
-    Unknown("", "Unknown"),
+enum class BookFormat(val wire: String, val displayName: UiText) {
+    // Format names stay as written; the ones with words come from the catalog.
+    Epub("epub", UiText.Raw("EPUB")),
+    Pdf("pdf", UiText.Raw("PDF")),
+    Cbz("cbz", UiText.Key(SharedString.BookFormatComicCbz)),
+    Cbr("cbr", UiText.Key(SharedString.BookFormatComicCbr)),
+    Mobi("mobi", UiText.Raw("MOBI")),
+    Azw("azw", UiText.Key(SharedString.BookFormatKindleAzw)),
+    Azw3("azw3", UiText.Key(SharedString.BookFormatKindleAzw3)),
+    Txt("txt", UiText.Key(SharedString.BookFormatPlainText)),
+    Markdown("md", UiText.Raw("Markdown")),
+    Fb2("fb2", UiText.Raw("FictionBook")),
+    Fbz("fbz", UiText.Raw("FictionBook ZIP")),
+    Unknown("", UiText.Key(SharedString.BookFormatUnknown)),
     ;
 
     companion object {

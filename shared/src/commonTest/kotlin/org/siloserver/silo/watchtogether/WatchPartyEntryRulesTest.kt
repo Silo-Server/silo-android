@@ -1,5 +1,7 @@
 package org.siloserver.silo.watchtogether
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.english
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomMember
 import org.siloserver.silo.model.watchtogether.RoomPhase
@@ -174,11 +176,11 @@ class WatchPartyEntryRulesTest {
 
     @Test
     fun `error text is plain and specific`() {
-        assertEquals("Only the host can do that.", watchPartyErrorMessage(ApiResult.Error(403, "permission_denied", ""), "x"))
+        assertEquals("Only the host can do that.", watchPartyErrorText(ApiResult.Error(403, "permission_denied", ""), UiText.Raw("x")).english())
         assertEquals(
             "Couldn't reach the server. Check your connection and try again.",
-            watchPartyErrorMessage(ApiResult.NetworkError(RuntimeException()), "x"),
+            watchPartyErrorText(ApiResult.NetworkError(RuntimeException()), UiText.Raw("x")).english(),
         )
-        assertEquals("fallback", watchPartyErrorMessage(ApiResult.Error(500, "internal", ""), "fallback"))
+        assertEquals("fallback", watchPartyErrorText(ApiResult.Error(500, "internal", ""), UiText.Raw("fallback")).english())
     }
 }

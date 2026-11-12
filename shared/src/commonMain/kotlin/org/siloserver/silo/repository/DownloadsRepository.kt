@@ -229,8 +229,8 @@ class DownloadsRepository(
                 if (!localWrite(authority) { upsertLocal(r.data) }) return changed()
                 ApiResult.Success(r.data)
             }
-            is ApiResult.Error -> ApiResult.Error(r.code, r.error, r.message)
-            is ApiResult.NetworkError -> ApiResult.NetworkError(r.exception)
+            is ApiResult.Error -> r
+            is ApiResult.NetworkError -> r
         }
 
     }
@@ -305,8 +305,8 @@ class DownloadsRepository(
                 if (!localWrite(authority) { r.data.downloads.forEach { upsertLocal(it) } }) return changed()
                 ApiResult.Success(r.data)
             }
-            is ApiResult.Error -> ApiResult.Error(r.code, r.error, r.message)
-            is ApiResult.NetworkError -> ApiResult.NetworkError(r.exception)
+            is ApiResult.Error -> r
+            is ApiResult.NetworkError -> r
         }
 
     }
@@ -391,8 +391,8 @@ class DownloadsRepository(
 
     private fun ApiResult<*>.mapToUnit(): ApiResult<Unit> = when (this) {
         is ApiResult.Success -> ApiResult.Success(Unit)
-        is ApiResult.Error -> ApiResult.Error(code, error, message)
-        is ApiResult.NetworkError -> ApiResult.NetworkError(exception)
+        is ApiResult.Error -> this
+        is ApiResult.NetworkError -> this
     }
 
     /** Mark an id as user-deleted so future refreshes filter it out, even

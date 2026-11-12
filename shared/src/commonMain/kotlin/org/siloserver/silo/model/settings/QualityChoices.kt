@@ -1,9 +1,10 @@
 package org.siloserver.silo.model.settings
 
-import org.siloserver.silo.model.playback.formatPlaybackQualityBitrate
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 
 /** One entry of a settings picker: the value it stores and its label. */
-data class QualityChoice<T>(val value: T, val label: String)
+data class QualityChoice<T>(val value: T, val label: UiText)
 
 /**
  * The main quality settings as two independent pickers, as the web app shows
@@ -14,13 +15,9 @@ data class QualityChoice<T>(val value: T, val label: String)
  */
 object QualityChoices {
 
-    val RESOLUTIONS: List<QualityChoice<String>> = listOf(
-        QualityChoice(QualityPresets.RESOLUTION_AUTO, "Auto"),
-        QualityChoice("2160p", "4K"),
-        QualityChoice("1080p", "1080p"),
-        QualityChoice("720p", "720p"),
-        QualityChoice("480p", "480p"),
-    )
+    val RESOLUTIONS: List<QualityChoice<String>> =
+        listOf(QualityPresets.RESOLUTION_AUTO, "2160p", "1080p", "720p", "480p")
+            .map { QualityChoice(it, resolutionText(it)) }
 
     /**
      * The bitrate ceilings offered, highest first. The same values as the web
@@ -31,36 +28,43 @@ object QualityChoices {
         200_000, 100_000, 60_000, 40_000, 20_000, 15_000, 10_000, 6_000, 4_000, 2_000, 1_500,
     )
 
-    const val NO_BITRATE_LIMIT_LABEL = "No limit"
+    val NO_BITRATE_LIMIT_LABEL: UiText = UiText.Key(SharedString.QualityNoLimit)
 
-    const val MAX_BITRATE_DESCRIPTION = "Files above this bitrate are converted to fit."
-
-    /** The label of a stored resolution; legacy spellings read as their enum member. */
-    fun resolutionLabel(value: String?): String {
-        val normalized = QualityPresets.normalizeResolution(value)
-        return RESOLUTIONS.firstOrNull { it.value == normalized }?.label ?: normalized
+    /** A normalized resolution's label: "Auto", "4K", "1080p". */
+    internal fun resolutionText(normalized: String): UiText = when (normalized) {
+        QualityPresets.RESOLUTION_AUTO -> UiText.Key(SharedString.QualityAuto)
+        "2160p" -> UiText.Key(SharedString.Quality4K)
+        "1080p" -> UiText.Key(SharedString.Quality1080p)
+        "720p" -> UiText.Key(SharedString.Quality720p)
+        "480p" -> UiText.Key(SharedString.Quality480p)
+        else -> UiText.Raw(normalized)
     }
 
+    /** The label of a stored resolution; legacy spellings read as their enum member. */
+    fun resolutionLabel(value: String?): UiText = resolutionText(QualityPresets.normalizeResolution(value))
+
     /** What the stored resolution does, shown under the picker. */
-    fun resolutionDescription(value: String?): String {
+    fun resolutionDescription(value: String?): UiText {
         val normalized = QualityPresets.normalizeResolution(value)
-        if (normalized == QualityPresets.RESOLUTION_AUTO) {
-            return "Plays the original file whenever your device and connection can handle it."
-        }
-        return "Plays the original file up to ${resolutionLabel(normalized)}. Larger files are converted."
+        if (normalized == QualityPresets.RESOLUTION_AUTO) return UiText.Key(SharedString.QualityFooterOriginal)
+        return UiText.Key(SharedString.QualityFooterUpTo, listOf(resolutionText(normalized)))
     }
 
     /** What both choices do together, shown under them. */
-    fun description(resolution: String?, maxBitrateKbps: Int?): String {
+    fun description(resolution: String?, maxBitrateKbps: Int?): UiText {
         val resolutionText = resolutionDescription(resolution)
         val capped = maxBitrateKbps != null && maxBitrateKbps > 0
-        return if (capped) "$resolutionText $MAX_BITRATE_DESCRIPTION" else resolutionText
+        return if (capped) {
+            UiText.Key(SharedString.QualityFooterJoined, listOf(resolutionText, UiText.Key(SharedString.QualityFooterBitrate)))
+        } else {
+            resolutionText
+        }
     }
 
     /** The pair in one line, for a row that leads to the pickers: "1080p, up to 6 Mbps". */
-    fun summary(resolution: String?, maxBitrateKbps: Int?): String {
+    fun summary(resolution: String?, maxBitrateKbps: Int?): UiText {
         val capped = maxBitrateKbps?.takeIf { it > 0 } ?: return resolutionLabel(resolution)
-        return "${resolutionLabel(resolution)}, up to ${bitrateLabel(capped)}"
+        return UiText.Key(SharedString.QualitySummaryUpTo, listOf(resolutionLabel(resolution), bitrateLabel(capped)))
     }
 
     /**
@@ -68,10 +72,11 @@ object QualityChoices {
      * cannot show exactly (set through the API) reads in kbps, so it never
      * shares a label with a listed choice.
      */
-    fun bitrateLabel(kbps: Int?): String {
+    fun bitrateLabel(kbps: Int?): UiText {
         val capped = kbps?.takeIf { it > 0 } ?: return NO_BITRATE_LIMIT_LABEL
-        if (capped % 100 != 0) return "$capped kbps"
-        return formatPlaybackQualityBitrate(capped) ?: NO_BITRATE_LIMIT_LABEL
+        if (capped < 1_000 || capped % 100 != 0) return UiText.Key(SharedString.RateKbps, listOf(UiText.Number(capped)))
+        // As formatPlaybackQualityBitrate words it: tenths of a Mbps, the decimal only when it isn't zero.
+        return UiText.Key(SharedString.RateMbps, listOf(UiText.Number(capped / 1_000.0, maxFractionDigits = 1)))
     }
 
     /**
@@ -111,19 +116,18 @@ object CellularQuality {
     const val DEFAULT_RESOLUTION = "720p"
     const val DEFAULT_MAX_BITRATE_KBPS = 2_000
 
-    const val FOOTER = "Used on mobile data and metered networks, such as a phone hotspot."
+    val FOOTER: UiText = UiText.Key(SharedString.QualityCellularFooter)
 
     /**
      * The picker's label for a stored pair: its preset's, or, for a pair no
      * preset covers (the two keys set separately elsewhere), one naming both
      * axes, such as "1080p, no limit", so it never reads as a preset.
      */
-    fun label(resolution: String?, maxBitrateKbps: Int?): String {
+    fun label(resolution: String?, maxBitrateKbps: Int?): UiText {
         QualityPresets.presetFor(resolution, maxBitrateKbps)?.let { return it.label }
         val cap = maxBitrateKbps?.takeIf { it > 0 }
-            ?.let { "up to ${QualityChoices.bitrateLabel(it)}" }
-            ?: QualityChoices.NO_BITRATE_LIMIT_LABEL.lowercase()
-        return "${QualityChoices.resolutionLabel(resolution)}, $cap"
+            ?: return UiText.Key(SharedString.QualitySummaryNoLimit, listOf(QualityChoices.resolutionLabel(resolution)))
+        return QualityChoices.summary(resolution, cap)
     }
 
     /** The contract revision [key] needs, or null for a key this object does not gate. */

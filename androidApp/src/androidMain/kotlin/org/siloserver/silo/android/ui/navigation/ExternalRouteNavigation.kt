@@ -273,6 +273,9 @@ private val preAuthenticationDestinationRoutes = setOf(
     Route.ServerSetupPrefilled.ROUTE,
     Route.ServerList.route,
     Route.AccountDetail.ROUTE,
+    // Stands in for the picker when Profile Selection asks with several
+    // accounts saved, and is the root while no account is open.
+    Route.ChangeAccount.ROUTE,
     Route.Setup.route,
     Route.Signup.route,
     Route.ProfileSelection.route,

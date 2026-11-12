@@ -27,7 +27,10 @@ import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeBody
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButton
 import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButtonKind
@@ -74,8 +77,8 @@ fun TvSignupScreen(
         TvMarqueeScreen(
             copyScroll = rememberTvImeAwareFormScrollState(),
             copy = {
-                TvMarqueeHeadline("Create your\naccount")
-                TvMarqueeBody("Join this Silo server with your invite.", modifier = Modifier.padding(top = 11.dp))
+                TvMarqueeHeadline(stringResource(CommonR.string.account_create_headline))
+                TvMarqueeBody(stringResource(CommonR.string.tvSignIn_signup_body), modifier = Modifier.padding(top = 11.dp))
                 Column(
                     Modifier.width(380.dp).padding(top = 20.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -85,7 +88,7 @@ fun TvSignupScreen(
                             value = state.username,
                             onValueChange = viewModel::onUsernameChanged,
                             icon = Icons.Outlined.Person,
-                            placeholder = "Username",
+                            placeholder = stringResource(CommonR.string.tvSignIn_form_usernamePlaceholder),
                             enabled = !state.isLoading,
                             focusRequester = usernameFocus,
                         )
@@ -95,7 +98,7 @@ fun TvSignupScreen(
                             value = state.email,
                             onValueChange = viewModel::onEmailChanged,
                             icon = Icons.Outlined.Email,
-                            placeholder = "Email",
+                            placeholder = stringResource(CommonR.string.account_create_email),
                             keyboardType = KeyboardType.Email,
                             enabled = !state.isLoading,
                         )
@@ -105,7 +108,7 @@ fun TvSignupScreen(
                             value = state.password,
                             onValueChange = viewModel::onPasswordChanged,
                             icon = Icons.Outlined.Lock,
-                            placeholder = "Password",
+                            placeholder = stringResource(CommonR.string.tvSignIn_form_passwordPlaceholder),
                             isSecure = true,
                             enabled = !state.isLoading,
                         )
@@ -115,7 +118,7 @@ fun TvSignupScreen(
                             value = state.inviteCode,
                             onValueChange = viewModel::onInviteCodeChanged,
                             icon = Icons.Outlined.ConfirmationNumber,
-                            placeholder = "Invite code",
+                            placeholder = stringResource(CommonR.string.account_create_inviteCode),
                             imeAction = ImeAction.Done,
                             onImeAction = { if (!state.isLoading) viewModel.onSignupClick() },
                             isError = state.error != null,
@@ -123,16 +126,16 @@ fun TvSignupScreen(
                         )
                     }
                 }
-                state.error?.let { TvMarqueeErrorText(it, Modifier.width(380.dp).padding(top = 8.dp)) }
+                state.error?.let { TvMarqueeErrorText(it.text(), Modifier.width(380.dp).padding(top = 8.dp)) }
                 Row(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalArrangement = Arrangement.spacedBy(11.dp)) {
                     TvMarqueeButton(
-                        text = if (state.isLoading) "Creating account…" else "Create account",
+                        text = stringResource(if (state.isLoading) CommonR.string.tvSignIn_form_creatingAccount else CommonR.string.account_create_submit),
                         onClick = viewModel::onSignupClick,
                         isLoading = state.isLoading,
                         enabled = !state.isLoading,
                     )
                     TvMarqueeButton(
-                        text = "Sign in instead",
+                        text = stringResource(CommonR.string.tvSignIn_signup_signInInstead),
                         onClick = onBackToLogin,
                         kind = TvMarqueeButtonKind.Plain,
                         enabled = !state.isLoading,
@@ -140,7 +143,7 @@ fun TvSignupScreen(
                 }
             },
             card = {
-                TvUsePhoneCard("Already have an account? Open Silo on a phone or tablet on the same Wi‑Fi and it can sign this TV in for you.")
+                TvUsePhoneCard(stringResource(CommonR.string.tvSignIn_signup_phoneCard))
             },
         )
     }

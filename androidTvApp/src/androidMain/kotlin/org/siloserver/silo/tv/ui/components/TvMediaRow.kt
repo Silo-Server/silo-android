@@ -26,8 +26,10 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.ExperimentalComposeUiApi
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.model.settings.EpisodeSpoilers
@@ -41,6 +43,9 @@ import org.siloserver.silo.tv.ui.util.tvArtworkAspectRatioForMediaType
 import org.siloserver.silo.common.diagnostics.DiagnosticsKeyAnomalyLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsKeyCollection
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
+import org.siloserver.silo.common.i18n.isRightToLeftText
+import org.siloserver.silo.common.i18n.LocaleFormat
+import androidx.compose.ui.platform.LocalConfiguration
 
 /** Visual style of cards inside a [TvMediaRow]. */
 enum class TvRowStyle { Poster, Backdrop }
@@ -55,7 +60,10 @@ private data class TvMediaRowItemModel(
     val backdropUrl: String?,
     val backdropThumbhash: String?,
     val shelfTitle: String,
+    /** With [shelfEpisodeTag], the line under the shelf title. */
     val shelfSubtitle: String?,
+    /** The episode tag that leads the subtitle on a progress row ("S01E02 • Title"). */
+    val shelfEpisodeTag: TvHeroFactToken.ResToken?,
     val overlay: OverlayData,
     val contentType: String,
     /** Spoiler protection: blur this card's still (an unstarted episode). */
@@ -173,7 +181,9 @@ fun TvMediaRow(
     if (items.isEmpty()) return
     val rowState = rememberLazyListState()
     val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
-    val rowItems = remember(items, showProgress, style, cardLayout, spoilerPrefs, unwatchedById, keyEpisodesBySeries) {
+    // The configuration: shelf years are written in the app's digits when the model is built.
+    val configuration = LocalConfiguration.current
+    val rowItems = remember(items, showProgress, style, cardLayout, spoilerPrefs, unwatchedById, keyEpisodesBySeries, configuration) {
         // Deduplicate before keying. A repeated contentId inside one row makes
         // the lazy list throw ("Key ... was already used"), which is fatal —
         // and a row has no reason to show the same title twice anyway. Feeds
@@ -193,6 +203,7 @@ fun TvMediaRow(
                 backdropThumbhash = item.bestBackdropThumbhash(),
                 shelfTitle = item.shelfTitle(showProgress = showProgress),
                 shelfSubtitle = item.shelfSubtitle(showProgress = showProgress),
+                shelfEpisodeTag = if (showProgress) tvEpisodeTagToken(item.seasonNumber, item.episodeNumber) else null,
                 overlay = OverlayDataExtractor.fromSectionItem(item),
                 contentType = "${cardLayout.name}:${style.name}:${item.type}",
                 // Protect the selected still while preserving series fallback art.
@@ -422,8 +433,13 @@ fun TvMediaRow(
                         title = rowItem.shelfTitle,
                         imageUrl = rowItem.backdropUrl,
                         imageThumbhash = rowItem.backdropThumbhash,
-                        subtitle = rowItem.shelfSubtitle,
-                        detail = if (showProgress) rowItem.remainingMinutes?.let { "${it}m left" } else null,
+                        subtitle = rowItem.shelfEpisodeTag
+                            ?.let { tag ->
+                                listOfNotNull(tag.resolved(), rowItem.shelfSubtitle?.let { bidiIsolated(it, isRightToLeftText()) })
+                                    .joinToString(" • ")
+                            }
+                            ?: rowItem.shelfSubtitle,
+                        detail = if (showProgress) rowItem.remainingMinutes?.let { stringResource(CommonR.string.shell_card_minutesLeft, it) } else null,
                         mediaType = item.type,
                         progress = rowItem.progress,
                         onClick = { onItemClick(item.contentId) },
@@ -562,12 +578,11 @@ private fun SectionItem.shelfTitle(showProgress: Boolean): String {
 }
 
 private fun SectionItem.shelfSubtitle(showProgress: Boolean): String? {
-    if (showProgress) {
-        return tvEpisodeTitleLine(seasonNumber, episodeNumber, title)
-    }
+    // A progress row's episode tag is [TvMediaRowItemModel.shelfEpisodeTag], added when drawn.
+    if (showProgress) return title.takeIf { it.isNotBlank() }
     return when {
-        year > 0 && genres.isNotEmpty() -> "${year} • ${genres.first()}"
-        year > 0 -> year.toString()
+        year > 0 && genres.isNotEmpty() -> "${LocaleFormat.integer(year)} • ${genres.first()}"
+        year > 0 -> LocaleFormat.integer(year)
         genres.isNotEmpty() -> genres.first()
         else -> null
     }

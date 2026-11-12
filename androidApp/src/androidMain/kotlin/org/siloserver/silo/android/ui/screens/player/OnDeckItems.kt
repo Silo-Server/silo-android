@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.player
 
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.settings.EpisodeSpoilers
+import org.siloserver.silo.common.i18n.LocaleFormat
 
 /** Existing On Deck projection: ordered, bounded cards with usable landscape art. */
 internal fun List<ResolvedSection>.toOnDeckItems(contentId: String, seriesId: String?): List<PlayerViewModel.OnDeckItem> {
@@ -37,6 +38,12 @@ internal fun List<ResolvedSection>.toOnDeckItems(contentId: String, seriesId: St
                 imageIsEpisodeStill = item.backdropIsEpisodeStill,
                 isUnwatchedEpisode = item.type.equals("episode", ignoreCase = true) &&
                     EpisodeSpoilers.isUnwatched(item),
+                year = item.year.takeIf { it > 0 && (item.seasonNumber == null || item.episodeNumber == null) },
+                episodeLine = item.seasonNumber?.let { season ->
+                    item.episodeNumber?.let { episode ->
+                        PlayerViewModel.OnDeckEpisodeLine(season, episode, item.title.takeIf { it.isNotBlank() })
+                    }
+                },
             )
         }
 }

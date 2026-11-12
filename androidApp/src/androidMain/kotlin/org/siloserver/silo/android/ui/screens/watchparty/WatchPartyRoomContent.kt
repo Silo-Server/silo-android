@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.watchparty
 
+import org.siloserver.silo.watchtogether.WatchPartyReconnectingBanner
+import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -64,6 +66,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -75,6 +80,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.koin.compose.koinInject
@@ -82,6 +88,8 @@ import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import org.siloserver.silo.android.ui.theme.SiloDestructive
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.watchtogether.GuestControlPolicy
 import org.siloserver.silo.model.watchtogether.MemberRole
@@ -92,6 +100,9 @@ import org.siloserver.silo.model.watchtogether.Suggestion
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.common.watchparty.watchPartyEpisodeCode
 import org.siloserver.silo.viewmodel.WatchPartyItem
 import org.siloserver.silo.viewmodel.WatchPartySpoilers
 import org.siloserver.silo.watchtogether.WatchPartyConnectionTone
@@ -199,7 +210,7 @@ internal fun rememberWatchPartyStagedTitle(room: RoomSnapshot?, suggestions: Lis
         backdropUrl = loaded.backdropUrl,
         backdropThumbhash = loaded.backdropThumbhash,
         facts = listOfNotNull(
-            loaded.year.takeIf { it > 0 && !episode }?.toString(),
+            loaded.year.takeIf { it > 0 && !episode }?.let { LocaleFormat.integer(it) },
             watchPartyRuntime(loaded.runtime),
         ),
         chips = watchPartyQualityChips(version),
@@ -209,11 +220,12 @@ internal fun rememberWatchPartyStagedTitle(room: RoomSnapshot?, suggestions: Lis
     )
 }
 
+@Composable
 private fun ItemDetail.episodeSubtitle(): String? {
     val series = seriesTitle?.takeIf { it.isNotBlank() } ?: return null
     val season = seasonNumber
     val episode = episodeNumber
-    return if (season != null && episode != null) "$series · S$season:E$episode" else series
+    return if (season != null && episode != null) "$series · ${watchPartyEpisodeCode(season, episode)}" else series
 }
 
 internal fun Suggestion.toPartyItem() = WatchPartyItem(
@@ -265,9 +277,13 @@ internal fun WatchPartyRoomContent(
 
     val primary = watchPartyPrimaryAction(room, features, suggestions, unavailable)
     val secondary = watchPartySecondaryAction(room, primary)
-    val hint = watchPartyLobbyHint(room, suggestions)
-    val banner = watchPartyLobbyBanner(room, unavailable, reconnecting = showReconnect)?.let {
-        if (showReconnect && firstConnect && it == "Reconnecting to the party…") "Connecting to the party…" else it
+    val hint = watchPartyLobbyHint(room, suggestions)?.text()
+    val lobbyBanner = watchPartyLobbyBanner(room, unavailable, reconnecting = showReconnect)
+    val reconnectBanner = lobbyBanner == WatchPartyReconnectingBanner
+    val banner = when {
+        !reconnectBanner -> lobbyBanner?.text()
+        showReconnect && firstConnect -> stringResource(CommonR.string.watchParty_connection_connectingToParty)
+        else -> stringResource(CommonR.string.watchParty_banner_reconnecting)
     }
 
     val header: @Composable () -> Unit = {
@@ -282,8 +298,7 @@ internal fun WatchPartyRoomContent(
     val middle: @Composable ColumnScope.(compact: Boolean) -> Unit = { compact ->
         RoomHero(room, staged, suggestions, compact)
         if (banner != null) {
-            val warning = banner != "Reconnecting to the party…" && banner != "Connecting to the party…"
-            WatchPartyBanner(banner, tone = if (warning) WatchPartyBannerTone.Warning else WatchPartyBannerTone.Neutral)
+            WatchPartyBanner(banner, tone = if (reconnectBanner) WatchPartyBannerTone.Neutral else WatchPartyBannerTone.Warning)
         }
         extraBanner?.invoke()
         if (voteLobby) {
@@ -297,14 +312,20 @@ internal fun WatchPartyRoomContent(
         PrimaryButton(primary, room, winner, eligibility, connected, actions)
         when (secondary) {
             WatchPartySecondaryAction.ChangeTitle -> WatchPartyButton(
-                text = "Change title",
+                text = stringResource(CommonR.string.watchParty_button_changeTitle),
                 kind = WatchPartyButtonKind.Secondary,
                 enabled = eligibility.canStage,
                 onClick = actions::chooseTitle,
                 modifier = Modifier.fillMaxWidth(),
             )
             WatchPartySecondaryAction.Suggest -> WatchPartyButton(
-                text = if (primary is WatchPartyPrimaryAction.Start) "Suggest" else "Suggest a title",
+                text = stringResource(
+                    if (primary is WatchPartyPrimaryAction.Start) {
+                        CommonR.string.watchParty_button_suggest
+                    } else {
+                        CommonR.string.watchParty_button_suggestTitle
+                    },
+                ),
                 icon = Icons.Filled.Add,
                 kind = WatchPartyButtonKind.Secondary,
                 enabled = eligibility.canSuggest,
@@ -360,10 +381,15 @@ internal fun WatchPartyRoomContent(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = WatchPartyMetrics.pageInset, vertical = 10.dp),
                 ) {
                     if (onBack != null) {
-                        WatchPartyCircleButton(Icons.AutoMirrored.Filled.ArrowBack, "Navigate back", onBack, size = 40.dp)
+                        WatchPartyCircleButton(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            stringResource(CommonR.string.common_navigateBack),
+                            onBack,
+                            size = 40.dp,
+                        )
                         Spacer(Modifier.width(14.dp))
                     }
-                    Text("Watch Party", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = SiloOnSurface)
+                    Text(stringResource(CommonR.string.watchParty_title), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = SiloOnSurface)
                     Spacer(Modifier.width(14.dp))
                     ConnectionDot(room, connected, reconnecting = !connected && !firstConnect)
                     Spacer(Modifier.weight(1f))
@@ -401,7 +427,8 @@ internal fun WatchPartyRoomContent(
 
 @Composable
 private fun ConnectionDot(room: RoomSnapshot, connected: Boolean, reconnecting: Boolean) {
-    val (tone, label) = watchPartyConnectionLabel(room, connected, reconnecting)
+    val (tone, labelText) = watchPartyConnectionLabel(room, connected, reconnecting)
+    val label = labelText.text()
     val color = when (tone) {
         WatchPartyConnectionTone.Good -> WatchPartyColors.emerald
         WatchPartyConnectionTone.Warning -> WatchPartyColors.amber
@@ -438,10 +465,10 @@ private fun RoomHero(room: RoomSnapshot, staged: WatchPartyStagedTitle?, suggest
             )
         }
         Column(verticalArrangement = Arrangement.spacedBy((titleSize * 0.28f).dp), modifier = Modifier.weight(1f)) {
-            WatchPartyEyebrow(hero.eyebrow)
-            val title = hero.title ?: staged?.title
+            WatchPartyEyebrow(hero.eyebrow.text())
+            val title = hero.title?.text() ?: staged?.title
             WatchPartyHeroTitle(
-                text = title ?: "Loading title…",
+                text = title ?: stringResource(CommonR.string.watchParty_hero_loading),
                 color = if (title == null || staged?.unavailable == true) SiloSecondaryText else SiloOnSurface,
                 size = titleSize,
             )
@@ -449,7 +476,7 @@ private fun RoomHero(room: RoomSnapshot, staged: WatchPartyStagedTitle?, suggest
             if (selected && staged != null) FactsLine(staged)
             hero.supporting?.let {
                 Text(
-                    it,
+                    it.text(),
                     fontSize = if (selected) WatchPartyMetrics.CAPTION.sp else WatchPartyMetrics.BODY.sp,
                     color = if (selected) SiloSecondaryText.copy(alpha = 0.7f) else SiloSecondaryText,
                 )
@@ -505,7 +532,13 @@ private fun PrimaryButton(
     val full = Modifier.fillMaxWidth()
     when (primary) {
         WatchPartyPrimaryAction.ChooseTitle -> WatchPartyButton(
-            text = if (room.selectedContentId.isNullOrBlank()) "Choose a title" else "Change title",
+            text = stringResource(
+                if (room.selectedContentId.isNullOrBlank()) {
+                    CommonR.string.watchParty_button_chooseTitle
+                } else {
+                    CommonR.string.watchParty_button_changeTitle
+                },
+            ),
             enabled = eligibility.canStage,
             onClick = actions::chooseTitle,
             modifier = full,
@@ -514,7 +547,8 @@ private fun PrimaryButton(
             // A voting room starts its leader; a host-pick room its staged title.
             val vote = room.selectionMode == RoomSelectionMode.Vote
             WatchPartyButton(
-                text = primary.title?.let { "Start $it" } ?: "Start for everyone",
+                text = primary.title?.let { stringResourceWithNames(CommonR.string.watchParty_button_startWinner, it) }
+                    ?: stringResource(CommonR.string.watchParty_button_startForEveryone),
                 icon = Icons.Filled.PlayArrow,
                 enabled = connected && if (vote) eligibility.canPromote && winner != null else eligibility.canStart,
                 onClick = { if (vote) winner?.let(actions::promote) else actions.start() },
@@ -522,7 +556,7 @@ private fun PrimaryButton(
             )
         }
         WatchPartyPrimaryAction.WaitingForVotes -> WatchPartyButton(
-            text = "Suggest a title",
+            text = stringResource(CommonR.string.watchParty_button_suggestTitle),
             icon = Icons.Filled.Add,
             enabled = eligibility.canSuggest,
             onClick = actions::suggest,
@@ -530,7 +564,7 @@ private fun PrimaryButton(
         )
         is WatchPartyPrimaryAction.Ready -> if (primary.isReady) {
             WatchPartyButton(
-                text = "You're ready",
+                text = stringResource(CommonR.string.watchParty_button_youreReady),
                 icon = Icons.Filled.Check,
                 kind = WatchPartyButtonKind.Outlined,
                 enabled = connected && eligibility.canLobbyReady,
@@ -538,7 +572,7 @@ private fun PrimaryButton(
                 modifier = full,
                 trailing = {
                     Text(
-                        "  tap to undo",
+                        "  " + stringResource(CommonR.string.watchParty_button_tapToUndo),
                         fontSize = WatchPartyMetrics.CAPTION.sp,
                         color = SiloOnSurface.copy(alpha = 0.6f),
                         maxLines = 1,
@@ -547,7 +581,7 @@ private fun PrimaryButton(
             )
         } else {
             WatchPartyButton(
-                text = "I'm ready",
+                text = stringResource(CommonR.string.watchParty_button_imReady),
                 icon = Icons.Outlined.CheckCircle,
                 enabled = connected && eligibility.canLobbyReady,
                 onClick = { actions.setLobbyReady(true) },
@@ -555,7 +589,7 @@ private fun PrimaryButton(
             )
         }
         WatchPartyPrimaryAction.ReturnToPlayback -> WatchPartyButton(
-            text = "Return to playback",
+            text = stringResource(CommonR.string.watchParty_button_returnToPlayback),
             icon = Icons.Filled.PlayArrow,
             onClick = actions::returnToPlayback,
             modifier = full,
@@ -587,10 +621,16 @@ private fun WatchPartyOptionsMenu(
     Box {
         WatchPartyCircleButton(
             icon = Icons.Filled.MoreHoriz,
-            contentDescription = "Party options",
+            contentDescription = stringResource(CommonR.string.watchParty_options_title),
             onClick = { open = true },
         )
         SiloDropdownMenu(expanded = open, onDismissRequest = ::close) {
+            val whoChooses = stringResource(CommonR.string.watchParty_options_whoChooses)
+            val everyoneVotes = stringResource(CommonR.string.watchParty_options_everyoneVotes)
+            val hostLabel = stringResource(CommonR.string.watchParty_options_host)
+            val playPause = stringResource(CommonR.string.watchParty_options_playPause)
+            val hostOnly = stringResource(CommonR.string.watchParty_options_hostOnly)
+            val hostAndGuests = stringResource(CommonR.string.watchParty_options_hostAndGuests)
             val vote = room.selectionMode == RoomSelectionMode.Vote
             val guestsControl = room.guestControlPolicy == GuestControlPolicy.GuestPlayPause
             when (page) {
@@ -598,21 +638,21 @@ private fun WatchPartyOptionsMenu(
                     if (host) {
                         if (room.phase == RoomPhase.Lobby && features?.selectionModeSwitch == true) {
                             OptionRow(
-                                "Who chooses",
+                                whoChooses,
                                 icon = Icons.Outlined.PanTool,
-                                value = if (vote) "Everyone votes" else "Host",
+                                value = if (vote) everyoneVotes else hostLabel,
                                 enabled = eligibility.canSwitchMode,
                             ) { page = OptionsPage.Mode }
                         }
                         OptionRow(
-                            "Play & pause",
+                            playPause,
                             icon = Icons.Outlined.SmartDisplay,
-                            value = if (guestsControl) "Host and guests" else "Host only",
+                            value = if (guestsControl) hostAndGuests else hostOnly,
                             enabled = eligibility.canSetPolicy,
                         ) { page = OptionsPage.Policy }
                         if (room.phase == RoomPhase.Playing && features?.stopPlayback == true) {
                             OptionRow(
-                                "Return everyone to lobby",
+                                stringResource(CommonR.string.watchParty_options_returnToLobby),
                                 icon = Icons.AutoMirrored.Filled.Undo,
                                 enabled = eligibility.canStop,
                             ) {
@@ -622,35 +662,40 @@ private fun WatchPartyOptionsMenu(
                         }
                         HorizontalDivider(color = WatchPartyColors.chromeBorder)
                     }
-                    OptionRow("Leave party", icon = Icons.AutoMirrored.Filled.Logout) {
+                    OptionRow(stringResource(CommonR.string.watchParty_options_leave), icon = Icons.AutoMirrored.Filled.Logout) {
                         close()
                         actions.leave()
                     }
                     if (host) {
-                        OptionRow("End party", icon = Icons.Outlined.HighlightOff, destructive = true, enabled = eligibility.canEnd) {
+                        OptionRow(
+                            stringResource(CommonR.string.watchParty_end_button),
+                            icon = Icons.Outlined.HighlightOff,
+                            destructive = true,
+                            enabled = eligibility.canEnd,
+                        ) {
                             close()
                             actions.end()
                         }
                     }
                 }
                 OptionsPage.Mode -> {
-                    OptionRow("Who chooses", icon = Icons.AutoMirrored.Filled.ArrowBack, header = true) { page = OptionsPage.Main }
-                    OptionRow("Host", checked = !vote, enabled = eligibility.canSwitchMode) {
+                    OptionRow(whoChooses, icon = Icons.AutoMirrored.Filled.ArrowBack, header = true) { page = OptionsPage.Main }
+                    OptionRow(hostLabel, checked = !vote, enabled = eligibility.canSwitchMode) {
                         close()
                         if (vote) actions.setMode(RoomSelectionMode.HostPick)
                     }
-                    OptionRow("Everyone votes", checked = vote, enabled = eligibility.canSwitchMode) {
+                    OptionRow(everyoneVotes, checked = vote, enabled = eligibility.canSwitchMode) {
                         close()
                         if (!vote) actions.setMode(RoomSelectionMode.Vote)
                     }
                 }
                 OptionsPage.Policy -> {
-                    OptionRow("Play & pause", icon = Icons.AutoMirrored.Filled.ArrowBack, header = true) { page = OptionsPage.Main }
-                    OptionRow("Host only", checked = !guestsControl, enabled = eligibility.canSetPolicy) {
+                    OptionRow(playPause, icon = Icons.AutoMirrored.Filled.ArrowBack, header = true) { page = OptionsPage.Main }
+                    OptionRow(hostOnly, checked = !guestsControl, enabled = eligibility.canSetPolicy) {
                         close()
                         if (guestsControl) actions.setPolicy(GuestControlPolicy.HostOnly)
                     }
-                    OptionRow("Host and guests", checked = guestsControl, enabled = eligibility.canSetPolicy) {
+                    OptionRow(hostAndGuests, checked = guestsControl, enabled = eligibility.canSetPolicy) {
                         close()
                         if (!guestsControl) actions.setPolicy(GuestControlPolicy.GuestPlayPause)
                     }
@@ -684,7 +729,14 @@ private fun OptionRow(
     ) {
         when {
             checked != null -> Box(Modifier.size(20.dp)) {
-                if (checked) Icon(Icons.Filled.Check, contentDescription = "Selected", tint = color, modifier = Modifier.size(20.dp))
+                if (checked) {
+                    Icon(
+                        Icons.Filled.Check,
+                        contentDescription = stringResource(CommonR.string.menu_item_selected),
+                        tint = color,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
             icon != null -> Icon(icon, contentDescription = null, tint = if (header) SiloSecondaryText else color, modifier = Modifier.size(20.dp))
         }
@@ -730,7 +782,7 @@ private fun WatchPartyBallot(
         }
         if (suggestions.isEmpty()) {
             Text(
-                "Nothing suggested yet. Anyone can add a title.",
+                stringResource(CommonR.string.watchParty_ballot_empty),
                 fontSize = WatchPartyMetrics.CAPTION.sp,
                 color = SiloSecondaryText,
             )
@@ -755,7 +807,12 @@ private fun WatchPartyBallot(
         ) {
             Icon(Icons.Filled.Add, contentDescription = null, tint = SiloSecondaryText, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Suggest a title", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = SiloSecondaryText)
+            Text(
+                stringResource(CommonR.string.watchParty_button_suggestTitle),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                color = SiloSecondaryText,
+            )
         }
     }
 }
@@ -776,7 +833,23 @@ private fun CandidateRow(
     val voteEnabled = votesKnown && canVote
     val hasMenu = canPromote || canRemove
     val shape = RoundedCornerShape(14.dp)
-    val votes = "${suggestion.voteCount} ${if (suggestion.voteCount == 1) "vote" else "votes"}"
+    val count = suggestion.voteCount
+    // The title is isolated in a right-to-left interface, as stringResourceWithNames does.
+    val title = if (LocalLayoutDirection.current == LayoutDirection.Rtl) "\u2068${suggestion.title}\u2069" else suggestion.title
+    val rowDescription = pluralStringResource(
+        if (isLeader) CommonR.plurals.watchParty_ballot_candidateLeading else CommonR.plurals.watchParty_ballot_candidate,
+        count,
+        title,
+        count,
+    )
+    val moreActions = stringResource(CommonR.string.watchParty_suggestion_moreActions)
+    val startThisOne = stringResource(CommonR.string.watchParty_ballot_startThis)
+    val removeSuggestion = stringResource(CommonR.string.watchParty_ballot_remove)
+    val voteDescription = when {
+        !votesKnown -> stringResource(CommonR.string.watchParty_ballot_loadingVote)
+        voted -> stringResourceWithNames(CommonR.string.watchParty_ballot_removeVote, suggestion.title)
+        else -> stringResourceWithNames(CommonR.string.watchParty_ballot_vote, suggestion.title)
+    }
     Box {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -790,13 +863,13 @@ private fun CandidateRow(
                     enabled = voteEnabled || hasMenu,
                     onClick = { if (voteEnabled) actions.vote(suggestion) },
                     onLongClick = if (hasMenu) ({ menu = true }) else null,
-                    onLongClickLabel = "More actions",
+                    onLongClickLabel = moreActions,
                 )
                 .semantics {
-                    contentDescription = "${suggestion.title}, $votes" + if (isLeader) ", leading" else ""
+                    contentDescription = rowDescription
                     customActions = buildList {
-                        if (canPromote) add(CustomAccessibilityAction("Start this one") { actions.promote(suggestion); true })
-                        if (canRemove) add(CustomAccessibilityAction("Remove suggestion") { actions.remove(suggestion); true })
+                        if (canPromote) add(CustomAccessibilityAction(startThisOne) { actions.promote(suggestion); true })
+                        if (canRemove) add(CustomAccessibilityAction(removeSuggestion) { actions.remove(suggestion); true })
                     }
                 }
                 .padding(8.dp),
@@ -811,14 +884,14 @@ private fun CandidateRow(
             SuggestionText(suggestion, Modifier.weight(1f))
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.widthIn(min = 48.dp)) {
                 Text(
-                    "${suggestion.voteCount}",
+                    LocaleFormat.integer(count, currentNumberLocale()),
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     color = SiloOnSurface,
                 )
                 Text(
-                    if (suggestion.voteCount == 1) "VOTE" else "VOTES",
+                    pluralStringResource(CommonR.plurals.watchParty_ballot_votesLabel, count),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = 1.sp,
@@ -836,11 +909,7 @@ private fun CandidateRow(
                     .border(1.dp, if (voted && votesKnown) Color.Transparent else WatchPartyColors.outline, toggleShape)
                     .clickable(enabled = voteEnabled, role = Role.Button) { actions.vote(suggestion) }
                     .semantics {
-                        contentDescription = when {
-                            !votesKnown -> "Loading your vote"
-                            voted -> "Remove vote for ${suggestion.title}"
-                            else -> "Vote for ${suggestion.title}"
-                        }
+                        contentDescription = voteDescription
                     },
             ) {
                 Icon(
@@ -857,13 +926,13 @@ private fun CandidateRow(
         }
         SiloDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             if (canPromote) {
-                OptionRow("Start this one", icon = Icons.Filled.PlayArrow) {
+                OptionRow(startThisOne, icon = Icons.Filled.PlayArrow) {
                     menu = false
                     actions.promote(suggestion)
                 }
             }
             if (canRemove) {
-                OptionRow("Remove suggestion", icon = Icons.Outlined.Delete, destructive = true) {
+                OptionRow(removeSuggestion, icon = Icons.Outlined.Delete, destructive = true) {
                     menu = false
                     actions.remove(suggestion)
                 }
@@ -885,7 +954,7 @@ private fun SuggestionText(suggestion: Suggestion, modifier: Modifier) {
         )
         val detail = listOfNotNull(
             suggestion.subtitle.takeIf { it.isNotBlank() },
-            suggestion.note.takeIf { it.isNotBlank() }?.let { "“$it”" },
+            suggestion.note.takeIf { it.isNotBlank() }?.let { stringResource(CommonR.string.watchParty_ballot_note, it) },
         ).joinToString(" · ")
         if (detail.isNotEmpty()) {
             Text(detail, fontSize = 12.sp, color = SiloSecondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -910,10 +979,10 @@ private fun WatchPartyHostPickSuggestions(
     val manages = room.selfRole == MemberRole.Host && room.selfCanManageRoom
     Column(verticalArrangement = Arrangement.spacedBy((WatchPartyMetrics.CAPTION * 0.6f).dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            WatchPartyEyebrow("Suggestions · ${suggestions.size}")
+            WatchPartyEyebrow(stringResource(CommonR.string.watchParty_strip_titleCount, suggestions.size))
             Spacer(Modifier.width(12.dp).weight(1f))
             Text(
-                if (manages) "Queue one to put it up next." else "The host decides what plays.",
+                stringResource(if (manages) CommonR.string.watchParty_strip_manager else CommonR.string.watchParty_strip_guest),
                 fontSize = WatchPartyMetrics.CAPTION.sp,
                 color = SiloSecondaryText,
                 maxLines = 1,
@@ -944,6 +1013,9 @@ private fun HostPickSuggestionRow(
 ) {
     var menu by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(14.dp)
+    val moreActions = stringResource(CommonR.string.watchParty_suggestion_moreActions)
+    val removeSuggestion = stringResource(CommonR.string.watchParty_ballot_remove)
+    val queueDescription = stringResourceWithNames(CommonR.string.watchParty_suggestion_queueTitle, suggestion.title)
     Box {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -957,12 +1029,12 @@ private fun HostPickSuggestionRow(
                     enabled = canRemove,
                     onClick = {},
                     onLongClick = if (canRemove) ({ menu = true }) else null,
-                    onLongClickLabel = "More actions",
+                    onLongClickLabel = moreActions,
                 )
                 .semantics {
                     contentDescription = suggestion.title
                     if (canRemove) {
-                        customActions = listOf(CustomAccessibilityAction("Remove suggestion") { actions.remove(suggestion); true })
+                        customActions = listOf(CustomAccessibilityAction(removeSuggestion) { actions.remove(suggestion); true })
                     }
                 }
                 .padding(8.dp),
@@ -977,22 +1049,23 @@ private fun HostPickSuggestionRow(
             SuggestionText(suggestion, Modifier.weight(1f))
             when {
                 queued -> Text(
-                    "Up next",
+                    stringResource(CommonR.string.watchParty_suggestion_upNext),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = SiloSecondaryText,
                     modifier = Modifier.padding(horizontal = 8.dp),
                 )
                 canQueue -> WatchPartyButton(
-                    text = "Queue",
+                    text = stringResource(CommonR.string.watchParty_suggestion_queue),
                     kind = WatchPartyButtonKind.Secondary,
                     onClick = { actions.queue(suggestion) },
-                    modifier = Modifier.height(44.dp).semantics { contentDescription = "Queue ${suggestion.title}" },
+                    modifier = Modifier.height(44.dp).semantics { contentDescription = queueDescription },
+                    maxLines = 1,
                 )
             }
         }
         SiloDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            OptionRow("Remove suggestion", icon = Icons.Outlined.Delete, destructive = true) {
+            OptionRow(removeSuggestion, icon = Icons.Outlined.Delete, destructive = true) {
                 menu = false
                 actions.remove(suggestion)
             }

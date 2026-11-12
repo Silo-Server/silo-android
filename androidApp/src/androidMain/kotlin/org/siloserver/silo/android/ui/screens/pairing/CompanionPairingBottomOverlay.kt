@@ -69,7 +69,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
-import org.siloserver.silo.android.R
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.auth.DeviceCodeFormat
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -252,7 +252,7 @@ private fun PairingCard(
     // A signed-out TV (`st=login`) is being signed in, not set up; the
     // progress and result copy says so.
     val signIn = signInServerName != null
-    val paneTitle = stringResource(if (target.isRoku) R.string.companion_pane_title_roku else R.string.companion_pane_title)
+    val paneTitle = stringResource(if (target.isRoku) CommonR.string.companion_paneTitleRoku else CommonR.string.companion_paneTitle)
 
     Card(
         modifier = Modifier
@@ -312,37 +312,37 @@ private fun PairingCard(
                 status is CompanionPairingStatus.Completed -> TerminalStep(
                     successful = status.failures.isEmpty(),
                     title = when {
-                        signIn -> stringResource(R.string.companion_signin_done_title, status.targetName)
-                        status.failures.isNotEmpty() -> stringResource(R.string.companion_setup_partial_title, status.targetName)
+                        signIn -> stringResource(CommonR.string.companion_signinDoneTitle, status.targetName)
+                        status.failures.isNotEmpty() -> stringResource(CommonR.string.companion_setupPartialTitle, status.targetName)
                         else -> status.serverNames.takeIf { it.isNotEmpty() }
-                            ?.let { stringResource(R.string.companion_setup_done_title, it.joinToString()) }
+                            ?.let { stringResource(CommonR.string.companion_setupDoneTitle, it.joinToString()) }
                             ?: stringResource(
                                 if (target.isRoku) {
-                                    R.string.companion_setup_done_title_generic_roku
+                                    CommonR.string.companion_setupDoneTitleGenericRoku
                                 } else {
-                                    R.string.companion_setup_done_title_generic
+                                    CommonR.string.companion_setupDoneTitleGeneric
                                 },
                             )
                     },
                     message = when {
-                        signIn -> stringResource(R.string.companion_signin_done_body, signInServerName.orEmpty())
+                        signIn -> stringResource(CommonR.string.companion_signinDoneBody, signInServerName.orEmpty())
                         // One target, signed in: today's short line.
-                        status.outcomes.size <= 1 -> stringResource(R.string.companion_setup_done_body, status.targetName)
+                        status.outcomes.size <= 1 -> stringResource(CommonR.string.companion_setupDoneBody, status.targetName)
                         // Each target: "Home — alex, sam", then failures with their reasons.
                         else -> companionSummaryLines(status.outcomes).joinToString("\n")
                     },
-                    primaryLabel = stringResource(R.string.companion_done),
+                    primaryLabel = stringResource(CommonR.string.common_done),
                     onPrimary = onDismiss,
                 )
                 status is CompanionPairingStatus.Failed -> TerminalStep(
                     successful = false,
                     title = if (signIn) {
-                        stringResource(R.string.companion_signin_failed_title)
+                        stringResource(CommonR.string.companion_signinFailedTitle)
                     } else {
-                        stringResource(R.string.companion_setup_failed_title)
+                        stringResource(CommonR.string.companion_setupFailedTitle)
                     },
                     message = status.message,
-                    primaryLabel = stringResource(R.string.companion_try_again),
+                    primaryLabel = stringResource(CommonR.string.common_tryAgain),
                     onPrimary = onPair,
                     onSecondary = onDismiss,
                 )
@@ -380,15 +380,15 @@ private fun AccountPicker(
                 Text(
                     stringResource(
                         if (choice.mode == CompanionSelectionMode.One) {
-                            R.string.companion_choose_account_title
+                            CommonR.string.companion_chooseAccountTitle
                         } else {
-                            R.string.companion_choose_accounts_title
+                            CommonR.string.companion_chooseAccountsTitle
                         },
                     ),
                     style = MaterialTheme.typography.titleLarge,
                 )
                 Text(
-                    text = stringResource(R.string.companion_choose_servers_body, choice.targetName),
+                    text = stringResource(CommonR.string.companion_chooseServersBody, choice.targetName),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -428,7 +428,7 @@ private fun AccountPicker(
                         AccountRow(
                             name = companionAccountLabel(account, isPhones = server.isActive && account.isCurrent, tablet = tablet),
                             detail = if (account.needsSignIn) {
-                                stringResource(if (tablet) R.string.companion_account_sign_in_again_tablet else R.string.companion_account_sign_in_again)
+                                stringResource(if (tablet) CommonR.string.companion_accountSignInAgainTablet else CommonR.string.companion_accountSignInAgain)
                             } else {
                                 null
                             },
@@ -446,9 +446,9 @@ private fun AccountPicker(
         val limit = choice.limit
         val note = when {
             choice.mode == CompanionSelectionMode.OnePerServer ->
-                stringResource(R.string.companion_choose_one_per_server, choice.targetName)
+                stringResource(CommonR.string.companion_chooseOnePerServer, choice.targetName)
             limit != null && choice.mode == CompanionSelectionMode.Several ->
-                pluralStringResource(R.plurals.companion_choose_limit, limit, choice.targetName, limit)
+                pluralStringResource(CommonR.plurals.companion_chooseLimit, limit, choice.targetName, limit)
             else -> null
         }
         note?.let {
@@ -468,12 +468,12 @@ private fun AccountPicker(
                 .padding(top = 6.dp),
         ) {
             Text(
-                if (count > 0) pluralStringResource(R.plurals.companion_continue_count, count, count) else stringResource(R.string.companion_continue),
+                if (count > 0) pluralStringResource(CommonR.plurals.companion_continueCount, count, count) else stringResource(CommonR.string.companion_continue),
                 style = MaterialTheme.typography.titleMedium,
             )
         }
         TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.companion_cancel))
+            Text(stringResource(CommonR.string.common_cancel))
         }
     }
 }
@@ -551,9 +551,9 @@ private fun AccountRow(
 /** "alex", "alex · this phone" for the one in use, or "Your account" when the name isn't saved. */
 @Composable
 private fun companionAccountLabel(account: CompanionPairingAccount, isPhones: Boolean, tablet: Boolean): String {
-    val name = account.username?.takeIf { it.isNotBlank() } ?: stringResource(R.string.companion_account_unnamed)
+    val name = account.username?.takeIf { it.isNotBlank() } ?: stringResource(CommonR.string.companion_accountUnnamed)
     return if (isPhones) {
-        stringResource(if (tablet) R.string.companion_account_this_tablet else R.string.companion_account_this_phone, name)
+        stringResource(if (tablet) CommonR.string.companion_accountThisTablet else CommonR.string.companion_accountThisPhone, name)
     } else {
         name
     }
@@ -600,9 +600,9 @@ private fun DiscoveryStep(
         )
         Text(
             text = if (signIn) {
-                stringResource(R.string.companion_offer_signin_title, target.name, signInServerName.orEmpty())
+                stringResource(CommonR.string.companion_offerSigninTitle, target.name, signInServerName.orEmpty())
             } else {
-                stringResource(R.string.companion_offer_setup_title, target.name)
+                stringResource(CommonR.string.companion_offerSetupTitle, target.name)
             },
             style = MaterialTheme.typography.headlineSmall,
             textAlign = TextAlign.Center,
@@ -610,12 +610,12 @@ private fun DiscoveryStep(
         Text(
             text = if (signInServerName != null) {
                 stringResource(
-                    if (target.isRoku) R.string.companion_offer_signin_body_roku else R.string.companion_offer_signin_body,
+                    if (target.isRoku) CommonR.string.companion_offerSigninBodyRoku else CommonR.string.companion_offerSigninBody,
                     target.name,
                 )
             } else {
                 stringResource(
-                    if (isTablet()) R.string.companion_offer_setup_body_tablet else R.string.companion_offer_setup_body,
+                    if (isTablet()) CommonR.string.companion_offerSetupBodyTablet else CommonR.string.companion_offerSetupBody,
                     target.name,
                 )
             },
@@ -628,7 +628,7 @@ private fun DiscoveryStep(
         if (signIn && signInAccounts.size >= 2) {
             val tablet = isTablet()
             Text(
-                text = stringResource(R.string.companion_offer_signin_as),
+                text = stringResource(CommonR.string.companion_offerSigninAs),
                 style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -649,13 +649,13 @@ private fun DiscoveryStep(
         }
         PrimaryAction(
             label = stringResource(
-                if (signIn) R.string.companion_offer_signin_action else R.string.companion_offer_setup_action,
+                if (signIn) CommonR.string.companion_offerSigninAction else CommonR.string.companion_offerSetupAction,
             ),
             onClick = onPair,
             modifier = Modifier.padding(top = 14.dp),
         )
         TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.companion_offer_not_now))
+            Text(stringResource(CommonR.string.companion_offerNotNow))
         }
     }
 }
@@ -676,14 +676,14 @@ private fun MatchConfirmation(
         // that Living Room shows this code for sam on Lake House").
         val accountName = approval.accountName
         val check = when {
-            !approval.isFollowUp -> stringResource(R.string.companion_confirm_check, approval.targetName)
+            !approval.isFollowUp -> stringResource(CommonR.string.companion_confirmCheck, approval.targetName)
             accountName != null ->
-                stringResource(R.string.companion_confirm_check_for, approval.targetName, accountName, approval.serverName)
-            else -> stringResource(R.string.companion_confirm_check_for_server, approval.targetName, approval.serverName)
+                stringResource(CommonR.string.companion_confirmCheckFor, approval.targetName, accountName, approval.serverName)
+            else -> stringResource(CommonR.string.companion_confirmCheckForServer, approval.targetName, approval.serverName)
         }
         Text(
             text = if (approval.total > 1) {
-                stringResource(R.string.companion_progress_position, check, approval.position, approval.total)
+                stringResource(CommonR.string.companion_progressPosition, check, approval.position, approval.total)
             } else {
                 check
             },
@@ -704,7 +704,7 @@ private fun MatchConfirmation(
         // "Older TV apps show ..." line.
         approval.serverMatchCode.trim().takeIf { it.isNotEmpty() }?.let { words ->
             Text(
-                text = stringResource(R.string.companion_confirm_older_tv, words.uppercase()),
+                text = stringResource(CommonR.string.companion_confirmOlderTv, words.uppercase()),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -720,24 +720,24 @@ private fun MatchConfirmation(
             modifier = Modifier.padding(top = 6.dp),
         )
         Text(
-            text = stringResource(R.string.sign_in_tv_profiles_note),
+            text = stringResource(CommonR.string.signInTv_profilesNote),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
         Text(
-            text = stringResource(R.string.sign_in_tv_warning),
+            text = stringResource(CommonR.string.signInTv_warning),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
         PrimaryAction(
-            label = stringResource(R.string.companion_confirm_yes),
+            label = stringResource(CommonR.string.companion_confirmYes),
             onClick = onApprove,
             modifier = Modifier.padding(top = 14.dp),
         )
         TextButton(onClick = onDecline, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.companion_confirm_no))
+            Text(stringResource(CommonR.string.companion_confirmNo))
         }
     }
 }
@@ -750,36 +750,36 @@ private fun companionSignInLine(approval: CompanionPairingApproval): String =
 @Composable
 private fun ProgressStep(status: CompanionPairingStatus, signIn: Boolean, onCancel: () -> Unit) {
     val working = stringResource(
-        if (signIn) R.string.companion_signin_progress_title else R.string.companion_setup_progress_title,
+        if (signIn) CommonR.string.companion_signinProgressTitle else CommonR.string.companion_setupProgressTitle,
     )
-    val connecting = stringResource(R.string.companion_connecting)
+    val connecting = stringResource(CommonR.string.companion_connecting)
     val (title, message) = when (status) {
         is CompanionPairingStatus.Connecting -> connecting to status.targetName
         is CompanionPairingStatus.PickServers -> connecting to status.targetName
         // Later targets: "Signing in sam on Home… (2 of 4)".
         is CompanionPairingStatus.PushingServer -> working to if (status.position > 1) {
             stringResource(
-                R.string.companion_progress_position,
-                status.accountName?.let { stringResource(R.string.companion_progress_signing_in_account, it, status.serverName) }
-                    ?: stringResource(R.string.companion_progress_signing_in_server, status.serverName),
+                CommonR.string.companion_progressPosition,
+                status.accountName?.let { stringResource(CommonR.string.companion_progressSigningInAccount, it, status.serverName) }
+                    ?: stringResource(CommonR.string.companion_progressSigningInServer, status.serverName),
                 status.position,
                 status.total,
             )
         } else if (signIn) {
-            stringResource(R.string.companion_signin_progress_allow, status.targetName)
+            stringResource(CommonR.string.companion_signinProgressAllow, status.targetName)
         } else {
             stringResource(
-                if (isTablet()) R.string.companion_setup_progress_allow_tablet else R.string.companion_setup_progress_allow,
+                if (isTablet()) CommonR.string.companion_setupProgressAllowTablet else CommonR.string.companion_setupProgressAllow,
                 status.targetName,
             )
         }
         is CompanionPairingStatus.AwaitingMatchConfirmation ->
-            working to stringResource(R.string.companion_progress_waiting_code, status.approval.targetName)
+            working to stringResource(CommonR.string.companion_progressWaitingCode, status.approval.targetName)
         is CompanionPairingStatus.Approving ->
-            working to stringResource(R.string.companion_progress_approving, status.serverName, status.targetName)
+            working to stringResource(CommonR.string.companion_progressApproving, status.serverName, status.targetName)
         is CompanionPairingStatus.SignedIn ->
-            working to stringResource(R.string.companion_progress_signed_in, status.serverName)
-        else -> working to stringResource(R.string.companion_progress_wait)
+            working to stringResource(CommonR.string.companion_progressSignedIn, status.serverName)
+        else -> working to stringResource(CommonR.string.companion_progressWait)
     }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -800,7 +800,7 @@ private fun ProgressStep(status: CompanionPairingStatus, signIn: Boolean, onCanc
             strokeWidth = 3.dp,
         )
         TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.companion_cancel))
+            Text(stringResource(CommonR.string.common_cancel))
         }
     }
 }
@@ -835,7 +835,7 @@ private fun TerminalStep(
         PrimaryAction(label = primaryLabel, onClick = onPrimary, modifier = Modifier.padding(top = 8.dp))
         onSecondary?.let { secondary ->
             TextButton(onClick = secondary, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.companion_close))
+                Text(stringResource(CommonR.string.companion_close))
             }
         }
     }

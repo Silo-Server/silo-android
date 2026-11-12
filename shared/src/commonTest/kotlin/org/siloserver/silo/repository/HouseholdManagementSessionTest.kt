@@ -15,6 +15,8 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 
 class HouseholdManagementSessionTest {
     private val primary = Profile(id = "1", name = "Parent", isPrimary = true, hasPin = true)
@@ -43,13 +45,45 @@ class HouseholdManagementSessionTest {
         assertEquals(primary, assertNotNull(session.reverify.value).profile)
         session.submitPin("0000")
         runCurrent()
-        assertEquals("Wrong PIN. Try again.", session.reverify.value?.error)
+        assertEquals(UiText.Key(SharedString.PinWrong), session.reverify.value?.error)
         session.submitPin("1234")
         runCurrent()
         assertIs<ApiResult.Success<Unit>>(result.await())
         assertEquals<List<String?>>(listOf("old", "fresh"), tokensSent)
         assertEquals(listOf("0000", "1234"), pins)
         assertEquals("fresh", session.manager?.profileToken)
+        assertNull(session.reverify.value)
+        assertTrue(session.isActive.value)
+    }
+
+    @Test fun beginVerifiedAsksForThePrimaryPinFirst() = runTest {
+        val started = async { session.beginVerified(primary, null) }
+        runCurrent()
+        assertEquals(primary, assertNotNull(session.reverify.value).profile)
+        assertNull(session.manager?.profileToken)
+        session.submitPin("0000")
+        runCurrent()
+        assertEquals(UiText.Key(SharedString.PinWrong), session.reverify.value?.error)
+        session.submitPin("1234")
+        runCurrent()
+        assertTrue(started.await())
+        assertEquals("fresh", session.manager?.profileToken)
+        assertNull(session.reverify.value)
+    }
+
+    @Test fun beginVerifiedCancelledLeavesNoSession() = runTest {
+        val started = async { session.beginVerified(primary, null) }
+        runCurrent()
+        session.cancelReverify()
+        runCurrent()
+        assertFalse(started.await())
+        assertFalse(session.isActive.value)
+        assertNull(session.manager)
+        assertTrue(pins.isEmpty())
+    }
+
+    @Test fun beginVerifiedWithoutAPinStartsAtOnce() = runTest {
+        assertTrue(session.beginVerified(primary.copy(hasPin = false), null))
         assertNull(session.reverify.value)
         assertTrue(session.isActive.value)
     }

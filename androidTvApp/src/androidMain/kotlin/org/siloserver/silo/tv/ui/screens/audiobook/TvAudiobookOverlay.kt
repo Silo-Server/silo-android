@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.tv.ui.focus.TvFocusAcquisitionBudgetMillis
 import org.siloserver.silo.tv.ui.focus.TvFocusRelocationBudgetMillis
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
@@ -239,10 +240,10 @@ internal fun TvAudiobookOverlayRow(
 
 /** H:MM:SS / M:SS clock used across the audiobook TV surfaces. */
 internal fun formatAudiobookTime(seconds: Double): String {
-    if (seconds.isNaN() || seconds < 0.0) return "0:00"
+    if (seconds.isNaN() || seconds < 0.0) return LocaleFormat.clock(0, 0, 0)
     val total = seconds.toLong()
     val h = total / 3600
     val m = (total % 3600) / 60
     val s = total % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    return LocaleFormat.clock(h, m, s)
 }

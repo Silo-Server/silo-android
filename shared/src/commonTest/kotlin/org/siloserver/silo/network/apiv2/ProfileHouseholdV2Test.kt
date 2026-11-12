@@ -44,6 +44,20 @@ class ProfileHouseholdV2Test {
         } finally { c.close() }
     }
 
+    @Test fun listCarriesTheProfileLimitWhenTheServerSendsOne() = runTest {
+        for ((body, expected) in listOf(
+            """{"items":[$profile],"max_profiles":1}""" to 1,
+            // An older server, or one that could not read the limit.
+            """{"items":[$profile]}""" to null,
+        )) {
+            val c = client { respond(body, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json")) }
+            try {
+                val listed = assertIs<ApiResult.Success<ProfilesResponse>>(ProfileApi(c, ApiV2Gate.Unrestricted, tokens).listProfiles())
+                assertEquals(expected, listed.data.maxProfiles)
+            } finally { c.close() }
+        }
+    }
+
     @Test fun createOmitsNullsAndDeleteIsSingleAttempt() = runTest {
         scope = scope.copy(profileId = "1", profileToken = "manager-proof")
         var sends = 0

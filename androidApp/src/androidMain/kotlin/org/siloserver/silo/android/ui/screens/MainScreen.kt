@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -31,6 +33,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -69,6 +72,7 @@ import org.siloserver.silo.android.ui.screens.libraries.LibrariesSelectorSheet
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesViewModel
 import org.siloserver.silo.android.ui.screens.recommendations.ForYouList
 import org.siloserver.silo.android.ui.screens.recommendations.RecommendationsScreen
+import org.siloserver.silo.common.i18n.sectionTitle
 import org.siloserver.silo.viewmodel.RecommendationsViewModel
 import org.siloserver.silo.android.ui.screens.recommendations.headerTitle
 import org.siloserver.silo.android.ui.screens.watchparty.WatchPartySoloGuardDialog
@@ -104,6 +108,7 @@ fun MainScreen(
     navController: NavHostController,
     currentTab: Tab,
 ) {
+    val context = LocalContext.current
     val headerViewModel = koinViewModel<MainHeaderViewModel>()
     val headerState by headerViewModel.uiState.collectAsState()
     val siloCastController: SiloCastController = koinInject()
@@ -461,7 +466,7 @@ fun MainScreen(
                                 playVideo(contentId, resumePositionSeconds = resumePositionSeconds)
                             },
                             onExploreSection = { section ->
-                                navController.navigate(Route.SectionBrowse(section.id, section.title).route)
+                                navController.navigate(Route.SectionBrowse(section.id, context.sectionTitle(section)).route)
                             },
                             viewModel = homeViewModel,
                             activeProfile = headerState.activeProfile,
@@ -496,7 +501,7 @@ fun MainScreen(
                             },
                             onExploreSection = { section, libraryId, mediaScope ->
                                 navController.navigate(
-                                    Route.SectionBrowse(section.id, section.title, libraryId, mediaScope).route,
+                                    Route.SectionBrowse(section.id, context.sectionTitle(section), libraryId, mediaScope).route,
                                 )
                             },
                             viewModel = requireNotNull(librariesViewModel),
@@ -587,7 +592,7 @@ fun MainScreen(
             // Downloads and For You use the shared iOS-style top chrome.
             if (currentTab == Tab.Downloads || currentTab == Tab.ForYou) {
                 val title = when (currentTab) {
-                    Tab.Downloads -> "Downloads"
+                    Tab.Downloads -> stringResource(CommonR.string.tab_downloads)
                     // Names what For You is showing: the feed, or a saved list.
                     Tab.ForYou -> forYouDisplayed.headerTitle()
                     else -> null
@@ -676,7 +681,7 @@ private fun MobileServerOfflinePill(
         shadowElevation = 6.dp,
     ) {
         Text(
-            text = "Offline mode - tap to retry",
+            text = stringResource(CommonR.string.shell_offline_tapToRetry),
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,

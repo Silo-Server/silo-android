@@ -1,5 +1,6 @@
 package org.siloserver.silo.watchtogether
 
+import org.siloserver.silo.common.i18n.english
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomMember
 import org.siloserver.silo.model.watchtogether.RoomPhase
@@ -74,8 +75,8 @@ class WatchPartyLobbyPresentationTest {
             WatchPartyPrimaryAction.WaitingForVotes,
             watchPartyPrimaryAction(voting, features, listOf(suggestion("a", 1))),
         )
-        assertEquals("Nobody has voted yet.", watchPartyLobbyHint(voting, listOf(suggestion("a", 0))))
-        assertEquals("Suggest a title to get the vote going.", watchPartyLobbyHint(voting, emptyList()))
+        assertEquals("Nobody has voted yet.", watchPartyLobbyHint(voting, listOf(suggestion("a", 0)))?.english())
+        assertEquals("Suggest a title to get the vote going.", watchPartyLobbyHint(voting, emptyList())?.english())
     }
 
     @Test
@@ -96,8 +97,8 @@ class WatchPartyLobbyPresentationTest {
         assertEquals(WatchPartySeatState.NotReady, watchPartySeatState(guest, RoomPhase.Lobby))
         assertEquals(WatchPartySeatState.Away, watchPartySeatState(guest.copy(connected = false), RoomPhase.Lobby))
         assertEquals(WatchPartySeatState.Watching, watchPartySeatState(guest.copy(isReady = true), RoomPhase.Playing))
-        assertEquals("1 of 2 ready", watchPartyPresenceSummary(listOf(host, guest), RoomPhase.Lobby))
-        assertEquals("only you so far", watchPartyPresenceSummary(listOf(host), RoomPhase.Lobby))
+        assertEquals(WatchPartyPresence.Ready(ready = 1, here = 2), watchPartyPresenceSummary(listOf(host, guest), RoomPhase.Lobby))
+        assertEquals(WatchPartyPresence.OnlyYou, watchPartyPresenceSummary(listOf(host), RoomPhase.Lobby))
         assertEquals(
             listOf("Ana", "Ben", "Cal"),
             watchPartySeatOrder(listOf(guest.copy(displayName = "Cal"), guest, host)).map { it.displayName },
@@ -106,15 +107,15 @@ class WatchPartyLobbyPresentationTest {
 
     @Test
     fun `hints and banners name the people involved`() {
-        assertEquals("Ben hasn't marked ready. You can still start.", watchPartyLobbyHint(room(MemberRole.Host), emptyList()))
-        assertEquals("Everyone's ready.", watchPartyLobbyHint(room(MemberRole.Host, guestReady = true), emptyList()))
-        assertEquals("Ana starts the movie when everyone's set.", watchPartyLobbyHint(room(MemberRole.Guest), emptyList()))
+        assertEquals("Ben hasn't marked ready. You can still start.", watchPartyLobbyHint(room(MemberRole.Host), emptyList())?.english())
+        assertEquals("Everyone's ready.", watchPartyLobbyHint(room(MemberRole.Host, guestReady = true), emptyList())?.english())
+        assertEquals("Ana starts the movie when everyone's set.", watchPartyLobbyHint(room(MemberRole.Guest), emptyList())?.english())
         assertEquals(
             "Ana lost connection. The party holds for two minutes while they come back.",
-            watchPartyLobbyBanner(room(MemberRole.Guest, hostConnected = false), selectionUnavailable = false, reconnecting = false),
+            watchPartyLobbyBanner(room(MemberRole.Guest, hostConnected = false), selectionUnavailable = false, reconnecting = false)?.english(),
         )
         assertNull(watchPartyLobbyBanner(room(MemberRole.Host), selectionUnavailable = false, reconnecting = false))
-        assertEquals("Waiting for\nAna", watchPartyLobbyHero(room(MemberRole.Guest, staged = false), emptyList()).title)
-        assertEquals("Ana chose this", watchPartyLobbyHero(room(MemberRole.Guest), emptyList()).supporting)
+        assertEquals("Waiting for\nAna", watchPartyLobbyHero(room(MemberRole.Guest, staged = false), emptyList()).title?.english())
+        assertEquals("Ana chose this", watchPartyLobbyHero(room(MemberRole.Guest), emptyList()).supporting?.english())
     }
 }

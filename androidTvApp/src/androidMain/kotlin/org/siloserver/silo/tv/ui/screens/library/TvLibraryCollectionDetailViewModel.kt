@@ -1,5 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.library
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.common.i18n.detailedErrorText
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
@@ -7,7 +10,7 @@ import org.siloserver.silo.model.catalog.CatalogEffectiveSort
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.apiv2.CatalogContinuationV2
-import org.siloserver.silo.network.errorMessage
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.tv.ui.util.visibleOnTv
@@ -32,7 +35,7 @@ class TvLibraryCollectionDetailViewModel(
         val isLoadingMore: Boolean = false,
         val items: List<BrowseItem> = emptyList(),
         val hasMore: Boolean = false,
-        val error: String? = null,
+        val error: UiText? = null,
         /** Empty = send no sort, i.e. keep the collection's own order. */
         val sort: String = TvLibrarySortOption.CollectionOrder.wireValue,
         val order: String = "desc",
@@ -141,13 +144,13 @@ class TvLibraryCollectionDetailViewModel(
                 is ApiResult.Error -> _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = result.message.ifBlank { "Failed to load collection" },
+                        error = result.errorText(CommonR.string.collections_error_loadFailed),
                     )
                 }
                 is ApiResult.NetworkError -> _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = "Network error: ${result.exception.message ?: "unknown"}",
+                        error = result.detailedErrorText(),
                     )
                 }
             }
@@ -210,7 +213,7 @@ class TvLibraryCollectionDetailViewModel(
                         )
                     }
                 }
-                is ApiResult.Error -> return ApiResult.Error(result.code, result.error, result.message)
+                is ApiResult.Error -> return result
                 is ApiResult.NetworkError -> return ApiResult.NetworkError(result.exception)
             }
         }
@@ -237,7 +240,7 @@ class TvLibraryCollectionDetailViewModel(
                     }
                 }
                 is ApiResult.Error, is ApiResult.NetworkError -> {
-                    _uiState.update { it.copy(isLoadingMore = false, error = result.errorMessage("Could not load more. Reload to try again.")) }
+                    _uiState.update { it.copy(isLoadingMore = false, error = result.errorText(CommonR.string.library_error_loadMoreReload)) }
                 }
             }
         }

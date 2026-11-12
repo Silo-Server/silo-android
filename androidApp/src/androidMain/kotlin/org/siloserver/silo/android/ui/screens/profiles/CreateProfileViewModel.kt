@@ -2,8 +2,9 @@ package org.siloserver.silo.android.ui.screens.profiles
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.model.profile.AssignableLibraries
-import org.siloserver.silo.model.profile.CHOOSE_A_LIBRARY_MESSAGE
 import org.siloserver.silo.model.profile.CreateProfileRequest
 import org.siloserver.silo.model.profile.ProfileAccessLimits
 import org.siloserver.silo.model.profile.withAccessLimits
@@ -16,6 +17,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.model.profile.CHOOSE_A_LIBRARY_TEXT
 
 data class CreateProfileUiState(
     val name: String = "",
@@ -28,17 +31,17 @@ data class CreateProfileUiState(
     val subtitleLanguage: String? = null,
     val subtitleMode: String? = null,
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val createSuccess: Boolean = false,
 )
 
 /** Available content ratings, ordered from least to most restrictive. */
 val CONTENT_RATINGS = listOf("G", "PG", "PG-13", "R", "NC-17")
 
-/** Available quality preferences. */
+/** Available quality preferences, shown through [qualityOptionLabel]. */
 val QUALITY_OPTIONS = listOf("Auto", "4K", "1080p", "720p", "480p")
 
-/** Available subtitle modes. */
+/** Available subtitle modes, shown through [subtitleModeLabel]. */
 val SUBTITLE_MODES = listOf("Off", "Default", "Always", "Forced Only")
 
 class CreateProfileViewModel(
@@ -121,19 +124,19 @@ class CreateProfileViewModel(
         val current = _uiState.value
 
         if (current.name.isBlank()) {
-            _uiState.update { it.copy(error = "Profile name is required") }
+            _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_nameRequired)) }
             return
         }
         if (existingProfiles.hasProfileNamed(current.name)) {
-            _uiState.update { it.copy(error = "A profile with this name already exists") }
+            _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_nameTaken)) }
             return
         }
         if (current.pinEnabled && current.pin.length != 4) {
-            _uiState.update { it.copy(error = "PIN must be 4 digits") }
+            _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_pinLength)) }
             return
         }
         if (current.access.needsLibrary(assignable = current.libraries.ids)) {
-            _uiState.update { it.copy(error = CHOOSE_A_LIBRARY_MESSAGE) }
+            _uiState.update { it.copy(error = CHOOSE_A_LIBRARY_TEXT) }
             return
         }
 
@@ -160,14 +163,14 @@ class CreateProfileViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = result.message.ifBlank { "Failed to create profile" },
+                            error = result.errorText(CommonR.string.newProfile_error_createFailed),
                         )
                     }
                 }
 
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(isLoading = false, error = "Network error. Please try again.")
+                        it.copy(isLoading = false, error = UiText.Res(CommonR.string.profiles_error_network))
                     }
                 }
             }

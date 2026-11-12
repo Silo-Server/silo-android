@@ -4,6 +4,9 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.toProfileUpdate
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -99,5 +102,14 @@ class ProfileAccessLimitsTest {
         assertTrue(stored.withLibrary(1, false).needsLibrary(stored, assignable = setOf(1)))
         // Left as stored, the same allowlist isn't sent, so it isn't checked.
         assertFalse(stored.copy(allowedLibraryIds = setOf(99)).needsLibrary(stored.copy(allowedLibraryIds = setOf(99)), setOf(1)))
+    }
+
+    @Test fun aFailedLibraryLoadShowsTheServersReasonWithoutTrailingWhitespace() {
+        val failed = AssignableLibraries.from(ApiResult.Error(503, "unavailable", "Service unavailable.\n"))
+        assertEquals(
+            UiText.Key(SharedString.ProfileLibrariesFailedReason, listOf(UiText.Raw("Service unavailable."))),
+            (failed as AssignableLibraries.Failed).text,
+        )
+        assertEquals(UiText.Key(SharedString.ProfileLibrariesFailed), AssignableLibraries.from(ApiResult.Error(500, "internal", " ")).let { (it as AssignableLibraries.Failed).text })
     }
 }

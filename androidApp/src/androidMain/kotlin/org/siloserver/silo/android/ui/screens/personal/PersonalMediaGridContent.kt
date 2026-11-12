@@ -3,6 +3,7 @@ package org.siloserver.silo.android.ui.screens.personal
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -35,9 +36,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -50,10 +51,11 @@ import org.siloserver.silo.android.ui.components.PosterGridSkeleton
 import org.siloserver.silo.android.ui.screens.browse.CatalogGrid
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.components.MediaCardContextMenu
-import org.siloserver.silo.android.ui.components.WatchedBadge
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.overlays.CardOverlayVariant
+import org.siloserver.silo.common.overlays.CardWatchStatusBadge
+import org.siloserver.silo.overlays.CardWatchStatus
 import org.siloserver.silo.common.overlays.CardOverlays
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.model.catalog.BrowseItem
@@ -65,14 +67,18 @@ import org.siloserver.silo.viewmodel.PersonalListUiState
 import org.siloserver.silo.viewmodel.WatchlistViewModel
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.navigation.LocalHeroSourceHandoff
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 private enum class PersonalMediaType(
-    val label: String,
-    val emptyTitle: String,
-    val emptySubtitle: String,
+    @StringRes val label: Int,
+    @StringRes val emptyTitle: Int,
+    @StringRes val emptySubtitle: Int,
 ) {
-    Movies("Movies", "No movies", "There are no movies in this list."),
-    TvShows("TV Shows", "No TV shows", "There are no TV shows in this list."),
+    Movies(CommonR.string.personal_filter_movies, CommonR.string.personal_movies_empty, CommonR.string.personal_movies_emptyBody),
+    TvShows(CommonR.string.personal_filter_tvShows, CommonR.string.personal_tvShows_empty, CommonR.string.personal_tvShows_emptyBody),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,7 +93,7 @@ private fun PersonalMediaTypeSelector(
                 selected = selected == type,
                 onClick = { onSelected(type) },
                 shape = SegmentedButtonDefaults.itemShape(index, PersonalMediaType.entries.size),
-                label = { androidx.compose.material3.Text(type.label) },
+                label = { androidx.compose.material3.Text(stringResource(type.label)) },
             )
         }
     }
@@ -120,8 +126,8 @@ fun FavoritesGridContent(
             }
         },
         mediaType = mediaType,
-        emptyTitle = "No favorites",
-        emptySubtitle = "Tap the heart icon on any item to add it here",
+        emptyTitle = stringResource(CommonR.string.personal_favorites_empty),
+        emptySubtitle = stringResource(CommonR.string.personal_favorites_emptyTapHint),
         emptyIcon = Icons.Outlined.FavoriteBorder,
         onRetry = viewModel::retry,
         onRefresh = viewModel::refresh,
@@ -157,8 +163,8 @@ fun WatchlistGridContent(
             }
         },
         mediaType = mediaType,
-        emptyTitle = "Watchlist is empty",
-        emptySubtitle = "Tap the bookmark icon on any item to add it here",
+        emptyTitle = stringResource(CommonR.string.personal_watchlist_empty),
+        emptySubtitle = stringResource(CommonR.string.personal_watchlist_emptyTapHint),
         emptyIcon = Icons.Outlined.BookmarkBorder,
         onRetry = viewModel::retry,
         onRefresh = viewModel::refresh,
@@ -182,8 +188,8 @@ fun HistoryGridContent(
         modifier = modifier,
         contentPadding = contentPadding,
         header = header,
-        emptyTitle = "No watch history",
-        emptySubtitle = "Items you watch will appear here",
+        emptyTitle = stringResource(CommonR.string.personal_history_empty),
+        emptySubtitle = stringResource(CommonR.string.personal_history_emptyBody),
         emptyIcon = Icons.Outlined.History,
         onRetry = viewModel::retry,
         onRefresh = viewModel::refresh,
@@ -243,7 +249,7 @@ private fun PersonalMediaGridContent(
             Column(modifier = modifier.padding(contentPadding)) {
                 header?.let { Box(modifier = Modifier.padding(16.dp)) { it(state) } }
                 ErrorView(
-                    message = state.error ?: "Unknown error",
+                    message = state.error?.text() ?: stringResource(CommonR.string.catalog_error_unknown),
                     onRetry = onRetry,
                     modifier = Modifier.weight(1f),
                 )
@@ -258,13 +264,13 @@ private fun PersonalMediaGridContent(
                 val selectedTypeEmpty = mediaType != null && state.items.isNotEmpty()
                 EmptyStateView(
                     title = when {
-                        filtered -> "No matches"
-                        selectedTypeEmpty -> mediaType?.emptyTitle ?: emptyTitle
+                        filtered -> stringResource(CommonR.string.personal_noMatches)
+                        selectedTypeEmpty -> mediaType?.let { stringResource(it.emptyTitle) } ?: emptyTitle
                         else -> emptyTitle
                     },
                     subtitle = when {
-                        filtered -> "No titles match the current filters."
-                        selectedTypeEmpty -> mediaType?.emptySubtitle ?: emptySubtitle
+                        filtered -> stringResource(CommonR.string.personal_noMatchesBody)
+                        selectedTypeEmpty -> mediaType?.let { stringResource(it.emptySubtitle) } ?: emptySubtitle
                         else -> emptySubtitle
                     },
                     icon = emptyIcon,
@@ -356,9 +362,7 @@ fun MediaGridItem(
                 )
             }
 
-            if (userState.played) {
-                WatchedBadge(modifier = Modifier.align(Alignment.TopEnd))
-            }
+            CardWatchStatusBadge(CardWatchStatus.of(userState), Modifier.fillMaxSize())
         }
 
         androidx.compose.material3.Text(
@@ -373,7 +377,7 @@ fun MediaGridItem(
 
         if (item.year > 0) {
             androidx.compose.material3.Text(
-                text = item.year.toString(),
+                text = LocaleFormat.integer(item.year, currentNumberLocale()),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Normal,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
