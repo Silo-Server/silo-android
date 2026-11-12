@@ -525,8 +525,6 @@ class LibrariesViewModelTest {
             fixture.awaitRequest("sections:1")
             viewModel.selectLibrary(2)
             fixture.awaitRequest("sections:2")
-            viewModel.selectNamePrefix("B")
-            viewModel.uiState.first { it.selectedNamePrefix != null }
 
             // The server stops listing the open library: the re-check falls
             // back to the first library with none of library 2's browse state,
@@ -538,7 +536,6 @@ class LibrariesViewModelTest {
             fixture.awaitRequest("sections:1")
             val state = viewModel.uiState.first { !it.isLoadingLibraries && it.libraries.size == 1 }
             assertEquals(1, state.selectedLibraryId)
-            assertEquals(null, state.selectedNamePrefix)
         } finally {
             store.clear()
             Dispatchers.resetMain()

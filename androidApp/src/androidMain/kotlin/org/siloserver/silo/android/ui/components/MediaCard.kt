@@ -30,6 +30,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -122,6 +124,11 @@ fun MediaCard(
      * overrides [width], so those hosts leave it false.
      */
     widthIsExact: Boolean = false,
+    /**
+     * Always takes two title lines and a caption line, so every card in a grid
+     * is one height and a [MediaCardPlaceholder] beside it matches.
+     */
+    reserveTextLines: Boolean = false,
 ) {
     val overlayState = LocalCardOverlayUiState.current
     var menuExpanded by remember { mutableStateOf(false) }
@@ -260,25 +267,17 @@ fun MediaCard(
             }
         }
 
-        // iOS titleText: .siloSubheadline (14sp), 2 lines.
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth(),
-        )
-
         val caption = subtitle ?: year?.takeIf { it > 0 }?.let { LocaleFormat.integer(it, currentNumberLocale()) }
-        if (caption != null) {
-            // iOS yearText: .siloCaption (12sp) at secondary text.
-            Text(
-                text = caption,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth(),
-            )
+        if (reserveTextLines) {
+            // Always as tall as two title lines and a caption, so rows keep one
+            // height; a short title keeps its caption under it and the spare
+            // room goes below.
+            Box {
+                MediaCardTextLinesTemplate()
+                MediaCardTitleAndCaption(title, caption, captionMaxLines = 1)
+            }
+        } else {
+            MediaCardTitleAndCaption(title, caption)
         }
 
         MediaCardContextMenu(
@@ -289,5 +288,70 @@ fun MediaCard(
             isFavorite = userState?.isFavorite == true,
             isInWatchlist = userState?.inWatchlist == true,
         )
+    }
+}
+
+@Composable
+private fun MediaCardTitleAndCaption(title: String, caption: String?, captionMaxLines: Int = Int.MAX_VALUE) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        // iOS titleText: .siloSubheadline (14sp), 2 lines.
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (caption != null) {
+            // iOS yearText: .siloCaption (12sp) at secondary text.
+            Text(
+                text = caption,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = captionMaxLines,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+/** Invisible lines the height of two title lines and a caption, for fixed-height cards. */
+@Composable
+private fun MediaCardTextLinesTemplate() {
+    Column(
+        modifier = Modifier
+            .graphicsLayer { alpha = 0f }
+            .clearAndSetSemantics {},
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(text = " ", style = MaterialTheme.typography.titleSmall, minLines = 2, maxLines = 2) // i18n-ignore
+        Text(text = " ", style = MaterialTheme.typography.bodySmall, maxLines = 1) // i18n-ignore
+    }
+}
+
+/**
+ * A card-shaped stand-in for a title that has not arrived yet, the height of a
+ * [MediaCard] with `reserveTextLines`, so rows keep their size when it fills in.
+ */
+@Composable
+fun MediaCardPlaceholder(
+    modifier: Modifier = Modifier,
+    width: Dp = 120.dp * LocalCardPresentation.current.posterSize.posterScale,
+    artworkAspectRatio: Float = 2f / 3.3f,
+) {
+    Column(
+        modifier = modifier.width(width),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(artworkAspectRatio)
+                .clip(MaterialTheme.shapes.small)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+        )
+        MediaCardTextLinesTemplate()
     }
 }

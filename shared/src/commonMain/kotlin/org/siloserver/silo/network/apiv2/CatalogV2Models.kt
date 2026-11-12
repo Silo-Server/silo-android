@@ -33,6 +33,49 @@ data class CatalogQueryV2(
     val limit: Int = 50,
 )
 
+/**
+ * `POST /api/v2/catalog/letters`: the scope and rules of a query-source
+ * browse, which the server always counts in title order.
+ */
+@Serializable
+data class CatalogLettersQueryV2(
+    @SerialName("library_id") val libraryId: String? = null,
+    val type: String? = null,
+    val match: String? = null,
+    val groups: List<CatalogRuleGroupV2> = emptyList(),
+    val order: String? = null,
+)
+
+/**
+ * Where each letter's titles sit in a title-ordered browse, for jumping to a
+ * letter. Positions are zero-based and count in the browse's order.
+ */
+@Serializable
+data class CatalogLettersV2(
+    val total: Int,
+    /** Letters with at least one title, in list order. */
+    val letters: List<Letter> = emptyList(),
+    /**
+     * Blocks of consecutive titles under one letter, covering the whole list.
+     * A collation can sort some of a letter's titles apart from the rest, so a
+     * position's letter comes from these rather than from [letters].
+     */
+    val runs: List<Run> = emptyList(),
+) {
+    /** A to Z, or `#` for digits, symbols and other scripts. */
+    @Serializable
+    data class Letter(val letter: String, val count: Int, val position: Int)
+
+    @Serializable
+    data class Run(val letter: String, val position: Int)
+
+    /** The first position of [letter], or null when no title files under it. */
+    fun position(of: String): Int? = letters.firstOrNull { it.letter == of }?.position
+
+    /** The letter whose titles the list shows at [position]. */
+    fun letterAt(position: Int): String? = runs.lastOrNull { it.position <= position }?.letter
+}
+
 @Serializable
 data class CatalogRuleGroupV2(val match: String, val rules: List<CatalogRuleV2>)
 @Serializable

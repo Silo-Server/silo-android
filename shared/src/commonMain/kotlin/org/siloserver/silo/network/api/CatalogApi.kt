@@ -22,7 +22,8 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         continuation: CatalogContinuationV2? = null, limit: Int? = null,
         namePrefix: String? = null, yearMin: Int? = null, yearMax: Int? = null,
         queryGroups: List<CatalogQueryGroup> = emptyList(), match: String? = null,
-        skipTotal: Boolean = false, widths: ArtworkWidths? = null,
+        skipTotal: Boolean = false, widths: ArtworkWidths? = null, seek: Int? = null,
+        windowCursor: String? = null,
     ): ApiResult<CatalogResponse> {
         val groups = queryGroups.toV2Groups().toMutableList()
         val implicit = buildList {
@@ -40,9 +41,21 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         }
         return v2.browse(CatalogQueryV2(source = source ?: "query", q = query, type = mediaType,
             libraryId = libraryId?.toString(), sort = sort, order = order, limit = limit ?: 50,
-            namePrefix = namePrefix, groups = groups, match = match, skipTotal = skipTotal), continuation, widths = widths)
+            namePrefix = namePrefix, groups = groups, match = match, skipTotal = skipTotal), continuation, widths = widths, seek = seek, windowCursor = windowCursor)
             .map { it.toCatalogResponse() }
     }
+
+    /**
+     * Where each letter starts in a title-ordered browse of [libraryId], in
+     * [order]; null from a server without a letter index.
+     */
+    suspend fun getCatalogLetters(
+        libraryId: Int?, mediaType: String?, order: String?,
+        queryGroups: List<CatalogQueryGroup>, match: String?,
+    ): ApiResult<CatalogLettersV2?> = v2.letters(CatalogLettersQueryV2(
+        libraryId = libraryId?.toString(), type = mediaType, match = match,
+        groups = queryGroups.toV2Groups(), order = order,
+    ))
 
     suspend fun getAudiobookGroups(libraryId: Int, groupBy: String, sort: String = "name",
         continuation: CatalogContinuationV2? = null, limit: Int? = null, query: String? = null,
@@ -131,4 +144,5 @@ private val BOOLEAN_RULE_FIELDS = setOf("hdr", "dolby_vision", "watched", "in_pr
 internal fun CatalogPageV2<BrowseItem>.toCatalogResponse() = CatalogResponse(
     total = total, totalExact = totalExact, hasMore = continuation != null, items = items,
     effectiveSort = effectiveSort, continuation = continuation, searchDiagnostics = searchDiagnostics,
+    windowCursor = windowCursor,
 )
