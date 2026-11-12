@@ -1,9 +1,11 @@
 package org.siloserver.silo.common.player
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
@@ -14,7 +16,7 @@ import java.text.DateFormat
 import java.util.Date
 
 /** "11:42 PM": when [remainingSec] of media finishes at [speed], or null if nothing is left. */
-fun playerFinishTime(
+private fun playerFinishTime(
     nowMillis: Long,
     remainingSec: Double,
     speed: Double,
@@ -27,10 +29,10 @@ fun playerFinishTime(
 
 /**
  * "Ends 11:42 PM" in the formatting locale, with the device's 12/24-hour
- * setting. It runs off its own tick because the position stands still while
- * paused, and a paused end time still has to move with the clock. The state
- * holds the finished text, so a tick only recomposes the caller when the
- * label actually changes.
+ * setting. The clock ticks on its own because the position stands still while
+ * paused, and a paused end time still has to move with the clock. The label
+ * is derived from the clock and the latest position, so a scrub updates it in
+ * the same frame, and the caller recomposes only when the text changes.
  */
 @Composable
 fun rememberPlayerEndTimeLabel(remainingSec: Double, speed: Double): String? {
@@ -46,12 +48,18 @@ fun rememberPlayerEndTimeLabel(remainingSec: Double, speed: Double): String? {
         android.text.format.DateFormat.getTimeFormat(localized)
     }
     val resources = localizedResources()
-    fun label() = playerFinishTime(System.currentTimeMillis(), remainingSec, speed, timeFormat)
-        ?.let { resources.getString(R.string.player_scrubber_endsAt, it) }
-    val endTimeLabel by produceState(label(), remainingSec, speed, timeFormat, resources) {
+    val remaining = rememberUpdatedState(remainingSec)
+    val rate = rememberUpdatedState(speed)
+    val now = produceState(System.currentTimeMillis()) {
         while (true) {
-            value = label()
             delay(1_000)
+            value = System.currentTimeMillis()
+        }
+    }
+    val endTimeLabel by remember(timeFormat, resources) {
+        derivedStateOf {
+            playerFinishTime(now.value, remaining.value, rate.value, timeFormat)
+                ?.let { resources.getString(R.string.player_scrubber_endsAt, it) }
         }
     }
     return endTimeLabel
