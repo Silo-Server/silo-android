@@ -240,7 +240,8 @@ fun EditionVersionSelectorRows(
         label = stringResource(CommonR.string.detail_version),
         value = formatVersionValueLabel(resources, selectedVersion, isAutoVersion),
         onClick = { showVersionPicker = true },
-        interactive = versions.size > 1,
+        // With editions it always opens, so Auto stays reachable after an edition pick.
+        interactive = showEditions || versions.size > 1,
     )
     if (showEditionPicker) {
         PickerSheetScaffold(

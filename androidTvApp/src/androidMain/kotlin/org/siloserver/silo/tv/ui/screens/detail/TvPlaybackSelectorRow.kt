@@ -251,7 +251,8 @@ internal fun TvPlaybackActionSelectors(
         value = versionValue,
         options = versionOptions,
         triggerFocusRequester = versionFocusRequester.takeUnless { showEditions },
-        interactive = currentVersion != null && selectorIsInteractive(scopedVersions.size),
+        // With editions it always opens, so Auto stays reachable after an edition pick.
+        interactive = currentVersion != null && (showEditions || selectorIsInteractive(scopedVersions.size)),
         triggerStyle = TvSelectorTriggerStyle.CircularAction,
     )
     TvAnchoredSelectorMenu(
