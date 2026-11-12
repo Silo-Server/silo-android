@@ -177,6 +177,16 @@ class CatalogPositionPagerTest {
     }
 
     @Test
+    fun aSeedEndsAJumpWaitingForThatPage() = runTest {
+        val pager = pager(300) { _, _ -> CompletableDeferred<Unit>().await(); null }
+        val began = currentTime
+        backgroundScope.launch { delay(40); pager.seed(titles(0, 100)) }
+        pager.awaitLanding(position = 50, patienceMillis = 300)
+        assertEquals(40, currentTime - began)
+        assertTrue(pager.isLoaded(38..97))
+    }
+
+    @Test
     fun aThrownReadCountsAsAFailure() = runTest {
         val pager = pager(100) { _, _ -> error("boom") }
         pager.show(0..10)

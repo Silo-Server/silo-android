@@ -341,7 +341,8 @@ internal fun CatalogLetterRail(
                     val entry = touched ?: 0
                     val railTop = (constraints.maxHeight - railHeightPx) / 2f
                     IntOffset(
-                        x = (if (rtl) bubbleShiftPx else -bubbleShiftPx).roundToInt(),
+                        // offset {} mirrors x in RTL, so negative is toward the grid either way.
+                        x = (-bubbleShiftPx).roundToInt(),
                         y = (railTop + entryCenter(entry) - bubbleSizePx / 2f).roundToInt(),
                     )
                 },

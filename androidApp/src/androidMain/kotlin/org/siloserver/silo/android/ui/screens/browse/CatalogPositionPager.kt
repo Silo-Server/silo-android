@@ -90,7 +90,11 @@ class CatalogPositionPager(
             seeded[page] = first.subList(start, end).toList()
             start = end
         }
-        if (seeded != _pages.value) _pages.value = seeded
+        if (seeded != _pages.value) {
+            _pages.value = seeded
+            // A jump waiting on a seeded page rechecks now, not at its timeout.
+            settled.update { it + 1 }
+        }
     }
 
     /** The grid now shows [positions]: read their pages, then the ones beside them. */
