@@ -25,12 +25,6 @@ on:
         type: boolean
         required: false
         default: false
-    secrets:
-      # Read access to the private Silo-Server/silo-translations catalog, for
-      # scripts/check-translations. Without it that check is skipped on pull
-      # requests and fails on pushes.
-      SILO_TRANSLATIONS_TOKEN:
-        required: false
 
 permissions:
   contents: read
@@ -73,34 +67,14 @@ jobs:
           python3 scripts/test-ci-routing.py -v
           python3 scripts/test-ci-result.py -v
 
-      # Needs read access to the private catalog. Without the secret a pull
-      # request skips the check (fork pull requests get no secrets), but a
-      # main push fails: release.yml releases only commits this run passed.
-      - name: Look for the translation catalog token
-        id: translations
-        env:
-          SILO_TRANSLATIONS_TOKEN: ${{ secrets.SILO_TRANSLATIONS_TOKEN }}
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          if [ -n "$SILO_TRANSLATIONS_TOKEN" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          elif [ "$EVENT_NAME" = push ]; then
-            echo "::error::SILO_TRANSLATIONS_READ_TOKEN is not set; a main push must check the generated translations"
-            exit 1
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-          fi
-
+      # A local-<commit> pin generates from a clone of the catalog, which needs Node.
       - name: Set up Node for the translation catalog
-        if: steps.translations.outputs.available == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
 
       - name: Check generated translations match the catalog
         run: ./scripts/check-translations
-        env:
-          SILO_TRANSLATIONS_TOKEN: ${{ secrets.SILO_TRANSLATIONS_TOKEN }}
 
       - name: Select validation jobs
         id: route
