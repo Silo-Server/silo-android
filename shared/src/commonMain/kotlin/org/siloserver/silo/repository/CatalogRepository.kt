@@ -112,6 +112,10 @@ class CatalogRepository(
         match: String? = null,
         /** Zero-based list position to read from; see [CatalogApi.getCatalog]. */
         seek: Int? = null,
+        /** The list's `window_cursor`, sent with [seek]. */
+        windowCursor: String? = null,
+        /** True when the caller already knows the list's size (a letter index's total). */
+        skipTotal: Boolean = false,
     ): ApiResult<CatalogResponse> {
         val requestIdentityGeneration = identityTransitions.generation.value
         val sized = if (continuation == null) artwork.sizedRead(ArtworkSurface.BROWSE) else null
@@ -134,12 +138,14 @@ class CatalogRepository(
             queryGroups = queryGroups,
             match = match,
             seek = seek,
+            windowCursor = windowCursor,
+            skipTotal = skipTotal,
         )
 
         // Only the unfiltered, first-page default browse of a single library is
         // cached for offline (every request-shaping param must be at its default).
         val cacheableLibraryId = libraryId?.takeIf {
-            continuation == null && (seek == null || seek == 0) &&
+            continuation == null && (seek == null || seek == 0) && !skipTotal &&
                 query == null && genre == null && contentRating == null &&
                 namePrefix == null && yearMin == null && yearMax == null &&
                 source == null && mediaType == null &&

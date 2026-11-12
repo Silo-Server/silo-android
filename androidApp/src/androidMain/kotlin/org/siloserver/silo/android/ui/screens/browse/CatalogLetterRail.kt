@@ -206,7 +206,9 @@ internal fun CatalogLetterRail(
                     // Every letter with titles, including those a short rail
                     // draws as dots, is reachable from TalkBack's actions.
                     customActions = LetterRailEntries.filter { it in available }.map { letter ->
-                        CustomAccessibilityAction(letter) { jump(letter); true }
+                        // Not jump(): that marks the touch, which would make the
+                        // next touch on this letter do nothing.
+                        CustomAccessibilityAction(letter) { currentOnJump(letter); true }
                     }
                 }
                 .pointerInput(railHeightPx) {
@@ -220,11 +222,13 @@ internal fun CatalogLetterRail(
                         try {
                             while (true) {
                                 val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                                // The release event can carry a last move; the
+                                // lift jumps where the finger actually left.
+                                y = change.position.y.coerceIn(0f, railHeightPx)
                                 if (!change.pressed) {
                                     lifted = true
                                     break
                                 }
-                                y = change.position.y.coerceIn(0f, railHeightPx)
                                 fingerY = y
                                 lensY = y
                                 change.consume()
@@ -279,7 +283,7 @@ internal fun CatalogLetterRail(
                                 if (!row.isDot && hasTitles) {
                                     Modifier.semantics {
                                         contentDescription = letter
-                                        onClick { jump(letter); true }
+                                        onClick { currentOnJump(letter); true }
                                     }
                                 } else {
                                     Modifier

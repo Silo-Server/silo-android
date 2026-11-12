@@ -23,6 +23,7 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         namePrefix: String? = null, yearMin: Int? = null, yearMax: Int? = null,
         queryGroups: List<CatalogQueryGroup> = emptyList(), match: String? = null,
         skipTotal: Boolean = false, widths: ArtworkWidths? = null, seek: Int? = null,
+        windowCursor: String? = null,
     ): ApiResult<CatalogResponse> {
         val groups = queryGroups.toV2Groups().toMutableList()
         val implicit = buildList {
@@ -40,7 +41,7 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         }
         return v2.browse(CatalogQueryV2(source = source ?: "query", q = query, type = mediaType,
             libraryId = libraryId?.toString(), sort = sort, order = order, limit = limit ?: 50,
-            namePrefix = namePrefix, groups = groups, match = match, skipTotal = skipTotal), continuation, widths = widths, seek = seek)
+            namePrefix = namePrefix, groups = groups, match = match, skipTotal = skipTotal), continuation, widths = widths, seek = seek, windowCursor = windowCursor)
             .map { it.toCatalogResponse() }
     }
 
@@ -143,4 +144,5 @@ private val BOOLEAN_RULE_FIELDS = setOf("hdr", "dolby_vision", "watched", "in_pr
 internal fun CatalogPageV2<BrowseItem>.toCatalogResponse() = CatalogResponse(
     total = total, totalExact = totalExact, hasMore = continuation != null, items = items,
     effectiveSort = effectiveSort, continuation = continuation, searchDiagnostics = searchDiagnostics,
+    windowCursor = windowCursor,
 )

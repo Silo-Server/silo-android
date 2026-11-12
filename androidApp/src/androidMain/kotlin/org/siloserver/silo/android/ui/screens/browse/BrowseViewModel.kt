@@ -241,7 +241,7 @@ class BrowseViewModel(
                     }
                     kotlin.coroutines.coroutineContext.ensureActive()
                     continuation = response.continuation
-                    if (reset) letterJumpController.seed(overlaid)
+                    if (reset) letterJumpController.seed(overlaid, response.windowCursor)
                     // Audiobook libraries surface book-native facets
                     // (author/narrator/series) — detected from the first item
                     // like iOS BrowseMediaType.from.

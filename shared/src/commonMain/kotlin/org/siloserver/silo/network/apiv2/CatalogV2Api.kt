@@ -39,10 +39,17 @@ class CatalogV2Api(
          * position, and resending the seek would read the same page again.
          */
         seek: Int? = null,
+        /**
+         * A first page's `window_cursor`, sent with a nonzero [seek] so the
+         * server reuses the ordering boundaries it recorded for the list
+         * instead of scanning its sorted prefix on every seek.
+         */
+        windowCursor: String? = null,
     ): ApiResult<CatalogPageV2<BrowseItem>> {
         if (query.limit !in 1..100) return invalid("Page size must be between 1 and 100.")
         if (seek != null && (seek < 0 || continuation != null)) return invalid("A seek starts a listing; it never continues one.")
         val seekParam = seek?.takeIf { it > 0 }
+        val window = windowCursor?.takeIf { seekParam != null }
         val usePost = query.groups.isNotEmpty()
         // A listing keeps the widths it started with: the server binds its cursors to them.
         val artwork = if (continuation != null) continuation.widths else widths
@@ -58,6 +65,7 @@ class CatalogV2Api(
                 val body = SiloJson.encodeToJsonElement(CatalogQueryV2.serializer(), query).jsonObject.toMutableMap()
                 continuation?.let { body["cursor"] = JsonPrimitive(it.cursor) }
                 seekParam?.let { body["seek"] = JsonPrimitive(it) }
+                window?.let { body["cursor"] = JsonPrimitive(it) }
                 setBody(JsonObject(body))
             } else client.get("/api/v2/catalog") {
                 scope?.let { authScope(it) }
@@ -80,6 +88,7 @@ class CatalogV2Api(
                 query.sort?.let { parameter("sort", if (query.order == "desc") "-$it" else it) }
                 continuation?.let { parameter("cursor", it.cursor) }
                 seekParam?.let { parameter("seek", it) }
+                window?.let { parameter("cursor", it) }
             }
         }) { it }
         return when (result) {

@@ -51,6 +51,28 @@ class CatalogSeekAndLettersV2Test {
         client.close()
     }
 
+    @Test fun aWindowCursorRidesWithASeekOnBothForms() = runTest {
+        val requests = mutableListOf<Pair<Url, JsonObject?>>()
+        val client = HttpClient(MockEngine { request ->
+            val body = (request.body as? TextContent)?.let { SiloJson.parseToJsonElement(it.text).jsonObject }
+            requests += request.url to body
+            respond(page(), headers = jsonHeaders)
+        }) { install(ContentNegotiation) { json(SiloJson) } }
+        val api = CatalogV2Api(client, ApiV2Gate.Unrestricted)
+        val query = CatalogQueryV2(libraryId = "7", sort = "title", limit = 100)
+        api.browse(query, seek = 400, windowCursor = "window")
+        assertEquals("window", requests.last().first.parameters["cursor"])
+        assertEquals("400", requests.last().first.parameters["seek"])
+        // Position zero is the first page itself; the cursor goes only with a seek.
+        api.browse(query, seek = 0, windowCursor = "window")
+        assertNull(requests.last().first.parameters["cursor"])
+        val groups = listOf(CatalogRuleGroupV2("all", listOf(CatalogRuleV2("genre", "contains", JsonPrimitive("Drama")))))
+        api.browse(query.copy(groups = groups), seek = 400, windowCursor = "window")
+        assertEquals("window", requests.last().second?.get("cursor")?.jsonPrimitive?.content)
+        assertEquals(400, requests.last().second?.get("seek")?.jsonPrimitive?.int)
+        client.close()
+    }
+
     @Test fun seekRidesTheStructuredQueryBody() = runTest {
         val client = HttpClient(MockEngine { request ->
             assertEquals("/api/v2/catalog/query", request.url.encodedPath)

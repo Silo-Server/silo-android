@@ -129,6 +129,8 @@ data class CatalogResponse(
     @SerialName("effective_sort") val effectiveSort: CatalogEffectiveSort? = null,
     @Transient val continuation: CatalogContinuationV2? = null,
     @Transient val searchDiagnostics: CatalogSearchDiagnosticsV2? = null,
+    /** Opaque seed for later `seek` reads of the same list; never persisted. */
+    @Transient val windowCursor: String? = null,
 )
 
 @Serializable

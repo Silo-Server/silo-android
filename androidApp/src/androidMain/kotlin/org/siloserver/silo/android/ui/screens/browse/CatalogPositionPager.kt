@@ -50,6 +50,8 @@ class CatalogPositionPager(
     /** Bumps when a page arrives or fails, for [awaitLanding]. */
     private val settled = MutableStateFlow(0)
     private var retry: Job? = null
+    /** Failures since the last page arrived; each one doubles the wait before a retry. */
+    private var consecutiveFailures = 0
     private var visible: IntRange = IntRange.EMPTY
     /** Which way the grid last moved: down the list, up it, or not yet (null). */
     private var movingDown: Boolean? = null
@@ -80,10 +82,15 @@ class CatalogPositionPager(
         while (start < first.size) {
             val end = minOf(start + PAGE_SIZE, first.size)
             if (end - start != PAGE_SIZE && end < total) break
-            seeded.putIfAbsent(start / PAGE_SIZE, first.subList(start, end).toList())
+            val page = start / PAGE_SIZE
+            // The seed is what the grid's first page showed; a read of the
+            // same page still in flight gives way to it.
+            reads.remove(page)?.cancel()
+            failed -= page
+            seeded[page] = first.subList(start, end).toList()
             start = end
         }
-        if (seeded.size != _pages.value.size) _pages.value = seeded
+        if (seeded != _pages.value) _pages.value = seeded
     }
 
     /** The grid now shows [positions]: read their pages, then the ones beside them. */
@@ -196,8 +203,10 @@ class CatalogPositionPager(
             if (cancelled || reads[page] !== job) return@launch
             reads.remove(page)
             if (items != null) {
+                consecutiveFailures = 0
                 _pages.update { it + (page to items) }
             } else {
+                consecutiveFailures++
                 failed += page
                 scheduleRetry()
             }
@@ -210,8 +219,12 @@ class CatalogPositionPager(
 
     private fun scheduleRetry() {
         if (retry != null) return
+        // 2 s, 4 s, 8 s … up to MAX_RETRY_DELAY_MILLIS while the server stays
+        // unreachable, so an outage does not turn into a request every 2 s.
+        val backoff = (retryDelayMillis shl (consecutiveFailures - 1).coerceIn(0, 10))
+            .coerceAtMost(maxOf(retryDelayMillis, MAX_RETRY_DELAY_MILLIS))
         retry = scope.launch {
-            delay(retryDelayMillis)
+            delay(backoff)
             retry = null
             failed.clear()
             pump()
@@ -226,5 +239,7 @@ class CatalogPositionPager(
         /** Titles on each side of a letter's first one that a jump lands among. */
         const val LANDING_BEFORE = 12
         const val LANDING_AFTER = 48
+        /** Longest wait between retries of failed pages. */
+        const val MAX_RETRY_DELAY_MILLIS = 30_000L
     }
 }

@@ -70,6 +70,12 @@ class CatalogLetterJump(
     val state: StateFlow<CatalogLetterJumpState?> = _state.asStateFlow()
 
     private var firstPage: List<BrowseItem>? = null
+    /**
+     * The list's `window_cursor`, from its first page or first positional
+     * read. Sent with each seek so the server reuses the ordering boundaries
+     * it recorded instead of scanning up to the position every time.
+     */
+    private var windowCursor: String? = null
     private var lettersJob: Job? = null
     /** Bumps on every reset; a read only answers for the reset that started it. */
     private var generation = 0
@@ -83,11 +89,13 @@ class CatalogLetterJump(
         lettersJob?.cancel()
         val myGeneration = ++generation
         firstPage = null
+        windowCursor = null
         drop()
         if (next == null || !serverHasIndex) return
         lettersJob = scope.launch {
             val cached = repository.cachedCatalogLetters(next.libraryId, next.mediaType, next.order, next.queryGroups, next.match)
-            if (cached != null && myGeneration == generation) install(next, cached)
+            if (myGeneration != generation) return@launch
+            if (cached != null) install(next, cached)
             val result = repository.catalogLetters(next.libraryId, next.mediaType, next.order, next.queryGroups, next.match)
             if (myGeneration != generation) return@launch
             when (result) {
@@ -107,8 +115,9 @@ class CatalogLetterJump(
     }
 
     /** The grid's first page arrived; the pager need not read it again. */
-    fun seed(items: List<BrowseItem>) {
+    fun seed(items: List<BrowseItem>, windowCursor: String?) {
         firstPage = items
+        if (windowCursor != null) this.windowCursor = windowCursor
         _state.value?.pager?.seed(items)
     }
 
@@ -140,29 +149,43 @@ class CatalogLetterJump(
             return
         }
         current?.pager?.cancel()
+        val readGeneration = generation
         val pager = CatalogPositionPager(index.total, scope, retryDelayMillis) { start, limit ->
-            readPage(query, start, limit)
+            readPage(query, start, limit, readGeneration)
         }
         firstPage?.let(pager::seed)
         _state.value = CatalogLetterJumpState(query, index, pager)
     }
 
-    private suspend fun readPage(query: CatalogLetterQuery, start: Int, limit: Int): List<BrowseItem>? =
-        when (
-            val result = repository.browse(
-                libraryId = query.libraryId,
-                mediaType = query.mediaType,
-                sort = TITLE_SORT,
-                order = query.order,
-                limit = limit,
-                queryGroups = query.queryGroups,
-                match = query.match,
-                seek = start,
-            )
-        ) {
-            is ApiResult.Success -> overlay(result.data.items)
-            else -> null
+    private suspend fun readPage(query: CatalogLetterQuery, start: Int, limit: Int, readGeneration: Int): List<BrowseItem>? {
+        val window = windowCursor
+        val result = repository.browse(
+            libraryId = query.libraryId,
+            mediaType = query.mediaType,
+            sort = TITLE_SORT,
+            order = query.order,
+            limit = limit,
+            queryGroups = query.queryGroups,
+            match = query.match,
+            seek = start,
+            windowCursor = window,
+            // The letter index already gave the exact total.
+            skipTotal = true,
+        )
+        val current = readGeneration == generation
+        return when (result) {
+            is ApiResult.Success -> {
+                if (current && windowCursor == null) windowCursor = result.data.windowCursor
+                overlay(result.data.items)
+            }
+            else -> {
+                // A cursor the server refuses (expired, or another viewer's)
+                // is dropped; the retry seeks without it.
+                if (current && window != null && windowCursor == window) windowCursor = null
+                null
+            }
         }
+    }
 
     private fun drop() {
         _state.value?.pager?.cancel()

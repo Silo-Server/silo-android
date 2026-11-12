@@ -141,22 +141,29 @@ fun CatalogGrid(
     // The letter last jumped to stays softly marked until the grid is scrolled
     // by hand or the list changes.
     var jumpedLetter by remember(letterJump?.query) { mutableStateOf<String?>(null) }
-    LaunchedEffect(gridState) {
+    val scope = rememberCoroutineScope()
+    val jumpJob = remember { arrayOfNulls<Job>(1) }
+    // Keyed on the list too, so a drag clears the current list's marker. A
+    // drag also cancels a jump still waiting for its titles, so the jump
+    // never overrides the user's own scroll.
+    LaunchedEffect(gridState, letterJump?.query) {
         gridState.interactionSource.interactions.collect {
-            if (it is DragInteraction.Start) jumpedLetter = null
+            if (it is DragInteraction.Start) {
+                jumpedLetter = null
+                jumpJob[0]?.cancel()
+            }
         }
     }
-    // Another title-ordered list in the same grid starts at its top; the old
-    // scroll offset means nothing in it.
+    // Another list in the same grid starts at its top; the old scroll offset
+    // means nothing in it. Leaving title order counts; the index first
+    // arriving for the list already shown does not.
     val shownQuery = remember { arrayOfNulls<CatalogLetterQuery>(1) }
     LaunchedEffect(letterJump?.query) {
-        val query = letterJump?.query ?: return@LaunchedEffect
+        val query = letterJump?.query
         val previous = shownQuery[0]
         shownQuery[0] = query
         if (previous != null && previous != query) gridState.scrollToItem(0)
     }
-    val scope = rememberCoroutineScope()
-    val jumpJob = remember { arrayOfNulls<Job>(1) }
 
     Box(modifier = modifier) {
         DeferImagePresentationWhileScrolling(gridState) {

@@ -79,7 +79,10 @@ class CatalogLetterIndexViewModelTest {
         awaitState("landing pages") { jump.pager.isLoaded(198..257) }
         val seeks = server.catalogRequests.mapNotNull { it["seek"] }.toSet()
         assertEquals(setOf("100", "200"), seeks)
-        assertTrue(server.catalogRequests.none { it["seek"] != null && it["cursor"] != null })
+        // Seeks reuse the first page's window cursor (never a continuation)
+        // and skip the count the letter index already gave.
+        val seekRequests = server.catalogRequests.filter { it["seek"] != null }
+        assertTrue(seekRequests.all { it["cursor"] == "window" && it["skip_total"] == "true" }, "seeks: $seekRequests")
         assertEquals("t210", jump.pager.item(210)?.contentId)
 
         // A letter with no titles has nowhere to jump.

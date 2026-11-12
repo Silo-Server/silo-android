@@ -150,6 +150,33 @@ class CatalogPositionPagerTest {
     }
 
     @Test
+    fun retriesBackOffWhileAPageKeepsFailing() = runTest {
+        val attemptsAt = mutableListOf<Long>()
+        val pager = pager(100) { _, _ -> attemptsAt += currentTime; null }
+        pager.show(0..10)
+        advanceTimeBy(61_000)
+        // 2 s, then 4, 8, 16, and never more than 30 s apart.
+        val gaps = attemptsAt.zipWithNext { a, b -> b - a }
+        assertEquals(listOf(2_000L, 4_000L, 8_000L, 16_000L, 30_000L), gaps.take(5))
+        assertTrue(gaps.all { it <= CatalogPositionPager.MAX_RETRY_DELAY_MILLIS })
+    }
+
+    @Test
+    fun aSeedReplacesAnOverlappingReadOfTheSamePage() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val pager = pager(300) { start, limit -> gate.await(); titles(start + 1_000, limit) }
+        pager.show(0..10)
+        runCurrent()
+        assertTrue(0 in pager.pagesInFlight)
+        pager.seed(titles(0, 100))
+        assertFalse(0 in pager.pagesInFlight)
+        gate.complete(Unit)
+        runCurrent()
+        // The late read of page 0 does not overwrite what the grid's first page showed.
+        assertEquals("t0", pager.item(0)?.contentId)
+    }
+
+    @Test
     fun aThrownReadCountsAsAFailure() = runTest {
         val pager = pager(100) { _, _ -> error("boom") }
         pager.show(0..10)

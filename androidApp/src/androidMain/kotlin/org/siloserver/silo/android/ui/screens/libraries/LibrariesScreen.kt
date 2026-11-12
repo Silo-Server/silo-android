@@ -826,7 +826,7 @@ class LibrariesViewModel(
                     }
                     if (!isCatalogRequestCurrent(requestGeneration, requestIdentity)) return@launch
                     catalogContinuation = result.data.continuation
-                    if (reset) letterJumpController.seed(overlaid)
+                    if (reset) letterJumpController.seed(overlaid, result.data.windowCursor)
                     // Audiobook libraries expose book-native facets
                     // (author/narrator/series) — detected from the first item.
                     val detectedMediaType = overlaid.firstOrNull()?.let { first ->
