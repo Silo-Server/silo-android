@@ -672,6 +672,16 @@ data class LeafItemUserData(
     @SerialName("last_edition_key") val lastEditionKey: String? = null,
 )
 
+/**
+ * This history with [fileId] as the last-played file. A different file drops
+ * [LeafItemUserData.lastEditionKey], which named the old file's edition, so
+ * the new file's edition opens the detail page until the server catches up.
+ */
+fun LeafItemUserData.withLastPlayedFile(fileId: Int?): LeafItemUserData = when (fileId) {
+    null, lastFileId -> this
+    else -> copy(lastFileId = fileId, lastEditionKey = null)
+}
+
 @Serializable
 data class SeasonUserData(
     val played: Boolean = false,

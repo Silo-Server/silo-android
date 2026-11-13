@@ -29,6 +29,7 @@ import org.siloserver.silo.model.catalog.withTranslatedDescription
 import org.siloserver.silo.model.catalog.withEpisodeDescription
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
+import org.siloserver.silo.model.catalog.withLastPlayedFile
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.catalog.Season
@@ -3238,11 +3239,10 @@ private fun ItemDetail.withPlaybackReturn(saved: TvDetailTrackSelectionSession.S
     val position = saved.positionSeconds?.takeIf { it.isFinite() && it >= 0.0 } ?: return this
     val current = userData ?: LeafItemUserData()
     return copy(
-        userData = current.copy(
+        userData = current.withLastPlayedFile(saved.trackFileId).copy(
             isInProgress = position > 0.0,
             positionSeconds = position.takeIf { it > 0.0 },
             durationSeconds = saved.durationSeconds ?: current.durationSeconds,
-            lastFileId = saved.trackFileId ?: current.lastFileId,
         ),
     )
 }

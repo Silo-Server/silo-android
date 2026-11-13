@@ -74,6 +74,7 @@ class LocalUserStateOverlayTest {
                 positionSeconds = 90.0,
                 durationSeconds = 1_000.0,
                 lastFileId = 11,
+                lastEditionKey = "theatrical",
             ),
         )
 
@@ -89,6 +90,8 @@ class LocalUserStateOverlayTest {
         assertEquals(450.0, overlaid.userData?.positionSeconds)
         assertEquals(1_100.0, overlaid.userData?.durationSeconds)
         assertEquals(22, overlaid.userData?.lastFileId)
+        // The server's key named file 11's edition; file 22's edition decides now.
+        assertEquals(null, overlaid.userData?.lastEditionKey)
         assertEquals(true, overlaid.userData?.isInProgress)
     }
 

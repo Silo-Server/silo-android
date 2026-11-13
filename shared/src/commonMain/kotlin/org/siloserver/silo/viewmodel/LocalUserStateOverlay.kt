@@ -3,6 +3,7 @@ package org.siloserver.silo.viewmodel
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.LeafItemUserData
+import org.siloserver.silo.model.catalog.withLastPlayedFile
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
@@ -93,7 +94,7 @@ fun MediaItemUserState?.withLocalContentState(state: LocalContentState): MediaIt
 }
 
 private fun LeafItemUserData.withLocalProgress(progress: LocalPlaybackProgress): LeafItemUserData =
-    copy(
+    withLastPlayedFile(progress.fileId).copy(
         isInProgress = true,
         positionSeconds = progress.positionSeconds,
         durationSeconds = progress.durationSeconds ?: durationSeconds,
