@@ -20,6 +20,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -28,6 +29,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
@@ -202,6 +204,19 @@ class SiloCastController(
     )
     val launchFeedback: SharedFlow<SiloCastLaunchFeedback> = _launchFeedback.asSharedFlow()
 
+    // A channel, not a shared flow: the latest close waits for the app's one
+    // collector, so one that lands while the activity is being recreated
+    // still closes the remote.
+    private val endedByTvChannel = Channel<SiloCastText>(Channel.CONFLATED)
+
+    /**
+     * The TV ended a session the user was engaged with, for good (see
+     * [SiloCastClosePolicy]): its viewer took control back with the TV's own
+     * remote or chose Disconnect Remote. Carries the notice to show; the
+     * remote screen closes on it. Each close is delivered once.
+     */
+    val endedByTv: Flow<SiloCastText> = endedByTvChannel.receiveAsFlow()
+
     @Volatile
     private var session: SiloCastConnection? = null
     private var readJob: Job? = null
@@ -237,6 +252,9 @@ class SiloCastController(
 
     @Volatile
     private var remoteScreenVisible = false
+
+    /** The last message from the TV, if it was an error. Read loop only. */
+    private var lastMessageError: String? = null
 
     @Volatile
     private var appInForeground = false
@@ -1252,6 +1270,8 @@ class SiloCastController(
     }
 
     private suspend fun handleMessage(message: SiloCastMessage) {
+        val errorBeforeMessage = lastMessageError
+        lastMessageError = (message as? SiloCastMessage.Error)?.error?.message
         when (message) {
             is SiloCastMessage.Hello -> {
                 val version = SiloCastProtocol.negotiatedVersion(message.hello.supportedVersions)
@@ -1348,8 +1368,9 @@ class SiloCastController(
                 // The TV ended the session deliberately. An older TV only does
                 // that for a takeover or Disconnect, so the phone forgets it and
                 // never silently reattaches; a TV that keeps several controllers
-                // says why (see SiloCastClosePolicy). The remote keeps showing
-                // any error the TV sent just before.
+                // says why (see SiloCastClosePolicy). Unless the close is
+                // final, the remote keeps showing any error the TV sent just
+                // before.
                 Log.i(TAG, "SiloCast close from TV reason=${message.reason ?: "none"}")
                 val roku = _state.value.connectedTarget?.takeIf { it.isRoku }
                 if (roku != null && message.reason == SiloCastCloseReason.TvDisconnected) {
@@ -1368,7 +1389,20 @@ class SiloCastController(
                     is SiloCastCloseResponse.LetGo -> {
                         suppressReconnect = true
                         if (response.forgetTarget) lastTargetStore.clear()
+                        // A silent auto-resume the user never engaged with
+                        // never surfaced, so it ends quietly.
+                        val ended = _state.value.connectedTarget
+                            ?.takeIf { response.closesRemote && !sessionIsAutoResumed }
                         closeConnection()
+                        if (ended != null) {
+                            // A refusal the TV sent just before its goodbye
+                            // says more; an older error in the state belongs
+                            // to another exchange.
+                            endedByTvChannel.trySend(
+                                errorBeforeMessage?.let(SiloCastText::Verbatim)
+                                    ?: SiloCastText.Res(CommonR.string.cast_remote_disconnectedFrom, ended.name),
+                            )
+                        }
                     }
                 }
             }

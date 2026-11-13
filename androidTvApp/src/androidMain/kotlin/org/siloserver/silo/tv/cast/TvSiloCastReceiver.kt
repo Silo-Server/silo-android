@@ -161,6 +161,11 @@ class TvSiloCastReceiver(
      *  Handshakes started before the bump must not register — they belong to
      *  the previous epoch. */
     private var receiverEpoch: Long = 0
+
+    /** Times the viewer took control back at the TV ([disconnectRemoteControl]).
+     *  A connection whose count was read (in [acceptLoop]) before the latest
+     *  one is judged at its hello. */
+    private var handBacks: Long = 0
     @Volatile
     private var activePlayer: ActivePlayer? = null
     private val volumeTracker = SiloCastVolumeTracker()
@@ -413,13 +418,27 @@ class TvSiloCastReceiver(
     }
 
     /**
-     * The TV's own Disconnect (standby screen). Closes every controller that
-     * put the standby screen up; passive ones (integrations, silent
-     * auto-resume) never did and stay connected.
+     * The viewer at the TV takes control back: Disconnect or Back on the
+     * standby screen, or leaving a title with the TV's own remote. Closes
+     * every controller that puts the standby screen up; passive ones
+     * (integrations, silent auto-resume) never do and stay connected. The
+     * phones get `close` with `tv_disconnected` and don't reconnect.
+     *
+     * A player calls this before it exits: once it unregisters, a phone still
+     * connected would put the standby screen over the screen the viewer
+     * returned to. A profile a phone lent is handed back once the player's
+     * session stop has landed (see [scheduleIdentityEnd]).
      */
     fun disconnectRemoteControl() {
         val closing = synchronized(this) {
-            controllers.values.filter { !it.passive }.onEach { removeControllerLocked(it) }
+            // A phone still connecting is turned away at its hello (handleHello).
+            handBacks += 1
+            // A title a phone sent just before must not open after it. If
+            // navigation already took the request, confirmLaunch now refuses
+            // its player.
+            pendingLaunch?.let { clearPendingLaunch(it.id, dropQueued = true) }
+            TvSiloCastReceiverPolicy.closedByHandBack(controllers.values.map { it.summary(isHandingOff = false) })
+                .mapNotNull { id -> controllers[id]?.also { removeControllerLocked(it) } }
         }
         if (closing.isNotEmpty()) DiagnosticsCastLogger.event("TV cast controllers disconnected on the TV")
         closing.forEach { goodbye(it, SiloCastCloseReason.TvDisconnected) }
@@ -480,8 +499,18 @@ class TvSiloCastReceiver(
 
     private suspend fun acceptLoop(socket: ServerSocket) {
         while (true) {
-            val client = try {
-                withContext(Dispatchers.IO) { socket.accept() }
+            // The counters are read right after accept() returns, in the same
+            // block: the session coroutine below, or even this one resuming,
+            // may run only after a hand-back or server switch the connection
+            // predates. That read is the boundary, on purpose: a hand-back
+            // that lands between accept() returning and the read treats the
+            // connection as new, like one still in the TCP backlog. accept()
+            // blocks, so the lock can't be held across it.
+            val (client, accepted) = try {
+                withContext(Dispatchers.IO) {
+                    val accepted = socket.accept()
+                    accepted to synchronized(this@TvSiloCastReceiver) { AcceptedAt(receiverEpoch, handBacks) }
+                }
             } catch (_: Throwable) {
                 Log.i(TAG, "SiloCast listener stopped")
                 return
@@ -492,12 +521,11 @@ class TvSiloCastReceiver(
             }
             // A new connection never evicts a working controller here:
             // admission decides once its TLS handshake is done.
-            ownerScope.launch { runControllerSession(client) }
+            ownerScope.launch { runControllerSession(client, accepted) }
         }
     }
 
-    private suspend fun runControllerSession(client: Socket) {
-        val epochAtAccept = synchronized(this) { receiverEpoch }
+    private suspend fun runControllerSession(client: Socket, accepted: AcceptedAt) {
         val tls = try {
             withContext(Dispatchers.IO) { SiloCastTls.accept(client) }
         } catch (t: Throwable) {
@@ -506,8 +534,14 @@ class TvSiloCastReceiver(
             runCatching { client.close() }
             return
         }
-        val session = ControllerSession(id = UUID.randomUUID().toString(), socket = client, tls = tls, json = json)
-        when (val admitted = admit(session, epochAtAccept)) {
+        val session = ControllerSession(
+            id = UUID.randomUUID().toString(),
+            socket = client,
+            tls = tls,
+            json = json,
+            handBacksAtAccept = accepted.handBacks,
+        )
+        when (val admitted = admit(session, accepted.receiverEpoch)) {
             Admitted.Stale -> {
                 // A server switch or stop() happened while this handshake was
                 // in flight — this session belongs to the previous epoch.
@@ -617,6 +651,9 @@ class TvSiloCastReceiver(
             }
         }
     }
+
+    /** What the receiver had counted when a connection was accepted. */
+    private data class AcceptedAt(val receiverEpoch: Long, val handBacks: Long)
 
     private sealed interface Admitted {
         data object Stale : Admitted
@@ -737,24 +774,47 @@ class TvSiloCastReceiver(
             session.goodbyeAndClose(SiloCastCloseReason.Unauthorized)
             return false
         }
+        // Before didReceiveHello: a hand-back closes non-passive controllers
+        // that have said hello, and must not catch a passive one half-read.
+        session.passive = hello.passive == true
         session.didReceiveHello = true
         session.negotiatedVersion = negotiated
         session.controllerDeviceId = hello.deviceId
         session.controllerDeviceName = hello.deviceName
         session.controllerServerId = hello.serverId
         session.controllerServerIdentity = hello.serverIdentity?.trim()?.takeIf { it.isNotEmpty() }
-        session.passive = hello.passive == true
         session.clientKind = hello.clientKind
 
-        // The device's older sockets are ones it has abandoned (a Wi-Fi change,
-        // a return from background). A v2 cross-server controller is kept to
-        // complete its handoff, so this hello always stays.
+        // One step under the receiver lock, so a hand-back lands wholly before
+        // or after this hello.
+        var turnedAway = false
         val replaced = synchronized(this) {
-            TvSiloCastReceiverPolicy.connectionsReplaced(
-                deviceId = hello.deviceId,
-                connection = session.id,
-                existing = controllers.values.map { it.id to it.controllerDeviceId },
-            ).mapNotNull { id -> controllers[id]?.also { removeControllerLocked(it) } }
+            // A hand-back or an eviction closed this connection while its
+            // hello was being read. It must not replace the device's newer one.
+            if (controllers[session.id] !== session) return false
+            if (TvSiloCastReceiverPolicy.turnedAwayAtHello(session.handBacksAtAccept, handBacks, session.passive)) {
+                // The viewer took control back while this phone was still
+                // connecting. Closing it the way Disconnect closes the others
+                // keeps it from reconnecting and bringing the standby back.
+                removeControllerLocked(session)
+                turnedAway = true
+                emptyList()
+            } else {
+                // The device's older sockets are ones it has abandoned (a Wi-Fi
+                // change, a return from background). A v2 cross-server
+                // controller is kept to complete its handoff, so this hello
+                // always stays.
+                TvSiloCastReceiverPolicy.connectionsReplaced(
+                    deviceId = hello.deviceId,
+                    connection = session.id,
+                    existing = controllers.values.map { it.id to it.controllerDeviceId },
+                ).mapNotNull { id -> controllers[id]?.also { removeControllerLocked(it) } }
+            }
+        }
+        if (turnedAway) {
+            DiagnosticsCastLogger.event("TV cast controller turned away after a hand-back")
+            session.goodbyeAndClose(SiloCastCloseReason.TvDisconnected)
+            return false
         }
         replaced.forEach { goodbye(it, SiloCastCloseReason.Replaced) }
 
@@ -1358,7 +1418,8 @@ class TvSiloCastReceiver(
     /**
      * Ends [generationId] after [delayMs]. With [keepIfLenderReturns] (the
      * lending phone left), a phone back by then keeps it under the idle limit
-     * instead: a dropped link reconnects within seconds.
+     * instead: a dropped link reconnects within seconds. The end also waits
+     * (bounded) for a queued player teardown to finish.
      */
     private fun scheduleIdentityEnd(
         generationId: String,
@@ -1369,6 +1430,11 @@ class TvSiloCastReceiver(
         val owner = scope ?: return@synchronized
         identityEndJob = owner.launch {
             delay(delayMs)
+            // The exited player's final progress report and stopSession ride
+            // on this identity; ending it first revokes the session under
+            // them (401). Bounded, so the identity is always ended. Before the
+            // lender check, so a phone back during the wait keeps it.
+            withTimeoutOrNull(PLAYBACK_TEARDOWN_TIMEOUT_MS) { awaitPlaybackTeardown() }
             if (keepIfLenderReturns && isLenderConnected(generationId) && isIdentityIdle()) {
                 scheduleIdentityEnd(generationId, IDENTITY_IDLE_MS)
                 return@launch
@@ -1714,6 +1780,8 @@ class TvSiloCastReceiver(
         val socket: Socket,
         val tls: SiloCastTlsSession,
         private val json: Json,
+        /** The receiver's hand-back count when this connection was accepted. */
+        val handBacksAtAccept: Long,
     ) {
         val writeMutex = Mutex()
 

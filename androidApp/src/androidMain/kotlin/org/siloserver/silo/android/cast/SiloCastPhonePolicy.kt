@@ -39,11 +39,17 @@ sealed interface SiloCastCloseResponse {
     /** Connect again quietly, as after a dropped link. */
     data object Reconnect : SiloCastCloseResponse
 
-    /** End the session. With [forgetTarget], no later foreground probe silently reattaches to that TV. */
-    data class LetGo(val forgetTarget: Boolean) : SiloCastCloseResponse
+    /**
+     * End the session. With [forgetTarget], no later foreground probe silently
+     * reattaches to that TV. With [closesRemote], the close is final: the
+     * remote closes with a short notice instead of staying up.
+     */
+    data class LetGo(val forgetTarget: Boolean, val closesRemote: Boolean) : SiloCastCloseResponse
 }
 
 object SiloCastClosePolicy {
+    private val finalClose = SiloCastCloseResponse.LetGo(forgetTarget = true, closesRemote = true)
+
     /**
      * A TV without `multi_controller` closes only to hand the slot to another
      * phone or because someone pressed Disconnect, so the phone lets go and
@@ -51,13 +57,17 @@ object SiloCastClosePolicy {
      * why: a deliberate disconnect (or no reason) still forgets the TV, a
      * timeout reconnects, and the rest end the session but let a later
      * foreground find the TV again.
+     *
+     * The closes that forget the TV are final, so the remote closes too, as
+     * silo-apple's does: someone at the TV took control back. The others keep
+     * the remote up to show the reason the TV sent before closing.
      */
     fun response(reason: String?, tvKeepsOtherControllers: Boolean): SiloCastCloseResponse {
-        if (!tvKeepsOtherControllers) return SiloCastCloseResponse.LetGo(forgetTarget = true)
+        if (!tvKeepsOtherControllers) return finalClose
         return when (reason) {
             SiloCastCloseReason.Timeout -> SiloCastCloseResponse.Reconnect
-            null, SiloCastCloseReason.TvDisconnected -> SiloCastCloseResponse.LetGo(forgetTarget = true)
-            else -> SiloCastCloseResponse.LetGo(forgetTarget = false)
+            null, SiloCastCloseReason.TvDisconnected -> finalClose
+            else -> SiloCastCloseResponse.LetGo(forgetTarget = false, closesRemote = false)
         }
     }
 }
