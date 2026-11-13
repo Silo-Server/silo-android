@@ -289,6 +289,7 @@ fun ItemDetailScreen(
     // describe the real file rather than defaulting to versions[0].
     val playerSettingsStore: PlayerSettingsStore = koinInject()
     val preferredQuality by playerSettingsStore.preferredQualityFlow.collectAsState(initial = null)
+    LaunchedEffect(preferredQuality) { viewModel.onPreferredQualityChanged(preferredQuality) }
     // Server capability gates which quality presets the picker may offer
     // (issue #20 GAP 4). Until it loads (or if the fetch fails) we optimistically
     // offer every preset; the server still rejects a disallowed quality.

@@ -33,10 +33,10 @@ fun selectDetailPlaybackVersion(
     if (versions.isEmpty()) return null
     val editions = playbackEditions(versions, variants)
     versions.firstOrNull { it.fileId == pinnedFileId }?.let { return it }
-    if (editions.isEmpty()) return selectAutoVersion(versions, preferredQuality)
+    if (editions.isEmpty()) return selectAutoVersion(versions.firstParts(versions), preferredQuality)
     val edition = editionId?.let { id -> editions.firstOrNull { it.id == id } }
         ?: lastPlayedEdition(editions, lastFileId, lastEditionKey)
-        ?: selectAutoVersion(editions.flatMap { it.versions }, preferredQuality)
+        ?: selectAutoVersion(editions.flatMap { it.versions }.firstParts(versions), preferredQuality)
             .let { best -> editions.first { best.fileId in it.fileIds } }
     val lastFile = versions.firstOrNull { it.fileId == lastFileId }
     if (lastFile != null && lastFile.fileId in edition.fileIds &&
@@ -44,12 +44,23 @@ fun selectDetailPlaybackVersion(
     ) {
         return lastFile
     }
-    return edition.autoVersion(preferredQuality)
+    // A cut can come as several presentations (one file, or parts); Auto ranks them all.
+    val cut = editions.filter { it.cutKey == edition.cutKey }
+    return selectAutoVersion(cut.flatMap { it.versions }.firstParts(versions), preferredQuality)
 }
+
+/** The cut an edition belongs to: its files' edition key, else its label. */
+private val PlaybackEdition.cutKey: String
+    get() = versions.firstNotNullOfOrNull { it.editionKey?.trim()?.lowercase()?.takeIf(String::isNotEmpty) }
+        ?: label.lowercase()
+
+/** Auto starts a multi-part item at its first part; later parts are reached by playing on. */
+private fun List<FileVersion>.firstParts(all: List<FileVersion>): List<FileVersion> =
+    filter { firstPlaybackPart(all, it).fileId == it.fileId }.ifEmpty { this }
 
 /** The file Version Auto picks in this edition, which picking the edition keeps. */
 fun PlaybackEdition.autoVersion(preferredQuality: String?): FileVersion =
-    selectAutoVersion(versions, preferredQuality)
+    selectAutoVersion(versions.firstParts(versions), preferredQuality)
 
 /**
  * The file id Play sends for a detail page's [displayed] version, so Play

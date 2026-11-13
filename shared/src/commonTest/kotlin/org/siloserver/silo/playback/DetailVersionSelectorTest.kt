@@ -60,6 +60,27 @@ class DetailVersionSelectorTest {
     }
 
     @Test
+    fun autoRanksEveryPresentationOfTheCut() {
+        val single4k = FileVersion(20, resolution = "2160p", editionRaw = "Final Cut", editionKey = "final_cut")
+        val cd1 = FileVersion(11, resolution = "1080p", editionRaw = "Final Cut", editionKey = "final_cut", presentationKind = "multipart_movie", presentationPartIndex = 1)
+        val cd2 = cd1.copy(fileId = 12, presentationPartIndex = 2)
+        val variants = listOf(
+            PlaybackVariant(variantId = "final_cut|single", editionKey = "final_cut",
+                parts = listOf(PlaybackVariantPart(partIndex = 1, versions = listOf(single4k)))),
+            PlaybackVariant(variantId = "final_cut|multipart", editionKey = "final_cut",
+                parts = listOf(
+                    PlaybackVariantPart(partIndex = 1, versions = listOf(cd1)),
+                    PlaybackVariantPart(partIndex = 2, versions = listOf(cd2)),
+                )),
+        )
+        val files = listOf(cd1, cd2, single4k)
+        // Last played the first CD: the cut's best file wins.
+        assertEquals(20, select(lastFileId = 11, files = files, variants = variants))
+        // Stopped in CD2: Resume keeps that part.
+        assertEquals(12, select(lastFileId = 12, files = files, variants = variants))
+    }
+
+    @Test
     fun resumeStaysOnTheLaterPartOfAMultiPartEdition() {
         val part1 = FileVersion(10, resolution = "1080p", presentationKind = "multipart_movie", presentationPartIndex = 1)
         val part2 = FileVersion(11, resolution = "1080p", presentationKind = "multipart_movie", presentationPartIndex = 2)
@@ -73,7 +94,9 @@ class DetailVersionSelectorTest {
         assertEquals(11, select(lastFileId = 11, files = listOf(part1, part2), variants = listOf(variant)))
         assertEquals(11, select(lastFileId = 11, editionId = "standard", files = listOf(part1, part2), variants = listOf(variant)))
         assertEquals(10, select(files = listOf(part1, part2), variants = listOf(variant)))
-        // Without variants, a later part is still recognised.
+        // Without variants, a later part is still recognised, and Auto starts at part 1
+        // even when a later part has the better file.
         assertEquals(11, select(lastFileId = 11, files = listOf(part1, part2)))
+        assertEquals(10, select(files = listOf(part1, part2.copy(bitrate = 9_000))))
     }
 }

@@ -21,11 +21,12 @@ class DetailDisplayVersionTest {
         userData: LeafItemUserData? = playedThe720p,
         preferredQuality: String? = "auto",
         files: List<FileVersion> = versions,
+        editionId: String? = null,
     ) = detailDisplayVersionIndex(
         versions = files,
         variants = emptyList(),
         explicitIndex = explicitIndex,
-        editionId = null,
+        editionId = editionId,
         userData = userData,
         preferredQuality = preferredQuality,
         fallbackIndex = 0,
@@ -45,6 +46,14 @@ class DetailDisplayVersionTest {
     @Test
     fun `auto names no version until the quality preference loads`() {
         assertEquals(-1, index(preferredQuality = null))
+    }
+
+    @Test
+    fun `a picked edition keeps its file while the quality preference loads`() {
+        val theatrical = FileVersion(fileId = 1, resolution = "2160p", editionRaw = "Theatrical", editionKey = "theatrical")
+        val extended = FileVersion(fileId = 2, resolution = "1080p", editionRaw = "Extended", editionKey = "extended")
+        val files = listOf(theatrical, extended)
+        assertEquals(2, files[index(preferredQuality = null, files = files, editionId = "extended", userData = null)].fileId)
     }
 
     @Test

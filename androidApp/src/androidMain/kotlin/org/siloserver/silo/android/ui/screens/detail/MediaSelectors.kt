@@ -556,8 +556,9 @@ private fun BadgePill(text: String) {
  * Auto resolves through [selectDetailPlaybackVersion]: the current edition
  * ([editionId], else the last-played one, else the one holding the best
  * file), then its best file for the quality preference. While the preference
- * is still loading, Auto names no version (-1, the bare "Auto" placeholder),
- * so the page never shows a file the arriving preference contradicts.
+ * is still loading, Auto names no version (-1, the bare "Auto" placeholder)
+ * unless the viewer picked an edition, so the page never shows a file the
+ * arriving preference contradicts.
  * [fallbackIndex] covers an empty list or an unmatched version.
  */
 internal fun detailDisplayVersionIndex(
@@ -573,7 +574,9 @@ internal fun detailDisplayVersionIndex(
     // A stale pick (the list shrank after a refresh) names no version rather
     // than a different one, since playback would not use a clamped file.
     if (explicitIndex != null) return explicitIndex.takeIf { it in versions.indices } ?: -1
-    if (preferredQuality == null) return -1
+    // Until the preference loads, Auto names no file, except within a picked
+    // edition: Play must not leave the cut the viewer chose.
+    if (preferredQuality == null && editionId == null) return -1
     val resolvedFileId = selectDetailPlaybackVersion(
         versions = versions,
         variants = variants,
