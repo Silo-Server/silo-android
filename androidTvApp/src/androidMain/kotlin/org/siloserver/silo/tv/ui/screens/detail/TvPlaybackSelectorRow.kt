@@ -5,7 +5,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.res.stringResource
@@ -243,7 +243,7 @@ internal fun TvPlaybackActionSelectors(
         )
     }
     TvAnchoredSelectorMenu(
-        icon = Icons.Filled.Movie,
+        icon = Icons.Filled.VideoLibrary,
         label = stringResource(CommonR.string.detail_version),
         value = versionValue,
         options = versionOptions,

@@ -67,7 +67,7 @@ class TvDetailFocusPolicyTest {
         assertTrue(detailSource.contains("icon = Icons.Filled.BookmarkBorder"))
         assertTrue(detailSource.contains("key = \"favorite\""))
         assertTrue(detailSource.contains("key = \"watched\""))
-        assertTrue(selectorSource.contains("icon = Icons.Filled.Movie"))
+        assertTrue(selectorSource.contains("icon = Icons.Filled.VideoLibrary"))
         assertTrue(selectorSource.contains("icon = Icons.AutoMirrored.Filled.VolumeUp"))
         assertTrue(selectorSource.contains("icon = Icons.AutoMirrored.Filled.Chat"))
         assertTrue(selectorSource.contains("triggerStyle = TvSelectorTriggerStyle.CircularAction"))
