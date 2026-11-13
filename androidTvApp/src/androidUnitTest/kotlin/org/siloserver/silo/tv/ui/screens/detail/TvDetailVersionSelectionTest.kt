@@ -1,19 +1,29 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
 import org.siloserver.silo.model.catalog.FileVersion
+import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.LeafItemUserData
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class TvDetailVersionSelectionTest {
-    @Test
-    fun autoDisplayUsesLastPlayedFileBeforeFirstServerVersion() {
-        val version1080 = FileVersion(fileId = 1080, resolution = "1080p")
-        val version4k = FileVersion(fileId = 2160, resolution = "2160p")
+    private val version1080 = FileVersion(fileId = 1080, resolution = "1080p")
+    private val version4k = FileVersion(fileId = 2160, resolution = "2160p")
 
+    private fun movie(lastFileId: Int?) = ItemDetail(
+        contentId = "m1",
+        type = "movie",
+        title = "Movie",
+        versions = listOf(version1080, version4k),
+        userData = LeafItemUserData(lastFileId = lastFileId),
+    )
+
+    @Test
+    fun autoDisplayFollowsThePreferenceRatherThanTheLastPlayedFile() {
         val selected = selectTvDetailDisplayVersion(
-            versions = listOf(version1080, version4k),
+            detail = movie(lastFileId = 1080),
             selectedFileId = null,
-            lastFileId = 2160,
+            selectedEditionId = null,
             preferredQuality = "auto",
         )
 
@@ -22,13 +32,10 @@ class TvDetailVersionSelectionTest {
 
     @Test
     fun autoDisplayUsesPreferredQualityWhenNothingWasExplicitlySelectedOrLastPlayed() {
-        val version1080 = FileVersion(fileId = 1080, resolution = "1080p")
-        val version4k = FileVersion(fileId = 2160, resolution = "2160p")
-
         val selected = selectTvDetailDisplayVersion(
-            versions = listOf(version1080, version4k),
+            detail = movie(lastFileId = null),
             selectedFileId = null,
-            lastFileId = null,
+            selectedEditionId = null,
             preferredQuality = "1080p",
         )
 

@@ -29,6 +29,7 @@ import org.siloserver.silo.model.catalog.withTranslatedDescription
 import org.siloserver.silo.model.catalog.withEpisodeDescription
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
+import org.siloserver.silo.model.catalog.withLastPlayedFile
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.catalog.Season
@@ -157,6 +158,12 @@ data class TvItemDetailUiState(
     /** As [audioPickedThisSession], for the series/season next-up selector. */
     val nextUpAudioPickedThisSession: Boolean = false,
     val selectedNextUpSubtitleIndex: Int? = null,
+    /**
+     * The edition the viewer picked (a `PlaybackEdition.id`) for whichever
+     * item the selectors show: this item, or the series' next-up episode.
+     * Null opens on the last-played edition.
+     */
+    val selectedEditionId: String? = null,
     val preferredQuality: String = "auto",
     val preferredAudioLanguage: String? = null,
     val audioSelectionCapabilities: ClientCodecCapabilities? = null,
@@ -342,13 +349,9 @@ internal data class TvTrackSelectionPersistence(
 internal fun resolveTvTrackSelectionVersion(
     detail: ItemDetail,
     selectedFileId: Int?,
+    selectedEditionId: String?,
     preferredQuality: String?,
-): FileVersion? = selectTvDetailDisplayVersion(
-    versions = detail.versions,
-    selectedFileId = selectedFileId,
-    lastFileId = detail.userData?.lastFileId,
-    preferredQuality = preferredQuality,
-)
+): FileVersion? = selectTvDetailDisplayVersion(detail, selectedFileId, selectedEditionId, preferredQuality)
 
 internal fun buildTrackSelectionPersistence(
     targetContentId: String,
@@ -662,10 +665,42 @@ class TvItemDetailViewModel(
     private fun observePreferredQuality() {
         viewModelScope.launch {
             playerSettingsStore.preferredQualityFlow.collect { quality ->
+                val before = _uiState.value
                 _uiState.update {
                     it.copy(preferredQuality = quality.trim().ifBlank { "auto" })
                 }
+                restartTrackPicksIfShownFileChanged(before, _uiState.value)
             }
+        }
+    }
+
+    /**
+     * Track picks belong to a file. When a new quality preference makes Auto
+     * show another file, start that file's tracks over from what was saved for
+     * it, for this item and for the series' next-up episode.
+     */
+    private fun restartTrackPicksIfShownFileChanged(before: TvItemDetailUiState, after: TvItemDetailUiState) {
+        fun shown(state: TvItemDetailUiState, detail: ItemDetail?, fileId: Int?) =
+            detail?.let { resolveTvTrackSelectionVersion(it, fileId, state.selectedEditionId, state.preferredQuality)?.fileId }
+        if (shown(before, before.detail, before.selectedFileId) != shown(after, after.detail, after.selectedFileId)) {
+            _uiState.update {
+                it.copy(selectedAudioIndex = null, audioPickedThisSession = false, selectedSubtitleIndex = null)
+            }
+            _uiState.value.detail?.let(::seedPersistedTrackSelection)
+        }
+        if (shown(before, before.nextUpPlaybackDetail, before.selectedNextUpFileId) !=
+            shown(after, after.nextUpPlaybackDetail, after.selectedNextUpFileId)
+        ) {
+            // A restore still reading the previous file's picks must not land.
+            markNextUpSelectorInput()
+            _uiState.update {
+                it.copy(
+                    selectedNextUpAudioIndex = null,
+                    nextUpAudioPickedThisSession = false,
+                    selectedNextUpSubtitleIndex = null,
+                )
+            }
+            seedPersistedNextUpTrackSelection()
         }
     }
 
@@ -1076,7 +1111,7 @@ class TvItemDetailViewModel(
             _uiState.update {
                 val returnedDetail = it.detail?.withPlaybackReturn(saved)
                 val resolvedFileId = returnedDetail?.let { detail ->
-                    resolveTvTrackSelectionVersion(detail, saved.fileId, it.preferredQuality)?.fileId
+                    resolveTvTrackSelectionVersion(detail, saved.fileId, it.selectedEditionId, it.preferredQuality)?.fileId
                 }
                 val tracksStillMatch = saved.trackFileId == null || saved.trackFileId == resolvedFileId
                 it.copy(
@@ -1480,6 +1515,12 @@ class TvItemDetailViewModel(
         }
     }
 
+    /** Picks an edition: Version goes back to Auto within it. */
+    fun onEditionSelected(editionId: String) {
+        _uiState.update { it.copy(selectedEditionId = editionId) }
+        onVersionSelected(null)
+    }
+
     fun onVersionSelected(fileId: Int?) {
         // Track indexes are file-specific; clear them so a stale index can't
         // carry over to a different version's track list.
@@ -1595,7 +1636,7 @@ class TvItemDetailViewModel(
 
     /** The exact version the Auto/display/player policy currently resolves. */
     private fun selectedVersionFor(state: TvItemDetailUiState, detail: ItemDetail): FileVersion? {
-        return resolveTvTrackSelectionVersion(detail, state.selectedFileId, state.preferredQuality)
+        return resolveTvTrackSelectionVersion(detail, state.selectedFileId, state.selectedEditionId, state.preferredQuality)
     }
 
     /**
@@ -1628,7 +1669,12 @@ class TvItemDetailViewModel(
         selectedSubtitleIndex: Int?,
         preferredQuality: String?,
     ) {
-        val version = resolveTvTrackSelectionVersion(detail, selectedFileId, preferredQuality) ?: return
+        val version = resolveTvTrackSelectionVersion(
+            detail,
+            selectedFileId,
+            _uiState.value.selectedEditionId,
+            preferredQuality,
+        ) ?: return
         val selection = buildTrackSelectionPersistence(
             targetContentId = targetContentId,
             version = version,
@@ -1680,7 +1726,7 @@ class TvItemDetailViewModel(
     private fun seedSessionTrackSelection(detail: ItemDetail) {
         val saved = TvDetailTrackSelectionSession.recall(contentId) ?: return
         val state = _uiState.value
-        val version = resolveTvTrackSelectionVersion(detail, saved.fileId, state.preferredQuality)
+        val version = resolveTvTrackSelectionVersion(detail, saved.fileId, state.selectedEditionId, state.preferredQuality)
         val tracksBelongToVersion = saved.trackFileId == null || saved.trackFileId == version?.fileId
         val (audio, subtitle) = sessionTracksConsistentWithSeriesChoice(
             detail = detail,
@@ -2318,6 +2364,7 @@ class TvItemDetailViewModel(
                     isLoadingNextUpPlaybackDetail = false,
                     didLoadNextUpPlaybackDetail = false,
                     selectedNextUpFileId = null,
+                    selectedEditionId = null,
                     selectedNextUpAudioIndex = null,
                     nextUpAudioPickedThisSession = false,
                     selectedNextUpSubtitleIndex = null,
@@ -2342,6 +2389,7 @@ class TvItemDetailViewModel(
                 isLoadingNextUpPlaybackDetail = true,
                 didLoadNextUpPlaybackDetail = false,
                 selectedNextUpFileId = null,
+                selectedEditionId = null,
                 selectedNextUpAudioIndex = null,
                 nextUpAudioPickedThisSession = false,
                 selectedNextUpSubtitleIndex = null,
@@ -2426,12 +2474,27 @@ class TvItemDetailViewModel(
                             it.identity == requestIdentity
                     }
                     val selectionRevision = nextUpSelectorRevision
-                    val selection = resolveNextUpTrackSelection(
+                    var selectionQuality = _uiState.value.preferredQuality
+                    var selection = resolveNextUpTrackSelection(
                         episodeContentId = episodeContentId,
                         detail = playbackDetail,
                         handoff = pending?.handoff,
-                        preferredQuality = _uiState.value.preferredQuality,
+                        preferredQuality = selectionQuality,
                     )
+                    // The restored tracks belong to the file Auto showed for that
+                    // quality. If the preference changed during the read, resolve
+                    // again for the file it shows now, keeping the carried choices.
+                    while (_uiState.value.preferredQuality != selectionQuality &&
+                        ownsNextUpPlaybackDetailRequest(episodeContentId, refreshGeneration)
+                    ) {
+                        selectionQuality = _uiState.value.preferredQuality
+                        selection = resolveNextUpTrackSelection(
+                            episodeContentId = episodeContentId,
+                            detail = playbackDetail,
+                            handoff = pending?.handoff,
+                            preferredQuality = selectionQuality,
+                        )
+                    }
                     if (
                         !ownsNextUpPlaybackDetailRequest(episodeContentId, refreshGeneration) ||
                         captureNextUpIdentity(identityGeneration) != requestIdentity
@@ -2513,9 +2576,9 @@ class TvItemDetailViewModel(
         val selectedVersion = state.selectedNextUpFileId
             ?.let { fileId -> detail.versions.firstOrNull { it.fileId == fileId } }
         val activeVersion = selectTvDetailDisplayVersion(
-            versions = detail.versions,
+            detail = detail,
             selectedFileId = state.selectedNextUpFileId,
-            lastFileId = detail.userData?.lastFileId,
+            selectedEditionId = state.selectedEditionId,
             preferredQuality = state.preferredQuality,
         )
         val subtitleChoices = buildPlaybackSubtitleChoices(
@@ -2546,10 +2609,11 @@ class TvItemDetailViewModel(
         val carriedFileId = resolveEpisodeSourceIntent(handoff?.source, detail.versions)
         val sessionFileId = session?.fileId?.takeIf { fileId -> detail.versions.any { it.fileId == fileId } }
         val selectedFileId = if (sourceSpecified) carriedFileId else sessionFileId
+        // A new next-up target opens on its own last-played edition.
         val selectedVersion = selectTvDetailDisplayVersion(
-            versions = detail.versions,
+            detail = detail,
             selectedFileId = selectedFileId,
-            lastFileId = detail.userData?.lastFileId,
+            selectedEditionId = null,
             preferredQuality = preferredQuality,
         )
             ?: return ResolvedNextUpTrackSelection(selectedFileId, null, null)
@@ -2698,6 +2762,12 @@ class TvItemDetailViewModel(
         }
     }
 
+    /** As [onEditionSelected], for the series/season next-up selector. */
+    fun onNextUpEditionSelected(editionId: String) {
+        _uiState.update { it.copy(selectedEditionId = editionId) }
+        onNextUpVersionSelected(null)
+    }
+
     fun onNextUpVersionSelected(fileId: Int?) {
         markNextUpSelectorInput()
         _uiState.update {
@@ -2726,7 +2796,7 @@ class TvItemDetailViewModel(
         state.nextUpPlaybackDetail?.let { detail ->
             rememberSeriesAudioChoice(
                 detail,
-                resolveTvTrackSelectionVersion(detail, state.selectedNextUpFileId, state.preferredQuality),
+                resolveTvTrackSelectionVersion(detail, state.selectedNextUpFileId, state.selectedEditionId, state.preferredQuality),
                 index,
             )
         }
@@ -2741,7 +2811,7 @@ class TvItemDetailViewModel(
         state.nextUpPlaybackDetail?.let { detail ->
             rememberSeriesSubtitleChoice(
                 detail,
-                resolveTvTrackSelectionVersion(detail, state.selectedNextUpFileId, state.preferredQuality),
+                resolveTvTrackSelectionVersion(detail, state.selectedNextUpFileId, state.selectedEditionId, state.preferredQuality),
                 index,
             )
         }
@@ -2764,6 +2834,7 @@ class TvItemDetailViewModel(
                 resolveTvTrackSelectionVersion(
                     detail,
                     state.selectedNextUpFileId,
+                    state.selectedEditionId,
                     state.preferredQuality,
                 )?.fileId
             },
@@ -2796,6 +2867,7 @@ class TvItemDetailViewModel(
         val version = resolveTvTrackSelectionVersion(
             playbackDetail,
             selectedFileId,
+            _uiState.value.selectedEditionId,
             _uiState.value.preferredQuality,
         ) ?: return
         viewModelScope.launch {
@@ -3182,11 +3254,10 @@ private fun ItemDetail.withPlaybackReturn(saved: TvDetailTrackSelectionSession.S
     val position = saved.positionSeconds?.takeIf { it.isFinite() && it >= 0.0 } ?: return this
     val current = userData ?: LeafItemUserData()
     return copy(
-        userData = current.copy(
+        userData = current.withLastPlayedFile(saved.trackFileId).copy(
             isInProgress = position > 0.0,
             positionSeconds = position.takeIf { it > 0.0 },
             durationSeconds = saved.durationSeconds ?: current.durationSeconds,
-            lastFileId = saved.trackFileId ?: current.lastFileId,
         ),
     )
 }

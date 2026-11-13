@@ -66,12 +66,16 @@ import org.siloserver.silo.model.catalog.editionLabel
 import org.siloserver.silo.model.catalog.playbackEditions
 import org.siloserver.silo.model.catalog.hasEditionChoices
 import org.siloserver.silo.model.catalog.FileVersion
+import org.siloserver.silo.model.catalog.LeafItemUserData
+import org.siloserver.silo.model.catalog.PlaybackVariant
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.playback.isUnplayableSubtitle
 import org.siloserver.silo.player.DolbyVisionDetection
 import org.siloserver.silo.player.trackLanguageDisplayName
 import org.siloserver.silo.player.trackLanguageEnglishName
-import org.siloserver.silo.playback.selectPlaybackVersion
+import org.siloserver.silo.playback.autoVersion
+import org.siloserver.silo.playback.hasResumePoint
+import org.siloserver.silo.playback.selectDetailPlaybackVersion
 
 /**
  * One iOS-style row inside [PlaybackSelectorCard]. Icon + group label lead,
@@ -212,7 +216,9 @@ fun EditionVersionSelectorRows(
     detail: ItemDetail,
     selectedVersionIndex: Int,
     isAutoVersion: Boolean,
+    preferredQuality: String?,
     onVersionSelected: (Int?) -> Unit,
+    onEditionSelected: (String) -> Unit,
 ) {
     var showEditionPicker by remember(detail.contentId) { mutableStateOf(false) }
     var showVersionPicker by remember(detail.contentId) { mutableStateOf(false) }
@@ -236,7 +242,7 @@ fun EditionVersionSelectorRows(
     TrackSelectorRow(
         icon = Icons.Outlined.HighQuality,
         label = stringResource(CommonR.string.detail_version),
-        value = formatVersionValueLabel(resources, selectedVersion, isAutoVersion && !showEditions),
+        value = formatVersionValueLabel(resources, selectedVersion, isAutoVersion),
         onClick = { showVersionPicker = true },
         interactive = versions.size > 1,
     )
@@ -248,12 +254,11 @@ fun EditionVersionSelectorRows(
             itemsIndexed(editions) { index, edition ->
                 PickerItem(
                     title = edition.label,
-                    subtitle = formatVersionMenuLabel(resources, edition.defaultVersion),
+                    subtitle = formatVersionMenuLabel(resources, edition.autoVersion(preferredQuality)),
                     badges = emptyList(),
                     isSelected = edition.id == currentEdition?.id,
                     onClick = {
-                        detail.versions.indexOfFirst { it.fileId == edition.defaultVersion.fileId }
-                            .takeIf { it >= 0 }?.let(onVersionSelected)
+                        onEditionSelected(edition.id)
                         showEditionPicker = false
                     },
                 )
@@ -265,7 +270,7 @@ fun EditionVersionSelectorRows(
         VersionPickerSheet(
             versions = versions,
             selectedIndex = versions.indexOfFirst { it.fileId == selectedVersion?.fileId }
-                .takeIf { it >= 0 && (!isAutoVersion || showEditions) },
+                .takeIf { it >= 0 && !isAutoVersion },
             onSelect = { index ->
                 if (index == null) {
                     onVersionSelected(null)
@@ -276,8 +281,6 @@ fun EditionVersionSelectorRows(
                 showVersionPicker = false
             },
             onDismiss = { showVersionPicker = false },
-            // A global Auto reset could switch away from the chosen edition.
-            allowAuto = !showEditions,
         )
     }
 }
@@ -291,11 +294,10 @@ fun VersionPickerSheet(
     selectedIndex: Int?,
     onSelect: (Int?) -> Unit,
     onDismiss: () -> Unit,
-    allowAuto: Boolean = true,
 ) {
     val resources = localizedResources()
     PickerSheetScaffold(title = stringResource(CommonR.string.detail_picker_selectVersion), onDismiss = onDismiss) {
-        if (allowAuto) item {
+        item {
             PickerItem(
                 title = stringResource(CommonR.string.detail_auto),
                 subtitle = stringResource(CommonR.string.detail_picker_bestVersion),
@@ -551,18 +553,21 @@ private fun BadgePill(text: String) {
 
 /**
  * Index of the version a video detail page shows for [versions], which is
- * also the version its Download button saves. An explicit pick wins. Auto
- * resolves through the same shared selector as playback (lastFileId →
- * preferred-quality rank → bestAvailable), so what Auto previews is the file
- * playback and downloads use. While the quality pref is still loading, only
- * the pref-independent lastFileId is shown, otherwise -1 (the bare "Auto"
- * placeholder), so the page never names a version the arriving pref
- * contradicts. [fallbackIndex] covers an empty list or an unmatched version.
+ * also the version its Play and Download buttons use. An explicit pick wins.
+ * Auto resolves through [selectDetailPlaybackVersion]: the current edition
+ * ([editionId], else the last-played one, else the one whose Auto file
+ * compares best across cuts), then its best file for the quality preference. While the preference
+ * is still loading, Auto names no version (-1, the bare "Auto" placeholder)
+ * unless the viewer picked an edition, so the page never shows a file the
+ * arriving preference contradicts.
+ * [fallbackIndex] covers an empty list or an unmatched version.
  */
 internal fun detailDisplayVersionIndex(
     versions: List<FileVersion>,
+    variants: List<PlaybackVariant>,
     explicitIndex: Int?,
-    lastFileId: Int?,
+    editionId: String?,
+    userData: LeafItemUserData?,
     preferredQuality: String?,
     fallbackIndex: Int,
 ): Int {
@@ -570,12 +575,19 @@ internal fun detailDisplayVersionIndex(
     // A stale pick (the list shrank after a refresh) names no version rather
     // than a different one, since playback would not use a clamped file.
     if (explicitIndex != null) return explicitIndex.takeIf { it in versions.indices } ?: -1
-    if (preferredQuality == null) {
-        return lastFileId
-            ?.let { id -> versions.indexOfFirst { it.fileId == id }.takeIf { it >= 0 } }
-            ?: -1
-    }
-    val resolvedFileId = selectPlaybackVersion(versions, lastFileId, preferredQuality).fileId
+    // Until the preference loads, Auto names no file, except within a picked
+    // edition: Play must not leave the cut the viewer chose.
+    if (preferredQuality == null && editionId == null) return -1
+    val resolvedFileId = selectDetailPlaybackVersion(
+        versions = versions,
+        variants = variants,
+        pinnedFileId = null,
+        editionId = editionId,
+        lastFileId = userData?.lastFileId,
+        lastEditionKey = userData?.lastEditionKey,
+        inProgress = userData.hasResumePoint,
+        preferredQuality = preferredQuality,
+    )?.fileId
     return versions.indexOfFirst { it.fileId == resolvedFileId }.takeIf { it >= 0 } ?: fallbackIndex
 }
 

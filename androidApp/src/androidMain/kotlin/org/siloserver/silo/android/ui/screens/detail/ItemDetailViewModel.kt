@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.playback.hasResumePoint
+import org.siloserver.silo.playback.selectDetailPlaybackVersion
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.i18n.errorText
@@ -127,6 +129,8 @@ data class ItemDetailUiState(
     val selectedAudioIndex: Int = 0,
     val selectedSubtitleIndex: Int = -1,
     val hasExplicitVersionSelection: Boolean = false,
+    /** The edition the viewer picked (a `PlaybackEdition.id`); null opens on the last-played one. */
+    val selectedEditionId: String? = null,
     val hasExplicitAudioSelection: Boolean = false,
     val hasExplicitSubtitleSelection: Boolean = false,
     /** Server converts Kindle (mobi/azw/azw3) to EPUB, so they read in-app. */
@@ -966,6 +970,7 @@ class ItemDetailViewModel(
                 selectedAudioIndex = 0,
                 selectedSubtitleIndex = -1,
                 hasExplicitVersionSelection = false,
+                selectedEditionId = null,
                 hasExplicitAudioSelection = false,
                 hasExplicitSubtitleSelection = false,
             )
@@ -1087,6 +1092,7 @@ class ItemDetailViewModel(
                 selectedAudioIndex = 0,
                 selectedSubtitleIndex = -1,
                 hasExplicitVersionSelection = false,
+                selectedEditionId = null,
                 hasExplicitAudioSelection = false,
                 hasExplicitSubtitleSelection = false,
             )
@@ -1307,6 +1313,13 @@ class ItemDetailViewModel(
         seedPersistedTrackSelection()
     }
 
+    /** Picks an edition: Version goes back to Auto within it, which clears the
+     *  version pin and, like [selectVersion], the file-specific track picks. */
+    fun selectEdition(editionId: String) {
+        _uiState.update { it.copy(selectedEditionId = editionId) }
+        selectAutoVersion()
+    }
+
     /** Back to Auto — clears the version override and, like [selectVersion],
      *  the file-specific audio/subtitle overrides with it. */
     fun selectAutoVersion() {
@@ -1387,7 +1400,54 @@ class ItemDetailViewModel(
     }
 
     private fun trackChoiceVersion(state: ItemDetailUiState, detail: ItemDetail, version: FileVersion?): FileVersion? =
-        version ?: detail.versions.getOrNull(state.selectedVersionIndex)
+        version ?: displayedVersion(state, detail)
+
+    /** The quality preference the page resolves Auto with; the screen reports it. */
+    private var preferredQuality: String? = null
+
+    fun onPreferredQualityChanged(quality: String?) {
+        if (quality == preferredQuality) return
+        val state = _uiState.value
+        // On a series page the selectors show the selected episode's files.
+        val target = state.selectedEpisodeDetail ?: state.detail
+        val shownBefore = target?.let { displayedVersion(state, it)?.fileId }
+        preferredQuality = quality
+        val shownAfter = target?.let { displayedVersion(state, it)?.fileId }
+        // Track picks belong to a file: when Auto now shows another file, start
+        // that file's tracks over from what was saved for it.
+        if (shownAfter != shownBefore) {
+            _uiState.update {
+                it.copy(
+                    selectedAudioIndex = 0,
+                    selectedSubtitleIndex = -1,
+                    hasExplicitAudioSelection = false,
+                    hasExplicitSubtitleSelection = false,
+                )
+            }
+            seedPersistedTrackSelection()
+        }
+    }
+
+    /**
+     * The file the page shows for [detail]: the pinned one, else Auto within
+     * the current edition, as the screen resolves it. Track picks are saved
+     * and restored against this file.
+     */
+    private fun displayedVersion(state: ItemDetailUiState, detail: ItemDetail): FileVersion? =
+        if (state.hasExplicitVersionSelection) {
+            detail.versions.getOrNull(state.selectedVersionIndex)
+        } else {
+            selectDetailPlaybackVersion(
+                versions = detail.versions,
+                variants = detail.playbackVariants,
+                pinnedFileId = null,
+                editionId = state.selectedEditionId,
+                lastFileId = detail.userData?.lastFileId,
+                lastEditionKey = detail.userData?.lastEditionKey,
+                inProgress = detail.userData.hasResumePoint,
+                preferredQuality = preferredQuality,
+            )
+        }
 
     /**
      * A pick here applies to the whole series (or the movie) and the
@@ -1456,7 +1516,7 @@ class ItemDetailViewModel(
     private fun persistTrackSelection() {
         val state = _uiState.value
         val detail = state.detail ?: return
-        val version = detail.versions.getOrNull(state.selectedVersionIndex) ?: return
+        val version = displayedVersion(state, detail) ?: return
         val subtitleFingerprint = when {
             !state.hasExplicitSubtitleSelection -> null
             state.selectedSubtitleIndex == -1 -> SUBTITLE_OFF_FINGERPRINT
@@ -1486,7 +1546,7 @@ class ItemDetailViewModel(
     private fun seedPersistedTrackSelection() {
         val state = _uiState.value
         val detail = state.detail ?: return
-        val version = detail.versions.getOrNull(state.selectedVersionIndex) ?: return
+        val version = displayedVersion(state, detail) ?: return
         viewModelScope.launch {
             val saved = userItemState.localTrackSelection(detail.contentId, version.fileId) ?: return@launch
             // The series choice on the server outranks this device's per-file
@@ -1525,7 +1585,7 @@ class ItemDetailViewModel(
                 // The ordinals were resolved against `version`; if the user
                 // switched versions while this suspended, they'd index into the
                 // wrong track list — leave the new version untouched.
-                if (it.detail?.versions?.getOrNull(it.selectedVersionIndex)?.fileId != version.fileId) {
+                if (it.detail?.let { current -> displayedVersion(it, current) }?.fileId != version.fileId) {
                     return@update it
                 }
                 // Don't clobber a pick the user already made this session.

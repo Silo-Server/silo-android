@@ -84,6 +84,7 @@ import org.siloserver.silo.common.downloads.DownloadOpenTarget
 import org.siloserver.silo.common.downloads.DownloadStorage
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.playback.detailPlaybackFileId
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.catalog.isBookLikeItemType
 import org.siloserver.silo.model.ebook.chooseEbookVersion
@@ -94,6 +95,8 @@ import org.siloserver.silo.model.download.labelFor
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.network.ServerRegistry
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
+import org.siloserver.silo.common.player.networkPreferredQualityFlow
 import org.siloserver.silo.common.ui.OnViewerAccessChanged
 import org.siloserver.silo.network.AccessChangeSignals
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
@@ -283,11 +286,16 @@ fun ItemDetailScreen(
     val downloadStorage: DownloadStorage = koinInject()
     val serverRegistry: ServerRegistry = koinInject()
     // The auto-version PREVIEW must name the version playback will actually
-    // pick, which depends on the user's preferred quality (see
-    // MobileVideoPlaybackStarter). Read it so the Video/Audio/Subtitle rows
-    // describe the real file rather than defaulting to versions[0].
+    // pick, which depends on the preferred quality for the current network
+    // (the cellular one on mobile data or a metered network, as
+    // MobileVideoPlaybackStarter picks it). Read it so the Video/Audio/Subtitle
+    // rows describe the real file rather than defaulting to versions[0].
     val playerSettingsStore: PlayerSettingsStore = koinInject()
-    val preferredQuality by playerSettingsStore.preferredQualityFlow.collectAsState(initial = null)
+    val playbackNetwork: PlaybackNetworkEvidenceProvider = koinInject()
+    val preferredQuality by remember(playerSettingsStore, playbackNetwork) {
+        playerSettingsStore.networkPreferredQualityFlow(playbackNetwork.updates)
+    }.collectAsState(initial = null)
+    LaunchedEffect(preferredQuality) { viewModel.onPreferredQualityChanged(preferredQuality) }
     // Server capability gates which quality presets the picker may offer
     // (issue #20 GAP 4). Until it loads (or if the fetch fails) we optimistically
     // offer every preset; the server still rejects a disallowed quality.
@@ -507,18 +515,10 @@ fun ItemDetailScreen(
                         }
                         ?: state.selectedVersionIndex
                 }
-                val explicitFileId = detail.versions
-                    .getOrNull(effectiveSelectedVersionIndex)
-                    ?.fileId
-                    ?.takeIf { state.hasExplicitVersionSelection }
                 val explicitAudioIndex = state.selectedAudioIndex
                     .takeIf { state.hasExplicitAudioSelection }
                 val explicitSubtitleIndex = state.selectedSubtitleIndex
                     .takeIf { state.hasExplicitSubtitleSelection }
-                val playbackFileId = explicitFileId ?: detail.versions
-                    .getOrNull(effectiveSelectedVersionIndex)
-                    ?.fileId
-                    ?.takeIf { state.hasExplicitAudioSelection || state.hasExplicitSubtitleSelection }
                 val effectiveAudiobookFileId = detail.versions
                     .getOrNull(effectiveSelectedVersionIndex)
                     ?.fileId
@@ -724,21 +724,22 @@ fun ItemDetailScreen(
                         val selectedEpisodeVersions = selectedEpisodeDetail?.versions.orEmpty()
                         val selectedEpisodeVersionIndex = detailDisplayVersionIndex(
                             versions = selectedEpisodeVersions,
+                            variants = selectedEpisodeDetail?.playbackVariants.orEmpty(),
                             explicitIndex = state.selectedVersionIndex
                                 .coerceIn(0, selectedEpisodeVersions.lastIndex.coerceAtLeast(0))
                                 .takeIf { state.hasExplicitVersionSelection },
-                            lastFileId = selectedEpisodeDetail?.userData?.lastFileId,
+                            editionId = state.selectedEditionId,
+                            userData = selectedEpisodeDetail?.userData,
                             preferredQuality = preferredQuality,
                             fallbackIndex = 0,
                         )
-                        val selectedEpisodeFileId = selectedEpisodeDetail?.versions
-                            ?.getOrNull(selectedEpisodeVersionIndex)
-                            ?.fileId
-                            ?.takeIf {
-                                state.hasExplicitVersionSelection ||
-                                    state.hasExplicitAudioSelection ||
-                                    state.hasExplicitSubtitleSelection
-                            }
+                        val selectedEpisodeDisplayed = selectedEpisodeVersions.getOrNull(selectedEpisodeVersionIndex)
+                        val selectedEpisodeFileId = detailPlaybackFileId(
+                            displayed = selectedEpisodeDisplayed,
+                            pinned = state.hasExplicitVersionSelection,
+                            tracksPicked = state.hasExplicitAudioSelection || state.hasExplicitSubtitleSelection,
+                            lastFileId = selectedEpisodeDetail?.userData?.lastFileId,
+                        )
                         val selectedEpisodeVersion = selectedEpisodeDetail?.versions
                             ?.getOrNull(selectedEpisodeVersionIndex)
                         val episodeDownloadState = detailDownloadStateFor(
@@ -770,11 +771,13 @@ fun ItemDetailScreen(
                             isLoadingSelectedEpisodeDetail = state.isLoadingSelectedEpisodeDetail,
                             selectedVersionIndex = selectedEpisodeVersionIndex,
                             isAutoVersion = !state.hasExplicitVersionSelection,
+                            preferredQuality = preferredQuality,
                             selectedAudioIndex = state.selectedAudioIndex.takeIf { state.hasExplicitAudioSelection },
                             selectedSubtitleIndex = state.selectedSubtitleIndex.takeIf { state.hasExplicitSubtitleSelection },
                             onVersionSelected = { index ->
                                 if (index == null) viewModel.selectAutoVersion() else viewModel.selectVersion(index)
                             },
+                            onEditionSelected = viewModel::selectEdition,
                             onAudioSelected = { index ->
                                 if (index == null) {
                                     viewModel.selectAutoAudioTrack()
@@ -794,7 +797,7 @@ fun ItemDetailScreen(
                                     guardedPlay(
                                         it.contentId,
                                         selectedEpisodeFileId,
-                                        state.hasExplicitVersionSelection,
+                                        state.hasExplicitVersionSelection && selectedEpisodeFileId != null,
                                         state.selectedAudioIndex.takeIf { state.hasExplicitAudioSelection },
                                         state.selectedSubtitleIndex.takeIf { state.hasExplicitSubtitleSelection },
                                         selectedEpisodeResume,
@@ -816,7 +819,7 @@ fun ItemDetailScreen(
                                         guardedPlay(
                                             ep.contentId,
                                             selectedEpisodeFileId,
-                                            state.hasExplicitVersionSelection,
+                                            state.hasExplicitVersionSelection && selectedEpisodeFileId != null,
                                             state.selectedAudioIndex.takeIf { state.hasExplicitAudioSelection },
                                             state.selectedSubtitleIndex.takeIf { state.hasExplicitSubtitleSelection },
                                             0.0,
@@ -982,12 +985,20 @@ fun ItemDetailScreen(
                         // does the same.
                         val videoDisplayVersionIndex = detailDisplayVersionIndex(
                             versions = detail.versions,
+                            variants = detail.playbackVariants,
                             explicitIndex = effectiveSelectedVersionIndex.takeIf { state.hasExplicitVersionSelection },
-                            lastFileId = detail.userData?.lastFileId,
+                            editionId = state.selectedEditionId,
+                            userData = detail.userData,
                             preferredQuality = preferredQuality,
                             fallbackIndex = effectiveSelectedVersionIndex,
                         )
                         val selectedVersion = detail.versions.getOrNull(videoDisplayVersionIndex)
+                        val playbackFileId = detailPlaybackFileId(
+                            displayed = selectedVersion,
+                            pinned = state.hasExplicitVersionSelection,
+                            tracksPicked = state.hasExplicitAudioSelection || state.hasExplicitSubtitleSelection,
+                            lastFileId = detail.userData?.lastFileId,
+                        )
                         val selectedLocalDownload = selectedVersion?.let { version ->
                             localDownloadFor(version.fileId)
                         }
@@ -1010,13 +1021,14 @@ fun ItemDetailScreen(
                             isInWatchlist = state.isInWatchlist,
                             selectedVersionIndex = videoDisplayVersionIndex,
                             isAutoVersion = !state.hasExplicitVersionSelection,
+                            preferredQuality = preferredQuality,
                             selectedAudioIndex = explicitAudioIndex,
                             selectedSubtitleIndex = explicitSubtitleIndex,
                             onPlayClick = {
                                 guardedPlay(
                                     detail.contentId,
                                     playbackFileId,
-                                    explicitFileId != null,
+                                    state.hasExplicitVersionSelection && playbackFileId != null,
                                     explicitAudioIndex,
                                     explicitSubtitleIndex,
                                     movieResume,
@@ -1027,7 +1039,7 @@ fun ItemDetailScreen(
                                     guardedPlay(
                                         detail.contentId,
                                         playbackFileId,
-                                        explicitFileId != null,
+                                        state.hasExplicitVersionSelection && playbackFileId != null,
                                         explicitAudioIndex,
                                         explicitSubtitleIndex,
                                         0.0,
@@ -1041,6 +1053,7 @@ fun ItemDetailScreen(
                             onVersionSelected = { index ->
                                 if (index != null) viewModel.selectVersion(index) else viewModel.selectAutoVersion()
                             },
+                            onEditionSelected = viewModel::selectEdition,
                             onAudioSelected = { index ->
                                 if (index != null) {
                                     viewModel.selectAudioTrack(index, selectedVersion)

@@ -667,8 +667,20 @@ data class LeafItemUserData(
     @SerialName("last_file_id") val lastFileId: Int? = null,
     @SerialName("last_resolution") val lastResolution: String? = null,
     @SerialName("last_hdr") val lastHdr: Boolean? = null,
-    @SerialName("last_codec_video") val lastCodecVideo: String? = null
+    @SerialName("last_codec_video") val lastCodecVideo: String? = null,
+    /** The edition the profile last played; the detail page opens on it. */
+    @SerialName("last_edition_key") val lastEditionKey: String? = null,
 )
+
+/**
+ * This history with [fileId] as the last-played file. A different file drops
+ * [LeafItemUserData.lastEditionKey], which named the old file's edition, so
+ * the new file's edition opens the detail page until the server catches up.
+ */
+fun LeafItemUserData.withLastPlayedFile(fileId: Int?): LeafItemUserData = when (fileId) {
+    null, lastFileId -> this
+    else -> copy(lastFileId = fileId, lastEditionKey = null)
+}
 
 @Serializable
 data class SeasonUserData(

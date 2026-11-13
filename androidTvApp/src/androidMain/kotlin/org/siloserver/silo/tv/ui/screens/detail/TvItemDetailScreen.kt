@@ -162,6 +162,7 @@ import org.siloserver.silo.watchtogether.WatchPartyDestination
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 import org.siloserver.silo.viewmodel.WatchPartySpoilers
+import org.siloserver.silo.playback.detailPlaybackFileId
 import android.content.res.Resources
 import androidx.annotation.StringRes
 import androidx.compose.ui.platform.LocalConfiguration
@@ -763,9 +764,9 @@ private fun TvDetailContent(
         ?: TvDetailMetadata.sourceTokens(resources, detail)
     val activeSeriesSelectedVersion = activeSeriesPlaybackDetail?.let { playbackDetail ->
         selectTvDetailDisplayVersion(
-            versions = playbackDetail.versions,
+            detail = playbackDetail,
             selectedFileId = state.selectedNextUpFileId,
-            lastFileId = playbackDetail.userData?.lastFileId,
+            selectedEditionId = state.selectedEditionId,
             preferredQuality = state.preferredQuality,
         )
     }
@@ -783,6 +784,7 @@ private fun TvDetailContent(
         detail = detail,
         preferredQuality = state.preferredQuality,
         selectedFileId = heroSelectedFileId,
+        selectedEditionId = state.selectedEditionId,
         includePlaybackFormats = false,
     )
     val heroArtwork = resolveTvDetailHeroArtwork(detail, state.nextUpEpisode, spoilerPrefs)
@@ -1590,15 +1592,15 @@ private fun TvDetailPlaybackSelectionSummary(
     val selectedSubtitleIndex =
         if (usesNextUp) state.selectedNextUpSubtitleIndex else state.selectedSubtitleIndex
     val selectedVersion = remember(
-        versions,
+        playbackDetail,
         selectedFileId,
-        playbackDetail?.userData?.lastFileId,
+        state.selectedEditionId,
         state.preferredQuality,
     ) {
         selectTvDetailDisplayVersion(
-            versions = versions,
+            detail = playbackDetail,
             selectedFileId = selectedFileId,
-            lastFileId = playbackDetail?.userData?.lastFileId,
+            selectedEditionId = state.selectedEditionId,
             preferredQuality = state.preferredQuality,
         )
     }
@@ -1846,21 +1848,17 @@ private fun HeroActionRow(
         if (isSeriesOrSeason) state.nextUpAudioPickedThisSession else state.audioPickedThisSession
     val selectorSubtitleIndex =
         if (isSeriesOrSeason) state.selectedNextUpSubtitleIndex else state.selectedSubtitleIndex
-    val selectorLastFileId = if (isSeriesOrSeason) {
-        nextUpDetail?.userData?.lastFileId
-    } else {
-        detail.userData?.lastFileId
-    }
+    val selectorDetail = if (isSeriesOrSeason) nextUpDetail else detail
     val selectedVersion = remember(
-        selectorVersions,
+        selectorDetail,
         selectorSelectedFileId,
-        selectorLastFileId,
+        state.selectedEditionId,
         state.preferredQuality,
     ) {
         selectTvDetailDisplayVersion(
-            versions = selectorVersions,
+            detail = selectorDetail,
             selectedFileId = selectorSelectedFileId,
-            lastFileId = selectorLastFileId,
+            selectedEditionId = state.selectedEditionId,
             preferredQuality = state.preferredQuality,
         )
     }
@@ -1933,7 +1931,12 @@ private fun HeroActionRow(
             )
         },
     )
-    val playFileId = selectorSelectedFileId ?: selectedFileId.takeIf { hasTrackOverride }
+    val playFileId = detailPlaybackFileId(
+        displayed = selectedVersion,
+        pinned = selectorSelectedFileId != null,
+        tracksPicked = hasTrackOverride,
+        lastFileId = selectorDetail?.userData?.lastFileId,
+    )
     // Only a version the viewer picked pins the file; a track override's file is the automatic one.
     val playVersionChosen = selectorSelectedFileId != null
     // No separate next-up autofocus: the Play button is always rendered and
@@ -2040,10 +2043,16 @@ private fun HeroActionRow(
                             audioLanguage = audioLanguage,
                         )
                     },
+                    preferredQuality = state.preferredQuality,
                     onSelectVersion = if (isSeriesOrSeason) {
                         viewModel::onNextUpVersionSelected
                     } else {
                         viewModel::onVersionSelected
+                    },
+                    onSelectEdition = if (isSeriesOrSeason) {
+                        viewModel::onNextUpEditionSelected
+                    } else {
+                        viewModel::onEditionSelected
                     },
                     onSelectAudioTrack = if (isSeriesOrSeason) {
                         viewModel::onNextUpAudioTrackSelected
@@ -2254,9 +2263,9 @@ internal fun seriesEpisodePlaybackLaunch(
     val audioTrackIndex = state.selectedNextUpAudioIndex.takeIf { selectionMatchesEpisode }
     val subtitleTrackIndex = state.selectedNextUpSubtitleIndex.takeIf { selectionMatchesEpisode }
     val selectedVersion = selectTvDetailDisplayVersion(
-        versions = versions,
+        detail = playbackDetail,
         selectedFileId = explicitFileId,
-        lastFileId = playbackDetail?.userData?.lastFileId,
+        selectedEditionId = state.selectedEditionId.takeIf { selectionMatchesEpisode },
         preferredQuality = state.preferredQuality,
     )
     val automaticAudioTrackOrdinal = state.automaticAudioOrdinal(playbackDetail, selectedVersion)
@@ -2279,7 +2288,12 @@ internal fun seriesEpisodePlaybackLaunch(
         },
     )
     return SeriesEpisodePlaybackLaunch(
-        fileId = explicitFileId ?: selectedVersion?.fileId?.takeIf { hasTrackOverride },
+        fileId = detailPlaybackFileId(
+            displayed = selectedVersion,
+            pinned = explicitFileId != null,
+            tracksPicked = hasTrackOverride,
+            lastFileId = playbackDetail?.userData?.lastFileId,
+        ),
         versionChosen = explicitFileId != null,
         // Only a pick travels; Auto is resolved by the start (see the hero row).
         audioTrackIndex = audioTrackIndex,

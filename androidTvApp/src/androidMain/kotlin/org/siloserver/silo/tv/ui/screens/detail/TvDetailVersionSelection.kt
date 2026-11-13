@@ -1,21 +1,30 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
 import org.siloserver.silo.model.catalog.FileVersion
-import org.siloserver.silo.playback.selectPlaybackVersion
+import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.playback.hasResumePoint
+import org.siloserver.silo.playback.selectDetailPlaybackVersion
 
+/**
+ * The version a TV detail page shows and plays for [detail]: the explicit
+ * pick [selectedFileId], else Auto within the current edition
+ * ([selectedEditionId], else the last-played one). See
+ * [selectDetailPlaybackVersion].
+ */
 internal fun selectTvDetailDisplayVersion(
-    versions: List<FileVersion>,
+    detail: ItemDetail?,
     selectedFileId: Int?,
-    lastFileId: Int?,
+    selectedEditionId: String?,
     preferredQuality: String?,
-): FileVersion? {
-    if (versions.isEmpty()) return null
-    if (selectedFileId != null) {
-        versions.firstOrNull { it.fileId == selectedFileId }?.let { return it }
-    }
-    return selectPlaybackVersion(
-        versions = versions,
-        lastFileId = lastFileId,
+): FileVersion? = detail?.let {
+    selectDetailPlaybackVersion(
+        versions = it.versions,
+        variants = it.playbackVariants,
+        pinnedFileId = selectedFileId,
+        editionId = selectedEditionId,
+        lastFileId = it.userData?.lastFileId,
+        lastEditionKey = it.userData?.lastEditionKey,
+        inProgress = it.userData.hasResumePoint,
         preferredQuality = preferredQuality,
     )
 }

@@ -6,6 +6,7 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
 import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.model.playback.videoQualityPreference
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 
@@ -47,6 +49,19 @@ suspend fun PlayerSettingsStore.qualityPair(cellular: Boolean): PlaybackQualityP
     } else {
         PlaybackQualityPair(preferredQualityFlow.first(), maxBitrateKbpsFlow.first())
     }
+
+/**
+ * The stored resolution preference a start on the current network sends, as
+ * [qualityPair] picks it, updated when [network] moves between unmetered and
+ * cellular or metered. A detail page ranks its versions with it, so the file
+ * it shows is the one the player starts.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+fun PlayerSettingsStore.networkPreferredQualityFlow(network: Flow<PlaybackNetworkSnapshot>): Flow<String> =
+    network
+        .map { it.usesCellularQuality }
+        .distinctUntilChanged()
+        .flatMapLatest { cellular -> if (cellular) cellularPreferredQualityFlow else preferredQualityFlow }
 
 /**
  * The pair an Auto picked in the player sends: "auto" with the saved bitrate
