@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.Placeable
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Constraints
@@ -25,6 +26,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
+import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.WatchProgressBarDefaults
 import org.siloserver.silo.overlays.CardOverlayPrefs
 import org.siloserver.silo.overlays.EDGE_GAP
@@ -53,7 +55,10 @@ enum class CardOverlayVariant {
      */
     Poster,
 
-    /** Backdrop card (continue watching, episode stills): `scale`d reference lengths, extra bottom room. */
+    /**
+     * Backdrop card (continue watching, episode stills): reference lengths
+     * times `scale` and the poster-size setting, extra bottom room.
+     */
     Wide,
 
     /** Large backdrop (detail-page hero, featured carousel). */
@@ -85,10 +90,16 @@ enum class CardOverlayVariant {
  * [CardOverlayUiState.enabled]) and supplies [data] and [prefs]. Uploaded
  * images resolve through [LocalCardOverlayUiState].
  *
+ * Every length is its reference length times one [OverlayScale]: the card's
+ * scale (a poster's width against 185 units, a wide card's poster-size
+ * setting) times the system text size, held to 1-1.35x. The status corner
+ * uses the same scale, so the two always match.
+ *
  * @param scale reference-unit multiplier for [CardOverlayVariant.Wide] and
- *   [CardOverlayVariant.Hero]; posters measure their width instead.
+ *   [CardOverlayVariant.Hero], applied before the [OverlayScale]; posters
+ *   measure their width instead.
  * @param bottomInset overrides a wide or hero card's bottom inset (before
- *   [scale]) for cards that draw only a thin progress bar along the bottom.
+ *   scaling) for cards that draw only a thin progress bar along the bottom.
  * @param hasProgressBar set by hosts that draw a watch-progress bar along
  *   the artwork's bottom edge: the bottom badges rise clear of it.
  * @param cardWidth the poster artwork box's width, when the host knows it
@@ -117,19 +128,24 @@ fun CardOverlays(
     }
     if (badges.isEmpty) return
 
+    val fontScale = LocalConfiguration.current.fontScale
+    val posterSize = LocalCardPresentation.current.posterSize
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         val density = LocalDensity.current
+        // Pixels per reference unit at the card's overlay scale.
+        fun unitFor(cardWidthPx: Float, base: Float = 1f): Float = base * density.density *
+            OverlayScale.value(OverlayScale.cardScale(variant, cardWidthPx / density.density, posterSize), fontScale)
         if (variant == CardOverlayVariant.Poster && cardWidth != null && cardWidth.isSpecified && cardWidth > 0.dp) {
             Box(modifier = modifier.fillMaxSize()) {
-                val unit = with(density) { cardWidth.toPx() } / POSTER_REFERENCE_WIDTH.toFloat()
+                val unit = unitFor(with(density) { cardWidth.toPx() })
                 OverlayLayer(badges, preset, unit, density, variant, scale, bottomInset, hasProgressBar)
             }
         } else if (variant == CardOverlayVariant.Poster) {
             BoxWithConstraints(modifier = modifier.fillMaxSize()) {
                 val unit = if (constraints.hasBoundedWidth && constraints.maxWidth > 0) {
-                    constraints.maxWidth / POSTER_REFERENCE_WIDTH.toFloat()
+                    unitFor(constraints.maxWidth.toFloat())
                 } else {
-                    scale.coerceAtLeast(MIN_SCALE) * density.density
+                    scale.coerceAtLeast(MIN_SCALE) * density.density * OverlayScale.textFactor(fontScale)
                 }
                 OverlayLayer(badges, preset, unit, density, variant, scale, bottomInset, hasProgressBar)
             }
@@ -137,7 +153,7 @@ fun CardOverlays(
             // Wide and hero cards use fixed reference lengths, so nothing
             // depends on the measured width at composition time.
             Box(modifier = modifier.fillMaxSize()) {
-                val unit = scale.coerceAtLeast(MIN_SCALE) * density.density
+                val unit = unitFor(cardWidthPx = 0f, base = scale.coerceAtLeast(MIN_SCALE))
                 OverlayLayer(badges, preset, unit, density, variant, scale, bottomInset, hasProgressBar)
             }
         }
@@ -237,13 +253,16 @@ private fun overlayInsets(
             edgeGap = (EDGE_GAP * unit).roundToInt(),
         )
     }
-    // Wide and hero cards keep their existing insets: a title block or
-    // progress treatment usually sits along the bottom of the image. They
-    // never draw the status corner, so the top row runs to the inset.
-    val safeScale = scale.coerceAtLeast(MIN_SCALE)
-    fun Dp.px(): Int = with(density) { (this@px * safeScale).roundToPx() }
+    // Wide and hero cards keep their existing insets, at the overlay scale:
+    // a title block or progress treatment usually sits along the bottom of
+    // the image. They never draw the status corner, so the top row runs to
+    // the inset.
+    fun Dp.px(): Int = (value * unit).roundToInt()
     val side = (if (variant == CardOverlayVariant.Hero) 16.dp else 8.dp).px()
-    val bottom = (bottomInset ?: if (variant == CardOverlayVariant.Hero) 16.dp else 24.dp).px()
+    // The bottom inset never drops below its size at the caller's scale, so
+    // a compact card's badges still clear a progress bar that keeps its size.
+    val bottomDp = bottomInset ?: if (variant == CardOverlayVariant.Hero) 16.dp else 24.dp
+    val bottom = max(bottomDp.px(), with(density) { (bottomDp * scale.coerceAtLeast(MIN_SCALE)).roundToPx() })
     return OverlayInsets(
         side = side,
         top = side,
@@ -442,7 +461,7 @@ private fun BandStrip(
 ) {
     val density = LocalDensity.current
     val dividerWidth = with(density) { 1.dp.roundToPx() }.coerceAtLeast(1)
-    // `0.9em` of the badge font size before the text ratio, as web sizes it.
+    // `0.9em` of the badge font size.
     val dividerHeight = (metrics.fontPx * 0.9f).roundToInt()
     Layout(
         content = {
