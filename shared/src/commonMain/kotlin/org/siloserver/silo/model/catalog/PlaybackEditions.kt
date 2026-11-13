@@ -5,7 +5,6 @@ data class PlaybackEdition(
     val id: String,
     val label: String,
     val versions: List<FileVersion>,
-    val defaultVersion: FileVersion,
     val fileIds: Set<Int>,
 )
 
@@ -19,7 +18,7 @@ fun editionLabel(raw: String?, key: String?): String? =
 val FileVersion.editionLabel: String?
     get() = editionLabel(editionRaw, editionKey)
 
-/** Matches web's edition choices: select the first part, honoring its default file. */
+/** Matches web's edition choices: an edition offers the files of its first part. */
 fun playbackEditions(
     versions: List<FileVersion>,
     variants: List<PlaybackVariant> = emptyList(),
@@ -29,13 +28,11 @@ fun playbackEditions(
         return variants.mapNotNull { variant ->
             val firstPart = variant.parts.minByOrNull { it.partIndex } ?: return@mapNotNull null
             val choices = firstPart.versions.mapNotNull { byId[it.fileId] }
-            val default = choices.firstOrNull { it.fileId == firstPart.defaultFileId }
-                ?: choices.firstOrNull() ?: return@mapNotNull null
+            if (choices.isEmpty()) return@mapNotNull null
             PlaybackEdition(
                 id = variant.variantId,
                 label = editionLabel(variant.editionRaw, variant.editionKey) ?: "Standard",
                 versions = choices,
-                defaultVersion = default,
                 fileIds = variant.parts.flatMap { it.versions }.map { it.fileId }.toSet(),
             )
         }
@@ -46,7 +43,6 @@ fun playbackEditions(
                 id = key,
                 label = files.first().editionLabel ?: "Standard",
                 versions = files,
-                defaultVersion = files.first(),
                 fileIds = files.map { it.fileId }.toSet(),
             )
         }

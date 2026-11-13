@@ -87,11 +87,12 @@ internal object TvDetailMetadata {
         detail: ItemDetail,
         preferredQuality: String? = null,
         selectedFileId: Int? = null,
+        selectedEditionId: String? = null,
         includePlaybackFormats: Boolean = true,
         zone: ZoneId = ZoneId.systemDefault(),
     ): List<TvHeroFactToken> {
         val tokens = mutableListOf<TvHeroFactToken>()
-        val selectedVersion = preferredVersion(detail, preferredQuality, selectedFileId)
+        val selectedVersion = selectTvDetailDisplayVersion(detail, selectedFileId, selectedEditionId, preferredQuality)
         if (detail.type.equals("episode", ignoreCase = true)) {
             abbreviatedDate(detail.airDate ?: detail.releaseDate, zone)?.let {
                 tokens += TvHeroFactToken.TextToken(it)
@@ -198,19 +199,6 @@ internal object TvDetailMetadata {
         primaryAudioLabel(version)?.let { tokens += TvHeroFactToken.Chip(it) }
         if (!version.subtitleTracks.isNullOrEmpty()) tokens += TvHeroFactToken.Chip("CC")
         return tokens
-    }
-
-    private fun preferredVersion(
-        detail: ItemDetail,
-        preferredQuality: String?,
-        selectedFileId: Int?,
-    ): FileVersion? {
-        return selectTvDetailDisplayVersion(
-            versions = detail.versions,
-            selectedFileId = selectedFileId,
-            lastFileId = detail.userData?.lastFileId,
-            preferredQuality = preferredQuality,
-        )
     }
 
     private fun resolutionLabel(raw: String?): String? {

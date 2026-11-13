@@ -398,7 +398,9 @@ class TvNextUpSelectionHandoffTest {
     }
 
     @Test
-    fun lastPlayedAutoSourceCapturesAndResolvesSubtitleAgainstTheDisplayedVersions() = runDetailTest {
+    // Auto shows the best file for the preference, not the last-played one
+    // (#898), so the subtitle pick resolves against the 1080p files.
+    fun lastPlayedFileDoesNotPickTheAutoSourceTheSubtitleResolvesAgainst() = runDetailTest {
         val scenario = Scenario(
             suffix = "-auto-source-subtitle",
             oldVersions = listOf(
@@ -426,7 +428,7 @@ class TvNextUpSelectionHandoffTest {
         advanceToEpisodeTwo(fixture.viewModel, scenario)
 
         assertNull(fixture.viewModel.uiState.value.selectedNextUpFileId)
-        assertEquals(1, fixture.viewModel.uiState.value.selectedNextUpSubtitleIndex)
+        assertEquals(0, fixture.viewModel.uiState.value.selectedNextUpSubtitleIndex)
     }
 
     @Test

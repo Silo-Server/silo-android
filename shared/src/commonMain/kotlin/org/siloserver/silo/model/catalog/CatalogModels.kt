@@ -667,7 +667,9 @@ data class LeafItemUserData(
     @SerialName("last_file_id") val lastFileId: Int? = null,
     @SerialName("last_resolution") val lastResolution: String? = null,
     @SerialName("last_hdr") val lastHdr: Boolean? = null,
-    @SerialName("last_codec_video") val lastCodecVideo: String? = null
+    @SerialName("last_codec_video") val lastCodecVideo: String? = null,
+    /** The edition the profile last played; the detail page opens on it. */
+    @SerialName("last_edition_key") val lastEditionKey: String? = null,
 )
 
 @Serializable

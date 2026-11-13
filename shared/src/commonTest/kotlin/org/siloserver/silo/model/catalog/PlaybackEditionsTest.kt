@@ -17,11 +17,10 @@ class PlaybackEditionsTest {
         assertEquals(listOf("Theatrical", "International"), editions.map { it.label })
         assertEquals(listOf(10), editions[0].versions.map { it.fileId })
         assertEquals(listOf(20, 30), editions[1].versions.map { it.fileId })
-        assertEquals(20, editions[1].defaultVersion.fileId)
     }
 
     @Test
-    fun variantDefaultsUseFirstPartAndPreserveCatalogFileIdentity() {
+    fun variantsOfferTheirFirstPartAndPreserveCatalogFileIdentity() {
         val files = listOf(FileVersion(30), FileVersion(20), FileVersion(10))
         val variant = PlaybackVariant(
             variantId = "international",
@@ -36,10 +35,7 @@ class PlaybackEditionsTest {
 
         assertEquals("International", edition.label)
         assertEquals(listOf(10, 20), edition.versions.map { it.fileId })
-        assertEquals(files[1], edition.defaultVersion)
         assertEquals(setOf(10, 20, 30), edition.fileIds)
-        // The scoped position is not the position passed to the phone view model.
-        assertEquals(1, files.indexOfFirst { it.fileId == edition.defaultVersion.fileId })
     }
 
     @Test

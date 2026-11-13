@@ -282,7 +282,8 @@ internal data class LeafItemUserDataReadV2(
     @SerialName("last_file_id") val lastFileId: String? = null,
     @SerialName("last_resolution") val lastResolution: String? = null,
     @SerialName("last_hdr") val lastHdr: Boolean? = null,
-    @SerialName("last_codec_video") val lastCodecVideo: String? = null
+    @SerialName("last_codec_video") val lastCodecVideo: String? = null,
+    @SerialName("last_edition_key") val lastEditionKey: String? = null,
 ) {
     fun toDomain() = LeafItemUserData(
         played = played,
@@ -293,6 +294,7 @@ internal data class LeafItemUserDataReadV2(
         lastResolution = lastResolution,
         lastHdr = lastHdr,
         lastCodecVideo = lastCodecVideo,
+        lastEditionKey = lastEditionKey,
     )
 }
 

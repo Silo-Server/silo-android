@@ -127,6 +127,8 @@ data class ItemDetailUiState(
     val selectedAudioIndex: Int = 0,
     val selectedSubtitleIndex: Int = -1,
     val hasExplicitVersionSelection: Boolean = false,
+    /** The edition the viewer picked (a `PlaybackEdition.id`); null opens on the last-played one. */
+    val selectedEditionId: String? = null,
     val hasExplicitAudioSelection: Boolean = false,
     val hasExplicitSubtitleSelection: Boolean = false,
     /** Server converts Kindle (mobi/azw/azw3) to EPUB, so they read in-app. */
@@ -966,6 +968,7 @@ class ItemDetailViewModel(
                 selectedAudioIndex = 0,
                 selectedSubtitleIndex = -1,
                 hasExplicitVersionSelection = false,
+                selectedEditionId = null,
                 hasExplicitAudioSelection = false,
                 hasExplicitSubtitleSelection = false,
             )
@@ -1087,6 +1090,7 @@ class ItemDetailViewModel(
                 selectedAudioIndex = 0,
                 selectedSubtitleIndex = -1,
                 hasExplicitVersionSelection = false,
+                selectedEditionId = null,
                 hasExplicitAudioSelection = false,
                 hasExplicitSubtitleSelection = false,
             )
@@ -1305,6 +1309,13 @@ class ItemDetailViewModel(
         }
         // Restore any saved audio/subtitle override for the newly-selected file.
         seedPersistedTrackSelection()
+    }
+
+    /** Picks an edition: Version goes back to Auto within it, which clears the
+     *  version pin and, like [selectVersion], the file-specific track picks. */
+    fun selectEdition(editionId: String) {
+        _uiState.update { it.copy(selectedEditionId = editionId) }
+        selectAutoVersion()
     }
 
     /** Back to Auto — clears the version override and, like [selectVersion],
