@@ -33,6 +33,37 @@ Use Kotlin 2.1, Java 21 targets, and Compose idioms. The Silo package root is `o
 
 Android tests use Kotlin test/JUnit where present, especially under `android-shared/src/androidUnitTest`. Do not add tests for small changes or UI changes unless requested. For shared logic changes, add focused tests only for critical or high-risk behavior.
 
+## Cross-client parity
+
+Silo has four clients: Apple (`silo-apple`), Android (`silo-android`), Roku
+(`silo-roku`), and Web (`silo-server`, under `web/`). A feature, fix, or
+other change a user can notice in one client is not done until each other
+client has been handled or ruled out. The change's author owns this, whether a
+person or an agent.
+
+For each other client:
+
+- Rule it out when the change is specific to this platform (an Android TV focus
+  fix, a foldable layout), the other client already behaves correctly, or the
+  feature is outside that client's scope (for example Roku's deferred features
+  in `silo-roku/docs/spec.md`, or ebooks on a TV client). Note the reason.
+- Otherwise, open an issue in that client's repository at minimum. Search its
+  issues first and add to an existing one rather than filing a duplicate. Title
+  it `Parity: <behavior> (from Silo-Server/silo-android#NNN)`, describe what users
+  should get, link this pull request, and point to the code that implements it
+  here. A parity issue follows up work already in review or merged, so it goes
+  in Issues, not Discussions → Ideas.
+- Also open a pull request there when you can build and verify that client and
+  its contribution rules let you open one. Link it from the issue.
+
+Open parity issues when this pull request opens, so each one can link it. List
+the outcome on the pull request's `Other clients:` line, one entry per client:
+`Other clients: Apple Silo-Server/silo-apple#NNN; Roku N/A (Android TV-only focus fix); Web Silo-Server/silo-server#NNN`.
+
+Agents open the parity issues without asking and apply the Writing rules below to them.
+Ask the developer before opening a pull request in another repository;
+approval to open one here does not cover the others.
+
 ## Writing
 
 Run a final readability pass on every human-facing issue, pull request,
