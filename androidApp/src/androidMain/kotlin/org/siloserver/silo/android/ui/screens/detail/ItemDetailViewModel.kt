@@ -1405,7 +1405,24 @@ class ItemDetailViewModel(
     private var preferredQuality: String? = null
 
     fun onPreferredQualityChanged(quality: String?) {
+        if (quality == preferredQuality) return
+        val state = _uiState.value
+        val shownBefore = state.detail?.let { displayedVersion(state, it)?.fileId }
         preferredQuality = quality
+        val shownAfter = state.detail?.let { displayedVersion(state, it)?.fileId }
+        // Track picks belong to a file: when Auto now shows another file, start
+        // that file's tracks over from what was saved for it.
+        if (shownAfter != shownBefore) {
+            _uiState.update {
+                it.copy(
+                    selectedAudioIndex = 0,
+                    selectedSubtitleIndex = -1,
+                    hasExplicitAudioSelection = false,
+                    hasExplicitSubtitleSelection = false,
+                )
+            }
+            seedPersistedTrackSelection()
+        }
     }
 
     /**
