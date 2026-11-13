@@ -2474,13 +2474,27 @@ class TvItemDetailViewModel(
                             it.identity == requestIdentity
                     }
                     val selectionRevision = nextUpSelectorRevision
-                    val selectionQuality = _uiState.value.preferredQuality
-                    val selection = resolveNextUpTrackSelection(
+                    var selectionQuality = _uiState.value.preferredQuality
+                    var selection = resolveNextUpTrackSelection(
                         episodeContentId = episodeContentId,
                         detail = playbackDetail,
                         handoff = pending?.handoff,
                         preferredQuality = selectionQuality,
                     )
+                    // The restored tracks belong to the file Auto showed for that
+                    // quality. If the preference changed during the read, resolve
+                    // again for the file it shows now, keeping the carried choices.
+                    while (_uiState.value.preferredQuality != selectionQuality &&
+                        ownsNextUpPlaybackDetailRequest(episodeContentId, refreshGeneration)
+                    ) {
+                        selectionQuality = _uiState.value.preferredQuality
+                        selection = resolveNextUpTrackSelection(
+                            episodeContentId = episodeContentId,
+                            detail = playbackDetail,
+                            handoff = pending?.handoff,
+                            preferredQuality = selectionQuality,
+                        )
+                    }
                     if (
                         !ownsNextUpPlaybackDetailRequest(episodeContentId, refreshGeneration) ||
                         captureNextUpIdentity(identityGeneration) != requestIdentity
@@ -2491,14 +2505,10 @@ class TvItemDetailViewModel(
                     _uiState.update {
                         if (!ownsNextUpPlaybackDetailRequest(episodeContentId, refreshGeneration)) {
                             it
-                        } else if (nextUpSelectorRevision != selectionRevision ||
-                            it.preferredQuality != selectionQuality
-                        ) {
+                        } else if (nextUpSelectorRevision != selectionRevision) {
                             // An explicit selector callback ran while a durable
-                            // read was suspended, or the quality preference
-                            // changed and the restored tracks belong to another
-                            // file. Finish loading the target but leave the
-                            // selection to the newer input.
+                            // read was suspended. Finish loading the target but
+                            // leave that newer explicit choice untouched.
                             it.copy(
                                 nextUpPlaybackDetail = it.nextUpEpisode?.let(playbackDetail::withEpisodeDescription) ?: playbackDetail,
                                 isLoadingNextUpPlaybackDetail = false,
@@ -2515,13 +2525,6 @@ class TvItemDetailViewModel(
                                 selectedNextUpSubtitleIndex = selection.subtitleIndex,
                             )
                         }
-                    }
-                    // Restore the saved picks for the file the new preference shows.
-                    if (nextUpSelectorRevision == selectionRevision &&
-                        _uiState.value.preferredQuality != selectionQuality &&
-                        ownsNextUpPlaybackDetailRequest(episodeContentId, refreshGeneration)
-                    ) {
-                        seedPersistedNextUpTrackSelection()
                     }
                     // This transition resolution is display/session input only.
                     // Selector callbacks remain the sole writers to session/Room.
