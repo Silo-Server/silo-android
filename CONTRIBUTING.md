@@ -218,12 +218,12 @@ any server coordination. Read
 the [AI-assisted contribution policy](https://github.com/Silo-Server/silo-server/blob/main/docs/ai-contributions.md)
 and include its disclosure block.
 
-A change users can notice is not done until the other Silo clients (Apple, Roku,
-and Web) have it or have a reason not to. For each one that needs the same
-change, open an issue in its repository at minimum, linking your pull request;
-search first and add to an existing issue when there is one. Open a pull request
-there too if you can build and verify that client and its contribution rules let
-you. List the outcome on the template's `Other clients:` line. [Cross-client
+A change users can notice is not done until each other Silo client (Apple, Roku,
+and Web) has been handled or ruled out. For each one that needs the same change,
+open an issue in its repository at minimum, linking your pull request; search
+first and add to an existing issue when there is one. Open a pull request there
+too if you can build and verify that client and its contribution rules let you.
+List the outcome on the template's `Other clients:` line. [Cross-client
 parity](AGENTS.md#cross-client-parity) has the details.
 
 ## Licensing of contributions
