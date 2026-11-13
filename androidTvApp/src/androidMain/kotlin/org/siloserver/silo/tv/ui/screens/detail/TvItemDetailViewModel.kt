@@ -664,10 +664,40 @@ class TvItemDetailViewModel(
     private fun observePreferredQuality() {
         viewModelScope.launch {
             playerSettingsStore.preferredQualityFlow.collect { quality ->
+                val before = _uiState.value
                 _uiState.update {
                     it.copy(preferredQuality = quality.trim().ifBlank { "auto" })
                 }
+                restartTrackPicksIfShownFileChanged(before, _uiState.value)
             }
+        }
+    }
+
+    /**
+     * Track picks belong to a file. When a new quality preference makes Auto
+     * show another file, start that file's tracks over from what was saved for
+     * it, for this item and for the series' next-up episode.
+     */
+    private fun restartTrackPicksIfShownFileChanged(before: TvItemDetailUiState, after: TvItemDetailUiState) {
+        fun shown(state: TvItemDetailUiState, detail: ItemDetail?, fileId: Int?) =
+            detail?.let { resolveTvTrackSelectionVersion(it, fileId, state.selectedEditionId, state.preferredQuality)?.fileId }
+        if (shown(before, before.detail, before.selectedFileId) != shown(after, after.detail, after.selectedFileId)) {
+            _uiState.update {
+                it.copy(selectedAudioIndex = null, audioPickedThisSession = false, selectedSubtitleIndex = null)
+            }
+            _uiState.value.detail?.let(::seedPersistedTrackSelection)
+        }
+        if (shown(before, before.nextUpPlaybackDetail, before.selectedNextUpFileId) !=
+            shown(after, after.nextUpPlaybackDetail, after.selectedNextUpFileId)
+        ) {
+            _uiState.update {
+                it.copy(
+                    selectedNextUpAudioIndex = null,
+                    nextUpAudioPickedThisSession = false,
+                    selectedNextUpSubtitleIndex = null,
+                )
+            }
+            seedPersistedNextUpTrackSelection()
         }
     }
 
