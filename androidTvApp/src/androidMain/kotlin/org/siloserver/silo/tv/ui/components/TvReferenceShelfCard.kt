@@ -120,7 +120,13 @@ fun TvReferenceShelfCard(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .padding(
+                        start = 12.dp,
+                        end = 12.dp,
+                        top = 10.dp,
+                        // Rise above the progress bar when the card draws one.
+                        bottom = if (progress != null && progress > 0f) WatchProgressBarDefaults.BadgeClearance else 10.dp,
+                    ),
             ) {
                 Text(
                     text = title,
