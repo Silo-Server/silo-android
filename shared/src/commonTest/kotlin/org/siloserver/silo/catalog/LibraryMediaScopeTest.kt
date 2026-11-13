@@ -5,6 +5,7 @@ import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogResponse
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.section.offersExploreAll
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import kotlin.test.*
@@ -87,6 +88,26 @@ class LibraryMediaScopeTest {
         val result = scopeLibrarySection(row, "series") { error("Profile-added sections have no stored catalog definition") }
         assertEquals(listOf(episode), result.section.items)
         assertTrue(result.incomplete)
+    }
+
+    /** A failed refill never learned the scoped list's length, so a playback row must not pass for whole. */
+    @Test fun incompleteScopedPlaybackRowKeepsItsCountAndExploreAll() = runTest {
+        val episode = SectionItem("episode", "episode", "Episode")
+        val row = ResolvedSection("continue", "continue_watching", "Continue", itemLimit = 20, totalCount = 20,
+            items = movies.take(19) + episode)
+        val result = scopeLibrarySection(row, "series") { ApiResult.Error(503, "unavailable", "Unavailable") }
+        assertEquals(listOf(episode), result.section.items)
+        assertTrue(result.incomplete)
+        assertTrue(result.section.offersExploreAll)
+    }
+
+    /** A scoped slice of an exhausted playback row is the whole scoped list. */
+    @Test fun exhaustedScopedPlaybackRowOffersNoExploreAll() = runTest {
+        val row = ResolvedSection("continue", "continue_watching", "Continue", itemLimit = 20, totalCount = 2,
+            items = listOf(SectionItem("film", "movie", "Film"), SectionItem("show", "series", "Show")))
+        val result = scopeLibrarySection(row, "series") { error("An under-filled slice is the whole shelf") }
+        assertFalse(result.incomplete)
+        assertFalse(result.section.offersExploreAll)
     }
 
     @Test fun customizedShelfAlreadyFilledByItsScopeIsComplete() = runTest {

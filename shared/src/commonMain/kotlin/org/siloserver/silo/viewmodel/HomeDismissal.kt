@@ -1,6 +1,7 @@
 package org.siloserver.silo.viewmodel
 
 import org.siloserver.silo.model.catalog.isEpisodeItemType
+import org.siloserver.silo.model.section.PLAYBACK_SECTION_TYPES
 import org.siloserver.silo.model.section.SectionItem
 
 /**
@@ -15,7 +16,7 @@ import org.siloserver.silo.model.section.SectionItem
 class HomeDismissal private constructor(val surface: String, val anchor: String, val menuLabel: String) {
     companion object {
         /** Home rows whose cards can be removed. */
-        val sectionTypes = setOf("continue_watching", "in_progress", "next_up")
+        val sectionTypes = PLAYBACK_SECTION_TYPES
 
         /** Null when neither list can represent the card, which then has no remove action. */
         fun of(item: SectionItem): HomeDismissal? {
