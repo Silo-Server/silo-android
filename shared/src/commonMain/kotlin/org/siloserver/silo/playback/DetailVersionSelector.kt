@@ -1,6 +1,7 @@
 package org.siloserver.silo.playback
 
 import org.siloserver.silo.model.catalog.FileVersion
+import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.catalog.PlaybackEdition
 import org.siloserver.silo.model.catalog.PlaybackVariant
 import org.siloserver.silo.model.catalog.playbackEditions
@@ -19,8 +20,10 @@ import org.siloserver.silo.model.settings.QualityPresets
  *   across cuts ([openingEdition]).
  * - Auto is the edition's best first-part file at or below [preferredQuality],
  *   else the closest file above it, else a file of unknown resolution. History
- *   picks only the edition, with one exception: a later part of a multi-part
- *   item the viewer stopped in, so Resume continues that part.
+ *   picks only the edition, with one exception: while the item is
+ *   [inProgress], a later part of a multi-part item the viewer stopped in, so
+ *   Resume continues that part. Without a resume point Auto is part 1, so a
+ *   rewatch starts at the beginning.
  */
 fun selectDetailPlaybackVersion(
     versions: List<FileVersion>,
@@ -29,6 +32,7 @@ fun selectDetailPlaybackVersion(
     editionId: String?,
     lastFileId: Int?,
     lastEditionKey: String?,
+    inProgress: Boolean,
     preferredQuality: String?,
 ): FileVersion? {
     if (versions.isEmpty()) return null
@@ -40,13 +44,21 @@ fun selectDetailPlaybackVersion(
         ?: lastPlayedEdition(editions, lastFileId, lastEditionKey)
         ?: openingEdition(editions, cap)
     val lastFile = versions.firstOrNull { it.fileId == lastFileId }
-    if (lastFile != null && lastFile.fileId in edition.fileIds &&
+    if (inProgress && lastFile != null && lastFile.fileId in edition.fileIds &&
         firstPlaybackPart(versions, lastFile).fileId != lastFile.fileId
     ) {
         return lastFile
     }
     return edition.autoFile(cap)
 }
+
+/**
+ * Whether the item has a resume point: a saved position above 0. The played
+ * flag is ignored, because the server resets the position to 0 when a title
+ * finishes and keeps played set during a rewatch.
+ */
+val LeafItemUserData?.hasResumePoint: Boolean
+    get() = (this?.positionSeconds ?: 0.0) > 0.0
 
 /** The file Version Auto picks in this edition, which picking the edition keeps. */
 fun PlaybackEdition.autoVersion(preferredQuality: String?): FileVersion = autoFile(qualityCap(preferredQuality))

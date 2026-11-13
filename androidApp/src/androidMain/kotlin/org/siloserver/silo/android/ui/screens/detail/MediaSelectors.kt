@@ -74,6 +74,7 @@ import org.siloserver.silo.player.DolbyVisionDetection
 import org.siloserver.silo.player.trackLanguageDisplayName
 import org.siloserver.silo.player.trackLanguageEnglishName
 import org.siloserver.silo.playback.autoVersion
+import org.siloserver.silo.playback.hasResumePoint
 import org.siloserver.silo.playback.selectDetailPlaybackVersion
 
 /**
@@ -584,6 +585,7 @@ internal fun detailDisplayVersionIndex(
         editionId = editionId,
         lastFileId = userData?.lastFileId,
         lastEditionKey = userData?.lastEditionKey,
+        inProgress = userData.hasResumePoint,
         preferredQuality = preferredQuality,
     )?.fileId
     return versions.indexOfFirst { it.fileId == resolvedFileId }.takeIf { it >= 0 } ?: fallbackIndex

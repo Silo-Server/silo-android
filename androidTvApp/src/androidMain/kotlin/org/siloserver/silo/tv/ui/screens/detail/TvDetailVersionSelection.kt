@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.screens.detail
 
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.playback.hasResumePoint
 import org.siloserver.silo.playback.selectDetailPlaybackVersion
 
 /**
@@ -23,6 +24,7 @@ internal fun selectTvDetailDisplayVersion(
         editionId = selectedEditionId,
         lastFileId = it.userData?.lastFileId,
         lastEditionKey = it.userData?.lastEditionKey,
+        inProgress = it.userData.hasResumePoint,
         preferredQuality = preferredQuality,
     )
 }

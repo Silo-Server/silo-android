@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.playback.hasResumePoint
 import org.siloserver.silo.playback.selectDetailPlaybackVersion
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.UiText
@@ -1443,6 +1444,7 @@ class ItemDetailViewModel(
                 editionId = state.selectedEditionId,
                 lastFileId = detail.userData?.lastFileId,
                 lastEditionKey = detail.userData?.lastEditionKey,
+                inProgress = detail.userData.hasResumePoint,
                 preferredQuality = preferredQuality,
             )
         }

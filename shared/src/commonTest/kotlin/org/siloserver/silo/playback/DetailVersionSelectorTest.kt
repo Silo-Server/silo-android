@@ -1,6 +1,7 @@
 package org.siloserver.silo.playback
 
 import org.siloserver.silo.model.catalog.FileVersion
+import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.catalog.PlaybackVariant
 import org.siloserver.silo.model.catalog.PlaybackVariantPart
 import org.siloserver.silo.model.catalog.playbackEditions
@@ -19,11 +20,12 @@ class DetailVersionSelectorTest {
         editionId: String? = null,
         lastFileId: Int? = null,
         lastEditionKey: String? = null,
+        inProgress: Boolean = false,
         preferredQuality: String? = "2160p",
         files: List<FileVersion> = versions,
         variants: List<PlaybackVariant> = emptyList(),
     ) = selectDetailPlaybackVersion(
-        files, variants, pinnedFileId, editionId, lastFileId, lastEditionKey, preferredQuality,
+        files, variants, pinnedFileId, editionId, lastFileId, lastEditionKey, inProgress, preferredQuality,
     )?.fileId
 
     @Test
@@ -121,7 +123,7 @@ class DetailVersionSelectorTest {
         // Last played the first CD: the cut's best file wins.
         assertEquals(20, select(lastFileId = 11, files = files, variants = variants))
         // Stopped in CD2: Resume keeps that part, and Start Over plays CD1.
-        assertEquals(12, select(lastFileId = 12, files = files, variants = variants))
+        assertEquals(12, select(lastFileId = 12, inProgress = true, files = files, variants = variants))
         assertEquals(11, firstPlaybackPart(files, files.first { it.fileId == 12 }).fileId)
         // One Edition row for the cut, offering both presentations' first parts.
         val edition = playbackEditions(files, variants).single()
@@ -140,12 +142,24 @@ class DetailVersionSelectorTest {
                 PlaybackVariantPart(partIndex = 2, defaultFileId = 11, versions = listOf(part2)),
             ),
         )
-        assertEquals(11, select(lastFileId = 11, files = listOf(part1, part2), variants = listOf(variant)))
-        assertEquals(11, select(lastFileId = 11, editionId = "", files = listOf(part1, part2), variants = listOf(variant)))
+        assertEquals(11, select(lastFileId = 11, inProgress = true, files = listOf(part1, part2), variants = listOf(variant)))
+        assertEquals(11, select(lastFileId = 11, inProgress = true, editionId = "", files = listOf(part1, part2), variants = listOf(variant)))
         assertEquals(10, select(files = listOf(part1, part2), variants = listOf(variant)))
         // Without variants, a later part is still recognised, and Auto starts at part 1
         // even when a later part has the better file.
-        assertEquals(11, select(lastFileId = 11, files = listOf(part1, part2)))
+        assertEquals(11, select(lastFileId = 11, inProgress = true, files = listOf(part1, part2)))
         assertEquals(10, select(files = listOf(part1, part2.copy(bitrate = 9_000))))
+    }
+
+    @Test
+    fun onlyASavedPositionKeepsALaterPart() {
+        val part1 = FileVersion(10, resolution = "1080p", presentationKind = "multipart_movie", presentationPartIndex = 1)
+        val part2 = part1.copy(fileId = 11, presentationPartIndex = 2)
+        fun selectFor(userData: LeafItemUserData) =
+            select(lastFileId = 11, inProgress = userData.hasResumePoint, files = listOf(part1, part2))
+        // Finished on the last part: the server reset the position, so a rewatch starts at part 1.
+        assertEquals(10, selectFor(LeafItemUserData(played = true, positionSeconds = 0.0, lastFileId = 11)))
+        // A rewatch stopped in part 2 keeps it, though the title stays marked played.
+        assertEquals(11, selectFor(LeafItemUserData(played = true, positionSeconds = 600.0, lastFileId = 11)))
     }
 }
