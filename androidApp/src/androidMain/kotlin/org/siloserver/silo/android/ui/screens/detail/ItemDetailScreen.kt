@@ -95,6 +95,8 @@ import org.siloserver.silo.model.download.labelFor
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.network.ServerRegistry
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
+import org.siloserver.silo.common.player.networkPreferredQualityFlow
 import org.siloserver.silo.common.ui.OnViewerAccessChanged
 import org.siloserver.silo.network.AccessChangeSignals
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
@@ -284,11 +286,15 @@ fun ItemDetailScreen(
     val downloadStorage: DownloadStorage = koinInject()
     val serverRegistry: ServerRegistry = koinInject()
     // The auto-version PREVIEW must name the version playback will actually
-    // pick, which depends on the user's preferred quality (see
-    // MobileVideoPlaybackStarter). Read it so the Video/Audio/Subtitle rows
-    // describe the real file rather than defaulting to versions[0].
+    // pick, which depends on the preferred quality for the current network
+    // (the cellular one on mobile data or a metered network, as
+    // MobileVideoPlaybackStarter picks it). Read it so the Video/Audio/Subtitle
+    // rows describe the real file rather than defaulting to versions[0].
     val playerSettingsStore: PlayerSettingsStore = koinInject()
-    val preferredQuality by playerSettingsStore.preferredQualityFlow.collectAsState(initial = null)
+    val playbackNetwork: PlaybackNetworkEvidenceProvider = koinInject()
+    val preferredQuality by remember(playerSettingsStore, playbackNetwork) {
+        playerSettingsStore.networkPreferredQualityFlow(playbackNetwork.updates)
+    }.collectAsState(initial = null)
     LaunchedEffect(preferredQuality) { viewModel.onPreferredQualityChanged(preferredQuality) }
     // Server capability gates which quality presets the picker may offer
     // (issue #20 GAP 4). Until it loads (or if the fetch fails) we optimistically

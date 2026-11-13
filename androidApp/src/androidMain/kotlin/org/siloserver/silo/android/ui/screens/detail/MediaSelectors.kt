@@ -554,8 +554,8 @@ private fun BadgePill(text: String) {
  * Index of the version a video detail page shows for [versions], which is
  * also the version its Play and Download buttons use. An explicit pick wins.
  * Auto resolves through [selectDetailPlaybackVersion]: the current edition
- * ([editionId], else the last-played one, else the one holding the best
- * file), then its best file for the quality preference. While the preference
+ * ([editionId], else the last-played one, else the one whose Auto file
+ * compares best across cuts), then its best file for the quality preference. While the preference
  * is still loading, Auto names no version (-1, the bare "Auto" placeholder)
  * unless the viewer picked an edition, so the page never shows a file the
  * arriving preference contradicts.

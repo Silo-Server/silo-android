@@ -4,22 +4,23 @@ import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.PlaybackEdition
 import org.siloserver.silo.model.catalog.PlaybackVariant
 import org.siloserver.silo.model.catalog.playbackEditions
-import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
-import org.siloserver.silo.model.playback.videoQualityPreference
+import org.siloserver.silo.model.settings.QualityPresets
 
 /**
  * The file a detail page shows, and that its Play and Download use. Edition is
- * the cut; Version Auto picks a file within it and never changes it.
+ * the cut; Version Auto picks a file within it and never changes it. Web,
+ * Apple and Roku follow the same rule, so every client picks the same file.
  *
  * - [pinnedFileId], an explicit Version pick, wins. Picking an edition clears
  *   it, so it is normally inside the current edition.
  * - The edition is [editionId] (the viewer's pick), else the one last played
- *   (the edition of [lastFileId], then [lastEditionKey]), else the one holding
- *   the best file for [preferredQuality].
- * - Auto is the best file in that edition for [preferredQuality], or the
- *   closest file above it when none fits. History picks only the edition, with
- *   one exception: a later part of a multi-part item the viewer stopped in, so
- *   Resume continues that part.
+ *   ([lastEditionKey], where a present "" names the unnamed edition, then the
+ *   edition of [lastFileId]), else the one whose Auto file compares best
+ *   across cuts ([openingEdition]).
+ * - Auto is the edition's best first-part file at or below [preferredQuality],
+ *   else the closest file above it, else a file of unknown resolution. History
+ *   picks only the edition, with one exception: a later part of a multi-part
+ *   item the viewer stopped in, so Resume continues that part.
  */
 fun selectDetailPlaybackVersion(
     versions: List<FileVersion>,
@@ -31,36 +32,30 @@ fun selectDetailPlaybackVersion(
     preferredQuality: String?,
 ): FileVersion? {
     if (versions.isEmpty()) return null
-    val editions = playbackEditions(versions, variants)
     versions.firstOrNull { it.fileId == pinnedFileId }?.let { return it }
-    if (editions.isEmpty()) return selectAutoVersion(versions.firstParts(versions), preferredQuality)
+    val cap = qualityCap(preferredQuality)
+    val editions = playbackEditions(versions, variants)
+    if (editions.isEmpty()) return autoFile(versions.firstParts(versions), cap)
     val edition = editionId?.let { id -> editions.firstOrNull { it.id == id } }
         ?: lastPlayedEdition(editions, lastFileId, lastEditionKey)
-        ?: selectAutoVersion(editions.flatMap { it.versions }.firstParts(versions), preferredQuality)
-            .let { best -> editions.first { best.fileId in it.fileIds } }
+        ?: openingEdition(editions, cap)
     val lastFile = versions.firstOrNull { it.fileId == lastFileId }
     if (lastFile != null && lastFile.fileId in edition.fileIds &&
         firstPlaybackPart(versions, lastFile).fileId != lastFile.fileId
     ) {
         return lastFile
     }
-    // A cut can come as several presentations (one file, or parts); Auto ranks them all.
-    val cut = editions.filter { it.cutKey == edition.cutKey }
-    return selectAutoVersion(cut.flatMap { it.versions }.firstParts(versions), preferredQuality)
+    return edition.autoFile(cap)
 }
 
-/** The cut an edition belongs to: its files' edition key, else its label. */
-private val PlaybackEdition.cutKey: String
-    get() = versions.firstNotNullOfOrNull { it.editionKey?.trim()?.lowercase()?.takeIf(String::isNotEmpty) }
-        ?: label.lowercase()
+/** The file Version Auto picks in this edition, which picking the edition keeps. */
+fun PlaybackEdition.autoVersion(preferredQuality: String?): FileVersion = autoFile(qualityCap(preferredQuality))
+
+private fun PlaybackEdition.autoFile(cap: Int?): FileVersion = autoFile(versions.firstParts(versions), cap)
 
 /** Auto starts a multi-part item at its first part; later parts are reached by playing on. */
 private fun List<FileVersion>.firstParts(all: List<FileVersion>): List<FileVersion> =
     filter { firstPlaybackPart(all, it).fileId == it.fileId }.ifEmpty { this }
-
-/** The file Version Auto picks in this edition, which picking the edition keeps. */
-fun PlaybackEdition.autoVersion(preferredQuality: String?): FileVersion =
-    selectAutoVersion(versions.firstParts(versions), preferredQuality)
 
 /**
  * The file id Play sends for a detail page's [displayed] version, so Play
@@ -76,27 +71,87 @@ fun detailPlaybackFileId(
     lastFileId: Int?,
 ): Int? = displayed?.fileId?.takeIf { pinned || tracksPicked || it != lastFileId }
 
+/** The last-played edition: [lastEditionKey] when it names one, else the edition of [lastFileId]. */
 private fun lastPlayedEdition(
     editions: List<PlaybackEdition>,
     lastFileId: Int?,
     lastEditionKey: String?,
 ): PlaybackEdition? {
-    lastFileId?.let { id -> editions.firstOrNull { id in it.fileIds } }?.let { return it }
-    val key = lastEditionKey?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-    return editions.firstOrNull { edition ->
-        edition.versions.any { it.editionKey?.trim().equals(key, ignoreCase = true) }
-    }
+    lastEditionKey?.trim()?.let { key -> editions.firstOrNull { it.id == key } }?.let { return it }
+    return lastFileId?.let { id -> editions.firstOrNull { id in it.fileIds } }
 }
 
-/** The best file at or below the preference, else the closest file above it. */
-private fun selectAutoVersion(versions: List<FileVersion>, preferredQuality: String?): FileVersion {
-    val target = videoQualityPreference(preferredQuality) ?: PLAYBACK_QUALITY_AUTO
-    if (target == PLAYBACK_QUALITY_AUTO) return selectPlaybackVersion(versions, null, target)
-    // A preference that names no resolution reads as Auto.
-    val cap = playbackResolutionRank(target).takeIf { it > 0 }
-        ?: return selectPlaybackVersion(versions, null, PLAYBACK_QUALITY_AUTO)
-    val (fits, above) = versions.partition { playbackResolutionRank(it.resolution) <= cap }
-    if (fits.isNotEmpty()) return selectPlaybackVersion(fits, null, target)
-    val closest = above.minOf { playbackResolutionRank(it.resolution) }
-    return selectPlaybackVersion(above.filter { playbackResolutionRank(it.resolution) == closest }, null, target)
+/**
+ * The edition a page opens on with no history: each edition's Auto file
+ * compared across cuts by fit (within the cap, above it, unknown resolution),
+ * then resolution (higher within the cap, lower above it), then HDR, then
+ * edition preference, then server order. File size is not compared across cuts.
+ */
+private fun openingEdition(editions: List<PlaybackEdition>, cap: Int?): PlaybackEdition =
+    editions.mapIndexed { index, edition -> OpeningCandidate(index, edition, edition.autoFile(cap), cap) }
+        .minWith(
+            compareBy<OpeningCandidate> { it.fit }
+                .thenBy { if (it.fit == 1) it.rank else -it.rank }
+                .thenByDescending { it.auto.hdr }
+                .thenBy { it.edition.preference }
+                .thenBy { it.index },
+        ).edition
+
+private class OpeningCandidate(val index: Int, val edition: PlaybackEdition, val auto: FileVersion, cap: Int?) {
+    val rank = resolutionRank(auto.resolution)
+    val fit = fitClass(rank, cap)
+}
+
+/** 0 fits the cap (or there is none), 1 is above it, 2 is an unknown resolution. */
+private fun fitClass(rank: Int, cap: Int?): Int = when {
+    rank == 0 -> 2
+    cap == null || rank <= cap -> 0
+    else -> 1
+}
+
+/** 0 for the unnamed or standard edition, 1 for a theatrical one, 2 for any other cut. */
+private val PlaybackEdition.preference: Int
+    get() {
+        val names = listOfNotNull(id, raw).map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        return when {
+            names.isEmpty() -> 0
+            names.any { it == "standard" || it == "default" || it.startsWith("standard ") || it.endsWith(" standard") } -> 0
+            names.any { "theatrical" in it } -> 1
+            else -> 2
+        }
+    }
+
+/**
+ * Version Auto within one edition's first-part [candidates]: the best file at
+ * or below [cap] (null is no cap), else the closest file above it. A file of
+ * unknown resolution is picked only when no file's resolution is known.
+ */
+private fun autoFile(candidates: List<FileVersion>, cap: Int?): FileVersion {
+    val ordered = candidates.sortedWith(SERVER_ORDER)
+    val known = ordered.filter { resolutionRank(it.resolution) > 0 }
+    if (known.isEmpty()) return ordered.first()
+    if (cap == null) return known.first()
+    known.firstOrNull { resolutionRank(it.resolution) <= cap }?.let { return it }
+    val closest = known.minOf { resolutionRank(it.resolution) }
+    return known.first { resolutionRank(it.resolution) == closest }
+}
+
+/** The server's version order: resolution, then HDR before SDR, then larger file; stable otherwise. */
+private val SERVER_ORDER: Comparator<FileVersion> =
+    compareByDescending<FileVersion> { resolutionRank(it.resolution) }
+        .thenByDescending { it.hdr }
+        .thenByDescending { it.fileSize }
+
+/** The resolution [preferredQuality] caps Auto at, or null for no cap (Auto, Original, or no resolution). */
+private fun qualityCap(preferredQuality: String?): Int? =
+    resolutionRank(QualityPresets.normalizeResolution(preferredQuality)).takeIf { it > 0 }
+
+/** The server's resolution rank (`access` quality order), with the 4K and 8K aliases; 0 is unknown. */
+private fun resolutionRank(value: String?): Int = when (value?.trim()?.lowercase()) {
+    "480p" -> 1
+    "720p" -> 2
+    "1080p" -> 3
+    "2160p", "4k" -> 4
+    "4320p", "8k" -> 5
+    else -> 0
 }

@@ -34,7 +34,8 @@ class PlaybackEditionsTest {
         val edition = playbackEditions(files, listOf(variant)).single()
 
         assertEquals("International", edition.label)
-        assertEquals(listOf(10, 20), edition.versions.map { it.fileId })
+        // First-part files in the server's version order.
+        assertEquals(listOf(20, 10), edition.versions.map { it.fileId })
         assertEquals(setOf(10, 20, 30), edition.fileIds)
     }
 
