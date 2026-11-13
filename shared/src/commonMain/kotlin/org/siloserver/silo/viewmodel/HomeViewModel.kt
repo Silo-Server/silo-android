@@ -8,6 +8,7 @@ import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.section.showsWholeList
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
@@ -602,10 +603,17 @@ class HomeViewModel(
 /** Rows built from playback state. Next Up appears as its own row and merged into Continue Watching. */
 private fun ResolvedSection.isProgressRow() = sectionType in setOf("continue_watching", "in_progress", "next_up", "up_next")
 
-/** Drops [isRemoved] cards from the progress rows; a row left empty goes too. */
-private fun List<ResolvedSection>.removingFromProgressRows(isRemoved: (SectionItem) -> Boolean): List<ResolvedSection> =
+/**
+ * Drops [isRemoved] cards from the progress rows; a row left empty goes too.
+ * A row that held its whole list still does, so its count follows its cards
+ * and it gains no "Explore all" card. A row cut at its limit keeps its count:
+ * one card fewer does not make it whole.
+ */
+internal fun List<ResolvedSection>.removingFromProgressRows(isRemoved: (SectionItem) -> Boolean): List<ResolvedSection> =
     map { section ->
-        if (section.isProgressRow()) section.copy(items = section.items.filterNot(isRemoved)) else section
+        if (!section.isProgressRow()) return@map section
+        val kept = section.items.filterNot(isRemoved)
+        section.copy(items = kept, totalCount = if (section.showsWholeList) kept.size else section.totalCount)
     }.filter { it.items.isNotEmpty() }
 
 private fun List<ResolvedSection>.duplicateSectionKeyCount(): Int =

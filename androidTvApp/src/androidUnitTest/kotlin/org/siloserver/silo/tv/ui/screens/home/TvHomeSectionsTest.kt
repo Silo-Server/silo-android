@@ -3,6 +3,7 @@ package org.siloserver.silo.tv.ui.screens.home
 import java.io.File
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.section.offersExploreAll
 import org.siloserver.silo.tv.data.preferences.TvHomeSectionLayout
 import org.siloserver.silo.tv.data.preferences.TvHomeSectionPreferences
 import org.siloserver.silo.tv.ui.components.isTvContinueWatchingRow
@@ -102,6 +103,29 @@ class TvHomeSectionsTest {
         assertEquals(listOf("a1"), normalized[1].items.map { it.contentId })
         assertTrue(normalized[1].isTvAudioProgressSection())
         assertEquals(TvRowStyle.Poster, normalized[1].tvHomeRowStyle())
+    }
+
+    @Test
+    fun splittingOffAudiobooksKeepsExploreAllOnARowCutAtItsLimit() {
+        fun continueRow(videos: Int, total: Int) = ResolvedSection(
+            id = "continue",
+            sectionType = "continue_watching",
+            title = "Continue Watching",
+            itemLimit = 20,
+            totalCount = total,
+            items = (1..videos).map { SectionItem(contentId = "m$it", type = "movie", title = "Movie $it") } +
+                SectionItem(contentId = "a1", type = "audiobook", title = "Audio"),
+        )
+
+        // 20 of 20 was cut at the limit: its 19 videos are not the whole list.
+        val cut = listOf(continueRow(videos = 19, total = 20)).normalizeTvHomeSections().first()
+        assertEquals(19, cut.items.size)
+        assertTrue(cut.offersExploreAll)
+
+        // 3 of 3 is the whole list, and so are its 2 videos.
+        val whole = listOf(continueRow(videos = 2, total = 3)).normalizeTvHomeSections().first()
+        assertEquals(2, whole.items.size)
+        assertFalse(whole.offersExploreAll)
     }
 
     @Test
