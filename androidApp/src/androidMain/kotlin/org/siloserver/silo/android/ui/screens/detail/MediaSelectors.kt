@@ -28,9 +28,9 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.HighQuality
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -240,7 +240,7 @@ fun EditionVersionSelectorRows(
         PlaybackSelectorDivider()
     }
     TrackSelectorRow(
-        icon = Icons.Outlined.HighQuality,
+        icon = Icons.Outlined.VideoLibrary,
         label = stringResource(CommonR.string.detail_version),
         value = formatVersionValueLabel(resources, selectedVersion, isAutoVersion),
         onClick = { showVersionPicker = true },
