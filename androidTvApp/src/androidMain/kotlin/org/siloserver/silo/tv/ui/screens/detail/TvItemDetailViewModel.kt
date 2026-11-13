@@ -690,6 +690,8 @@ class TvItemDetailViewModel(
         if (shown(before, before.nextUpPlaybackDetail, before.selectedNextUpFileId) !=
             shown(after, after.nextUpPlaybackDetail, after.selectedNextUpFileId)
         ) {
+            // A restore still reading the previous file's picks must not land.
+            markNextUpSelectorInput()
             _uiState.update {
                 it.copy(
                     selectedNextUpAudioIndex = null,

@@ -1407,9 +1407,11 @@ class ItemDetailViewModel(
     fun onPreferredQualityChanged(quality: String?) {
         if (quality == preferredQuality) return
         val state = _uiState.value
-        val shownBefore = state.detail?.let { displayedVersion(state, it)?.fileId }
+        // On a series page the selectors show the selected episode's files.
+        val target = state.selectedEpisodeDetail ?: state.detail
+        val shownBefore = target?.let { displayedVersion(state, it)?.fileId }
         preferredQuality = quality
-        val shownAfter = state.detail?.let { displayedVersion(state, it)?.fileId }
+        val shownAfter = target?.let { displayedVersion(state, it)?.fileId }
         // Track picks belong to a file: when Auto now shows another file, start
         // that file's tracks over from what was saved for it.
         if (shownAfter != shownBefore) {
