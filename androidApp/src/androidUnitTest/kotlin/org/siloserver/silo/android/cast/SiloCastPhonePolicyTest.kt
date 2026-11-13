@@ -31,13 +31,13 @@ class SiloCastPhonePolicyTest {
         playback = SiloCastPlaybackRequest(contentId = "miasma", startFromBeginning = true),
     )
 
+    /** The TV is forgotten and the remote closes with a notice. */
+    private val final = SiloCastCloseResponse.LetGo(forgetTarget = true, closesRemote = true)
+
     @Test
-    fun anOlderTvsCloseAlwaysForgetsIt() {
+    fun anOlderTvsCloseIsAlwaysFinal() {
         for (reason in listOf(null, SiloCastCloseReason.Timeout, SiloCastCloseReason.Replaced)) {
-            assertEquals(
-                SiloCastCloseResponse.LetGo(forgetTarget = true),
-                SiloCastClosePolicy.response(reason, tvKeepsOtherControllers = false),
-            )
+            assertEquals(final, SiloCastClosePolicy.response(reason, tvKeepsOtherControllers = false))
         }
     }
 
@@ -45,15 +45,16 @@ class SiloCastPhonePolicyTest {
     fun aMultiControllerTvSaysWhetherToReconnectOrForget() {
         fun response(reason: String?) = SiloCastClosePolicy.response(reason, tvKeepsOtherControllers = true)
         assertEquals(SiloCastCloseResponse.Reconnect, response(SiloCastCloseReason.Timeout))
-        assertEquals(SiloCastCloseResponse.LetGo(forgetTarget = true), response(SiloCastCloseReason.TvDisconnected))
-        assertEquals(SiloCastCloseResponse.LetGo(forgetTarget = true), response(null))
+        assertEquals(final, response(SiloCastCloseReason.TvDisconnected))
+        assertEquals(final, response(null))
         for (reason in listOf(
             SiloCastCloseReason.TooManyControllers,
             SiloCastCloseReason.Unauthorized,
             SiloCastCloseReason.LaunchTimeout,
             SiloCastCloseReason.Replaced,
         )) {
-            assertEquals(reason, SiloCastCloseResponse.LetGo(forgetTarget = false), response(reason))
+            // The remote stays up to show the reason the TV sent first.
+            assertEquals(reason, SiloCastCloseResponse.LetGo(forgetTarget = false, closesRemote = false), response(reason))
         }
     }
 

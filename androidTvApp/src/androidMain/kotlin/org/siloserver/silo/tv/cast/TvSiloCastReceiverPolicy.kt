@@ -147,6 +147,24 @@ internal object TvSiloCastReceiverPolicy {
         return StandbyPick(newest.id, eligible.size - 1)
     }
 
+    /**
+     * The controllers closed when the viewer takes control back at the TV:
+     * every non-passive one that has said hello. A passive controller never
+     * puts the standby screen up, so it stays. One that hasn't said hello yet
+     * is judged when it does ([turnedAwayAtHello]), once it has said whether
+     * it is passive.
+     */
+    fun closedByHandBack(controllers: List<ControllerSummary>): List<String> =
+        controllers.filter { it.didReceiveHello && !it.passive }.map { it.id }
+
+    /**
+     * Whether a controller saying hello is closed because the viewer took
+     * control back after its connection was accepted. It was already on its
+     * way when they did, so it gets the answer the connected ones got.
+     */
+    fun turnedAwayAtHello(handBacksAtAccept: Long, handBacks: Long, passive: Boolean): Boolean =
+        handBacksAtAccept != handBacks && !passive
+
     fun makeResumeToken(random: SecureRandom = SecureRandom()): String {
         val bytes = ByteArray(32)
         random.nextBytes(bytes)

@@ -145,6 +145,25 @@ class TvSiloCastReceiverPolicyTest {
     }
 
     @Test
+    fun aHandBackClosesTheNonPassiveControllersThatSaidHello() {
+        val phone = summary(1)
+        val crossServer = summary(2, authorized = false)
+        val integration = summary(3, passive = true)
+        val connecting = summary(4, hello = false)
+        assertEquals(
+            listOf(phone.id, crossServer.id),
+            policy.closedByHandBack(listOf(phone, crossServer, integration, connecting)),
+        )
+    }
+
+    @Test
+    fun aControllerAcceptedBeforeAHandBackIsTurnedAwayAtHelloUnlessPassive() {
+        assertTrue(policy.turnedAwayAtHello(handBacksAtAccept = 2, handBacks = 3, passive = false))
+        assertFalse("a silent auto-resume stays", policy.turnedAwayAtHello(handBacksAtAccept = 2, handBacks = 3, passive = true))
+        assertFalse("accepted after the hand-back", policy.turnedAwayAtHello(handBacksAtAccept = 3, handBacks = 3, passive = false))
+    }
+
+    @Test
     fun resumeTokensAreLongAndUnique() {
         val first = policy.makeResumeToken()
         assertEquals(64, first.length)

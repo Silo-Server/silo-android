@@ -75,6 +75,7 @@ import kotlinx.coroutines.flow.map
 import org.siloserver.silo.android.cast.GoogleCastMiniBar
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.cast.SiloCastSessionManager
+import org.siloserver.silo.android.ui.screens.cast.SiloCastEndedByTvNotice
 import org.siloserver.silo.android.ui.screens.cast.SiloCastLaunchHaptics
 import org.siloserver.silo.android.ui.screens.cast.SiloCastMiniBar
 import org.siloserver.silo.android.ui.screens.cast.SiloCastRemoteScreen
@@ -330,6 +331,16 @@ fun AppNavigation(
         onDispose { siloCastController.stopBrowsing() }
     }
     SiloCastLaunchHaptics(siloCastController)
+    SiloCastEndedByTvNotice(
+        controller = siloCastController,
+        closeRemote = {
+            // Only while the remote is on top: a goodbye during its exit fade
+            // must not pop the screen underneath.
+            if (navController.currentDestination?.route == Route.SiloCastRemote.route) {
+                navController.popBackStack()
+            }
+        },
+    )
 
     // Graceful handling of server-side session invalidation (refresh 401'd).
     // The TokenManager has already wiped the active account's tokens (the
