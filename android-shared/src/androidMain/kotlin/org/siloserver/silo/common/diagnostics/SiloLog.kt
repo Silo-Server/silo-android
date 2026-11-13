@@ -164,6 +164,22 @@ internal class DiagnosticsLogRenderer(
                 "play_method" to AttributeKind.STRING,
                 "reason" to AttributeKind.STRING,
                 "position_ms" to AttributeKind.INTEGER,
+                // Media3 player and load errors. Client-side keys: self-hosted
+                // reports keep them; the hosted collector allowlist drops them.
+                "error_code" to AttributeKind.INTEGER,
+                "error_name" to AttributeKind.STRING,
+                "http_status" to AttributeKind.INTEGER,
+                "error_class" to AttributeKind.STRING,
+                "root_error_class" to AttributeKind.STRING,
+                "renderer" to AttributeKind.STRING,
+                "format_support" to AttributeKind.STRING,
+                "data_type" to AttributeKind.STRING,
+                "track_type" to AttributeKind.STRING,
+                "was_canceled" to AttributeKind.BOOLEAN,
+                "bytes_loaded" to AttributeKind.INTEGER,
+                "resume_offset" to AttributeKind.INTEGER,
+                "attempt" to AttributeKind.INTEGER,
+                "retry_delay_ms" to AttributeKind.INTEGER,
             ),
             DiagnosticsLogCategory.FOCUS to mapOf(
                 "target" to AttributeKind.STRING,
