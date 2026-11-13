@@ -20,6 +20,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -28,6 +29,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
@@ -202,18 +204,18 @@ class SiloCastController(
     )
     val launchFeedback: SharedFlow<SiloCastLaunchFeedback> = _launchFeedback.asSharedFlow()
 
-    private val _endedByTv = MutableSharedFlow<SiloCastText>(
-        extraBufferCapacity = 1,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
+    // A channel, not a shared flow: the latest close waits for the app's one
+    // collector, so one that lands while the activity is being recreated
+    // still closes the remote.
+    private val endedByTvChannel = Channel<SiloCastText>(Channel.CONFLATED)
 
     /**
      * The TV ended a session the user was engaged with, for good (see
      * [SiloCastClosePolicy]): its viewer took control back with the TV's own
      * remote or chose Disconnect Remote. Carries the notice to show; the
-     * remote screen closes on it.
+     * remote screen closes on it. Each close is delivered once.
      */
-    val endedByTv: SharedFlow<SiloCastText> = _endedByTv.asSharedFlow()
+    val endedByTv: Flow<SiloCastText> = endedByTvChannel.receiveAsFlow()
 
     @Volatile
     private var session: SiloCastConnection? = null
@@ -1396,7 +1398,7 @@ class SiloCastController(
                             // A refusal the TV sent just before its goodbye
                             // says more; an older error in the state belongs
                             // to another exchange.
-                            _endedByTv.tryEmit(
+                            endedByTvChannel.trySend(
                                 errorBeforeMessage?.let(SiloCastText::Verbatim)
                                     ?: SiloCastText.Res(CommonR.string.cast_remote_disconnectedFrom, ended.name),
                             )
