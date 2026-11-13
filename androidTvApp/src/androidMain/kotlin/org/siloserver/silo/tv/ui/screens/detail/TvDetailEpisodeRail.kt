@@ -89,7 +89,6 @@ import org.siloserver.silo.tv.ui.theme.tvRailPinOnFocus
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
-import org.siloserver.silo.tv.ui.theme.ProgressFill
 import org.siloserver.silo.tv.ui.theme.InterFamily
 import org.siloserver.silo.tv.ui.theme.CardOutline
 import org.siloserver.silo.tv.ui.theme.cardFocusedScale
@@ -101,6 +100,8 @@ import org.siloserver.silo.common.i18n.localizedResources
 import androidx.compose.ui.platform.LocalConfiguration
 import java.util.Locale
 import org.siloserver.silo.common.i18n.isRightToLeftText
+import org.siloserver.silo.common.ui.components.WatchProgressBar
+import org.siloserver.silo.common.ui.components.WatchProgressBarDefaults
 
 /** Includes the still, the two-line caption, and vertical rail padding from the first frame. */
 @Composable
@@ -556,20 +557,7 @@ private fun TvDetailEpisodeCard(
             }
 
             episode.progressFraction()?.let { fraction ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(5.dp)
-                        .align(Alignment.BottomStart)
-                        .background(Color.Black.copy(alpha = 0.6f)),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(fraction)
-                            .height(5.dp)
-                            .background(ProgressFill),
-                    )
-                }
+                WatchProgressBar(fraction, height = WatchProgressBarDefaults.TvHeight)
             }
         }
 

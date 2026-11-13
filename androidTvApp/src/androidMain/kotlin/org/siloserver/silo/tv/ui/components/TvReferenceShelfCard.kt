@@ -35,9 +35,9 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.tv.ui.theme.ProgressFill
-import org.siloserver.silo.tv.ui.theme.ProgressTrack
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
+import org.siloserver.silo.common.ui.components.WatchProgressBar
+import org.siloserver.silo.common.ui.components.WatchProgressBarDefaults
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -160,22 +160,7 @@ fun TvReferenceShelfCard(
                 }
             }
 
-            if (progress != null && progress > 0f) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .align(Alignment.BottomStart)
-                        .background(ProgressTrack),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(progress.coerceIn(0f, 1f))
-                            .height(3.dp)
-                            .background(ProgressFill),
-                    )
-                }
-            }
+            if (progress != null) WatchProgressBar(progress, height = WatchProgressBarDefaults.TvHeight)
 
             }
         }

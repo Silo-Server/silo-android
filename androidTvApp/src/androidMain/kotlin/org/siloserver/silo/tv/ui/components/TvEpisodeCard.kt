@@ -43,13 +43,13 @@ import org.siloserver.silo.common.overlays.CardOverlayVariant
 import org.siloserver.silo.common.overlays.CardOverlays
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.overlays.OverlayData
-import org.siloserver.silo.tv.ui.theme.ProgressFill
-import org.siloserver.silo.tv.ui.theme.ProgressTrack
 import org.siloserver.silo.tv.ui.theme.RowDimens
 import org.siloserver.silo.tv.ui.theme.cardScaled
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.common.ui.components.WatchProgressBar
+import org.siloserver.silo.common.ui.components.WatchProgressBarDefaults
 
 /**
  * 16:9 thumbnail card for "Continue Watching", "Next Up", and episode list rows.
@@ -148,35 +148,24 @@ fun TvEpisodeCard(
 
                 // Card-overlay badge layer. Over the still + scrim, under the
                 // play affordance + progress bar. Never intercepts focus.
-                // The bottom inset matches the side inset plus the 3dp progress
-                // bar so the lower badges sit in the corner like the upper ones.
+                // The lower badges sit in the corner like the upper ones, and
+                // rise clear of the progress bar when the card draws one.
                 if (overlayState.enabled && overlay != null) {
                     CardOverlays(
                         data = overlay,
                         prefs = overlayState.prefs,
                         variant = CardOverlayVariant.Wide,
                         scale = TvCardOverlayScale,
-                        bottomInset = TvEpisodeCardOverlayBottomInset,
+                        bottomInset = if (progress != null && progress > 0f) {
+                            TvEpisodeCardOverlayProgressBottomInset
+                        } else {
+                            TvEpisodeCardOverlayBottomInset
+                        },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
 
-                if (progress != null && progress > 0f) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(3.dp)
-                            .align(Alignment.BottomStart)
-                            .background(ProgressTrack),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(progress.coerceIn(0f, 1f))
-                                .height(3.dp)
-                                .background(ProgressFill),
-                        )
-                    }
-                }
+                if (progress != null) WatchProgressBar(progress, height = WatchProgressBarDefaults.TvHeight)
             }
         }
 
@@ -238,5 +227,12 @@ fun tvEpisodeCardWidth(): Dp = TvEpisodeCardWidth.cardScaled()
 /** Hoisted so every card shares one instance instead of allocating a shape per composition. */
 private val TvEpisodeCardShape = RoundedCornerShape(8.dp)
 
-/** Unscaled: 8dp side inset + 3dp progress bar, scaled by [TvCardOverlayScale]. */
+/** Unscaled, scaled by [TvCardOverlayScale]: the badges' bottom inset on a card without progress. */
 private val TvEpisodeCardOverlayBottomInset = 12.dp
+
+/**
+ * Unscaled. Scaled by [TvCardOverlayScale] it puts the badges just above
+ * the progress bar.
+ */
+private val TvEpisodeCardOverlayProgressBottomInset =
+    WatchProgressBarDefaults.BadgeClearance / TvCardOverlayScale
