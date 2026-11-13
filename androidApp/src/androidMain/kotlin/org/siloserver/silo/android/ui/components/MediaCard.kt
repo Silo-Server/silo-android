@@ -54,6 +54,7 @@ import org.siloserver.silo.overlays.CardWatchStatus
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.common.ui.components.WatchProgressBar
 
 object MediaGridDefaults {
     // Same minimum as the Library grid's Normal density (CatalogViewDensity),
@@ -246,24 +247,10 @@ fun MediaCard(
 
             // Progress bar at bottom of artwork.
             if (hasProgressBar) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxWidth()
-                        .height(4.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.4f)),
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(progress.coerceIn(0f, 1f))
-                            .height(4.dp)
-                            .background(MaterialTheme.colorScheme.onSurface),
-                    )
-                }
+                WatchProgressBar(
+                    progress,
+                    belowCornerLabel = cornerLabel != null,
+                )
             }
         }
 

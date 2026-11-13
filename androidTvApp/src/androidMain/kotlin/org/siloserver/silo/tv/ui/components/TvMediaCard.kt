@@ -55,14 +55,14 @@ import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.overlays.CardWatchStatus
 import org.siloserver.silo.overlays.OverlayData
-import org.siloserver.silo.tv.ui.theme.ProgressTrack
-import org.siloserver.silo.tv.ui.theme.ProgressFill
 import org.siloserver.silo.tv.ui.theme.RowDimens
 import org.siloserver.silo.tv.ui.theme.cardScaled
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
 import org.siloserver.silo.tv.ui.util.tvArtworkAspectRatioForMediaType
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.common.ui.components.WatchProgressBar
+import org.siloserver.silo.common.ui.components.WatchProgressBarDefaults
 
 /**
  * The core focusable media card used throughout the TV app.
@@ -257,20 +257,11 @@ fun TvMediaCard(
                     }
 
                     if (hasProgressBar) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(3.dp)
-                                .align(Alignment.BottomStart)
-                                .background(ProgressTrack),
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth(progress.coerceIn(0f, 1f))
-                                    .height(3.dp)
-                                    .background(ProgressFill),
-                            )
-                        }
+                        WatchProgressBar(
+                            progress,
+                            height = WatchProgressBarDefaults.TvHeight,
+                            belowCornerLabel = cornerLabel != null,
+                        )
                     }
                 }
             }

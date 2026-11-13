@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -36,7 +35,6 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -61,6 +59,7 @@ import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrol
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.common.ui.components.WatchProgressBar
 
 /** Episode details and controls beside the mounted player's preview pane. */
 @OptIn(ExperimentalLayoutApi::class)
@@ -375,22 +374,7 @@ private fun OnDeckCard(
                 contentDescription = item.title,
                 modifier = Modifier.fillMaxSize(),
             )
-            item.progressFraction?.takeIf { it > 0f }?.let { fraction ->
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .background(Color.White.copy(alpha = 0.25f)),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(fraction)
-                            .fillMaxHeight()
-                            .background(MaterialTheme.colorScheme.primary),
-                    )
-                }
-            }
+            item.progressFraction?.let { WatchProgressBar(it) }
         }
         Text(
             text = item.title,

@@ -32,7 +32,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -71,6 +70,7 @@ import org.siloserver.silo.model.settings.EpisodeSpoilers
 import kotlin.math.abs
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.ui.components.WatchProgressBar
 
 /**
  * PR #212's phone episode carousel: a 240dp card settles in the centre and,
@@ -273,17 +273,7 @@ private fun EpisodeRailCard(
                 }
             }
 
-            progress?.takeIf { it > 0f }?.let {
-                LinearProgressIndicator(
-                    progress = { it },
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(3.dp),
-                    color = Color.White,
-                    trackColor = Color.Black.copy(alpha = 0.60f),
-                )
-            }
+            if (progress != null) WatchProgressBar(progress)
         }
 
         // The iOS card's caption: NOW VIEWING, "S01E02 · Title", air date and

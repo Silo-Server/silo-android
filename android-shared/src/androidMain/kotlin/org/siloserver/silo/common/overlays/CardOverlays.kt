@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
+import org.siloserver.silo.common.ui.components.WatchProgressBarDefaults
 import org.siloserver.silo.overlays.CardOverlayPrefs
 import org.siloserver.silo.overlays.EDGE_GAP
 import org.siloserver.silo.overlays.EDGE_INSET
@@ -89,8 +90,7 @@ enum class CardOverlayVariant {
  * @param bottomInset overrides a wide or hero card's bottom inset (before
  *   [scale]) for cards that draw only a thin progress bar along the bottom.
  * @param hasProgressBar set by hosts that draw a watch-progress bar along
- *   the artwork's bottom edge: the bottom badges rise one edge step clear
- *   of it.
+ *   the artwork's bottom edge: the bottom badges rise clear of it.
  * @param cardWidth the poster artwork box's width, when the host knows it
  *   exactly. Posters then scale from it without measuring first (a
  *   subcomposition per card); left null, the layer measures itself. Pass it
@@ -225,10 +225,13 @@ private fun overlayInsets(
     val edge = (EDGE_INSET * unit).roundToInt()
     val lift = if (hasProgressBar) edge else 0
     if (variant == CardOverlayVariant.Poster) {
+        // The bar keeps its size on small posters, so the badges clear it by
+        // a fixed distance rather than one (scaled) edge step.
+        val barClearance = with(density) { WatchProgressBarDefaults.BadgeClearance.roundToPx() }
         return OverlayInsets(
             side = edge,
             top = edge,
-            bottom = edge + lift,
+            bottom = if (hasProgressBar) maxOf(edge + lift, barClearance) else edge,
             topRight = ((EDGE_INSET + WATCH_STATUS_RESERVE) * unit).roundToInt(),
             edge = edge,
             edgeGap = (EDGE_GAP * unit).roundToInt(),

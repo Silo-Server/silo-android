@@ -27,7 +27,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -52,6 +51,7 @@ import org.siloserver.silo.common.overlays.CardOverlays
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.overlays.OverlayData
+import org.siloserver.silo.common.ui.components.WatchProgressBar
 
 /**
  * Reserved height for the text block under a backdrop card: title (bodySmall)
@@ -180,18 +180,7 @@ fun BackdropCard(
                 )
             }
 
-            // Progress bar at bottom
-            if (progress != null && progress > 0f) {
-                LinearProgressIndicator(
-                    progress = { progress.coerceIn(0f, 1f) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .align(Alignment.BottomCenter),
-                    color = Color.White,
-                    trackColor = Color.Black.copy(alpha = 0.4f),
-                )
-            }
+            if (progress != null) WatchProgressBar(progress)
         }
 
         Spacer(modifier = Modifier.height(6.dp))
