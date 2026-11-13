@@ -163,7 +163,8 @@ class TvSiloCastReceiver(
     private var receiverEpoch: Long = 0
 
     /** Times the viewer took control back at the TV ([disconnectRemoteControl]).
-     *  A connection accepted before the latest one is judged at its hello. */
+     *  A connection whose count was read (in [acceptLoop]) before the latest
+     *  one is judged at its hello. */
     private var handBacks: Long = 0
     @Volatile
     private var activePlayer: ActivePlayer? = null
@@ -501,7 +502,10 @@ class TvSiloCastReceiver(
             // The counters are read right after accept() returns, in the same
             // block: the session coroutine below, or even this one resuming,
             // may run only after a hand-back or server switch the connection
-            // predates.
+            // predates. That read is the boundary, on purpose: a hand-back
+            // that lands between accept() returning and the read treats the
+            // connection as new, like one still in the TCP backlog. accept()
+            // blocks, so the lock can't be held across it.
             val (client, accepted) = try {
                 withContext(Dispatchers.IO) {
                     val accepted = socket.accept()
