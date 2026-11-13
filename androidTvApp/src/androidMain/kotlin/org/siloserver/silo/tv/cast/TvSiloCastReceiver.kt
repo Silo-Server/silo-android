@@ -498,8 +498,15 @@ class TvSiloCastReceiver(
 
     private suspend fun acceptLoop(socket: ServerSocket) {
         while (true) {
-            val client = try {
-                withContext(Dispatchers.IO) { socket.accept() }
+            // The counters are read right after accept() returns, in the same
+            // block: the session coroutine below, or even this one resuming,
+            // may run only after a hand-back or server switch the connection
+            // predates.
+            val (client, accepted) = try {
+                withContext(Dispatchers.IO) {
+                    val accepted = socket.accept()
+                    accepted to synchronized(this@TvSiloCastReceiver) { AcceptedAt(receiverEpoch, handBacks) }
+                }
             } catch (_: Throwable) {
                 Log.i(TAG, "SiloCast listener stopped")
                 return
@@ -508,9 +515,6 @@ class TvSiloCastReceiver(
                 runCatching { client.close() }
                 return
             }
-            // Read here, not in the coroutine below: that may start only after
-            // a hand-back or server switch this connection predates.
-            val accepted = synchronized(this) { AcceptedAt(receiverEpoch, handBacks) }
             // A new connection never evicts a working controller here:
             // admission decides once its TLS handshake is done.
             ownerScope.launch { runControllerSession(client, accepted) }
@@ -777,28 +781,36 @@ class TvSiloCastReceiver(
         session.controllerServerIdentity = hello.serverIdentity?.trim()?.takeIf { it.isNotEmpty() }
         session.clientKind = hello.clientKind
 
-        // The viewer took control back while this phone was still connecting.
-        // Closing it the way Disconnect closes the others keeps it from
-        // reconnecting and bringing the standby screen back.
-        val turnedAway = synchronized(this) {
-            TvSiloCastReceiverPolicy.turnedAwayAtHello(session.handBacksAtAccept, handBacks, session.passive)
-                .also { if (it) removeControllerLocked(session) }
+        // One step under the receiver lock, so a hand-back lands wholly before
+        // or after this hello.
+        var turnedAway = false
+        val replaced = synchronized(this) {
+            // A hand-back or an eviction closed this connection while its
+            // hello was being read. It must not replace the device's newer one.
+            if (controllers[session.id] !== session) return false
+            if (TvSiloCastReceiverPolicy.turnedAwayAtHello(session.handBacksAtAccept, handBacks, session.passive)) {
+                // The viewer took control back while this phone was still
+                // connecting. Closing it the way Disconnect closes the others
+                // keeps it from reconnecting and bringing the standby back.
+                removeControllerLocked(session)
+                turnedAway = true
+                emptyList()
+            } else {
+                // The device's older sockets are ones it has abandoned (a Wi-Fi
+                // change, a return from background). A v2 cross-server
+                // controller is kept to complete its handoff, so this hello
+                // always stays.
+                TvSiloCastReceiverPolicy.connectionsReplaced(
+                    deviceId = hello.deviceId,
+                    connection = session.id,
+                    existing = controllers.values.map { it.id to it.controllerDeviceId },
+                ).mapNotNull { id -> controllers[id]?.also { removeControllerLocked(it) } }
+            }
         }
         if (turnedAway) {
             DiagnosticsCastLogger.event("TV cast controller turned away after a hand-back")
             session.goodbyeAndClose(SiloCastCloseReason.TvDisconnected)
             return false
-        }
-
-        // The device's older sockets are ones it has abandoned (a Wi-Fi change,
-        // a return from background). A v2 cross-server controller is kept to
-        // complete its handoff, so this hello always stays.
-        val replaced = synchronized(this) {
-            TvSiloCastReceiverPolicy.connectionsReplaced(
-                deviceId = hello.deviceId,
-                connection = session.id,
-                existing = controllers.values.map { it.id to it.controllerDeviceId },
-            ).mapNotNull { id -> controllers[id]?.also { removeControllerLocked(it) } }
         }
         replaced.forEach { goodbye(it, SiloCastCloseReason.Replaced) }
 
