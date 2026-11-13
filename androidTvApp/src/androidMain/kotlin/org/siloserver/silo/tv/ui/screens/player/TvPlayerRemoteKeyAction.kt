@@ -36,7 +36,7 @@ internal enum class TvPlayerRemoteKeyAction {
  * Maps one remote key event onto the player's intent vocabulary, or null when
  * the key is not ours (focus navigation and unhandled keys fall through).
  *
- * Media play/pause acts on the first DOWN and consumes UP halves and
+ * Media play/pause (and a keyboard's Space) acts on the first DOWN and consumes UP halves and
  * auto-repeats so the system media-key fallback cannot act on them twice.
  * Left/Right quick-skip only while [dpadHorizontalSeek] allows it — with a
  * focus-owning surface (transport overlay, HUD, Up Next) up, they belong to
@@ -62,10 +62,23 @@ internal fun tvPlayerRemoteKeyAction(
     // overlay up, Down still belongs to it — that is the press that reaches the
     // buttons under the scrubber.
     dpadDownOpensHud: Boolean = false,
-): TvPlayerRemoteKeyAction? = when (keyCode) {
+    metaState: Int = 0,
+): TvPlayerRemoteKeyAction? = if (
+    // Ctrl+Space (and Alt/Meta+Space) are system shortcuts such as switching
+    // keyboard layout, not playback presses. Leave them unmapped, as Space was
+    // before it toggled playback.
+    keyCode == KeyEvent.KEYCODE_SPACE && metaState and SpaceShortcutModifiers != 0
+) {
+    null
+} else when (keyCode) {
     KeyEvent.KEYCODE_MEDIA_PLAY,
     KeyEvent.KEYCODE_MEDIA_PAUSE,
     KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+    // A keyboard's Space bar toggles playback, as in desktop and web players.
+    // Without this, Space from clean playback only reveals the controls, and
+    // with them up a focused Compose button ignores it (only Select/Enter
+    // click), so a keyboard user had to reach for Enter on the Pause button.
+    KeyEvent.KEYCODE_SPACE,
     -> if (action == KeyEvent.ACTION_DOWN && repeatCount == 0) {
         TvPlayerRemoteKeyAction.PlayPause
     } else {
@@ -137,6 +150,9 @@ internal fun tvPlayerRemoteKeyAction(
     else -> null
 }
 
+private const val SpaceShortcutModifiers =
+    KeyEvent.META_CTRL_ON or KeyEvent.META_ALT_ON or KeyEvent.META_META_ON
+
 // The idle overlay is a focus-owning surface: the scrubber handles its own
 // Left/Right skips when focused, and the transport cluster needs Left/Right
 // for moving between buttons — so horizontal seek mapping stays off here.
@@ -144,10 +160,12 @@ internal fun tvPlayerIdleOverlayRemoteKeyAction(
     keyCode: Int,
     action: Int,
     repeatCount: Int,
+    metaState: Int = 0,
 ): TvPlayerRemoteKeyAction? =
     tvPlayerRemoteKeyAction(
         keyCode = keyCode,
         action = action,
         repeatCount = repeatCount,
         dpadHorizontalSeek = false,
+        metaState = metaState,
     )
