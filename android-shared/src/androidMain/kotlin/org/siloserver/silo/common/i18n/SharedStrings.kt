@@ -339,7 +339,7 @@ internal val SharedPlural.resId: Int
         SharedPlural.BoxSetWatchedCard -> R.plurals.boxSets_watchedCard
         SharedPlural.BoxSetWatchedFact -> R.plurals.boxSets_watchedFact
         SharedPlural.PersonYearsOld -> R.plurals.person_yearsOld
-        SharedPlural.PersonTitles -> R.plurals.person_count
-        SharedPlural.PersonTitlesMore -> R.plurals.person_countMore
+        SharedPlural.TitleCount -> R.plurals.library_titleCount
+        SharedPlural.TitleCountMore -> R.plurals.library_titleCountMore
         SharedPlural.PersonTitlesOf -> R.plurals.person_countOf
     }

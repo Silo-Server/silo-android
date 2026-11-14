@@ -86,6 +86,14 @@ class LocaleFormatTest {
         assertEquals("٠٥", LocaleFormat.integer(5, ar, minDigits = 2))
     }
 
+    @Test fun groupedCountsUseTheLocalesSeparator() {
+        assertEquals("999", LocaleFormat.groupedCount(999, Locale.US))
+        assertEquals("1,284", LocaleFormat.groupedCount(1284, Locale.US))
+        assertEquals("1,234,567", LocaleFormat.groupedCount(1_234_567, Locale.US))
+        assertEquals("1.284", LocaleFormat.groupedCount(1284, de))
+        assertEquals("١٬٢٨٤", LocaleFormat.groupedCount(1284, ar))
+    }
+
     @Test fun decimalsDropTrailingZerosAndUseTheLocalesSeparator() {
         assertEquals("1.25", LocaleFormat.decimal(1.25, 2, Locale.US))
         assertEquals("1.5", LocaleFormat.decimal(1.5, 2, Locale.US))

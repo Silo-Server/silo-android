@@ -134,6 +134,15 @@ object LocaleFormat {
         integer(value.toLong(), locale, minDigits)
 
     /**
+     * A count grouped by [locale]'s thousands separator, in its digits:
+     * "1,234" in English, "1.234" in German, "١٬٢٣٤" in Arabic. For counts
+     * that can run large: a collection's size, a person's title count. Years,
+     * codes and episode numbers stay ungrouped ([integer]).
+     */
+    fun groupedCount(value: Int, locale: Locale = numberLocale()): String =
+        NumberFormat.getIntegerInstance(locale).apply { isGroupingUsed = true }.format(value)
+
+    /**
      * A season or episode number inside a code ("S2", "E05", "S2021E01") in
      * ASCII digits in every language: codes are technical (D78). A phrase
      * such as "Season 2" uses [integer].

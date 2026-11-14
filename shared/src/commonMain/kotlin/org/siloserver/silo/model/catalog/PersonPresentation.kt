@@ -101,10 +101,10 @@ fun personAge(birthValue: String?, deathValue: String?, todayIso: String?): Int?
 
 fun personWorksCountLabel(total: Int, loaded: Int, hasMore: Boolean): UiText? = when {
     total > 0 && hasMore ->
-        UiText.Plural(SharedPlural.PersonTitlesOf, total, listOf(UiText.Number(total), UiText.Number(loaded)))
-    total > 0 -> UiText.Plural(SharedPlural.PersonTitles, total)
-    loaded > 0 && hasMore -> UiText.Plural(SharedPlural.PersonTitlesMore, loaded)
-    loaded > 0 -> UiText.Plural(SharedPlural.PersonTitles, loaded)
+        UiText.Plural(SharedPlural.PersonTitlesOf, total, listOf(UiText.GroupedCount(total), UiText.GroupedCount(loaded)))
+    total > 0 -> UiText.Plural(SharedPlural.TitleCount, total, listOf(UiText.GroupedCount(total)))
+    loaded > 0 && hasMore -> UiText.Plural(SharedPlural.TitleCountMore, loaded, listOf(UiText.GroupedCount(loaded)))
+    loaded > 0 -> UiText.Plural(SharedPlural.TitleCount, loaded, listOf(UiText.GroupedCount(loaded)))
     else -> null
 }
 

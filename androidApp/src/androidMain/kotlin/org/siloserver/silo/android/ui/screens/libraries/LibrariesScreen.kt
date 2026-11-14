@@ -1586,7 +1586,7 @@ private fun InlineLibraryCollectionCard(
                 modifier = Modifier.fillMaxSize(),
             )
             if (showItemCount) Text(
-                text = collection.itemCount?.takeIf { it > 0 }?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: stringResource(CommonR.string.collections_type_smart),
+                text = collection.itemCount?.takeIf { it > 0 }?.let { LocaleFormat.groupedCount(it, currentNumberLocale()) } ?: stringResource(CommonR.string.collections_type_smart),
                 fontSize = 12.sp,
                 color = Color.White,
                 modifier = Modifier
@@ -1606,7 +1606,7 @@ private fun InlineLibraryCollectionCard(
         )
         Text(
             text = collection.itemCount?.takeIf { showItemCount }
-                ?.let { pluralStringResource(CommonR.plurals.collections_itemCount, it, it, LocaleFormat.integer(it)) }
+                ?.let { pluralStringResource(CommonR.plurals.collections_itemCount, it, it, LocaleFormat.groupedCount(it)) }
                 ?: stringResource(CommonR.string.collections_collection),
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

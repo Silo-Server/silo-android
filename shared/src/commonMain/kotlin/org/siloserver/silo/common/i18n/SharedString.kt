@@ -366,7 +366,7 @@ enum class SharedPlural(val key: String, val countIndex: Int = 0) {
     BoxSetWatchedCard("boxSets.watchedCard", countIndex = 1),
     BoxSetWatchedFact("boxSets.watchedFact", countIndex = 1),
     PersonYearsOld("person.yearsOld"),
-    PersonTitles("person.count"),
-    PersonTitlesMore("person.countMore"),
+    TitleCount("library.titleCount"),
+    TitleCountMore("library.titleCountMore"),
     PersonTitlesOf("person.countOf"),
 }

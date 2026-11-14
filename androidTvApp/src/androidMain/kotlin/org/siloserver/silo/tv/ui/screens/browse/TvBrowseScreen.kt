@@ -582,8 +582,8 @@ private fun browseSubtitle(state: TvBrowseViewModel.UiState): String {
     val count = state.items.size
     val titles = when {
         count == 0 -> null
-        state.hasMore -> pluralStringResource(CommonR.plurals.library_titleCountMore, count, count, LocaleFormat.integer(count))
-        else -> pluralStringResource(CommonR.plurals.library_titleCount, count, count, LocaleFormat.integer(count))
+        state.hasMore -> pluralStringResource(CommonR.plurals.library_titleCountMore, count, count, LocaleFormat.groupedCount(count))
+        else -> pluralStringResource(CommonR.plurals.library_titleCount, count, count, LocaleFormat.groupedCount(count))
     }
     val parts = listOfNotNull(state.filter.genre, state.filter.contentRating, titles)
     return parts.joinToString(" · ").ifBlank { stringResource(CommonR.string.library_browseAllSubtitle) }
