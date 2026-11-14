@@ -456,8 +456,8 @@ class LibrariesViewModelTest {
     }
 
     @Test
-    fun seriesOnlySortIsRestoredOnTheFirstLibraryLoad() = runTest {
-        val fixture = DeferredLibrariesFixture(deferredKeys = emptySet(), firstLibraryType = "series")
+    fun aRestoredSortTheLibraryWouldNotOfferStaysInUse() = runTest {
+        val fixture = DeferredLibrariesFixture(deferredKeys = emptySet(), firstLibraryType = "movies")
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val browsePrefs = BrowsePrefsStore(
             context = ApplicationProvider.getApplicationContext(),
@@ -474,8 +474,9 @@ class LibrariesViewModelTest {
             viewModel.selectBrowseSort(CatalogSortField.LatestEpisodeAdded)
             fixture.awaitRequest("catalog:1:latest_episode_added:desc")
 
-            // The library list is not in the state yet when the restored
-            // selection is reset, so the series-only sort must survive that.
+            // A movie library's list doesn't offer Latest Episode Added, but a
+            // saved sort stays in use (and listed) rather than snapping back
+            // to Date Added, as on TV, Apple and Roku.
             val restored = fixture.viewModel(browsePrefs = browsePrefs)
             val restoredStore = ViewModelStore().also { it.put("libraries-restored", restored) }
             try {

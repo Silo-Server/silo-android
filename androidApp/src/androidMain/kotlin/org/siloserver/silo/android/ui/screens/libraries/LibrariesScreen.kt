@@ -186,14 +186,13 @@ internal const val DefaultLibraryBrowseOrder = "desc"
 /**
  * The sort and order a persisted [CatalogFilterState] restores. The sort
  * rides that state (same as BrowseViewModel), so restoring saved browse prefs
- * also restores the menu label. A field this library's sort list does not
- * offer, or a state saved with no usable order, falls back to the default.
+ * also restores the menu label. A sort this library's list would not offer
+ * stays in use, and the menu keeps listing it, as on TV, Apple and Roku. Only
+ * a field this client doesn't know falls back to the default; a state saved
+ * with no usable order takes the field's own default direction.
  */
-internal fun restoredLibraryBrowseSort(
-    state: CatalogFilterState,
-    relevance: CatalogSortRelevance,
-): Pair<CatalogSortField, String> {
-    val field = CatalogSortField.fromWire(state.sort)?.takeIf { it.appliesTo(relevance) }
+internal fun restoredLibraryBrowseSort(state: CatalogFilterState): Pair<CatalogSortField, String> {
+    val field = CatalogSortField.fromWire(state.sort)
         ?: return DefaultLibraryBrowseSort to DefaultLibraryBrowseOrder
     val order = state.order.takeIf { it == "asc" || it == "desc" } ?: field.defaultOrder
     return field to order
@@ -406,7 +405,7 @@ class LibrariesViewModel(
                     ?.let(::defaultMediaScope)
                     ?.let { default -> if (selectedLibraryId == previousLibraryId) previousScope ?: default else default }
                 val selectionChanged = selectedLibraryId != previousLibraryId || mediaScope != previousScope
-                if (selectionChanged) resetForLibrary(selectedLibraryId, mediaScope, libraries)
+                if (selectionChanged) resetForLibrary(selectedLibraryId, mediaScope)
                 _uiState.update {
                     it.copy(
                         isLoadingLibraries = false,
@@ -516,12 +515,7 @@ class LibrariesViewModel(
      * unfiltered grid; defaults to a clean filter — and therefore Date
      * Added, newest first — when nothing is saved.
      */
-    private fun resetForLibrary(
-        libraryId: Int?,
-        mediaScope: String?,
-        // The list being installed, when it is not in the state yet (first load).
-        libraries: List<UserLibrary> = _uiState.value.libraries,
-    ) {
+    private fun resetForLibrary(libraryId: Int?, mediaScope: String?) {
         recommendedJob?.cancel()
         recommendedLoadedLibraryId = null
         browseLoadedLibraryId = null
@@ -534,11 +528,7 @@ class LibrariesViewModel(
         letterJumpController.reset(null)
         val savedFilterState = libraryId?.let { browsePrefs?.savedState(it, mediaScope) } ?: CatalogFilterState()
         _uiState.update {
-            val relevance = CatalogSortRelevance.forLibrary(
-                libraries.firstOrNull { library -> library.id == libraryId }?.type,
-                mediaScope,
-            )
-            val (restoredSort, restoredOrder) = restoredLibraryBrowseSort(savedFilterState, relevance)
+            val (restoredSort, restoredOrder) = restoredLibraryBrowseSort(savedFilterState)
             val restoredFilterState = savedFilterState.copy(sort = restoredSort.wireValue, order = restoredOrder)
             it.copy(
                 selectedLibraryId = libraryId,
