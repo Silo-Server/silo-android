@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -186,7 +187,18 @@ class InviteClaimViewModel(
         if (current.invitation == null) {
             _uiState.update { it.copy(pendingCleartextOrigin = null) }
             viewModelScope.launch {
-                cleartextConsentStore.approve(origin)
+                try {
+                    cleartextConsentStore.approve(origin)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // Consent wasn't saved, so the lookup would be refused
+                    // again: offer the retry, which asks again.
+                    if (generation == lookupGeneration.value) {
+                        _uiState.update { it.copy(isLoadingInvitation = false, lookupFailed = true) }
+                    }
+                    return@launch
+                }
                 if (generation != lookupGeneration.value) return@launch
                 lookup(generation, origin, claimToken)
             }
