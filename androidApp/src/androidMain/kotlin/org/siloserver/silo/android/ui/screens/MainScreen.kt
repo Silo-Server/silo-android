@@ -304,15 +304,16 @@ fun MainScreen(
     }
 
     LaunchedEffect(activeEntry?.id, activeEntry?.accountId, activeEntry?.profileId, headerState.activeProfile?.id) {
+        // First, in its own coroutine: sort lists need it, and it should not
+        // wait on the suspending refreshes below.
+        ratingSourcesStore.reset()
+        launch { ratingSourcesStore.refresh() }
         requestsFeatureStore.reset()
         requestsFeatureStore.refresh()
         metadataAiFeatureStore.reset()
         metadataAiFeatureStore.refresh()
         shuffleFeatureStore.reset()
         shuffleFeatureStore.refresh()
-        ratingSourcesStore.reset()
-        // Its own coroutine: sort lists need it, and it should not wait on the calls above.
-        launch { ratingSourcesStore.refresh() }
     }
 
     fun signOutFromProfileMenu(removeServer: Boolean) {
