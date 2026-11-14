@@ -75,8 +75,9 @@ private const val COUNT_PADDING_EM = 0.4f
  * A poster's top-right corner (web `CardWatchStatus`): a check on a watched
  * title, or the episodes a started series or season has left. Fills the
  * artwork box it is placed in, measures its width, and draws [EDGE_INSET]
- * from the top and the physical right edge in every language, sized against
- * the 185-unit reference width like the badges. Draws nothing for
+ * from the top and the physical right edge in every language, at the same
+ * [OverlayScale] as the badges (the poster's width against the 185-unit
+ * reference, times the text factor). Draws nothing for
  * [CardWatchStatus.None]. It is not a setting: poster hosts draw it whether
  * or not badges are on, and wide cards never do.
  */
@@ -84,20 +85,20 @@ private const val COUNT_PADDING_EM = 0.4f
 fun CardWatchStatusBadge(status: CardWatchStatus, modifier: Modifier = Modifier) {
     when (status) {
         CardWatchStatus.None -> Unit
-        CardWatchStatus.Watched -> WatchedCheck(modifier)
-        is CardWatchStatus.EpisodesLeft -> EpisodesLeftCount(status.count, modifier)
+        CardWatchStatus.Watched -> WatchedCheck(overlayTextFactor(), modifier)
+        is CardWatchStatus.EpisodesLeft -> EpisodesLeftCount(status.count, overlayTextFactor(), modifier)
     }
 }
 
 @Composable
-private fun WatchedCheck(modifier: Modifier) {
+private fun WatchedCheck(textFactor: Float, modifier: Modifier) {
     val description = stringResource(CommonR.string.shell_card_watched)
     Spacer(
         modifier = modifier
             .fillMaxSize()
             .semantics { contentDescription = description }
             .drawWithCache {
-                val unit = size.width / POSTER_REFERENCE_WIDTH.toFloat()
+                val unit = size.width / POSTER_REFERENCE_WIDTH.toFloat() * textFactor
                 val diameter = (WATCH_STATUS_SIZE * unit).toFloat()
                 val inset = (EDGE_INSET * unit).toFloat()
                 val topLeft = Offset(size.width - inset - diameter, inset)
@@ -131,7 +132,7 @@ private fun WatchedCheck(modifier: Modifier) {
 }
 
 @Composable
-private fun EpisodesLeftCount(count: Int, modifier: Modifier) {
+private fun EpisodesLeftCount(count: Int, textFactor: Float, modifier: Modifier) {
     // No string says "N episodes left" yet, so the count carries no
     // description of its own.
     val text = LocaleFormat.integer(count, currentNumberLocale())
@@ -149,10 +150,10 @@ private fun EpisodesLeftCount(count: Int, modifier: Modifier) {
         modifier = modifier
             .fillMaxSize()
             .drawWithCache {
-                val unit = size.width / POSTER_REFERENCE_WIDTH.toFloat()
+                val unit = size.width / POSTER_REFERENCE_WIDTH.toFloat() * textFactor
                 val height = (WATCH_STATUS_SIZE * unit).toFloat()
                 val inset = (EDGE_INSET * unit).toFloat()
-                // Web sizes this text from the card alone, without the text ratio.
+                // `unit` carries the text factor, so the font size is exact pixels.
                 val fontPx = (WATCH_STATUS_FONT_SIZE * unit).toFloat()
                 val fontSize = (fontPx / density / fontScale).sp
                 val layout = measurer.measure(text, baseStyle.copy(fontSize = fontSize, lineHeight = fontSize))
