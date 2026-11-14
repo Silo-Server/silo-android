@@ -34,6 +34,7 @@ actual fun UiText.english(): String = when (this) {
                 roundingMode = RoundingMode.HALF_UP
             }.format(value)
         }
+    is UiText.GroupedCount -> String.format(Locale.US, "%,d", value)
     is UiText.CalendarDate -> LocalDate.of(year, month, day).format(DateTimeFormatter.ofPattern("MMM d, y", Locale.US))
     is UiText.LanguageName -> {
         val name = Locale.forLanguageTag(tag.replace('_', '-')).getDisplayName(Locale.US)

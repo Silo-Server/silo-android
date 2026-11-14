@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.people
 
 import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.LocaleFormat
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -801,10 +802,10 @@ private fun cleanPersonBio(raw: String?): String? {
 // otherwise the loaded count with a "+" while more pages remain.
 @Composable
 private fun tvPersonFilmographyCountLabel(total: Int, loaded: Int, hasMore: Boolean): String? = when {
-    total > 0 -> pluralStringResource(CommonR.plurals.person_count, total, total)
+    total > 0 -> pluralStringResource(CommonR.plurals.library_titleCount, total, total, LocaleFormat.groupedCount(total))
     loaded <= 0 -> null
-    hasMore -> pluralStringResource(CommonR.plurals.person_countMore, loaded, loaded)
-    else -> pluralStringResource(CommonR.plurals.person_count, loaded, loaded)
+    hasMore -> pluralStringResource(CommonR.plurals.library_titleCountMore, loaded, loaded, LocaleFormat.groupedCount(loaded))
+    else -> pluralStringResource(CommonR.plurals.library_titleCount, loaded, loaded, LocaleFormat.groupedCount(loaded))
 }
 
 private fun personWorkCardAspectRatio(item: BrowseItem): Float? =

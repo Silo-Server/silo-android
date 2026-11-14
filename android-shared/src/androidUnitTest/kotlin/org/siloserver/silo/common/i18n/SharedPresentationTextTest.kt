@@ -161,8 +161,10 @@ class SharedPresentationTextTest {
         assertEquals("12 titles", personWorksCountLabel(total = 12, loaded = 12, hasMore = false).en())
         assertEquals("1 title", personWorksCountLabel(total = 1, loaded = 1, hasMore = false).en())
         assertEquals("60 of 120 titles", personWorksCountLabel(total = 120, loaded = 60, hasMore = true).en())
-        assertEquals("1060 of 1200 titles", personWorksCountLabel(total = 1_200, loaded = 1_060, hasMore = true).en())
+        assertEquals("1,060 of 1,200 titles", personWorksCountLabel(total = 1_200, loaded = 1_060, hasMore = true).en())
+        assertEquals("1,284 titles", personWorksCountLabel(total = 1_284, loaded = 60, hasMore = false).en())
         assertEquals("60+ titles", personWorksCountLabel(total = 0, loaded = 60, hasMore = true).en())
+        assertEquals("1,060+ titles", personWorksCountLabel(total = 0, loaded = 1_060, hasMore = true).en())
         assertEquals("3 titles", personWorksCountLabel(total = 0, loaded = 3, hasMore = false).en())
     }
 

@@ -62,12 +62,18 @@ class PersonPresentationTest {
 
     @Test
     fun worksCountLabelDistinguishesLoadedTotalAndMore() {
-        assertEquals(UiText.Plural(SharedPlural.PersonTitles, 12), personWorksCountLabel(total = 12, loaded = 12, hasMore = false))
         assertEquals(
-            UiText.Plural(SharedPlural.PersonTitlesOf, 120, listOf(UiText.Number(120), UiText.Number(60))),
-            personWorksCountLabel(total = 120, loaded = 60, hasMore = true),
+            UiText.Plural(SharedPlural.TitleCount, 12, listOf(UiText.GroupedCount(12))),
+            personWorksCountLabel(total = 12, loaded = 12, hasMore = false),
         )
-        assertEquals(UiText.Plural(SharedPlural.PersonTitlesMore, 60), personWorksCountLabel(total = 0, loaded = 60, hasMore = true))
+        assertEquals(
+            UiText.Plural(SharedPlural.PersonTitlesOf, 1284, listOf(UiText.GroupedCount(1284), UiText.GroupedCount(60))),
+            personWorksCountLabel(total = 1284, loaded = 60, hasMore = true),
+        )
+        assertEquals(
+            UiText.Plural(SharedPlural.TitleCountMore, 60, listOf(UiText.GroupedCount(60))),
+            personWorksCountLabel(total = 0, loaded = 60, hasMore = true),
+        )
         assertEquals(null, personWorksCountLabel(total = 0, loaded = 0, hasMore = false))
     }
 

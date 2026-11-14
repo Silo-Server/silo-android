@@ -24,12 +24,13 @@ fun stringResourceWithNames(@StringRes id: Int, vararg names: String): String =
 
 /**
  * [pluralStringResource] for a count message whose placeholders are
- * `{count}`, `{count_text}` (the count as digits), then titles or names,
- * which are isolated as in [stringResourceWithNames].
+ * `{count}`, `{count_text}` (the count with the thousands separator,
+ * [LocaleFormat.groupedCount]), then titles or names, which are isolated as
+ * in [stringResourceWithNames].
  */
 @Composable
 fun pluralStringResourceWithNames(@PluralsRes id: Int, count: Int, vararg names: String): String =
-    pluralStringResource(id, count, count, LocaleFormat.integer(count), *isolated(names))
+    pluralStringResource(id, count, count, LocaleFormat.groupedCount(count), *isolated(names))
 
 @Composable
 private fun isolated(names: Array<out String>): Array<String> =

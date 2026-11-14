@@ -58,6 +58,14 @@ sealed interface UiText {
     }
 
     /**
+     * A count with the thousands separator, formatted as
+     * `LocaleFormat.groupedCount` does (the number locale, D55), for a
+     * `{count_text}` slot whose count can run large: "1,284 titles",
+     * "1.284 Titel".
+     */
+    data class GroupedCount(val value: Int) : UiText
+
+    /**
      * A calendar date with the month as a word, formatted as the app's other
      * dates are (D26, D58, D64): "Jan 5, 1980" in US English. [month] is 1–12.
      */
