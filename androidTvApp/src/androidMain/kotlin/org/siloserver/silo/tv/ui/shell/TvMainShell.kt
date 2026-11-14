@@ -248,6 +248,7 @@ fun TvMainShell(
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val metadataAiFeatureStore: org.siloserver.silo.model.feature.MetadataAiFeatureStore = koinInject()
     val shuffleFeatureStore: org.siloserver.silo.model.feature.ShuffleFeatureStore = koinInject()
+    val ratingSourcesStore: org.siloserver.silo.model.feature.RatingSourcesStore = koinInject()
     val serverRegistry: ServerRegistry = koinInject()
     val reachabilityState by reachabilityMonitor.state.collectAsState()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
@@ -402,6 +403,10 @@ fun TvMainShell(
     }
 
     LaunchedEffect(activeServerEntry?.id, activeServerEntry?.accountId, activeServerEntry?.profileId) {
+        // First, in its own coroutine: sort lists need it, and it should not
+        // wait on the suspending refreshes below.
+        ratingSourcesStore.reset()
+        launch { ratingSourcesStore.refresh() }
         requestsFeatureStore.reset()
         requestsFeatureStore.refresh()
         metadataAiFeatureStore.reset()

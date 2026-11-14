@@ -31,7 +31,7 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.putJsonObject
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesSubtab
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesViewModel
-import org.siloserver.silo.android.ui.screens.libraries.LibraryBrowseSort
+import org.siloserver.silo.catalog.sort.CatalogSortField
 import org.siloserver.silo.catalog.filter.CatalogFilterState
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.api.CatalogApi
@@ -158,14 +158,14 @@ class CatalogLetterIndexViewModelTest {
         awaitState("first page") { viewModel.uiState.value.catalogItems.isNotEmpty() }
         assertNull(viewModel.letterJump.value)
 
-        viewModel.selectBrowseSort(LibraryBrowseSort.Title)
+        viewModel.selectBrowseSort(CatalogSortField.Title)
         awaitState("letter index") { viewModel.letterJump.value != null }
         assertEquals("1", server.lettersRequests.single()["library_id"])
         assertEquals("asc", server.lettersRequests.single()["order"])
         assertEquals("100", server.catalogRequests.last { it["seek"] == null }["limit"])
         assertEquals(210, jumpPosition { viewModel.letterJumpPosition("M") })
 
-        viewModel.selectBrowseSort(LibraryBrowseSort.RecentlyAdded)
+        viewModel.selectBrowseSort(CatalogSortField.DateAdded)
         assertNull(viewModel.letterJump.value)
     }
 

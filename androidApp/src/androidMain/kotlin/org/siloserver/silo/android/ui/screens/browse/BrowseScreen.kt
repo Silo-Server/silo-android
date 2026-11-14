@@ -54,6 +54,10 @@ import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.util.formatCardDate
+import org.siloserver.silo.catalog.sort.CatalogSortField
+import org.siloserver.silo.catalog.sort.CatalogSortRelevance
+import org.siloserver.silo.catalog.sort.CatalogSortScope
+import org.siloserver.silo.common.catalog.labelRes
 import org.siloserver.silo.common.R as CommonR
 
 /**
@@ -77,6 +81,7 @@ fun BrowseScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val letterJump by viewModel.letterJump.collectAsState()
+    val shownRatingSources = org.siloserver.silo.android.ui.components.rememberShownRatingSources()
     var showFilterSheet by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -111,9 +116,14 @@ fun BrowseScreen(
                         expanded = sortMenuOpen,
                         onDismissRequest = { sortMenuOpen = false },
                     ) {
-                        browseSortOptions(state.mediaType).forEach { (field, labelRes) ->
-                            val active = state.filterState.sort == field
-                            val label = stringResource(labelRes)
+                        val sortRelevance = browseSortRelevance(state.mediaType)
+                        browseSortOptions(
+                            mediaType = state.mediaType,
+                            shownRatingSources = shownRatingSources,
+                            current = state.filterState.sort,
+                        ).forEach { field ->
+                            val label = stringResource(field.labelRes(sortRelevance))
+                            val active = state.filterState.sort == field.wireValue
                             val arrow = if (state.filterState.order == "desc") "↓" else "↑"
                             val shown = if (active) "$label  $arrow" else label
                             SiloDropdownMenuItem(
@@ -124,7 +134,7 @@ fun BrowseScreen(
                                     )
                                 },
                                 onClick = {
-                                    viewModel.selectSort(field)
+                                    viewModel.selectSort(field.wireValue, field.defaultOrder)
                                     sortMenuOpen = false
                                 },
                             )
@@ -270,6 +280,7 @@ fun BrowseScreen(
                         cardSubtitle = when (state.filterState.sort) {
                             "added_at" -> { item -> formatCardDate(item.addedAt, dateLocale) }
                             "release_date" -> { item -> formatCardDate(item.releaseDate, dateLocale) }
+                            "last_air_date" -> { item -> formatCardDate(item.lastAirDate, dateLocale) }
                             else -> null
                         },
                         letterJump = letterJump,
@@ -301,27 +312,29 @@ fun BrowseScreen(
     }
 }
 
-/** Sort keys per media type (iOS CatalogSortKey.available): wire field to label. */
+/**
+ * The sort list's media. Video Browse spans libraries, so it lists every
+ * field, as the web client's cross-library catalog does.
+ */
+internal fun browseSortRelevance(
+    mediaType: org.siloserver.silo.catalog.filter.BrowseFacetMediaType,
+): CatalogSortRelevance = when (mediaType) {
+    org.siloserver.silo.catalog.filter.BrowseFacetMediaType.Video -> CatalogSortRelevance.Any
+    org.siloserver.silo.catalog.filter.BrowseFacetMediaType.Audiobook ->
+        CatalogSortRelevance.Only(CatalogSortScope.Audiobook)
+}
+
+/** Sort fields per media type, in the web client's order. [current] stays listed while it is the active sort. */
 internal fun browseSortOptions(
     mediaType: org.siloserver.silo.catalog.filter.BrowseFacetMediaType,
-): List<Pair<String, Int>> = when (mediaType) {
-    org.siloserver.silo.catalog.filter.BrowseFacetMediaType.Video -> listOf(
-        "title" to CommonR.string.catalog_sort_title,
-        "added_at" to CommonR.string.catalog_sort_added,
-        "year" to CommonR.string.catalog_sort_releaseYear,
-        "rating_imdb" to CommonR.string.catalog_sort_imdbRating,
-        "runtime" to CommonR.string.catalog_sort_runtime,
-        "resolution" to CommonR.string.catalog_sort_resolution,
-    )
-    org.siloserver.silo.catalog.filter.BrowseFacetMediaType.Audiobook -> listOf(
-        "title" to CommonR.string.catalog_sort_title,
-        "author" to CommonR.string.catalog_sort_author,
-        "narrator" to CommonR.string.catalog_sort_narrator,
-        "series" to CommonR.string.catalog_sort_series,
-        "added_at" to CommonR.string.catalog_sort_added,
-        "runtime" to CommonR.string.catalog_sort_runtime,
-    )
-}
+    shownRatingSources: Set<String>,
+    current: String? = null,
+): List<CatalogSortField> = CatalogSortField.options(
+    relevance = browseSortRelevance(mediaType),
+    includePersonalized = true,
+    shownRatingSources = shownRatingSources,
+    keep = CatalogSortField.fromWire(current),
+)
 
 /** Chip label for a facet value (decades and watch statuses have labels
  *  distinct from their wire values). */

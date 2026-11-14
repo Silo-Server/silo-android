@@ -132,6 +132,7 @@ val repositoryModule = module {
     single { ActiveProfileStore(get()) }
     single { org.siloserver.silo.repository.MetadataAiRepository(get()) }
     single { org.siloserver.silo.model.feature.MetadataAiFeatureStore(get()) }
+    single { org.siloserver.silo.model.feature.RatingSourcesStore(get()) }
     single { org.siloserver.silo.model.feature.ShuffleFeatureStore(get()) }
     single { org.siloserver.silo.repository.HomeRealtimeCoordinator(get(), get(), getOrNull()) }
     single { SettingsRepository(get()) }
