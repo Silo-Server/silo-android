@@ -64,4 +64,36 @@ class CatalogGridLoadMoreTest {
         composeRule.waitForIdle()
         assertEquals(1, nextPagesRequested)
     }
+
+    /**
+     * The library also counts its reload as loading. A reload that returns
+     * the same page leaves the list key unchanged, so the end of loading
+     * alone has to make a grid at its end ask again.
+     */
+    @Test
+    fun aGridAtItsEndAsksAgainWhenLoadingEndsWithTheSamePage() {
+        val items = page("same")
+        var loading by mutableStateOf(true)
+        var nextPagesRequested = 0
+        composeRule.setContent {
+            val gridState = rememberLazyGridState()
+            LazyVerticalGrid(columns = GridCells.Fixed(3), state = gridState) {
+                items(items, key = { it.contentId }) { Box(Modifier.size(10.dp)) }
+            }
+            LoadMoreNearEnd(
+                gridState = gridState,
+                items = items,
+                hasMore = true,
+                isLoadingMore = loading,
+                enabled = true,
+                onLoadMore = { nextPagesRequested++ },
+            )
+        }
+        composeRule.waitForIdle()
+        assertEquals(0, nextPagesRequested)
+
+        loading = false
+        composeRule.waitForIdle()
+        assertEquals(1, nextPagesRequested)
+    }
 }
