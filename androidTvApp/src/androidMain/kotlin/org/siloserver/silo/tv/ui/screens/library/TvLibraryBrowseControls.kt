@@ -52,6 +52,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -361,47 +362,51 @@ fun TvBrowseSortPanel(
                 modifier = Modifier.padding(start = 10.dp, top = 4.dp, bottom = 6.dp),
             )
             options.forEach { option ->
-                val isCurrent = option.wireValue == currentSort
-                BrowsePanelRow(
-                    onClick = { onSelect(option) },
-                    focusRequester = currentFocusRequester.takeIf {
-                        isCurrent || (options.none { o -> o.wireValue == currentSort } && option == options.first())
-                    },
-                ) { foreground ->
-                    Icon(
-                        imageVector = Icons.Filled.Check,
-                        contentDescription = null,
-                        tint = if (isCurrent) foreground else Color.Transparent,
-                        modifier = Modifier.size(15.dp),
-                    )
-                    // The name gives up width first, so the active row's
-                    // direction and arrow always fit.
-                    Text(
-                        text = option.label,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
-                        color = foreground,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    // Source-order entries have no asc/desc to show or flip.
-                    if (isCurrent && option.hasDirection) {
-                        Text(
-                            text = option.directionLabel(order),
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                            color = if (foreground == Color.Black) {
-                                Color.Black.copy(alpha = 0.55f)
-                            } else {
-                                BrowseSecondaryText
-                            },
-                            maxLines = 1,
-                        )
+                // Keyed: the RT sorts can arrive while the panel is open, and a
+                // positional row would keep focus while becoming another sort.
+                key(option.wireValue) {
+                    val isCurrent = option.wireValue == currentSort
+                    BrowsePanelRow(
+                        onClick = { onSelect(option) },
+                        focusRequester = currentFocusRequester.takeIf {
+                            isCurrent || (options.none { o -> o.wireValue == currentSort } && option == options.first())
+                        },
+                    ) { foreground ->
                         Icon(
-                            imageVector = if (order == "asc") Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward,
+                            imageVector = Icons.Filled.Check,
                             contentDescription = null,
-                            tint = foreground,
-                            modifier = Modifier.size(13.dp),
+                            tint = if (isCurrent) foreground else Color.Transparent,
+                            modifier = Modifier.size(15.dp),
                         )
+                        // The name gives up width first, so the active row's
+                        // direction and arrow always fit.
+                        Text(
+                            text = option.label,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
+                            color = foreground,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        // Source-order entries have no asc/desc to show or flip.
+                        if (isCurrent && option.hasDirection) {
+                            Text(
+                                text = option.directionLabel(order),
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),
+                                color = if (foreground == Color.Black) {
+                                    Color.Black.copy(alpha = 0.55f)
+                                } else {
+                                    BrowseSecondaryText
+                                },
+                                maxLines = 1,
+                            )
+                            Icon(
+                                imageVector = if (order == "asc") Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward,
+                                contentDescription = null,
+                                tint = foreground,
+                                modifier = Modifier.size(13.dp),
+                            )
+                        }
                     }
                 }
             }
