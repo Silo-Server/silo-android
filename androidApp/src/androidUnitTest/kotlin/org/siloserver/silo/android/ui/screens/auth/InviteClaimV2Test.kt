@@ -115,6 +115,39 @@ class InviteClaimV2Test {
         } finally { Dispatchers.resetMain() }
     }
 
+    @Test fun refusalsThatSpendNothingShowTheReasonAndAllowAnotherClaim() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            for ((status, code) in listOf(
+                HttpStatusCode.TooManyRequests to "rate_limited",
+                HttpStatusCode.Forbidden to "local_login_disabled",
+                HttpStatusCode.Conflict to "conflict",
+                HttpStatusCode.UnprocessableEntity to "validation_failed",
+                HttpStatusCode.NotImplemented to "capability_unsupported",
+            )) {
+                var posts = 0
+                val client = client { request ->
+                    if (request.method == HttpMethod.Post) {
+                        posts++
+                        """{"type":"https://siloserver.org/problems/$code","title":"Refused","status":${status.value},"detail":"Refused: $code"}""" to status
+                    } else (if (request.url.encodedPath.endsWith("capabilities")) capability else lookup) to HttpStatusCode.OK
+                }
+                val vm = InviteClaimViewModel(AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), TokenManagerImpl()), consent)
+                try {
+                    ready(vm); vm.onClaimClick()
+                    val refused = vm.uiState.first { it.error != null }
+                    assertFalse(refused.acceptanceUncertain, code)
+                    assertFalse(refused.invitationInvalid, code)
+                    assertEquals(org.siloserver.silo.common.i18n.UiText.Raw("Refused: $code"), refused.error, code)
+                    vm.onClaimClick()
+                    assertTrue(vm.uiState.value.isSubmitting, code)
+                    vm.uiState.first { !it.isSubmitting }
+                    assertEquals(2, posts, code)
+                } finally { vm.viewModelScope.cancel(); client.close() }
+            }
+        } finally { Dispatchers.resetMain() }
+    }
+
     @Test fun successfulClaimInstallsNestedSessionAndRoutesOnlyAfterCommit() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val tokens = TokenManagerImpl().apply { setServerUrl("https://existing.example.test") }
