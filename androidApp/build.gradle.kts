@@ -1,4 +1,6 @@
 import java.util.Properties
+import com.android.build.api.variant.HasHostTestsBuilder
+import com.android.build.api.variant.HostTestBuilder
 
 plugins {
     alias(libs.plugins.android.application)
@@ -185,6 +187,8 @@ kotlin {
             // runtime + ApplicationProvider aren't transitive — add them here.
             implementation(libs.androidx.room.runtime)
             implementation(libs.androidx.test.core)
+            // CatalogGridLoadMoreTest composes the grid under Robolectric.
+            implementation(libs.compose.ui.test.junit4)
         }
     }
 }
@@ -348,8 +352,23 @@ android {
     }
 }
 
+// The Compose UI tests need the test ComponentActivity in the merged manifest,
+// and that dependency is debug-only so it never reaches the release APK. Those
+// tests cannot run against the release variant, and unit tests are not
+// minified, so release runs no different code: run unit tests on debug only,
+// as androidTvApp does.
+androidComponents {
+    beforeVariants(selector().withBuildType("release")) { variant ->
+        (variant as HasHostTestsBuilder)
+            .hostTests[HostTestBuilder.UNIT_TEST_TYPE]
+            ?.enable = false
+    }
+}
+
 dependencies {
     coreLibraryDesugaring(libs.desugar.jdk.libs)
+    // Registers the host activity createComposeRule() launches in unit tests.
+    debugImplementation(libs.compose.ui.test.manifest)
     // The generated Baseline Profile artifact (see :baselineprofile).
     baselineProfile(project(":baselineprofile"))
 }

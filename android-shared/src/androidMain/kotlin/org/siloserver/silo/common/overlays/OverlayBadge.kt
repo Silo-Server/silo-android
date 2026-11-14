@@ -133,7 +133,8 @@ internal enum class OverlayRail { Left, Right }
 
 /**
  * One card's badge lengths in pixels: the preset's reference lengths times
- * [unit], the pixels per reference unit (`cardWidth / 185` on posters).
+ * [unit], the pixels per reference unit at the card's [OverlayScale]
+ * (`cardWidth / 185` times the text factor on posters).
  */
 @Immutable
 internal class OverlayMetrics(
@@ -143,23 +144,20 @@ internal class OverlayMetrics(
 ) {
     fun px(reference: Double): Float = (reference * unit).toFloat()
 
-    /** The badge font size at the reference scale, before the system font scale. */
-    val fontPx: Float = px(preset.fontSize)
-
-    /**
-     * The badge font size. It follows the system font scale, as web's badge
-     * font follows the browser and in-app text size (`--ui-root-text-ratio`
-     * in `CardOverlays.tsx`); padding, icons and wordmarks do not, on either.
-     */
-    val fontSize: TextUnit = (fontPx / density.density).sp
-
-    /** The rendered font size, the badge's `em`. */
-    val emPx: Float = fontPx * density.fontScale
-
     private val pixelsPerSp: Float = density.density * density.fontScale
 
-    /** Font size for text that does not follow the font scale (web lengths without the text ratio). */
+    /**
+     * A font size that renders at exactly [pixels]. Badge text is sized from
+     * [unit], which already carries the text factor, so it must not scale
+     * with the font scale again.
+     */
     fun fixedSize(pixels: Float): TextUnit = (pixels / pixelsPerSp).sp
+
+    /** The badge font size in pixels, the badge's `em`. */
+    val fontPx: Float = px(preset.fontSize)
+
+    /** The badge font size. */
+    val fontSize: TextUnit = fixedSize(fontPx)
 
     val paddingInline: Float = px(preset.paddingInline)
     val paddingBlock: Float = px(preset.paddingBlock)
@@ -509,7 +507,7 @@ private class BadgeFrame(
 /** A rating's source mark as an accent-coloured chip ahead of the score (plate preset). */
 @Composable
 private fun SourceChip(mark: String, color: OverlayColor, metrics: OverlayMetrics, shadow: Shadow?) {
-    val em = metrics.emPx
+    val em = metrics.fontPx
     val density = LocalDensity.current
     val shape = remember(em) { RoundedCornerShape(em * 0.2f) }
     val style = remember(metrics, color, shadow) {

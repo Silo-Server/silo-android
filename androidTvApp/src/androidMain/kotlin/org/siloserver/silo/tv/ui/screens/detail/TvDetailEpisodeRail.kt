@@ -72,6 +72,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.i18n.currentFormatLocale
+import org.siloserver.silo.common.overlays.wideCardOverlayScale
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -533,6 +534,8 @@ private fun TvDetailEpisodeCard(
             )
 
             if (episode.userData?.played == true) {
+                // At the wide cards' overlay scale, like their badges.
+                val checkScale = wideCardOverlayScale()
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -540,8 +543,8 @@ private fun TvDetailEpisodeCard(
                 )
                 Box(
                     modifier = Modifier
-                        .padding(6.dp)
-                        .size(20.dp)
+                        .padding(6.dp * checkScale)
+                        .size(20.dp * checkScale)
                         .clip(CircleShape)
                         .background(Color.White)
                         .align(Alignment.TopEnd),
@@ -551,7 +554,7 @@ private fun TvDetailEpisodeCard(
                         imageVector = Icons.Default.Check,
                         contentDescription = null,
                         tint = Color.Black,
-                        modifier = Modifier.size(9.dp),
+                        modifier = Modifier.size(9.dp * checkScale),
                     )
                 }
             }

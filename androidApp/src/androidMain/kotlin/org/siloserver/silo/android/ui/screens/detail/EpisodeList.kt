@@ -60,6 +60,7 @@ import org.siloserver.silo.android.ui.util.playbackResumePosition
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.i18n.currentFormatLocale
+import org.siloserver.silo.common.overlays.wideCardOverlayScale
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -227,6 +228,8 @@ private fun EpisodeRailCard(
             )
 
             if (episode.userData?.played == true) {
+                // At the wide cards' overlay scale, like their badges.
+                val checkScale = wideCardOverlayScale()
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -235,8 +238,8 @@ private fun EpisodeRailCard(
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(8.dp)
-                        .size(22.dp)
+                        .padding(8.dp * checkScale)
+                        .size(22.dp * checkScale)
                         .clip(CircleShape)
                         .background(Color.White),
                     contentAlignment = Alignment.Center,
@@ -245,7 +248,7 @@ private fun EpisodeRailCard(
                         imageVector = Icons.Filled.Check,
                         contentDescription = stringResource(CommonR.string.detail_watched),
                         tint = Color.Black,
-                        modifier = Modifier.size(12.dp),
+                        modifier = Modifier.size(12.dp * checkScale),
                     )
                 }
             }
