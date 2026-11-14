@@ -238,7 +238,7 @@ class InviteClaimViewModel(
             }
             is ApiResult.Error -> {
                 val invalid = result.code == 404
-                val uncertain = result.code !in setOf(400, 404)
+                val uncertain = !result.isUnspentRefusal()
                 _uiState.update {
                     it.copy(isSubmitting = false, invitationInvalid = invalid,
                         acceptanceUncertain = uncertain,
@@ -262,5 +262,16 @@ class InviteClaimViewModel(
     private companion object {
         /** Statuses that mean the token itself is gone, used, or malformed. */
         private val TERMINAL_LOOKUP_CODES = setOf(404)
+
+        /**
+         * Accept answers the server gives before it commits anything (silo-server
+         * docs/invitations-api.md): the user can fix the cause or try again. Any
+         * other error, such as a 5xx or one the app raises after the server
+         * answered, may follow a created account and stays uncertain.
+         */
+        private val UNSPENT_REFUSAL_CODES = setOf(400, 403, 404, 409, 422, 429)
+
+        private fun ApiResult.Error.isUnspentRefusal() =
+            code in UNSPENT_REFUSAL_CODES || (code == 501 && error == "capability_unsupported")
     }
 }
