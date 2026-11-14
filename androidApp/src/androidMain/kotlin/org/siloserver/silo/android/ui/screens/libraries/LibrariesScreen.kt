@@ -1458,7 +1458,11 @@ private fun BrowseTabContent(
                 val dateLocale = currentFormatLocale()
                 CatalogGrid(
                     items = state.catalogItems,
-                    isLoadingMore = state.isLoadingMoreCatalog,
+                    // A re-sort keeps the old page up while it reloads, and
+                    // loadMoreCatalog turns a next page away until then. Count
+                    // that reload as loading so the grid asks again once it
+                    // ends, even if the new page equals the old one.
+                    isLoadingMore = state.isLoadingMoreCatalog || state.isLoadingCatalog,
                     hasMore = state.catalogHasMore,
                     onItemClick = onItemClick,
                     onLoadMore = onLoadMore,
