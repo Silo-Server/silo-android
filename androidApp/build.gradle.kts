@@ -1,4 +1,6 @@
 import java.util.Properties
+import com.android.build.api.variant.HasHostTestsBuilder
+import com.android.build.api.variant.HostTestBuilder
 
 plugins {
     alias(libs.plugins.android.application)
@@ -347,6 +349,19 @@ android {
         // one falls back to English at runtime by design.
         disable += "MissingTranslation"
         checkReleaseBuilds = true
+    }
+}
+
+// The Compose UI tests need the test ComponentActivity in the merged manifest,
+// and that dependency is debug-only so it never reaches the release APK. Those
+// tests cannot run against the release variant, and unit tests are not
+// minified, so release runs no different code: run unit tests on debug only,
+// as androidTvApp does.
+androidComponents {
+    beforeVariants(selector().withBuildType("release")) { variant ->
+        (variant as HasHostTestsBuilder)
+            .hostTests[HostTestBuilder.UNIT_TEST_TYPE]
+            ?.enable = false
     }
 }
 
