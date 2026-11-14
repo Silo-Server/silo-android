@@ -283,28 +283,35 @@ class AuthRepository(
         serverUrl: String,
         token: String,
     ): ApiResult<InvitationLookupResponse> {
-        when (val capability = authApi.invitationCapabilities(serverUrl)) {
+        val tokenInBody = when (val capability = authApi.invitationCapabilities(serverUrl)) {
             is ApiResult.Error -> return capability
             is ApiResult.NetworkError -> return capability
-            is ApiResult.Success -> if (capability.data.state != "available" ||
-                (!capability.data.defaultProfile && !capability.data.profileless)) {
-                return ApiResult.Error(409, "capability_unavailable", "Invitation acceptance is unavailable on this server.")
+            is ApiResult.Success -> {
+                if (capability.data.state != "available" ||
+                    (!capability.data.defaultProfile && !capability.data.profileless)) {
+                    return ApiResult.Error(409, "capability_unavailable", "Invitation acceptance is unavailable on this server.")
+                }
+                capability.data.tokenInBody
             }
         }
-        return authApi.lookupInvitation(serverUrl, token)
+        return authApi.lookupInvitation(serverUrl, token, tokenInBody).map { it.copy(tokenInBody = tokenInBody) }
     }
 
-    /** A committed invitation may require ordinary sign-in without adopting its server. */
+    /**
+     * A committed invitation may require ordinary sign-in without adopting its
+     * server. Pass the [InvitationLookupResponse.tokenInBody] of the lookup.
+     */
     suspend fun acceptInvitation(
         serverUrl: String,
         token: String,
         password: String,
+        tokenInBody: Boolean,
         installationAllowed: () -> Boolean = { true },
     ): ApiResult<InvitationClaimResult> {
         val captured = tokenManager.captureAccountSessionExpectation() ?: return staleSession()
         val expected = captured.copy(installationAllowed = installationAllowed)
         if (!installationAllowed()) return staleSession()
-        val result = authApi.acceptInvitation(serverUrl, token, password)
+        val result = authApi.acceptInvitation(serverUrl, token, password, tokenInBody)
         if (result is ApiResult.Error) return result
         if (result is ApiResult.NetworkError) return result
         val accepted = (result as ApiResult.Success).data

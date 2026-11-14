@@ -260,7 +260,14 @@ signed in, and to try again.
 The phone claim flow uses public v2 invitation capabilities, lookup and acceptance.
 It checks global support and the token's `acceptance_available` separately. Only a
 lookup 404 marks the token invalid; server failures remain retryable lookup errors.
-All requests pin the invitation origin and omit existing credentials. Acceptance
+All requests pin the invitation origin and omit existing credentials. When the
+capability reports `token_in_body`, lookup and acceptance send the claim token in
+the JSON body (`POST /invitations/lookup` and `POST /invitations/accept`) so it
+never appears in a request URL; older servers that omit the field get the
+deprecated path forms. The lookup's form is carried to acceptance. On a cleartext
+HTTP origin the body-form lookup is a credential-bearing POST, so the auth plugin
+refuses it until the user approves the origin; the screen then asks and repeats
+the lookup. Acceptance
 is a single-attempt POST requiring 201 and the typed accepted outcome with string
 account IDs. Invalid or inconsistent token wrappers are failures, not sessions.
 

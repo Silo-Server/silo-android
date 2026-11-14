@@ -16,6 +16,8 @@ import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.network.*
 import org.siloserver.silo.network.api.AuthApi
 import org.siloserver.silo.repository.AuthRepository
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.*
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -132,6 +134,100 @@ class InviteClaimV2Test {
             assertEquals("https://invite.example.test", tokens.getServerUrl())
             assertNull(vm.uiState.value.signInRequiredUsername)
         } finally { vm.viewModelScope.cancel(); client.close(); Dispatchers.resetMain() }
+    }
+
+    @Test fun cleartextInviteAsksBeforeLookupAndKeepsTheTokenOutOfEveryUrl() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val approved = mutableSetOf<String>()
+        val store = object : CleartextConsentStore {
+            override suspend fun isApproved(origin: String) = origin in approved
+            override suspend fun approve(origin: String) { approved += origin }
+        }
+        val tokens = TokenManagerImpl()
+        val urls = mutableListOf<String>()
+        val bodies = mutableListOf<String>()
+        val client = HttpClient(MockEngine { request ->
+            urls += request.url.toString()
+            (request.body as? io.ktor.http.content.TextContent)?.let { bodies += it.text }
+            val (body, status) = when (request.url.encodedPath) {
+                "/api/v2/invitations/capabilities" -> capability.replace("}", ",\"token_in_body\":true}") to HttpStatusCode.OK
+                "/api/v2/invitations/lookup" -> lookup to HttpStatusCode.OK
+                "/api/v2/invitations/accept" -> signedIn to HttpStatusCode.Created
+                else -> "" to HttpStatusCode.MethodNotAllowed
+            }
+            respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
+        }) {
+            install(ContentNegotiation) { json(SiloJson) }
+            install(SiloAuthPlugin) { tokenManager = tokens; cleartextOriginConsent = store }
+        }
+        val vm = InviteClaimViewModel(AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), tokens), store)
+        try {
+            vm.load("http://invite.example.test", "secret-token")
+            vm.uiState.first { it.pendingCleartextOrigin != null || !it.isLoadingInvitation }
+            assertTrue(urls.none { "secret-token" in it }, "token sent in a URL: $urls")
+            assertEquals("http://invite.example.test", vm.uiState.value.pendingCleartextOrigin)
+            assertNull(vm.uiState.value.invitation)
+
+            vm.onConfirmCleartext()
+            vm.uiState.first { !it.isLoadingInvitation }
+            assertNotNull(vm.uiState.value.invitation)
+            vm.onPasswordChanged("password"); vm.onConfirmPasswordChanged("password")
+            vm.onClaimClick()
+            vm.uiState.first { it.claimSuccess }
+
+            assertTrue(urls.none { "secret-token" in it }, "token sent in a URL: $urls")
+            assertEquals(
+                // The first lookup POST is refused before it leaves the device;
+                // after consent the lookup runs again from the capability read.
+                listOf("/api/v2/invitations/capabilities", "/api/v2/invitations/capabilities",
+                    "/api/v2/invitations/lookup", "/api/v2/invitations/accept"),
+                urls.map { io.ktor.http.Url(it).encodedPath },
+            )
+            assertEquals(listOf("secret-token", "secret-token"), bodies.map {
+                SiloJson.parseToJsonElement(it).jsonObject.getValue("token").jsonPrimitive.content
+            })
+        } finally { vm.viewModelScope.cancel(); client.close(); Dispatchers.resetMain() }
+    }
+
+    @Test fun cleartextConsentIsAskedBeforeLookupOnlyWhenTheLookupNeedsIt() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val store = object : CleartextConsentStore {
+            override suspend fun isApproved(origin: String) = false
+            override suspend fun approve(origin: String) = Unit
+        }
+        try {
+            for (tokenInBody in listOf(false, true)) {
+                var lookups = 0
+                val tokens = TokenManagerImpl()
+                val client = HttpClient(MockEngine { request ->
+                    val body = if (request.url.encodedPath.endsWith("capabilities")) {
+                        if (tokenInBody) capability.replace("}", ",\"token_in_body\":true}") else capability
+                    } else { lookups++; lookup }
+                    respond(body, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+                }) {
+                    install(ContentNegotiation) { json(SiloJson) }
+                    install(SiloAuthPlugin) { tokenManager = tokens; cleartextOriginConsent = store }
+                }
+                val vm = InviteClaimViewModel(AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), tokens), store)
+                try {
+                    vm.load("http://invite.example.test", "token")
+                    vm.uiState.first { it.pendingCleartextOrigin != null || !it.isLoadingInvitation }
+                    if (!tokenInBody) {
+                        // An older server's GET lookup needs no consent; it is asked at claim.
+                        assertNotNull(vm.uiState.value.invitation)
+                        assertNull(vm.uiState.value.pendingCleartextOrigin)
+                        assertEquals(1, lookups)
+                    } else {
+                        assertEquals("http://invite.example.test", vm.uiState.value.pendingCleartextOrigin)
+                        vm.onCancelCleartext()
+                        assertTrue(vm.uiState.value.lookupFailed)
+                        vm.onRetryLookup()
+                        vm.uiState.first { it.pendingCleartextOrigin != null }
+                        assertEquals(0, lookups)
+                    }
+                } finally { vm.viewModelScope.cancel(); client.close() }
+            }
+        } finally { Dispatchers.resetMain() }
     }
 
     private suspend fun ready(vm: InviteClaimViewModel) {
