@@ -6,6 +6,8 @@ import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.siloserver.silo.model.auth.*
 import org.siloserver.silo.network.ApiErrorBody
 import org.siloserver.silo.network.ApiResult
@@ -99,16 +101,27 @@ class AuthApi(
 
     /**
      * Resolves an emailed-invitation claim token against the given server.
-     * Unauthenticated: this runs before any account exists.
+     * Unauthenticated: this runs before any account exists. With [tokenInBody]
+     * the token goes in the request body, so proxies in front of the server
+     * never log it; otherwise this uses the older path form.
      */
     suspend fun lookupInvitation(
         serverUrl: String,
         token: String,
+        tokenInBody: Boolean,
     ): ApiResult<InvitationLookupResponse> = safeApiV2Call(ApiV2Gate.Unrestricted) {
-        // The token arrives from an emailed link and is not ours to trust as
-        // path-safe: a '/' or '?' in it would otherwise re-shape the request.
-        client.get("${serverUrl.trimEnd('/')}/api/v2/invitations/${token.encodeURLPathPart()}") {
-            skipSiloAuth()
+        if (tokenInBody) {
+            client.post("${serverUrl.trimEnd('/')}/api/v2/invitations/lookup") {
+                skipSiloAuth()
+                contentType(ContentType.Application.Json)
+                setBody(buildJsonObject { put("token", token) })
+            }
+        } else {
+            // The token arrives from an emailed link and is not ours to trust as
+            // path-safe: a '/' or '?' in it would otherwise re-shape the request.
+            client.get("${serverUrl.trimEnd('/')}/api/v2/invitations/${token.encodeURLPathPart()}") {
+                skipSiloAuth()
+            }
         }.requireAuthStatus(200)
     }
 
@@ -118,12 +131,20 @@ class AuthApi(
                 .requireAuthStatus(200)
         }
 
-    suspend fun acceptInvitation(serverUrl: String, token: String, password: String): ApiResult<InvitationAcceptance> =
+    /** [tokenInBody] picks the request form, as for [lookupInvitation]. */
+    suspend fun acceptInvitation(
+        serverUrl: String,
+        token: String,
+        password: String,
+        tokenInBody: Boolean,
+    ): ApiResult<InvitationAcceptance> =
         safeApiV2Call<InvitationAcceptanceV2>(ApiV2Gate.Unrestricted) {
-            client.post("${serverUrl.trimEnd('/')}/api/v2/invitations/${token.encodeURLPathPart()}/accept") {
+            val base = "${serverUrl.trimEnd('/')}/api/v2/invitations"
+            val url = if (tokenInBody) "$base/accept" else "$base/${token.encodeURLPathPart()}/accept"
+            client.post(url) {
                 skipSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json)
-                setBody(AcceptInvitationRequest(password = password))
+                setBody(AcceptInvitationRequest(password = password, token = token.takeIf { tokenInBody }))
             }.requireAuthStatus(201)
         }.map { it.domain() }
 

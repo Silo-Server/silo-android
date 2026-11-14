@@ -56,6 +56,7 @@ class AuthRepositoryAccountReplacementTest {
             serverUrl = "https://invited.example",
             token = "invite-token",
             password = "password",
+            tokenInBody = false,
         )
 
         assertEquals("new-user", assertIs<org.siloserver.silo.network.ApiResult.Success<*>>(result).data.let {
