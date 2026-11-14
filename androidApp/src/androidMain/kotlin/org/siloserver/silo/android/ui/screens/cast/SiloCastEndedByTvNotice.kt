@@ -8,6 +8,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import org.siloserver.silo.android.cast.SiloCastController
 
 /**
@@ -21,11 +22,13 @@ fun SiloCastEndedByTvNotice(controller: SiloCastController, closeRemote: () -> U
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val latestCloseRemote by rememberUpdatedState(closeRemote)
     LaunchedEffect(controller, context, lifecycle) {
-        controller.endedByTv.collect { notice ->
-            latestCloseRemote()
-            // Only while Silo is on screen: the TV also ends sessions nobody
-            // is watching, and the toast must not land over another app.
-            if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+        // Only while Silo is on screen: a close that lands while the app is in
+        // the background waits in the controller's channel, so the user comes
+        // back to the notice rather than to a remote that vanished unexplained,
+        // and the toast never lands over another app.
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            controller.endedByTv.collect { notice ->
+                latestCloseRemote()
                 Toast.makeText(context, notice.resolve(context.resources), Toast.LENGTH_SHORT).show()
             }
         }

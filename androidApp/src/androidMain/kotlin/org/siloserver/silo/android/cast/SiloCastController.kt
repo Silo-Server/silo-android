@@ -253,7 +253,7 @@ class SiloCastController(
     @Volatile
     private var remoteScreenVisible = false
 
-    /** The last message from the TV, if it was an error. Read loop only. */
+    /** The last message from the TV, if it was an error. Read loop and session open only. */
     private var lastMessageError: String? = null
 
     @Volatile
@@ -942,6 +942,8 @@ class SiloCastController(
             negotiatedVersion = CompletableDeferred()
             missedHeartbeats = 0
             tvFeatures = emptySet()
+            // The previous session's last error is not this one's.
+            lastMessageError = null
             sessionPassive = passive
             // Before the read loop starts: the TV's hello can arrive at once,
             // and must not read an unset flag as engagement.
@@ -1397,9 +1399,13 @@ class SiloCastController(
                         if (ended != null) {
                             // A refusal the TV sent just before its goodbye
                             // says more; an older error in the state belongs
-                            // to another exchange.
+                            // to another exchange. A hand-back (tv_disconnected)
+                            // sends no error first, so one right before it was
+                            // the reply to an earlier control.
+                            val refusal = errorBeforeMessage
+                                ?.takeIf { message.reason != SiloCastCloseReason.TvDisconnected }
                             endedByTvChannel.trySend(
-                                errorBeforeMessage?.let(SiloCastText::Verbatim)
+                                refusal?.let(SiloCastText::Verbatim)
                                     ?: SiloCastText.Res(CommonR.string.cast_remote_disconnectedFrom, ended.name),
                             )
                         }
