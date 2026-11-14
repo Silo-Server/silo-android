@@ -137,6 +137,8 @@ import org.siloserver.silo.catalog.filter.CatalogFilterQueryBuilder
 import org.siloserver.silo.catalog.filter.CatalogFilterState
 import org.siloserver.silo.catalog.sort.CatalogSortField
 import org.siloserver.silo.catalog.sort.CatalogSortRelevance
+import org.siloserver.silo.common.catalog.directionLabelRes
+import org.siloserver.silo.common.catalog.labelRes
 import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.diagnostics.DiagnosticsListLogger
@@ -777,12 +779,12 @@ class LibrariesViewModel(
             browseSort = requestState.browseSort,
             filterState = requestState.filterState,
         )
-        val titleOrdered = requestState.browseSort.sortField == CatalogLetterJump.TITLE_SORT
+        val titleOrdered = requestState.browseSort.wireValue == CatalogLetterJump.TITLE_SORT
         // The letter index is read beside the first page, so the rail is
         // ready when the grid is.
         if (reset) {
             letterJumpController.reset(
-                CatalogLetterQuery.of(libraryId, requestState.mediaScope, requestState.browseSort.sortOrder, requestState.filterState)
+                CatalogLetterQuery.of(libraryId, requestState.mediaScope, requestState.browseOrder, requestState.filterState)
                     .takeIf { titleOrdered },
             )
         }
