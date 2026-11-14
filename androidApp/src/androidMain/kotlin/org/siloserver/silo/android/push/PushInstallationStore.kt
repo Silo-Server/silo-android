@@ -12,6 +12,8 @@ import org.siloserver.silo.model.notifications.PushDeviceRegisterRequest
 import org.siloserver.silo.model.notifications.PushDeviceRegisterResponse
 import org.siloserver.silo.network.SiloJson
 
+private const val BINDING_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000L
+
 @Serializable
 internal data class PushInstallation(
     val serverUrl: String,
@@ -35,7 +37,42 @@ internal data class PushInstallation(
      * Any newer generation supersedes it.
      */
     val retirement: PushRetirement? = null,
-) { override fun toString() = "PushInstallation(<redacted>)" }
+    /**
+     * This record's generation was allocated for a server that advertises recording
+     * the caller's login session, which it does only when it applies a new generation,
+     * never on a replay. False on a record an older app version wrote or one allocated
+     * for a server that does not advertise it: its registration may have no login
+     * session there, so it gets one newer generation once the server advertises it.
+     */
+    val loginSessionBound: Boolean = false,
+    /** When a saved server that is not active was last asked about binding. */
+    val bindingCheckedAtMs: Long = 0,
+) {
+    /**
+     * A settled registration still without [loginSessionBound]. Never one the server
+     * refused, one being removed, or one whose login is on its way out.
+     */
+    val needsLoginSessionBinding: Boolean
+        get() = !loginSessionBound && acknowledged && refusal == null && !ownerLeaving && intent.registration != null
+
+    /** At most daily, whatever the last answer was; a clock set back only asks sooner. */
+    fun bindingCheckDue(nowMs: Long): Boolean =
+        needsLoginSessionBinding && bindingCheckedAtMs !in (nowMs - BINDING_CHECK_INTERVAL_MS + 1)..nowMs
+
+    /**
+     * A rebinding not yet confirmed, the only pending intent that keeps a [receipt]:
+     * the server confirmed the same registration before it, so it changes nothing the
+     * server delivers whether or not it landed.
+     */
+    val rebindingUnconfirmed: Boolean
+        get() = !acknowledged && receipt != null && intent.registration != null
+
+    /** The server delivers to this registration: it confirmed it, or the same one before a rebinding. */
+    val deliversPushes: Boolean
+        get() = refusal == null && intent.registration != null && (acknowledged || rebindingUnconfirmed)
+
+    override fun toString() = "PushInstallation(<redacted>)"
+}
 
 /** A queued retirement of [generation], first queued at [queuedAtMs] (epoch milliseconds). */
 @Serializable
