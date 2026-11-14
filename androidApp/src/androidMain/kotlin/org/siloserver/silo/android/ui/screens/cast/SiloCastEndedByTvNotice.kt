@@ -28,7 +28,11 @@ fun SiloCastEndedByTvNotice(controller: SiloCastController, closeRemote: () -> U
         // and the toast never lands over another app.
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             controller.endedByTv.collect { notice ->
-                latestCloseRemote()
+                // A TV the user picked since then keeps its remote open.
+                val current = controller.state.value
+                if (current.connectedTarget == null && !current.isConnecting && !current.isReconnecting) {
+                    latestCloseRemote()
+                }
                 Toast.makeText(context, notice.resolve(context.resources), Toast.LENGTH_SHORT).show()
             }
         }
