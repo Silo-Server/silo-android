@@ -92,6 +92,11 @@ class LocaleFormatTest {
         assertEquals("1,234,567", LocaleFormat.groupedCount(1_234_567, Locale.US))
         assertEquals("1.284", LocaleFormat.groupedCount(1284, de))
         assertEquals("١٬٢٨٤", LocaleFormat.groupedCount(1284, ar))
+        // Spanish groups from five digits, as Apple's automatic grouping does; Mexican Spanish from four.
+        val es = Locale.forLanguageTag("es-ES")
+        assertEquals("1284", LocaleFormat.groupedCount(1284, es))
+        assertEquals("12.840", LocaleFormat.groupedCount(12_840, es))
+        assertEquals("1,284", LocaleFormat.groupedCount(1284, Locale.forLanguageTag("es-MX")))
     }
 
     @Test fun decimalsDropTrailingZerosAndUseTheLocalesSeparator() {

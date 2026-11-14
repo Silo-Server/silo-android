@@ -3,6 +3,7 @@ package org.siloserver.silo.common.i18n
 import android.app.LocaleManager
 import android.content.Context
 import android.content.res.Resources
+import android.icu.number.NumberFormatter
 import android.icu.util.ULocale
 import android.os.Build
 import android.os.LocaleList
@@ -138,9 +139,20 @@ object LocaleFormat {
      * "1,234" in English, "1.234" in German, "١٬٢٣٤" in Arabic. For counts
      * that can run large: a collection's size, a person's title count. Years,
      * codes and episode numbers stay ungrouped ([integer]).
+     *
+     * On Android 11+ it follows the locale's minimum grouping, as Apple does:
+     * Spanish writes "1284" and groups from "12.840". Older versions group
+     * every count over 999.
      */
     fun groupedCount(value: Int, locale: Locale = numberLocale()): String =
-        NumberFormat.getIntegerInstance(locale).apply { isGroupingUsed = true }.format(value)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            NumberFormatter.withLocale(locale)
+                .grouping(NumberFormatter.GroupingStrategy.AUTO)
+                .format(value)
+                .toString()
+        } else {
+            NumberFormat.getIntegerInstance(locale).format(value)
+        }
 
     /**
      * A season or episode number inside a code ("S2", "E05", "S2021E01") in
