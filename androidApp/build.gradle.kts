@@ -185,6 +185,8 @@ kotlin {
             // runtime + ApplicationProvider aren't transitive — add them here.
             implementation(libs.androidx.room.runtime)
             implementation(libs.androidx.test.core)
+            // CatalogGridLoadMoreTest composes the grid under Robolectric.
+            implementation(libs.compose.ui.test.junit4)
         }
     }
 }
@@ -350,6 +352,8 @@ android {
 
 dependencies {
     coreLibraryDesugaring(libs.desugar.jdk.libs)
+    // Registers the host activity createComposeRule() launches in unit tests.
+    debugImplementation(libs.compose.ui.test.manifest)
     // The generated Baseline Profile artifact (see :baselineprofile).
     baselineProfile(project(":baselineprofile"))
 }

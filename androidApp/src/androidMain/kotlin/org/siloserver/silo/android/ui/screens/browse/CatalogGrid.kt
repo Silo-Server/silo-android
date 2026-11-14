@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -105,24 +106,15 @@ fun CatalogGrid(
         )
     }
 
-    // Trigger load more when scrolled near bottom. Keyed on the flags: a
-    // keyless remember would freeze their first-composition values inside the
-    // derived lambda (they are plain params, not snapshot state).
-    val shouldLoadMore by remember(hasMore, isLoadingMore) {
-        derivedStateOf {
-            val lastVisibleItem = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            val totalItems = gridState.layoutInfo.totalItemsCount
-            hasMore && !isLoadingMore && lastVisibleItem >= totalItems - 6
-        }
-    }
-
-    // Keyed on the pager too: when the letter index goes away, cursor paging
-    // must resume even if the grid was already near its end.
-    LaunchedEffect(shouldLoadMore, letterJump == null) {
-        if (shouldLoadMore && letterJump == null) {
-            onLoadMore()
-        }
-    }
+    LoadMoreNearEnd(
+        gridState = gridState,
+        items = items,
+        hasMore = hasMore,
+        isLoadingMore = isLoadingMore,
+        // The letter pager reads by position instead of paging by cursor.
+        enabled = letterJump == null,
+        onLoadMore = onLoadMore,
+    )
 
     val headerCount = if (header != null) 1 else 0
     val pager = letterJump?.pager
@@ -291,4 +283,40 @@ private fun CatalogGridCard(
         sharedContentId = item.contentId,
         reserveTextLines = reserveTextLines,
     )
+}
+
+/**
+ * Calls [onLoadMore] once the grid is within six cells of its end and more
+ * is there to load.
+ */
+@Composable
+internal fun LoadMoreNearEnd(
+    gridState: LazyGridState,
+    items: List<BrowseItem>,
+    hasMore: Boolean,
+    isLoadingMore: Boolean,
+    enabled: Boolean,
+    onLoadMore: () -> Unit,
+) {
+    // Keyed on the flags: a keyless remember would freeze their
+    // first-composition values inside the derived lambda (they are plain
+    // params, not snapshot state).
+    val shouldLoadMore by remember(hasMore, isLoadingMore) {
+        derivedStateOf {
+            val lastVisibleItem = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val totalItems = gridState.layoutInfo.totalItemsCount
+            hasMore && !isLoadingMore && lastVisibleItem >= totalItems - 6
+        }
+    }
+
+    // Keyed on [enabled] too: when the letter index goes away, cursor paging
+    // must resume even if the grid was already near its end. Keyed on the
+    // items as well: a caller can swap the list without touching the flags (a
+    // re-sort keeps the old page up while it reloads and turns away a next
+    // page until then), and a grid still at its end must ask again.
+    LaunchedEffect(shouldLoadMore, enabled, items) {
+        if (shouldLoadMore && enabled) {
+            onLoadMore()
+        }
+    }
 }
