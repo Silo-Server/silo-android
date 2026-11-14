@@ -86,6 +86,19 @@ class LocaleFormatTest {
         assertEquals("٠٥", LocaleFormat.integer(5, ar, minDigits = 2))
     }
 
+    @Test fun groupedCountsUseTheLocalesSeparator() {
+        assertEquals("999", LocaleFormat.groupedCount(999, Locale.US))
+        assertEquals("1,284", LocaleFormat.groupedCount(1284, Locale.US))
+        assertEquals("1,234,567", LocaleFormat.groupedCount(1_234_567, Locale.US))
+        assertEquals("1.284", LocaleFormat.groupedCount(1284, de))
+        assertEquals("١٬٢٨٤", LocaleFormat.groupedCount(1284, ar))
+        // Spanish groups from five digits, as Apple's automatic grouping does; Mexican Spanish from four.
+        val es = Locale.forLanguageTag("es-ES")
+        assertEquals("1284", LocaleFormat.groupedCount(1284, es))
+        assertEquals("12.840", LocaleFormat.groupedCount(12_840, es))
+        assertEquals("1,284", LocaleFormat.groupedCount(1284, Locale.forLanguageTag("es-MX")))
+    }
+
     @Test fun decimalsDropTrailingZerosAndUseTheLocalesSeparator() {
         assertEquals("1.25", LocaleFormat.decimal(1.25, 2, Locale.US))
         assertEquals("1.5", LocaleFormat.decimal(1.5, 2, Locale.US))

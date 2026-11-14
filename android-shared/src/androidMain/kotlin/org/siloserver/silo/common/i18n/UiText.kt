@@ -48,6 +48,7 @@ private fun UiText.resolve(resources: Resources, rtl: Boolean): String = when (t
         } else {
             LocaleFormat.decimal(value, maxFractionDigits)
         }
+    is UiText.GroupedCount -> LocaleFormat.groupedCount(value)
     is UiText.CalendarDate -> LocalDate.of(year, month, day)
         .format(LocaleFormat.dateFormatter("yMMMd", "MMM d, y", padYear = false))
     is UiText.LanguageName -> languageName(tag, uppercaseIfUnnamed, LocaleFormat.interfaceLocale())
