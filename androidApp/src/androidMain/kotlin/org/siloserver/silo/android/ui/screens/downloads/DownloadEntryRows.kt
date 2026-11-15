@@ -512,10 +512,15 @@ private fun ExpandableAggregateRow(
     }
 }
 
-/** An aggregate row's title: "Season N", the series, else the entry's own. */
+/** An aggregate row's title: "Specials" or "Season N", the series, else the entry's own. */
 @Composable
 private fun downloadEntryTitle(entry: DownloadEntry): String = when (entry) {
-    is DownloadEntry.Season -> stringResource(CommonR.string.downloads_entry_season, LocaleFormat.integer(entry.seasonNumber))
+    // Season zero is Specials, which the detail page labels the same way.
+    is DownloadEntry.Season -> if (entry.seasonNumber == 0) {
+        stringResource(CommonR.string.detail_specials)
+    } else {
+        stringResource(CommonR.string.downloads_entry_season, LocaleFormat.integer(entry.seasonNumber))
+    }
     // Empty when no download named the series.
     is DownloadEntry.Series -> storedDownloadTitle(entry.title.ifEmpty { DownloadEnqueuer.UNKNOWN_SERIES_TITLE }, DownloadMediaType.TvShow)
     else -> entry.title

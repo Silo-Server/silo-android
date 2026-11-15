@@ -21,15 +21,15 @@ class SeasonDisplayOrderTest {
     )
 
     @Test
-    fun `specials sort after regular seasons`() {
+    fun `specials sort before regular seasons`() {
         val result = listOf(season(2), season(0), season(1)).sortedForDisplay()
-        assertEquals(listOf(1, 2, 0), result.map(Season::seasonNumber))
+        assertEquals(listOf(0, 1, 2), result.map(Season::seasonNumber))
     }
 
     @Test
     fun `specials flag is authoritative even for nonzero season number`() {
         val result = listOf(season(1), season(99, specials = true), season(2)).sortedForDisplay()
-        assertEquals(listOf(1, 2, 99), result.map(Season::seasonNumber))
+        assertEquals(listOf(99, 1, 2), result.map(Season::seasonNumber))
     }
 
     @Test
@@ -60,6 +60,45 @@ class SeasonDisplayOrderTest {
         ).initialSeasonForDisplay(preferredSeasonNumber = null)
 
         assertEquals(2, result?.seasonNumber)
+    }
+
+    @Test
+    fun `fresh series with unplayed specials opens on the first regular season`() {
+        val result = listOf(season(2), season(0), season(1))
+            .initialSeasonForDisplay(preferredSeasonNumber = null)
+        assertEquals(1, result?.seasonNumber)
+    }
+
+    @Test
+    fun `unplayed specials open once every regular season is watched`() {
+        val watched = SeasonUserData(played = true, watchedCount = 10)
+        val result = listOf(
+            season(1, userData = watched),
+            season(2, userData = watched),
+            season(0),
+        ).initialSeasonForDisplay(preferredSeasonNumber = null)
+        assertEquals(0, result?.seasonNumber)
+    }
+
+    @Test
+    fun `fully watched series opens on the first regular season`() {
+        val watched = SeasonUserData(played = true, watchedCount = 10)
+        val result = listOf(
+            season(0, userData = watched),
+            season(1, userData = watched),
+            season(2, userData = watched),
+        ).initialSeasonForDisplay(preferredSeasonNumber = null)
+        assertEquals(1, result?.seasonNumber)
+    }
+
+    @Test
+    fun `specials with an episode in progress open on specials`() {
+        val result = listOf(
+            season(0, userData = SeasonUserData(inProgressCount = 1)),
+            season(1),
+            season(2),
+        ).initialSeasonForDisplay(preferredSeasonNumber = null)
+        assertEquals(0, result?.seasonNumber)
     }
 
     @Test
@@ -101,7 +140,7 @@ class SeasonDisplayOrderTest {
         val plan = listOf(season(2), season(0), season(1))
             .initialSeasonDisplayPlan(preferredSeasonNumber = null)
 
-        assertEquals(listOf(1, 2, 0), plan.seasons.map(Season::seasonNumber))
+        assertEquals(listOf(0, 1, 2), plan.seasons.map(Season::seasonNumber))
         assertEquals(1, plan.selectedSeasonNumber)
         assertEquals(1, plan.episodeRequestSeasonNumber)
     }
