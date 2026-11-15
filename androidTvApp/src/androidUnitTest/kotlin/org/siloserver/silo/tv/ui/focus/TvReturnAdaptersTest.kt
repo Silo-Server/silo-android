@@ -106,6 +106,65 @@ class TvReturnAdaptersTest {
         )
     }
 
+    @Test
+    fun `a Continue Watching show that advanced an episode is found at its new slot`() {
+        fun episode(contentId: String, seriesId: String) = SectionItem(
+            contentId = contentId,
+            type = "episode",
+            title = contentId,
+            seriesId = seriesId,
+            seasonNumber = 1,
+        )
+        fun continueWatching(vararg items: SectionItem) = ResolvedSection(
+            id = "continue",
+            sectionType = "continue_watching",
+            title = "Continue Watching",
+            items = items.toList(),
+        )
+        val before = continueWatching(
+            episode("x-e1", "show-x"),
+            episode("y-e5", "show-y"),
+            episode("z-e3", "show-z"),
+        )
+        val launched = TvReturnTarget(
+            "continue",
+            before.tvReturnItemId(before.items[2]),
+            sectionIndex = 0,
+            itemIndex = 2,
+        )
+
+        // Finishing Z's E3 replaces the card with E4 and moves it to the front.
+        val after = continueWatching(
+            episode("z-e4", "show-z"),
+            episode("x-e1", "show-x"),
+            episode("y-e5", "show-y"),
+        )
+
+        assertEquals(
+            TvReturnResolution.Exact(0, 0, "continue", launched.itemId),
+            resolveTvReturnTarget(launched, listOf(after).toTvReturnSections()),
+        )
+
+        // A show that appears twice can't be one target; its cards keep episode ids.
+        val repeated = continueWatching(episode("z-e3", "show-z"), episode("z-e4", "show-z"))
+        assertEquals(listOf("z-e3", "z-e4"), repeated.tvReturnItemIds())
+    }
+
+    @Test
+    fun `episodes outside progress rows keep their own identity`() {
+        val recent = ResolvedSection(
+            id = "recent",
+            sectionType = "recently_added",
+            title = "Recently Added",
+            items = listOf(
+                SectionItem(contentId = "e1", type = "episode", title = "e1", seriesId = "show"),
+                SectionItem(contentId = "e2", type = "episode", title = "e2", seriesId = "show"),
+            ),
+        )
+
+        assertEquals(listOf("e1", "e2"), listOf(recent).toTvReturnSections().single().itemIds)
+    }
+
     // ── Flat paginated surfaces ──────────────────────────────────────────
 
     @Test

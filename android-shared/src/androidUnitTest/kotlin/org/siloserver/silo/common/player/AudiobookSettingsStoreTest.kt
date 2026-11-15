@@ -30,7 +30,7 @@ class AudiobookSettingsStoreTest {
             context = mockContextStub(),
             getActiveProfileId = { profileId },
             profileChangeSignal = flowOf(Unit),
-            dataStoreFactory = { id ->
+            dataStoreFactory = { _, id ->
                 val file = File(tempFolder.root, "ds_$id.preferences_pb")
                 PreferenceDataStoreFactory.create(produceFile = { file })
             },

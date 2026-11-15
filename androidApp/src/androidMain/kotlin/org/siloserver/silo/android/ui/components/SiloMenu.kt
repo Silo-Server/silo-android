@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
@@ -168,7 +170,7 @@ fun SiloMenuItem(
             { Icon(imageVector = vector, contentDescription = null, modifier = Modifier.size(22.dp)) }
         },
         trailingIcon = if (checked) {
-            { Icon(Icons.Rounded.Check, contentDescription = "Selected", tint = SiloForeground, modifier = Modifier.size(20.dp)) }
+            { Icon(Icons.Rounded.Check, contentDescription = stringResource(CommonR.string.menu_item_selected), tint = SiloForeground, modifier = Modifier.size(20.dp)) }
         } else {
             null
         },

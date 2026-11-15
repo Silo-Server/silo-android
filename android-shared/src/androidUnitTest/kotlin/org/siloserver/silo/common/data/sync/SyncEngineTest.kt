@@ -90,6 +90,7 @@ class SyncEngineTest {
     ) = DirtyOperationEntity(
         opKind = opKind,
         serverId = serverId,
+        accountId = "",
         profileId = "p1",
         targetContentId = targetContentId,
         targetFileId = null,

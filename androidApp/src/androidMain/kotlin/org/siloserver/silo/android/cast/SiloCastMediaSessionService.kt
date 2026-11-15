@@ -30,6 +30,7 @@ import org.siloserver.silo.model.settings.SeekIntervalPair
 import org.siloserver.silo.cast.SiloCastPlaybackState
 import org.siloserver.silo.common.player.SiloMediaSessionBitmapLoader
 import org.siloserver.silo.repository.CatalogRepository
+import org.siloserver.silo.common.R as CommonR
 import kotlin.math.roundToLong
 
 /**
@@ -60,7 +61,7 @@ class SiloCastMediaSessionService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-        player = SiloCastRemotePlayer(Looper.getMainLooper(), controller)
+        player = SiloCastRemotePlayer(Looper.getMainLooper(), controller) { tv -> getString(CommonR.string.cast_playingOn, tv) }
         val bitmapLoader = SiloMediaSessionBitmapLoader(this)
         mediaSessionBitmapLoader = bitmapLoader
         mediaSession = MediaSession.Builder(this, player)
@@ -147,6 +148,8 @@ class SiloCastMediaSessionService : MediaSessionService() {
 internal class SiloCastRemotePlayer(
     looper: Looper,
     private val controller: SiloCastController,
+    /** The session subtitle "Playing on <TV>" for a title without its own. */
+    private val playingOn: (String) -> String,
 ) : SimpleBasePlayer(looper) {
     private var playback: SiloCastPlaybackState? = null
     private var targetName: String? = null
@@ -212,7 +215,7 @@ internal class SiloCastRemotePlayer(
         }
         val metadata = MediaMetadata.Builder()
             .setTitle(remote.title)
-            .setSubtitle(remote.subtitle ?: targetName?.let { "Playing on $it" })
+            .setSubtitle(remote.subtitle ?: targetName?.let(playingOn))
             .setIsPlayable(true)
             .apply {
                 remote.subtitle?.takeIf(String::isNotBlank)?.let { setArtist(it) }

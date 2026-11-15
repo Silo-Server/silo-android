@@ -92,7 +92,13 @@ data class UpdateProfileRequest(
 
 @Serializable
 data class ProfilesResponse(
-    val profiles: List<Profile>
+    val profiles: List<Profile>,
+    /**
+     * How many profiles the account may have. Null when the server did not
+     * say: an older server, a remote-playback handoff session, or a server
+     * that could not read the limit.
+     */
+    @SerialName("max_profiles") val maxProfiles: Int? = null,
 )
 
 @Serializable

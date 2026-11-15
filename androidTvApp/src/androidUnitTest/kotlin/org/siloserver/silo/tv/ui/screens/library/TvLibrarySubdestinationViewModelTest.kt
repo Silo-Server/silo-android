@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.library
 
+import org.siloserver.silo.catalog.sort.CatalogSortField
 import io.ktor.client.HttpClient
 import io.ktor.http.content.TextContent
 import kotlinx.serialization.json.*
@@ -106,7 +107,7 @@ class TvLibrarySubdestinationViewModelTest {
 
         viewModel.onTabSelected(TvLibraryTab.Browse)
         awaitState { requests.catalogRequestCount() >= 1 }
-        viewModel.onSortKeySelected(TvLibrarySortOption.ReleaseDate)
+        viewModel.onSortKeySelected(TvLibrarySortOption.of(CatalogSortField.ReleaseDate))
         awaitState { requests.lastCatalogRequestOrNull()?.query?.get("sort") == "-release_date" }
         val requestsBeforeReentry = requests.catalogRequestCount()
 

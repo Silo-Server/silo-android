@@ -2,10 +2,15 @@ package org.siloserver.silo.tv.ui.screens.profiles
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.model.profile.AssignableLibraries
 import org.siloserver.silo.model.profile.Profile
+import org.siloserver.silo.model.profile.ProfileAccessLimits
 import org.siloserver.silo.model.profile.UpdateProfileRequest
 import org.siloserver.silo.model.profile.canonicalProfileQualityPreference
 import org.siloserver.silo.model.profile.hasProfileNamed
+import org.siloserver.silo.model.profile.withAccessLimits
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.ProfileRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,6 +18,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.model.profile.CHOOSE_A_LIBRARY_TEXT
 
 /**
  * Mirrors the phone app's `EditProfileViewModel`. Loads an existing profile by
@@ -28,15 +35,15 @@ data class TvEditProfileUiState(
     val avatarStyleId: String = TvProfileAvatarPresets.DefaultStyleId,
     val selectedAvatarSeed: String? = null,
     val avatarBatch: Int = 0,
-    val isChild: Boolean = false,
-    val maxContentRating: String? = null,
+    val access: ProfileAccessLimits = ProfileAccessLimits(),
+    val libraries: AssignableLibraries = AssignableLibraries.Loading,
     val pinEnabled: Boolean = false,
     val pin: String = "",
     val qualityPreference: String? = null,
     val subtitleMode: String? = null,
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     val saveSuccess: Boolean = false,
 )
 
@@ -59,8 +66,12 @@ class TvEditProfileViewModel(
      */
     private var loadedHasPin: Boolean = false
 
+    /** The loaded profile's limits; the save sends only the ones that changed. */
+    private var loadedAccess = ProfileAccessLimits()
+
     init {
         loadProfile()
+        loadLibraries()
     }
 
     fun loadProfile() {
@@ -73,6 +84,7 @@ class TvEditProfileViewModel(
                     val profile = result.data.find { it.id == profileId }
                     if (profile != null) {
                         loadedHasPin = profile.hasPin
+                        loadedAccess = ProfileAccessLimits.of(profile)
                         val preset = TvProfileAvatarPresets.parseRef(profile.avatar)
                         _uiState.update {
                             it.copy(
@@ -82,8 +94,7 @@ class TvEditProfileViewModel(
                                 selectedAvatarUrl = profile.avatarUrl,
                                 avatarStyleId = preset?.styleId ?: TvProfileAvatarPresets.DefaultStyleId,
                                 selectedAvatarSeed = preset?.seed,
-                                isChild = profile.isChild,
-                                maxContentRating = profile.maxContentRating,
+                                access = loadedAccess,
                                 pinEnabled = profile.hasPin,
                                 qualityPreference = profile.qualityPreference,
                                 subtitleMode = profile.subtitleMode,
@@ -91,20 +102,20 @@ class TvEditProfileViewModel(
                         }
                     } else {
                         _uiState.update {
-                            it.copy(isLoading = false, error = "Profile not found")
+                            it.copy(isLoading = false, error = UiText.Res(CommonR.string.profiles_error_notFound))
                         }
                     }
                 }
 
                 is ApiResult.Error -> {
                     _uiState.update {
-                        it.copy(isLoading = false, error = "Failed to load profile")
+                        it.copy(isLoading = false, error = UiText.Res(CommonR.string.profiles_error_loadOne))
                     }
                 }
 
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(isLoading = false, error = "Network error. Please try again.")
+                        it.copy(isLoading = false, error = UiText.Res(CommonR.string.profiles_error_network))
                     }
                 }
             }
@@ -153,17 +164,28 @@ class TvEditProfileViewModel(
         }
     }
 
-    fun onChildToggled(checked: Boolean) {
-        _uiState.update {
-            it.copy(
-                isChild = checked,
-                maxContentRating = if (checked && it.maxContentRating == null) "PG" else it.maxContentRating,
-            )
+    fun loadLibraries() {
+        _uiState.update { it.copy(libraries = it.libraries.loading()) }
+        viewModelScope.launch {
+            val libraries = AssignableLibraries.from(profileRepository.listAssignableLibraries())
+            _uiState.update { it.copy(libraries = libraries) }
         }
     }
 
-    fun onContentRatingSelected(rating: String) {
-        _uiState.update { it.copy(maxContentRating = rating) }
+    fun onChildToggled(checked: Boolean) {
+        _uiState.update { it.copy(access = it.access.withChild(checked), error = null) }
+    }
+
+    fun onContentRatingSelected(rating: String?) {
+        _uiState.update { it.copy(access = it.access.withContentRating(rating)) }
+    }
+
+    fun onLibraryRestrictionsToggled(enabled: Boolean) {
+        _uiState.update { it.copy(access = it.access.withLibraryRestrictions(enabled), error = null) }
+    }
+
+    fun onLibraryToggled(libraryId: Int, allowed: Boolean) {
+        _uiState.update { it.copy(access = it.access.withLibrary(libraryId, allowed), error = null) }
     }
 
     fun onPinToggled(enabled: Boolean) {
@@ -194,15 +216,19 @@ class TvEditProfileViewModel(
         val current = _uiState.value
 
         if (current.name.isBlank()) {
-            _uiState.update { it.copy(error = "Profile name is required") }
+            _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_nameRequired)) }
             return
         }
         if (existingProfiles.hasProfileNamed(current.name, excludeId = current.profileId)) {
-            _uiState.update { it.copy(error = "A profile with this name already exists") }
+            _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_nameTaken)) }
             return
         }
         if (current.pinEnabled && current.pin.isNotEmpty() && current.pin.length != 4) {
-            _uiState.update { it.copy(error = "PIN must be 4 digits") }
+            _uiState.update { it.copy(error = UiText.Res(CommonR.string.profiles_error_pinLength)) }
+            return
+        }
+        if (current.access.needsLibrary(loadedAccess, current.libraries.ids)) {
+            _uiState.update { it.copy(error = CHOOSE_A_LIBRARY_TEXT) }
             return
         }
 
@@ -224,11 +250,9 @@ class TvEditProfileViewModel(
                 name = current.name,
                 avatar = current.effectiveAvatarRef(),
                 pin = pinValue,
-                isChild = current.isChild,
-                maxContentRating = current.maxContentRating,
                 qualityPreference = current.qualityPreference,
                 subtitleMode = current.subtitleMode,
-            )
+            ).withAccessLimits(current.access, loadedAccess, current.libraries.ids)
 
             when (val result = profileRepository.updateProfile(current.profileId, request)) {
                 is ApiResult.Success -> {
@@ -241,14 +265,14 @@ class TvEditProfileViewModel(
                     _uiState.update {
                         it.copy(
                             isSaving = false,
-                            error = result.message.ifBlank { "Failed to update profile" },
+                            error = result.errorText(CommonR.string.profiles_error_updateFailed),
                         )
                     }
                 }
 
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(isSaving = false, error = "Network error. Please try again.")
+                        it.copy(isSaving = false, error = UiText.Res(CommonR.string.profiles_error_network))
                     }
                 }
             }

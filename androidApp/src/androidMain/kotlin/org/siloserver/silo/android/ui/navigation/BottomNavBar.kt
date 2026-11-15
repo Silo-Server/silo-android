@@ -1,12 +1,26 @@
 package org.siloserver.silo.android.ui.navigation
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,7 +45,8 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
@@ -43,12 +58,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import androidx.navigation.NavOptionsBuilder
+import androidx.annotation.StringRes
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.android.ui.theme.SiloNavPillBorder
 import org.siloserver.silo.android.ui.theme.SiloNavPillContent
 import org.siloserver.silo.android.ui.theme.SiloNavPillSelected
@@ -69,17 +89,17 @@ val LocalBottomChromeInset = compositionLocalOf { 0.dp }
  */
 enum class Tab(
     val route: String,
-    val label: String,
+    @StringRes val labelRes: Int,
     val icon: ImageVector,
     val selectedIcon: ImageVector,
 ) {
-    Home(Route.Home.route, "Home", Icons.Outlined.Home, Icons.Filled.Home),
-    Libraries(Route.Libraries.route, "Libraries", Icons.Outlined.GridView, Icons.Filled.GridView),
-    ForYou(Route.Recommendations.route, "For You", Icons.Outlined.AutoAwesome, Icons.Filled.AutoAwesome),
-    Calendar(Route.Calendar.route, "Calendar", Icons.Outlined.CalendarMonth, Icons.Filled.CalendarMonth),
+    Home(Route.Home.route, CommonR.string.tab_home, Icons.Outlined.Home, Icons.Filled.Home),
+    Libraries(Route.Libraries.route, CommonR.string.shell_tab_libraries, Icons.Outlined.GridView, Icons.Filled.GridView),
+    ForYou(Route.Recommendations.route, CommonR.string.topBar_forYou, Icons.Outlined.AutoAwesome, Icons.Filled.AutoAwesome),
+    Calendar(Route.Calendar.route, CommonR.string.topBar_calendar, Icons.Outlined.CalendarMonth, Icons.Filled.CalendarMonth),
     Downloads(
         Route.Downloads.route,
-        "Downloads",
+        CommonR.string.tab_downloads,
         Icons.Outlined.Download,
         Icons.Filled.Download,
     ),
@@ -142,6 +162,12 @@ private val PillExpandedWindowBreakpoint = 560.dp
 private val PillHorizontalMargin = 20.dp
 private val PillBottomMargin = 10.dp
 private val PillTopMargin = 8.dp
+private val InlineAccessoryGap = 10.dp
+// One duration for the capsule resize and the accessory's move so the two
+// read as a single motion.
+private const val ChromeMotionMillis = 320
+private fun <T> chromeTween() = tween<T>(durationMillis = ChromeMotionMillis, easing = FastOutSlowInEasing)
+private const val AccessorySharedKey = "bottomNavAccessory"
 
 /**
  * Floating pill tab bar, matching the iOS app's detached bottom capsule.
@@ -151,6 +177,7 @@ private val PillTopMargin = 8.dp
  * buttons. Bright white glyphs keep the tab symbols legible without turning
  * the material into a pale solid bar.
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun SiloBottomNavBar(
     currentTab: Tab,
@@ -163,11 +190,82 @@ fun SiloBottomNavBar(
     // when the user has no downloads in flight or on disk. Defaults to all
     // tabs for backwards-compat.
     tabs: List<Tab> = Tab.entries.toList(),
+    /** Optional bar (the cast remote) that rests above the capsule, and moves
+     *  into the row beside the minimized Home control while the capsule is
+     *  minimized (iOS inline tab bar accessory). `inline` tells it which
+     *  placement it is rendering. Expanded windows keep it above, since their
+     *  capsule stays centered. The accessory applies `barModifier` to its
+     *  visible card; the card then glides and resizes between the two
+     *  placements instead of fading out of one and into the other. */
+    accessory: (@Composable (inline: Boolean, barModifier: Modifier) -> Unit)? = null,
 ) {
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .navigationBarsPadding()
+            .navigationBarsPadding(),
+    ) {
+        val isExpandedWindow = maxWidth - PillHorizontalMargin * 2 >= PillExpandedWindowBreakpoint
+        val accessoryInline = accessory != null && minimizedToCurrentTab && !isExpandedWindow
+        SharedTransitionLayout {
+            val sharedScope = this
+            Column {
+                if (accessory != null) {
+                    AnimatedVisibility(
+                        visible = !accessoryInline,
+                        // The size change lets the content inset follow; the
+                        // card itself moves in the shared-bounds overlay.
+                        enter = expandVertically(chromeTween()) + fadeIn(chromeTween()),
+                        exit = shrinkVertically(chromeTween()) + fadeOut(chromeTween()),
+                    ) {
+                        accessory(false, sharedScope.accessoryBounds(this))
+                    }
+                }
+                PillRow(
+                    currentTab = currentTab,
+                    onTabSelected = onTabSelected,
+                    minimizedToCurrentTab = minimizedToCurrentTab,
+                    tabs = tabs,
+                    isExpandedWindow = isExpandedWindow,
+                    inlineAccessory = if (accessory != null) {
+                        { visibility -> accessory(true, sharedScope.accessoryBounds(visibility)) }
+                    } else {
+                        null
+                    },
+                    accessoryInline = accessoryInline,
+                )
+            }
+        }
+    }
+}
+
+/** Shared bounds for the accessory card, matched across its two placements. */
+@OptIn(ExperimentalSharedTransitionApi::class)
+@Composable
+private fun SharedTransitionScope.accessoryBounds(visibility: AnimatedVisibilityScope): Modifier =
+    Modifier.sharedBounds(
+        sharedContentState = rememberSharedContentState(AccessorySharedKey),
+        animatedVisibilityScope = visibility,
+        enter = fadeIn(chromeTween()),
+        exit = fadeOut(chromeTween()),
+        boundsTransform = { _, _ -> chromeTween() },
+    )
+
+/** The capsule row, with the fixed inline-accessory slot right of the
+ *  minimized control. Its own function so the slot's AnimatedVisibility does
+ *  not resolve against the enclosing Column's scope. */
+@Composable
+private fun PillRow(
+    currentTab: Tab,
+    onTabSelected: (Tab) -> Unit,
+    minimizedToCurrentTab: Boolean,
+    tabs: List<Tab>,
+    isExpandedWindow: Boolean,
+    inlineAccessory: (@Composable (AnimatedVisibilityScope) -> Unit)?,
+    accessoryInline: Boolean,
+) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
             .padding(
                 start = PillHorizontalMargin,
                 end = PillHorizontalMargin,
@@ -175,41 +273,74 @@ fun SiloBottomNavBar(
                 bottom = PillBottomMargin,
             ),
     ) {
-        val isExpandedWindow = maxWidth >= PillExpandedWindowBreakpoint
-        val pillWidth by animateDpAsState(
-            targetValue = if (minimizedToCurrentTab) {
-                PillHeight
-            } else {
-                maxWidth.coerceAtMost(PillExpandedMaxWidth)
-            },
-            animationSpec = tween(durationMillis = 260),
-            label = "bottomNavWidth",
-        )
-        val displayedTabs = if (minimizedToCurrentTab) listOf(currentTab) else tabs
-        Row(
-            modifier = Modifier
-                // Keep alignment stable for the entire width animation:
-                // mobile grows from the left; the already-approved expanded
-                // foldable/tablet bar remains centered in both states.
-                .align(if (isExpandedWindow) Alignment.Center else Alignment.CenterStart)
-                .width(pillWidth)
-                .height(PillHeight)
-                .shadow(elevation = 20.dp, shape = CircleShape, clip = false)
-                .clip(CircleShape)
-                .background(SiloNavPillSurface)
-                .border(1.dp, SiloNavPillBorder, CircleShape)
-                .padding(horizontal = 6.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            displayedTabs.forEach { tab ->
-                PillTabItem(
-                    tab = tab,
-                    selected = tab == currentTab,
-                    showSelectedChip = !minimizedToCurrentTab,
-                    onClick = { onTabSelected(tab) },
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                )
+        if (inlineAccessory != null) {
+            // Fixed slot right of the minimized control, which the card glides
+            // into while the capsule shrinks, so nothing in the row reflows.
+            AnimatedVisibility(
+                visible = accessoryInline,
+                enter = fadeIn(chromeTween()),
+                exit = fadeOut(chromeTween()),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(PillHeight)
+                    .padding(start = PillHeight + InlineAccessoryGap),
+            ) {
+                inlineAccessory(this)
             }
+        }
+        NavPill(
+            currentTab = currentTab,
+            onTabSelected = onTabSelected,
+            minimizedToCurrentTab = minimizedToCurrentTab,
+            tabs = tabs,
+            isExpandedWindow = isExpandedWindow,
+            fullWidth = maxWidth,
+        )
+    }
+}
+
+@Composable
+private fun BoxScope.NavPill(
+    currentTab: Tab,
+    onTabSelected: (Tab) -> Unit,
+    minimizedToCurrentTab: Boolean,
+    tabs: List<Tab>,
+    isExpandedWindow: Boolean,
+    fullWidth: Dp,
+) {
+    val pillWidth by animateDpAsState(
+        targetValue = if (minimizedToCurrentTab) {
+            PillHeight
+        } else {
+            fullWidth.coerceAtMost(PillExpandedMaxWidth)
+        },
+        animationSpec = chromeTween(),
+        label = "bottomNavWidth",
+    )
+    val displayedTabs = if (minimizedToCurrentTab) listOf(currentTab) else tabs
+    Row(
+        modifier = Modifier
+            // Keep alignment stable for the entire width animation:
+            // mobile grows from the left; the already-approved expanded
+            // foldable/tablet bar remains centered in both states.
+            .align(if (isExpandedWindow) Alignment.Center else Alignment.CenterStart)
+            .width(pillWidth)
+            .height(PillHeight)
+            .shadow(elevation = 20.dp, shape = CircleShape, clip = false)
+            .clip(CircleShape)
+            .background(SiloNavPillSurface)
+            .border(1.dp, SiloNavPillBorder, CircleShape)
+            .padding(horizontal = 6.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        displayedTabs.forEach { tab ->
+            PillTabItem(
+                tab = tab,
+                selected = tab == currentTab,
+                showSelectedChip = !minimizedToCurrentTab,
+                onClick = { onTabSelected(tab) },
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+            )
         }
     }
 }
@@ -240,36 +371,58 @@ private fun PillTabItem(
         label = "tabTint",
     )
     val interaction = remember { MutableInteractionSource() }
-    Column(
-        modifier = modifier
-            .clip(CircleShape)
-            .background(chip)
-            // selectable (not clickable) so TalkBack announces which tab is
-            // active — the chip and filled icon alone are not perceivable.
-            .selectable(
-                selected = selected,
-                interactionSource = interaction,
-                indication = ripple(bounded = true, color = tint),
-                role = Role.Tab,
-                onClick = onClick,
-            ),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+    // selectable (not clickable) so TalkBack announces which tab is active —
+    // the chip and filled icon alone are not perceivable.
+    Box(
+        modifier = modifier.selectable(
+            selected = selected,
+            interactionSource = interaction,
+            indication = null,
+            role = Role.Tab,
+            onClick = onClick,
+        ),
+        contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = if (selected) tab.selectedIcon else tab.icon,
-            contentDescription = tab.label,
-            tint = tint,
-            modifier = Modifier.size(25.dp),
+        // Only the chip and the ripple are clipped to the pill shape. Clipping
+        // the content too cut the ends off a wide label such as "Downloads"
+        // or "Bibliotecas" where the shape curves in.
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clip(CircleShape)
+                .background(chip)
+                .indication(interaction, ripple(bounded = true, color = tint)),
         )
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = tab.label,
-            color = tint,
-            fontSize = 11.sp,
-            lineHeight = 13.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-            maxLines = 1,
-        )
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+        ) {
+            val label = stringResource(tab.labelRes)
+            Icon(
+                imageVector = if (selected) tab.selectedIcon else tab.icon,
+                contentDescription = label,
+                tint = tint,
+                modifier = Modifier.size(25.dp),
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            // Steps down from 11sp only when a translated label is wider than
+            // its tab or, on the chip, than the chip where the label sits: low
+            // in the chip, its round ends take about 5dp a side at mid-letter
+            // height, at any tab width.
+            BasicText(
+                text = label,
+                modifier = Modifier.padding(horizontal = if (onLightChip) 5.dp else 0.dp),
+                style = LocalTextStyle.current.merge(
+                    TextStyle(
+                        color = tint,
+                        fontSize = 11.sp,
+                        lineHeight = 13.sp,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                    ),
+                ),
+                maxLines = 1,
+                autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = 11.sp, stepSize = 0.5.sp),
+            )
+        }
     }
 }

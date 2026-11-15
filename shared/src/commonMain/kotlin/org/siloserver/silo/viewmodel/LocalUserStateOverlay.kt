@@ -3,6 +3,7 @@ package org.siloserver.silo.viewmodel
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.LeafItemUserData
+import org.siloserver.silo.model.catalog.withLastPlayedFile
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
@@ -70,17 +71,30 @@ fun applyLocalPlaybackProgress(
 
 private fun SectionItem.withLocalContentState(state: LocalContentState?): SectionItem {
     if (state == null) return this
-    val base = userState ?: MediaItemUserState()
-    return copy(
-        userState = base.copy(
-            played = state.watched ?: base.played,
-            isFavorite = state.favorite ?: base.isFavorite,
-        ),
-    )
+    return copy(userState = userState.withLocalContentState(state))
+}
+
+/**
+ * [this] server state with the local projection laid over it. A local
+ * `watched` value replaces `played`, as it always has. The episode counts are
+ * dropped only while that watched change is still unacknowledged
+ * ([LocalContentState.watchedPending]): until then they describe the state
+ * before the change. Once the server has it, its counts are the newer answer
+ * and stay, so a series marked unwatched and then partly rewatched shows its
+ * episodes left.
+ */
+fun MediaItemUserState?.withLocalContentState(state: LocalContentState): MediaItemUserState {
+    val base = this ?: MediaItemUserState()
+    val watched = when {
+        state.watched == null -> base
+        state.watchedPending -> base.withPlayed(state.watched)
+        else -> base.copy(played = state.watched)
+    }
+    return watched.copy(isFavorite = state.favorite ?: base.isFavorite)
 }
 
 private fun LeafItemUserData.withLocalProgress(progress: LocalPlaybackProgress): LeafItemUserData =
-    copy(
+    withLastPlayedFile(progress.fileId).copy(
         isInProgress = true,
         positionSeconds = progress.positionSeconds,
         durationSeconds = progress.durationSeconds ?: durationSeconds,

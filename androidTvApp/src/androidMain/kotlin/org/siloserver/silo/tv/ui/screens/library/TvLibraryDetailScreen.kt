@@ -1,5 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.library
 
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.model.section.ResolvedSection
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -51,6 +54,11 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.annotation.StringRes
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
@@ -63,7 +71,6 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.section.LibraryCollection
@@ -108,6 +115,8 @@ fun TvLibraryDetailScreen(
     mediaScope: String? = null,
     onItemClick: (contentId: String) -> Unit,
     onCollectionClick: (collectionId: String, title: String, isUserCollection: Boolean) -> Unit,
+    /** Opens a Recommended row's full page from its "Explore all" card. */
+    onExploreSection: ((ResolvedSection) -> Unit)? = null,
     onInitialContentFocus: () -> Unit = {},
     // When the screen is opened from the Skyline cascade with a committed
     // section pill, this drives the initial tab (Recommended / Library /
@@ -169,6 +178,7 @@ fun TvLibraryDetailScreen(
                 onInitialContentFocus = onInitialContentFocus,
                 focusRequest = sectionRequestNonce,
                 onContentUpFallbackChanged = onContentUpFallbackChanged,
+                onExploreSection = onExploreSection,
             )
             // Browse is the tvOS `TVLibraryGridView` embed: Sort/Filter
             // control row over the grid, with the A–Z rail always on.
@@ -222,7 +232,7 @@ fun TvLibraryDetailScreen(
                 if (state.selectedAudiobookGroup == null) {
                     AudiobookGroupsTab(
                         state = state,
-                        groupLabel = "authors",
+                        emptyMessage = CommonR.string.library_noAudiobookAuthors,
                         onGroupClick = viewModel::onAudiobookGroupSelected,
                         onLoadMore = viewModel::loadMoreAudiobookGroups,
                         onRetry = viewModel::retryAudiobookGroups,
@@ -245,7 +255,7 @@ fun TvLibraryDetailScreen(
                 if (state.selectedAudiobookGroup == null) {
                     AudiobookGroupsTab(
                         state = state,
-                        groupLabel = "series",
+                        emptyMessage = CommonR.string.library_noAudiobookSeries,
                         onGroupClick = viewModel::onAudiobookGroupSelected,
                         onLoadMore = viewModel::loadMoreAudiobookGroups,
                         onRetry = viewModel::retryAudiobookGroups,
@@ -289,6 +299,7 @@ private fun RecommendedTab(
     onInitialContentFocus: () -> Unit,
     focusRequest: Int,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)?,
+    onExploreSection: ((ResolvedSection) -> Unit)?,
 ) {
     val rows = remember(state.sections) {
         state.sections.filter { !it.featured && it.items.isNotEmpty() }
@@ -302,7 +313,7 @@ private fun RecommendedTab(
         }
         state.recommendedError != null && state.sections.isEmpty() -> {
             TvErrorScreen(
-                message = state.recommendedError,
+                message = state.recommendedError.text(),
                 onRetry = onRetry,
                 modifier = Modifier.padding(
                     start = Spacing.safeArea,
@@ -313,7 +324,7 @@ private fun RecommendedTab(
         }
         rows.isEmpty() -> {
             TvCatalogEmptyState(
-                message = "${state.title} is empty.",
+                message = stringResourceWithNames(CommonR.string.library_namedIsEmpty, state.title),
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -326,6 +337,7 @@ private fun RecommendedTab(
                     focusRequest = focusRequest,
                     onInitialContentFocus = onInitialContentFocus,
                     onContentUpFallbackChanged = onContentUpFallbackChanged,
+                    onExploreAllForSection = onExploreSection,
                 )
                 state.recommendedError?.let { message ->
                     Row(
@@ -335,8 +347,8 @@ private fun RecommendedTab(
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(message, modifier = Modifier.weight(1f))
-                        Button(onClick = onRetry) { Text("Retry") }
+                        Text(message.text(), modifier = Modifier.weight(1f))
+                        Button(onClick = onRetry) { Text(stringResource(CommonR.string.common_retry)) }
                     }
                 }
             }
@@ -389,7 +401,7 @@ private fun LibraryTab(
         itemIds = state.browseItems.map { it.contentId },
         hasMore = state.browseHasMore,
         isLoadingMore = state.browseLoadingMore,
-        errorMessage = state.browseError,
+        errorMessage = state.browseError?.text(),
         surfaceKey = state.selectedTab.name,
         onLoadMore = onLoadMore,
         // Headers occupy full-span slots ahead of the cards, so the grid's own
@@ -410,9 +422,9 @@ private fun LibraryTab(
         // also overwrites the saved state.
         val canClearFilters = showBrowseControls && state.browseFilter.facetSelection.canReset
         TvErrorScreen(
-            message = state.browseError,
+            message = state.browseError.text(),
             onRetry = onRetry,
-            secondaryActionLabel = "Clear filters".takeIf { canClearFilters },
+            secondaryActionLabel = stringResource(CommonR.string.library_clearFilters).takeIf { canClearFilters },
             onSecondaryAction = { onFacetSelectionApplied(TvCatalogFacetSelection()) }.takeIf { canClearFilters },
             modifier = Modifier.padding(
                 start = Spacing.safeArea,
@@ -475,7 +487,12 @@ private fun LibraryTab(
 
     when (openPanel) {
         TvBrowsePanel.Sort -> TvBrowseSortPanel(
-            options = TvLibrarySortOption.availableFor(state.libraryType),
+            options = TvLibrarySortOption.availableFor(
+                libraryType = state.libraryType,
+                mediaScope = state.mediaScope,
+                shownRatingSources = rememberShownRatingSources(),
+                current = state.browseFilter.sort,
+            ),
             currentSort = state.browseFilter.sort,
             order = state.browseFilter.order,
             onSelect = { option ->
@@ -586,7 +603,10 @@ private fun LibraryGrid(
         ) {
             if (showBrowseControls) {
                 item(span = { GridItemSpan(maxLineSpan) }, key = "browse-controls") {
-                    val sortOption = TvLibrarySortOption.fromWire(state.browseFilter.sort)
+                    val sortOption = TvLibrarySortOption.fromWire(
+                        state.browseFilter.sort,
+                        org.siloserver.silo.catalog.sort.CatalogSortRelevance.forLibrary(state.libraryType, state.mediaScope),
+                    )
                     var controlsFocused by remember { mutableStateOf(false) }
                     // Scrolling back up lands the pills via minimal
                     // bring-into-view (pinned at the viewport top edge);
@@ -647,9 +667,9 @@ private fun LibraryGrid(
                 item(span = { GridItemSpan(maxLineSpan) }, key = "empty") {
                     TvCatalogEmptyState(
                         message = if (state.browseLibraryHasItems == false) {
-                            "This library is empty."
+                            stringResource(CommonR.string.library_isEmptySentence)
                         } else {
-                            "No titles match the current filters."
+                            stringResource(CommonR.string.library_noTitlesMatchFilters)
                         },
                     )
                 }
@@ -717,7 +737,8 @@ private fun LibraryGrid(
 @Composable
 private fun AudiobookGroupsTab(
     state: TvLibraryDetailViewModel.UiState,
-    groupLabel: String,
+    /** What the grid says when there are no groups, e.g. no audiobook authors. */
+    @StringRes emptyMessage: Int,
     onGroupClick: (AudiobookGroup) -> Unit,
     onLoadMore: () -> Unit,
     onRetry: () -> Unit,
@@ -795,12 +816,12 @@ private fun AudiobookGroupsTab(
                 }
                 state.audiobookGroupsError != null -> {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "error") {
-                        TvErrorScreen(message = state.audiobookGroupsError, onRetry = onRetry)
+                        TvErrorScreen(message = state.audiobookGroupsError.text(), onRetry = onRetry)
                     }
                 }
                 state.audiobookGroups.isEmpty() -> {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "empty") {
-                        TvCatalogEmptyState(message = "No audiobook $groupLabel found.")
+                        TvCatalogEmptyState(message = stringResource(emptyMessage))
                     }
                 }
                 else -> {
@@ -841,7 +862,9 @@ private fun AudiobookGroupDrillInHeader(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TvFilterChip(
-            text = "All ${tab.label}",
+            text = stringResource(
+                if (tab == TvLibraryTab.Series) CommonR.string.library_allSeries else CommonR.string.library_allAuthors,
+            ),
             selected = false,
             onClick = onClear,
         )
@@ -873,12 +896,16 @@ private fun TvAudiobookGroupCard(
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
 ) {
-    val caption = LocalCardPresentation.current.caption
 
+    val shape = RoundedCornerShape(8.dp)
+    val cardFocus = siloCardDefaults(shape = shape)
     Column(modifier = Modifier.fillMaxWidth()) {
         Card(
             onClick = onClick,
-            shape = CardDefaults.shape(shape = RoundedCornerShape(8.dp)),
+            shape = CardDefaults.shape(shape = shape),
+            scale = cardFocus.scale,
+            border = cardFocus.border,
+            glow = cardFocus.glow,
             modifier = Modifier
                 .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
                 .fillMaxWidth()
@@ -909,29 +936,25 @@ private fun TvAudiobookGroupCard(
             }
         }
 
-        if (caption.showsTitle) {
-            Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
+        Text(
+            text = group.name,
+            style = MaterialTheme.typography.titleSmall,
+            color = Color.White.copy(alpha = 0.92f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        audiobookGroupSubtitle(group)?.let { subtitle ->
             Text(
-                text = group.name,
-                style = MaterialTheme.typography.titleSmall,
-                color = Color.White.copy(alpha = 0.92f),
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.68f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth(),
             )
-            if (caption.showsMetadata) {
-                audiobookGroupSubtitle(group)?.let { subtitle ->
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.68f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
         }
     }
 }
@@ -951,7 +974,7 @@ private fun GenreChipCloud(
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
     ) {
         Text(
-            text = if (loading) "Loading genres" else "Genres",
+            text = stringResource(if (loading) CommonR.string.library_loadingGenres else CommonR.string.library_genres),
             style = MaterialTheme.typography.titleMedium,
             color = Color.White.copy(alpha = 0.74f),
         )
@@ -965,7 +988,7 @@ private fun GenreChipCloud(
         ) {
             item(key = "genre-all") {
                 TvFilterChip(
-                    text = "All",
+                    text = stringResource(CommonR.string.filters_all),
                     selected = selectedGenre == null,
                     onClick = { onGenreChanged(null) },
                 )
@@ -1090,12 +1113,12 @@ private fun CollectionsTab(
                 }
                 state.collectionsError != null && state.collections.isEmpty() -> {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "error") {
-                        TvErrorScreen(message = state.collectionsError, onRetry = onRetry)
+                        TvErrorScreen(message = state.collectionsError.text(), onRetry = onRetry)
                     }
                 }
                 state.collections.isEmpty() -> {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "empty") {
-                        TvCatalogEmptyState(message = "No collections in this library.")
+                        TvCatalogEmptyState(message = stringResource(CommonR.string.library_noCollectionsInLibrary))
                     }
                 }
                 // Grouped collections (tvOS `TVLibraryCollectionsView`): the
@@ -1168,13 +1191,12 @@ private fun TvCollectionCard(
     focusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
-    // Same focus treatment (scale + accent border + glow) and caption metrics
+    // Same focus treatment (lift + white outline + shadow) and caption metrics
     // as `TvMediaCard`, so collection posters sit alongside Browse posters
     // without reading as a different card family.
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val cardFocus = siloCardDefaults(shape = TvCollectionCardShape)
-    val caption = LocalCardPresentation.current.caption
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Card(
@@ -1215,52 +1237,56 @@ private fun TvCollectionCard(
 
         // Title-only caption, start-aligned like every other poster caption in
         // the app. The item count was dropped: it doubled the caption height
-        // and made the rows read differently from Browse. Gated like
-        // `TvMediaCard` so both card families agree in the same Library tab.
-        if (caption.showsTitle) {
-            Spacer(modifier = Modifier.height(11.dp))
+        // and made the rows read differently from Browse.
+        Spacer(modifier = Modifier.height(11.dp))
 
-            Text(
-                text = collection.name,
-                style = MaterialTheme.typography.titleSmall.copy(
-                    fontSize = 15.5.sp,
-                    lineHeight = 18.5.sp,
-                ),
-                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
+        Text(
+            text = collection.name,
+            style = MaterialTheme.typography.titleSmall.copy(
+                fontSize = 15.5.sp,
+                lineHeight = 18.5.sp,
+            ),
+            color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
 private val TvCollectionCardShape = RoundedCornerShape(8.dp)
 private val CollectionsGroupHeaderNudge = 10.dp
 
+@Composable
 private fun audiobookGroupSubtitle(group: AudiobookGroup): String? {
     val parts = mutableListOf<String>()
     if (group.itemCount > 0) {
-        parts += "${group.itemCount} ${if (group.itemCount == 1) "book" else "books"}"
+        parts += pluralStringResource(CommonR.plurals.library_audiobookGroup_books, group.itemCount, group.itemCount, LocaleFormat.integer(group.itemCount))
     }
     group.totalDurationSeconds
         ?.takeIf { it > 0 }
-        ?.let(::formatAudiobookGroupDuration)
-        ?.let { parts += it }
+        ?.let { parts += formatAudiobookGroupDuration(it) }
     if (group.inProgressCount > 0) {
-        parts += "${group.inProgressCount} in progress"
+        parts += pluralStringResource(
+            CommonR.plurals.library_audiobookGroup_inProgress,
+            group.inProgressCount,
+            group.inProgressCount,
+            LocaleFormat.integer(group.inProgressCount),
+        )
     }
     return parts.takeIf { it.isNotEmpty() }?.joinToString(" • ")
 }
 
+@Composable
 private fun formatAudiobookGroupDuration(seconds: Long): String {
     val hours = seconds / 3600
     val minutes = (seconds % 3600) / 60
     return when {
-        hours > 0 && minutes > 0 -> "${hours}h ${minutes}m"
-        hours > 0 -> "${hours}h"
-        minutes > 0 -> "${minutes}m"
-        else -> "<1m"
+        hours > 0 && minutes > 0 ->
+            stringResource(CommonR.string.catalog_runtimeHoursMinutes, LocaleFormat.integer(hours), LocaleFormat.integer(minutes))
+        hours > 0 -> stringResource(CommonR.string.catalog_runtimeHours, LocaleFormat.integer(hours))
+        minutes > 0 -> stringResource(CommonR.string.catalog_runtimeMinutesShort, LocaleFormat.integer(minutes))
+        else -> stringResource(CommonR.string.catalog_runtimeUnderMinute)
     }
 }
 

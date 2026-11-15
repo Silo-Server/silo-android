@@ -174,7 +174,7 @@ class HomeViewModelCacheIdentityTest {
     private class RecordingHomeCache : HomeCachePort {
         var sections: List<ResolvedSection>? = null
 
-        override suspend fun cacheHomeV2(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, stillCurrent: () -> Boolean) {
+        override suspend fun cacheHomeV2(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, artworkFingerprint: String?, stillCurrent: () -> Boolean) {
             this.sections = sections
         }
     }

@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.components
 
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 
@@ -42,11 +44,16 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.boxSetCard
+import org.siloserver.silo.model.catalog.boxSetFilmCount
+import org.siloserver.silo.model.catalog.cardCaption
+import org.siloserver.silo.model.catalog.watchedFraction
 import org.siloserver.silo.overlays.OverlayDataExtractor
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.cardScaled
 import org.siloserver.silo.tv.ui.theme.rememberTvGridBringIntoViewSpec
 import org.siloserver.silo.tv.ui.util.tvArtworkAspectRatioForMediaType
+import org.siloserver.silo.common.i18n.text
 
 /**
  * Poster grid with automatic pagination. Fed by a [List] of
@@ -300,14 +307,21 @@ fun TvCatalogGrid(
                         }
                     }
                 }
+                // A box set card opens the box set and has no item menu.
+                val boxSet = item.boxSetCard
                 TvMediaCard(
                     hideArtwork = hideArtwork,
                     title = item.title,
-                    posterUrl = item.posterUrl,
-                    posterThumbhash = item.posterThumbhash,
+                    posterUrl = item.posterUrl ?: boxSet?.posterUrl,
+                    posterThumbhash = item.posterThumbhash ?: boxSet?.posterThumbhash,
                     year = item.year.takeIf { it > 0 },
-                    userState = userState,
-                    mediaType = item.type,
+                    userState = userState.takeIf { boxSet == null },
+                    progress = boxSet?.watchedFraction,
+                    mediaType = if (boxSet != null) "movie" else item.type,
+                    badge = if (boxSet != null) stringResource(CommonR.string.shell_card_boxSet) else null,
+                    cornerLabel = boxSet?.let { boxSetFilmCount(it.movieCount).text() },
+                    caption = boxSet?.cardCaption()?.text(),
+                    sleeves = org.siloserver.silo.tv.ui.theme.BoxSetSleeves.takeIf { boxSet != null },
                     onClick = { onBrowseItemClick?.invoke(item) ?: onItemClick(item.contentId) },
                     fillWidth = true,
                     artworkAspectRatio = artworkAspectRatioForItem(item),
@@ -330,8 +344,8 @@ fun TvCatalogGrid(
                                 it.hasFocus,
                             )
                         },
-                    overlay = OverlayDataExtractor.fromBrowseItem(item),
-                    actions = actions,
+                    overlay = OverlayDataExtractor.fromBrowseItem(item).takeIf { boxSet == null },
+                    actions = if (boxSet != null) TvMediaCardActions() else actions,
                 )
             }
         }
@@ -387,7 +401,7 @@ private fun TvLoadMoreRetryFooter(onRetry: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = "Couldn't load more",
+                text = stringResource(CommonR.string.shell_grid_loadMoreFailed),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -395,7 +409,7 @@ private fun TvLoadMoreRetryFooter(onRetry: () -> Unit) {
                 onClick = onRetry,
                 contentPadding = PaddingValues(horizontal = 32.dp, vertical = 12.dp),
             ) {
-                Text("Retry", style = MaterialTheme.typography.labelLarge)
+                Text(stringResource(CommonR.string.common_retry), style = MaterialTheme.typography.labelLarge)
             }
         }
     }

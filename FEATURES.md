@@ -41,6 +41,7 @@ File pointers are repository-relative.
 | Intro auto-skip (+ manual skip banner) | ✅ | ✅ | |
 | Shuffle (library, series, season, collection) | ✅ | ✅ | Server-picked random movies and episodes, gated by `/api/v2/shuffles/capabilities`. Picks play from the start; the up-next screen offers Pick Another and Stop shuffling. TV has no mixed-library screen, so mixed libraries shuffle on phone only. [docs](docs/shuffle-api-v2.md) |
 | Chapters | ✅ | ✅ | Server-extracted; TV scrubber markers |
+| Seek-bar thumbnails (server trickplay) | ✅ | ✅ | When the file's library generates previews (`trickplay_available`): phone above the drag bubble, TV above the focused scrubber and under the hold-seek chip. Sheets load on demand into a bounded cache; offline playback and files without previews keep the time-only preview. Shared `TrickplayPreviews` |
 | Sleep timer | ✅ | ✅ | Configurable default |
 | Playback speed | ✅ | ✅ | |
 | Video gravity (fit / fill / stretch) | ✅ | ✅ | |
@@ -128,8 +129,9 @@ Shown only while Settings → Experimental → Watch Party is on (default on in 
 | Feature | Phone | TV | Notes |
 |---|:---:|:---:|---|
 | Household profiles (multiple per account) | ✅ | ✅ | `ProfileRepository` |
+| Profile menu: Switch Profile, or Add Profile while the account has one profile | ✅ | ✅ | The row follows the open account's profile count and its profile limit (`max_profiles`): no row when it has one profile and the limit is one. Change Account is always there; on TV the profile row and Change Account sit together between Settings and Sign Out, as on the phone. Shared `profileMenuRow` |
 | PIN-protected & child profiles, content-rating limits | ✅ | ✅ | |
-| Profile Selection at launch (Automatic, Every Time, After 1 Hour, After 12 Hours) | ✅ | ✅ | Phone: Settings → Preferences; TV: Settings → General. Device-local; shared rules in `android-shared/.../profiles/`. TV also hides Watch Next |
+| Profile Selection at launch (Automatic, Every Time, After 1 Hour, After 12 Hours) | ✅ | ✅ | Phone: Settings → Preferences; TV: Settings → General. Device-local; shared rules in `android-shared/.../profiles/`. When it asks and several accounts are saved on the device, Change Account shows in place of Who's Watching, with no profile open. TV also hides Watch Next |
 | Per-profile language / subtitle / playback prefs | ✅ | ✅ | |
 | Library access restrictions per profile | ✅ | ✅ | |
 | Favorites & watchlist | ✅ | ✅ | TV: from Settings |

@@ -73,6 +73,7 @@ import androidx.media3.session.SessionToken
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.player.AudiobookPlayerViewModel
 import org.siloserver.silo.common.player.SiloPlaybackService
@@ -87,6 +88,11 @@ import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.delay
 import org.koin.compose.viewmodel.koinViewModel
 import kotlin.math.max
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import androidx.compose.ui.res.pluralStringResource
+import org.siloserver.silo.common.player.errorText
+import org.siloserver.silo.common.player.skipIntervalErrorText
 
 private enum class AudiobookPanel { None, Chapters, Speed, Sleep, More, Skip, Bookmarks, About }
 
@@ -118,6 +124,8 @@ fun TvAudiobookPlayerScreen(
     var exitRequested by remember { mutableStateOf(false) }
     val playPauseFocus = remember { FocusRequester() }
     val speedChipFocus = remember { FocusRequester() }
+    val errorFocus = remember { FocusRequester() }
+    var errorHasFocus by remember { mutableStateOf(false) }
 
     // MediaController binds async to the shared service — the same one the video
     // player uses, so a single MediaSession owns foreground audio.
@@ -296,24 +304,36 @@ fun TvAudiobookPlayerScreen(
         }
     }
 
+    // Back, Stop and the error screen's Back all leave the same way.
+    val exitPlayer: () -> Unit = {
+        exitRequested = true
+        viewModel.flushPosition()
+        viewModel.stopPlaybackSession()
+        onExit()
+    }
+
     BackHandler(enabled = true) {
         if (activePanel != AudiobookPanel.None) {
             activePanel = AudiobookPanel.None
         } else {
-            exitRequested = true
-            viewModel.flushPosition()
-            viewModel.stopPlaybackSession()
-            onExit()
+            exitPlayer()
         }
     }
 
     // A runtime failure can set `error` after playback is already up. That swaps
-    // the whole content branch for TvErrorScreen, which has no actions in it —
-    // so an open panel would be left floating over a screen with nothing to
-    // return focus to once it closes. Close the panel with the content it
-    // belonged to.
+    // the whole content branch for TvErrorScreen, so an open panel would be left
+    // floating over content it no longer belongs to. Close the panel with that
+    // content and move focus to the error screen's actions.
     LaunchedEffect(state.error != null) {
-        if (state.error != null) activePanel = AudiobookPanel.None
+        if (state.error != null) {
+            activePanel = AudiobookPanel.None
+            requestFocusUntilObserved(
+                maxAttempts = TvAudiobookTransportFocusMaxAttempts,
+                awaitAttempt = { delay(TvAudiobookTransportFocusRetryDelayMillis) },
+                requestFocus = errorFocus::requestFocus,
+                isFocused = { errorHasFocus },
+            )
+        }
     }
 
     // A skip-interval save message belongs to the open skip panel.
@@ -338,13 +358,23 @@ fun TvAudiobookPlayerScreen(
                 state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = Color.White)
                 }
-                state.error != null -> TvErrorScreen(message = state.error!!)
+                state.error != null -> TvErrorScreen(
+                    message = state.errorText().orEmpty(),
+                    onRetry = if (state.canRetryPlayback) viewModel::retryPlayback else null,
+                    secondaryActionLabel = stringResource(CommonR.string.common_back),
+                    onSecondaryAction = exitPlayer,
+                    // Requesting focus here lands on the screen's first button,
+                    // so the remote has somewhere to start.
+                    modifier = Modifier
+                        .focusRequester(errorFocus)
+                        .onFocusChanged { errorHasFocus = it.hasFocus },
+                )
                 else -> {
                     val hasChapters = state.chapters.size > 1
                     val currentChapterLabel = tvAudiobookCurrentChapterLabel(
                         chapters = state.chapters,
                         currentChapterIndex = currentChapterIndex,
-                        fallback = chapterCountLabel,
+                        hasChapterLine = chapterCountLabel != null,
                     )
                     Row(
                         modifier = Modifier
@@ -374,7 +404,7 @@ fun TvAudiobookPlayerScreen(
                             verticalArrangement = Arrangement.Center,
                         ) {
                             Text(
-                                text = "AUDIOBOOK",
+                                text = stringResource(CommonR.string.audiobook_player_eyebrow),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = Color.White.copy(alpha = 0.58f),
                                 letterSpacing = 2.sp,
@@ -460,12 +490,7 @@ fun TvAudiobookPlayerScreen(
                                 onSleep = { activePanel = AudiobookPanel.Sleep },
                                 onChapters = { activePanel = AudiobookPanel.Chapters },
                                 onMore = { activePanel = AudiobookPanel.More },
-                                onStop = {
-                                    exitRequested = true
-                                    viewModel.flushPosition()
-                                    viewModel.stopPlaybackSession()
-                                    onExit()
-                                },
+                                onStop = exitPlayer,
                             )
                         }
                     }
@@ -499,7 +524,7 @@ fun TvAudiobookPlayerScreen(
                     choices = state.skipIntervalChoices,
                     profileWide = state.skipIntervalsProfileWide,
                     editable = state.skipIntervalsEditable,
-                    errorMessage = state.skipIntervalError,
+                    errorMessage = state.skipIntervalErrorText(),
                 )
                 AudiobookPanel.Sleep -> TvAudiobookSleepPanel(
                     onFocusAcquisitionFailed = { panelFocusFailed = true },
@@ -739,7 +764,7 @@ private fun TvAudiobookSecondaryControls(
         )
         if (showChapters) {
             TvAudiobookPillButton(
-                label = "Chapters",
+                label = stringResource(CommonR.string.audiobook_chapters_open),
                 icon = Icons.AutoMirrored.Filled.FormatListBulleted,
                 focusSuppressed = focusSuppressed,
                 height = buttonHeight,
@@ -747,14 +772,14 @@ private fun TvAudiobookSecondaryControls(
             )
         }
         TvAudiobookPillButton(
-            label = "More",
+            label = stringResource(CommonR.string.detail_more),
             icon = Icons.Filled.MoreHoriz,
             focusSuppressed = focusSuppressed,
             height = buttonHeight,
             onClick = onMore,
         )
         TvAudiobookPillButton(
-            label = "Stop",
+            label = stringResource(CommonR.string.audiobook_player_stop),
             icon = Icons.Filled.Close,
             focusSuppressed = focusSuppressed,
             height = buttonHeight,
@@ -776,7 +801,7 @@ private fun TvAudiobookAboutPanel(
 ) {
     val closeFocus = remember { FocusRequester() }
     TvAudiobookOverlayScaffold(
-        title = "About",
+        title = stringResource(CommonR.string.audiobook_about_title),
         initialFocus = closeFocus,
         onAcquisitionFailed = onFocusAcquisitionFailed,
     ) {
@@ -792,7 +817,7 @@ private fun TvAudiobookAboutPanel(
         )
         Spacer(Modifier.height(16.dp))
         TvAudiobookOverlayRow(
-            label = "Close",
+            label = stringResource(CommonR.string.audiobook_about_close),
             isCurrent = false,
             onSelect = onClose,
             focusRequester = closeFocus,
@@ -811,7 +836,7 @@ private fun TvAudiobookMorePanel(
 ) {
     val firstRowFocus = remember { FocusRequester() }
     TvAudiobookOverlayScaffold(
-        title = "More",
+        title = stringResource(CommonR.string.detail_more),
         initialFocus = firstRowFocus,
         onAcquisitionFailed = onFocusAcquisitionFailed,
     ) {
@@ -819,22 +844,22 @@ private fun TvAudiobookMorePanel(
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             TvAudiobookMoreRow(
                 icon = Icons.Filled.Tune,
-                title = "Skip interval",
+                title = stringResource(CommonR.string.audiobook_skipInterval_title),
                 subtitle = skipLabel,
                 focusRequester = firstRowFocus,
                 onClick = onSkip,
             )
             TvAudiobookMoreRow(
                 icon = Icons.Filled.Bookmark,
-                title = "Bookmarks",
-                subtitle = "Add or jump to saved moments",
+                title = stringResource(CommonR.string.audiobook_bookmarks_title),
+                subtitle = stringResource(CommonR.string.audiobook_more_bookmarksSubtitle),
                 onClick = onBookmarks,
             )
             if (showAbout) {
                 TvAudiobookMoreRow(
                     icon = Icons.Filled.Info,
-                    title = "About",
-                    subtitle = "Book description",
+                    title = stringResource(CommonR.string.audiobook_about_title),
+                    subtitle = stringResource(CommonR.string.audiobook_more_aboutSubtitle),
                     onClick = onAbout,
                 )
             }
@@ -922,38 +947,44 @@ private fun TvAudiobookPillButton(
     }
 }
 
+@Composable
 private fun tvAudiobookCurrentChapterLabel(
     chapters: List<VersionChapter>,
     currentChapterIndex: Int,
-    fallback: String,
+    /** Whether the book has two or more chapters. */
+    hasChapterLine: Boolean,
 ): String {
     val chapter = chapters.getOrNull(currentChapterIndex)
     val title = chapter?.title?.trim().orEmpty()
     if (title.isNotBlank()) return title
-    if (chapter != null) return "Chapter ${chapter.index + 1}"
-    return fallback.substringBefore(" of ").takeIf { it.isNotBlank() }.orEmpty()
+    if (chapter != null) return stringResource(CommonR.string.options_chapterNumbered, LocaleFormat.integer(chapter.index + 1))
+    // The chapter list hasn't caught up with the index yet: "Chapter N" from the index alone.
+    if (!hasChapterLine) return ""
+    return stringResource(CommonR.string.options_chapterNumbered, LocaleFormat.integer(currentChapterIndex + 1))
 }
 
+@Composable
 private fun tvAudiobookSpeedLabel(speed: Float): String {
-    val rounded = (speed * 100).toInt()
-    return if (rounded % 100 == 0) {
-        "${rounded / 100}x"
-    } else {
-        "${"%.2f".format(speed).trimEnd('0').trimEnd('.')}x"
-    }
+    return stringResource(CommonR.string.audiobook_speed_value, LocaleFormat.decimal(speed.toDouble(), maxFractionDigits = 2))
 }
 
+@Composable
 private fun tvAudiobookSleepLabel(
     minutesLeft: Int?,
-): String = if (minutesLeft != null) "${minutesLeft}m" else "Sleep"
+): String = if (minutesLeft != null) {
+    pluralStringResource(CommonR.plurals.audiobook_sleepTimer_minutesAbbrev, minutesLeft, minutesLeft)
+} else {
+    stringResource(CommonR.string.audiobook_sleepTimer_button)
+}
 
+@Composable
 private fun tvAudiobookSkipLabel(
     skipBackSeconds: Int,
     skipForwardSeconds: Int,
 ): String {
     return if (skipBackSeconds == skipForwardSeconds) {
-        "Skip ${skipBackSeconds}s"
+        stringResource(CommonR.string.audiobook_skipInterval_summarySame, skipBackSeconds)
     } else {
-        "${skipBackSeconds}s/${skipForwardSeconds}s"
+        stringResource(CommonR.string.audiobook_skipInterval_summaryPair, skipBackSeconds, skipForwardSeconds)
     }
 }

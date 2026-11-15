@@ -2,8 +2,10 @@
 
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsSeekEvent
+import org.siloserver.silo.common.player.AudioOutputPath
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
 import org.siloserver.silo.common.player.failedRendererTrackType
 import org.siloserver.silo.common.player.failureDiagnostics
@@ -13,6 +15,9 @@ import android.os.SystemClock
 import android.util.Log
 import org.siloserver.silo.common.player.SubDiag
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
+import org.siloserver.silo.common.player.canSwitchSubtitleInPlace
+import org.siloserver.silo.common.player.withInPlaceAdoption
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.tv.data.preferences.PlaybackQuality
@@ -21,6 +26,7 @@ import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.isPlaybackSessionEnded
 import org.siloserver.silo.common.player.PlaybackSessionManager
+import org.siloserver.silo.common.player.inPlayerQualityPair
 import org.siloserver.silo.common.player.PlaybackTeardownGate
 import org.siloserver.silo.common.player.video.MountedAudioTrack
 import org.siloserver.silo.common.player.video.AudioReconcileAction
@@ -30,7 +36,7 @@ import org.siloserver.silo.common.player.video.DesiredAudio
 import org.siloserver.silo.common.player.video.LocalAudioSelection
 import org.siloserver.silo.common.player.video.reconcileDesiredAudioAction
 import org.siloserver.silo.common.player.video.shouldVerifyOriginalAudioSelection
-import org.siloserver.silo.common.player.video.matchMountedAudioTrack
+import org.siloserver.silo.common.player.video.mountedAudioFor
 import org.siloserver.silo.playback.resolveAudioTrackOrdinal
 import org.siloserver.silo.common.player.FinalPlaybackPosition
 import org.siloserver.silo.common.player.FinalPlaybackPositionWriter
@@ -74,19 +80,42 @@ import org.siloserver.silo.common.player.video.captureEpisodeSubtitleIntent
 import org.siloserver.silo.common.player.video.resolveAudioSelectionAcrossVersions
 import org.siloserver.silo.common.player.normalizedSubtitleCodecFamily
 import org.siloserver.silo.common.player.video.VideoPlayerUiState
+import org.siloserver.silo.common.player.video.SERVER_TERMINAL_FALLBACK_MESSAGE
 import org.siloserver.silo.common.player.video.serverTerminalUserMessage
+import org.siloserver.silo.common.player.video.terminalUserMessageRes
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
+import org.siloserver.silo.common.player.BufferingQualityPlayerAdapter
+import org.siloserver.silo.common.player.awaitNetworkRetry
+import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
+import org.siloserver.silo.common.player.asPlaybackEventSink
+import org.siloserver.silo.domain.player.BufferingQualityController
+import org.siloserver.silo.domain.player.BufferingQualityKey
+import org.siloserver.silo.domain.player.BufferingQualityPicks
+import org.siloserver.silo.domain.player.isViewerChangeTo
+import org.siloserver.silo.domain.player.BufferingQualityNotice
+import org.siloserver.silo.domain.player.BufferingQualityNoticeSlot
+import org.siloserver.silo.domain.player.BufferingQualityPill
+import org.siloserver.silo.domain.player.BufferingQualityReplan
+import org.siloserver.silo.domain.player.toBufferingQualityPlan
+import org.siloserver.silo.model.playback.isCommittedAt
+import org.siloserver.silo.model.playback.LEARNED_LIMIT_CLEAR
+import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroAutoSkipState
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.player.settlingFalseEdges
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
+import org.siloserver.silo.domain.player.MarkerKind
+import org.siloserver.silo.domain.player.MarkerTimeline
+import org.siloserver.silo.model.catalog.MarkerSegment
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.AutoSubtitleCandidate
+import org.siloserver.silo.model.playback.SUBTITLE_HLS_RENDITION_FAILED_CLASSIFICATION
+import org.siloserver.silo.model.playback.SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS
 import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.AutoSubtitleContext
 import org.siloserver.silo.model.playback.inventoryAutoSubtitleCandidates
@@ -95,8 +124,11 @@ import org.siloserver.silo.model.playback.selectedCandidate
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackAvailableQualityV3
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
+import org.siloserver.silo.model.playback.PlaybackSourceDescriptorV3
+import org.siloserver.silo.model.playback.ReportedPlaybackQuality
 import org.siloserver.silo.model.playback.activePlaybackQualityId
 import org.siloserver.silo.model.playback.playbackQualityMenu
+import org.siloserver.silo.model.playback.reportedQuality
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
@@ -109,6 +141,8 @@ import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
+import org.siloserver.silo.model.playback.videoQualityPreference
+import org.siloserver.silo.playback.ADMIN_ENDED_PLAYBACK_NOTICE
 import org.siloserver.silo.playback.PlaybackMarkersUpdate
 import org.siloserver.silo.playback.PlaybackSubtitleReady
 import org.siloserver.silo.playback.PlaybackSubtitleTimingChanged
@@ -162,6 +196,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -210,9 +245,11 @@ internal fun authoritativePlaybackQualityOptions(
     available: List<PlaybackAvailableQualityV3>,
     selectedLabel: String?,
     delivered: PlaybackEffectiveRecipeV3? = null,
+    source: PlaybackSourceDescriptorV3? = null,
+    reported: ReportedPlaybackQuality? = null,
 ): List<VideoQualityOption> {
     val menu = playbackQualityMenu(available)
-    val activeId = activePlaybackQualityId(menu, selectedLabel, delivered)
+    val activeId = activePlaybackQualityId(menu, selectedLabel, delivered, source, reported)
     return menu.map { option ->
         VideoQualityOption(
             id = option.id,
@@ -317,6 +354,39 @@ private fun SubtitleMediaIdentity.toEpisodeSubtitleIntent(
  * Captures only episode-portable intent. Server, download, and Media3 identities
  * remain local to the current item and therefore cannot cross this boundary.
  */
+/**
+ * The handoff the next episode gets: what [captured] saw this episode play,
+ * except that a choice carried into this episode ([incoming]) is carried on
+ * unchanged unless the viewer picked again here. This episode may have
+ * played a fallback for it (only plain English where SDH was chosen); the
+ * next one re-resolves the original choice on its own tracks.
+ *
+ * Audio is carried only as the viewer chose it: a pick during this episode
+ * ([audioPicked]), else the choice carried in, else Auto — the next episode
+ * then follows the series choice. The audio this episode merely played
+ * (the series default, a fallback where the chosen language is missing, a
+ * track an automatic replan settled on) is never handed on as a choice.
+ */
+internal fun carryEpisodeIntent(
+    captured: EpisodeSelectionHandoff,
+    incoming: EpisodeSelectionHandoff?,
+    audioPicked: Boolean,
+    subtitlePicked: Boolean,
+): EpisodeSelectionHandoff {
+    val audio = when {
+        audioPicked -> captured.audio
+        incoming != null && incoming.audio.mode != EpisodeAudioMode.AUTO -> incoming.audio
+        else -> org.siloserver.silo.common.player.video.EpisodeAudioIntent.auto()
+    }
+    incoming ?: return captured.copy(audio = audio)
+    return captured.copy(
+        audio = audio,
+        subtitle = incoming.subtitle
+            .takeIf { !subtitlePicked && it.mode != org.siloserver.silo.common.player.video.EpisodeSubtitleMode.AUTO }
+            ?: captured.subtitle,
+    )
+}
+
 internal fun captureTvEpisodeSelectionHandoff(
     activeVersion: FileVersion?,
     committedSubtitleIdentity: SubtitleIdentity,
@@ -493,12 +563,24 @@ internal fun resolveTvAutoSubtitleIdentity(
     preferredLanguage: String?,
     subtitleMode: String?,
     showForced: Boolean,
+    trackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
+    /**
+     * Language of the audio this playback is set to play (the planned or
+     * chosen track). Media3's first snapshot still shows the file's default
+     * track selected before the switch lands, so reading the selection alone
+     * judged English audio as the German default and turned on full English
+     * subtitles where only the forced track belonged. Falls back to the
+     * mounted selection when unknown.
+     */
+    intendedAudioLanguage: String? = null,
 ): SubtitleIdentity {
     val context = AutoSubtitleContext(
         preferredLanguage = preferredLanguage,
         mode = subtitleMode,
         showForced = showForced,
-        audioLanguage = audioTracks.firstOrNull { it.isSelected }?.language,
+        audioLanguage = intendedAudioLanguage?.takeIf { it.isNotBlank() }
+            ?: audioTracks.firstOrNull { it.isSelected }?.language,
+        trackSignature = trackSignature,
     )
     if (subtitleRows.isNotEmpty()) {
         val winner = resolveAutoSubtitle(
@@ -613,10 +695,120 @@ enum class VideoFillMode {
 }
 
 /** The in-player notice for an AI subtitle job that failed out of sight. */
-internal fun aiFailureNotice(message: String): String = "AI subtitles failed. $message"
+internal fun aiFailureNotice(message: String): String = TvPlayerErrors.AI_SUBTITLES_FAILED_PREFIX + message
+
+/**
+ * English of the errors and notices this player writes itself (this view
+ * model and [TvVideoPlaybackStarter]). State keeps the English, which the
+ * logs, the adb debug hook and source tests read; [res] and [prefixed] map it
+ * to the catalog when the screen shows it (see `tvPlayerMessageText`). Text
+ * from the server or the shared module has no entry and shows as it is.
+ */
+/** A catalog string for one exact [message] held in [TvPlayerViewModel.UiState.error]. */
+data class TvPlayerErrorRes(val message: String, @StringRes val res: Int)
+
+internal object TvPlayerErrors {
+    const val SERVER_UNREACHABLE = "Can't reach server — check your connection."
+    const val PLAYBACK_FAILED = "Playback failed. Please try again."
+    const val SEEK_FAILED = "Couldn't seek. Please try again."
+    const val RECOVERY_UNSUPPORTED = "This Silo server must be updated to support playback recovery."
+    const val STOPPED_RESPONDING = "Playback stopped responding. Press Back and try again."
+    const val SEEK_UNSUPPORTED = "This Silo server does not support reliable seeking."
+    const val SEEK_CHANGED_VERSION = "Seek recovery tried to change the selected media version."
+
+    // Written as literals at their `fail(...)` calls, which source tests pin.
+    const val NO_SESSION = "Playback start returned no session."
+    const val PUBLICATION_UNCONFIRMED = "Playback publication could not be confirmed."
+
+    // TvVideoPlaybackStarter.
+    const val METADATA_NEEDS_PROFILE = "Playback metadata needs an authenticated profile."
+    const val NO_VERSIONS = "No playable versions available"
+    const val WATCH_PARTY_VERSION_UNAVAILABLE = "The Watch Party's version of this title isn't available to this profile."
+    const val NO_PROFILE = "No active profile selected"
+    const val NOT_AUTHENTICATED = "Not authenticated"
+    const val VIEWER_CHANGED_BEFORE_ADMISSION = "The metadata viewer changed before playback admission."
+    const val SERVER_UPGRADE_MEDIA3 = "This Silo server must be updated to support the Media3 playback protocol."
+    const val VIEWER_CHANGED_AFTER_ADMISSION = "The metadata viewer changed after playback admission."
+    const val WATCH_PARTY_VERSION_MISMATCH = "The server offered a different version than the Watch Party's."
+    const val SUPERSEDED = "Playback start was superseded."
+    const val VIEWER_CHANGED_DURING_ADOPTION = "The metadata viewer changed during playback adoption."
+    const val LOAD_FAILED_PREFIX = "Failed to load content: "
+    const val NETWORK_PREFIX = "Network error: "
+    const val START_FAILED_PREFIX = "Failed to start playback: "
+    const val UNEXPECTED_PREFIX = "Unexpected error: "
+
+    // Notices (the remote-message toast).
+    const val AI_SUBTITLES_FAILED_PREFIX = "AI subtitles failed. "
+
+    // Subtitle search and AI subtitle state, shown by the subtitle dialogs.
+    const val SUBTITLE_SEARCH_FAILED = "Subtitle search failed"
+    const val SUBTITLE_DOWNLOAD_FAILED = "Subtitle download failed"
+    const val SUBTITLE_DOWNLOADED_NOT_REFRESHED = "Downloaded, but the subtitle list could not be refreshed."
+    const val SUBTITLE_SIGN_IN_REQUIRED = "Sign in before starting subtitle processing."
+    const val TRANSLATION_FAILED = "Translation failed"
+    const val TRANSLATED_NOT_REFRESHED = "Translated, but the subtitle list could not be refreshed."
+    const val PROCESSING_IN_BACKGROUND = "Processing in background"
+
+    @StringRes
+    fun res(english: String): Int? = when (english) {
+        SERVER_UNREACHABLE -> CommonR.string.player_error_serverUnreachable
+        PLAYBACK_FAILED -> CommonR.string.player_error_playbackFailed
+        SEEK_FAILED -> CommonR.string.player_error_seekFailed
+        RECOVERY_UNSUPPORTED -> CommonR.string.player_error_recoveryUnsupported
+        STOPPED_RESPONDING -> CommonR.string.player_error_stoppedResponding
+        SEEK_UNSUPPORTED -> CommonR.string.player_error_seekUnsupported
+        SEEK_CHANGED_VERSION -> CommonR.string.player_error_seekChangedVersion
+        NO_SESSION -> CommonR.string.player_error_noSession
+        PUBLICATION_UNCONFIRMED -> CommonR.string.player_error_publicationUnconfirmed
+        METADATA_NEEDS_PROFILE -> CommonR.string.player_error_metadataNeedsProfile
+        NO_VERSIONS -> CommonR.string.player_error_noVersions
+        WATCH_PARTY_VERSION_UNAVAILABLE -> CommonR.string.player_watchParty_versionUnavailable
+        NO_PROFILE -> CommonR.string.player_error_noProfile
+        NOT_AUTHENTICATED -> CommonR.string.player_error_notAuthenticated
+        VIEWER_CHANGED_BEFORE_ADMISSION -> CommonR.string.player_error_viewerChangedBeforeAdmission
+        SERVER_UPGRADE_MEDIA3 -> CommonR.string.player_error_serverUpgradeMedia3
+        VIEWER_CHANGED_AFTER_ADMISSION -> CommonR.string.player_error_viewerChangedAfterAdmission
+        WATCH_PARTY_VERSION_MISMATCH -> CommonR.string.player_watchParty_versionMismatch
+        SUPERSEDED -> CommonR.string.player_error_superseded
+        VIEWER_CHANGED_DURING_ADOPTION -> CommonR.string.player_error_viewerChangedDuringAdoption
+        TvPlayerViewModel.SHUFFLE_CONTINUE_FAILED -> CommonR.string.upNext_shuffleContinueFailed
+        TvPlayerViewModel.SHUFFLE_PICK_FAILED -> CommonR.string.upNext_pickAnotherFailed
+        TV_WATCH_PARTY_LAUNCH_REFUSAL -> CommonR.string.player_watchParty_launchRefusal
+        SUBTITLE_SEARCH_FAILED -> CommonR.string.player_subtitleTools_searchFailed
+        SUBTITLE_DOWNLOAD_FAILED -> CommonR.string.player_subtitleTools_downloadFailed
+        SUBTITLE_DOWNLOADED_NOT_REFRESHED -> CommonR.string.player_subtitleTools_downloadedNotRefreshed
+        SUBTITLE_SIGN_IN_REQUIRED -> CommonR.string.player_subtitleTools_signInRequired
+        TRANSLATION_FAILED -> CommonR.string.player_subtitleTools_translationFailed
+        TRANSLATED_NOT_REFRESHED -> CommonR.string.player_subtitleTools_translatedNotRefreshed
+        PROCESSING_IN_BACKGROUND -> CommonR.string.player_subtitleTools_processingInBackground
+        // The shared terminal fallback, for paths that keep only the English (a replacement-load toast).
+        SERVER_TERMINAL_FALLBACK_MESSAGE -> CommonR.string.player_error_playbackUnavailable
+        else -> null
+    }
+
+    /** A message built as a fixed prefix and a detail: the catalog id for it and the detail. */
+    fun prefixed(english: String): Pair<Int, String>? {
+        val prefix = PREFIXES.keys.firstOrNull { english.startsWith(it) } ?: return null
+        return PREFIXES.getValue(prefix) to english.removePrefix(prefix)
+    }
+
+    private val PREFIXES = mapOf(
+        LOAD_FAILED_PREFIX to CommonR.string.player_error_loadFailed,
+        NETWORK_PREFIX to CommonR.string.player_error_network,
+        START_FAILED_PREFIX to CommonR.string.player_error_startFailed,
+        UNEXPECTED_PREFIX to CommonR.string.player_error_unexpected,
+        AI_SUBTITLES_FAILED_PREFIX to CommonR.string.player_notice_aiSubtitlesFailed,
+    )
+}
 
 /** A transient remote "display_message"; [id] makes repeats re-trigger the toast. */
-data class RemoteMessage(val id: Long, val text: String, val durationMs: Long = 5_000L)
+data class RemoteMessage(
+    val id: Long,
+    val text: String,
+    val durationMs: Long = 5_000L,
+    /** When set, the toast shows this catalog string; [text] keeps the English. */
+    @StringRes val textRes: Int? = null,
+)
 
 /** The resolved next episode for auto-advance / "Up next". */
 data class NextEpisodeState(
@@ -653,6 +845,8 @@ data class TvPlayerLaunchArgs(
     val contentId: String,
     val libraryId: Int? = null,
     val preferredFileId: Int? = null,
+    /** The viewer picked [preferredFileId]'s version: the start pins it. */
+    val versionChosen: Boolean = false,
     val preferredQuality: String? = null,
     val roomId: String? = null,
     val resumePositionOverride: Double? = null,
@@ -762,15 +956,33 @@ class TvPlayerViewModel(
     // Home sections feeding the Up Next overlay's On Deck row. Optional so
     // tests that construct the VM directly stay source-compatible.
     private val sectionRepository: org.siloserver.silo.repository.SectionRepository? = null,
+    // Network availability for the buffering-quality adapter: a wait while
+    // the device is offline is an outage, not a stall. Optional for tests
+    // that construct the VM directly; null reads as always connected.
+    private val networkEvidence: PlaybackNetworkEvidenceProvider? = null,
+    // When the video's requests last received a byte, so the buffering-quality
+    // adapter can tell a dead link from a slow one. Optional for the same reason.
+    private val throughputMeter: org.siloserver.silo.common.player.PlaybackThroughputMeter? = null,
+    /** Remembers a manual subtitle choice for the whole series on the server. */
+    private val seriesTrackChoiceWriter: org.siloserver.silo.common.settings.SeriesTrackChoiceWriter? = null,
+    /** The server's seek-bar previews. Optional for the same reason. */
+    trickplayManifests: org.siloserver.silo.playback.trickplay.TrickplayManifestSource? = null,
+    /** Stamps the series return with the identity generation it was recorded under. */
+    private val identityTransitions: org.siloserver.silo.network.IdentityTransitionBarrier? = null,
 ) : ViewModel() {
 
     companion object {
         private const val TAG = "TvPlayerViewModel"
-        const val SERVER_UNREACHABLE_MESSAGE =
-            "Can't reach server — check your connection."
+        const val SERVER_UNREACHABLE_MESSAGE = TvPlayerErrors.SERVER_UNREACHABLE
         // A transient network blip retries the same route this many times before
         // demoting to a server transcode (resets once playback progresses).
         private const val MAX_TRANSIENT_NETWORK_RETRIES = 1
+        // How long an outage's check that the server answers again may take.
+        private const val SERVER_CHECK_TIMEOUT_MS = 10_000L
+        // Error screens say what happened in plain words; the request URL and
+        // the library's exception text go to the log only.
+        private const val PLAYBACK_FAILED_MESSAGE = TvPlayerErrors.PLAYBACK_FAILED
+        private const val SEEK_FAILED_MESSAGE = TvPlayerErrors.SEEK_FAILED
         private const val SEEK_SETTLE_DEADLINE_MS = 15_000L
         /** How long a Dolby Vision toggle may claim "Applying…" before the cue gives up. */
         private const val OUTPUT_SWITCH_FEEDBACK_TIMEOUT_MS = 20_000L
@@ -787,6 +999,8 @@ class TvPlayerViewModel(
         // How long a coordinated source fallback may take before the original
         // refusal is shown after all.
         private const val ROOM_FALLBACK_WAIT_MS = 15_000L
+        // How often a waiting Restore quality looks again for its turn.
+        private const val BUFFERING_RESTORE_POLL_MS = 250L
         const val SHUFFLE_CONTINUE_FAILED = "Couldn't continue the shuffle."
         const val SHUFFLE_PICK_FAILED = "Couldn't pick another."
     }
@@ -802,7 +1016,9 @@ class TvPlayerViewModel(
 
     /** [force] bypasses the time-throttle (used on pause/stop to capture the exact spot). */
     private fun maybeRecordPosition(positionSec: Double, durationSec: Double, force: Boolean = false) {
-        if (_uiState.value.sessionId?.let(playbackSessionManager::isSequenced) == true) return
+        // The exit token, not UI state: exit clears sessionId before the player
+        // reports its pause, which then saved a sequenced session's spot locally (#842).
+        if (exitSessionId?.let(playbackSessionManager::isSequenced) == true) return
         if (positionSec < 0.0) return
         val cid = contentId.takeIf { it.isNotBlank() } ?: return
         val fileId = _uiState.value.selectedFileId ?: _uiState.value.mediaFileId ?: return
@@ -833,11 +1049,14 @@ class TvPlayerViewModel(
      * resolution file because of the server's version sort order.
      */
     private var preferredFileId: Int? = launchArgs.preferredFileId
-    private var preferredQuality: String? = launchArgs.preferredQuality
+
+    /** The viewer picked [preferredFileId]'s version, so starts of it pin it. */
+    private var versionChosen: Boolean = launchArgs.versionChosen
+    // A legacy "original" route reads as Auto, which plays the source when it can.
+    private var preferredQuality: String? = videoQualityPreference(launchArgs.preferredQuality)
     // Explicit session-level video-quality intent chosen in the player's
-    // Quality menu. Null uses [preferredQuality] as the default output ceiling.
-    // Wire values match
-    // [PlaybackQuality]: "auto"/"original"/"2160p"/"1080p"/"720p"/"480p".
+    // Quality menu: a plan entry's label, or "auto". Null uses
+    // [preferredQuality] as the default output ceiling.
     private var qualityOverride: String? = null
     // Blank means solo, exactly as the screen treats it.
     private val roomId: String? = launchArgs.roomId?.takeIf { it.isNotBlank() }
@@ -899,6 +1118,18 @@ class TvPlayerViewModel(
     /** Guards [startServerRecoveryFallback] against concurrent fallbacks racing the same session. */
     private var recoveryJob: Job? = null
 
+    /** An outage's wait for the network and the server; see [waitOutOutage]. */
+    private var outageRecoveryJob: Job? = null
+
+    /** The mount [outageRecoveryJob] waits to reopen. */
+    private var outageMount: Long? = null
+
+    /**
+     * The same route was reopened once the outage ended and has not played
+     * since: a transport failure now is the route's, so it is replanned.
+     */
+    private var reopenedAfterOutage = false
+
     private data class QueuedRecoveryReplan(
         val classification: String,
         val notice: String,
@@ -943,6 +1174,43 @@ class TvPlayerViewModel(
      */
     private var contentLoadGeneration = 0L
     private val loadOwners = TvPlayerLoadOwnerRegistry()
+
+    /**
+     * The account, server and profile the current playback was started under
+     * — what a series audio or subtitle pick is saved under.
+     */
+    private var trackChoiceOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null
+
+    /**
+     * The choice the current episode was started with by the previous one,
+     * and whether the viewer has picked anything during this episode. What
+     * played can be a fallback (the episode lacks the chosen track); the next
+     * episode inherits the choice, not the fallback.
+     */
+    private var episodeIntentContentId: String? = null
+    private var incomingEpisodeIntent: org.siloserver.silo.common.player.video.EpisodeSelectionHandoff? = null
+    private var audioPickedThisEpisode = false
+    private var subtitlePickedThisEpisode = false
+
+    private fun noteEpisodeIntent(
+        contentId: String,
+        handoff: org.siloserver.silo.common.player.video.EpisodeSelectionHandoff?,
+    ) {
+        if (contentId != episodeIntentContentId) {
+            // The first episode's audio counts as picked only when the detail
+            // page's selector was used; its Auto preview is not a pick.
+            audioPickedThisEpisode = episodeIntentContentId == null && launchArgs.initialAudioPickedThisSession
+            episodeIntentContentId = contentId
+            incomingEpisodeIntent = handoff
+            subtitlePickedThisEpisode = false
+        } else if (handoff != null) {
+            incomingEpisodeIntent = handoff
+        }
+    }
+
+    /** A pick waiting for its change to commit; a newer pick replaces it. */
+    private val stagedSubtitleWrite = java.util.concurrent.atomic.AtomicReference<StagedSubtitleWrite?>(null)
+    private val stagedAudioWrite = java.util.concurrent.atomic.AtomicReference<StagedAudioWrite?>(null)
 
     /** Same-route retries spent on transient network errors; reset once playback progresses. */
     private var transientNetworkRetries = 0
@@ -989,9 +1257,19 @@ class TvPlayerViewModel(
         val playbackState: Int,
         val suppressed: Boolean,
         val sampledAtMs: Long,
+        val playbackSpeed: Double?,
     )
 
     private var roomPlayerSample: TvRoomPlayerSample? = null
+
+    // When the latest transport mount was applied. A sample read before it
+    // describes the replaced item and must not be mapped through the new
+    // plan's timeline.
+    private var roomMountAppliedAtMs = Long.MIN_VALUE
+
+    // Counts applied transport mounts, so the room can tell new media from a
+    // native seek within the mounted item.
+    private var roomMountGeneration = 0L
     private val _roomObservation = MutableStateFlow(RoomPlayerObservation())
 
     /** What the player is actually doing, for the room binding. */
@@ -1008,6 +1286,8 @@ class TvPlayerViewModel(
     data class UiState(
         val isLoading: Boolean = true,
         val error: String? = null,
+        /** The catalog string a shared producer named for [error]; shown only while [error] still matches. */
+        val errorRes: TvPlayerErrorRes? = null,
         val contentId: String = "",
         /**
          * Distinct "Can't reach server" state (issue #33): when true, [error]
@@ -1088,6 +1368,12 @@ class TvPlayerViewModel(
         // from the video group, plus a synthetic "Auto". Distinct from
         // [videoTracks] (group-level): only this drives the HUD Quality picker.
         val videoQualities: List<VideoQualityOption> = emptyList(),
+        /**
+         * The preference the session plays at: a pick, the route's, or the
+         * saved settings. With no row lit (a saved resolution the source
+         * plays under) the HUD names it instead of Auto.
+         */
+        val videoQualityPreference: String? = null,
         // Scrubber preview state — `isScrubbing` flips on the first arrow
         // press from the focused scrubber, `scrubPreviewSec` shadows the
         // intended seek target so the overlay can render a preview puck
@@ -1118,6 +1404,8 @@ class TvPlayerViewModel(
         val pendingSubtitleIdentity: SubtitleIdentity? = null,
         val subtitleApplying: Boolean = false,
         val subtitleFailureMessage: String? = null,
+        /** The catalog string for [subtitleFailureMessage] when a shared producer named one. */
+        val subtitleFailureRes: TvPlayerErrorRes? = null,
         /** Distinguishes two failures that happen to read the same. */
         val subtitleFailureId: Long = 0L,
         // Dialog visibility — owned here so HUD rows can request them and
@@ -1133,12 +1421,16 @@ class TvPlayerViewModel(
         val preferredTextLanguage: String? = null,
         val preferredSubtitleMode: String? = null,
         val showForcedSubtitles: Boolean = true,
+        /** The series' remembered subtitle track, from the watch detail. */
+        val preferredSubtitleTrackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
         // Intro / credits ranges — populated from `WatchDetail`. Used by the
         // intro auto-skip observer and (eventually) the next-up promote.
         val intro: TimeRange? = null,
         val credits: TimeRange? = null,
         val recap: TimeRange? = null,
         val preview: TimeRange? = null,
+        /** Every marker occurrence; null from servers that send only the singular fields. */
+        val markerSegments: List<MarkerSegment>? = null,
         // Chapters from the selected FileVersion (server-extracted via FFprobe
         // at ingest, mirrors Apple's `VersionChapter` consumption). Empty list
         // when the file has no embedded chapters. The HUD Chapters pane
@@ -1182,7 +1474,21 @@ class TvPlayerViewModel(
         // Video surface fill mode (letterbox vs zoom). Session-scoped — resets
         // to Fit on each new playback to match tvOS video-gravity behavior.
         val videoFillMode: VideoFillMode = VideoFillMode.Fit,
-    )
+        // The item whose first frame (or, for audio, first play) has shown.
+        // Until it matches [contentId] the item is on its first load: no
+        // controls, only the spinner. A retry, renewal, reconnect or replan
+        // keeps the content id, so only a new item brings that state back.
+        val startedContentId: String? = null,
+    ) {
+        /** The current item has not shown its first frame yet; see [startedContentId]. */
+        val awaitingFirstFrame: Boolean
+            get() = startedContentId != contentId
+
+        /** The marker occurrences the skip controls and Up Next read. */
+        val markerTimeline: MarkerTimeline by lazy {
+            MarkerTimeline.resolve(markerSegments, intro = intro, credits = credits, recap = recap, preview = preview)
+        }
+    }
 
     private val _uiState = MutableStateFlow(
         UiState(
@@ -1190,6 +1496,16 @@ class TvPlayerViewModel(
             shuffle = TvShuffleUiState().takeIf { !launchArgs.shuffleId.isNullOrBlank() && shuffleFeatureStore != null },
         ),
     )
+
+    init {
+        viewModelScope.launch {
+            _uiState.collect { state ->
+                sendStagedSubtitleIfCommitted(
+                    state.contentId, state.committedSubtitleIdentity, state.pendingSubtitleIdentity, state.subtitleUrls,
+                )
+            }
+        }
+    }
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
     val presentationState: StateFlow<UiState> = uiState
         .map(UiState::withoutPlaybackClock)
@@ -1209,13 +1525,17 @@ class TvPlayerViewModel(
         )
     // Marker controls use source time; presentationState deliberately omits the clock.
     val manualMarkerSkipTarget: StateFlow<MarkerSkipTarget?> = uiState
-        .map { markerSkipTarget(it.position, it.recap, it.credits) }
+        .map { markerSkipTarget(it.position, it.markerTimeline) }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private var subtitleMountGeneration = 0L
     private var lastAdapterMountIdentity: SubtitleIdentity? = null
     private var lastAdapterMountGeneration: Long? = null
+    /** The adapter's owner of [lastAdapterMountIdentity]; a new owner re-arms the same identity. */
+    private var lastAdapterMountOwner: Long? = null
+    /** [lastAdapterMountIdentity] was shown on the playing stream ahead of its replan. */
+    private var lastAdapterMountInPlaceSwitch = false
 
     /**
      * Authority for the NEXT mount the adapter arms, consumed by the snapshot
@@ -1238,15 +1558,39 @@ class TvPlayerViewModel(
     /** True from issuing an automatic selection until the adapter commits it. */
     private var autoSubtitleSelectionInFlight = false
     private val unpublishedSubtitleUi = mutableMapOf<String, UiState>()
+
+    /** The mount nonce of each subtitle publication not yet confirmed, by session. */
+    private val unpublishedSubtitleMounts = mutableMapOf<String, Long>()
+
+    /**
+     * Sessions whose unconfirmed subtitle publication was applied in place:
+     * no mount nonce, the same MediaItem. Their rollback restores the plan
+     * and reselects the previous subtitle instead of remounting.
+     */
+    private val unpublishedInPlaceSubtitles = mutableSetOf<String>()
+
+    /**
+     * Unconfirmed publications that moved to another version, which turned the
+     * requested subtitle Off because that file lacks it, by session, with the
+     * [subtitleChoiceGeneration] they were adopted under. Once confirmed, the Off
+     * is not the viewer's choice: it isn't carried to the next episode or saved
+     * as their preference, unless they picked a subtitle in the meantime.
+     */
+    private val unpublishedForcedSubtitleOff = mutableMapOf<String, Long>()
+
+    /** Counts the viewer's subtitle picks; see [unpublishedForcedSubtitleOff]. */
+    private var subtitleChoiceGeneration = 0L
     private val unpublishedTvLoadUi =
         TvUnpublishedLoadUiOwnership<UiState, TvSubtitlePlaybackContext>()
 
     private val subtitleTransactions = TvSubtitleTransactionAdapter(
         scope = viewModelScope,
+        // An Auto picked in the player takes the saved cap. The TV has no
+        // cellular pair.
         stagedPort = PlaybackSessionManagerTvSubtitleStagedReplanPort(
             playbackSessionManager,
             sessionLifecycle,
-        ),
+        ) { preference -> playerSettingsStore.inPlayerQualityPair(preference, cellular = false) },
         settlementScope = TvSubtitleSettlementOwner.scope,
         persistencePort = object : TvSubtitlePersistencePort {
             override suspend fun persist(
@@ -1258,6 +1602,7 @@ class TvPlayerViewModel(
                 // testing the index for non-null marked the server default as
                 // the viewer's choice after any successful subtitle change.
                 if (committed.audioPreferenceSpecified) onAudioSelectionCommitted()
+                sendCommittedSeriesWrites(committed)
                 val writeScope = context.writeScope ?: return false
                 return userItemStatePort.recordTrackSelection(
                     scope = writeScope,
@@ -1275,8 +1620,21 @@ class TvPlayerViewModel(
             }
         },
         onSnapshotChanged = { snapshot ->
+            if (snapshot.failureMessage != null) refuseMenuPickWhenIdle()
             val localMountIdentity = snapshot.localMountIdentity
-            if (localMountIdentity != null && localMountIdentity != lastAdapterMountIdentity) {
+            // A switch shown ahead of its replan ended with nothing after it
+            // (a newer pick that takes the replan path, or a failure): the
+            // player still shows that track, so put the committed one back.
+            val abandonedInPlaceSwitch = localMountIdentity == null &&
+                lastAdapterMountInPlaceSwitch &&
+                lastAdapterMountIdentity != snapshot.committedIdentity
+            if (localMountIdentity != null) lastAdapterMountInPlaceSwitch = snapshot.localMountInPlaceSwitch
+            if (localMountIdentity != null && (
+                    localMountIdentity != lastAdapterMountIdentity ||
+                        snapshot.localMountGeneration != lastAdapterMountOwner
+                    )
+            ) {
+                lastAdapterMountOwner = snapshot.localMountGeneration
                 subtitleMountGeneration += 1
                 lastAdapterMountGeneration = subtitleMountGeneration
                 subtitleRemountReselection.arm(
@@ -1289,8 +1647,10 @@ class TvPlayerViewModel(
                 lastAdapterMountIdentity = localMountIdentity
                 // In-stream captions can already be present and need no media
                 // rebuild, so settle them against the current snapshot now.
+                // Off needs no track, and a title without text tracks may
+                // publish no later snapshot to act on.
                 _uiState.value.subtitleTracks
-                    .takeIf(List<PlayerTrackEntry>::isNotEmpty)
+                    .takeIf { it.isNotEmpty() || localMountIdentity == SubtitleIdentity.Off }
                     ?.let(::resolveSubtitleRemountReselection)
             } else if (localMountIdentity == null) {
                 lastAdapterMountGeneration?.let { generation ->
@@ -1300,6 +1660,9 @@ class TvPlayerViewModel(
                 }
                 lastAdapterMountGeneration = null
                 lastAdapterMountIdentity = null
+                lastAdapterMountOwner = null
+                lastAdapterMountInPlaceSwitch = false
+                if (abandonedInPlaceSwitch) reselectMountedSubtitle(snapshot.committedIdentity)
             }
             if (autoSubtitleSelectionInFlight &&
                 !snapshot.subtitleApplying &&
@@ -1350,18 +1713,40 @@ class TvPlayerViewModel(
                 subtitleTrackIndexOverride = serverIndex,
             )
         },
+        onHlsRenditionSubtitleFailure = { serverIndex ->
+            startProtocolV3Replan(
+                classification = SUBTITLE_HLS_RENDITION_FAILED_CLASSIFICATION,
+                notice = "Embedded subtitles couldn't load. Retrying with a sidecar.",
+                state = _uiState.value,
+                subtitleTrackIndexOverride = serverIndex,
+            )
+        },
         onCommittedPlaybackFailure = { message ->
             _uiState.update { it.copy(error = message) }
         },
-        hasMountableTracks = { _uiState.value.subtitleTracks.isNotEmpty() },
+        // Until the screen applies a pending mount, subtitleTracks still lists
+        // the previous item's tracks (onTransportMountApplied clears them), and
+        // counting those would start the mount deadline before the new item
+        // has any.
+        hasMountableTracks = {
+            !transportMountGate.suppressPositionReports && _uiState.value.subtitleTracks.isNotEmpty()
+        },
         isLocallyMountable = { identity ->
-            // Server-native and sidecar decisions require exact mounted IDs.
             val state = _uiState.value
-            tvResolveMountedSubtitleTrack(
+            isTvLocallyMountable(
                 identity = identity,
+                plan = state.playbackPlan,
                 subtitleRows = state.subtitleUrls,
                 mounted = state.subtitleTracks.map { it.toMountedTvSubtitleTrack() },
-            ) != null
+            )
+        },
+        canSwitchInPlace = { committed, target ->
+            val state = _uiState.value
+            canSwitchSubtitleInPlace(state.playbackPlan, state.subtitleUrls, committed, target)
+        },
+        onBufferingQualityReplanFailed = {
+            Log.i(TAG, "buffering_quality replan_failed")
+            bufferingQualityController.onReplanFailed()
         },
     )
     private val subtitleTransactionLaunchMutex = Mutex()
@@ -1381,15 +1766,117 @@ class TvPlayerViewModel(
     /** Total seconds a fresh intro prompt runs for, for the fill's arithmetic. */
     val introSkipTotalSeconds: Int = introAutoSkipController.totalCountdownSeconds
 
+    // ---- Buffering quality (server docs/design/2026-10-17-buffering-quality.md) ----
+
+    /**
+     * Lowers quality when playback keeps buffering, or offers to. Suspended
+     * in a Watch Party, where the room's own lower-quality offer applies: it
+     * times stalls and summarizes plans but never acts. Main thread only,
+     * like the intro controller.
+     */
+    private val bufferingQualityController = BufferingQualityController(
+        scope = viewModelScope,
+        clock = { SystemClock.elapsedRealtime() },
+        onReplan = ::requestBufferingQualityReplan,
+        onNotice = ::showBufferingQualityNotice,
+        onPlanSummary = { playbackSessionManager.emitPlanSummary(it) },
+        planThroughputKbps = playbackSessionManager::observedPlanThroughputKbps,
+    )
+
+    /**
+     * True while the controller acts on stalls: false in a Watch Party. TV has
+     * no local file playback, so that is the only exclusion.
+     */
+    val bufferingQualityEnabled: Boolean = roomId == null
+
+    /** The Media3 adapter feeding the controller. The screen attaches it to the in-process ExoPlayer. */
+    val bufferingQualityAdapter = BufferingQualityPlayerAdapter(
+        bufferingQualityController.asPlaybackEventSink(),
+        lastMediaByteAtMs = { throughputMeter?.lastByteAtMs() },
+        loadingReplacement = { bufferingQualityController.loadingReplacement },
+    )
+
+    /** The buffering pill. The screen consumes this directly. */
+    val bufferingPill: StateFlow<BufferingQualityPill> = bufferingQualityController.pill
+
+    /** Bumps whenever the pill's timer (re)starts, so the fill can re-anchor. */
+    val bufferingCountdownRun: StateFlow<Int> = bufferingQualityController.countdownRun
+
+    /** False while the pill is up but its timer is frozen by a pause. */
+    val bufferingTimerRunning: StateFlow<Boolean> = bufferingQualityController.timerRunning
+
+    /** Picture in picture: no pill or notice shows. */
+    private val playerViewHidden = MutableStateFlow(false)
+
+    /**
+     * The buffering notice. It waits while the player is in picture in
+     * picture or a lifecycle notice, which the screen ranks first, holds the
+     * slot.
+     */
+    private val bufferingNoticeSlot = BufferingQualityNoticeSlot(
+        scope = viewModelScope,
+        slotFree = combine(sessionLifecycle.notice, playerViewHidden) { other, hidden -> other == null && !hidden },
+        clock = { SystemClock.elapsedRealtime() },
+    )
+
+    /** A display-only buffering notice; the screen words it from string resources. */
+    val bufferingNotice: StateFlow<BufferingQualityNotice?> = bufferingNoticeSlot.notice
+
+    private val _bufferingAutoLimited = MutableStateFlow(false)
+
+    /** The playing plan is on Auto under a learned limit: the menu says so. */
+    val bufferingAutoLimited: StateFlow<Boolean> = _bufferingAutoLimited.asStateFlow()
+
+    /** The title the controller's answer, notice and re-offer wait belong to. */
+    private var bufferingQualityContentId: String? = null
+
+    /** What the last adopted plan played at, for spotting the viewer's quality change. */
+    private var bufferingQualityKey: BufferingQualityKey? = null
+
+    /** The viewer's picks, so only the latest one settles the controller's pending pick. */
+    private val bufferingPicks = BufferingQualityPicks(bufferingQualityController)
+    private var lastMenuPick: BufferingQualityPicks.Pick? = null
+    private var lastVersionPick: BufferingQualityPicks.Pick? = null
+
+    /** The mount that plays the controller's own replan, until it is adopted. */
+    private var bufferingReplanNonce: Long? = null
+
+    /** A Restore quality waiting for the replan or transaction in flight. */
+    private var bufferingRestoreJob: Job? = null
+
+    /**
+     * The adoption last handed to the controller. Every published plan that
+     * mounts is a new adoption, even when the server repeats its plan_id.
+     */
+    private var bufferingAdoptionId: String? = null
+
+    /** The mount that made [bufferingAdoptionId]. */
+    private var bufferingAdoptedMountNonce: Long? = null
+
+    /**
+     * The mount nonce of a client-side same-plan remount (a `client_retry`
+     * copy of the playing plan). Its mount is a reload, not an adoption.
+     */
+    private var pendingBufferingReloadNonce: Long? = null
+
     private val seekRequestChannel = Channel<Double>(capacity = Channel.BUFFERED)
     val seekRequests: Flow<Double> = seekRequestChannel.receiveAsFlow()
 
     // ---- Remote session-control surface (driven by TvPlaybackRealtimeController) ----
     // Stop is screen-local (stopPlaybackAndExit) and the lifecycle `notice` is
     // read-only, so expose thin channels here for the control socket to drive.
-    private val _remoteStopRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    /** Screen collects this and runs its teardown/exit. */
-    val remoteStopRequests: SharedFlow<Unit> = _remoteStopRequests
+    private val _roomAudioTrackChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /**
+     * Emits when the viewer switched audio track within the mounted stream in
+     * a room, so the binding measures rate support again (a replan mounts new
+     * media, which already does).
+     */
+    val roomAudioTrackChanges: SharedFlow<Unit> = _roomAudioTrackChanges
+
+    private val _remoteStopRequests = MutableSharedFlow<String?>(extraBufferCapacity = 1)
+    /** Screen collects this and runs its teardown/exit, showing the notice when there is one. */
+    val remoteStopRequests: SharedFlow<String?> = _remoteStopRequests
 
     private var remoteMessageCounter = 0L
     private val _remoteMessage = MutableStateFlow<RemoteMessage?>(null)
@@ -1399,6 +1886,11 @@ class TvPlayerViewModel(
     // ---- Next-episode auto-advance (F2) ----
     private var autoAdvanceCount: Int = launchArgs.autoAdvanceCount
     private var autoAdvanceHandled = false // once-per-item guard
+    // The credits or the end of this item was reached. Unlike autoAdvanceHandled,
+    // opening Up Next by hand or Keep Watching never sets it.
+    private var reachedCreditsOrEnd = false
+    // The identity generation this player was launched under.
+    private val launchIdentityGeneration: Long? = identityTransitions?.generation?.value
     private val nextUpTransitionGate = NextUpTransitionGate()
     private var resolveNextEpisodeJob: Job? = null
     // Set when the credits/end point fired but nextEpisode hadn't resolved yet,
@@ -1465,6 +1957,19 @@ class TvPlayerViewModel(
 
     fun requestSubtitleSync(key: String) = subtitleSync.requestSync(key)
 
+    // Seek-bar thumbnails for the streamed file; the scrubber and the
+    // hold-seek chip stay text-only while this is null.
+    private val trickplay = trickplayManifests?.let {
+        org.siloserver.silo.common.player.trickplay.trickplayPreviews(it, viewModelScope)
+    }
+    val trickplayThumbnail: StateFlow<androidx.compose.ui.graphics.ImageBitmap?> =
+        trickplay?.thumbnail ?: MutableStateFlow(null)
+
+    /** The time a D-pad seek is previewing, or null when it ends. */
+    fun showTrickplay(seconds: Double?) {
+        trickplay?.show(seconds)
+    }
+
     fun resetSubtitleTiming(key: String) = subtitleSync.resetTiming(key)
 
     /**
@@ -1496,7 +2001,12 @@ class TvPlayerViewModel(
      * playback and the HUD ended up disagreeing.
      */
     private val _subtitleMountRequests =
-        MutableSharedFlow<TvSubtitleMountRequest>(extraBufferCapacity = 1)
+        // Only the newest owner's request can be applied (canApplySubtitleMount),
+        // so an older one still waiting to be collected gives way to it.
+        MutableSharedFlow<TvSubtitleMountRequest>(
+            extraBufferCapacity = 1,
+            onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+        )
     internal val subtitleMountRequests: SharedFlow<TvSubtitleMountRequest> = _subtitleMountRequests
 
     // Remote track-selection latches. A remote command can land before the
@@ -1540,6 +2050,9 @@ class TvPlayerViewModel(
     /** False when the server is known to discard subtitle text opacity. */
     val subtitleTextOpacitySupported: StateFlow<Boolean> = playerSettingsStore.subtitleTextOpacitySupportedFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    /** The AudioTrack's real output path, for the HUD's Mode row and delay gating. */
+    val audioOutputPath: StateFlow<AudioOutputPath?> get() = playbackAnalytics.audioOutputPath
+
     /**
      * Per-profile audio delay in ms, ±500 clamp. Sourced from
      * [PlayerSettingsStore.audioSyncMsFlow]; mirrored into the active
@@ -1577,6 +2090,7 @@ class TvPlayerViewModel(
     private val subtitleSnapshotSettlement = TvSubtitleSnapshotSettlementTracker()
 
     init {
+        startBufferingQuality()
         // Keep the process-wide active-file marker in sync (phone parity), so
         // Reclaim Watched never deletes bytes under a live player.
         viewModelScope.launch {
@@ -1594,6 +2108,30 @@ class TvPlayerViewModel(
                 }
                 .distinctUntilChanged()
                 .collect { (mediaFileId, syncKeys) -> subtitleSync.bind(mediaFileId, syncKeys) }
+        }
+        // Seek previews follow the streamed file.
+        trickplay?.let { previews ->
+            viewModelScope.launch {
+                _uiState
+                    .map { state ->
+                        org.siloserver.silo.common.player.trickplay.trickplayTarget(
+                            contentId = state.contentId,
+                            fileId = state.mediaFileId,
+                            versions = state.fileVersions,
+                            streaming = !state.sessionId.isNullOrEmpty(),
+                        )
+                    }
+                    .distinctUntilChanged()
+                    .collect(previews::bind)
+            }
+            // The focused scrubber's preview; the hidden-controls hold seek
+            // reports its own through showTrickplay.
+            viewModelScope.launch {
+                _uiState
+                    .map { state -> state.scrubPreviewSec.takeIf { state.isScrubbing } }
+                    .distinctUntilChanged()
+                    .collect(previews::show)
+            }
         }
         viewModelScope.launch {
             val screen = _uiState
@@ -1637,6 +2175,7 @@ class TvPlayerViewModel(
                         if (current.error == null) {
                             current.copy(
                                 error = state.message,
+                                errorRes = state.messageRes?.let { TvPlayerErrorRes(state.message, it) },
                                 showNextUp = false,
                                 isNextUpTransitioning = false,
                             )
@@ -1738,11 +2277,17 @@ class TvPlayerViewModel(
         }
         subtitleServerIndexToRestore?.let { serverIndex ->
             subtitleSnapshotSettlement.reset()
+            // A track the media itself carries (a native track or a rendition)
+            // is restored by its exact identity. After an in-place switch the
+            // reloaded multivariant playlist still marks the original track
+            // DEFAULT, so only the explicit selection puts the viewer's back.
+            val committed = (_uiState.value.committedSubtitleIdentity as? SubtitleIdentity.Embedded)
+                ?.takeIf { it.isServerSelected && it.serverIndex == serverIndex }
             subtitleRemountReselection.arm(
-                identity = if (serverIndex == -1) {
-                    SubtitleIdentity.Off
-                } else {
-                    SubtitleIdentity.ServerSidecar(serverIndex)
+                identity = when {
+                    serverIndex == -1 -> SubtitleIdentity.Off
+                    committed != null -> committed
+                    else -> SubtitleIdentity.ServerSidecar(serverIndex)
                 },
                 generation = transportMountSequence,
             )
@@ -1810,9 +2355,10 @@ class TvPlayerViewModel(
             sessionId = state.sessionId,
             positionSeconds = state.position,
             audioTrackIndex = selectedAudio,
-            qualityPreference = qualityOverride
-                ?: preferredQuality
-                ?: PlaybackQuality.Auto.wireValue,
+            // Only a pick (or the route's quality). Defaulting to "auto" here
+            // sent Auto on every subtitle change, over a saved resolution, and
+            // the commit then recorded it as the viewer's pick.
+            qualityPreference = qualityOverride ?: preferredQuality,
             subtitleTracks = state.subtitleUrls,
             audioTracks = version?.audioTracks.orEmpty(),
             outputRouteGeneration = capabilityDetector.outputRouteGeneration.value,
@@ -1871,16 +2417,59 @@ class TvPlayerViewModel(
         lastAdoptedSessionId = ready.session.sessionId
         if (!adoption.isCurrent()) return TvSubtitleAdoptionResult.Superseded
         unpublishedSubtitleUi[ready.session.sessionId] = before
+        if (fileId != before.mediaFileId &&
+            adoption.committed.identity == SubtitleIdentity.Off &&
+            adoption.requestedIdentity != SubtitleIdentity.Off
+        ) {
+            unpublishedForcedSubtitleOff[ready.session.sessionId] = subtitleChoiceGeneration
+        }
 
         val subtitleUrls = enrichAuthoritativePlaybackSubtitleChoices(
             catalogTracks = version?.subtitleTracks.orEmpty(),
             plannedTracks = ready.session.subtitleUrls.orEmpty(),
         )
+        val mountedPlan = before.playbackPlan
+        val adoptedPlan = ready.session.playbackPlan
+        if (ready.inPlace &&
+            fileId == before.mediaFileId &&
+            ready.session.sessionId == before.sessionId &&
+            mountedPlan != null &&
+            adoptedPlan != null
+        ) {
+            // The server kept the transport and changed only a subtitle the
+            // mounted media already carries, which the adapter has selected
+            // (or turned off) on the player. No mount nonce is issued, so the
+            // screen keeps the MediaItem: its mount effect keys on the plan's
+            // media mount key, which this plan shares. The publication is
+            // confirmed by the adapter's mount owner reporting the selection
+            // on the current tracks, like any local mount.
+            unpublishedInPlaceSubtitles += ready.session.sessionId
+            _uiState.update { state ->
+                state.copy(
+                    error = null,
+                    playbackPlan = (state.playbackPlan ?: mountedPlan).withInPlaceAdoption(adoptedPlan),
+                    delivery = ready.plan.delivery,
+                    videoQualities = authoritativePlaybackQualityOptions(
+                        available = ready.plan.availableQualities,
+                        selectedLabel = adoption.committed.qualityPreference ?: sessionQualityPreference(),
+                        delivered = ready.plan.effectiveRecipe,
+                        source = ready.plan.source,
+                        reported = ready.plan.reportedQuality,
+                    ),
+                    subtitleUrls = subtitleUrls,
+                )
+            }
+            Log.i(TAG, "subtitle_replan_in_place plan_id=${ready.plan.planId}")
+            return TvSubtitleAdoptionResult.Adopted
+        }
         val duration = ready.session.durationSeconds ?: 0.0
         val remountPosition = ready.plan.timeline.replanMountPositionForSource(
             adoption.requestedSourcePositionSeconds,
         )
         val mountNonce = nextTypedSubtitleMountNonce(adoption.committed.identity)
+        unpublishedSubtitleMounts[ready.session.sessionId] = mountNonce
+        unpublishedInPlaceSubtitles -= ready.session.sessionId
+        bufferingReplanNonce = mountNonce.takeIf { adoption.bufferingQuality }
         _uiState.update { state ->
             state.copy(
                 error = null,
@@ -1897,9 +2486,12 @@ class TvPlayerViewModel(
                     ?: ready.plan.effectiveRecipe.height?.let { "${it}p" },
                 videoQualities = authoritativePlaybackQualityOptions(
                     available = ready.plan.availableQualities,
-                    selectedLabel = adoption.committed.qualityPreference,
+                    selectedLabel = adoption.committed.qualityPreference ?: sessionQualityPreference(),
                     delivered = ready.plan.effectiveRecipe,
+                    source = ready.plan.source,
+                    reported = ready.plan.reportedQuality,
                 ),
+                videoQualityPreference = adoption.committed.qualityPreference ?: sessionQualityPreference(),
                 container = ready.plan.stream.container ?: version?.container ?: state.container,
                 duration = duration,
                 serverDuration = duration,
@@ -1922,6 +2514,12 @@ class TvPlayerViewModel(
         playback: TvSubtitleCommittedPlayback,
     ): Boolean {
         unpublishedSubtitleUi.remove(playback.sessionId)
+        unpublishedSubtitleMounts.remove(playback.sessionId)
+        unpublishedInPlaceSubtitles.remove(playback.sessionId)
+        if (unpublishedForcedSubtitleOff.remove(playback.sessionId) == subtitleChoiceGeneration) {
+            manualSubtitleSelectionApplied = false
+            autoSelectedSubtitleIdentity = SubtitleIdentity.Off
+        }
         return true
     }
 
@@ -1930,6 +2528,15 @@ class TvPlayerViewModel(
         restoreUi: Boolean,
     ): Boolean {
         val predecessor = unpublishedSubtitleUi.remove(playback.sessionId)
+        unpublishedForcedSubtitleOff.remove(playback.sessionId)
+        val inPlace = unpublishedInPlaceSubtitles.remove(playback.sessionId)
+        // A replacement the controller adopted sends its summary when the
+        // predecessor's remount ends it. One it never adopted sends none, and
+        // its identity would go to a later adoption that repeats its plan id.
+        val mountNonce = unpublishedSubtitleMounts.remove(playback.sessionId)
+        if (mountNonce == null || mountNonce != bufferingAdoptedMountNonce) {
+            playback.ready?.let { playbackSessionManager.forgetPlanIdentity(it.plan.planId, it.planAttemptId) }
+        }
         // The token follows lifecycle ownership in BOTH directions. Rollback
         // hands ownership back to the predecessor, so leaving the token on the
         // discarded replacement would make teardown name a session the
@@ -1938,13 +2545,43 @@ class TvPlayerViewModel(
         if (lastAdoptedSessionId == playback.sessionId) {
             lastAdoptedSessionId = predecessor?.sessionId
         }
-        if (restoreUi && predecessor != null) {
+        if (restoreUi && predecessor != null && inPlace) {
+            // The MediaItem never changed: lay the predecessor's subtitle
+            // decision back over the mounted plan, as the adoption did, and
+            // select its subtitle again on the same tracks. The rest of the
+            // snapshot is older than what is playing now; its whole plan
+            // would bring back fields changed since (a PCM retry's audio
+            // claims), change the media mount key, and remount.
+            _uiState.update { state ->
+                state.copy(
+                    playbackPlan = predecessor.playbackPlan?.let { previous ->
+                        state.playbackPlan?.withInPlaceAdoption(previous) ?: previous
+                    },
+                    delivery = predecessor.delivery,
+                    videoQualities = predecessor.videoQualities,
+                    subtitleUrls = predecessor.subtitleUrls,
+                )
+            }
+            reselectMountedSubtitle(predecessor.committedSubtitleIdentity)
+        } else if (restoreUi && predecessor != null) {
             val identity = predecessor.committedSubtitleIdentity
             _uiState.value = predecessor.copy(
                 transportMountNonce = nextTypedSubtitleMountNonce(identity),
             )
         }
         return true
+    }
+
+    /** Selects [identity] again on the mounted tracks, as a remount would, without one. */
+    private fun reselectMountedSubtitle(identity: SubtitleIdentity) {
+        subtitleMountGeneration += 1
+        if (subtitleRemountReselection.requiresRemount(identity)) {
+            subtitleSnapshotSettlement.reset()
+            subtitleRemountReselection.arm(identity, subtitleMountGeneration)
+        }
+        _uiState.value.subtitleTracks
+            .takeIf(List<PlayerTrackEntry>::isNotEmpty)
+            ?.let(::resolveSubtitleRemountReselection)
     }
 
     private suspend fun rollbackUnpublishedTvLoadSession(sessionId: String) {
@@ -2000,6 +2637,9 @@ class TvPlayerViewModel(
             // absent, which at worst costs an unnecessary reanchor.
             playerWindowIsSeekable = false
             playerWindowEndPlayerMs = -1L
+            adoptBufferingQualityPlan(nonce)
+            roomMountAppliedAtMs = SystemClock.elapsedRealtime()
+            roomMountGeneration++
             pendingNativeSeekAfterMount?.let { targetSeconds ->
                 pendingNativeSeekAfterMount = null
                 // Re-evaluate against the plan that actually won the load;
@@ -2018,10 +2658,13 @@ class TvPlayerViewModel(
     private fun resetSeekRecoveryForContentChange() {
         recoveryJob?.cancel()
         recoveryJob = null
+        outageRecoveryJob?.cancel()
+        outageRecoveryJob = null
         queuedRecoveryReplan = null
         // A budget exhausted on the previous content/version must not leak
         // into the next one (phone parity: resetPlaybackRecoveryState).
         transientNetworkRetries = 0
+        reopenedAfterOutage = false
         seekRecoveryQueue.reset()
         cancelPendingQuickSkip()
         seekPresentationGuard.cancel()
@@ -2035,6 +2678,8 @@ class TvPlayerViewModel(
     private fun loadContent(
         startPositionOverride: Double? = null,
         preferredFileIdOverride: Int? = null,
+        // Pins the file this start plays: the viewer's pick, or an in-place restart's exact file.
+        versionChosen: Boolean = this.versionChosen,
         audioTrackIndexOverride: Int? = null,
         audioTrackIndexOverrideSpecified: Boolean = false,
         // A missing server session is a renewal, not a new route. Use the
@@ -2092,8 +2737,13 @@ class TvPlayerViewModel(
         resetSeekRecoveryForContentChange()
         transportMountGate.beginLoad()
         introAutoSkipController.reset()
+        beginBufferingQualityLoad()
         manualSubtitleSelectionApplied = false
         launchSubtitleSelectionApplied = false
+        // A replacement load (version switch, retry) decides Auto again for its
+        // own file: an earlier automatic Off left text disabled, and only a new
+        // decision mounts the subtitle this plan commits.
+        autoTextSubtitleSelectionAttempted = false
         autoSelectedSubtitleIdentity = null
         autoSubtitleSelectionInFlight = false
         // Cleared here and raised only if the carried choice actually RESOLVES
@@ -2127,6 +2777,7 @@ class TvPlayerViewModel(
                     ownerGeneration = loadOwner.generation,
                 )
                 val episodeSelectionHandoff = episodeSelectionHandoffLease?.handoff
+                noteEpisodeIntent(contentId, episodeSelectionHandoff)
                 val request = VideoPlaybackStartRequest(
                         libraryId = requestRoom?.libraryId ?: launchArgs.libraryId,
                         contentId = contentId,
@@ -2153,7 +2804,12 @@ class TvPlayerViewModel(
                         episodeSelectionHandoff = episodeSelectionHandoff,
                         recoveryStartParams = recoveryStartParams,
                         room = requestRoom,
+                        versionChosen = versionChosen,
                     )
+                // Adopted only when this load publishes: a superseded one must
+                // not replace the owner of the playback that is on screen.
+                val loadTrackChoiceOwner = catalogRepository.captureWatchAuthority()
+                if (!loadOwners.owns(loadOwner)) return@launch
                 val result = loadOwners.withOwner(loadOwner) {
                     videoPlaybackCoordinator.start(request)
                 }
@@ -2237,7 +2893,20 @@ class TvPlayerViewModel(
                             pendingInitialSubtitleIndex == null &&
                             !subtitleSelection.suppressDurableSubtitleRestore
                         ) {
-                            localTrackSelection?.subtitleFingerprint
+                            // The series choice on the server outranks this
+                            // device's per-file memory: it is what every other
+                            // device sees, and Auto elsewhere deletes it.
+                            org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice(
+                                localPreference = localTrackSelection?.subtitleFingerprint,
+                                serverChoiceKnown = true,
+                                signature = result.preferredSubtitleTrackSignature,
+                                candidates = org.siloserver.silo.model.playback.inventoryAutoSubtitleCandidates(
+                                    result.subtitleUrls,
+                                ),
+                                effectiveMode = result.preferredSubtitleMode,
+                                resetToAuto = org.siloserver.silo.model.playback.seriesTrackChoiceKey(result.seriesId, contentId)
+                                    ?.let { seriesTrackChoiceWriter?.subtitleResetToAuto(it) } == true,
+                            )
                         } else {
                             null
                         }
@@ -2282,8 +2951,21 @@ class TvPlayerViewModel(
                             return@launch
                         }
                         val hydratedSubtitleUrls = freshRestore.rows
+                        // The starter already weighed this memory against the
+                        // series choice (and an Auto reset, which may have
+                        // landed during its flush); only the track its plan
+                        // plays may be restored onto the renderer.
                         pendingPersistedAudioFingerprint = if (initialAudioTrackIndex == null) {
-                            localTrackSelection?.audioFingerprint
+                            val readyVersion = result.versions.firstOrNull { it.fileId == (result.fileId ?: readyMediaFileId) }
+                            org.siloserver.silo.model.playback.localAudioMemoryForSeriesChoice(
+                                localFingerprint = localTrackSelection?.audioFingerprint,
+                                tracks = readyVersion?.audioTracks.orEmpty(),
+                                serverOrdinal = result.playbackPlan?.selectedTracks?.audioIndex
+                                    ?: readyVersion?.effectiveAudioTrackIndex,
+                                resetToAuto = org.siloserver.silo.model.playback.seriesTrackChoiceKey(result.seriesId, contentId)
+                                    ?.let { seriesTrackChoiceWriter?.pendingAudio(it) }
+                                    ?.let { it.choice == null } == true,
+                            )
                         } else {
                             null
                         }
@@ -2306,12 +2988,25 @@ class TvPlayerViewModel(
                                 mediaFileId = result.mediaFileId,
                                 position = result.sourceStartPositionSeconds,
                                 subtitleUrls = hydratedSubtitleUrls,
+                                // The predecessor's audio belongs to its own
+                                // file (on Next Up, another episode). Left in,
+                                // the first subtitle replan here sent that
+                                // ordinal back as this file's audio choice,
+                                // replacing the track the start resolved.
+                                desiredAudioOrdinal = null,
+                                desiredAudioConfirmed = false,
+                                audioTracks = emptyList(),
                             ),
                         )
                         val published = loadOwners.publishReadyIfOwned(
                             owner = loadOwner,
                             sessionId = allocatedSessionId,
                             publish = {
+                                trackChoiceOwner = loadTrackChoiceOwner
+                                // A staged pick belongs to the playback it was
+                                // made in; TV never finishes a pick through a
+                                // new load, so every load drops it.
+                                clearStagedSeriesWrites(keepContentId = null)
                                 unpublishedTvLoadUi.register(
                                     sessionId = allocatedSessionId,
                                     state = predecessorUi,
@@ -2364,11 +3059,12 @@ class TvPlayerViewModel(
                                 selectedFileResolution = result.fileResolution,
                                 videoQualities = authoritativePlaybackQualityOptions(
                                     available = result.playbackPlanV3?.availableQualities.orEmpty(),
-                                    selectedLabel = qualityOverride
-                                        ?: preferredQuality
-                                        ?: PlaybackQuality.Auto.wireValue,
+                                    selectedLabel = sessionQualityPreference(),
                                     delivered = result.playbackPlanV3?.effectiveRecipe,
+                                    source = result.playbackPlanV3?.source,
+                                    reported = result.playbackPlanV3?.reportedQuality,
                                 ),
+                                videoQualityPreference = sessionQualityPreference(),
                                 mediaFileId = result.mediaFileId,
                                 startPosition = result.startPositionSeconds,
                                 position = result.sourceStartPositionSeconds,
@@ -2380,10 +3076,12 @@ class TvPlayerViewModel(
                                 preferredTextLanguage = result.preferredTextLanguage,
                                 preferredSubtitleMode = result.preferredSubtitleMode,
                                 showForcedSubtitles = result.showForcedSubtitles,
+                                preferredSubtitleTrackSignature = result.preferredSubtitleTrackSignature,
                                 intro = result.intro,
                                 credits = result.credits,
                                 recap = result.recap,
                                 preview = result.preview,
+                                markerSegments = result.markerSegments,
                                 chapters = result.chapters,
                                 seriesId = result.seriesId,
                                 seasonNumber = result.seasonNumber,
@@ -2490,22 +3188,23 @@ class TvPlayerViewModel(
                                 fileId = requestRoom.fileId,
                                 reason = refusalReason,
                                 message = result.message,
+                                messageRes = result.messageRes,
                             )
                         } else if (preserveCurrentPlaybackOnFailure) {
-                            _uiState.update { failTvReplacementLoad(it, result.message) }
+                            failReplacementLoad(result.message, result.messageRes)
                         } else {
-                            fail(result.message)
+                            fail(result.message, result.messageRes)
                         }
                     }
                     is VideoPlayerUiState.ServerUnreachable -> {
                         episodeSelectionHandoffSlot.retainForRetry(
                             episodeSelectionHandoffLease,
                         )
-                        _uiState.update {
-                            if (preserveCurrentPlaybackOnFailure) {
-                                failTvReplacementLoad(it, SERVER_UNREACHABLE_MESSAGE)
-                            } else {
-                                nextUpTransitionGate.cancel()
+                        if (preserveCurrentPlaybackOnFailure) {
+                            failReplacementLoad(SERVER_UNREACHABLE_MESSAGE)
+                        } else {
+                            nextUpTransitionGate.cancel()
+                            _uiState.update {
                                 it.copy(
                                     isLoading = false,
                                     error = SERVER_UNREACHABLE_MESSAGE,
@@ -2526,14 +3225,31 @@ class TvPlayerViewModel(
                 Log.e(TAG, "Error loading content", e)
                 if (generation != contentLoadGeneration || !loadOwners.owns(loadOwner)) return@launch
                 episodeSelectionHandoffSlot.retainForRetry(episodeSelectionHandoffLease)
-                val message = "Unexpected error: ${e.message}"
+                val message = PLAYBACK_FAILED_MESSAGE
                 if (preserveCurrentPlaybackOnFailure) {
-                    _uiState.update { failTvReplacementLoad(it, message) }
+                    failReplacementLoad(message)
                 } else {
                     fail(message)
                 }
             }
         }
+    }
+
+    /**
+     * The transaction carrying a pick failed, and no newer pick is queued in
+     * it: the server refused the latest pick.
+     */
+    private fun refuseMenuPickWhenIdle() {
+        if (!subtitleTransactions.hasActiveTransaction) bufferingPicks.refused(lastMenuPick)
+    }
+
+    /**
+     * A replacement load (a version switch) failed and the current version
+     * keeps playing: the viewer's pick was refused.
+     */
+    private fun failReplacementLoad(message: String, @StringRes messageRes: Int? = null) {
+        _uiState.update { failTvReplacementLoad(it, message, messageRes) }
+        bufferingPicks.refused(lastVersionPick)
     }
 
     private fun startIntroAutoSkipObserver() {
@@ -2551,24 +3267,23 @@ class TvPlayerViewModel(
         } else {
             playerSettingsStore.introSkipModeFlow
         }
+        // An episode may have several intros: the prompt follows the one that
+        // last started, so an `always` undo survives the seek past its end.
+        val introOccurrence = _uiState
+            .map { it.markerTimeline.occurrenceAt(MarkerKind.Intro, it.position) }
+            .distinctUntilChanged()
         introObserveJob?.cancel()
         introObserveJob = introAutoSkipController.observe(
             position = _uiState
                 .map { it.position }
                 .distinctUntilChanged(),
-            introRange = _uiState
-                .map { it.intro }
-                .distinctUntilChanged(),
+            introRange = introOccurrence,
             mode = effectiveMode,
             introKey = _uiState
-                .map { state ->
-                    state.intro?.let { intro ->
-                        "${state.sessionId}:${state.selectedFileId}:${intro.start}:${intro.end}"
-                    }
-                }
+                .map { state -> "${state.sessionId}:${state.selectedFileId}" }
                 .distinctUntilChanged(),
             // Only reachable outside a room, where the mode is pinned to `ask`.
-            onSeek = { seekToSec -> seekImmediate(seekToSec) },
+            onSeek = { seekToSec -> seekWithoutViewerAction(seekToSec) },
             // Filtered, not raw: isPlaying dips for a rebuffer exactly as it
             // does for a deliberate pause, and a pause that reaches the
             // controller freezes the timer. Unfiltered, a stuttering stream
@@ -2586,12 +3301,13 @@ class TvPlayerViewModel(
         )
     }
 
-    private fun fail(message: String) {
+    private fun fail(message: String, @StringRes messageRes: Int? = null) {
         nextUpTransitionGate.cancel()
         _uiState.update {
             it.copy(
                 isLoading = false,
                 error = message,
+                errorRes = messageRes?.let { res -> TvPlayerErrorRes(message, res) },
                 showNextUp = false,
                 isNextUpTransitioning = false,
             )
@@ -2633,6 +3349,49 @@ class TvPlayerViewModel(
         }
         Log.i(TAG, "Preflight fallback: $notice")
 
+        // A plan, first or replacement, whose transport stalled past the
+        // start deadline on a link measurably slower than its bitrate lowers
+        // on Auto, as a long stall would, instead of replanning the same
+        // quality. A decoder or renderer failure keeps its failure path, and
+        // so does a stall with no such evidence; the controller keeps it for
+        // a renderer wait and for an outage, which the reconnect path owns.
+        if (reason is org.siloserver.silo.common.player.Playability.StartupStalled &&
+            reason.classification == "transport_stall" &&
+            bufferingQualityEnabled
+        ) {
+            val mount = state.transportMountNonce
+            val generation = contentLoadGeneration
+            val lowering = bufferingQualityController.onStartDeadlineMissed {
+                // The lowering came to nothing: fail this load as before, if it is still the one mounted.
+                val current = _uiState.value
+                if (generation == contentLoadGeneration && current.transportMountNonce == mount) {
+                    Log.i(TAG, "buffering_quality start_deadline_lowering_failed action=failure_path")
+                    runStartFailurePath(reason, notice, current)
+                }
+            }
+            if (lowering) {
+                Log.i(
+                    TAG,
+                    "buffering_quality start_deadline_missed action=lower " +
+                        "observed_kbps=${playbackSessionManager.observedPlanThroughputKbps()} " +
+                        "classification=${reason.classification} buffered_ahead_ms=${reason.bufferedAheadMs}",
+                )
+                return
+            }
+        }
+        runStartFailurePath(reason, notice, state)
+    }
+
+    /**
+     * The failure path of a plan that cannot play here: one same-route reopen
+     * of a stalled transport, else a replan that reports the failure.
+     */
+    private fun runStartFailurePath(
+        reason: org.siloserver.silo.common.player.Playability,
+        notice: String,
+        state: UiState,
+    ) {
+        if (state.sessionId == null) return
         if (reason is org.siloserver.silo.common.player.Playability.StartupStalled &&
             reason.classification == "transport_stall" &&
             state.playbackPlan != null &&
@@ -2640,23 +3399,7 @@ class TvPlayerViewModel(
             playbackSessionManager.recordTransportReopen()
         ) {
             transientNetworkRetries++
-            val plan = state.playbackPlan
-            val transportMountNonce = nextTransportMountNonce(selectedSubtitleTrackIndex(state))
-            _uiState.update {
-                it.copy(
-                    error = null,
-                    playbackPlan = plan.copy(
-                        timeline = plan.timeline.copy(
-                            playerStartSeconds = plan.timeline.playerPositionForSource(state.position)
-                                ?: plan.timeline.playerStartSeconds,
-                        ),
-                        decisionTrace = plan.decisionTrace + "client_retry=transport_reopen",
-                    ),
-                    startPosition = plan.timeline.playerPositionForSource(state.position)
-                        ?: plan.timeline.playerStartSeconds,
-                    transportMountNonce = transportMountNonce,
-                )
-            }
+            reopenSameRoute(state, "client_retry=transport_reopen", endLoading = false)
             return
         }
 
@@ -2683,7 +3426,7 @@ class TvPlayerViewModel(
             // replans stay dropped — onPlayerError re-raises those. Embedded
             // mount failures have no player-error retry, so retain those too.
             if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS ||
-                classification == "subtitle_embedded_failed"
+                classification in SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS
             ) {
                 queuedRecoveryReplan = QueuedRecoveryReplan(
                     classification = classification,
@@ -2816,10 +3559,11 @@ class TvPlayerViewModel(
                                     capabilities = decision.capabilities,
                                     audioTrackIndex = returnedAudioIndex,
                                     subtitleTrackIndex = returnedSubtitleIndex ?: -1,
+                                    // A renewal carries only a pick; the saved
+                                    // settings are read again.
                                     qualityPreference = qualityPreference
                                         ?: qualityOverride
-                                        ?: preferredQuality
-                                        ?: PlaybackQuality.Auto.wireValue,
+                                        ?: preferredQuality,
                                     startPosition = decision.session.position,
                                     clientPlaybackContext = decision.clientPlaybackContext,
                                 ),
@@ -2866,12 +3610,12 @@ class TvPlayerViewModel(
                                 selectedFileResolution = effectiveResolution,
                                 videoQualities = authoritativePlaybackQualityOptions(
                                     available = decision.plan.availableQualities,
-                                    selectedLabel = qualityPreference
-                                        ?: qualityOverride
-                                        ?: preferredQuality
-                                        ?: PlaybackQuality.Auto.wireValue,
+                                    selectedLabel = qualityPreference ?: sessionQualityPreference(),
                                     delivered = decision.plan.effectiveRecipe,
+                                    source = decision.plan.source,
+                                    reported = decision.plan.reportedQuality,
                                 ),
+                                videoQualityPreference = qualityPreference ?: sessionQualityPreference(),
                                 container = effectiveContainer,
                                 duration = effectiveDuration,
                                 serverDuration = effectiveDuration,
@@ -2902,12 +3646,13 @@ class TvPlayerViewModel(
                         )
                     }
                     is VideoSessionStartV3.Terminal -> {
-                        if (classification == "subtitle_embedded_failed") {
+                        if (classification in SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS) {
                             onReplanRequestFailed(classification, notice, decision.message)
                             return@launch
                         }
                         val failedSessionId = state.sessionId ?: return@launch
                         val terminalMessage = serverTerminalUserMessage(decision.message)
+                        val terminalMessageRes = terminalUserMessageRes(decision)
                         cancelPendingCatalogSubtitle()
                         val terminalStillCurrent = sessionLifecycle.stopTerminalSessionIfCurrent(
                             expectedSessionId = failedSessionId,
@@ -2926,6 +3671,9 @@ class TvPlayerViewModel(
                                 // In a Watch Party the room decides first
                                 // whether everyone moves to another source.
                                 error = terminalMessage.takeIf { refusalContext == null },
+                                errorRes = terminalMessageRes
+                                    ?.takeIf { refusalContext == null }
+                                    ?.let { res -> TvPlayerErrorRes(terminalMessage, res) },
                                 isLoading = refusalContext != null,
                                 isBuffering = false,
                                 isPlaying = false,
@@ -2943,18 +3691,19 @@ class TvPlayerViewModel(
                                 fileId = fileId,
                                 reason = decision.reason,
                                 message = terminalMessage,
+                                messageRes = terminalMessageRes,
                             )
                         }
                     }
                     VideoSessionStartV3.ServerUpgradeRequired -> {
                         cancelPendingCatalogSubtitle()
-                        if (classification == "subtitle_embedded_failed") {
+                        if (classification in SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS) {
                             onReplanRequestFailed(classification, notice, "Server upgrade required")
                             return@launch
                         }
                         _uiState.update {
                             it.copy(
-                                error = "This Silo server must be updated to support playback recovery.",
+                                error = TvPlayerErrors.RECOVERY_UNSUPPORTED,
                                 isLoading = false,
                                 isBuffering = false,
                             )
@@ -2971,7 +3720,7 @@ class TvPlayerViewModel(
                 }
                 is ApiResult.NetworkError -> {
                     cancelPendingCatalogSubtitle()
-                    onReplanRequestFailed(classification, notice, result.exception.message)
+                    onReplanRequestFailed(classification, notice, result.exception.message, unreachable = true)
                 }
             }
         }.also { job ->
@@ -3003,16 +3752,23 @@ class TvPlayerViewModel(
      * still mounted and healthy, so a benign 409 or a network blip must not
      * tear playback down with a fatal error banner.
      */
-    private fun onReplanRequestFailed(classification: String, notice: String, detail: String?) {
+    private fun onReplanRequestFailed(
+        classification: String,
+        notice: String,
+        detail: String?,
+        /** The request got no response. */
+        unreachable: Boolean = false,
+    ) {
         if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS ||
-            classification == "subtitle_embedded_failed"
+            classification in SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS
         ) {
             Log.w(TAG, "Invalidation replan failed ($classification): $detail")
             _uiState.update { it.copy(isLoading = false, isBuffering = false) }
         } else {
+            Log.w(TAG, "Recovery replan failed ($classification): $notice ($detail)")
             _uiState.update {
                 it.copy(
-                    error = "$notice ($detail)",
+                    error = if (unreachable) SERVER_UNREACHABLE_MESSAGE else PLAYBACK_FAILED_MESSAGE,
                     isLoading = false,
                     isBuffering = false,
                 )
@@ -3154,7 +3910,7 @@ class TvPlayerViewModel(
         // whose saved position is already inside the credits doesn't instantly
         // skip to the next one (a seek into credits also won't trigger it).
         if (!seekWasActive) {
-            _uiState.value.credits?.start?.let { creditsStart ->
+            _uiState.value.markerTimeline.upNextCreditsStart()?.let { creditsStart ->
                 if (previousPosition < creditsStart && positionSec >= creditsStart) onApproachingEnd()
             }
         }
@@ -3172,15 +3928,27 @@ class TvPlayerViewModel(
     }
 
     fun onPlayingChanged(isPlaying: Boolean) {
+        if (isPlaying) reopenedAfterOutage = false
         _uiState.update { it.copy(isPlaying = isPlaying) }
         if (!isPlaying) {
             maybeRecordPosition(_uiState.value.position, _uiState.value.duration, force = true)
         }
     }
 
+    /**
+     * A mount with audio and no video started playing. It renders no frame, so
+     * playing ends its first load instead; a callback from an earlier mount is
+     * ignored, as for [onFirstVideoFrameRendered].
+     */
+    fun onAudioOnlyPlaybackStarted(transportMountNonce: Long) {
+        if (transportMountNonce != _uiState.value.transportMountNonce) return
+        _uiState.update { it.copy(startedContentId = it.contentId) }
+    }
+
     fun onFirstVideoFrameRendered(transportMountNonce: Long?) {
         if (transportMountNonce != _uiState.value.transportMountNonce) return
         hasRenderedFirstFrame = true
+        _uiState.update { it.copy(startedContentId = it.contentId) }
         playbackSessionManager.reportFirstVideoFrame(_uiState.value.stats)
         if (nextUpTransitionGate.completeOnFirstFrame(transportMountNonce)) {
             _uiState.update {
@@ -3337,6 +4105,7 @@ class TvPlayerViewModel(
             selectedOrdinal = audio.firstOrNull { it.isSelected }?.index,
             planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
             requiresMountedIdentity = requiresMountedIdentity,
+            delivery = state.playbackPlan?.delivery,
         )
         when (action) {
             AudioReconcileAction.None -> armOriginalAudioSelectionVerification(
@@ -3445,6 +4214,9 @@ class TvPlayerViewModel(
     private fun confirmDesiredAudio(desired: DesiredAudio) {
         if (desired.confirmed) return
         desiredAudio = desired.copy(confirmed = true)
+        // The new track is mounted and selected: only now can its output path
+        // (PCM or passthrough) be measured for rate support.
+        if (roomId != null) _roomAudioTrackChanges.tryEmit(Unit)
         _uiState.update {
             it.copy(desiredAudioOrdinal = desired.catalogOrdinal, desiredAudioConfirmed = true)
         }
@@ -3454,6 +4226,14 @@ class TvPlayerViewModel(
         if (desired.explicit) {
             onAudioSelectionCommitted()
             persistDesiredAudio(desired.catalogOrdinal)
+            // The viewer's pick is playing: now it is saved and counts as
+            // this episode's pick.
+            stagedAudioWrite.get()
+                ?.takeIf {
+                    it.catalogOrdinal == desired.catalogOrdinal && it.contentId == _uiState.value.contentId &&
+                        stagedAudioWrite.compareAndSet(it, null)
+                }
+                ?.let(::saveSeriesAudio)
         }
     }
 
@@ -3511,7 +4291,7 @@ class TvPlayerViewModel(
     fun onPlaybackRecoveryExhausted() {
         _uiState.update {
             if (it.error != null) it else it.copy(
-                error = "Playback stopped responding. Press Back and try again.",
+                error = TvPlayerErrors.STOPPED_RESPONDING,
             )
         }
     }
@@ -3524,7 +4304,14 @@ class TvPlayerViewModel(
     }
 
     fun onBufferingChanged(isBuffering: Boolean) {
-        _uiState.update { it.copy(isBuffering = isBuffering) }
+        // Media3 reports a player error before it goes idle, so the idle state
+        // would hide what [waitOutOutage] just showed: the viewer still waits.
+        _uiState.update { it.copy(isBuffering = isBuffering || outageRecoveryJob?.isActive == true) }
+    }
+
+    /** A deliberate interaction shows someone is still watching. */
+    private fun resetPassOutStreak() {
+        autoAdvanceCount = 0
     }
 
     /** Toggle user-intent pause state. Screen mirrors this to player.play/pause. */
@@ -3532,6 +4319,7 @@ class TvPlayerViewModel(
         // In a Watch Party every toggle goes through the room; a local flip
         // here would fork this viewer from everyone else.
         if (roomId != null) return
+        resetPassOutStreak()
         _uiState.update { it.copy(isPaused = !it.isPaused) }
     }
 
@@ -3546,16 +4334,34 @@ class TvPlayerViewModel(
     }
 
     /**
-     * Deadband-free seek, also used for Watch Party room seeks
-     * ([applyRoomSeek]). Updates `uiState.position` AND emits on
-     * [seekRequests] (or re-anchors), which the screen applies to the
-     * MediaController unconditionally, so sub-second corrections are never
-     * swallowed. Named to mirror the mobile `PlayerViewModel.seekImmediate`
-     * contract.
+     * A viewer's deadband-free seek: it resets the still-watching count.
+     * Every caller outside this ViewModel is a viewer's seek: scrubber,
+     * chapters, intro and marker skips, a cast phone, a remote command.
+     * Unlike the mobile `PlayerViewModel.seekImmediate`, which room
+     * corrections use, automatic seeks here go through
+     * [seekWithoutViewerAction].
      */
     fun seekImmediate(positionSec: Double) {
+        resetPassOutStreak()
+        seekWithoutViewerAction(positionSec)
+    }
+
+    /**
+     * An automatic seek (intro auto-skip, Watch Party room seeks via
+     * [applyRoomSeek]); not viewer activity. Updates `uiState.position` AND
+     * emits on [seekRequests] (or re-anchors), which the screen applies to
+     * the MediaController unconditionally, so sub-second corrections are
+     * never swallowed.
+     */
+    private fun seekWithoutViewerAction(positionSec: Double) {
         cancelPendingQuickSkip()
         beginAndExecuteSeek(positionSec)
+    }
+
+    /** Explicit play or pause from a viewer: a cast phone or a remote control command. */
+    fun setPausedByViewer(paused: Boolean) {
+        resetPassOutStreak()
+        setPaused(paused)
     }
 
     /**
@@ -3572,6 +4378,7 @@ class TvPlayerViewModel(
 
     /** Coalesces rapid remote/button skips into one route-aware seek. */
     fun onSkipBy(deltaSeconds: Double): Double {
+        resetPassOutStreak()
         val state = _uiState.value
         val nowMs = SystemClock.elapsedRealtime()
         if (quickSkipAccumulator.pending == null) {
@@ -3799,11 +4606,7 @@ class TvPlayerViewModel(
                     "Seek recovery failed unexpectedly for seek_id=${request.seekId}",
                     error,
                 )
-                handleSeekRecoveryFailure(
-                    request,
-                    error.localizedMessage?.takeIf(String::isNotBlank)
-                        ?: "Unable to seek. Please try again.",
-                )
+                handleSeekRecoveryFailure(request, SEEK_FAILED_MESSAGE)
             }
             request = seekRecoveryQueue.complete(request)
         }
@@ -3842,7 +4645,7 @@ class TvPlayerViewModel(
                             )
                             VideoSessionStartV3.ServerUpgradeRequired -> handleSeekRecoveryFailure(
                                 request,
-                                "This Silo server does not support reliable seeking.",
+                                TvPlayerErrors.SEEK_UNSUPPORTED,
                             )
                         }
                     }
@@ -3851,7 +4654,7 @@ class TvPlayerViewModel(
                         if (result.error == "seek_reanchor_not_supported") {
                             handleSeekRecoveryFailure(
                                 request,
-                                "This Silo server does not support reliable seeking.",
+                                TvPlayerErrors.SEEK_UNSUPPORTED,
                             )
                         } else {
                             performPinnedSeekFailureRecovery(
@@ -3909,31 +4712,29 @@ class TvPlayerViewModel(
                         before = before,
                         requestedSourcePosition = targetSourceSec,
                     )
-                    is VideoSessionStartV3.Terminal -> handleSeekRecoveryFailure(
-                        request,
-                        "Unable to seek (${decision.reason}): ${decision.message}",
-                    )
+                    is VideoSessionStartV3.Terminal -> {
+                        Log.w(TAG, "Seek recovery ended: ${decision.reason}: ${decision.message}")
+                        handleSeekRecoveryFailure(request, SEEK_FAILED_MESSAGE)
+                    }
                     VideoSessionStartV3.ServerUpgradeRequired -> handleSeekRecoveryFailure(
                         request,
-                        "This Silo server does not support reliable seeking.",
+                        TvPlayerErrors.SEEK_UNSUPPORTED,
                     )
                 }
             }
             is ApiResult.Error -> {
                 if (!isCurrentSeekRecovery(request)) return
                 val message = if (result.error == "seek_reanchor_not_supported") {
-                    "This Silo server does not support reliable seeking."
+                    TvPlayerErrors.SEEK_UNSUPPORTED
                 } else {
-                    "Unable to seek (${result.message})"
+                    SEEK_FAILED_MESSAGE.also { Log.w(TAG, "Seek recovery failed: ${result.message}") }
                 }
                 handleSeekRecoveryFailure(request, message)
             }
             is ApiResult.NetworkError -> {
                 if (!isCurrentSeekRecovery(request)) return
-                handleSeekRecoveryFailure(
-                    request,
-                    "Unable to seek (${result.exception.message})",
-                )
+                Log.w(TAG, "Seek recovery failed: ${result.exception.message}")
+                handleSeekRecoveryFailure(request, SEEK_FAILED_MESSAGE)
             }
         }
     }
@@ -3951,7 +4752,7 @@ class TvPlayerViewModel(
         if (actualFileId != expectedFileId) {
             handleSeekRecoveryFailure(
                 request,
-                "Seek recovery tried to change the selected media version.",
+                TvPlayerErrors.SEEK_CHANGED_VERSION,
             )
             return
         }
@@ -3970,9 +4771,8 @@ class TvPlayerViewModel(
             ?: SubtitleIdentity.Off
         val returnedAudioIndex = decision.plan.selectedTracks.audio?.index
             ?: decision.session.audioTrackIndex
-        val committedQualityPreference = qualityOverride
-            ?: preferredQuality
-            ?: PlaybackQuality.Auto.wireValue
+        // A renewal carries only a pick; the saved settings are read again.
+        val committedQualityPreference = qualityOverride ?: preferredQuality
         seekRecoveryRollbackInvalidated = false
         if (!isCurrentSeekRecovery(request)) return
         val adopted = sessionLifecycle.adoptActiveSessionIfCurrent(
@@ -4012,6 +4812,15 @@ class TvPlayerViewModel(
                 transportMountNonce = transportMountNonce,
                 requestHeaders = decision.plan.stream.effectiveRequestHeaders,
                 container = decision.plan.stream.container ?: it.container,
+                // A recovered seek can land on another recipe (an HEVC encode
+                // falling back to H.264), so the lit row follows its plan.
+                videoQualities = authoritativePlaybackQualityOptions(
+                    available = decision.plan.availableQualities,
+                    selectedLabel = it.videoQualityPreference ?: sessionQualityPreference(),
+                    delivered = decision.plan.effectiveRecipe,
+                    source = decision.plan.source,
+                    reported = decision.plan.reportedQuality,
+                ),
                 startPosition = decision.plan.timeline.playerStartSeconds,
                 position = sourcePosition,
                 subtitleUrls = effectiveSubtitleUrls,
@@ -4120,6 +4929,7 @@ class TvPlayerViewModel(
         pendingInitialSubtitleAttempts = 0
         autoTextSubtitleSelectionAttempted = false
         autoAdvanceHandled = false
+        reachedCreditsOrEnd = false
         pendingApproachingEndVideoEnded = null
         episodeSelectionHandoffSlot.invalidate()
         _uiState.update { it.copy(contentId = newContentId, nextEpisode = null) }
@@ -4128,7 +4938,7 @@ class TvPlayerViewModel(
     /** A room seek. Maps onto the mounted stream or re-anchors; never user intent. */
     fun applyRoomSeek(sourceSeconds: Double) {
         if (roomId == null || !sourceSeconds.isFinite()) return
-        seekImmediate(sourceSeconds.coerceAtLeast(0.0))
+        seekWithoutViewerAction(sourceSeconds.coerceAtLeast(0.0))
         publishRoomObservation()
     }
 
@@ -4146,14 +4956,16 @@ class TvPlayerViewModel(
     }
 
     /**
-     * Whether [sourceSeconds] is reachable without new media: a plain native
-     * seek of the mounted item, between a second behind the playhead and the
-     * buffered position. Anything uncertain answers false.
+     * Whether [sourceSeconds] is reachable without rebuilding the stream: a
+     * plain native seek of the mounted item, no further ahead than the
+     * buffered position, and behind the playhead anywhere in a seekable
+     * window (otherwise within a second). Anything uncertain answers false.
      */
     fun isRoomPositionBuffered(sourceSeconds: Double): Boolean {
         if (roomId == null || !sourceSeconds.isFinite() || sourceSeconds < 0.0) return false
         val sample = roomPlayerSample ?: return false
         if (SystemClock.elapsedRealtime() - sample.sampledAtMs > ROOM_SAMPLE_MAX_AGE_MS) return false
+        if (sample.sampledAtMs <= roomMountAppliedAtMs) return false
         if (sample.playbackState != androidx.media3.common.Player.STATE_READY &&
             sample.playbackState != androidx.media3.common.Player.STATE_BUFFERING
         ) {
@@ -4172,6 +4984,7 @@ class TvPlayerViewModel(
             targetPlayerSeconds = targetPlayerSeconds,
             currentPlayerSeconds = sample.positionMs.coerceAtLeast(0L) / 1000.0,
             bufferedPlayerSeconds = sample.bufferedPositionMs.coerceAtLeast(0L) / 1000.0,
+            seekableBehindPlayhead = playerWindowIsSeekable,
         )
     }
 
@@ -4183,6 +4996,7 @@ class TvPlayerViewModel(
         isPlaying: Boolean,
         playbackState: Int,
         suppressed: Boolean,
+        playbackSpeed: Double? = null,
     ) {
         if (roomId == null) return
         roomPlayerSample = TvRoomPlayerSample(
@@ -4193,6 +5007,7 @@ class TvPlayerViewModel(
             playbackState = playbackState,
             suppressed = suppressed,
             sampledAtMs = SystemClock.elapsedRealtime(),
+            playbackSpeed = playbackSpeed?.takeIf { it.isFinite() && it > 0.0 },
         )
         publishRoomObservation()
     }
@@ -4256,19 +5071,19 @@ class TvPlayerViewModel(
                 if (roomContext?.selectionRevision == refusal.context.selectionRevision &&
                     _uiState.value.streamUrl == null && _uiState.value.error == null
                 ) {
-                    fail(refusal.message)
+                    fail(refusal.message, refusal.messageRes)
                 }
             }
             return
         }
         if (roomContext?.selectionRevision != refusal.context.selectionRevision) return
-        fail(refusal.message)
+        fail(refusal.message, refusal.messageRes)
     }
 
     /** A short in-player message (Watch Party notices share the remote-message toast). */
-    fun showPlayerMessage(text: String, durationMs: Long = 5_000L) {
+    fun showPlayerMessage(text: String, durationMs: Long = 5_000L, @StringRes textRes: Int? = null) {
         if (text.isBlank()) return
-        _remoteMessage.value = RemoteMessage(++remoteMessageCounter, text, durationMs)
+        _remoteMessage.value = RemoteMessage(++remoteMessageCounter, text, durationMs, textRes)
     }
 
     private fun roomSeekPending(state: UiState): Boolean =
@@ -4289,7 +5104,9 @@ class TvPlayerViewModel(
         // Engine truth mapped to source time. While a new mount takes over, the
         // old item's position cannot be mapped through the new timeline, so
         // the last known value stands (and seekPending says it is not a decision).
-        val position = if (sample != null && hasMedia && !transportMountGate.suppressPositionReports) {
+        val sampled = sample != null && hasMedia && !transportMountGate.suppressPositionReports &&
+            sample.sampledAtMs > roomMountAppliedAtMs
+        val position = if (sample != null && sampled) {
             val raw = sample.positionMs.coerceAtLeast(0L) / 1000.0
             val mapped = state.playbackPlan?.timeline?.sourcePositionForPlayer(raw) ?: raw
             state.serverDuration.takeIf { it > 0.0 }?.let(mapped::coerceAtMost) ?: mapped
@@ -4306,6 +5123,9 @@ class TvPlayerViewModel(
             state = tvRoomPlayerState(sample?.playbackState, hasMedia),
             seekPending = roomSeekPending(state),
             suspended = roomHolds.isNotEmpty() || sample?.suppressed == true,
+            sampledAtMs = sample?.sampledAtMs?.takeIf { sampled },
+            playbackSpeed = sample?.playbackSpeed?.takeIf { sampled },
+            mountGeneration = roomMountGeneration,
         )
     }
 
@@ -4313,11 +5133,11 @@ class TvPlayerViewModel(
     /** True while this player belongs to a Watch Party: the room owns transport. */
     val inWatchParty: Boolean get() = roomId != null
 
-    fun remotePause() = setPaused(true)
-    fun remoteUnpause() = setPaused(false)
+    fun remotePause() = setPausedByViewer(true)
+    fun remoteUnpause() = setPausedByViewer(false)
     fun remoteTogglePlayPause() = onPlayPause()
     fun remoteSeek(positionSeconds: Double) = seekImmediate(positionSeconds)
-    fun remoteStop() { _remoteStopRequests.tryEmit(Unit) }
+    fun remoteStop(notice: String? = null) { _remoteStopRequests.tryEmit(notice) }
 
     /**
      * The server ended this session for good: an administrator stopped it
@@ -4326,7 +5146,7 @@ class TvPlayerViewModel(
      */
     private fun leaveServerEndedSession() {
         Log.i(TAG, "The server ended this playback session; leaving playback")
-        remoteStop()
+        remoteStop(ADMIN_ENDED_PLAYBACK_NOTICE)
     }
     fun remoteDisplayMessage(message: String) {
         _remoteMessage.value = RemoteMessage(++remoteMessageCounter, message)
@@ -4351,14 +5171,18 @@ class TvPlayerViewModel(
             // Through the same intent as every other entry point. Going straight
             // to a replan left an older launch/persisted/HUD intent authoritative,
             // and it would reapply itself afterwards and undo the remote pick.
+            // Staged before the switch starts: a mounted track can be
+            // confirmed during setDesiredAudio itself.
+            rememberSeriesAudioChoice(state, selected)
             setDesiredAudio(selected, explicit = true)
-            if (matchMountedAudioTrack(
-                    catalogAudioTracks(state).getOrNull(selected) ?: return,
-                    state.audioTracks.map { it.toMountedAudioTrack() },
-                ) != null
-            ) {
-                return
-            }
+            val switchesLocally = mountedAudioFor(
+                catalog = catalogAudioTracks(state),
+                catalogOrdinal = selected,
+                mounted = state.audioTracks.map { it.toMountedAudioTrack() },
+                delivery = state.playbackPlan?.delivery,
+                planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
+            ) != null
+            if (switchesLocally) return
             playbackMutationFence.beginReplan()
             launchSubtitleTransaction(state) {
                 subtitleTransactions.selectAudio(selected)
@@ -4377,6 +5201,8 @@ class TvPlayerViewModel(
         )
         if (identity != null) {
             _pendingRemoteSubtitleIndex.compareAndSet(index, null)
+            subtitleChoiceGeneration += 1
+            rememberSeriesSubtitleChoice(identity)
             playbackMutationFence.beginReplan()
             launchSubtitleTransaction(_uiState.value) {
                 subtitleTransactions.select(identity)
@@ -4417,7 +5243,7 @@ class TvPlayerViewModel(
                 current.contentId != state.contentId || current.mediaFileId != fileId) return@launch
             val version = detail.versions.firstOrNull { it.fileId == fileId } ?: return@launch
             applyUpdatedMarkers(version.intro, version.credits,
-                version.recap, version.preview)
+                version.recap, version.preview, version.markerSegments)
         }
     }
 
@@ -4427,14 +5253,14 @@ class TvPlayerViewModel(
      */
     fun applyMarkersUpdate(update: PlaybackMarkersUpdate) {
         if (update.fileId != null && update.fileId != _uiState.value.mediaFileId) return
-        applyUpdatedMarkers(update.intro, update.credits, update.recap, update.preview)
+        applyUpdatedMarkers(update.intro, update.credits, update.recap, update.preview, update.markerSegments)
     }
 
     /** A replan that lands on another file takes that file's markers, then reads them again. */
     private fun adoptFileMarkersAfterReplan(previousFileId: Int?, version: FileVersion?) {
         val state = _uiState.value
         if (state.mediaFileId == previousFileId) return
-        applyUpdatedMarkers(version?.intro, version?.credits, version?.recap, version?.preview)
+        applyUpdatedMarkers(version?.intro, version?.credits, version?.recap, version?.preview, version?.markerSegments)
         state.sessionId?.let(::reconcileMarkers)
     }
 
@@ -4444,9 +5270,17 @@ class TvPlayerViewModel(
      * from UiState, so the update takes effect immediately; `null` clears a
      * marker the server dropped.
      */
-    private fun applyUpdatedMarkers(intro: TimeRange?, credits: TimeRange?, recap: TimeRange?, preview: TimeRange?) {
+    private fun applyUpdatedMarkers(
+        intro: TimeRange?,
+        credits: TimeRange?,
+        recap: TimeRange?,
+        preview: TimeRange?,
+        markerSegments: List<MarkerSegment>?,
+    ) {
         markerReconciliationFence.invalidate()
-        _uiState.update { it.copy(intro = intro, credits = credits, recap = recap, preview = preview) }
+        _uiState.update {
+            it.copy(intro = intro, credits = credits, recap = recap, preview = preview, markerSegments = markerSegments)
+        }
     }
 
     // ---- Next-episode auto-advance (F2) ----
@@ -4578,6 +5412,9 @@ class TvPlayerViewModel(
         // (it would silently leave/desync the room). Mirrors the remote-control
         // transport gate.
         if (roomId != null) return
+        // Recorded before the once-per-item guard below, which Keep Watching on
+        // a hand-opened Up Next also sets.
+        reachedCreditsOrEnd = true
         if (shufflePlayback != null) {
             // A multi-part pick plays its later parts before the shuffle moves on.
             shuffleNextPartFileId?.let { fileId ->
@@ -4746,7 +5583,10 @@ class TvPlayerViewModel(
                 // Automatic countdown-expiry advance: increment the pass-out streak
                 // so a long unattended binge eventually trips the "still watching?"
                 // gate. An explicit Play Now (below) resets the streak instead.
-                advanceToNextEpisode(nextAutoAdvanceCount = autoAdvanceCount + 1)
+                // Counted now, not when the handoff lands, so viewer activity
+                // during the handoff still resets it.
+                autoAdvanceCount += 1
+                advanceToNextEpisode()
                 return@launch
             }
         }
@@ -4759,10 +5599,11 @@ class TvPlayerViewModel(
      * prompt. The automatic countdown-expiry path keeps incrementing the streak.
      */
     fun playNextEpisodeNow() {
-        advanceToNextEpisode(nextAutoAdvanceCount = 0)
+        resetPassOutStreak()
+        advanceToNextEpisode()
     }
 
-    private fun advanceToNextEpisode(nextAutoAdvanceCount: Int) {
+    private fun advanceToNextEpisode() {
         nextUpCountdownJob?.cancel()
         nextUpCountdownJob = null
         // Watch Together owns the room timeline. The previous navigation
@@ -4770,11 +5611,11 @@ class TvPlayerViewModel(
         // in place so a remote Next command cannot desynchronise the room.
         if (!shouldNavigateToLocalNext(inWatchTogetherRoom = roomId != null)) return
         if (shufflePlayback != null) {
-            advanceShuffle(nextAutoAdvanceCount)
+            advanceShuffle()
             return
         }
         val next = _uiState.value.nextEpisode ?: return
-        playInPlace(next.contentId, targetFileId = null, nextAutoAdvanceCount = nextAutoAdvanceCount)
+        playInPlace(next.contentId, targetFileId = null)
     }
 
     /**
@@ -4786,7 +5627,6 @@ class TvPlayerViewModel(
     private fun playInPlace(
         targetContentId: String,
         targetFileId: Int?,
-        nextAutoAdvanceCount: Int,
         showCard: Boolean = true,
     ) {
         val state = _uiState.value
@@ -4801,7 +5641,7 @@ class TvPlayerViewModel(
         val activeVersion = state.fileVersions.firstOrNull { version ->
             version.fileId == (state.selectedFileId ?: state.mediaFileId)
         }
-        val handoff = captureTvEpisodeSelectionHandoff(
+        val captured = captureTvEpisodeSelectionHandoff(
             activeVersion = activeVersion,
             committedSubtitleIdentity = state.committedSubtitleIdentity,
             catalogSubtitles = state.subtitleUrls,
@@ -4819,6 +5659,12 @@ class TvPlayerViewModel(
             hasExplicitAudioSelection = manualAudioSelectionApplied,
             hasExplicitSubtitleSelection = manualSubtitleSelectionApplied,
         )
+        val handoff = carryEpisodeIntent(
+            captured = captured,
+            incoming = incomingEpisodeIntent,
+            audioPicked = audioPickedThisEpisode,
+            subtitlePicked = subtitlePickedThisEpisode,
+        )
         val outgoingSessionId = exitSessionId
         resolveNextEpisodeJob?.cancel()
         viewModelScope.launch {
@@ -4835,6 +5681,7 @@ class TvPlayerViewModel(
             lastAdoptedSessionId = null
             contentId = targetContentId
             preferredFileId = targetFileId
+            versionChosen = false
             preferredQuality = null
             qualityOverride = null
             initialAudioTrackIndex = null
@@ -4842,8 +5689,8 @@ class TvPlayerViewModel(
             pendingInitialSubtitleAutoResolved = false
             pendingInitialSubtitleAttempts = 0
             autoTextSubtitleSelectionAttempted = false
-            autoAdvanceCount = nextAutoAdvanceCount
             autoAdvanceHandled = false
+            reachedCreditsOrEnd = false
             pendingApproachingEndVideoEnded = null
             shuffleNextPartFileId = null
             shuffleRefreshedForPostRoll = false
@@ -4867,9 +5714,7 @@ class TvPlayerViewModel(
         val fileId = state.selectedFileId ?: state.mediaFileId
         val scope = finalPositionScope
         maybeRecordPosition(state.position, state.duration, force = true)
-        if (expectedSessionId?.let(playbackSessionManager::isSequenced) != true &&
-            scope != null && contentId.isNotBlank() && fileId != null
-        ) {
+        if (scope != null && contentId.isNotBlank() && fileId != null) {
             finalPlaybackPositionWriter.submit(
                 FinalPlaybackPosition(
                     scope = scope,
@@ -4877,12 +5722,15 @@ class TvPlayerViewModel(
                     fileId = fileId,
                     positionSeconds = state.position,
                     durationSeconds = state.duration.takeIf { it > 0.0 },
+                    serverTrackedAtMs = System.currentTimeMillis()
+                        .takeIf { expectedSessionId?.let(playbackSessionManager::isSequenced) == true },
                 ),
             )
         }
         subtitleTransactions.persistCommittedSelectionAndFlush()
         introObserveJob?.cancel()
         introAutoSkipController.reset()
+        resetBufferingQuality()
         val stopped = sessionLifecycle.stop(expectedSessionId = expectedSessionId)
         if (stopped) finalPositionScope = null
         return stopped
@@ -4973,7 +5821,7 @@ class TvPlayerViewModel(
     /** Plays the next part of a multi-part pick from its start, without the overlay. */
     private fun playNextShufflePart(fileId: Int) {
         shuffleNextPartFileId = null
-        playInPlace(contentId, targetFileId = fileId, nextAutoAdvanceCount = autoAdvanceCount, showCard = false)
+        playInPlace(contentId, targetFileId = fileId, showCard = false)
     }
 
     /**
@@ -4981,7 +5829,7 @@ class TvPlayerViewModel(
      * pick from the beginning. The server moves on only while that item is
      * still current, so a repeated press or a retry plays the same pick.
      */
-    private fun advanceShuffle(nextAutoAdvanceCount: Int) {
+    private fun advanceShuffle() {
         val shuffle = shufflePlayback ?: return
         if (_uiState.value.nextEpisode == null) return
         if (shuffleAdvanceJob?.isActive == true || nextUpTransitionGate.isActive) return
@@ -5000,7 +5848,7 @@ class TvPlayerViewModel(
                 return@launch
             }
             // Like the first pick, every shuffled item plays from the start.
-            playInPlace(target, targetFileId = null, nextAutoAdvanceCount = nextAutoAdvanceCount)
+            playInPlace(target, targetFileId = null)
         }
     }
 
@@ -5168,6 +6016,10 @@ class TvPlayerViewModel(
         // re-run auto over a longer track list and override a selection the
         // viewer has since made.
         if (autoTextSubtitleSelectionAttempted) return
+        // A replacement load keeps the outgoing media playing until its own
+        // mount applies. Deciding on the outgoing tracks would spend this
+        // load's only attempt on the wrong file.
+        if (transportMountGate.suppressPositionReports) return
         // Wait for the player to report SOMETHING: an empty snapshot carries no
         // selected audio language for the resolver to rank a subtitle against.
         if (audio.isEmpty() && subtitle.isEmpty()) return
@@ -5192,6 +6044,10 @@ class TvPlayerViewModel(
             preferredLanguage = state.preferredTextLanguage,
             subtitleMode = state.preferredSubtitleMode,
             showForced = state.showForcedSubtitles,
+            trackSignature = state.preferredSubtitleTrackSignature,
+            intendedAudioLanguage = state.desiredAudioOrdinal
+                ?.let { catalogAudioTracks(state).getOrNull(it) }
+                ?.language,
         )
         autoTextSubtitleSelectionAttempted = true
         SubDiag.log("AUTO subtitle -> $identity")
@@ -5223,7 +6079,17 @@ class TvPlayerViewModel(
             // sidecar reached this line and returned, and nobody ever told the
             // player. Ask the adapter to mount its committed identity through
             // the same local-restore path the replan/recovery loads use.
-            if (identity != SubtitleIdentity.Off && !playerHasSelectedSubtitle(identity, state)) {
+            //
+            // Off too: until text is disabled, Media3 turns on a track the file
+            // flags Default, now or on a later snapshot, and
+            // reconcileExternallySelectedSubtitle adopted it over "Auto - None".
+            if (identity == SubtitleIdentity.Off) {
+                SubDiag.log("AUTO committed Off -> restoreCommittedOff")
+                nextSubtitleMountPriority = priority
+                if (!subtitleTransactions.restoreCommittedOff()) {
+                    nextSubtitleMountPriority = TvSubtitleMountPriority.UserTransaction
+                }
+            } else if (!playerHasSelectedSubtitle(identity, state)) {
                 SubDiag.log("AUTO committed-but-unmounted -> restoreCommittedLocalMount $identity")
                 nextSubtitleMountPriority = priority
                 subtitleTransactions.restoreCommittedLocalMount()
@@ -5392,14 +6258,18 @@ class TvPlayerViewModel(
         // Record the intent first: the resolver applies it locally when the
         // mounted stream already carries the track, which is the common
         // direct-play case and needs no replan at all.
+        // Staged before the switch starts: a mounted track can be confirmed
+        // during setDesiredAudio itself.
+        rememberSeriesAudioChoice(state, catalogOrdinal)
         setDesiredAudio(catalogOrdinal, explicit = true)
-        if (matchMountedAudioTrack(
-                catalog[catalogOrdinal],
-                state.audioTracks.map { it.toMountedAudioTrack() },
-            ) != null
-        ) {
-            return
-        }
+        val switchesLocally = mountedAudioFor(
+            catalog = catalog,
+            catalogOrdinal = catalogOrdinal,
+            mounted = state.audioTracks.map { it.toMountedAudioTrack() },
+            delivery = state.playbackPlan?.delivery,
+            planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
+        ) != null
+        if (switchesLocally) return
 
         // manualAudioSelectionApplied is deliberately NOT raised here: it is
         // raised on commit via CommittedSubtitle.audioPreferenceSpecified, so a
@@ -5412,14 +6282,175 @@ class TvPlayerViewModel(
 
     fun selectSubtitleOption(identity: SubtitleIdentity) {
         manualSubtitleSelectionApplied = true
+        subtitleChoiceGeneration += 1
         // The viewer is choosing: drop the automatic marker so this commit
         // writes the durable per-item preference.
         autoSelectedSubtitleIdentity = null
         autoSubtitleSelectionInFlight = false
+        rememberSeriesSubtitleChoice(identity)
         playbackMutationFence.beginReplan()
         launchSubtitleTransaction(_uiState.value) {
             subtitleTransactions.select(identity)
         }
+    }
+
+    /**
+     * A manual pick (a track or Off) applies to the whole series — or the
+     * movie — and to the profile's other devices: it is saved on the server,
+     * which hands it back as `effective_subtitle_*` on every later load.
+     *
+     * Saved only once the change commits: a pick whose request fails or rolls
+     * back never becomes a preference. A pick of what already plays has
+     * nothing to commit and is saved at once.
+     */
+    private fun rememberSeriesSubtitleChoice(identity: SubtitleIdentity) {
+        val state = _uiState.value
+        // Counted as this episode's pick (handed to Next Up) and saved only
+        // once the change commits: a pick that fails to replan or mount is
+        // undone. One that cannot be saved still counts once it commits.
+        val write = StagedSubtitleWrite(
+            contentId = state.contentId,
+            key = trackChoiceKey(state),
+            choice = org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(identity, state.subtitleUrls),
+            owner = trackChoiceOwner,
+            identity = identity,
+        )
+        if (state.pendingSubtitleIdentity == null && state.committedSubtitleIdentity == identity) {
+            stagedSubtitleWrite.set(null)
+            saveSeriesSubtitle(write)
+        } else {
+            stagedSubtitleWrite.set(write)
+        }
+    }
+
+    /**
+     * A manual audio pick applies to the whole series (or the movie) and the
+     * profile's other devices, like a subtitle pick. It is staged here and
+     * saved once the track plays: confirmed on the player
+     * ([confirmDesiredAudio]) or committed by its replan, so a switch the
+     * watchdog gives up on is never saved. Restores, carried choices and
+     * fallbacks never come through here.
+     */
+    private fun rememberSeriesAudioChoice(state: UiState, catalogOrdinal: Int) {
+        val write = StagedAudioWrite(
+            contentId = state.contentId,
+            key = trackChoiceKey(state),
+            choice = org.siloserver.silo.model.playback.SeriesAudioChoice.of(catalogAudioTracks(state), catalogOrdinal),
+            owner = trackChoiceOwner,
+            catalogOrdinal = catalogOrdinal,
+            fileId = state.selectedFileId ?: state.mediaFileId,
+        )
+        stagedAudioWrite.set(write)
+    }
+
+    /**
+     * The id a pick in this player is remembered under. Null for an episode
+     * whose series is unknown: keying it by the episode would save a choice no
+     * other episode reads.
+     */
+    private fun trackChoiceKey(state: UiState): String? {
+        if (state.contentType == "episode" && state.seriesId.isNullOrBlank()) return null
+        return org.siloserver.silo.model.playback.seriesTrackChoiceKey(state.seriesId, state.contentId)
+    }
+
+    /**
+     * A pick waiting for its change to commit. On commit it counts as this
+     * episode's pick and, when [key], [choice] and [owner] are known, is
+     * saved as the series choice.
+     */
+    private data class StagedSubtitleWrite(
+        val contentId: String,
+        val key: String?,
+        val choice: org.siloserver.silo.model.playback.SeriesSubtitleChoice?,
+        val owner: org.siloserver.silo.network.AuthScopeSnapshot?,
+        val identity: SubtitleIdentity,
+    )
+
+    private data class StagedAudioWrite(
+        val contentId: String,
+        val key: String?,
+        val choice: org.siloserver.silo.model.playback.SeriesAudioChoice?,
+        val owner: org.siloserver.silo.network.AuthScopeSnapshot?,
+        val catalogOrdinal: Int,
+        /** The file it was picked on; a replan can commit it on another. */
+        val fileId: Int?,
+    )
+
+    /**
+     * Whether [identity], committed over [rows], is the pick [write] staged:
+     * the same identity, or the same track described again — a change that
+     * restarted playback (a delivery change, such as a subtitle added to a
+     * plan that had none) commits it from the new plan's rows.
+     */
+    private fun stagedSubtitleCommitted(
+        write: StagedSubtitleWrite,
+        identity: SubtitleIdentity,
+        rows: List<org.siloserver.silo.model.playback.PlayerSubtitleInfo>,
+    ): Boolean {
+        if (identity == write.identity) return true
+        val staged = write.choice ?: return false
+        val described = org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(identity, rows) ?: return false
+        return described.subtitleMode == staged.subtitleMode &&
+            described.trackSignature == staged.trackSignature
+    }
+
+    /**
+     * Sends a staged subtitle pick once the item on screen has committed it,
+     * whichever path got it there (a local mount, a replan, a restart).
+     */
+    private fun sendStagedSubtitleIfCommitted(contentId: String, committed: SubtitleIdentity, pending: SubtitleIdentity?, rows: List<org.siloserver.silo.model.playback.PlayerSubtitleInfo>) {
+        val write = stagedSubtitleWrite.get() ?: return
+        if (pending != null || write.contentId != contentId) return
+        if (!stagedSubtitleCommitted(write, committed, rows)) return
+        if (stagedSubtitleWrite.compareAndSet(write, null)) saveSeriesSubtitle(write)
+    }
+
+    /** Sends the staged picks [committed] made final; each goes out once. */
+    private fun sendCommittedSeriesWrites(committed: org.siloserver.silo.model.playback.CommittedSubtitle) {
+        stagedSubtitleWrite.get()
+            ?.takeIf { it.identity == committed.identity && stagedSubtitleWrite.compareAndSet(it, null) }
+            ?.let(::saveSeriesSubtitle)
+        if (committed.audioPreferenceSpecified) {
+            val state = _uiState.value
+            stagedAudioWrite.get()
+                ?.takeIf {
+                    it.choice.isCommittedAt(
+                        committedOrdinal = committed.audioTrackIndex,
+                        committedTracks = catalogAudioTracks(state),
+                        pickedOrdinal = it.catalogOrdinal,
+                        sameFile = it.fileId == (state.selectedFileId ?: state.mediaFileId),
+                    ) && stagedAudioWrite.compareAndSet(it, null)
+                }
+                ?.let(::saveSeriesAudio)
+        }
+    }
+
+    /**
+     * Drops staged picks when a new load replaces the playback they were
+     * made in, except those for [keepContentId] (null drops all): the restart
+     * that finishes a pick whose adoption failed inherits it.
+     */
+    private fun clearStagedSeriesWrites(keepContentId: String?) {
+        stagedSubtitleWrite.updateAndGet { it?.takeIf { write -> write.contentId == keepContentId } }
+        stagedAudioWrite.updateAndGet { it?.takeIf { write -> write.contentId == keepContentId } }
+    }
+
+    private fun saveSeriesSubtitle(write: StagedSubtitleWrite) {
+        if (write.contentId == _uiState.value.contentId) subtitlePickedThisEpisode = true
+        val key = write.key ?: return
+        val choice = write.choice ?: return
+        val owner = write.owner ?: return
+        val writer = seriesTrackChoiceWriter ?: return
+        viewModelScope.launch { writer.saveSubtitle(key, choice, owner) }
+    }
+
+    private fun saveSeriesAudio(write: StagedAudioWrite) {
+        if (write.contentId == _uiState.value.contentId) audioPickedThisEpisode = true
+        val key = write.key ?: return
+        val choice = write.choice ?: return
+        val owner = write.owner ?: return
+        val writer = seriesTrackChoiceWriter ?: return
+        viewModelScope.launch { writer.saveAudio(key, choice, owner) }
     }
 
     fun selectSubtitleOption(serverIndex: Int) {
@@ -5490,8 +6521,11 @@ class TvPlayerViewModel(
         }
     }
 
-    fun beginScrub() {
-        _uiState.update { it.copy(isScrubbing = true, scrubPreviewSec = it.position, showControls = true) }
+    /** Start scrubbing from [originSec], or the playback position when null. */
+    fun beginScrub(originSec: Double? = null) {
+        _uiState.update {
+            it.copy(isScrubbing = true, scrubPreviewSec = originSec ?: it.position, showControls = true)
+        }
     }
 
     fun updateScrubPreview(sec: Double) {
@@ -5501,6 +6535,7 @@ class TvPlayerViewModel(
     }
 
     fun commitScrub(): Double {
+        resetPassOutStreak()
         val target = _uiState.value.scrubPreviewSec
         _uiState.update { it.copy(isScrubbing = false) }
         return target
@@ -5563,17 +6598,37 @@ class TvPlayerViewModel(
     }
 
     /**
+     * The preference the session plays at: a pick, the route's, or the saved
+     * setting the session started with. Auto lights in the menu only when
+     * this is "auto".
+     */
+    private fun sessionQualityPreference(): String? =
+        qualityOverride ?: preferredQuality ?: playbackSessionManager.activeVideoQualityPair()?.qualityPreference
+
+    /**
      * Switch the in-player video quality (tvOS ApplePlaybackQuality parity): pin
      * a session-level [qualityOverride] and request a protocol-v3 replan at the
      * current position so the server transcodes to the chosen rung (or returns to
-     * Auto/Original). [wireValue] is a [PlaybackQuality] wire value.
+     * Auto, which plays the source when it can). [wireValue] is a plan entry's
+     * label or "auto".
      */
     fun switchQuality(wireValue: String): Boolean {
-        val current = qualityOverride ?: preferredQuality ?: PlaybackQuality.Auto.wireValue
+        val current = sessionQualityPreference() ?: PlaybackQuality.Auto.wireValue
         if (wireValue == current) return false
+        // The viewer's own pick (the HUD menu or a phone remote) replaces a
+        // waiting Restore. Once its plan plays it is a quality change
+        // (adoptBufferingQualityPlan); a refused pick is none. The
+        // controller's replans never come through here.
+        cancelBufferingRestore()
         val state = _uiState.value
         playbackMutationFence.beginReplan()
         launchSubtitleTransaction(state) {
+            // Any buffering pill hides as the pick is sent.
+            val wanted = videoQualityPreference(wireValue) ?: PLAYBACK_QUALITY_AUTO
+            lastMenuPick = bufferingPicks.sent(
+                matches = { it.quality == wanted },
+                outstanding = { subtitleTransactions.hasActiveTransaction },
+            )
             subtitleTransactions.selectQuality(wireValue)
         }
         return true
@@ -5604,6 +6659,270 @@ class TvPlayerViewModel(
      * caller consumes the press only then.
      */
     fun onDismissIntroPrompt(): Boolean = introAutoSkipController.dismiss()
+
+    // ---- Buffering quality ----------------------------------------------------
+
+    private fun startBufferingQuality() {
+        // In a Watch Party the room's own lower-quality offer applies.
+        bufferingQualityController.setSuspended(roomId != null)
+        // The session manager reads the stored mode itself; the controller
+        // follows it here.
+        viewModelScope.launch {
+            playerSettingsStore.bufferingQualityModeFlow
+                .distinctUntilChanged()
+                .collect { mode -> bufferingQualityController.setMode(mode) }
+        }
+        // A failed plan's summary goes out when the error shows, not at Retry
+        // or exit.
+        viewModelScope.launch {
+            _uiState.map { it.error != null }
+                .distinctUntilChanged()
+                .collect { failed -> if (failed) bufferingQualityController.onPlaybackStopped() }
+        }
+        // Picture in picture shows no pill: a prompt waits, and an undo pill
+        // runs on unseen so it never holds off a later lowering.
+        viewModelScope.launch {
+            playerViewHidden.collect { bufferingQualityController.setViewHidden(it) }
+        }
+        networkEvidence?.let { evidence ->
+            viewModelScope.launch {
+                // Connected, not validated: a captive or unvalidated network
+                // still carries media, and only its absence is an outage.
+                evidence.updates
+                    .map { it.connected }
+                    .distinctUntilChanged()
+                    .collect { connected -> bufferingQualityAdapter.onNetworkAvailable(connected) }
+            }
+        }
+        viewModelScope.launch {
+            var shownKind: String? = null
+            bufferingPill
+                .map { pill ->
+                    when (pill) {
+                        BufferingQualityPill.Hidden -> null
+                        is BufferingQualityPill.Prompt -> "prompt"
+                        is BufferingQualityPill.Undo -> "undo"
+                    }
+                }
+                .distinctUntilChanged()
+                .collect { kind ->
+                    if (kind != null) {
+                        Log.i(TAG, "buffering_quality pill_shown kind=$kind")
+                    } else if (shownKind != null) {
+                        Log.i(TAG, "buffering_quality pill_hidden kind=$shownKind")
+                    }
+                    shownKind = kind
+                }
+        }
+    }
+
+    /**
+     * The mount [nonce] replaced the media item. A client-side same-plan
+     * remount (a `client_retry` copy) is a reload of the plan the controller
+     * already has; any other mount is a newly published plan, so a new
+     * adoption, even when the server repeated its plan_id.
+     */
+    private fun adoptBufferingQualityPlan(nonce: Long) {
+        val reload = pendingBufferingReloadNonce == nonce
+        pendingBufferingReloadNonce = null
+        val controllerInitiated = bufferingReplanNonce == nonce
+        bufferingReplanNonce = null
+        if (reload && bufferingAdoptionId != null) {
+            bufferingQualityAdapter.reset(_uiState.value.playbackPlan?.delivery)
+            bufferingQualityAdapter.markReload()
+            return
+        }
+        val state = _uiState.value
+        val shown = state.playbackPlan ?: return
+        val adoptionId = "${shown.planId}#$nonce"
+        bufferingAdoptionId = adoptionId
+        bufferingAdoptedMountNonce = nonce
+        // What the mounted plan was requested at, session pick included. The
+        // session manager's pair comes first because it also carries a fixed
+        // rung saved in Settings, which must never be treated as Auto.
+        // videoQualityPreference reads "original" and its aliases as Auto.
+        val quality = videoQualityPreference(
+            playbackSessionManager.activeVideoQualityPair()?.qualityPreference
+                ?: state.videoQualityPreference
+                ?: sessionQualityPreference(),
+        ) ?: PLAYBACK_QUALITY_AUTO
+        val adopted = shown.toBufferingQualityPlan(quality, adoptionId)
+        Log.i(
+            TAG,
+            "buffering_quality plan_adopted adoption_id=$adoptionId plan_id=${shown.planId} " +
+                "delivered_kbps=${adopted.deliveredKbps} quality=${adopted.quality} " +
+                "bandwidth_limit_kbps=${shown.bandwidthLimit?.kbps}",
+        )
+        _bufferingAutoLimited.value = shown.bandwidthLimit != null && adopted.quality == PLAYBACK_QUALITY_AUTO
+        val key = BufferingQualityKey(
+            adopted.quality,
+            playbackSessionManager.activeVideoQualityPair()?.bandwidthCapKbps,
+            state.mediaFileId,
+        )
+        val pickStillPending = bufferingPicks.stillPendingAfter(key)
+        if (bufferingQualityKey.isViewerChangeTo(key, controllerInitiated)) {
+            bufferingQualityController.onViewerQualityChange()
+        }
+        bufferingQualityKey = key
+        if (!bufferingQualityController.hasPlan) playbackSessionManager.restartPlanThroughput()
+        bufferingQualityController.onPlanAdopted(adopted, controllerInitiated, pickStillPending)
+        // After adoption: re-announces the player's phase to the new plan.
+        bufferingQualityAdapter.reset(shown.delivery)
+    }
+
+    /**
+     * The controller's own `quality_change`. It rides the subtitle
+     * transaction like a menu pick, so subtitle state survives it, but it is
+     * not the viewer's quality change. A picked-rung lowering applies to this
+     * playback only: the committed transaction moves [qualityOverride], and
+     * the saved preference never changes. While another replan or
+     * transaction is in flight a lowering is refused, and the controller
+     * watches the plan again later; a Restore quality waits for its turn.
+     */
+    private fun requestBufferingQualityReplan(replan: BufferingQualityReplan) {
+        Log.i(
+            TAG,
+            "buffering_quality replan_requested quality_preference=${replan.qualityPreference} " +
+                "bandwidth_estimate_kbps=${replan.bandwidthEstimateKbps} " +
+                "bandwidth_estimate_source=${replan.bandwidthEstimateSource} " +
+                "learned_limit=${replan.learnedLimit}",
+        )
+        val state = _uiState.value
+        val blocked = bufferingReplanBlockedReason(state)
+        if (blocked != null && replan.learnedLimit == LEARNED_LIMIT_CLEAR && state.sessionId != null) {
+            // A Restore quality waits for its turn, as on the phone: the kept
+            // estimate goes at once, and the session manager owes its `clear`
+            // to the next request, so whatever replaces it carries it, once.
+            Log.i(TAG, "buffering_quality restore_waits_for_replan reason=$blocked")
+            playbackSessionManager.discardStepDownEstimate()
+            playbackSessionManager.oweLearnedLimitClear()
+            bufferingRestoreJob?.cancel()
+            bufferingRestoreJob = viewModelScope.launch {
+                while (bufferingReplanBlockedReason(_uiState.value) != null) delay(BUFFERING_RESTORE_POLL_MS)
+                bufferingRestoreJob = null
+                if (playbackSessionManager.learnedLimitClearOwed) {
+                    requestBufferingQualityReplan(replan)
+                } else {
+                    // A replan sent meanwhile carried the clear, and no estimate.
+                    Log.i(TAG, "buffering_quality restore_rode_on_replan")
+                    bufferingQualityController.onReplanFailed()
+                }
+            }
+            return
+        }
+        if (blocked != null) {
+            Log.i(TAG, "buffering_quality replan_not_sent reason=$blocked")
+            bufferingQualityController.onReplanFailed()
+            return
+        }
+        playbackMutationFence.beginReplan()
+        val adoptionId = bufferingAdoptionId
+        launchSubtitleTransaction(state) {
+            // The launch waits on the transaction mutex: never send a replan
+            // meant for a plan that has since been replaced.
+            if (adoptionId == null || adoptionId != bufferingAdoptionId) {
+                Log.i(TAG, "buffering_quality replan_not_sent reason=plan_changed")
+                bufferingQualityController.onReplanFailed()
+                return@launchSubtitleTransaction
+            }
+            subtitleTransactions.selectQuality(replan.qualityPreference, bufferingQuality = replan)
+        }
+    }
+
+    /** Why the controller's replan can't go now, or null when it can. */
+    private fun bufferingReplanBlockedReason(state: UiState): String? = when {
+        state.sessionId == null || state.playbackPlan == null -> "no_active_session"
+        state.isLoading || state.isNextUpTransitioning -> "load_in_flight"
+        transportMountGate.suppressPositionReports -> "mount_pending"
+        recoveryJob?.isActive == true -> "recovery_in_flight"
+        seekRecoveryQueue.hasInFlight -> "seek_recovery_in_flight"
+        subtitleTransactions.hasActiveTransaction -> "transaction_in_flight"
+        else -> null
+    }
+
+    /**
+     * A quality change or other content supersedes a waiting Restore quality;
+     * its owed `clear` rides on the request that replaces it.
+     */
+    private fun cancelBufferingRestore() {
+        bufferingRestoreJob?.cancel()
+        bufferingRestoreJob = null
+    }
+
+    private fun showBufferingQualityNotice(notice: BufferingQualityNotice) {
+        Log.i(TAG, "buffering_quality notice key=${notice.key}")
+        bufferingNoticeSlot.show(notice)
+    }
+
+    /**
+     * A load of [contentId] starts. Another attempt at the same title keeps
+     * the controller's answer, notice and re-offer wait, which belong to the
+     * title; other content starts fresh.
+     */
+    private fun beginBufferingQualityLoad() {
+        if (contentId != bufferingQualityContentId) {
+            resetBufferingQuality()
+            bufferingQualityContentId = contentId
+            return
+        }
+        bufferingQualityController.onNewAttempt()
+        forgetBufferingPlan()
+    }
+
+    /** Clears the controller and its notice for different content or an exit. */
+    private fun resetBufferingQuality() {
+        bufferingQualityController.reset()
+        bufferingQualityContentId = null
+        bufferingQualityKey = null
+        bufferingPicks.clear()
+        forgetBufferingPlan()
+        bufferingNoticeSlot.clear()
+    }
+
+    /** Forgets what this screen tracked about the controller's playing plan. */
+    private fun forgetBufferingPlan() {
+        bufferingAdoptionId = null
+        bufferingAdoptedMountNonce = null
+        pendingBufferingReloadNonce = null
+        bufferingReplanNonce = null
+        cancelBufferingRestore()
+        _bufferingAutoLimited.value = false
+    }
+
+    /** "Lower quality" on the buffering prompt. */
+    fun onBufferingLower() {
+        bufferingQualityController.selectLower()
+    }
+
+    /** "Keep quality" on the buffering prompt. */
+    fun onBufferingKeep() {
+        bufferingQualityController.selectKeep()
+    }
+
+    /** "Restore quality" on the undo pill. */
+    fun onBufferingRestore() {
+        bufferingQualityController.selectRestore()
+    }
+
+    /**
+     * At most one actionable pill: the intro, recap and credits skip pills
+     * and Next Up outrank the buffering pill. The screen reports them as
+     * displayed, since only it knows which are on screen.
+     */
+    fun onOtherPillDisplayed(displayed: Boolean) {
+        bufferingQualityController.setOtherPillVisible(displayed)
+    }
+
+    /** The screen reports picture in picture, where no buffering pill or notice shows. */
+    fun onPlayerViewHiddenChanged(hidden: Boolean) {
+        playerViewHidden.value = hidden
+    }
+
+    /** Back while a buffering pill shows. True when the pill consumed it. */
+    fun onBufferingBack(): Boolean = bufferingQualityController.back()
+
+    /** Select at the player root: the visible pill's primary action. True when consumed. */
+    fun onBufferingSelectPrimary(): Boolean = bufferingQualityController.selectPrimary()
 
     /**
      * HUD Chapters pane picked a row. Returns the seek target in seconds;
@@ -5686,7 +7005,7 @@ class TvPlayerViewModel(
                 // No capability probe exists — "no providers configured" arrives
                 // here as a plain server error; surface its text verbatim.
                 is ApiResult.Error, is ApiResult.NetworkError -> _subtitleSearch.update {
-                    it.copy(isSearching = false, error = r.errorMessage("Subtitle search failed"))
+                    it.copy(isSearching = false, error = r.errorMessage(TvPlayerErrors.SUBTITLE_SEARCH_FAILED))
                 }
             }
         }
@@ -5730,13 +7049,13 @@ class TvPlayerViewModel(
                             // back — say so rather than closing as a success.
                             it.copy(
                                 downloadingResultId = null,
-                                error = "Downloaded, but the subtitle list could not be refreshed.",
+                                error = TvPlayerErrors.SUBTITLE_DOWNLOADED_NOT_REFRESHED,
                             )
                         }
                     }
                 }
                 is ApiResult.Error, is ApiResult.NetworkError -> _subtitleSearch.update {
-                    it.copy(downloadingResultId = null, error = r.errorMessage("Subtitle download failed"))
+                    it.copy(downloadingResultId = null, error = r.errorMessage(TvPlayerErrors.SUBTITLE_DOWNLOAD_FAILED))
                 }
             }
         }
@@ -5929,9 +7248,10 @@ class TvPlayerViewModel(
 
     /**
      * Submit an AI job and poll to completion. `start_position` = current
-     * playhead (web parity); no `session_id` — Android polls instead of
-     * streaming live cues. Runs in viewModelScope so player exit cancels the
-     * poll via structured concurrency (the server job itself keeps running).
+     * playhead and `session_id` = the playback session (web parity), so the
+     * server can run it as a foreground job; Android polls instead of showing
+     * live cues. Runs in viewModelScope so player exit cancels the poll via
+     * structured concurrency (the server job itself keeps running).
      */
     private var aiCreationInFlight = false
     private var aiCancelOwner: Pair<Long, org.siloserver.silo.network.AuthScopeSnapshot>? = null
@@ -5952,7 +7272,7 @@ class TvPlayerViewModel(
         aiJobPollJob?.cancel()
         aiJobPollJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             val owner = subtitlesRepository.captureJobAuthority() ?: run {
-                _aiTranslate.update { it.copy(phase = AiJobPhase.Failed("Sign in before starting subtitle processing.")) }
+                _aiTranslate.update { it.copy(phase = AiJobPhase.Failed(TvPlayerErrors.SUBTITLE_SIGN_IN_REQUIRED)) }
                 return@launch
             }
             fun samePlayback() = generation == contentLoadGeneration && _uiState.value.mediaFileId == mediaFileId && _uiState.value.sessionId == state.sessionId
@@ -5968,25 +7288,26 @@ class TvPlayerViewModel(
                 sourceLanguage = sourceLanguage?.ifBlank { null },
                 targetLanguage = targetLanguage.ifBlank { null },
                 startPosition = state.position,
+                sessionId = state.sessionId,
             )
             val r = subtitlesRepository.translate(request, owner)
             if (!ownsRequest()) return@launch
             val job = when (r) {
                 is ApiResult.Success -> r.data.job.let { job ->
-                    if (!r.data.liveDeliveryAttached && job.progressMessage.isBlank()) job.copy(progressMessage = "Processing in background") else job
+                    if (!r.data.liveDeliveryAttached && job.progressMessage.isBlank()) job.copy(progressMessage = TvPlayerErrors.PROCESSING_IN_BACKGROUND) else job
                 }
                 is ApiResult.Error -> {
                     // 429 = quota exhausted → refresh quota so the dialog
                     // flips to the exhausted state; 503 = engine unconfigured.
                     if (r.code == 429) refreshAiQuota()
                     _aiTranslate.update {
-                        it.copy(phase = AiJobPhase.Failed(r.errorMessage("Translation failed")))
+                        it.copy(phase = AiJobPhase.Failed(r.errorMessage(TvPlayerErrors.TRANSLATION_FAILED)))
                     }
                     return@launch
                 }
                 is ApiResult.NetworkError -> {
                     _aiTranslate.update {
-                        it.copy(phase = AiJobPhase.Failed(r.errorMessage("Translation failed")))
+                        it.copy(phase = AiJobPhase.Failed(r.errorMessage(TvPlayerErrors.TRANSLATION_FAILED)))
                     }
                     return@launch
                 }
@@ -6025,14 +7346,14 @@ class TvPlayerViewModel(
                         } else {
                             it.copy(
                                 phase = AiJobPhase.Failed(
-                                    "Translated, but the subtitle list could not be refreshed.",
+                                    TvPlayerErrors.TRANSLATED_NOT_REFRESHED,
                                 ),
                             )
                         }
                     }
                 }
                 is SubtitlesRepository.SubtitleJobOutcome.Failed -> {
-                    val message = outcome.message ?: "Translation failed"
+                    val message = outcome.message ?: TvPlayerErrors.TRANSLATION_FAILED
                     _aiTranslate.update { it.copy(phase = AiJobPhase.Failed(message)) }
                     // The dialog may have been closed while the job ran; a reason
                     // is a full sentence, so it stays up long enough to read on a TV.
@@ -6143,7 +7464,8 @@ class TvPlayerViewModel(
                     _dolbyVisionSwitchInFlight.value = false
                 }
             }
-            restartSessionInPlace(fileId)
+            // The same file again: pinned only if the playing session was.
+            restartSessionInPlace(fileId, pinVersion = sessionLifecycle.sessionPinsVersion)
         }
     }
 
@@ -6233,7 +7555,7 @@ class TvPlayerViewModel(
         val state = _uiState.value
         val fileId = _uiState.value.selectedFileId ?: _uiState.value.mediaFileId
         val scope = finalPositionScope
-        if ((lastAdoptedSessionId ?: state.sessionId)?.let(playbackSessionManager::isSequenced) != true && scope != null && contentId.isNotBlank() && fileId != null) {
+        if (scope != null && contentId.isNotBlank() && fileId != null) {
             finalPlaybackPositionWriter.submit(
                 FinalPlaybackPosition(
                     scope = scope,
@@ -6241,12 +7563,15 @@ class TvPlayerViewModel(
                     fileId = fileId,
                     positionSeconds = state.position,
                     durationSeconds = state.duration.takeIf { it > 0.0 },
+                    serverTrackedAtMs = System.currentTimeMillis()
+                        .takeIf { (lastAdoptedSessionId ?: state.sessionId)?.let(playbackSessionManager::isSequenced) == true },
                 ),
             )
         }
         introObserveJob?.cancel()
         nextUpCountdownJob?.cancel()
         introAutoSkipController.reset()
+        resetBufferingQuality()
         // Only fills a gap; never overwrites. The adoption paths publish this
         // token ahead of UI state on purpose, and taking the UI value here would
         // put the older id back.
@@ -6303,6 +7628,29 @@ class TvPlayerViewModel(
             positionSeconds = state.position,
             durationSeconds = state.duration.takeIf { it > 0.0 },
         )
+        // Recorded only while the launching identity is still current, so a
+        // player left over from an earlier identity never replaces a newer return.
+        val identityGeneration = launchIdentityGeneration
+            ?.takeIf { it == identityTransitions?.generation?.value }
+        state.seriesId?.takeIf {
+            it.isNotBlank() && contentId.isNotBlank() && identityGeneration != null
+        }?.let { seriesId ->
+            // The series page lands on the episode on screen (auto-advance may
+            // have moved past the one it launched), or on the next one once this
+            // one reached its credits or end. A shuffle's next pick is not the
+            // series' next episode, so shuffle always lands on the one on screen.
+            val next = state.nextEpisode?.takeIf {
+                shufflePlayback == null && (reachedCreditsOrEnd || state.nextUpVideoEnded)
+            }
+            TvDetailTrackSelectionSession.rememberSeriesReturn(
+                TvDetailTrackSelectionSession.SeriesReturn(
+                    seriesId = seriesId,
+                    episodeId = next?.contentId ?: contentId,
+                    seasonNumber = if (next != null) next.seasonNumber else state.seasonNumber,
+                    identityGeneration = identityGeneration,
+                ),
+            )
+        }
         subtitleTransactions.invalidate()
         playbackMutationFence.invalidateAll()
         prepareSessionExit()
@@ -6372,6 +7720,8 @@ class TvPlayerViewModel(
                 playbackSessionManager.trySingleLocalPcmRetry(mime, selectedTrack?.channelCount ?: 0)
             ) {
                 val transportMountNonce = nextTransportMountNonce(selectedSubtitleTrackIndex(state))
+                // The same plan, remounted for PCM: a reload for the buffering controller.
+                pendingBufferingReloadNonce = transportMountNonce
                 _uiState.update {
                     it.copy(
                         error = null,
@@ -6436,25 +7786,7 @@ class TvPlayerViewModel(
         ) {
             transientNetworkRetries++
             Log.i(TAG, "Transient network error; retrying same route ($transientNetworkRetries/$MAX_TRANSIENT_NETWORK_RETRIES)")
-            val plan = state.playbackPlan
-            val transportMountNonce = nextTransportMountNonce(selectedSubtitleTrackIndex(state))
-            _uiState.update {
-                it.copy(
-                    isLoading = false,
-                    error = null,
-                    playbackPlan = plan.copy(
-                        timeline = plan.timeline.copy(
-                            playerStartSeconds = plan.timeline.playerPositionForSource(state.position)
-                                ?: plan.timeline.playerStartSeconds,
-                        ),
-                        decisionTrace = plan.decisionTrace +
-                            "client_retry=transient_network:$transientNetworkRetries",
-                    ),
-                    startPosition = plan.timeline.playerPositionForSource(state.position)
-                        ?: plan.timeline.playerStartSeconds,
-                    transportMountNonce = transportMountNonce,
-                )
-            }
+            reopenSameRoute(state, "client_retry=transient_network:$transientNetworkRetries")
             return
         }
         if (state.sessionId != null) {
@@ -6463,31 +7795,126 @@ class TvPlayerViewModel(
                 "error_code_name" to error.errorCodeName,
                 "error_cause" to (error.cause?.javaClass?.simpleName ?: "unknown"),
             )
-            if (pendingSeekTarget != null) {
-                startSeekFailureRecovery(
-                    targetSourceSec = pendingSeekTarget,
-                    classification = error.failureClassification(),
-                    notice = message,
-                    diagnostics = diagnostics,
-                )
+            val failedTrackType = error.failedRendererTrackType(servicePlayer)
+            fun recover() {
+                if (pendingSeekTarget != null) {
+                    startSeekFailureRecovery(
+                        targetSourceSec = pendingSeekTarget,
+                        classification = error.failureClassification(),
+                        notice = message,
+                        diagnostics = diagnostics,
+                    )
+                } else {
+                    startProtocolV3Replan(
+                        error.failureClassification(),
+                        message,
+                        _uiState.value,
+                        diagnostics = diagnostics,
+                        failedTrackType = failedTrackType,
+                    )
+                }
+            }
+            if (isTransientNetwork && state.playbackPlan != null) {
+                waitOutOutage(routeFailed = if (reopenedAfterOutage) ::recover else null)
             } else {
-                startProtocolV3Replan(
-                    error.failureClassification(),
-                    message,
-                    state,
-                    diagnostics = diagnostics,
-                    failedTrackType = error.failedRendererTrackType(servicePlayer),
-                )
+                recover()
             }
             return
         }
+        Log.w(TAG, "Player error without a session: $message")
         _uiState.update {
             it.copy(
                 isLoading = false,
-                error = message,
+                error = PLAYBACK_FAILED_MESSAGE,
             )
         }
     }
+
+    /**
+     * Reopens the playing plan at the current position, a reload for the
+     * buffering controller. The new transport mount nonce re-runs the
+     * screen's mount effect: a same-route remount, without a server
+     * round-trip. [trace] goes on the decision trace to record why.
+     */
+    private fun reopenSameRoute(state: UiState, trace: String, endLoading: Boolean = true) {
+        val plan = state.playbackPlan ?: return
+        val start = plan.timeline.playerPositionForSource(state.position) ?: plan.timeline.playerStartSeconds
+        val transportMountNonce = when (
+            val restore = tvReopenSubtitleRestore(
+                adapterMountIdentity = lastAdapterMountIdentity,
+                adapterMountGeneration = lastAdapterMountGeneration,
+                playerSelectedServerIndex = selectedSubtitleTrackIndex(state),
+            )
+        ) {
+            is TvReopenSubtitleRestore.AdapterMount -> nextTransportMountNonce(subtitleServerIndexToRestore = null).also {
+                subtitleSnapshotSettlement.reset()
+                subtitleRemountReselection.arm(restore.identity, restore.generation)
+            }
+            is TvReopenSubtitleRestore.PlayerSelection -> nextTransportMountNonce(restore.serverIndex)
+        }
+        pendingBufferingReloadNonce = transportMountNonce
+        _uiState.update {
+            it.copy(
+                isLoading = it.isLoading && !endLoading,
+                error = null,
+                playbackPlan = plan.copy(
+                    timeline = plan.timeline.copy(playerStartSeconds = start),
+                    decisionTrace = plan.decisionTrace + trace,
+                ),
+                startPosition = start,
+                transportMountNonce = transportMountNonce,
+            )
+        }
+    }
+
+    /**
+     * Media requests failed, or went silent, and the player gave up: an
+     * outage. It never ends playback by itself, and a failure replan sent
+     * into it would tell the server the route failed (the server then has
+     * nothing left to plan). So nothing is sent: once the device is online
+     * and the server answers again, the same route reopens.
+     *
+     * [routeFailed] is the failure recovery of an error after that reopen,
+     * before playing. It runs only while no outage is in progress: the
+     * device is online and the server answers, so the route itself fails.
+     * The media loads' own trouble cannot tell, because the failed request
+     * that raised the error is one. Otherwise the wait goes on.
+     */
+    private fun waitOutOutage(routeFailed: (() -> Unit)? = null) {
+        // The wait belongs to the mount that failed: a newer mount's error
+        // replaces it, and it never acts on a mount that replaced its own.
+        val mount = _uiState.value.transportMountNonce
+        if (outageRecoveryJob?.isActive == true && outageMount == mount) return
+        outageRecoveryJob?.cancel()
+        outageMount = mount
+        Log.i(TAG, "outage: waiting for the network and the server before reopening the same route")
+        _uiState.update { it.copy(isLoading = false, isBuffering = true, error = null) }
+        outageRecoveryJob = viewModelScope.launch {
+            if (routeFailed != null && networkEvidence?.snapshot()?.connected != false && serverAnswers()) {
+                if (_uiState.value.transportMountNonce != mount) return@launch
+                Log.i(TAG, "outage: the reopened route failed while the server answers; recovering")
+                routeFailed()
+                return@launch
+            }
+            var attempt = 0
+            do {
+                awaitNetworkRetry(networkEvidence?.updates ?: emptyFlow(), attempt++)
+            } while (!serverAnswers())
+            if (_uiState.value.transportMountNonce != mount) {
+                Log.i(TAG, "outage: over, but another mount replaced the failed one; not reopening")
+                return@launch
+            }
+            Log.i(TAG, "outage: over after $attempt checks; reopening the same route")
+            reopenedAfterOutage = true
+            reopenSameRoute(_uiState.value, "client_retry=outage_end")
+        }
+    }
+
+    private suspend fun serverAnswers(): Boolean =
+        withTimeoutOrNull(SERVER_CHECK_TIMEOUT_MS) {
+            runCatching { serverReachabilityMonitor.retryNow() }.getOrNull()?.status ==
+                org.siloserver.silo.common.network.ServerReachabilityStatus.Reachable
+        } == true
 
     /**
      * In-player version switch (QA 2026-07-08 / tvOS parity): restart the
@@ -6502,7 +7929,14 @@ class TvPlayerViewModel(
         // choice without switching anything.
         if (fileId == (state.selectedFileId ?: state.mediaFileId)) return
         if (state.fileVersions.none { it.fileId == fileId }) return
-        restartSessionInPlace(fileId)
+        // A pick: it replaces a waiting Restore, hides any pill and holds the
+        // controller until the version plays (a quality change) or fails.
+        cancelBufferingRestore()
+        lastVersionPick = bufferingPicks.sent(
+            matches = { it.fileId == fileId },
+            outstanding = { versionSwitchJob?.isActive == true || _uiState.value.isLoading },
+        )
+        restartSessionInPlace(fileId, pinVersion = true)
     }
 
     /**
@@ -6515,8 +7949,11 @@ class TvPlayerViewModel(
      * A manual audio choice is translated by identity onto a different file;
      * automatic choices are re-resolved from that file's persisted/language
      * chain. Raw ordinals never cross a file boundary.
+     *
+     * [pinVersion] pins [fileId] for the new session: the viewer's version
+     * pick does, and a settings restart keeps the playing session's pin.
      */
-    private fun restartSessionInPlace(fileId: Int?) {
+    private fun restartSessionInPlace(fileId: Int?, pinVersion: Boolean) {
         // Version and Dolby Vision restarts would choose playback locally.
         if (roomId != null) return
         val state = _uiState.value
@@ -6544,6 +7981,7 @@ class TvPlayerViewModel(
             loadContent(
                 startPositionOverride = resumeAt,
                 preferredFileIdOverride = fileId,
+                versionChosen = fileId != null && pinVersion,
                 audioTrackIndexOverride = audioTrackIndexOverride,
                 audioTrackIndexOverrideSpecified = fileId != null,
                 suppressResumeRewind = true,
@@ -6626,7 +8064,7 @@ class TvPlayerViewModel(
         val cid = contentId.takeIf { it.isNotBlank() }
         val fid = _uiState.value.selectedFileId ?: _uiState.value.mediaFileId
         val scope = finalPositionScope
-        if (exitSessionId?.let(playbackSessionManager::isSequenced) != true && scope != null && cid != null && fid != null) {
+        if (scope != null && cid != null && fid != null) {
             finalPlaybackPositionWriter.submit(
                 FinalPlaybackPosition(
                     scope = scope,
@@ -6634,6 +8072,8 @@ class TvPlayerViewModel(
                     fileId = fid,
                     positionSeconds = _uiState.value.position,
                     durationSeconds = _uiState.value.duration.takeIf { it > 0.0 },
+                    serverTrackedAtMs = System.currentTimeMillis()
+                        .takeIf { exitSessionId?.let(playbackSessionManager::isSequenced) == true },
                 ),
             )
         }
@@ -6641,6 +8081,7 @@ class TvPlayerViewModel(
         lifecycleObserveJob?.cancel()
         nextUpCountdownJob?.cancel()
         introAutoSkipController.reset()
+        resetBufferingQuality()
     }
 
 }

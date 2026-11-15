@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.android.ui.components.LeftToRight
 import org.siloserver.silo.android.ui.util.formatClockTime
 import org.siloserver.silo.model.catalog.VersionChapter
 
@@ -38,30 +39,32 @@ fun ChapterProgressBar(
     // row showing elapsed (left) and -remaining (right) in caption-weight,
     // monospaced, secondary text. The Material slider stands in for the slim
     // accent-gradient capsule track.
-    Column(modifier = modifier.fillMaxWidth()) {
-        Slider(
-            value = sliderValue,
-            valueRange = 0f..sliderMax,
-            onValueChange = { onSeek(it.toDouble().coerceIn(0.0, durationSeconds.coerceAtLeast(0.0))) },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(modifier = Modifier.height(10.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(
-                text = formatClockTime(positionSeconds),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+    LeftToRight {
+        Column(modifier = modifier.fillMaxWidth()) {
+            Slider(
+                value = sliderValue,
+                valueRange = 0f..sliderMax,
+                onValueChange = { onSeek(it.toDouble().coerceIn(0.0, durationSeconds.coerceAtLeast(0.0))) },
+                modifier = Modifier.fillMaxWidth(),
             )
-            Text(
-                text = "-" + formatClockTime(remaining),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = formatClockTime(positionSeconds),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "-" + formatClockTime(remaining),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

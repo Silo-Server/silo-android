@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -33,6 +34,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.tv.R
 
@@ -44,16 +47,17 @@ import org.siloserver.silo.tv.R
 @Composable
 fun TvMarqueeSetupSteps(modifier: Modifier = Modifier) {
     Column(modifier.width(350.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
-        Step(1, "Open Silo on your phone") { AppIconPicture() }
-        Step(2, "Tap Set up") { SetupCardPicture() }
-        Step(3, "Finish on your phone") { DonePicture() }
+        Step(1, stringResource(CommonR.string.setup_step_open)) { AppIconPicture() }
+        Step(2, stringResource(CommonR.string.shell_phoneSetup_tapSetUp)) { SetupCardPicture() }
+        Step(3, stringResource(CommonR.string.setup_step_finish)) { DonePicture() }
     }
 }
 
 @Composable
 private fun Step(number: Int, title: String, picture: @Composable () -> Unit) {
+    val spoken = stringResource(CommonR.string.setup_step_audio, LocaleFormat.integer(number), title)
     Row(
-        Modifier.clearAndSetSemantics { contentDescription = "Step $number: $title" },
+        Modifier.clearAndSetSemantics { contentDescription = spoken },
         horizontalArrangement = Arrangement.spacedBy(17.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -75,7 +79,7 @@ private fun Step(number: Int, title: String, picture: @Composable () -> Unit) {
                     .background(MarqueeColors.Ink),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("$number", color = Color.Black, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                Text(number.toString(), color = Color.Black, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
             }
         }
         Text(title, color = MarqueeColors.Ink, fontSize = 19.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.2).sp)
@@ -128,7 +132,7 @@ private fun SetupCardPicture() {
                 .background(MarqueeColors.Ink),
             contentAlignment = Alignment.Center,
         ) {
-            Text("Set up", color = Color.Black, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)
+            Text(stringResource(CommonR.string.companion_offerSetupAction), color = Color.Black, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)
         }
     }
 }

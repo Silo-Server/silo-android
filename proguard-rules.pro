@@ -84,6 +84,13 @@
 -dontwarn okhttp3.**
 -dontwarn okio.**
 
+# --- Local route trust manager -------------------------------------------------
+# X509TrustManagerExtensions (and with it OkHttp's Android certificate chain
+# cleaner) finds the hostname-aware check by name through reflection.
+-keepclassmembers class org.siloserver.silo.network.localroute.PinningTrustManager {
+    public java.util.List checkServerTrusted(java.security.cert.X509Certificate[], java.lang.String, java.lang.String);
+}
+
 # --- Coil3 / zxing (R8-friendly; silence optional desktop/J2SE references) -----
 -dontwarn coil3.**
 -dontwarn com.google.zxing.**

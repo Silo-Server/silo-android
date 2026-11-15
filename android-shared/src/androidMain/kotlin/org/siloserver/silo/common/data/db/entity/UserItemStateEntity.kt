@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.data.db.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 
@@ -7,8 +8,8 @@ import androidx.room.Index
  * Local-first projection of **file-level** user state — resume position, track
  * selections, and ebook reading position.
  *
- * Identity is `(serverId, profileId, contentId, fileId)` because Silo scopes
- * all user state by server + profile (see `ScopedJsonFileStore` and
+ * Identity is `(serverId, accountId, profileId, contentId, fileId)` because
+ * Silo scopes all user state by server + account + profile (see `ScopedJsonFileStore` and
  * `DownloadStorage`), and progress/track/CFI are file-level (a multi-file
  * content item — e.g. a movie with multiple versions, or an audiobook with
  * many tracks — has independent positions per file).
@@ -27,14 +28,17 @@ import androidx.room.Index
  */
 @Entity(
     tableName = "user_item_state",
-    primaryKeys = ["serverId", "profileId", "contentId", "fileId"],
+    primaryKeys = ["serverId", "accountId", "profileId", "contentId", "fileId"],
     indices = [
-        Index(value = ["serverId", "profileId", "contentId"]),
-        Index(value = ["serverId", "profileId", "clientUpdatedAtMs"]),
+        Index(value = ["serverId", "accountId", "profileId", "contentId"]),
+        Index(value = ["serverId", "accountId", "profileId", "clientUpdatedAtMs"]),
     ],
 )
 data class UserItemStateEntity(
     val serverId: String,
+    /** Saved account ([org.siloserver.silo.model.server.AccountEntry.localAccountId]); '' = written before accounts existed. */
+    @ColumnInfo(defaultValue = "")
+    val accountId: String,
     val profileId: String,
     val contentId: String,
     val fileId: Int,

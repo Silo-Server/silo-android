@@ -1,6 +1,9 @@
 package org.siloserver.silo.tv.ui.focus
 
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.tv.ui.components.isTvProgressRow
+import org.siloserver.silo.tv.ui.components.tvMediaRowSlotKeys
 
 /**
  * Projects a Skyline row feed into the shape [resolveTvReturnTarget] reads.
@@ -30,14 +33,44 @@ import org.siloserver.silo.model.section.ResolvedSection
  * up carries sections the feed never shows and puts every resolved index in a
  * different coordinate space from the rows they are meant to address.
  */
-internal fun List<ResolvedSection>.toTvReturnSections(): List<TvReturnSection> =
+internal fun List<ResolvedSection>.toTvReturnSections(
+    /** Rows ending with an "Explore all" card, which restores like a card at `items.size`. */
+    exploreAll: (ResolvedSection) -> Boolean = { false },
+): List<TvReturnSection> =
     map { section ->
+        val itemIds = section.tvReturnItemIds()
         TvReturnSection(
             id = section.id,
-            itemIds = section.items.map { it.contentId },
+            itemIds = if (exploreAll(section)) itemIds + TvExploreAllItemId else itemIds,
             isComplete = section.items.isNotEmpty() || section.totalCount == 0,
         )
     }
+
+/**
+ * The return identity of each card in this row, in order.
+ *
+ * A progress row (Continue Watching, Next Up) holds one card per show, and
+ * that card's episode changes as the viewer watches: finishing E3 replaces it
+ * with E4 and moves it to the front. Keyed on the episode id, the return
+ * target no longer matched anything and fell back to the launch slot, which
+ * by then held a different show. These are the row's own lazy-list keys
+ * ([tvMediaRowSlotKeys]), which name the show while it has a single card, so
+ * focus follows the show to its new position. A show with two cards keeps
+ * episode ids, as do all other rows.
+ */
+internal fun ResolvedSection.tvReturnItemIds(): List<String> =
+    tvMediaRowSlotKeys(items, keyEpisodesBySeries = isTvProgressRow())
+
+/** The return identity of [item] in this row; see [tvReturnItemIds]. */
+internal fun ResolvedSection.tvReturnItemId(item: SectionItem): String =
+    tvReturnItemIds().getOrNull(items.indexOfFirst { it.contentId == item.contentId })
+        ?: item.contentId
+
+/**
+ * The return-target item id of a row's "Explore all" card, so opening a row's
+ * full page and coming back lands on that card. Content ids never contain NUL.
+ */
+internal const val TvExploreAllItemId = "\u0000explore-all"
 
 /**
  * Projects a flat, paginated surface — a library grid, personal list, people or

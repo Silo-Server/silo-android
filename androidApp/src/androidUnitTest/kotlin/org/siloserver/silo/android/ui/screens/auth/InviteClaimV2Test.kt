@@ -16,6 +16,8 @@ import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.network.*
 import org.siloserver.silo.network.api.AuthApi
 import org.siloserver.silo.repository.AuthRepository
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.*
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -57,14 +59,14 @@ class InviteClaimV2Test {
         val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>(); val finished = CompletableDeferred<Unit>()
         val tokens = object : TokenManager by actual {
             override suspend fun replaceAccountSession(serverId: String?, serverUrl: String?, accessToken: String,
-                refreshToken: String, expiresIn: Long, profileId: String?, profileToken: String?, expectedIdentity: AccountSessionExpectation?) {
+                refreshToken: String, expiresIn: Long, profileId: String?, profileToken: String?, expectedIdentity: AccountSessionExpectation?,
+                account: org.siloserver.silo.network.AccountSignIn?): String? =
                 withContext(NonCancellable) {
                     entered.complete(Unit); release.await()
                     try { actual.replaceAccountSession(serverId, serverUrl, accessToken, refreshToken,
-                        expiresIn, profileId, profileToken, expectedIdentity) }
+                        expiresIn, profileId, profileToken, expectedIdentity, account) }
                     finally { finished.complete(Unit) }
                 }
-            }
         }
         val client = client { request ->
             if (request.method == HttpMethod.Post) signedIn to HttpStatusCode.Created
@@ -115,6 +117,39 @@ class InviteClaimV2Test {
         } finally { Dispatchers.resetMain() }
     }
 
+    @Test fun refusalsThatSpendNothingShowTheReasonAndAllowAnotherClaim() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            for ((status, code) in listOf(
+                HttpStatusCode.TooManyRequests to "rate_limited",
+                HttpStatusCode.Forbidden to "local_login_disabled",
+                HttpStatusCode.Conflict to "conflict",
+                HttpStatusCode.UnprocessableEntity to "validation_failed",
+                HttpStatusCode.NotImplemented to "capability_unsupported",
+            )) {
+                var posts = 0
+                val client = client { request ->
+                    if (request.method == HttpMethod.Post) {
+                        posts++
+                        """{"type":"https://siloserver.org/problems/$code","title":"Refused","status":${status.value},"detail":"Refused: $code"}""" to status
+                    } else (if (request.url.encodedPath.endsWith("capabilities")) capability else lookup) to HttpStatusCode.OK
+                }
+                val vm = InviteClaimViewModel(AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), TokenManagerImpl()), consent)
+                try {
+                    ready(vm); vm.onClaimClick()
+                    val refused = vm.uiState.first { it.error != null }
+                    assertFalse(refused.acceptanceUncertain, code)
+                    assertFalse(refused.invitationInvalid, code)
+                    assertEquals(org.siloserver.silo.common.i18n.UiText.Raw("Refused: $code"), refused.error, code)
+                    vm.onClaimClick()
+                    assertTrue(vm.uiState.value.isSubmitting, code)
+                    vm.uiState.first { !it.isSubmitting }
+                    assertEquals(2, posts, code)
+                } finally { vm.viewModelScope.cancel(); client.close() }
+            }
+        } finally { Dispatchers.resetMain() }
+    }
+
     @Test fun successfulClaimInstallsNestedSessionAndRoutesOnlyAfterCommit() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val tokens = TokenManagerImpl().apply { setServerUrl("https://existing.example.test") }
@@ -132,6 +167,100 @@ class InviteClaimV2Test {
             assertEquals("https://invite.example.test", tokens.getServerUrl())
             assertNull(vm.uiState.value.signInRequiredUsername)
         } finally { vm.viewModelScope.cancel(); client.close(); Dispatchers.resetMain() }
+    }
+
+    @Test fun cleartextInviteAsksBeforeLookupAndKeepsTheTokenOutOfEveryUrl() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val approved = mutableSetOf<String>()
+        val store = object : CleartextConsentStore {
+            override suspend fun isApproved(origin: String) = origin in approved
+            override suspend fun approve(origin: String) { approved += origin }
+        }
+        val tokens = TokenManagerImpl()
+        val urls = mutableListOf<String>()
+        val bodies = mutableListOf<String>()
+        val client = HttpClient(MockEngine { request ->
+            urls += request.url.toString()
+            (request.body as? io.ktor.http.content.TextContent)?.let { bodies += it.text }
+            val (body, status) = when (request.url.encodedPath) {
+                "/api/v2/invitations/capabilities" -> capability.replace("}", ",\"token_in_body\":true}") to HttpStatusCode.OK
+                "/api/v2/invitations/lookup" -> lookup to HttpStatusCode.OK
+                "/api/v2/invitations/accept" -> signedIn to HttpStatusCode.Created
+                else -> "" to HttpStatusCode.MethodNotAllowed
+            }
+            respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
+        }) {
+            install(ContentNegotiation) { json(SiloJson) }
+            install(SiloAuthPlugin) { tokenManager = tokens; cleartextOriginConsent = store }
+        }
+        val vm = InviteClaimViewModel(AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), tokens), store)
+        try {
+            vm.load("http://invite.example.test", "secret-token")
+            vm.uiState.first { it.pendingCleartextOrigin != null || !it.isLoadingInvitation }
+            assertTrue(urls.none { "secret-token" in it }, "token sent in a URL: $urls")
+            assertEquals("http://invite.example.test", vm.uiState.value.pendingCleartextOrigin)
+            assertNull(vm.uiState.value.invitation)
+
+            vm.onConfirmCleartext()
+            vm.uiState.first { !it.isLoadingInvitation }
+            assertNotNull(vm.uiState.value.invitation)
+            vm.onPasswordChanged("password"); vm.onConfirmPasswordChanged("password")
+            vm.onClaimClick()
+            vm.uiState.first { it.claimSuccess }
+
+            assertTrue(urls.none { "secret-token" in it }, "token sent in a URL: $urls")
+            assertEquals(
+                // The first lookup POST is refused before it leaves the device;
+                // after consent the lookup runs again from the capability read.
+                listOf("/api/v2/invitations/capabilities", "/api/v2/invitations/capabilities",
+                    "/api/v2/invitations/lookup", "/api/v2/invitations/accept"),
+                urls.map { io.ktor.http.Url(it).encodedPath },
+            )
+            assertEquals(listOf("secret-token", "secret-token"), bodies.map {
+                SiloJson.parseToJsonElement(it).jsonObject.getValue("token").jsonPrimitive.content
+            })
+        } finally { vm.viewModelScope.cancel(); client.close(); Dispatchers.resetMain() }
+    }
+
+    @Test fun cleartextConsentIsAskedBeforeLookupOnlyWhenTheLookupNeedsIt() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val store = object : CleartextConsentStore {
+            override suspend fun isApproved(origin: String) = false
+            override suspend fun approve(origin: String) = Unit
+        }
+        try {
+            for (tokenInBody in listOf(false, true)) {
+                var lookups = 0
+                val tokens = TokenManagerImpl()
+                val client = HttpClient(MockEngine { request ->
+                    val body = if (request.url.encodedPath.endsWith("capabilities")) {
+                        if (tokenInBody) capability.replace("}", ",\"token_in_body\":true}") else capability
+                    } else { lookups++; lookup }
+                    respond(body, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+                }) {
+                    install(ContentNegotiation) { json(SiloJson) }
+                    install(SiloAuthPlugin) { tokenManager = tokens; cleartextOriginConsent = store }
+                }
+                val vm = InviteClaimViewModel(AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), tokens), store)
+                try {
+                    vm.load("http://invite.example.test", "token")
+                    vm.uiState.first { it.pendingCleartextOrigin != null || !it.isLoadingInvitation }
+                    if (!tokenInBody) {
+                        // An older server's GET lookup needs no consent; it is asked at claim.
+                        assertNotNull(vm.uiState.value.invitation)
+                        assertNull(vm.uiState.value.pendingCleartextOrigin)
+                        assertEquals(1, lookups)
+                    } else {
+                        assertEquals("http://invite.example.test", vm.uiState.value.pendingCleartextOrigin)
+                        vm.onCancelCleartext()
+                        assertTrue(vm.uiState.value.lookupFailed)
+                        vm.onRetryLookup()
+                        vm.uiState.first { it.pendingCleartextOrigin != null }
+                        assertEquals(0, lookups)
+                    }
+                } finally { vm.viewModelScope.cancel(); client.close() }
+            }
+        } finally { Dispatchers.resetMain() }
     }
 
     private suspend fun ready(vm: InviteClaimViewModel) {

@@ -38,8 +38,8 @@ class PersonalWriteJournalTest {
             repo.completePersonalWrite(handle)
             assertNull(db.dirtyOperationDao().getById(handle.opId))
         }
-        assertEquals(true, db.contentItemStateDao().get("server", "profile", "item")?.watched)
-        assertNull(db.contentItemStateDao().get("server", "profile", "item")?.ratingValue)
+        assertEquals(true, db.contentItemStateDao().get("server", "", "profile", "item")?.watched)
+        assertNull(db.contentItemStateDao().get("server", "", "profile", "item")?.ratingValue)
     }
 
     @Test fun unresolvedWriteIsSupersededByTheNextWriteAndNeverProjects() = runTest {
@@ -48,16 +48,16 @@ class PersonalWriteJournalTest {
         assertNull(db.dirtyOperationDao().getById(stale.opId))
         assertNotNull(db.dirtyOperationDao().getById(next.opId))
         repo().completePersonalWrite(stale) // late acknowledgement of a superseded attempt
-        assertNull(db.contentItemStateDao().get("server", "profile", "item"))
+        assertNull(db.contentItemStateDao().get("server", "", "profile", "item"))
         repo().abandonPersonalWrite(next)
         assertEquals(0, db.dirtyOperationDao().count())
-        assertNull(db.contentItemStateDao().get("server", "profile", "item"))
+        assertNull(db.contentItemStateDao().get("server", "", "profile", "item"))
     }
 
     @Test fun oldQueueBytesAndAuthorityAreNeverCoalescedOrResetByFreshWritesOrPositions() = runTest {
         val dao = db.dirtyOperationDao()
         val old = listOf("SET_POSITION", "SET_WATCHED", "SET_RATING").mapIndexed { index, kind ->
-            val row = DirtyOperationEntity(opKind = kind, serverId = "server", profileId = "profile",
+            val row = DirtyOperationEntity(opKind = kind, serverId = "server", accountId = "", profileId = "profile",
                 targetContentId = "item", targetFileId = 7, coalesceKey = "server|profile|item|$kind",
                 idempotencyKey = "old-$index", payloadJson = "  {old exact bytes}  ",
                 state = if (index == 0) "in_flight" else "pending", createdAtMs = 1,
@@ -71,18 +71,18 @@ class PersonalWriteJournalTest {
         assertEquals(old, old.map { dao.getById(it.id) })
         assertEquals(3, dao.count())
         assertEquals(42.0, repo.localPosition("item", 7))
-        assertNull(db.contentItemStateDao().get("server", "profile", "item"))
+        assertNull(db.contentItemStateDao().get("server", "", "profile", "item"))
     }
 
     @Test fun acknowledgementCannotOverwriteNewerLocalProjectionOrResume() = runTest {
         val repo = repo()
         val handle = assertNotNull(repo.beginPersonalWrite(PersonalWrite.Watched("item", true)))
         val newer = org.siloserver.silo.common.data.db.entity.ContentItemStateEntity(
-            "server", "profile", "item", false, 5, null, Long.MAX_VALUE, null)
+            "server", "", "profile", "item", false, 5, null, Long.MAX_VALUE, null)
         db.contentItemStateDao().upsert(newer)
         repo.recordPosition("item", 7, 75.0, 100.0)
         repo.completePersonalWrite(handle)
-        assertEquals(newer, db.contentItemStateDao().get("server", "profile", "item"))
+        assertEquals(newer, db.contentItemStateDao().get("server", "", "profile", "item"))
         assertEquals(75.0, repo.localPosition("item", 7))
         assertNull(db.dirtyOperationDao().getById(handle.opId))
     }
@@ -95,6 +95,6 @@ class PersonalWriteJournalTest {
         scope = scope.copy(credentialGenerationId = "temporary")
         assertNull(repo().beginPersonalWrite(PersonalWrite.Watched("item", true)))
         assertEquals(0, db.dirtyOperationDao().count())
-        assertNull(db.contentItemStateDao().get("server", "profile", "item"))
+        assertNull(db.contentItemStateDao().get("server", "", "profile", "item"))
     }
 }

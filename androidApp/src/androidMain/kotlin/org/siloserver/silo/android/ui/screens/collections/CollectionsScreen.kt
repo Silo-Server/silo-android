@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.collections
 
+import org.siloserver.silo.common.i18n.pluralStringResourceWithNames
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.koin.compose.koinInject
@@ -42,6 +44,8 @@ import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.model.personal.Collection
 import org.siloserver.silo.viewmodel.CollectionSection
 import org.siloserver.silo.viewmodel.CollectionsViewModel
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,7 +60,7 @@ fun CollectionsScreen(
     Scaffold(
         topBar = {
             SiloTopBar(
-                title = "Collections",
+                title = stringResource(CommonR.string.collections_title),
                 onBackClick = onBackClick,
             )
         },
@@ -68,15 +72,15 @@ fun CollectionsScreen(
             }
             state.error != null && state.collections.isEmpty() && state.groups.isEmpty() -> {
                 ErrorView(
-                    message = state.error ?: "Unknown error",
+                    message = state.error?.text() ?: stringResource(CommonR.string.catalog_error_unknown),
                     onRetry = viewModel::loadCollections,
                     modifier = Modifier.padding(padding),
                 )
             }
             state.collections.isEmpty() && state.groups.isEmpty() -> {
                 EmptyStateView(
-                    title = "No collections",
-                    subtitle = "Collections from your library will appear here.",
+                    title = stringResource(CommonR.string.collections_none),
+                    subtitle = stringResource(CommonR.string.collections_emptyLibraryBody),
                     icon = Icons.Outlined.CollectionsBookmark,
                     modifier = Modifier.padding(padding),
                 )
@@ -106,7 +110,7 @@ fun CollectionsScreen(
                                 ) {
                                     if (section.collections.isEmpty()) {
                                         Text(
-                                            text = "No collections in this group.",
+                                            text = stringResource(CommonR.string.collections_emptyGroup),
                                             style = MaterialTheme.typography.bodySmall,
                                             fontSize = 12.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -147,7 +151,7 @@ private fun SectionHeader(section: CollectionSection) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = section.name,
+            text = section.title.text(),
             style = MaterialTheme.typography.bodySmall,
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -198,11 +202,12 @@ private fun CollectionCard(
     }
 }
 
+@Composable
 private fun rowSubtitle(collection: Collection): String {
     val kind = collection.collectionType.replaceFirstChar { it.uppercase() }
     val count = collection.itemCount
     return if (count != null && count > 0) {
-        "$kind - $count item${if (count == 1) "" else "s"}"
+        pluralStringResourceWithNames(CommonR.plurals.collections_rowSubtitle, count, kind)
     } else {
         kind
     }

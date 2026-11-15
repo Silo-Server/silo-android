@@ -49,19 +49,12 @@ Android 7.0 and 7.1 (API 24/25) are supported on both phone and Android TV. Vide
 
 ## Install APKs
 
-Each store release publishes release-signed APKs, and these links always serve the latest one.
+Silo Android has no store release yet, so install the newest tester build. These links always serve it. See [docs/releasing.md](docs/releasing.md).
 
 | App | Downloader code | Downloader link | Direct APK |
 |---|---:|---|---|
-| Android | `1141108` | <http://aftv.news/1141108> | <https://github.com/Silo-Server/silo-android/releases/latest/download/silo-android-latest-universal-release.apk> |
-| Android TV | `2249835` | <http://aftv.news/2249835> | <https://github.com/Silo-Server/silo-android/releases/latest/download/silo-android-tv-latest-universal-release.apk> |
-
-To test upcoming changes, these links always serve the newest tester build instead. Tester builds have higher version codes than the store build, so going back to the store build means uninstalling first. See [docs/releasing.md](docs/releasing.md).
-
-| App | Downloader code | Downloader link | Direct APK |
-|---|---:|---|---|
-| Android beta | `2988950` | <http://aftv.news/2988950> | <https://github.com/Silo-Server/silo-android/releases/download/beta-latest/silo-android-latest-beta.apk> |
-| Android TV beta | `6033910` | <http://aftv.news/6033910> | <https://github.com/Silo-Server/silo-android/releases/download/beta-latest/silo-android-tv-latest-beta.apk> |
+| Android | `2988950` | <http://aftv.news/2988950> | <https://github.com/Silo-Server/silo-android/releases/download/beta-latest/silo-android-latest-beta.apk> |
+| Android TV | `6033910` | <http://aftv.news/6033910> | <https://github.com/Silo-Server/silo-android/releases/download/beta-latest/silo-android-tv-latest-beta.apk> |
 
 Install **Downloader by AFTVnews** on Android TV / Google TV, enter the code for the app you want, then allow APK installs from Downloader when prompted.
 
@@ -86,12 +79,12 @@ WorkManager-backed downloads of video, audiobooks, and books to public device st
 
 ### 📚 Library, browse & discovery (phone + TV)
 - **Phone navigation** — Home, Libraries, For You, Calendar, and Downloads when the active profile has downloads. Video / Audio / Reading are library modes, not bottom-nav tabs.
-- **TV navigation** — Home, visible media-type tabs derived from server libraries (Movies/TV/Music/Audiobooks), For You, and Calendar. Reading/ebooks are intentionally excluded from TV.
+- **TV navigation** — Search, then Home, visible media-type tabs derived from server libraries (Movies/Series/Music/Audiobooks), For You, and Calendar. Requests sits in the profile menu. Reading/ebooks are intentionally excluded from TV.
 - **Home** with Continue Watching, Recently Added/Released, and server-curated recommendation rows.
 - **Browse** with genre/rating filters, sorting, and infinite-scroll grids; **collections** are browse-only in the Android clients, while collection authoring/management remains web-only.
 - **Item detail** for movies and series includes seasons → episodes, multi-version files, cast/crew, local download controls, and phone-to-TV playback handoff.
 - **Search** scoped by media type, debounced and paginated.
-- **Requests** — live on phone and TV behind the server's `requests_enabled` flag (phone: profile menu + search; TV: top-bar tab + search); request administration stays in web admin. **Experimental** — Watch Party, behind Settings → Experimental. **Not exposed** — other admin surfaces and session management are not reachable app surfaces today.
+- **Requests** — live on phone and TV behind the server's `requests_enabled` flag (phone and TV: profile menu + search); request administration stays in web admin. **Experimental** — Watch Party, behind Settings → Experimental. **Not exposed** — other admin surfaces and session management are not reachable app surfaces today.
 
 ### 📖 Reading & 🎧 Audio
 - **Ebook reader (phone only)** — EPUB, PDF, CBZ (comics), TXT/Markdown, FB2/FBZ, plus MOBI/AZW/AZW3 when the server can convert to EPUB; CBR and unsupported originals can be downloaded/opened externally. Themes, text size, margins, table of contents, bookmarks, and progress are supported.
@@ -238,10 +231,16 @@ implement and review changes through our own workflow, and pull request volume
 has outgrown what we can review carefully, so a good issue usually helps us
 more than a pull request.
 
+Feature ideas go in
+[Discussions → Ideas](https://github.com/Silo-Server/silo-android/discussions/categories/ideas),
+not issues.
+
 Pull requests are still welcome from contributors who've had one merged in a
-Silo repository, or when a maintainer asks for one. We close other pull
-requests without review. [CONTRIBUTING.md](CONTRIBUTING.md) explains what makes
-an issue useful.
+Silo repository, or when a maintainer asks for one; a feature pull request also
+needs an issue in this repository that a maintainer has labeled `accepted`.
+Other pull requests are closed automatically without review; when a maintainer
+asked for one, they reopen it. [CONTRIBUTING.md](CONTRIBUTING.md) explains what
+makes an issue useful.
 
 ---
 
@@ -265,7 +264,9 @@ Known gaps the docs track: TV has no reader/ebooks and no downloads management b
 
 ## License & Trademarks
 
-Silo Android is licensed under `AGPL-3.0-or-later`. See [LICENSE](LICENSE).
+Silo Android is licensed under `AGPL-3.0-or-later`, with an additional
+permission to combine it with platform SDKs. See [LICENSE](LICENSE) and
+[PLATFORM-EXCEPTION.md](PLATFORM-EXCEPTION.md).
 
 The **Silo name, logo, and wordmark are trademarks of Silo Media L.L.C.** and
 are **not** covered by the AGPL. You're free to fork and redistribute the code,

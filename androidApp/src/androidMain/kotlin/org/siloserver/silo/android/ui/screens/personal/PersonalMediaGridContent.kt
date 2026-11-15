@@ -3,8 +3,8 @@ package org.siloserver.silo.android.ui.screens.personal
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,17 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items as lazyItems
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -42,14 +32,13 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -59,15 +48,14 @@ import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.PosterGridSkeleton
+import org.siloserver.silo.android.ui.screens.browse.CatalogGrid
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.components.MediaCardContextMenu
-import org.siloserver.silo.android.ui.components.MediaGridDefaults
-import org.siloserver.silo.android.ui.components.WatchedBadge
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
-import org.siloserver.silo.common.cards.LocalCardPresentation
-import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.overlays.CardOverlayVariant
+import org.siloserver.silo.common.overlays.CardWatchStatusBadge
+import org.siloserver.silo.overlays.CardWatchStatus
 import org.siloserver.silo.common.overlays.CardOverlays
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.model.catalog.BrowseItem
@@ -79,18 +67,19 @@ import org.siloserver.silo.viewmodel.PersonalListUiState
 import org.siloserver.silo.viewmodel.WatchlistViewModel
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.navigation.LocalHeroSourceHandoff
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 private enum class PersonalMediaType(
-    val label: String,
-    val emptyTitle: String,
-    val emptySubtitle: String,
+    @StringRes val label: Int,
+    @StringRes val emptyTitle: Int,
+    @StringRes val emptySubtitle: Int,
 ) {
-    Movies("Movies", "No movies", "There are no movies in this list."),
-    TvShows("TV Shows", "No TV shows", "There are no TV shows in this list."),
+    Movies(CommonR.string.personal_filter_movies, CommonR.string.personal_movies_empty, CommonR.string.personal_movies_emptyBody),
+    TvShows(CommonR.string.personal_filter_tvShows, CommonR.string.personal_tvShows_empty, CommonR.string.personal_tvShows_emptyBody),
 }
-
-private const val PersonalMediaGridRowSize = 6
-private const val PersonalMediaGridPrefetchRows = 2
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -104,7 +93,7 @@ private fun PersonalMediaTypeSelector(
                 selected = selected == type,
                 onClick = { onSelected(type) },
                 shape = SegmentedButtonDefaults.itemShape(index, PersonalMediaType.entries.size),
-                label = { androidx.compose.material3.Text(type.label) },
+                label = { androidx.compose.material3.Text(stringResource(type.label)) },
             )
         }
     }
@@ -137,20 +126,13 @@ fun FavoritesGridContent(
             }
         },
         mediaType = mediaType,
-        emptyTitle = "No favorites",
-        emptySubtitle = "Tap the heart icon on any item to add it here",
+        emptyTitle = stringResource(CommonR.string.personal_favorites_empty),
+        emptySubtitle = stringResource(CommonR.string.personal_favorites_emptyTapHint),
         emptyIcon = Icons.Outlined.FavoriteBorder,
         onRetry = viewModel::retry,
         onRefresh = viewModel::refresh,
         onLoadMore = viewModel::loadMore,
-        itemContent = { item ->
-            MediaGridItem(
-                item = item,
-                onClick = { onItemClick(item.contentId) },
-                onFavoriteToggle = { viewModel.toggleFavorite(item.contentId) },
-                isFavorite = true,
-            )
-        },
+        onItemClick = onItemClick,
     )
 }
 
@@ -181,20 +163,13 @@ fun WatchlistGridContent(
             }
         },
         mediaType = mediaType,
-        emptyTitle = "Watchlist is empty",
-        emptySubtitle = "Tap the bookmark icon on any item to add it here",
+        emptyTitle = stringResource(CommonR.string.personal_watchlist_empty),
+        emptySubtitle = stringResource(CommonR.string.personal_watchlist_emptyTapHint),
         emptyIcon = Icons.Outlined.BookmarkBorder,
         onRetry = viewModel::retry,
         onRefresh = viewModel::refresh,
         onLoadMore = viewModel::loadMore,
-        itemContent = { item ->
-            MediaGridItem(
-                item = item,
-                onClick = { onItemClick(item.contentId) },
-                onWatchlistToggle = { viewModel.removeFromWatchlist(item.contentId) },
-                isInWatchlist = true,
-            )
-        },
+        onItemClick = onItemClick,
     )
 }
 
@@ -213,18 +188,13 @@ fun HistoryGridContent(
         modifier = modifier,
         contentPadding = contentPadding,
         header = header,
-        emptyTitle = "No watch history",
-        emptySubtitle = "Items you watch will appear here",
+        emptyTitle = stringResource(CommonR.string.personal_history_empty),
+        emptySubtitle = stringResource(CommonR.string.personal_history_emptyBody),
         emptyIcon = Icons.Outlined.History,
         onRetry = viewModel::retry,
         onRefresh = viewModel::refresh,
         onLoadMore = viewModel::loadMore,
-        itemContent = { item ->
-            MediaGridItem(
-                item = item,
-                onClick = { onItemClick(item.contentId) },
-            )
-        },
+        onItemClick = onItemClick,
     )
 }
 
@@ -238,7 +208,7 @@ private fun PersonalMediaGridContent(
     onRetry: () -> Unit,
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
-    itemContent: @Composable (BrowseItem) -> Unit,
+    onItemClick: (String) -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     // Optional full-width row that scrolls with the grid (For You's saved-list
@@ -248,8 +218,6 @@ private fun PersonalMediaGridContent(
     header: (@Composable (PersonalListUiState) -> Unit)? = null,
     mediaType: PersonalMediaType? = null,
 ) {
-    val gridState = rememberLazyListState()
-    val heroHandoff = LocalHeroSourceHandoff.current
     val layoutDirection = LocalLayoutDirection.current
     val visibleItems = remember(state.items, mediaType) {
         when (mediaType) {
@@ -265,20 +233,6 @@ private fun PersonalMediaGridContent(
             onLoadMore()
         }
     }
-    val shouldLoadMore by remember {
-        derivedStateOf {
-            val layoutInfo = gridState.layoutInfo
-            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            lastVisible >= layoutInfo.totalItemsCount - PersonalMediaGridPrefetchRows
-        }
-    }
-
-    LaunchedEffect(shouldLoadMore, state.hasMore, state.isLoadingMore, state.isLoading) {
-        if (shouldLoadMore && state.hasMore && !state.isLoadingMore && !state.isLoading) {
-            onLoadMore()
-        }
-    }
-
     when {
         state.isLoading -> {
             // Poster-grid skeleton (not a spinner) so the list keeps its shape
@@ -295,7 +249,7 @@ private fun PersonalMediaGridContent(
             Column(modifier = modifier.padding(contentPadding)) {
                 header?.let { Box(modifier = Modifier.padding(16.dp)) { it(state) } }
                 ErrorView(
-                    message = state.error ?: "Unknown error",
+                    message = state.error?.text() ?: stringResource(CommonR.string.catalog_error_unknown),
                     onRetry = onRetry,
                     modifier = Modifier.weight(1f),
                 )
@@ -310,13 +264,13 @@ private fun PersonalMediaGridContent(
                 val selectedTypeEmpty = mediaType != null && state.items.isNotEmpty()
                 EmptyStateView(
                     title = when {
-                        filtered -> "No matches"
-                        selectedTypeEmpty -> mediaType?.emptyTitle ?: emptyTitle
+                        filtered -> stringResource(CommonR.string.personal_noMatches)
+                        selectedTypeEmpty -> mediaType?.let { stringResource(it.emptyTitle) } ?: emptyTitle
                         else -> emptyTitle
                     },
                     subtitle = when {
-                        filtered -> "No titles match the current filters."
-                        selectedTypeEmpty -> mediaType?.emptySubtitle ?: emptySubtitle
+                        filtered -> stringResource(CommonR.string.personal_noMatchesBody)
+                        selectedTypeEmpty -> mediaType?.let { stringResource(it.emptySubtitle) } ?: emptySubtitle
                         else -> emptySubtitle
                     },
                     icon = emptyIcon,
@@ -330,55 +284,26 @@ private fun PersonalMediaGridContent(
                 onRefresh = onRefresh,
                 modifier = modifier.fillMaxSize(),
             ) {
-                // contentPadding goes inside the grid so items scroll edge to
-                // edge under any chrome the caller reserved space for.
-                DeferImagePresentationWhileScrolling(gridState) {
-                LazyColumn(
-                    state = gridState,
-                    contentPadding = PaddingValues(
-                        start = 16.dp + contentPadding.calculateStartPadding(layoutDirection),
-                        top = 16.dp + contentPadding.calculateTopPadding(),
-                        end = 16.dp + contentPadding.calculateEndPadding(layoutDirection),
-                        bottom = 16.dp + contentPadding.calculateBottomPadding(),
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),
-                ) {
-                    if (header != null) {
-                        item(key = "header") {
-                            header(state)
-                        }
-                    }
-                    visibleItems.chunked(PersonalMediaGridRowSize).forEachIndexed { rowIndex, rowItems ->
-                        item(key = "media-row-$rowIndex") {
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),
-                            ) {
-                                lazyItems(rowItems, key = { it.contentId }) { item ->
-                                    Box(modifier = Modifier.width(MediaGridDefaults.scaledPosterGridMinWidth)) {
-                                        itemContent(item)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (state.isLoadingMore) {
-                        item {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(24.dp),
-                                    strokeWidth = 2.dp,
-                                )
-                            }
-                        }
-                    }
-                }
-                }
+                // The library's own grid: adaptive columns, MediaCard, and
+                // load-more. contentPadding becomes insets inside the grid so
+                // items scroll edge to edge under any chrome the caller
+                // reserved space for.
+                CatalogGrid(
+                    items = visibleItems,
+                    isLoadingMore = state.isLoadingMore,
+                    hasMore = state.hasMore && !state.isLoading,
+                    onItemClick = onItemClick,
+                    onLoadMore = onLoadMore,
+                    topContentInset = contentPadding.calculateTopPadding(),
+                    bottomContentInset = contentPadding.calculateBottomPadding(),
+                    header = header?.let { content -> { content(state) } },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(
+                            start = contentPadding.calculateStartPadding(layoutDirection),
+                            end = contentPadding.calculateEndPadding(layoutDirection),
+                        ),
+                )
             }
         }
     }
@@ -437,27 +362,22 @@ fun MediaGridItem(
                 )
             }
 
-            if (userState.played) {
-                WatchedBadge(modifier = Modifier.align(Alignment.TopEnd))
-            }
+            CardWatchStatusBadge(CardWatchStatus.of(userState), Modifier.fillMaxSize())
         }
 
-        val cardCaption = LocalCardPresentation.current.caption
-        if (cardCaption.showsTitle) {
-            androidx.compose.material3.Text(
-                text = item.title,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                minLines = 2,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        androidx.compose.material3.Text(
+            text = item.title,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            minLines = 2,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
 
-        if (cardCaption.showsMetadata && item.year > 0) {
+        if (item.year > 0) {
             androidx.compose.material3.Text(
-                text = item.year.toString(),
+                text = LocaleFormat.integer(item.year, currentNumberLocale()),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Normal,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

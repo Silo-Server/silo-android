@@ -14,6 +14,12 @@ data class FinalPlaybackPosition(
     val fileId: Int,
     val positionSeconds: Double,
     val durationSeconds: Double?,
+    /**
+     * Set when the playback was a sequenced session, which the server tracks:
+     * when it exited. Local samples saved for the title before then are stale
+     * and are cleared instead of recording this one.
+     */
+    val serverTrackedAtMs: Long? = null,
 )
 
 /**

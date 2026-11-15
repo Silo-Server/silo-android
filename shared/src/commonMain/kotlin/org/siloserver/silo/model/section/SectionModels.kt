@@ -41,6 +41,13 @@ data class SectionItem(
     @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
     @SerialName("backdrop_url") val backdropUrl: String? = null,
     @SerialName("backdrop_thumbhash") val backdropThumbhash: String? = null,
+    /** Episode cards: the parent series' and season's artwork, never an episode still. Absent on older servers. */
+    @SerialName("series_poster_url") val seriesPosterUrl: String? = null,
+    @SerialName("series_poster_thumbhash") val seriesPosterThumbhash: String? = null,
+    @SerialName("series_backdrop_url") val seriesBackdropUrl: String? = null,
+    @SerialName("series_backdrop_thumbhash") val seriesBackdropThumbhash: String? = null,
+    @SerialName("season_poster_url") val seasonPosterUrl: String? = null,
+    @SerialName("season_poster_thumbhash") val seasonPosterThumbhash: String? = null,
     @SerialName("logo_url") val logoUrl: String? = null,
     @SerialName("user_state") val userState: MediaItemUserState? = null,
     /** This profile's metadata language while the card's description is not available in it yet. */
@@ -54,6 +61,14 @@ data class ResolvedSection(
     val id: String,
     @SerialName("section_type") val sectionType: String,
     val title: String,
+    /**
+     * The shared catalog key whose English is [title] (`home.section.*`),
+     * present only while the title is the server's own text, with its named
+     * arguments. A client that has the key shows its translation; otherwise
+     * [title]. Absent on servers that predate it and for titles someone typed.
+     */
+    @SerialName("title_key") val titleKey: String? = null,
+    @SerialName("title_args") val titleArgs: Map<String, String>? = null,
     val featured: Boolean = false,
     @SerialName("item_limit") val itemLimit: Int = 0,
     @SerialName("total_count") val totalCount: Int = 0,
@@ -68,6 +83,12 @@ data class ResolvedSection(
 @Serializable
 data class SectionsResponse(
     val sections: List<ResolvedSection> = emptyList()
+)
+
+/** One Home row from `GET /api/v2/home/layout`: which row it is, without its cards. */
+data class HomeLayoutRow(
+    val id: String,
+    val sectionType: String,
 )
 
 @Serializable

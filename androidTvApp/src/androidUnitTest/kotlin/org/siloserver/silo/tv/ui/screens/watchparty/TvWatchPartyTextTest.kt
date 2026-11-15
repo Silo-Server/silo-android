@@ -1,15 +1,26 @@
 package org.siloserver.silo.tv.ui.screens.watchparty
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import org.siloserver.silo.model.watchtogether.RoomMember
 import org.siloserver.silo.model.watchtogether.RoomPhase
 import org.siloserver.silo.model.watchtogether.RoomPlaybackState
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 class TvWatchPartyTextTest {
+    private val resources = ApplicationProvider.getApplicationContext<Application>().resources
+
+    private fun endedMessage(reason: String): String = resources.getString(tvWatchPartyEndedMessage(reason))
+
     private val self = RoomMember(userId = "1", profileId = "a", displayName = "Me", isSelf = true, connected = true)
     private val ana = RoomMember(userId = "2", profileId = "b", displayName = "Ana", connected = true)
     private val ben = RoomMember(userId = "3", profileId = "c", displayName = "Ben", connected = true)
@@ -77,13 +88,13 @@ class TvWatchPartyTextTest {
 
     @Test
     fun `an ended party explains itself`() {
-        assertEquals("The Watch Party has ended.", tvWatchPartyEndedMessage("host_left"))
-        assertEquals("The Watch Party has ended.", tvWatchPartyEndedMessage("not_found"))
-        assertEquals("The Watch Party has ended.", tvWatchPartyEndedMessage("ended"))
+        assertEquals("The Watch Party has ended.", endedMessage("host_left"))
+        assertEquals("The Watch Party has ended.", endedMessage("not_found"))
+        assertEquals("The Watch Party has ended.", endedMessage("ended"))
         assertEquals(
             "This profile joined the Watch Party on another device.",
-            tvWatchPartyEndedMessage("connection_replaced"),
+            endedMessage("connection_replaced"),
         )
-        assertEquals("Lost connection to the party.", tvWatchPartyEndedMessage("connection_lost"))
+        assertEquals("Lost connection to the party.", endedMessage("connection_lost"))
     }
 }

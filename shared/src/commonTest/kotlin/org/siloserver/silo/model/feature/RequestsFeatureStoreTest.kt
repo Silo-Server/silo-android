@@ -14,6 +14,7 @@ import org.siloserver.silo.model.request.RequestMediaType
 import org.siloserver.silo.model.request.RequestsDiscoverResponse
 import org.siloserver.silo.model.request.RequestsFeatureStatus
 import org.siloserver.silo.model.request.RequestsListResponse
+import org.siloserver.silo.model.request.RequestDiscoverySection
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.RequestsApi
 import org.siloserver.silo.repository.RequestDetailCache
@@ -45,6 +46,33 @@ class RequestsFeatureStoreTest {
         store.refresh()
 
         assertTrue(store.isEnabled.value)
+    }
+
+    @Test
+    fun removeFailedFollowsTheProbeAndStaysOffWhenRequestsAre() = runTest {
+        val store = RequestsFeatureStore(
+            RequestsRepository(
+                FakeRequestsApi(
+                    ApiResult.Success(available().copy(removeFailedSupported = true)),
+                    ApiResult.NetworkError(IllegalStateException("offline")),
+                    ApiResult.Success(available(allowed = false).copy(removeFailedSupported = true)),
+                ),
+            ),
+        )
+        assertFalse(store.removeFailedSupported.value)
+
+        store.refresh()
+        assertTrue(store.removeFailedSupported.value)
+
+        // A failed probe keeps the previous answer.
+        store.refresh()
+        assertTrue(store.removeFailedSupported.value)
+
+        store.refresh()
+        assertFalse(store.removeFailedSupported.value)
+
+        store.reset()
+        assertFalse(store.removeFailedSupported.value)
     }
 
     @Test
@@ -100,7 +128,7 @@ private class FakeRequestsApi(
     override suspend fun discover(): ApiResult<RequestsDiscoverResponse> =
         ApiResult.NetworkError(IllegalStateException("not used"))
 
-    override suspend fun discoverSection(section: String, page: Int): ApiResult<RequestMediaPage> =
+    override suspend fun discoverRow(rowKey: String, page: Int): ApiResult<RequestDiscoverySection> =
         ApiResult.NetworkError(IllegalStateException("not used"))
 
     override suspend fun search(

@@ -12,12 +12,13 @@ import org.siloserver.silo.network.ServerRegistry
 data class PushIssuer(val serverId: String, val profileId: String)
 
 /**
- * Where a push's content lives: the saved server entry ([serverEntryId]) and
- * profile it was sent for, and the saved login that reads it, whichever server
- * and profile are active.
+ * Where a push's content lives: the saved server entry ([serverEntryId]),
+ * account ([accountId]) and profile it was sent for, and that account's saved
+ * login that reads it, whichever server, account and profile are active.
  */
 internal data class PushTarget(
     val serverEntryId: String,
+    val accountId: String,
     val profileId: String,
     val owner: DurableLoginAuthority,
 )
@@ -34,7 +35,9 @@ internal data class PushTarget(
  *
  * Null for a server or profile this device holds no live registration and
  * login for, which includes one signed out of, removed, or unregistered, and
- * for one that more than one saved server claims.
+ * for one that more than one saved server claims. A server's installation
+ * belongs to its current account, so a push for another account there (one
+ * switched away from before the handover reached the server) is null too.
  */
 internal class PushTargetResolver(
     private val installations: suspend () -> List<PushInstallation>,
@@ -71,6 +74,11 @@ internal class PushTargetResolver(
             installation.intent.profileId,
             installation.intent.profileToken,
         )?.takeIf { it.loginId == installation.intent.loginId && it.scope.serverUrl == installation.serverUrl } ?: return null
-        return PushTarget(installation.intent.serverId, installation.intent.profileId, owner)
+        // The saved login answers as that server's current account; read and
+        // show it as that account only while the installation is still its own.
+        val accountId = owner.scope.accountId ?: return null
+        if (installation.intent.accountId != null && installation.intent.accountId != accountId) return null
+        if (registry.accounts.value.none { it.localAccountId == accountId && it.serverId == installation.intent.serverId }) return null
+        return PushTarget(installation.intent.serverId, accountId, installation.intent.profileId, owner)
     }
 }

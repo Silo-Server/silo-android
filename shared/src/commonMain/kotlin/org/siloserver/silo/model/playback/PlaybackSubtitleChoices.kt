@@ -37,6 +37,14 @@ fun combinedSubtitleSelectionIndexes(catalogTracks: List<SubtitleTrack>): List<I
     }
 }
 
+/**
+ * Whether no route can show this catalog track: an embedded track the server
+ * stored without a codec ([isUnrecognizedEmbeddedSubtitle]). The catalog
+ * carries no `unplayable` flag of its own.
+ */
+fun SubtitleTrack.isUnplayableSubtitle(): Boolean =
+    isUnrecognizedEmbeddedSubtitle(if (external) "external" else "embedded", codec)
+
 fun buildPlaybackSubtitleChoices(
     catalogTracks: List<SubtitleTrack>,
     plannedTracks: List<PlayerSubtitleInfo>,
@@ -58,9 +66,11 @@ fun buildPlaybackSubtitleChoices(
             source = if (track.external) "external" else "embedded",
             forced = track.forced,
             url = "",
+            hearingImpaired = track.hearingImpaired,
             catalogLabel = track.title,
             catalogSource = if (track.external) "external" else "embedded",
             isDefault = track.isDefault,
+            unplayable = track.isUnplayableSubtitle(),
         )
         return planned.copy(
             language = planned.language ?: track.language,
@@ -72,6 +82,7 @@ fun buildPlaybackSubtitleChoices(
             label = planned.label ?: track.title,
             source = planned.source ?: if (track.external) "external" else "embedded",
             forced = planned.forced ?: track.forced,
+            hearingImpaired = planned.hearingImpaired ?: track.hearingImpaired,
             catalogLabel = track.title,
             catalogSource = if (track.external) "external" else "embedded",
             isDefault = track.isDefault,

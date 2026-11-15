@@ -46,6 +46,8 @@ class DownloadsRepository(
     private val authorities: org.siloserver.silo.network.DurableLoginAuthorityProvider? = null,
     private val devices: org.siloserver.silo.network.DeviceMetadataProvider? = null,
     private val identityTransitions: org.siloserver.silo.network.IdentityTransitionBarrier? = null,
+    private val revokedCleanup: org.siloserver.silo.repository.port.RevokedDownloadCleanupPort =
+        org.siloserver.silo.repository.port.NoLocalDownloadCopies,
 ) {
 
     private val _records = MutableStateFlow<List<DownloadRecord>>(emptyList())
@@ -120,8 +122,8 @@ class DownloadsRepository(
      * deleted — both this session's [pendingDelete] and the durable
      * cross-restart tombstones in [deletions] — are filtered out of the merge.
      *
-     * When [serverId]/[profileId] are supplied (by the Downloads tab for the
-     * active scope), this also reconciles that scope's durable tombstones:
+     * When [serverId]/[accountId]/[profileId] are supplied (by the Downloads tab
+     * for the active scope), this also reconciles that scope's durable tombstones:
      * any still-present server record gets its `DELETE` replayed, and a
      * tombstone is dropped once the server's list confirms the record is gone
      * (never on a possibly-bouncing 2xx). recordIds are server-unique, so the
@@ -132,17 +134,26 @@ class DownloadsRepository(
         keepIdsAbsentFromServer: Set<String> = emptySet(),
         serverId: String? = null,
         profileId: String? = null,
+        accountId: String? = null,
     ): ApiResult<Unit> {
         val authority = authorities?.snapshotDurableLoginAuthority()
         if (!current(authority) || (authority != null &&
-            ((serverId != null && serverId != authority.scope.serverId) || (profileId != null && profileId != authority.scope.profileId)))) return changed()
+            ((serverId != null && serverId != authority.scope.serverId) || (profileId != null && profileId != authority.scope.profileId) ||
+                (accountId != null && authority.scope.accountId != null && accountId != authority.scope.accountId)))) return changed()
         return when (val result = api.list(authority?.scope)) {
             is ApiResult.Success -> {
                 if (!current(authority)) return changed()
                 val serverIds = result.data.downloads.map { it.id }.toSet()
+                // A caller that names the server and profile but not the
+                // account means the authority's account, never the empty
+                // pre-account scope.
+                val scopeAccountId = (accountId ?: authority?.scope?.accountId).orEmpty()
+                val revokedScope = if (serverId != null && profileId != null) Triple(serverId, scopeAccountId, profileId)
+                    else authority?.scope?.let { owner -> owner.profileId?.let { Triple(owner.serverId, owner.accountId.orEmpty(), it) } }
+                val revoked = removeRevokedEntries(result.data.downloads, revokedScope, authority) ?: return changed()
                 val durable = deletions.allPendingRecordIds()
                 if (!localWrite(authority) {
-                    val hidden = pendingDelete + durable
+                    val hidden = pendingDelete + durable + revoked
                     val serverList = result.data.downloads.filterNot { it.id in hidden }
                     _records.update { current ->
                         val local = current.associateBy { it.id }
@@ -152,12 +163,14 @@ class DownloadsRepository(
                 }) return changed()
                 if (serverId != null && profileId != null) {
                     val deviceId = devices?.current()?.id
-                    for (pending in deletions.pendingForScope(serverId, profileId)) {
+                    for (pending in deletions.pendingForScope(serverId, scopeAccountId, profileId)) {
                         if (!current(authority)) return changed()
+                        // Revoked entries were settled above, and only once their local copy is gone.
+                        if (pending.recordId in revoked) continue
                         // Old tombstones have no provable saved-login/device ownership. Keep them isolated.
                         if (authority != null && (pending.loginId != authority.loginId || pending.origin != authority.scope.serverUrl || pending.deviceId != deviceId)) continue
                         if (pending.recordId !in serverIds) {
-                            localWrite(authority) { deletions.remove(serverId, profileId, pending.recordId); pendingDelete.remove(pending.recordId) }
+                            localWrite(authority) { deletions.remove(serverId, pending.accountId, profileId, pending.recordId); pendingDelete.remove(pending.recordId) }
                         } else serverDeleteConfirmedGone(pending.recordId, authority?.scope)
                     }
                 }
@@ -167,6 +180,43 @@ class DownloadsRepository(
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
         }
+    }
+
+    /**
+     * Administrator-revoked entries (§9.3). When the server reports
+     * `revoked_removes_local`, each `revoked` row gets a durable tombstone first
+     * (so a crash cannot lose the intent), then its local copy is removed, and
+     * only then is the entry deleted on the server. A row whose local copy could
+     * not be removed keeps its server entry and is retried on the next read.
+     * Returns the revoked ids to hide from the cache (never shown as playable),
+     * empty without the capability flag, or null when the owner changed.
+     */
+    private suspend fun removeRevokedEntries(
+        rows: List<DownloadRecord>,
+        scope: Triple<String, String, String>?,
+        authority: org.siloserver.silo.network.DurableLoginAuthority?,
+    ): Set<String>? {
+        val revoked = rows.filter { it.status.equals(REVOKED_STATUS, ignoreCase = true) }
+        if (revoked.isEmpty() || scope == null) return emptySet()
+        val capability = _capability.value ?: (refreshCapability() as? ApiResult.Success)?.data
+        // Unknown capability: keep revoked rows hidden and their tombstones
+        // unreplayed, so a copy whose cleanup failed never loses its entry.
+        ?: return revoked.mapTo(mutableSetOf()) { it.id }
+        if (capability.revokedRemovesLocal != true) return emptySet()
+        val (serverId, accountId, profileId) = scope
+        for (row in revoked) {
+            if (!current(authority)) return null
+            val tombstoned = try {
+                deletions.enqueue(serverId, accountId, profileId, row.id, row.mediaFileId); true
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
+            if (!localWrite(authority) { markPendingDelete(row.id) }) return null
+            if (!tombstoned) continue
+            val removed = try {
+                revokedCleanup.removeLocalCopy(serverId, accountId, profileId, row.id, row.mediaFileId)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
+            if (removed && current(authority)) serverDeleteConfirmedGone(row.id, authority?.scope)
+        }
+        return revoked.mapTo(mutableSetOf()) { it.id }
     }
 
     /** Server creates a record; we upsert into the cache so the UI updates
@@ -179,8 +229,8 @@ class DownloadsRepository(
                 if (!localWrite(authority) { upsertLocal(r.data) }) return changed()
                 ApiResult.Success(r.data)
             }
-            is ApiResult.Error -> ApiResult.Error(r.code, r.error, r.message)
-            is ApiResult.NetworkError -> ApiResult.NetworkError(r.exception)
+            is ApiResult.Error -> r
+            is ApiResult.NetworkError -> r
         }
 
     }
@@ -200,6 +250,8 @@ class DownloadsRepository(
                 val row = result.data.downloads.singleOrNull { it.id == id }
                     ?: return ApiResult.Error(404, "download_not_found", "The queued download no longer exists.")
                 if (row.mediaFileId != fileId) return ApiResult.Error(409, "download_target_changed", "The queued download now targets another file.")
+                // The next refresh removes the local copy (§9.3); the transfer stops here.
+                if (row.status.equals(REVOKED_STATUS, ignoreCase = true)) return ApiResult.Error(409, "download_revoked", "An administrator revoked this download.")
                 if (row.revision == null || row.revision < 1) return ApiResult.Error(0, "invalid_download_registry", "The download revision is unavailable.")
                 ApiResult.Success(row)
             }
@@ -253,8 +305,8 @@ class DownloadsRepository(
                 if (!localWrite(authority) { r.data.downloads.forEach { upsertLocal(it) } }) return changed()
                 ApiResult.Success(r.data)
             }
-            is ApiResult.Error -> ApiResult.Error(r.code, r.error, r.message)
-            is ApiResult.NetworkError -> ApiResult.NetworkError(r.exception)
+            is ApiResult.Error -> r
+            is ApiResult.NetworkError -> r
         }
 
     }
@@ -302,10 +354,10 @@ class DownloadsRepository(
      * scope-local reconcile when back online. The tombstone is written BEFORE the
      * caller deletes bytes so a crash can't lose the server-delete intent.
      */
-    suspend fun enqueueDurableDelete(serverId: String, profileId: String, recordId: String, mediaFileId: Int?) {
+    suspend fun enqueueDurableDelete(serverId: String, accountId: String, profileId: String, recordId: String, mediaFileId: Int?) {
         val authority = authorities?.snapshotDurableLoginAuthority()
         check(current(authority)) { "The download owner changed" }
-        deletions.enqueue(serverId, profileId, recordId, mediaFileId)
+        deletions.enqueue(serverId, accountId, profileId, recordId, mediaFileId)
         check(localWrite(authority) {
             markPendingDelete(recordId)
             _records.update { list -> list.filterNot { it.id == recordId } }
@@ -314,13 +366,14 @@ class DownloadsRepository(
 
     /** Pending durable tombstones for a scope — lets the Android side finish an
      *  on-device cleanup interrupted by a crash (idempotent byte/metadata delete). */
-    suspend fun pendingDeletionsForScope(serverId: String, profileId: String): List<org.siloserver.silo.repository.port.PendingDownloadDeletion> {
+    suspend fun pendingDeletionsForScope(serverId: String, accountId: String, profileId: String): List<org.siloserver.silo.repository.port.PendingDownloadDeletion> {
         val authority = authorities?.snapshotDurableLoginAuthority()
         if (!current(authority)) return emptyList()
         val device = devices?.current()?.id
-        val pending = deletions.pendingForScope(serverId, profileId)
+        val pending = deletions.pendingForScope(serverId, accountId, profileId)
         if (!current(authority)) return emptyList()
         return pending.filter { authority == null || (authority.scope.serverId == serverId &&
+            authority.scope.accountId.orEmpty() == accountId &&
             authority.scope.profileId == profileId && it.loginId == authority.loginId &&
             it.origin == authority.scope.serverUrl && it.deviceId == device) }
     }
@@ -338,8 +391,8 @@ class DownloadsRepository(
 
     private fun ApiResult<*>.mapToUnit(): ApiResult<Unit> = when (this) {
         is ApiResult.Success -> ApiResult.Success(Unit)
-        is ApiResult.Error -> ApiResult.Error(code, error, message)
-        is ApiResult.NetworkError -> ApiResult.NetworkError(exception)
+        is ApiResult.Error -> this
+        is ApiResult.NetworkError -> this
     }
 
     /** Mark an id as user-deleted so future refreshes filter it out, even
@@ -386,6 +439,10 @@ class DownloadsRepository(
             aMillis == null || bMillis > aMillis -> b
             else -> a
         }
+    }
+
+    private companion object {
+        const val REVOKED_STATUS = "revoked"
     }
 
     /** Lookup helper for callers (item detail) that key off `FileVersion.fileId`. */

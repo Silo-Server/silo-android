@@ -7,6 +7,7 @@ import org.siloserver.silo.network.apiv2.CatalogSearchDiagnosticsV2
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 
 // --- Browse / Catalog ---
 
@@ -14,8 +15,20 @@ import kotlinx.serialization.json.JsonElement
 data class MediaItemUserState(
     val played: Boolean = false,
     @SerialName("is_favorite") val isFavorite: Boolean = false,
-    @SerialName("in_watchlist") val inWatchlist: Boolean = false
-)
+    @SerialName("in_watchlist") val inWatchlist: Boolean = false,
+    /** Episodes the profile has watched; the v2 catalog sends it only for a series or season the profile has not finished. */
+    @SerialName("watched_count") val watchedCount: Int? = null,
+    /** Available episodes the profile has not watched; sent only with [watchedCount]. */
+    @SerialName("unplayed_count") val unplayedCount: Int? = null,
+) {
+    /**
+     * This state optimistically marked watched or unwatched. Both episode
+     * counts go to zero, so a stale "N left" never shows beside the new state
+     * until the server's next answer brings real counts.
+     */
+    fun withPlayed(played: Boolean): MediaItemUserState =
+        copy(played = played, watchedCount = 0, unplayedCount = 0)
+}
 
 /**
  * Tech-level overlay summary derived server-side from the best-ranked file
@@ -48,7 +61,7 @@ data class CatalogAvailability(
 
 /** A watched mutation clears resume progress, including optimistic unwatched resets. */
 fun BrowseItem.withWatched(watched: Boolean): BrowseItem = copy(
-    userState = (userState ?: MediaItemUserState()).copy(played = watched),
+    userState = (userState ?: MediaItemUserState()).withPlayed(watched),
     positionSeconds = 0.0,
 )
 
@@ -77,6 +90,13 @@ data class BrowseItem(
     @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
     @SerialName("backdrop_url") val backdropUrl: String? = null,
     @SerialName("backdrop_thumbhash") val backdropThumbhash: String? = null,
+    /** Episode cards: the parent series' and season's artwork, never an episode still. Absent on older servers. */
+    @SerialName("series_poster_url") val seriesPosterUrl: String? = null,
+    @SerialName("series_poster_thumbhash") val seriesPosterThumbhash: String? = null,
+    @SerialName("series_backdrop_url") val seriesBackdropUrl: String? = null,
+    @SerialName("series_backdrop_thumbhash") val seriesBackdropThumbhash: String? = null,
+    @SerialName("season_poster_url") val seasonPosterUrl: String? = null,
+    @SerialName("season_poster_thumbhash") val seasonPosterThumbhash: String? = null,
     @SerialName("added_at") val addedAt: String? = null,
     @SerialName("release_date") val releaseDate: String? = null,
     @SerialName("last_air_date") val lastAirDate: String? = null,
@@ -95,6 +115,8 @@ data class BrowseItem(
     @SerialName("pending_translation_language") val pendingTranslationLanguage: String? = null,
     /** Localized fields ("overview", "tagline") whose text was machine-translated by AI. */
     @SerialName("machine_translated_fields") val machineTranslatedFields: List<String> = emptyList(),
+    /** The box set a [BOX_SET_TYPE] search card stands for. */
+    @SerialName("box_set") val boxSet: CatalogBoxSet? = null,
 )
 
 @Serializable
@@ -115,6 +137,8 @@ data class CatalogResponse(
     @SerialName("effective_sort") val effectiveSort: CatalogEffectiveSort? = null,
     @Transient val continuation: CatalogContinuationV2? = null,
     @Transient val searchDiagnostics: CatalogSearchDiagnosticsV2? = null,
+    /** Opaque seed for later `seek` reads of the same list; never persisted. */
+    @Transient val windowCursor: String? = null,
 )
 
 @Serializable
@@ -126,11 +150,19 @@ data class CatalogEffectiveSort(
 data class CatalogQueryRule(
     val field: String,
     val op: String,
-    val value: String,
+    /** Sent as-is, so its JSON type is the wire type: boolean fields (watched,
+     *  in_progress, favorited, in_watchlist, hdr, dolby_vision) need a JSON
+     *  boolean; the server rejects the string "true". */
+    val value: JsonPrimitive,
     /** Range ops ("between") carry indexed values instead of [value] —
      *  encoded as value[0], value[1] on the wire (iOS CatalogQueryBuilder). */
     val values: List<String> = emptyList(),
-)
+) {
+    constructor(field: String, op: String, value: String, values: List<String> = emptyList()) :
+        this(field, op, JsonPrimitive(value), values)
+
+    constructor(field: String, op: String, value: Boolean) : this(field, op, JsonPrimitive(value))
+}
 
 data class CatalogQueryGroup(
     val match: String = "all",
@@ -224,6 +256,13 @@ data class ItemDetail(
     @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
     @SerialName("backdrop_url") val backdropUrl: String? = null,
     @SerialName("backdrop_thumbhash") val backdropThumbhash: String? = null,
+    /** Episode cards: the parent series' and season's artwork, never an episode still. Absent on older servers. */
+    @SerialName("series_poster_url") val seriesPosterUrl: String? = null,
+    @SerialName("series_poster_thumbhash") val seriesPosterThumbhash: String? = null,
+    @SerialName("series_backdrop_url") val seriesBackdropUrl: String? = null,
+    @SerialName("series_backdrop_thumbhash") val seriesBackdropThumbhash: String? = null,
+    @SerialName("season_poster_url") val seasonPosterUrl: String? = null,
+    @SerialName("season_poster_thumbhash") val seasonPosterThumbhash: String? = null,
     @SerialName("logo_url") val logoUrl: String? = null,
     @SerialName("season_count") val seasonCount: Int? = null,
     @SerialName("series_id") val seriesId: String? = null,
@@ -239,6 +278,16 @@ data class ItemDetail(
     val versions: List<FileVersion> = emptyList(),
     @SerialName("playback_variants") val playbackVariants: List<PlaybackVariant> = emptyList(),
     val subtitles: List<SubtitleInfo> = emptyList(),
+    /**
+     * The subtitle choice the viewer's preferences resolve to for this item,
+     * including a choice remembered for its series; absent when it is the
+     * contract default. Same fields as [WatchDetail]'s.
+     */
+    @SerialName("effective_subtitle_language") val effectiveSubtitleLanguage: String? = null,
+    @SerialName("effective_subtitle_mode") val effectiveSubtitleMode: String? = null,
+    @SerialName("effective_show_forced_subtitles") val effectiveShowForcedSubtitles: Boolean? = null,
+    @SerialName("effective_subtitle_track_signature")
+    val effectiveSubtitleTrackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
     @SerialName("overlay_summary") val overlaySummary: OverlaySummary? = null,
     val availability: CatalogAvailability? = null,
     val intro: TimeRange? = null,
@@ -257,6 +306,28 @@ data class ItemDetail(
     val videos: List<ItemVideo>? = null,
     /** Scanner-discovered local trailers and featurettes. */
     val extras: List<ItemExtra>? = null,
+    /**
+     * The local theme audio this page may play. A season without its own set
+     * carries its series' set, an episode its season's then its series', so
+     * [ThemeSelection.ownerId] can name a different item. Null when the server
+     * predates themes or its theme lookup failed.
+     */
+    val themes: ThemeSelection? = null,
+)
+
+/** One owner's ordered theme audio; [items] is empty when it has none. */
+@Serializable
+data class ThemeSelection(
+    @SerialName("owner_id") val ownerId: String,
+    val items: List<ThemeTrack> = emptyList(),
+)
+
+@Serializable
+data class ThemeTrack(
+    val id: String,
+    val title: String? = null,
+    @SerialName("duration_seconds") val durationSeconds: Int? = null,
+    val container: String? = null,
 )
 
 @Serializable
@@ -276,6 +347,9 @@ data class ItemExtra(
     val title: String? = null,
     @SerialName("duration_seconds") val durationSeconds: Int? = null,
     @SerialName("file_id") val fileId: Int? = null,
+    /** 16:9 image: a sidecar beside the file or a frame of the video. */
+    @SerialName("still_url") val stillUrl: String? = null,
+    @SerialName("still_thumbhash") val stillThumbhash: String? = null,
 )
 
 @Serializable
@@ -345,6 +419,10 @@ data class FileVersion(
     val credits: TimeRange? = null,
     val recap: TimeRange? = null,
     val preview: TimeRange? = null,
+    /** Every marker occurrence in source-time order (v2 watch detail); null from older servers. */
+    @SerialName("marker_segments") val markerSegments: List<MarkerSegment>? = null,
+    /** The server publishes seek-bar previews for this file (`TrickplayV2Api`). */
+    @SerialName("trickplay_available") val trickplayAvailable: Boolean = false,
 )
 
 @Serializable
@@ -426,6 +504,8 @@ data class AudioTrack(
     @SerialName("sample_rate") val sampleRate: Int? = null,
     val language: String? = null,
     val title: String? = null,
+    /** The title stored in the container; part of the server's audio track signature. */
+    @SerialName("embedded_title") val embeddedTitle: String? = null,
     @SerialName("default") val isDefault: Boolean = false
 )
 
@@ -438,7 +518,8 @@ data class SubtitleTrack(
     val forced: Boolean = false,
     @SerialName("default") val isDefault: Boolean = false,
     val external: Boolean = false,
-    @SerialName("external_path") val externalPath: String? = null
+    @SerialName("external_path") val externalPath: String? = null,
+    @SerialName("hearing_impaired") val hearingImpaired: Boolean = false,
 )
 
 @Serializable
@@ -454,6 +535,18 @@ data class SubtitleInfo(
 data class TimeRange(
     val start: Double,
     val end: Double
+)
+
+/**
+ * One marker occurrence from the server's `marker_segments`. A kind may occur
+ * more than once; the singular `intro`/`credits`/`recap`/`preview` fields
+ * project only the first occurrence. See [org.siloserver.silo.domain.player.MarkerTimeline].
+ */
+@Serializable
+data class MarkerSegment(
+    val kind: String,
+    @SerialName("start_seconds") val startSeconds: Double,
+    @SerialName("end_seconds") val endSeconds: Double,
 )
 
 // --- Seasons / Episodes ---
@@ -485,27 +578,34 @@ fun Season.isSpecialsForDisplay(): Boolean =
 
 fun List<Season>.sortedForDisplay(): List<Season> =
     sortedWith(
-        // Match tvOS: numbered seasons first, Specials last.
-        compareBy<Season> { it.isSpecialsForDisplay() }
+        // Specials are season zero: list them first, then numbered seasons
+        // ascending, matching the server, web and the other Silo clients.
+        compareByDescending<Season> { it.isSpecialsForDisplay() }
             .thenBy { it.seasonNumber }
             .thenBy { it.title.orEmpty() }
             .thenBy { it.contentId },
     )
 
 private fun List<Season>.selectedSeasonForDisplay(preferredSeasonNumber: Int?): Season? {
-    return preferredSeasonNumber
+    preferredSeasonNumber
         ?.let { preferred -> firstOrNull { it.seasonNumber == preferred } }
-        // Open the Show overview while preloading the viewer's actual browse
-        // target: Continue Watching first, then a partially watched season,
-        // then the first not-yet-complete season. This lets the first Down land
-        // on e.g. Season 3 Episode 1 exactly as tvOS does.
-        ?: firstOrNull { (it.userData?.inProgressCount ?: 0) > 0 }
-        ?: firstOrNull { season ->
+        ?.let { return it }
+    // Specials are listed first but don't open a series on their own: each
+    // tier below tries numbered seasons before Specials, so Specials are picked
+    // only when no numbered season matches that tier.
+    val (specials, numbered) = partition { it.isSpecialsForDisplay() }
+    val candidates = numbered + specials
+    // Open the series overview while preloading the viewer's actual browse
+    // target: Continue Watching first, then a partially watched season,
+    // then the first not-yet-complete season. This lets the first Down land
+    // on e.g. Season 3 Episode 1 exactly as tvOS does.
+    return candidates.firstOrNull { (it.userData?.inProgressCount ?: 0) > 0 }
+        ?: candidates.firstOrNull { season ->
             val watched = season.userData?.watchedCount ?: 0
             watched > 0 && watched < season.episodeCount
         }
-        ?: firstOrNull { it.userData?.played != true }
-        ?: firstOrNull()
+        ?: candidates.firstOrNull { it.userData?.played != true }
+        ?: candidates.firstOrNull()
 }
 
 fun List<Season>.initialSeasonForDisplay(preferredSeasonNumber: Int?): Season? =
@@ -584,8 +684,20 @@ data class LeafItemUserData(
     @SerialName("last_file_id") val lastFileId: Int? = null,
     @SerialName("last_resolution") val lastResolution: String? = null,
     @SerialName("last_hdr") val lastHdr: Boolean? = null,
-    @SerialName("last_codec_video") val lastCodecVideo: String? = null
+    @SerialName("last_codec_video") val lastCodecVideo: String? = null,
+    /** The edition the profile last played; the detail page opens on it. */
+    @SerialName("last_edition_key") val lastEditionKey: String? = null,
 )
+
+/**
+ * This history with [fileId] as the last-played file. A different file drops
+ * [LeafItemUserData.lastEditionKey], which named the old file's edition, so
+ * the new file's edition opens the detail page until the server catches up.
+ */
+fun LeafItemUserData.withLastPlayedFile(fileId: Int?): LeafItemUserData = when (fileId) {
+    null, lastFileId -> this
+    else -> copy(lastFileId = fileId, lastEditionKey = null)
+}
 
 @Serializable
 data class SeasonUserData(
@@ -618,6 +730,9 @@ data class WatchDetail(
     @SerialName("effective_subtitle_language") val effectiveSubtitleLanguage: String? = null,
     @SerialName("effective_subtitle_mode") val effectiveSubtitleMode: String? = null,
     @SerialName("effective_show_forced_subtitles") val effectiveShowForcedSubtitles: Boolean? = null,
+    /** The subtitle track this profile last chose for the series (or movie); absent when none. */
+    @SerialName("effective_subtitle_track_signature")
+    val effectiveSubtitleTrackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
     // Optional forward-compatible artwork. Current servers expose these on
     // ItemDetail rather than WatchDetail, so playback clients must fall back
     // to the full catalog detail when these fields are absent.

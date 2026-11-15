@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.common.i18n.uiText
+import org.siloserver.silo.common.i18n.text
 import android.app.Activity
 import android.content.ComponentName
 import android.content.pm.ActivityInfo
@@ -23,9 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -43,6 +43,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -57,8 +60,10 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.media3.common.C
 import androidx.media3.common.Player
 import org.siloserver.silo.common.player.PlayWhenReadyReconciliationGate
 import org.siloserver.silo.android.ui.components.rememberVideoSeekIntervals
@@ -81,11 +86,13 @@ import org.siloserver.silo.common.player.plannedVideoRouteFor
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackPreflightListener
 import org.siloserver.silo.common.player.RefreshRateMatcher
+import org.siloserver.silo.common.player.rememberPlayerSpinnerVisible
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SubtitleManager
 import org.siloserver.silo.common.player.videoPlayerViewport
 import org.siloserver.silo.common.player.VideoPlayerMediaSpec
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
+import org.siloserver.silo.common.player.mountedPlaybackKey
 import org.siloserver.silo.common.player.videoMountToken
 import org.siloserver.silo.common.player.validatedColorRangeFallback
 import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
@@ -100,6 +107,7 @@ import org.siloserver.silo.common.player.video.PlaybackRuntimeCorrectionMetrics
 import org.siloserver.silo.common.player.video.PostResumeVideoStallDetector
 import org.siloserver.silo.common.player.isSubtitleSelected
 import org.siloserver.silo.common.player.renderableMountedTextTracks
+import org.siloserver.silo.common.player.isSubtitleSelectionApplied
 import org.siloserver.silo.common.player.video.VideoPlayerTrackEntry
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
@@ -113,7 +121,7 @@ import org.siloserver.silo.android.cast.SiloCastState
 import org.siloserver.silo.android.ui.navigation.Route
 import org.siloserver.silo.common.player.watchparty.IssuedSeekTracker
 import org.siloserver.silo.common.player.watchparty.WatchPartyPlayback
-import org.siloserver.silo.common.player.watchparty.watchPartyNoticeText
+import org.siloserver.silo.common.player.watchparty.localizedWatchPartyNotice
 import org.siloserver.silo.android.ui.screens.watchparty.WatchPartyPanelSheet
 import org.siloserver.silo.android.ui.screens.watchparty.formatWatchPartyNames
 import org.siloserver.silo.android.ui.screens.watchparty.rememberWatchPartyReconnectNotice
@@ -126,7 +134,7 @@ import org.siloserver.silo.watchtogether.RoomSession
 import org.siloserver.silo.watchtogether.WatchPartyAvailability
 import org.siloserver.silo.watchtogether.WatchPartyAvailabilityRepository
 import org.siloserver.silo.watchtogether.watchPartyEligibility
-import org.siloserver.silo.watchtogether.watchPartyErrorMessage
+import org.siloserver.silo.watchtogether.watchPartyErrorText
 import org.siloserver.silo.watchtogether.watchPartyInviteUrl
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -228,7 +236,8 @@ private fun SubtitleIdentity.requiresMountedMobileSelection(): Boolean =
  * is [PlayerOverlay].
  *
  * @param contentId The content ID to play (passed via navigation argument)
- * @param initialFileId Optional explicit file selection from the detail screen
+ * @param initialFileId Optional file from the detail screen
+ * @param initialVersionChosen The viewer picked [initialFileId]'s version, so the start pins it
  * @param initialQuality Optional explicit playback-quality ceiling from a deep link
  * @param initialAudioTrackIndex Optional explicit audio selection from the detail screen
  * @param initialSubtitleTrackIndex Optional explicit subtitle selection from the detail screen
@@ -241,6 +250,7 @@ fun PlayerScreen(
     contentId: String,
     libraryId: Int? = null,
     initialFileId: Int? = null,
+    initialVersionChosen: Boolean = false,
     initialQuality: String? = null,
     initialAudioTrackIndex: Int? = null,
     initialSubtitleTrackIndex: Int? = null,
@@ -266,6 +276,29 @@ fun PlayerScreen(
     val sessionState by viewModel.sessionState.collectAsState()
     val pictureInPictureEnabled by playerSettingsStore.pictureInPictureEnabledFlow.collectAsState(initial = true)
     val isInPictureInPictureMode by pictureInPictureCoordinator.isInPictureInPictureMode.collectAsState()
+    // Picture in picture and the background show no pills, so a buffering
+    // pill waits there with its timer frozen, as behind a higher-priority pill.
+    DisposableEffect(lifecycleOwner, isInPictureInPictureMode) {
+        fun report() = viewModel.onPlayerViewHiddenChanged(
+            isInPictureInPictureMode ||
+                !lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED),
+        )
+        val observer = LifecycleEventObserver { _, _ -> report() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    // The activity's stop, not this destination's: closing the player stops
+    // the destination too, and that exit sends the real plan summary itself.
+    DisposableEffect(activity) {
+        val activityLifecycle = (activity as? LifecycleOwner)?.lifecycle
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP && activity?.isChangingConfigurations != true) {
+                viewModel.onAppLeftForeground()
+            }
+        }
+        activityLifecycle?.addObserver(observer)
+        onDispose { activityLifecycle?.removeObserver(observer) }
+    }
     val backendFactory: VideoPlaybackBackendFactory = koinInject()
     val audioCapabilityManager: AudioCapabilityManager = koinInject()
     val capabilityDetector: PlaybackCapabilityDetector = koinInject()
@@ -391,6 +424,10 @@ fun PlayerScreen(
             subtitle = subtitle,
         )
     }
+    // This member's unanswered room seek: skips build on it and the timeline holds on it.
+    val roomPendingSeekSeconds by remember(watchParty) {
+        watchParty?.pendingSeekSeconds ?: MutableStateFlow<Double?>(null)
+    }.collectAsState()
     DisposableEffect(watchParty) {
         watchParty?.start()
         onDispose {
@@ -469,7 +506,7 @@ fun PlayerScreen(
         }
         if (present == null) {
             if (!exitRequested && party.ended.value == null) {
-                Toast.makeText(context, "This Watch Party isn't available anymore.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(CommonR.string.player_watchParty_unavailable), Toast.LENGTH_SHORT).show()
                 exitPlayer()
             }
             return@LaunchedEffect
@@ -481,7 +518,7 @@ fun PlayerScreen(
                 snapshot == null || snapshot.roomId != id -> if (party.ended.value == null) exitPlayer()
                 snapshot.phase == RoomPhase.Lobby -> {
                     if (snapshot.selfRole != MemberRole.Host) {
-                        Toast.makeText(context, "The host stopped playback", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, context.getString(CommonR.string.player_watchParty_hostStoppedPlayback), Toast.LENGTH_SHORT).show()
                     }
                     exitRequested = true
                     viewModel.onExit()
@@ -515,17 +552,20 @@ fun PlayerScreen(
         val waitingFor = watchPartyWaitingNames(room)
         when {
             showRoomReconnect -> if (roomConnection.disconnectedAtMs == null) {
-                "Connecting to the party…"
+                stringResource(CommonR.string.player_watchParty_connecting)
             } else {
-                "Reconnecting to the party…"
+                stringResource(CommonR.string.watchParty_player_reconnecting)
             }
             !room.hostConnected && room.selfRole != MemberRole.Host ->
-                "The host lost connection. The party ends in two minutes unless the host returns."
-            roomCatchingUp -> "Catching up to the party"
+                stringResource(CommonR.string.player_watchParty_hostLostConnection)
+            roomCatchingUp -> stringResource(CommonR.string.player_watchParty_catchingUp)
             room.playbackState == RoomPlaybackState.Waiting -> if (waitingFor.isEmpty()) {
-                "Syncing playback"
+                stringResource(CommonR.string.player_watchParty_syncing)
             } else {
-                "Syncing playback · Waiting for ${formatWatchPartyNames(waitingFor)}"
+                stringResourceWithNames(
+                    CommonR.string.player_watchParty_syncingWaitingFor,
+                    formatWatchPartyNames(waitingFor),
+                )
             }
             else -> null
         }
@@ -538,7 +578,7 @@ fun PlayerScreen(
             val leftBehind = watchPartyLeftBehindNames(previous, next)
             if (leftBehind.isNotEmpty()) {
                 roomEventNotice = SystemClock.elapsedRealtime() to
-                    "Continuing without ${formatWatchPartyNames(leftBehind)}"
+                    context.getString(CommonR.string.player_watchParty_continuingWithout, formatWatchPartyNames(leftBehind))
             }
             previous = next
         }
@@ -548,7 +588,8 @@ fun PlayerScreen(
         var wasCatchingUp = party.catchingUp.value
         party.catchingUp.collect { catchingUp ->
             if (catchingUp && !wasCatchingUp) {
-                roomEventNotice = SystemClock.elapsedRealtime() to "The party kept playing"
+                roomEventNotice = SystemClock.elapsedRealtime() to
+                    context.getString(CommonR.string.player_watchParty_keptPlaying)
             }
             wasCatchingUp = catchingUp
         }
@@ -568,7 +609,7 @@ fun PlayerScreen(
     LaunchedEffect(watchParty) {
         val party = watchParty ?: return@LaunchedEffect
         party.notices.collect { notice ->
-            Toast.makeText(context, watchPartyNoticeText(notice), Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.localizedWatchPartyNotice(notice), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -587,6 +628,11 @@ fun PlayerScreen(
     LaunchedEffect(watchParty) {
         val party = watchParty ?: return@LaunchedEffect
         viewModel.roomQualityChanges.collect { party.binding.onQualityChanged() }
+    }
+    // An in-place audio track switch may change the output path: rate support is measured again.
+    LaunchedEffect(watchParty) {
+        val party = watchParty ?: return@LaunchedEffect
+        viewModel.roomAudioTrackChanges.collect { party.binding.onAudioTrackChanged() }
     }
 
     // Per-session playback control socket (admin remote control). Bound for the
@@ -613,9 +659,15 @@ fun PlayerScreen(
     }
     // A remote "stop"/"terminate" command tears the screen down like a back
     // press. In a party it ends only this device's engagement; the room goes
-    // on (a host's leave starts the two-minute grace).
+    // on (a host's leave starts the two-minute grace). An administrator's stop
+    // also says why, once: a 410 for the same stop arriving after the command
+    // finds the exit already under way. The screen's context keeps the toast
+    // on the display the player is on; text toasts outlive the activity.
     LaunchedEffect(Unit) {
-        viewModel.remoteStopRequests.collect {
+        viewModel.remoteStopRequests.collect { notice ->
+            if (notice != null && !exitRequested) {
+                Toast.makeText(context, notice, Toast.LENGTH_LONG).show()
+            }
             watchParty?.leave()
             exitPlayer()
         }
@@ -651,6 +703,8 @@ fun PlayerScreen(
             playWhenReady = player.playWhenReady,
             isPlaying = player.isPlaying,
             playbackState = player.playbackState,
+            currentItemSeekable = player.isCurrentMediaItemSeekable,
+            playbackSpeed = player.playbackParameters.speed.toDouble(),
         )
     }
     // service. The video PlayerView binds its SurfaceView directly to this (NOT the
@@ -838,7 +892,15 @@ fun PlayerScreen(
     }
 
     // Load content on first composition
-    LaunchedEffect(contentId, initialFileId, initialQuality, initialAudioTrackIndex, initialSubtitleTrackIndex, resumePositionOverride) {
+    LaunchedEffect(
+        contentId,
+        initialFileId,
+        initialVersionChosen,
+        initialQuality,
+        initialAudioTrackIndex,
+        initialSubtitleTrackIndex,
+        resumePositionOverride,
+    ) {
         // A party starts from the room's playback context (above), never from
         // the route, so nothing plays solo first.
         if (inRoom) return@LaunchedEffect
@@ -848,6 +910,7 @@ fun PlayerScreen(
             libraryId = libraryId,
             contentId = contentId,
             preferredFileId = initialFileId,
+            versionChosen = initialVersionChosen,
             preferredQuality = initialQuality,
             initialAudioTrackIndex = initialAudioTrackIndex,
             initialSubtitleTrackIndex = initialSubtitleTrackIndex,
@@ -939,6 +1002,9 @@ fun PlayerScreen(
         }
     }
 
+    // The notification's second line, in the app language when the mount reads it.
+    val mediaSubtitle = uiState.displaySubtitle()
+
     // Set up the media item when stream URL becomes available
     LaunchedEffect(
         videoBackend,
@@ -988,7 +1054,7 @@ fun PlayerScreen(
                     ?: uiState.committedSubtitleIdentity,
             ),
             title = uiState.title.ifBlank { null },
-            subtitle = uiState.subtitle.ifBlank { null },
+            subtitle = mediaSubtitle.ifBlank { null },
             artworkUrl = uiState.artworkUrl,
             startPositionSeconds = uiState.startPosition,
             timelineOffsetSeconds = plan?.timeline?.timelineOffsetSeconds ?: 0.0,
@@ -1000,21 +1066,21 @@ fun PlayerScreen(
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
             runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
             activeClaims = plan?.activeOriginalHttpClaims().orEmpty(),
+            // Watch Party playback stays on the saved address.
+            allowsLocalRoute = !inRoom,
         )
         if (!isLocalMedia && uiState.sessionId != null) {
             PlaybackRuntimeCorrectionMetrics.reset()
             dvSanitizerReported = false
             startupStallDetector.onMounted(
-                sessionKey = "${uiState.sessionId}:$effectiveStreamUrl:${plan?.planId.orEmpty()}:" +
-                    "${plan?.decisionTrace?.size ?: 0}:${uiState.mediaMountGeneration}",
+                sessionKey = mountedPlaybackKey(uiState.sessionId, effectiveStreamUrl, plan, uiState.mediaMountGeneration),
                 playMethod = playMethod,
                 startPositionMs = mediaSpec.startPositionMs,
                 nowMs = SystemClock.elapsedRealtime(),
                 clientTransformations = mediaSpec.transformations,
             )
             postResumeStallDetector.onMounted(
-                "${uiState.sessionId}:$effectiveStreamUrl:${plan?.planId.orEmpty()}:" +
-                    "${plan?.decisionTrace?.size ?: 0}:${uiState.mediaMountGeneration}",
+                mountedPlaybackKey(uiState.sessionId, effectiveStreamUrl, plan, uiState.mediaMountGeneration),
             )
         }
         viewModel.onSubtitleMediaMountChanging()
@@ -1069,7 +1135,7 @@ fun PlayerScreen(
                     ?: uiState.committedSubtitleIdentity,
             ),
             title = uiState.title.ifBlank { null },
-            subtitle = uiState.subtitle.ifBlank { null },
+            subtitle = mediaSubtitle.ifBlank { null },
             artworkUrl = uiState.artworkUrl,
             startPositionSeconds = uiState.startPosition,
             timelineOffsetSeconds = plan?.timeline?.timelineOffsetSeconds ?: 0.0,
@@ -1085,8 +1151,12 @@ fun PlayerScreen(
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
             runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
             activeClaims = plan?.activeOriginalHttpClaims().orEmpty(),
+            // Watch Party playback stays on the saved address.
+            allowsLocalRoute = !inRoom,
         )
         viewModel.onSubtitleMediaMountChanging()
+        // The same plan, remounted: its coming wait is a reload, not a stall.
+        viewModel.bufferingQualityAdapter.markReload()
         backend.refresh(mediaSpec)
         viewModel.onSubtitleMediaMountApplied(MobileSubtitleMount(uiState.mediaMountGeneration, uiState.subtitleRefreshNonce))
         viewModel.onSubtitleCuesMounted(uiState.subtitleCueRevisions)
@@ -1167,10 +1237,28 @@ fun PlayerScreen(
                     postResumeStallDetector.onFirstFrameRendered()
                     viewModel.onFirstVideoFrameRendered(mountToken)
                 }
+
+                // Audio renders no frame, so a mount with audio and no video
+                // ends its first load when it plays. A video mount waits for
+                // its frame: audio can start ahead of a wedged video decoder.
+                override fun onIsPlayingChanged(eventTime: AnalyticsListener.EventTime, isPlaying: Boolean) {
+                    if (!isPlaying) return
+                    val mountToken = eventTime.videoMountToken() ?: return
+                    val tracks = player.currentTracks
+                    if (tracks.containsType(C.TRACK_TYPE_VIDEO) || !tracks.containsType(C.TRACK_TYPE_AUDIO)) return
+                    viewModel.onAudioOnlyPlaybackStarted(mountToken)
+                }
             }
             player.addAnalyticsListener(listener)
             onDispose { player.removeAnalyticsListener(listener) }
         }
+    }
+
+    // The buffering-quality controller reads the player that renders the plan:
+    // its states for stalls, and its loads for whether data is still arriving.
+    DisposableEffect(sessionPlayer) {
+        val detach = (sessionPlayer as? ExoPlayer)?.let(viewModel.bufferingQualityAdapter::attach)
+        onDispose { detach?.invoke() }
     }
 
     // Player event listener to feed state back to ViewModel + track video size for PiP
@@ -1231,8 +1319,7 @@ fun PlayerScreen(
                     if (watchParty != null) sampleRoomEngine(controller)
                     val live = viewModel.uiState.value
                     val key = live.sessionId?.let { sessionId ->
-                        "$sessionId:${live.streamUrl}:${live.playbackPlan?.planId.orEmpty()}:" +
-                            "${live.playbackPlan?.decisionTrace?.size ?: 0}:${live.mediaMountGeneration}"
+                        mountedPlaybackKey(sessionId, live.streamUrl, live.playbackPlan, live.mediaMountGeneration)
                     }
                     if (key != null) {
                         val rendered = (activePlayerHolder.player.value as? androidx.media3.exoplayer.ExoPlayer)
@@ -1332,6 +1419,11 @@ fun PlayerScreen(
                     val backend = videoBackend ?: return
                     if (!viewModel.isCurrentSubtitleMount(mount)) return
                     val currentTracks = backend.player.currentTracks
+                    viewModel.onMountedTextTracksChanged(
+                        mount = mount,
+                        present = currentTracks.containsType(androidx.media3.common.C.TRACK_TYPE_TEXT),
+                        renderable = renderableMountedTextTracks(currentTracks),
+                    )
                     // A downloaded file's own text tracks are only known now;
                     // this completes its subtitle menu and runs auto-selection
                     // before the selection below reads the live state.
@@ -1347,12 +1439,15 @@ fun PlayerScreen(
                     val selected = isSubtitleSelected(currentTracks, targetIdentity)
                     if (selected) viewModel.onMountedSubtitleSelected()
                     if (pendingIdentity != null) {
+                        // Off is applied with no text track selected, which
+                        // `selected` above never reports.
+                        val applied = isSubtitleSelectionApplied(currentTracks, pendingIdentity)
                         viewModel.onPendingSubtitleMountResult(
                             mount = mount,
                             identity = pendingIdentity,
-                            selected = selected,
+                            selected = applied,
                             snapshotKey = media3TextTrackSnapshotKey(currentTracks),
-                            settled = backend.player.playbackState == Player.STATE_READY && (selected || !accepted),
+                            settled = backend.player.playbackState == Player.STATE_READY && (applied || !accepted),
                         )
                     }
                 }
@@ -1387,18 +1482,20 @@ fun PlayerScreen(
         uiState.sessionId,
         uiState.streamUrl,
         uiState.playMethod,
-        uiState.playbackPlan?.planId,
         uiState.playbackPlan?.decisionTrace?.size,
         uiState.mediaMountGeneration,
     ) {
         val controller = mediaController ?: return@LaunchedEffect
         val sessionId = uiState.sessionId ?: return@LaunchedEffect
         val streamUrl = uiState.streamUrl ?: return@LaunchedEffect
-        val sessionKey = "$sessionId:$streamUrl:${uiState.playbackPlan?.planId.orEmpty()}:" +
-            "${uiState.playbackPlan?.decisionTrace?.size ?: 0}:${uiState.mediaMountGeneration}"
+        val sessionKey = mountedPlaybackKey(sessionId, streamUrl, uiState.playbackPlan, uiState.mediaMountGeneration)
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
                 val decoderCounters = (sessionPlayer as? androidx.media3.exoplayer.ExoPlayer)?.videoDecoderCounters
+                viewModel.bufferingQualityAdapter.sampleBuffer(
+                    nowMs = SystemClock.elapsedRealtime(),
+                    bufferedPositionMs = controller.bufferedPosition.coerceAtLeast(0L),
+                )
                 val reason = startupStallDetector.sample(
                     sessionKey = sessionKey,
                     nowMs = SystemClock.elapsedRealtime(),
@@ -1412,7 +1509,24 @@ fun PlayerScreen(
                     decoderSkippedOutputBufferCount = decoderCounters?.skippedOutputBufferCount ?: 0,
                     decoderDroppedBufferCount = decoderCounters?.droppedBufferCount ?: 0,
                 )
-                if (reason != null) {
+                // A slow plan that is still receiving data belongs to the
+                // buffering-quality controller: no same-plan reopen and no
+                // failure replan, and this loop keeps sampling.
+                if (reason != null &&
+                    viewModel.bufferingQualityAdapter.ownsStartupStall(
+                        reason = reason,
+                        nowMs = SystemClock.elapsedRealtime(),
+                        controllerEnabled = viewModel.bufferingQualityEnabled,
+                    )
+                ) {
+                    Log.i(
+                        TAG,
+                        "startup_stall owned_by=${if (viewModel.bufferingQualityAdapter.transportTroubleActive) "outage" else "buffering_quality"} " +
+                            "classification=${reason.classification} " +
+                            "stalled_for_ms=${reason.stalledForMs}",
+                    )
+                    startupStallDetector.onStallHandedOff(SystemClock.elapsedRealtime())
+                } else if (reason != null) {
                     Log.i(TAG, "Startup stall fallback: $reason")
                     viewModel.onUnsupportedPlayback(reason, uiState.mediaMountGeneration)
                     return@repeatOnLifecycle
@@ -1524,7 +1638,7 @@ fun PlayerScreen(
 
     // Party only: sample the engine often enough that the room sees where
     // the player really is. The display ticker above is too coarse for the
-    // binding's 0.35 s drift decisions and stays as it is.
+    // binding's 0.1-0.4 s drift decisions and stays as it is.
     LaunchedEffect(mediaController, lifecycleOwner, watchParty) {
         val controller = mediaController ?: return@LaunchedEffect
         if (watchParty == null) return@LaunchedEffect
@@ -1577,6 +1691,12 @@ fun PlayerScreen(
         val backend = videoBackend ?: return@LaunchedEffect
         val mount = mountedSubtitleMount
         if (!viewModel.isCurrentSubtitleMount(mount)) return@LaunchedEffect
+        // Tracks published before this mount was applied reached no callback for it.
+        viewModel.onMountedTextTracksChanged(
+            mount = mount,
+            present = backend.player.currentTracks.containsType(androidx.media3.common.C.TRACK_TYPE_TEXT),
+            renderable = renderableMountedTextTracks(backend.player.currentTracks),
+        )
         val pendingIdentity = uiState.localSubtitleMountIdentity
         val targetIdentity = pendingIdentity ?: uiState.committedSubtitleIdentity
         val selectedIndex = resolveMobileSubtitleOrdinal(targetIdentity, uiState.subtitleTracks)
@@ -1603,6 +1723,16 @@ fun PlayerScreen(
             }
         } else {
             backend.selectSubtitle(subtitleTrackEntry(uiState.subtitleTracks, selectedIndex))
+            if (pendingIdentity == SubtitleIdentity.Off) {
+                // Off ahead of its replan: a local switch on the playing stream.
+                viewModel.onPendingSubtitleMountResult(
+                    mount = mount,
+                    identity = pendingIdentity,
+                    selected = isSubtitleSelectionApplied(backend.player.currentTracks, pendingIdentity),
+                    snapshotKey = media3TextTrackSnapshotKey(backend.player.currentTracks),
+                    settled = false,
+                )
+            }
         }
     }
 
@@ -1640,6 +1770,17 @@ fun PlayerScreen(
         }
     }
 
+    // One spinner for the whole load: the session request (also one that keeps
+    // the old picture up, such as a version switch or Next Up), the player's
+    // first buffer, a rebuffer, and an outage the player itself can't see.
+    // Hoisted here so it carries across the loading branch giving way to the
+    // video.
+    val spinnerVisible = rememberPlayerSpinnerVisible(
+        uiState.isLoading ||
+            uiState.isBuffering ||
+            sessionState is SessionState.Reconnecting,
+    )
+
     // UI
     Box(
         modifier = Modifier
@@ -1657,13 +1798,8 @@ fun PlayerScreen(
             },
     ) {
         if (uiState.isLoading && uiState.streamUrl == null) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                androidx.compose.material3.CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.primary,
-                )
+            if (spinnerVisible) {
+                PlayerLoadingSpinner(modifier = Modifier.align(Alignment.Center))
             }
         } else if (uiState.error != null) {
             Box(
@@ -1676,7 +1812,7 @@ fun PlayerScreen(
                     modifier = Modifier.padding(32.dp),
                 ) {
                     Text(
-                        text = uiState.error ?: "Unknown error",
+                        text = uiState.error?.text() ?: stringResource(CommonR.string.player_error_unknown),
                         color = Color.White,
                         style = MaterialTheme.typography.bodyLarge,
                     )
@@ -1684,10 +1820,10 @@ fun PlayerScreen(
                     // Try Anyway escape hatch; generic errors keep the bare message.
                     if (uiState.serverUnreachable) {
                         Button(onClick = { viewModel.retryServerReachability() }) {
-                            Text("Retry")
+                            Text(stringResource(CommonR.string.common_retry))
                         }
                         OutlinedButton(onClick = { viewModel.playIgnoringServerReachability() }) {
-                            Text("Try Anyway")
+                            Text(stringResource(CommonR.string.player_tryAnyway))
                         }
                     }
                 }
@@ -1868,18 +2004,12 @@ fun PlayerScreen(
             // constrained to the controls pane. Keep playback/reconnection
             // feedback on the video itself instead of showing a spinner below
             // the hinge among the transport controls.
-            if (activeTabletopPaneLayout != null &&
-                (uiState.isBuffering || sessionState is SessionState.Reconnecting)
-            ) {
+            if (activeTabletopPaneLayout != null && spinnerVisible) {
                 Box(
                     modifier = videoSurfaceModifier,
                     contentAlignment = Alignment.Center,
                 ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(56.dp),
-                        color = Color.White,
-                        strokeWidth = 3.dp,
-                    )
+                    PlayerLoadingSpinner()
                 }
             }
 
@@ -1925,6 +2055,8 @@ fun PlayerScreen(
                         inRoom = inRoom,
                         roomSuspended = roomSuspended,
                         roomStatus = roomStatus,
+                        roomPendingSeekSeconds = roomPendingSeekSeconds,
+                        roomSeekOrigin = { live -> watchParty?.relativeSeekOrigin(live) ?: live },
                         orientationLockSupported =
                             orientationLockSupported && activeTabletopPaneLayout == null,
                         alwaysShowControls = activeTabletopPaneLayout != null,
@@ -1943,7 +2075,7 @@ fun PlayerScreen(
                                 window.attributes = attributes
                             }
                         },
-                        showBufferingIndicator = activeTabletopPaneLayout == null,
+                        spinnerVisible = spinnerVisible && activeTabletopPaneLayout == null,
                         castSlot = { discModifier ->
                             // No Cast in a party (D7).
                             if (!inRoom) {
@@ -2029,7 +2161,7 @@ fun PlayerScreen(
                     modifier = Modifier.padding(start = 14.dp, end = 4.dp),
                 ) {
                     Text(
-                        text = "Playback keeps stopping. Lower the quality?",
+                        text = stringResource(CommonR.string.player_watchParty_lowerQualityPrompt),
                         color = Color.White,
                         fontSize = 13.sp,
                         modifier = Modifier.weight(1f, fill = false),
@@ -2037,8 +2169,8 @@ fun PlayerScreen(
                     TextButton(onClick = {
                         lowerQualityDeclined = true
                         viewModel.lowerRoomQuality()
-                    }) { Text("Lower") }
-                    TextButton(onClick = { lowerQualityDeclined = true }) { Text("Not now") }
+                    }) { Text(stringResource(CommonR.string.player_watchParty_lowerQuality)) }
+                    TextButton(onClick = { lowerQualityDeclined = true }) { Text(stringResource(CommonR.string.player_watchParty_lowerQualityDecline)) }
                 }
             }
         }
@@ -2080,7 +2212,7 @@ fun PlayerScreen(
                     .clickable { viewModel.dismissVersionSwitchMessage() },
             ) {
                 Text(
-                    text = message,
+                    text = message.text(),
                     color = Color.White,
                     fontSize = 13.sp,
                     lineHeight = 17.sp,
@@ -2118,7 +2250,7 @@ fun PlayerScreen(
                     if (result !is ApiResult.Success) {
                         Toast.makeText(
                             context,
-                            watchPartyErrorMessage(result, "Couldn't return everyone to the lobby."),
+                            watchPartyErrorText(result, uiText(CommonR.string.player_watchParty_returnToLobbyFailed)).text(context),
                             Toast.LENGTH_SHORT,
                         ).show()
                     }

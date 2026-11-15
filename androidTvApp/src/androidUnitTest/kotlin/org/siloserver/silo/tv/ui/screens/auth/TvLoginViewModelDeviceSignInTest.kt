@@ -70,6 +70,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.siloserver.silo.common.i18n.UiText
 
 /**
  * The TV sign-in panel's device-code behavior: #421 (no silent "Loading"
@@ -361,6 +362,40 @@ class TvLoginViewModelDeviceSignInTest {
         advanceUntilIdle()
         assertTrue(vm.deviceSignIn.value.passwordOnly)
         assertEquals(0, api.starts)
+    }
+
+    // --- Change server (#741) ---
+
+    @Test
+    fun changeServerForgetsAServerThisTvHoldsNoSessionFor() = runTest(dispatcher) {
+        val registry = FakeRegistry()
+        val vm = viewModel(FakeTokens(), FakeDeviceApi(), registry = registry)
+        runCurrent()
+        vm.onChangeServer()
+        runCurrent()
+        assertEquals(listOf("entry-1"), registry.removed, "the next launch must open setup, not this server's sign-in")
+    }
+
+    @Test
+    fun changeServerKeepsAServerThisTvIsSignedInTo() = runTest(dispatcher) {
+        val registry = FakeRegistry()
+        val tokens = FakeTokens().apply { accessToken = "live-session" }
+        val vm = viewModel(tokens, FakeDeviceApi(), registry = registry)
+        runCurrent()
+        vm.onChangeServer()
+        runCurrent()
+        assertEquals(emptyList(), registry.removed)
+    }
+
+    @Test
+    fun changeServerStillLeavesWhenForgettingTheServerFails() = runTest(dispatcher) {
+        val registry = FakeRegistry().apply { removeFailure = IllegalStateException("unable to durably remove server") }
+        val vm = viewModel(FakeTokens(), FakeDeviceApi(), registry = registry)
+        runCurrent()
+        var left = false
+        vm.onChangeServer { left = true }
+        runCurrent()
+        assertTrue(left, "a failed write must not strand the person on a withdrawn code")
     }
 
     // --- Password gating (external sign-in) ---
@@ -686,7 +721,7 @@ class TvLoginViewModelDeviceSignInTest {
         assertEquals(TvLoginError.ProviderUnavailable, error(503, "provider_unavailable"))
         assertEquals(TvLoginError.RateLimited, error(429, ""))
         assertEquals(TvLoginError.IdentityChanged, error(0, "identity_changed"))
-        assertEquals(TvLoginError.Server("raw"), error(500, "internal"))
+        assertEquals(TvLoginError.Server(UiText.Raw("raw")), error(500, "internal"))
     }
 
     private fun TestScope.viewModel(
@@ -814,7 +849,12 @@ class TvLoginViewModelDeviceSignInTest {
         override suspend fun rename(serverId: String, userOverrideName: String?) = Unit
         override suspend fun setFetchedName(serverId: String, fetchedName: String?) = Unit
         override suspend fun setProfileId(serverId: String, profileId: String?) = Unit
-        override suspend fun remove(serverId: String) = Unit
+        val removed = mutableListOf<String>()
+        var removeFailure: Throwable? = null
+        override suspend fun remove(serverId: String) {
+            removeFailure?.let { throw it }
+            removed += serverId
+        }
         override suspend fun signOut(serverId: String) = Unit
         override suspend fun switchTo(serverId: String) = Unit
         override suspend fun touchActive() = Unit

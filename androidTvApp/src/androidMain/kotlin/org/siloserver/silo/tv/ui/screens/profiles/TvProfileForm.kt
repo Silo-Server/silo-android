@@ -49,6 +49,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,6 +64,10 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.model.profile.AssignableLibraries
+import org.siloserver.silo.model.profile.ProfileAccessLimits
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 import org.siloserver.silo.common.ui.components.isEmojiAvatar
@@ -84,6 +89,7 @@ private val ProfileEditorGridHeight = 154.dp
 private val ProfileEditorGridGap = 6.dp
 private val ProfileStyleChipGap = 4.dp
 private val ProfileEditorSectionGap = 8.dp
+private val ProfileEditorBottomPadding = 48.dp
 private val ProfileAvatarCellHeight = 46.dp
 private val ProfileAvatarImageSize = 42.dp
 private val ProfileTextEntryHeight = 52.dp
@@ -101,7 +107,7 @@ private enum class ProfileTextField {
  */
 data class TvProfileFormState(
     val title: String,
-    val subtitle: String = "Pick a look and give it a name.",
+    val subtitle: String,
     val name: String,
     val selectedAvatar: String?,
     /**
@@ -113,8 +119,8 @@ data class TvProfileFormState(
     val avatarStyleId: String,
     val selectedAvatarSeed: String?,
     val avatarBatch: Int,
-    val isChild: Boolean,
-    val maxContentRating: String?,
+    val access: ProfileAccessLimits,
+    val libraries: AssignableLibraries,
     val pinEnabled: Boolean,
     val pin: String,
     val qualityPreference: String?,
@@ -132,7 +138,10 @@ data class TvProfileFormCallbacks(
     val onAvatarPresetSelected: (TvProfileAvatarPresets.Preset) -> Unit,
     val onAvatarShuffle: () -> Unit,
     val onChildToggled: (Boolean) -> Unit,
-    val onContentRatingSelected: (String) -> Unit,
+    val onContentRatingSelected: (String?) -> Unit,
+    val onLibraryRestrictionsToggled: (Boolean) -> Unit,
+    val onLibraryToggled: (Int, Boolean) -> Unit,
+    val onRetryLibraries: () -> Unit,
     val onPinToggled: (Boolean) -> Unit,
     val onPinChanged: (String) -> Unit,
     val onQualitySelected: (String) -> Unit,
@@ -159,11 +168,21 @@ fun TvProfileForm(
     val pinFocusRequester = remember { FocusRequester() }
     val childFocusRequester = remember { FocusRequester() }
     val submitFocusRequester = remember { FocusRequester() }
+    val access = state.access
+    val accessFocus = rememberTvProfileAccessFocus(
+        access = access,
+        libraries = state.libraries,
+        childFocusRequester = childFocusRequester,
+        submitFocusRequester = submitFocusRequester,
+    )
     val formScrollState = rememberScrollState()
     var editingTextField by remember { mutableStateOf<ProfileTextField?>(null) }
     // Local validation feedback: without it, Save on a blank name is a silent
     // no-op. Keyed on the name so editing it clears the message.
     var blankNameError by remember(state.name) { mutableStateOf(false) }
+    // The preview tile's stand-in name; the caption under it shows while it's drawn.
+    val placeholderName = stringResource(CommonR.string.newProfile_previewName)
+    val previewName = state.name.ifBlank { placeholderName }
 
     Box(
         modifier = Modifier
@@ -201,7 +220,7 @@ fun TvProfileForm(
                 Spacer(modifier = Modifier.weight(1f))
                 callbacks.onCancel?.let { onCancel ->
                     TvHeroActionPill(
-                        label = "Cancel",
+                        label = stringResource(CommonR.string.common_cancel),
                         icon = Icons.Filled.Close,
                         variant = TvPillVariant.Hollow,
                         heightOverride = 22.dp,
@@ -224,24 +243,30 @@ fun TvProfileForm(
             ) {
                 TvProfilePreviewColumn(
                     avatar = previewAvatar,
-                    name = state.name.ifBlank { "Your Name" },
+                    name = previewName,
+                    showsPlaceholderCaption = previewName == placeholderName,
                     hasPin = state.pinEnabled,
-                    isChild = state.isChild,
+                    isChild = access.isChild,
                 )
 
                 Spacer(modifier = Modifier.width(ProfileEditorColumnGap))
 
+                // One scroll for the whole column: moving down into the child
+                // limits scrolls the avatar grid away instead of squeezing the
+                // rest of the form into the space under it.
                 Column(
                     modifier = Modifier
                         .width(ProfileEditorColumnWidth)
-                        .fillMaxSize(),
+                        .fillMaxSize()
+                        .verticalScroll(formScrollState)
+                        .padding(bottom = ProfileEditorBottomPadding),
                     verticalArrangement = Arrangement.spacedBy(ProfileEditorSectionGap),
                 ) {
-                    TvProfileFormSection(title = "Style") {
+                    TvProfileFormSection(title = stringResource(CommonR.string.profiles_form_style)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(ProfileStyleChipGap)) {
                             TvProfileAvatarPresets.styles.forEach { style ->
-                                TvAvatarStyleChip(
-                                    style = style,
+                                TvChoiceChip(
+                                    label = stringResource(style.label),
                                     isSelected = style.id == state.avatarStyleId,
                                     onSelect = { callbacks.onAvatarStyleSelected(style.id) },
                                 )
@@ -250,15 +275,15 @@ fun TvProfileForm(
                     }
 
                     if (isInitialsStyle) {
-                        TvProfileFormSection(title = "Avatar") {
+                        TvProfileFormSection(title = stringResource(CommonR.string.profiles_form_avatar)) {
                             TvInitialsHint()
                         }
                     } else {
                         TvProfileFormSection(
-                            title = "Avatar",
+                            title = stringResource(CommonR.string.profiles_form_avatar),
                             trailing = {
                                 TvHeroActionPill(
-                                    label = "Shuffle",
+                                    label = stringResource(CommonR.string.profiles_form_shuffle),
                                     icon = Icons.Filled.Refresh,
                                     variant = TvPillVariant.Hollow,
                                     heightOverride = 24.dp,
@@ -307,15 +332,12 @@ fun TvProfileForm(
                     }
 
                     Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .verticalScroll(formScrollState),
                         verticalArrangement = Arrangement.spacedBy(ProfileEditorSectionGap),
                     ) {
-                        TvProfileFormSection(title = "Name") {
+                        TvProfileFormSection(title = stringResource(CommonR.string.newProfile_name)) {
                             TvProfileTextEntryField(
                                 value = state.name,
-                                placeholder = "Profile name",
+                                placeholder = stringResource(CommonR.string.newProfile_namePlaceholder),
                                 onClick = { editingTextField = ProfileTextField.Name },
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -336,11 +358,11 @@ fun TvProfileForm(
                         }
 
                         TvProfileFormSection(
-                            title = "PIN (optional)",
+                            title = stringResource(CommonR.string.newProfile_pin),
                             trailing = if (state.pinEnabled) {
                                 {
                                     TvHeroActionPill(
-                                        label = "Remove",
+                                        label = stringResource(CommonR.string.profiles_form_removePin),
                                         icon = Icons.Filled.Close,
                                         variant = TvPillVariant.Hollow,
                                         heightOverride = 24.dp,
@@ -378,19 +400,28 @@ fun TvProfileForm(
                             )
                         }
 
-                        TvChildProfileRow(
-                            isOn = state.isChild,
-                            onToggle = { callbacks.onChildToggled(!state.isChild) },
+                        TvSwitchRow(
+                            title = stringResource(CommonR.string.newProfile_child),
+                            subtitle = stringResource(CommonR.string.profiles_form_childDetail),
+                            isOn = access.isChild,
+                            onToggle = { callbacks.onChildToggled(!access.isChild) },
                             modifier = Modifier
                                 .focusRequester(childFocusRequester)
                                 .focusProperties {
                                     up = pinFocusRequester
-                                    down = submitFocusRequester
+                                    down = accessFocus.rating
                                 },
                         )
 
+                        TvProfileAccessControls(
+                            access = access,
+                            libraries = state.libraries,
+                            focus = accessFocus,
+                            callbacks = callbacks,
+                        )
+
                         val errorText = state.error
-                            ?: "Enter a profile name".takeIf { blankNameError }
+                            ?: stringResource(CommonR.string.profiles_error_enterName).takeIf { blankNameError }
                         if (errorText != null) {
                             Text(
                                 text = errorText,
@@ -400,11 +431,11 @@ fun TvProfileForm(
                         }
 
                         TvHeroActionPill(
-                            label = if (state.isSubmitting) "Saving..." else state.submitLabel,
+                            label = if (state.isSubmitting) stringResource(CommonR.string.profiles_form_saving) else state.submitLabel,
                             icon = Icons.Filled.Check,
                             variant = TvPillVariant.Filled,
                             focusRequester = submitFocusRequester,
-                            upFocusRequester = childFocusRequester,
+                            upFocusRequester = accessFocus.beforeSubmit,
                             onClick = {
                                 when {
                                     state.isSubmitting -> Unit
@@ -421,14 +452,14 @@ fun TvProfileForm(
         editingTextField?.let { field ->
             TvTextInputDialog(
                 title = when (field) {
-                    ProfileTextField.Name -> "Profile Name"
-                    ProfileTextField.Pin -> "Profile PIN"
+                    ProfileTextField.Name -> stringResource(CommonR.string.profiles_form_name)
+                    ProfileTextField.Pin -> stringResource(CommonR.string.profiles_form_pinTitle)
                 },
                 label = when (field) {
-                    ProfileTextField.Name -> "Profile name"
-                    ProfileTextField.Pin -> "4-digit PIN"
+                    ProfileTextField.Name -> stringResource(CommonR.string.newProfile_namePlaceholder)
+                    ProfileTextField.Pin -> stringResource(CommonR.string.newProfile_pinPlaceholder)
                 },
-                confirmLabel = "Done",
+                confirmLabel = stringResource(CommonR.string.common_done),
                 initialValue = when (field) {
                     ProfileTextField.Name -> state.name
                     ProfileTextField.Pin -> state.pin
@@ -463,7 +494,7 @@ fun TvProfileForm(
 }
 
 @Composable
-private fun TvProfileFormSection(
+internal fun TvProfileFormSection(
     title: String,
     trailing: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
@@ -495,6 +526,7 @@ private fun TvProfileFormSection(
 private fun TvProfilePreviewColumn(
     avatar: ProfileAvatarRef,
     name: String,
+    showsPlaceholderCaption: Boolean,
     hasPin: Boolean,
     isChild: Boolean,
 ) {
@@ -511,9 +543,9 @@ private fun TvProfilePreviewColumn(
             hasPin = hasPin,
             isChild = isChild,
         )
-        if (name == "Your Name") {
+        if (showsPlaceholderCaption) {
             Text(
-                text = "Your tile will look like this.",
+                text = stringResource(CommonR.string.newProfile_preview),
                 style = MaterialTheme.typography.bodySmall,
                 color = Color.White.copy(alpha = 0.45f),
             )
@@ -578,8 +610,8 @@ private fun TvProfileTilePreview(
                         .padding(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    if (isChild) TvProfileBadge(Icons.Filled.ChildCare, "Child profile")
-                    if (hasPin) TvProfileBadge(Icons.Filled.Lock, "PIN protected")
+                    if (isChild) TvProfileBadge(Icons.Filled.ChildCare, stringResource(CommonR.string.profiles_childProfile))
+                    if (hasPin) TvProfileBadge(Icons.Filled.Lock, stringResource(CommonR.string.profiles_pinProtected))
                 }
             }
         }
@@ -651,10 +683,11 @@ private fun TvProfileTextEntryField(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TvAvatarStyleChip(
-    style: TvProfileAvatarPresets.Style,
+internal fun TvChoiceChip(
+    label: String,
     isSelected: Boolean,
     onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(14.dp)
     val interactionSource = remember { MutableInteractionSource() }
@@ -672,6 +705,7 @@ private fun TvAvatarStyleChip(
             pressedContentColor = Color.Black,
         ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
+        modifier = modifier,
         border = ClickableSurfaceDefaults.border(
             border = Border(
                 border = BorderStroke(
@@ -687,7 +721,7 @@ private fun TvAvatarStyleChip(
         ),
     ) {
         Text(
-            text = style.label,
+            text = label,
             fontSize = 14.sp,
             lineHeight = 18.sp,
             fontWeight = FontWeight.Medium,
@@ -747,7 +781,7 @@ private fun TvPresetAvatarCell(
         ) {
             AsyncImage(
                 model = preset.previewUrl,
-                contentDescription = "Avatar ${preset.seed}",
+                contentDescription = stringResourceWithNames(CommonR.string.profiles_avatar_preset, preset.seed),
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .size(ProfileAvatarImageSize)
@@ -776,14 +810,14 @@ private fun TvInitialsHint() {
         )
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                text = "Uses your profile name",
+                text = stringResource(CommonR.string.profiles_form_initialsTitle),
                 fontSize = 16.sp,
                 lineHeight = 20.sp,
                 fontWeight = FontWeight.Medium,
                 color = Color.White.copy(alpha = 0.85f),
             )
             Text(
-                text = "The first letters of the name below appear on your tile.",
+                text = stringResource(CommonR.string.profiles_form_initialsDetail),
                 fontSize = 14.sp,
                 lineHeight = 18.sp,
                 color = Color.White.copy(alpha = 0.50f),
@@ -794,10 +828,12 @@ private fun TvInitialsHint() {
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TvChildProfileRow(
+internal fun TvSwitchRow(
+    title: String,
     isOn: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
+    subtitle: String? = null,
 ) {
     val shape = RoundedCornerShape(12.dp)
     val interactionSource = remember { MutableInteractionSource() }
@@ -839,18 +875,22 @@ private fun TvChildProfileRow(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = "Child Profile",
+                    text = title,
                     fontSize = 20.sp,
                     lineHeight = 25.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    text = "Restricts content to kid-friendly ratings",
-                    fontSize = 16.sp,
-                    lineHeight = 20.sp,
-                    color = Color.White.copy(alpha = 0.55f),
-                )
+                if (subtitle != null) {
+                    Text(
+                        text = subtitle,
+                        fontSize = 16.sp,
+                        lineHeight = 20.sp,
+                        color = Color.White.copy(alpha = 0.55f),
+                    )
+                }
             }
             Box(
                 modifier = Modifier

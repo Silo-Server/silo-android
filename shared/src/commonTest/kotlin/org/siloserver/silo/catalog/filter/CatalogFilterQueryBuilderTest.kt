@@ -1,5 +1,7 @@
 package org.siloserver.silo.catalog.filter
 
+import kotlinx.serialization.json.JsonPrimitive
+import org.siloserver.silo.network.api.toV2Groups
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -27,7 +29,7 @@ class CatalogFilterQueryBuilderTest {
         val groups = CatalogFilterQueryBuilder.buildGroups(state)
         assertEquals(1, groups.size)
         assertEquals("any", groups[0].match)
-        assertEquals(listOf("Action", "Drama"), groups[0].rules.map { it.value })
+        assertEquals(listOf("Action", "Drama"), groups[0].rules.map { it.value.content })
         assertTrue(groups[0].rules.all { it.field == "genre" && it.op == "contains" })
     }
 
@@ -66,29 +68,30 @@ class CatalogFilterQueryBuilderTest {
         val groups = CatalogFilterQueryBuilder.buildGroups(state)
         assertEquals(1, groups.size)
         assertEquals("any", groups[0].match)
-        val byField = groups[0].rules.associate { it.field to it.value }
-        assertEquals("true", byField["hdr"])
-        assertEquals("true", byField["dolby_vision"])
+        // The server rejects string booleans ("true"), so the wire value must be a JSON boolean.
+        val byField = groups.toV2Groups()[0].rules.associate { it.field to it.value }
+        assertEquals(JsonPrimitive(true), byField["hdr"])
+        assertEquals(JsonPrimitive(true), byField["dolby_vision"])
     }
 
     @Test
     fun watchStatusIsItsOwnAllGroupWithOneRule() {
         val expectations = mapOf(
-            "unwatched" to ("watched" to "false"),
-            "watched" to ("watched" to "true"),
-            "inProgress" to ("in_progress" to "true"),
-            "favorited" to ("favorited" to "true"),
-            "watchlist" to ("in_watchlist" to "true"),
+            "unwatched" to ("watched" to false),
+            "watched" to ("watched" to true),
+            "inProgress" to ("in_progress" to true),
+            "favorited" to ("favorited" to true),
+            "watchlist" to ("in_watchlist" to true),
         )
         for ((status, expected) in expectations) {
             val state = CatalogFilterState(
                 selections = mapOf(CatalogFacet.WatchStatus to setOf(status)),
             )
-            val group = CatalogFilterQueryBuilder.buildGroups(state).single()
+            val group = CatalogFilterQueryBuilder.buildGroups(state).toV2Groups().single()
             assertEquals("all", group.match)
             val rule = group.rules.single()
             assertEquals(expected.first, rule.field, "field for $status")
-            assertEquals(expected.second, rule.value, "value for $status")
+            assertEquals(JsonPrimitive(expected.second), rule.value, "JSON boolean value for $status")
             assertEquals("is", rule.op)
         }
     }

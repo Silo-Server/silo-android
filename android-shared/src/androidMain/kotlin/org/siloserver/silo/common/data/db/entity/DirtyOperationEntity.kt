@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.data.db.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -38,6 +39,9 @@ data class DirtyOperationEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val opKind: String,        // SET_POSITION, SET_WATCHED, SET_RATING, SET_FAVORITE
     val serverId: String,
+    /** Saved account ([org.siloserver.silo.model.server.AccountEntry.localAccountId]); '' = written before accounts existed. */
+    @ColumnInfo(defaultValue = "")
+    val accountId: String,
     val profileId: String,
     val targetContentId: String,
     val targetFileId: Int?,    // null for content-level ops (watched/rating/favorite)

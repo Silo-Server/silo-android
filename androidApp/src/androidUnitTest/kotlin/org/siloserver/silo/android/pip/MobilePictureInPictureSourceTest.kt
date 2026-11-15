@@ -52,6 +52,7 @@ class MobilePictureInPictureSourceTest {
         // what actually makes the toggle reachable.
         assertTrue(settings.contains("checked = pictureInPictureEnabled"))
         assertTrue(settings.contains("onCheckedChange = onPictureInPictureEnabledChanged"))
-        assertTrue(settings.contains("Picture-in-Picture"))
+        // The label ("Picture-in-Picture") comes from the translation catalog.
+        assertTrue(settings.contains("CommonR.string.settings_playback_pictureInPicture"))
     }
 }

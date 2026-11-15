@@ -1,10 +1,11 @@
 package org.siloserver.silo.common.data.db.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 
 /**
  * Local-first projection of **content-level** user state — watched, rating,
- * and favorite. Keyed `(serverId, profileId, contentId)` with no fileId: these
+ * and favorite. Keyed `(serverId, accountId, profileId, contentId)` with no fileId: these
  * server APIs (`PersonalDataApi.markWatched`/`setRating`/`addFavorite`, etc.)
  * are keyed by item id only, and the mutations can fire from a card menu or
  * detail screen before any file-level row exists for the item.
@@ -19,10 +20,13 @@ import androidx.room.Entity
  */
 @Entity(
     tableName = "content_item_state",
-    primaryKeys = ["serverId", "profileId", "contentId"],
+    primaryKeys = ["serverId", "accountId", "profileId", "contentId"],
 )
 data class ContentItemStateEntity(
     val serverId: String,
+    /** Saved account ([org.siloserver.silo.model.server.AccountEntry.localAccountId]); '' = written before accounts existed. */
+    @ColumnInfo(defaultValue = "")
+    val accountId: String,
     val profileId: String,
     val contentId: String,
     val watched: Boolean?,

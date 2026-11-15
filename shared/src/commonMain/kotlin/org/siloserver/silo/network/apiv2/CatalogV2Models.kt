@@ -5,7 +5,10 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.CatalogBoxSet
+import org.siloserver.silo.model.catalog.CatalogBoxSetDetail
 import org.siloserver.silo.model.catalog.CatalogEffectiveSort
+import org.siloserver.silo.network.ArtworkWidths
 import org.siloserver.silo.network.AuthScopeSnapshot
 
 /** The same query is retained for every page; only its opaque cursor changes. */
@@ -29,6 +32,49 @@ data class CatalogQueryV2(
     @SerialName("skip_total") val skipTotal: Boolean = false,
     val limit: Int = 50,
 )
+
+/**
+ * `POST /api/v2/catalog/letters`: the scope and rules of a query-source
+ * browse, which the server always counts in title order.
+ */
+@Serializable
+data class CatalogLettersQueryV2(
+    @SerialName("library_id") val libraryId: String? = null,
+    val type: String? = null,
+    val match: String? = null,
+    val groups: List<CatalogRuleGroupV2> = emptyList(),
+    val order: String? = null,
+)
+
+/**
+ * Where each letter's titles sit in a title-ordered browse, for jumping to a
+ * letter. Positions are zero-based and count in the browse's order.
+ */
+@Serializable
+data class CatalogLettersV2(
+    val total: Int,
+    /** Letters with at least one title, in list order. */
+    val letters: List<Letter> = emptyList(),
+    /**
+     * Blocks of consecutive titles under one letter, covering the whole list.
+     * A collation can sort some of a letter's titles apart from the rest, so a
+     * position's letter comes from these rather than from [letters].
+     */
+    val runs: List<Run> = emptyList(),
+) {
+    /** A to Z, or `#` for digits, symbols and other scripts. */
+    @Serializable
+    data class Letter(val letter: String, val count: Int, val position: Int)
+
+    @Serializable
+    data class Run(val letter: String, val position: Int)
+
+    /** The first position of [letter], or null when no title files under it. */
+    fun position(of: String): Int? = letters.firstOrNull { it.letter == of }?.position
+
+    /** The letter whose titles the list shows at [position]. */
+    fun letterAt(position: Int): String? = runs.lastOrNull { it.position <= position }?.letter
+}
 
 @Serializable
 data class CatalogRuleGroupV2(val match: String, val rules: List<CatalogRuleV2>)
@@ -69,12 +115,47 @@ internal data class CatalogPageWireV2(
     @SerialName("search_diagnostics") val searchDiagnostics: CatalogSearchDiagnosticsV2? = null,
 )
 
-/** Not persisted: a cursor belongs to the query, operation and viewer that read it. */
+@Serializable
+internal data class CatalogBoxSetListWireV2(val items: List<CatalogBoxSet>)
+
+/** getCatalogBoxSet: the box set's own fields beside its movies. */
+@Serializable
+internal data class CatalogBoxSetDetailWireV2(
+    val id: String,
+    @SerialName("library_id") val libraryId: String,
+    val title: String,
+    val overview: String? = null,
+    @SerialName("poster_url") val posterUrl: String? = null,
+    @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
+    @SerialName("backdrop_url") val backdropUrl: String? = null,
+    @SerialName("backdrop_thumbhash") val backdropThumbhash: String? = null,
+    @SerialName("movie_count") val movieCount: Int,
+    @SerialName("played_count") val playedCount: Int,
+    @SerialName("first_year") val firstYear: Int? = null,
+    @SerialName("last_year") val lastYear: Int? = null,
+    val items: List<BrowseItem>,
+) {
+    fun toDomain() = CatalogBoxSetDetail(
+        CatalogBoxSet(id, libraryId, title, overview, posterUrl, posterThumbhash, backdropUrl, backdropThumbhash,
+            movieCount, playedCount, firstYear, lastYear),
+        items,
+    )
+}
+
+/** getCatalogItemBoxSet: `{"box_set": ...}`, or `{}` for a movie in no box set. */
+@Serializable
+internal data class CatalogItemBoxSetWireV2(@SerialName("box_set") val boxSet: CatalogBoxSetDetailWireV2? = null)
+
+/**
+ * Not persisted: a cursor belongs to the query, operation, viewer and artwork
+ * widths that read it.
+ */
 class CatalogContinuationV2 internal constructor(
     internal val requestKey: String,
     internal val cursor: String,
     internal val scope: AuthScopeSnapshot?,
     internal val seen: Set<String>,
+    internal val widths: ArtworkWidths? = null,
 )
 
 data class CatalogPageV2<T>(

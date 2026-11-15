@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.siloserver.silo.common.store.AccountScopedKeys
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.TokenManager
 
@@ -41,14 +42,16 @@ data class TvHomeSectionPreferenceState(
 class TvHomeSectionPreferences(
     private val context: Context,
     private val tokenManager: TokenManager,
-    private val dataStoreFactory: (profileId: String) -> DataStore<Preferences> = { profileId ->
+    private val dataStoreFactory: (accountId: String?, profileId: String) -> DataStore<Preferences> = { accountId, profileId ->
         PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile(fileNameFor(profileId)) },
+            produceFile = { context.preferencesDataStoreFile(fileNameFor(accountId, profileId)) },
         )
     },
 ) {
-    private data class Authority(val profileId: String, val serverId: String) {
-        val identity: String = "$serverId\u001f$profileId"
+    /** The file is per (account, profile); keys within it are per server. */
+    private data class Authority(val profileId: String, val serverId: String, val accountId: String?) {
+        val identity: String = listOfNotNull(serverId, accountId, profileId).joinToString("\u001f")
+        val storeName: String get() = fileNameFor(accountId, profileId)
     }
 
     private val mutex = Mutex()
@@ -56,9 +59,9 @@ class TvHomeSectionPreferences(
     private val _state = MutableStateFlow(TvHomeSectionPreferenceState())
     val state: StateFlow<TvHomeSectionPreferenceState> = _state.asStateFlow()
 
-    private fun storeFor(profileId: String): DataStore<Preferences> =
+    private fun storeFor(authority: Authority): DataStore<Preferences> =
         synchronized(storeCache) {
-            storeCache.getOrPut(profileId) { dataStoreFactory(profileId) }
+            storeCache.getOrPut(authority.storeName) { dataStoreFactory(authority.accountId, authority.profileId) }
         }
 
     /** Load the active server/profile layout, if it is not already current. */
@@ -115,7 +118,8 @@ class TvHomeSectionPreferences(
         val serverId = (if (scope != null) scope.serverId else tokenManager.getCurrentServerId())
             ?.takeIf(String::isNotBlank)
             ?: DEFAULT_SERVER_ID
-        return Authority(profileId = profileId, serverId = serverId)
+        val accountId = if (scope != null) scope.accountId else tokenManager.getCurrentAccountId()
+        return Authority(profileId = profileId, serverId = serverId, accountId = accountId)
     }
 
     private suspend fun currentLayout(authority: Authority): TvHomeSectionLayout =
@@ -126,7 +130,7 @@ class TvHomeSectionPreferences(
         }
 
     private suspend fun readLayout(authority: Authority): TvHomeSectionLayout {
-        val preferences = storeFor(authority.profileId).data.first()
+        val preferences = storeFor(authority).data.first()
         return TvHomeSectionLayout(
             orderedSectionIds = unique(decodeIds(preferences[orderKey(authority.serverId)])),
             hiddenSectionIds = preferences[hiddenKey(authority.serverId)].orEmpty(),
@@ -134,7 +138,7 @@ class TvHomeSectionPreferences(
     }
 
     private suspend fun persist(authority: Authority, layout: TvHomeSectionLayout) {
-        storeFor(authority.profileId).edit { preferences ->
+        storeFor(authority).edit { preferences ->
             preferences[orderKey(authority.serverId)] = encodeIds(layout.orderedSectionIds)
             preferences[hiddenKey(authority.serverId)] = layout.hiddenSectionIds
         }
@@ -227,8 +231,11 @@ class TvHomeSectionPreferences(
             return ids.filter { it.isNotBlank() && seen.add(it) }
         }
 
-        private fun fileNameFor(profileId: String): String =
-            "tv_home_sections_${profileHash(profileId)}"
+        /** Per (account, profile); `AccountLocalData` adopts and purges these files. */
+        const val FILE_BASE = "tv_home_sections"
+
+        private fun fileNameFor(accountId: String?, profileId: String): String =
+            AccountScopedKeys.profileFileName(FILE_BASE, accountId, profileHash(profileId))
 
         private fun profileHash(profileId: String): String = hash(profileId).take(16)
 

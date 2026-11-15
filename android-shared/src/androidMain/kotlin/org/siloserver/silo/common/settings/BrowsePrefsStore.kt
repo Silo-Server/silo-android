@@ -4,12 +4,14 @@ import android.content.Context
 import androidx.core.content.edit
 import kotlinx.serialization.json.Json
 import org.siloserver.silo.catalog.filter.CatalogFilterState
+import org.siloserver.silo.common.store.AccountScopedKeys
 import org.siloserver.silo.network.ServerRegistry
 
 /**
- * Persists browse filter + sort state per server, per profile, per library —
- * mirrors iOS `BrowsePrefsStore` (`ios.browsePrefs.<server>.<profile>.<lib>`,
- * here `<keyPrefix>.browsePrefs.…`). Nothing is persisted without an active
+ * Persists browse filter + sort state per server, per account, per profile,
+ * per library — mirrors iOS `BrowsePrefsStore`
+ * (`ios.browsePrefs.<server>.<profile>.<lib>`, here
+ * `<keyPrefix>.browsePrefs.<server>.@<account>.<profile>.<lib>`). Nothing is persisted without an active
  * profile, so anonymous browsing never leaks into a profile's saved state.
  *
  * The phone and TV apps each pass their own [keyPrefix] (`android`,
@@ -31,10 +33,11 @@ class BrowsePrefsStore(
 
     private fun base(libraryId: Int?, mediaScope: String? = null): String? {
         val serverId = serverRegistry.activeServerId.value ?: "default"
-        val profileId = serverRegistry.activeEntry.value?.profileId
-            ?.takeIf { it.isNotBlank() } ?: return null
+        val entry = serverRegistry.activeEntry.value
+        val profileId = entry?.profileId?.takeIf { it.isNotBlank() } ?: return null
+        val account = entry.accountId?.let { AccountScopedKeys.token(it) + "." }.orEmpty()
         val lib = libraryId?.toString() ?: "all"
-        return "$keyPrefix.browsePrefs.$serverId.$profileId.$lib" + (mediaScope?.let { ".type-$it" } ?: "")
+        return "$keyPrefix.browsePrefs.$serverId.$account$profileId.$lib" + (mediaScope?.let { ".type-$it" } ?: "")
     }
 
     fun savedState(libraryId: Int?, mediaScope: String? = null): CatalogFilterState? {

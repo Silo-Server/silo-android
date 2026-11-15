@@ -2,14 +2,20 @@ package org.siloserver.silo.tv.ui.screens.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.discovery.DiscoveredServer
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.network.CleartextConsentStore
+import org.siloserver.silo.common.network.ServerSetupScheme
+import org.siloserver.silo.common.network.ServerSetupValidationException
+import org.siloserver.silo.common.network.buildServerSetupCandidateUrls
+import org.siloserver.silo.common.network.serverSetupUsesCleartext
 import org.siloserver.silo.common.network.cleartextOrigin
 import org.siloserver.silo.model.auth.SetupStatusResponse
 import org.siloserver.silo.model.auth.SignupStatusResponse
 import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
 import org.siloserver.silo.repository.CONTRACT_PROVEN_BY_V2_RESPONSE
-import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.AuthRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,15 +26,23 @@ import kotlinx.coroutines.launch
 
 data class TvServerSetupUiState(
     val serverUrl: String = "",
+    /** Advanced options: the protocol and port to try, as on Apple TV. */
+    val selectedScheme: ServerSetupScheme = ServerSetupScheme.Auto,
+    val port: String = "",
+    val showsAdvancedOptions: Boolean = false,
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     /** Destination after a successful server probe; consumed by the screen. */
     val navigateTo: TvServerSetupDestination? = null,
     val pendingCleartextUrl: String? = null,
+    /** The found server being connected to, so its row can show progress while [isLoading]. */
+    val connectingServerUrl: String? = null,
+    /** A failure connecting to a found server; shown beside the found list, not on the address field. */
+    val discoveryError: UiText? = null,
 ) {
     /** True when the entered address will connect over unencrypted HTTP.
      *  Informational only — does not block LAN/IP connections. */
-    val usesCleartext: Boolean get() = serverSetupUsesCleartext(serverUrl)
+    val usesCleartext: Boolean get() = serverSetupUsesCleartext(serverUrl, selectedScheme, port)
 }
 
 /**
@@ -55,10 +69,7 @@ internal sealed class TvServerSetupProbeResult {
         val contract: ServerContract? = null,
     ) : TvServerSetupProbeResult()
 
-    data class Failure(
-        val message: String,
-        val serverUrl: String? = null,
-    ) : TvServerSetupProbeResult()
+    data class Failure(val message: UiText) : TvServerSetupProbeResult()
 }
 
 /**
@@ -88,6 +99,9 @@ class TvServerSetupViewModel(
     },
     /** Whether the now-active server already has a signed-in session. */
     private val hasSession: suspend () -> Boolean = { false },
+    private val candidateUrls: (TvServerSetupUiState) -> List<String> = {
+        buildServerSetupCandidateUrls(it.serverUrl, it.selectedScheme, it.port)
+    },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvServerSetupUiState())
@@ -112,22 +126,56 @@ class TvServerSetupViewModel(
     }
 
     fun onServerUrlChanged(url: String) {
-        _uiState.update { it.copy(serverUrl = url, error = null) }
+        _uiState.update { it.copy(serverUrl = url, error = null, discoveryError = null) }
+    }
+
+    fun onSchemeSelected(scheme: ServerSetupScheme) {
+        _uiState.update { it.copy(selectedScheme = scheme, error = null) }
+    }
+
+    fun onPortChanged(port: String) {
+        _uiState.update { it.copy(port = port, error = null) }
+    }
+
+    fun onToggleAdvancedOptions() {
+        _uiState.update { it.copy(showsAdvancedOptions = !it.showsAdvancedOptions) }
     }
 
     fun onConnectClick() {
         if (_uiState.value.isLoading) return
-        val raw = _uiState.value.serverUrl.trim()
-        if (raw.isBlank()) {
-            _uiState.update { it.copy(error = "Enter a server URL") }
+        val current = _uiState.value
+        val candidates = try {
+            candidateUrls(current)
+        } catch (error: ServerSetupValidationException) {
+            // The address parser's own wording (common/network).
+            _uiState.update { it.copy(error = error.message?.let(UiText::Raw)) }
             return
         }
-        val candidates = serverSetupUrlProbeCandidates(raw)
+        connect(candidates, found = null)
+    }
 
+    /**
+     * Connects to a server found on the local network exactly as if its
+     * address had been typed: the same probes, and the same plain-HTTP
+     * consent before anything is saved. Repeat presses while connecting are
+     * ignored, since the row stays focusable.
+     */
+    fun connectTo(server: DiscoveredServer) {
+        if (_uiState.value.isLoading) return
+        connect(listOf(server.url), found = server)
+    }
+
+    private fun connect(candidates: List<String>, found: DiscoveredServer?) {
         viewModelScope.launch {
             pendingCleartextConnection = null
             _uiState.update {
-                it.copy(isLoading = true, error = null, pendingCleartextUrl = null)
+                it.copy(
+                    isLoading = true,
+                    error = null,
+                    discoveryError = null,
+                    pendingCleartextUrl = null,
+                    connectingServerUrl = found?.url,
+                )
             }
 
             when (val result = probeTvServerSetupCandidates(
@@ -141,11 +189,19 @@ class TvServerSetupViewModel(
                 }
                 is TvServerSetupProbeResult.Failure -> {
                     _uiState.update {
-                        it.copy(
-                            serverUrl = result.serverUrl ?: it.serverUrl,
-                            isLoading = false,
-                            error = result.message,
-                        )
+                        if (found == null) {
+                            // The typed address stays as typed: a tried URL
+                            // carries its port, which would override the Port field.
+                            it.copy(
+                                isLoading = false,
+                                error = result.message,
+                            )
+                        } else {
+                            it.copy(
+                                isLoading = false,
+                                discoveryError = result.message,
+                            )
+                        }
                     }
                 }
             }
@@ -186,7 +242,7 @@ class TvServerSetupViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = "Could not safely identify this HTTP server.",
+                        error = UiText.Res(CommonR.string.setup_error_cleartextIdentity),
                         pendingCleartextUrl = null,
                         navigateTo = null,
                     )
@@ -260,8 +316,7 @@ internal suspend fun probeTvServerSetupCandidates(
         val probe = probeContract(candidate)
         if (probe is ApiV2ProbeResult.UpdateServer) {
             return TvServerSetupProbeResult.Failure(
-                serverUrl = candidate,
-                message = ServerContract.UPDATE_REQUIRED_MESSAGE,
+                message = ServerContract.UPDATE_REQUIRED_TEXT,
             )
         }
         // Anything else the probe said (V2, a transient failure, or a timeout)
@@ -282,15 +337,18 @@ internal suspend fun probeTvServerSetupCandidates(
             }
             is ApiResult.Error -> {
                 if (!isLastCandidate) continue
+                // A bare HTTP error (a 404 from something that isn't Silo)
+                // carries no message; fall back to Apple TV's wording.
                 return TvServerSetupProbeResult.Failure(
-                    serverUrl = candidate,
-                    message = "Could not reach server: ${result.message}",
+                    message = result.message.takeIf { it.isNotBlank() }
+                        ?.let { UiText.Res(CommonR.string.tvSignIn_server_unreachableWithReason, listOf(it)) }
+                        ?: NETWORK_ERROR_MESSAGE,
                 )
             }
             is ApiResult.NetworkError -> {
                 if (!isLastCandidate) continue
                 return TvServerSetupProbeResult.Failure(
-                    message = "Network error. Check the URL and try again.",
+                    message = NETWORK_ERROR_MESSAGE,
                 )
             }
         }
@@ -307,31 +365,8 @@ internal suspend fun probeTvServerSetupCandidates(
     }
 
     return TvServerSetupProbeResult.Failure(
-        message = "Network error. Check the URL and try again.",
+        message = NETWORK_ERROR_MESSAGE,
     )
 }
 
-/**
- * True when the entered address will connect over unencrypted HTTP: the probe
- * resolves to a single `http://` candidate (only when the user explicitly
- * typed `http://`). Informational only — never blocks LAN/IP connections.
- */
-internal fun serverSetupUsesCleartext(raw: String): Boolean {
-    val candidates = serverSetupUrlProbeCandidates(raw)
-    return candidates.size == 1 && candidates.first().startsWith("http://", ignoreCase = true)
-}
-
-internal fun serverSetupUrlProbeCandidates(raw: String): List<String> {
-    val trimmed = raw.trim().trimEnd('/')
-    if (trimmed.isBlank()) return emptyList()
-    return if (trimmed.startsWith("http://", ignoreCase = true) ||
-        trimmed.startsWith("https://", ignoreCase = true)
-    ) {
-        listOf(AndroidServerRegistry.normalizeUrl(trimmed))
-    } else {
-        listOf(
-            AndroidServerRegistry.normalizeUrl("https://$trimmed"),
-            AndroidServerRegistry.normalizeUrl("http://$trimmed"),
-        )
-    }
-}
+private val NETWORK_ERROR_MESSAGE = UiText.Res(CommonR.string.setup_error_unreachable)

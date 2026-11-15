@@ -24,7 +24,7 @@ data class SettingPresentation(
 )
 
 object SettingKeys {
-    const val REVISION = 17
+    const val REVISION = 28
 
     /** Blur unwatched episode images */
     const val CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES = "catalog.hide_unwatched_episode_images"
@@ -62,6 +62,12 @@ object SettingKeys {
     const val PLAYBACK_AUTO_SKIP_INTRO = "playback.auto_skip_intro"
     /** Auto-skip recaps */
     const val PLAYBACK_AUTO_SKIP_RECAP = "playback.auto_skip_recap"
+    /** Lower quality when buffering */
+    const val PLAYBACK_BUFFERING_QUALITY_MODE = "playback.buffering_quality_mode"
+    /** Cellular maximum bitrate */
+    const val PLAYBACK_CELLULAR_MAX_BITRATE_KBPS = "playback.cellular_max_bitrate_kbps"
+    /** Cellular quality */
+    const val PLAYBACK_CELLULAR_PREFERRED_QUALITY = "playback.cellular_preferred_quality"
     /** Skip intros */
     const val PLAYBACK_INTRO_SKIP_MODE = "playback.intro_skip_mode"
     /** Maximum bitrate */
@@ -72,6 +78,10 @@ object SettingKeys {
     const val PLAYBACK_PREFERRED_QUALITY = "playback.preferred_quality"
     /** Show forced subtitles */
     const val PLAYBACK_SHOW_FORCED_SUBTITLES = "playback.show_forced_subtitles"
+    /** Show marker confidence */
+    const val PLAYBACK_SHOW_MARKER_CONFIDENCE = "playback.show_marker_confidence"
+    /** Show marker source */
+    const val PLAYBACK_SHOW_MARKER_SOURCE = "playback.show_marker_source"
     /** Subtitle appearance */
     const val PLAYBACK_SUBTITLE_APPEARANCE = "playback.subtitle_appearance"
     /** Preferred subtitle language */
@@ -120,6 +130,8 @@ object SettingKeys {
     const val SEARCH_MEDIA_SCOPE = "search.media_scope"
     /** Match device caption settings */
     const val SUBTITLE_MATCHES_DEVICE = "subtitle.matches_device"
+    /** App language */
+    const val UI_APP_LANGUAGE = "ui.app_language"
     /** Poster badges */
     const val UI_CARD_OVERLAYS = "ui.card_overlays"
     /** Card overlays enabled */
@@ -146,6 +158,8 @@ object SettingKeys {
     const val UI_LIBRARY_PAGE_STATE = "ui.library_page_state"
     /** Next up episodes */
     const val UI_NEXT_UP_MODE = "ui.next_up_mode"
+    /** Show new episodes first */
+    const val UI_NEXT_UP_NEW_RELEASES_FIRST = "ui.next_up_new_releases_first"
     /** Remember library view */
     const val UI_REMEMBER_LIBRARY_PAGE_STATE = "ui.remember_library_page_state"
     /** Pinned sidebar items */
@@ -164,6 +178,8 @@ object SettingKeys {
     const val UI_TIME_FORMAT = "ui.time_format"
     /** Show title art */
     const val UI_TITLE_ART = "ui.title_art"
+    /** Watch Party playback controls */
+    const val WATCH_PARTY_GUEST_CONTROL_POLICY = "watch_party.guest_control_policy"
 
     /** Every key the server stores. Safe to flush. */
     val REMOTE: List<String> = listOf(
@@ -181,11 +197,16 @@ object SettingKeys {
         PLAYBACK_AUTO_SKIP_CREDITS,
         PLAYBACK_AUTO_SKIP_INTRO,
         PLAYBACK_AUTO_SKIP_RECAP,
+        PLAYBACK_BUFFERING_QUALITY_MODE,
+        PLAYBACK_CELLULAR_MAX_BITRATE_KBPS,
+        PLAYBACK_CELLULAR_PREFERRED_QUALITY,
         PLAYBACK_INTRO_SKIP_MODE,
         PLAYBACK_MAX_BITRATE_KBPS,
         PLAYBACK_NEXT_UP_PROMPT_SECONDS,
         PLAYBACK_PREFERRED_QUALITY,
         PLAYBACK_SHOW_FORCED_SUBTITLES,
+        PLAYBACK_SHOW_MARKER_CONFIDENCE,
+        PLAYBACK_SHOW_MARKER_SOURCE,
         PLAYBACK_SUBTITLE_APPEARANCE,
         PLAYBACK_SUBTITLE_LANGUAGE,
         PLAYBACK_SUBTITLE_MODE,
@@ -206,6 +227,7 @@ object SettingKeys {
         PLAYER_VIDEO_SKIP_FORWARD_SECONDS,
         REQUESTS_WATCHLIST_AUTO_REQUEST,
         SEARCH_MEDIA_SCOPE,
+        UI_APP_LANGUAGE,
         UI_CARD_OVERLAYS,
         UI_CARD_OVERLAYS_ENABLED,
         UI_CARD_PRESENTATION,
@@ -219,6 +241,7 @@ object SettingKeys {
         UI_LIBRARY_ORDER,
         UI_LIBRARY_PAGE_STATE,
         UI_NEXT_UP_MODE,
+        UI_NEXT_UP_NEW_RELEASES_FIRST,
         UI_REMEMBER_LIBRARY_PAGE_STATE,
         UI_SIDEBAR_PINS,
         UI_TEXT_SCALE,
@@ -228,6 +251,7 @@ object SettingKeys {
         UI_THEME_MUSIC_LOOP,
         UI_TIME_FORMAT,
         UI_TITLE_ART,
+        WATCH_PARTY_GUEST_CONTROL_POLICY,
     )
 
     /** Contract-known keys that never leave the device. */
@@ -263,6 +287,8 @@ object SettingKeys {
         PLAYBACK_AUTO_SKIP_INTRO,
         PLAYBACK_AUTO_SKIP_RECAP,
         PLAYBACK_SHOW_FORCED_SUBTITLES,
+        PLAYBACK_SHOW_MARKER_CONFIDENCE,
+        PLAYBACK_SHOW_MARKER_SOURCE,
         PLAYER_DOLBY_VISION_ENABLED,
         PLAYER_DV_PROFILE7_HDR10_FALLBACK,
         PLAYER_HDR_ENABLED,
@@ -272,6 +298,7 @@ object SettingKeys {
         UI_CARD_OVERLAYS_ENABLED,
         UI_CARD_QUICK_ACTIONS_ENABLED,
         UI_HIGH_CONTRAST,
+        UI_NEXT_UP_NEW_RELEASES_FIRST,
         UI_REMEMBER_LIBRARY_PAGE_STATE,
         UI_THEME_MUSIC_ENABLED,
         UI_THEME_MUSIC_LOOP,
@@ -279,6 +306,7 @@ object SettingKeys {
     )
 
     val INT_KEYS: Set<String> = setOf(
+        PLAYBACK_CELLULAR_MAX_BITRATE_KBPS,
         PLAYBACK_MAX_BITRATE_KBPS,
         PLAYBACK_NEXT_UP_PROMPT_SECONDS,
         PLAYER_AUDIO_SYNC_MS,
@@ -293,6 +321,19 @@ object SettingKeys {
 
 object SettingPresentationMetadata {
     val OPTION_SETS: Map<String, SettingOptionSet> = mapOf(
+        "app_languages" to SettingOptionSet(
+            type = "language_tag",
+            options = listOf(
+                SettingSuggestedOption("en", 28),
+                SettingSuggestedOption("es", 28),
+                SettingSuggestedOption("de", 28),
+                SettingSuggestedOption("fr", 28),
+                SettingSuggestedOption("pt-BR", 28),
+                SettingSuggestedOption("ja", 28),
+                SettingSuggestedOption("zh-Hans", 28),
+                SettingSuggestedOption("ar", 28),
+            ),
+        ),
         "catalog_metadata_languages" to SettingOptionSet(
             type = "language_tag",
             options = listOf(
@@ -460,6 +501,10 @@ object SettingPresentationMetadata {
         SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE to SettingPresentation(
             suggestedOptions = "playback_subtitle_languages",
             unsetLabel = "None",
+        ),
+        SettingKeys.UI_APP_LANGUAGE to SettingPresentation(
+            suggestedOptions = "app_languages",
+            unsetLabel = "Match device",
         ),
     )
 

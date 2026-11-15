@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,11 +44,15 @@ import androidx.tv.material3.LocalTextStyle
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import org.siloserver.silo.common.cards.LocalCardPresentation
+import org.siloserver.silo.model.settings.CardPosterSize
 import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.components.TvFactsRow
 import org.siloserver.silo.tv.ui.components.TvHeroFactToken
+import org.siloserver.silo.tv.ui.components.bidiIsolated
+import org.siloserver.silo.tv.ui.components.hasRightToLeftScript
 
 /**
  * Approved tvOS detail hero, mapped onto Android TV's half-scale layout
@@ -91,7 +96,15 @@ internal fun TvDetailHero(
     // tvOS 690pt on a 1080pt canvas. Android TV's 1920×1080 emulator reports
     // a 960×540dp layout canvas, so the same fraction produces 345dp.
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
-    val heroHeight = screenHeight * HERO_HEIGHT_FRACTION + extraHeight
+    // At the Large card size the Series episode rail's two-line caption runs
+    // past the bottom of the pinned first screen, so the Series hero gives up
+    // that much of its empty top inset; the rest of the page moves up with it.
+    val seriesLift = if (compactSeries && LocalCardPresentation.current.posterSize == CardPosterSize.Large) {
+        SERIES_LARGE_CARD_LIFT
+    } else {
+        0.dp
+    }
+    val heroHeight = screenHeight * HERO_HEIGHT_FRACTION + extraHeight - seriesLift
 
     BoxWithConstraints(
         modifier = modifier
@@ -147,7 +160,7 @@ internal fun TvDetailHero(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = HERO_TOP_INSET, start = TvDetailHorizontalInset, end = TvDetailHorizontalInset),
+                .padding(top = HERO_TOP_INSET - seriesLift, start = TvDetailHorizontalInset, end = TvDetailHorizontalInset),
             horizontalAlignment = Alignment.Start,
             verticalArrangement = Arrangement.spacedBy(if (compactSeries) 2.dp else HERO_CONTENT_SPACING),
         ) {
@@ -177,21 +190,19 @@ internal fun TvDetailHero(
                     .focusGroup(),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                if (compactSeries && translation != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.weight(1f)) { actions() }
-                        translation()
-                    }
-                } else if (compactSeries && machineTranslated) {
+                // Keep actions() at one call site: moving it between branches
+                // would recreate the row and drop focus from a focused button
+                // whenever the translation state changes.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { actions() }
                     // Series reserves fixed editorial slots, so the marker sits
                     // at the end of the action row where the translate button
                     // would; it is not focusable and adds no D-pad stop.
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.weight(1f)) { actions() }
+                    if (compactSeries && translation != null) {
+                        translation()
+                    } else if (compactSeries && machineTranslated) {
                         TvMachineTranslatedLabel()
                     }
-                } else {
-                    actions()
                 }
             }
         }
@@ -271,7 +282,14 @@ private fun EditorialColumn(
                             tagline = tagline.takeUnless { isCombinedSeriesEpisode },
                             collapsedMaxLines = 3,
                             dialogTitle = title,
-                            previewText = if (isCombinedSeriesEpisode) "$title · $line" else line,
+                            // The title is isolated whenever any of it reads right to left,
+                            // so the overview, not the title, sets the paragraph direction.
+                            // Left-to-right text keeps its bytes (D28).
+                            previewText = if (isCombinedSeriesEpisode) {
+                                "${bidiIsolated(title, line.hasRightToLeftScript())} · $line"
+                            } else {
+                                line
+                            },
                         )
                     }
                 }
@@ -537,6 +555,7 @@ private const val HERO_HEIGHT_FRACTION = 690f / 1080f
 private const val ARTWORK_WIDTH_FRACTION = 0.64f
 private const val ARTWORK_HEIGHT_FRACTION = 0.70f
 private val HERO_TOP_INSET = 58.dp
+private val SERIES_LARGE_CARD_LIFT = 16.dp
 private val HERO_CONTENT_MAX_WIDTH = 540.dp
 private val HERO_CONTENT_SPACING = 9.dp
 private val EDITORIAL_SPACING = 7.dp
@@ -572,6 +591,8 @@ private val heroDisplayHero = TextStyle(
     fontSize = 42.sp,
     lineHeight = 46.sp,
     letterSpacing = 0.sp,
+    textDirection = TextDirection.Content,
+    textAlign = TextAlign.Left,
     // Apple shadows the hero title (black@0.55, r16, y4) for legibility on
     // bright backdrops. Inherited by the subtitle/episode `.copy()` variants.
     shadow = Shadow(color = Color.Black.copy(alpha = 0.55f), offset = Offset(0f, 4f), blurRadius = 16f),

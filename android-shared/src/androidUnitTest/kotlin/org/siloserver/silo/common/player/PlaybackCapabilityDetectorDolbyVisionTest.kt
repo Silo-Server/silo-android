@@ -19,6 +19,8 @@ import org.siloserver.silo.model.playback.DELIVERY_CLASS_HLS
 import org.siloserver.silo.model.playback.DELIVERY_CLASS_ORIGINAL_HTTP
 import org.siloserver.silo.model.playback.DELIVERY_CLASS_PROGRESSIVE
 import org.siloserver.silo.model.playback.NATIVE_HLS_PLAYBACK_V1_FEATURE
+import org.siloserver.silo.model.playback.HLS_SUBTITLE_RENDITIONS_V1_FEATURE
+import org.siloserver.silo.model.playback.playbackClientFeaturesV3
 import org.siloserver.silo.model.playback.CLIENT_SELECTED_AUDIO_TRACK_V1_CLAIM
 import org.siloserver.silo.model.playback.CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM
 import kotlin.test.Test
@@ -57,6 +59,43 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
             assertFalse(
                 NATIVE_HLS_PLAYBACK_V1_FEATURE in playbackContext.deliveries.getValue(DELIVERY_CLASS_PROGRESSIVE).features,
                 "$formFactor must not apply the HLS sample-entry contract to progressive delivery",
+            )
+            assertTrue(
+                HLS_SUBTITLE_RENDITIONS_V1_FEATURE in playbackClientFeaturesV3(playbackContext),
+                "$formFactor selects HLS subtitle renditions in Media3",
+            )
+        }
+    }
+
+    @Test
+    fun phoneAndTvDrawMatroskaBitmapSubtitlesFromTheOriginalStream() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val detector = PlaybackCapabilityDetector(
+            context = context,
+            audioCapabilityManager = AudioCapabilityManager(context),
+            libassBridge = LibassBridge(false),
+            buildIdentity = SiloClientBuildIdentity(buildNumber = "test", channel = "test"),
+        )
+
+        listOf("mobile", "tv").forEach { formFactor ->
+            val playbackContext = detector.detectPlaybackContext(
+                formFactor = formFactor,
+                appVersion = "test",
+                capabilities = ClientCodecCapabilities(),
+            )
+            val native = playbackContext.deliveries.getValue(DELIVERY_CLASS_ORIGINAL_HTTP)
+                .subtitles.nativeEmbedded.associateBy { it.container }
+
+            assertEquals(
+                listOf("subrip", "ass", "hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle"),
+                native.getValue("mkv").codecs,
+                formFactor,
+            )
+            assertEquals(listOf("mov_text"), native.getValue("mp4").codecs, formFactor)
+            assertTrue(native.values.all { it.trackIdentity == "container_track_id" }, formFactor)
+            assertTrue(
+                playbackContext.deliveries.getValue(DELIVERY_CLASS_HLS).subtitles.nativeEmbedded.isEmpty(),
+                "$formFactor draws embedded tracks only from the original file",
             )
         }
     }

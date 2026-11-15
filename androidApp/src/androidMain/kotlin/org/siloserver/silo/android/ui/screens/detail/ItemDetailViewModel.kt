@@ -1,5 +1,10 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.playback.hasResumePoint
+import org.siloserver.silo.playback.selectDetailPlaybackVersion
+import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 import kotlinx.coroutines.flow.stateIn
 
 import androidx.lifecycle.SavedStateHandle
@@ -21,7 +26,6 @@ import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadStatus
 import org.siloserver.silo.model.download.statusEnum
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.network.isAccessRefusal
 import org.siloserver.silo.model.catalog.isBookLikeItemType
 import org.siloserver.silo.metadata.DescriptionTranslationController
@@ -35,6 +39,8 @@ import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.RecommendationRepository
 import org.siloserver.silo.viewmodel.applyLocalPlaybackProgress
 import org.siloserver.silo.model.download.DownloadQuality
+import org.siloserver.silo.model.playback.withPendingSeriesSubtitleChoice
+import org.siloserver.silo.model.playback.withPendingSeriesAudioChoice
 import org.siloserver.silo.playback.SUBTITLE_OFF_FINGERPRINT
 import org.siloserver.silo.playback.audioTrackFingerprint
 import org.siloserver.silo.playback.resolveAudioTrackOrdinal
@@ -54,6 +60,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ensureActive
 
+private const val MISSING_SERIES_ERROR = "missing_series"
+
 /**
  * UI state for the item detail screen.
  */
@@ -61,6 +69,8 @@ data class ItemDetailUiState(
     val isLoading: Boolean = true,
     val detail: ItemDetail? = null,
     val similarItems: List<org.siloserver.silo.model.catalog.BrowseItem> = emptyList(),
+    /** The box set this movie belongs to, for the box set row after the extras; null for none. */
+    val boxSet: org.siloserver.silo.model.catalog.CatalogBoxSetDetail? = null,
     val seasons: List<Season> = emptyList(),
     val selectedSeasonNumber: Int = 1,
     val episodes: List<EpisodeListItem> = emptyList(),
@@ -74,6 +84,20 @@ data class ItemDetailUiState(
      */
     val episodeFallbackContentId: String? = null,
     val selectedEpisodeDetail: ItemDetail? = null,
+    /**
+     * Series choices picked on this page, by series key. The selectors'
+     * Auto previews lay them over the server's effective fields, which keep
+     * describing the older choice until the page reloads.
+     */
+    val pickedSeriesSubtitleChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
+    val pickedSeriesAudioChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesAudioChoice> = emptyMap(),
+    /**
+     * The effective fields each pick was laid over: a pick stops applying
+     * once a refreshed detail answers differently (the server then holds it,
+     * or a newer choice made elsewhere).
+     */
+    val pickedSubtitleBaselines: Map<String, org.siloserver.silo.model.playback.PickedSubtitleBaseline> = emptyMap(),
+    val pickedAudioBaselines: Map<String, org.siloserver.silo.model.playback.PickedAudioBaseline> = emptyMap(),
     val isLoadingSelectedEpisodeDetail: Boolean = false,
     /** Parent-series portrait art used when an episode's own artwork is a wide still. */
     val episodeSeriesPosterUrl: String? = null,
@@ -100,11 +124,13 @@ data class ItemDetailUiState(
     val isFavorite: Boolean = false,
     val isInWatchlist: Boolean = false,
     val userRating: Int? = null,
-    val error: String? = null,
+    val error: UiText? = null,
     val selectedVersionIndex: Int = 0,
     val selectedAudioIndex: Int = 0,
     val selectedSubtitleIndex: Int = -1,
     val hasExplicitVersionSelection: Boolean = false,
+    /** The edition the viewer picked (a `PlaybackEdition.id`); null opens on the last-played one. */
+    val selectedEditionId: String? = null,
     val hasExplicitAudioSelection: Boolean = false,
     val hasExplicitSubtitleSelection: Boolean = false,
     /** Server converts Kindle (mobi/azw/azw3) to EPUB, so they read in-app. */
@@ -155,12 +181,16 @@ class ItemDetailViewModel(
     savedStateHandle: SavedStateHandle,
     private val userItemState: org.siloserver.silo.repository.port.UserItemStatePort =
         org.siloserver.silo.repository.port.NoOpUserItemStatePort,
+    /** Remembers a manual subtitle choice for the whole series on the server. */
+    private val seriesTrackChoiceWriter: org.siloserver.silo.common.settings.SeriesTrackChoiceWriter? = null,
 ) : ViewModel() {
     /** Access changes this ViewModel has applied, kept while its screen is away. */
     val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
 
     private var similarGeneration = 0L
     private var similarJob: kotlinx.coroutines.Job? = null
+    private var boxSetGeneration = 0L
+    private var boxSetJob: Job? = null
     private var detailLoadJob: Job? = null
     private var quietDetailJob: Job? = null
     /** Whether [quietDetailJob] clears the page on a refusal (an access-change refresh). */
@@ -235,6 +265,7 @@ class ItemDetailViewModel(
         repository = metadataAiRepository,
         delayMs = { kotlinx.coroutines.delay(it) },
     )
+    val translatingSeasonContentId: StateFlow<String?> = episodeTranslation.translatingContentId
 
     init {
         viewModelScope.launch {
@@ -318,13 +349,20 @@ class ItemDetailViewModel(
      *  download limit reached". The screen shows it; without it a rejected
      *  request, and above all a rejected series batch, looked like nothing
      *  happened. */
-    private val _downloadFailureMessages = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
-    val downloadFailureMessages: kotlinx.coroutines.flow.SharedFlow<String> = _downloadFailureMessages
+    private val _downloadFailureMessages =
+        kotlinx.coroutines.flow.MutableSharedFlow<UiText>(extraBufferCapacity = 4)
+    val downloadFailureMessages: kotlinx.coroutines.flow.SharedFlow<UiText> = _downloadFailureMessages
 
     private suspend fun reportDownloadStart(result: ApiResult<*>) {
         _downloadStartEvents.emit(result is ApiResult.Success)
         if (result !is ApiResult.Success) {
-            _downloadFailureMessages.emit(result.errorMessage("Couldn't start the download."))
+            _downloadFailureMessages.emit(
+                if (result is ApiResult.Error && result.error == MISSING_SERIES_ERROR) {
+                    UiText.Res(CommonR.string.detail_error_episodeMissingSeries)
+                } else {
+                    result.errorText(CommonR.string.detail_error_downloadStart)
+                },
+            )
         }
     }
 
@@ -367,7 +405,7 @@ class ItemDetailViewModel(
                     seriesContentId = seriesId,
                     episodeContentId = item.contentId,
                     fileId = version.fileId,
-                    seriesTitle = knownTitle ?: parent?.title?.takeIf { it.isNotBlank() } ?: "Series",
+                    seriesTitle = knownTitle ?: parent?.title?.takeIf { it.isNotBlank() } ?: DownloadEnqueuer.UNKNOWN_SERIES_TITLE,
                     seasonNumber = item.seasonNumber,
                     episodeNumber = item.episodeNumber,
                     episodeTitle = item.title,
@@ -378,7 +416,7 @@ class ItemDetailViewModel(
                 )
             }
             // The server rejects an episode sent without its series.
-            item?.type == "episode" -> ApiResult.Error(0, "missing_series", "This episode isn't linked to a series.")
+            item?.type == "episode" -> ApiResult.Error(0, MISSING_SERIES_ERROR, "")
             else -> downloadEnqueuer.start(
                 contentId = item?.contentId ?: contentId,
                 fileId = version.fileId,
@@ -424,6 +462,13 @@ class ItemDetailViewModel(
     fun loadDetail() = loadDetail(afterAccessChange = false)
 
     /**
+     * The profile this page was loaded for. A series track pick is saved for
+     * it, so a pick still being saved when the profile changes is dropped
+     * rather than filed under the next profile.
+     */
+    private var trackChoiceOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null
+
+    /**
      * [afterAccessChange] skips joining a Home warm-up still in flight, whose
      * answer may predate the change.
      */
@@ -434,9 +479,13 @@ class ItemDetailViewModel(
         // gave under an older access policy never lands after it.
         detailLoadJob?.cancel()
         quietDetailJob?.cancel()
-        _uiState.update { it.copy(similarItems = emptyList()) }
+        // A new load shows no box set row until its own read answers.
+        boxSetGeneration++
+        boxSetJob?.cancel()
+        _uiState.update { it.copy(similarItems = emptyList(), boxSet = null) }
         detailLoadJob = viewModelScope.launch {
             val similarOwner = recommendationRepository.captureSimilarAuthority()
+            trackChoiceOwner = catalogRepository.captureWatchAuthority()
             _uiState.update { it.copy(isLoading = true, error = null) }
             // Start the live request immediately. The durable cache read can
             // still paint an instant first frame, but it no longer delays the
@@ -462,6 +511,7 @@ class ItemDetailViewModel(
                     if (similarRun == similarGeneration) {
                         similarJob = viewModelScope.launch { loadSimilar(detail, similarOwner, similarRun) }
                     }
+                    loadBoxSet(detail)
                     // For series, load seasons
                     if (detail.type == "series") {
                         loadSeasons(detail.contentId)
@@ -472,7 +522,7 @@ class ItemDetailViewModel(
                         val seriesId = detail.seriesId
                         val seasonNumber = detail.seasonNumber
                         if (seriesId != null && seasonNumber != null) {
-                            loadEpisodeSiblings(seriesId, seasonNumber)
+                            loadEpisodeSiblings(seriesId, seasonNumber, detail)
                         } else {
                             // No parent to look up, so no series poster is coming.
                             _uiState.update { it.copy(episodeSeriesPosterResolved = true) }
@@ -497,7 +547,7 @@ class ItemDetailViewModel(
                         it.copy(
                             isLoading = false,
                             detail = detail,
-                            error = result.message.ifBlank { "Failed to load details" },
+                            error = result.errorText(CommonR.string.detail_error_loadFailed),
                             episodeFallbackContentId = initialEpisodeContentId.takeIf { detail == null },
                         )
                     }
@@ -506,7 +556,7 @@ class ItemDetailViewModel(
                     _uiState.update { state ->
                         state.copy(
                             isLoading = false,
-                            error = "Network error. Check your connection.",
+                            error = UiText.Res(CommonR.string.catalog_error_network),
                             // Offline, the episode may still be cached when its series is not.
                             episodeFallbackContentId = initialEpisodeContentId.takeIf { state.detail == null },
                         )
@@ -521,6 +571,20 @@ class ItemDetailViewModel(
         recommendationRepository.loadSimilarCards(detail.contentId, owner,
             stillCurrent = { run == similarGeneration && _uiState.value.detail?.contentId == detail.contentId },
             publish = { cards -> _uiState.update { it.copy(similarItems = cards) } })
+    }
+
+    /**
+     * Reads the box set row for a movie. A failed read keeps the row on
+     * screen, as a quiet refresh keeps the rest of the page.
+     */
+    private fun loadBoxSet(detail: ItemDetail) {
+        val run = ++boxSetGeneration
+        boxSetJob?.cancel()
+        boxSetJob = viewModelScope.launch {
+            val result = org.siloserver.silo.viewmodel.loadMovieBoxSet(catalogRepository, personalDataRepository, detail, libraryId)
+            if (run != boxSetGeneration || _uiState.value.detail?.contentId != detail.contentId) return@launch
+            if (result is ApiResult.Success) _uiState.update { it.copy(boxSet = result.data) }
+        }
     }
 
     /**
@@ -605,7 +669,7 @@ class ItemDetailViewModel(
                         it.copy(
                             isLoading = false,
                             detail = null,
-                            error = result.message.ifBlank { "Failed to load details" },
+                            error = result.errorText(CommonR.string.detail_error_loadFailed),
                         )
                     }
                 }
@@ -613,6 +677,8 @@ class ItemDetailViewModel(
                 is ApiResult.NetworkError -> Unit
             }
         }
+        // Watched badges in the box set row follow the player too.
+        loadBoxSet(current)
         if (current.type == "series") {
             refreshSeasonsQuietly(current.contentId, fresh = afterWatchedChange)
             loadEpisodes(
@@ -776,6 +842,31 @@ class ItemDetailViewModel(
     fun onRouteResumed() {
         val wasPaused = !routeActive
         routeActive = true
+        if (wasPaused) {
+            // Back from the player (or the background): picks made on this
+            // page before are older than anything picked in the player, which
+            // the server now holds. Drop the page's own overlays and explicit
+            // track picks so the previews and Play follow the refreshed
+            // answer; a newer choice can equal the answer a pick was laid
+            // over, so comparing the two cannot tell. The page's picks were
+            // saved as the series choice, so Auto still shows them when
+            // nothing replaced them.
+            _uiState.update {
+                it.copy(
+                    pickedSeriesAudioChoices = emptyMap(),
+                    pickedAudioBaselines = emptyMap(),
+                    pickedSeriesSubtitleChoices = emptyMap(),
+                    pickedSubtitleBaselines = emptyMap(),
+                    selectedAudioIndex = if (it.hasExplicitAudioSelection) 0 else it.selectedAudioIndex,
+                    hasExplicitAudioSelection = false,
+                    selectedSubtitleIndex = if (it.hasExplicitSubtitleSelection) -1 else it.selectedSubtitleIndex,
+                    hasExplicitSubtitleSelection = false,
+                )
+            }
+            // The selected episode's effective fields predate the playback;
+            // the parent refresh below does not re-read them.
+            refreshSelectedEpisodeDetail()
+        }
         refreshOnReturn()
         if (wasPaused && !_uiState.value.allEpisodeIdsComplete) {
             pendingEpisodeRollup?.let { request ->
@@ -792,7 +883,7 @@ class ItemDetailViewModel(
     /** Episode pages: seasons + this season's siblings, mirroring iOS's
      *  episode detail (the episode's own season stays selected; no series
      *  download roll-up — that's a series-page concern). */
-    private fun loadEpisodeSiblings(seriesId: String, seasonNumber: Int) {
+    private fun loadEpisodeSiblings(seriesId: String, seasonNumber: Int, episode: ItemDetail) {
         _uiState.update { it.copy(selectedSeasonNumber = seasonNumber) }
         loadEpisodes(seriesId, seasonNumber)
         viewModelScope.launch {
@@ -804,6 +895,21 @@ class ItemDetailViewModel(
                 else -> { /* Season load failure is non-critical */ }
             }
 
+            // An episode that carries its series poster and title needs no
+            // parent fetch for them.
+            val seriesPoster = episode.seriesPosterUrl?.takeIf { it.isNotBlank() }
+            val seriesTitle = episode.seriesTitle?.takeIf { it.isNotBlank() }
+            if (seriesPoster != null && seriesTitle != null) {
+                _uiState.update {
+                    it.copy(
+                        episodeSeriesPosterUrl = seriesPoster,
+                        episodeSeriesPosterThumbhash = episode.seriesPosterThumbhash,
+                        episodeSeriesTitle = seriesTitle,
+                        episodeSeriesPosterResolved = true,
+                    )
+                }
+                return@launch
+            }
             // Resolve seasons before the series fallback. Otherwise a cache-fast
             // series poster can paint for a frame and then be replaced by the
             // selected season poster when its request completes.
@@ -864,6 +970,7 @@ class ItemDetailViewModel(
                 selectedAudioIndex = 0,
                 selectedSubtitleIndex = -1,
                 hasExplicitVersionSelection = false,
+                selectedEditionId = null,
                 hasExplicitAudioSelection = false,
                 hasExplicitSubtitleSelection = false,
             )
@@ -879,7 +986,62 @@ class ItemDetailViewModel(
         loadSelectedEpisodeDetail(contentId)
     }
 
+    /** Bumped by every load or refresh of the selected episode's detail. */
+    private var selectedEpisodeLoadGeneration = 0L
+
+    /**
+     * Re-reads the shown episode's detail from the server, keeping it on
+     * screen meanwhile. Published only while this refresh is still the newest
+     * load of that episode and the viewer who asked still owns the page. A
+     * refusal (404, 410, an access-denying 403) clears it, as the page does
+     * for its own detail (a completed download keeps it); a transient failure
+     * keeps it.
+     */
+    private fun refreshSelectedEpisodeDetail() {
+        val state = _uiState.value
+        val contentId = state.selectedEpisodeContentId ?: return
+        if (state.selectedEpisodeDetail == null || state.isLoadingSelectedEpisodeDetail) return
+        selectedEpisodeLoadJob?.cancel()
+        val generation = ++selectedEpisodeLoadGeneration
+        selectedEpisodeLoadJob = viewModelScope.launch {
+            val owner = catalogRepository.captureWatchAuthority() ?: return@launch
+            val result = catalogRepository.getItemDetail(contentId, libraryId = libraryId)
+            fun owns() = generation == selectedEpisodeLoadGeneration &&
+                _uiState.value.selectedEpisodeContentId == contentId
+            if (!owns() || !catalogRepository.isWatchAuthorityCurrent(owner) || !owns()) return@launch
+            when {
+                result is ApiResult.Success -> {
+                    val refreshed = withLocalProgress(result.data)
+                    _uiState.update { current ->
+                        if (generation != selectedEpisodeLoadGeneration || current.selectedEpisodeContentId != contentId) {
+                            current
+                        } else {
+                            current.copy(
+                                selectedEpisodeDetail = current.episodes.firstOrNull { it.contentId == contentId }
+                                    ?.let(refreshed::withEpisodeDescription) ?: refreshed,
+                            )
+                        }
+                    }
+                }
+                result is ApiResult.Error && result.isAccessRefusal() &&
+                    downloads.value.none { record ->
+                        record.statusEnum() == DownloadStatus.Completed &&
+                            (record.contentId == contentId || record.episodeId == contentId)
+                    } -> _uiState.update { current ->
+                    if (generation != selectedEpisodeLoadGeneration || current.selectedEpisodeContentId != contentId) {
+                        current
+                    } else {
+                        current.copy(selectedEpisodeDetail = null, isLoadingSelectedEpisodeDetail = false)
+                    }
+                }
+                // Transient: keep what is shown.
+                else -> Unit
+            }
+        }
+    }
+
     private fun loadSelectedEpisodeDetail(contentId: String) {
+        selectedEpisodeLoadGeneration++
         selectedEpisodeLoadJob = viewModelScope.launch {
             val result = if (contentId == initialEpisodeContentId) {
                 catalogRepository.getItemDetailForPrefetch(contentId, libraryId = libraryId)
@@ -930,6 +1092,7 @@ class ItemDetailViewModel(
                 selectedAudioIndex = 0,
                 selectedSubtitleIndex = -1,
                 hasExplicitVersionSelection = false,
+                selectedEditionId = null,
                 hasExplicitAudioSelection = false,
                 hasExplicitSubtitleSelection = false,
             )
@@ -1150,6 +1313,13 @@ class ItemDetailViewModel(
         seedPersistedTrackSelection()
     }
 
+    /** Picks an edition: Version goes back to Auto within it, which clears the
+     *  version pin and, like [selectVersion], the file-specific track picks. */
+    fun selectEdition(editionId: String) {
+        _uiState.update { it.copy(selectedEditionId = editionId) }
+        selectAutoVersion()
+    }
+
     /** Back to Auto — clears the version override and, like [selectVersion],
      *  the file-specific audio/subtitle overrides with it. */
     fun selectAutoVersion() {
@@ -1166,7 +1336,12 @@ class ItemDetailViewModel(
         seedPersistedTrackSelection()
     }
 
-    fun selectAudioTrack(index: Int) {
+    /**
+     * [version] is the file the selector lists tracks for (the displayed
+     * version; on a series page, the selected episode's), so a pick is
+     * described from the track the viewer saw.
+     */
+    fun selectAudioTrack(index: Int, version: FileVersion? = null) {
         _uiState.update {
             it.copy(
                 selectedAudioIndex = index,
@@ -1174,9 +1349,10 @@ class ItemDetailViewModel(
             )
         }
         persistTrackSelection()
+        rememberSeriesAudioChoice(index, version)
     }
 
-    /** Back to Auto — playback falls through to the file's default track. */
+    /** Back to Auto — playback follows the profile's audio defaults again. */
     fun selectAutoAudioTrack() {
         _uiState.update {
             it.copy(
@@ -1185,9 +1361,10 @@ class ItemDetailViewModel(
             )
         }
         persistTrackSelection()
+        rememberSeriesAudioChoice(null, null)
     }
 
-    fun selectSubtitle(index: Int) {
+    fun selectSubtitle(index: Int, version: FileVersion? = null) {
         _uiState.update {
             it.copy(
                 selectedSubtitleIndex = index,
@@ -1195,6 +1372,7 @@ class ItemDetailViewModel(
             )
         }
         persistTrackSelection()
+        rememberSeriesSubtitleChoice(index, version)
     }
 
     /** Back to Auto — distinct from an explicit -1 ("Off") selection. */
@@ -1206,6 +1384,124 @@ class ItemDetailViewModel(
             )
         }
         persistTrackSelection()
+        rememberSeriesSubtitleChoice(null, null)
+    }
+
+    /**
+     * The item a pick on this page belongs to: the selected episode on a
+     * series page, else the page's own movie or episode. Null for anything
+     * else (an extra, a book), whose picks are not remembered.
+     */
+    private fun trackChoiceTarget(state: ItemDetailUiState): Pair<ItemDetail, String>? {
+        val detail = state.selectedEpisodeDetail ?: state.detail ?: return null
+        if (detail.type != "movie" && detail.type != "episode" && detail.type != "series") return null
+        val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId) ?: return null
+        return detail to key
+    }
+
+    private fun trackChoiceVersion(state: ItemDetailUiState, detail: ItemDetail, version: FileVersion?): FileVersion? =
+        version ?: displayedVersion(state, detail)
+
+    /** The quality preference the page resolves Auto with; the screen reports it. */
+    private var preferredQuality: String? = null
+
+    fun onPreferredQualityChanged(quality: String?) {
+        if (quality == preferredQuality) return
+        val state = _uiState.value
+        // On a series page the selectors show the selected episode's files.
+        val target = state.selectedEpisodeDetail ?: state.detail
+        val shownBefore = target?.let { displayedVersion(state, it)?.fileId }
+        preferredQuality = quality
+        val shownAfter = target?.let { displayedVersion(state, it)?.fileId }
+        // Track picks belong to a file: when Auto now shows another file, start
+        // that file's tracks over from what was saved for it.
+        if (shownAfter != shownBefore) {
+            _uiState.update {
+                it.copy(
+                    selectedAudioIndex = 0,
+                    selectedSubtitleIndex = -1,
+                    hasExplicitAudioSelection = false,
+                    hasExplicitSubtitleSelection = false,
+                )
+            }
+            seedPersistedTrackSelection()
+        }
+    }
+
+    /**
+     * The file the page shows for [detail]: the pinned one, else Auto within
+     * the current edition, as the screen resolves it. Track picks are saved
+     * and restored against this file.
+     */
+    private fun displayedVersion(state: ItemDetailUiState, detail: ItemDetail): FileVersion? =
+        if (state.hasExplicitVersionSelection) {
+            detail.versions.getOrNull(state.selectedVersionIndex)
+        } else {
+            selectDetailPlaybackVersion(
+                versions = detail.versions,
+                variants = detail.playbackVariants,
+                pinnedFileId = null,
+                editionId = state.selectedEditionId,
+                lastFileId = detail.userData?.lastFileId,
+                lastEditionKey = detail.userData?.lastEditionKey,
+                inProgress = detail.userData.hasResumePoint,
+                preferredQuality = preferredQuality,
+            )
+        }
+
+    /**
+     * A pick here applies to the whole series (or the movie) and the
+     * profile's other devices, like a pick in the player: a track or Off
+     * ([ordinal] -1) is saved on the server, and Auto (null) deletes it.
+     */
+    private fun rememberSeriesSubtitleChoice(ordinal: Int?, version: FileVersion?) {
+        val writer = seriesTrackChoiceWriter ?: return
+        val owner = trackChoiceOwner ?: return
+        val state = _uiState.value
+        val (detail, key) = trackChoiceTarget(state) ?: return
+        val choice = when (ordinal) {
+            null -> null
+            -1 -> org.siloserver.silo.model.playback.SeriesSubtitleChoice.Off
+            else -> {
+                val tracks = trackChoiceVersion(state, detail, version)?.subtitleTracks.orEmpty()
+                val track = tracks.getOrNull(ordinal) ?: return
+                val selectionIndex = org.siloserver.silo.model.playback.combinedSubtitleSelectionIndexes(tracks)
+                    .getOrNull(ordinal) ?: return
+                org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(track, selectionIndex)
+            }
+        }
+        _uiState.update {
+            it.copy(
+                pickedSeriesSubtitleChoices = it.pickedSeriesSubtitleChoices +
+                    (key to org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice(choice)),
+                pickedSubtitleBaselines = it.pickedSubtitleBaselines +
+                    (key to org.siloserver.silo.model.playback.PickedSubtitleBaseline.of(detail)),
+            )
+        }
+        viewModelScope.launch { writer.saveSubtitle(key, choice, owner) }
+    }
+
+    /** [rememberSeriesSubtitleChoice] for audio: a track is saved, Auto (null) deletes it. */
+    private fun rememberSeriesAudioChoice(ordinal: Int?, version: FileVersion?) {
+        val writer = seriesTrackChoiceWriter ?: return
+        val owner = trackChoiceOwner ?: return
+        val state = _uiState.value
+        val (detail, key) = trackChoiceTarget(state) ?: return
+        val choice = ordinal?.let {
+            org.siloserver.silo.model.playback.SeriesAudioChoice.of(
+                trackChoiceVersion(state, detail, version)?.audioTracks.orEmpty(),
+                it,
+            ) ?: return
+        }
+        _uiState.update {
+            it.copy(
+                pickedSeriesAudioChoices = it.pickedSeriesAudioChoices +
+                    (key to org.siloserver.silo.model.playback.PendingSeriesAudioChoice(choice)),
+                pickedAudioBaselines = it.pickedAudioBaselines +
+                    (key to org.siloserver.silo.model.playback.PickedAudioBaseline.of(detail)),
+            )
+        }
+        viewModelScope.launch { writer.saveAudio(key, choice, owner) }
     }
 
     /**
@@ -1220,7 +1516,7 @@ class ItemDetailViewModel(
     private fun persistTrackSelection() {
         val state = _uiState.value
         val detail = state.detail ?: return
-        val version = detail.versions.getOrNull(state.selectedVersionIndex) ?: return
+        val version = displayedVersion(state, detail) ?: return
         val subtitleFingerprint = when {
             !state.hasExplicitSubtitleSelection -> null
             state.selectedSubtitleIndex == -1 -> SUBTITLE_OFF_FINGERPRINT
@@ -1250,23 +1546,46 @@ class ItemDetailViewModel(
     private fun seedPersistedTrackSelection() {
         val state = _uiState.value
         val detail = state.detail ?: return
-        val version = detail.versions.getOrNull(state.selectedVersionIndex) ?: return
+        val version = displayedVersion(state, detail) ?: return
         viewModelScope.launch {
             val saved = userItemState.localTrackSelection(detail.contentId, version.fileId) ?: return@launch
+            // The series choice on the server outranks this device's per-file
+            // memory; the player starts from it when nothing is picked here.
+            // A choice still waiting to land outranks the server's older one.
+            val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId)
+            val pendingSubtitle = key?.let { seriesTrackChoiceWriter?.pendingSubtitle(it) }
+            val pendingAudio = key?.let { seriesTrackChoiceWriter?.pendingAudio(it) }
             val subtitleOrdinal = resolveSubtitleTrackOrdinal(
                 version.subtitleTracks.orEmpty(),
-                saved.subtitleFingerprint,
+                org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice(
+                    localPreference = saved.subtitleFingerprint,
+                    serverChoiceKnown = true,
+                    signature = detail.withPendingSeriesSubtitleChoice(pendingSubtitle).effectiveSubtitleTrackSignature,
+                    candidates = org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates(
+                        version.subtitleTracks.orEmpty(),
+                    ),
+                    effectiveMode = detail.withPendingSeriesSubtitleChoice(pendingSubtitle).effectiveSubtitleMode,
+                    resetToAuto = key?.let { seriesTrackChoiceWriter?.subtitleResetToAuto(it) } == true,
+                ),
             )
+            // Likewise for audio: the memory only restores the track the
+            // server's effective answer (the series choice) already names.
+            val audioTracks = version.audioTracks.orEmpty()
             val audioOrdinal = resolveAudioTrackOrdinal(
-                version.audioTracks.orEmpty(),
-                saved.audioFingerprint,
+                audioTracks,
+                org.siloserver.silo.model.playback.localAudioMemoryForSeriesChoice(
+                    localFingerprint = saved.audioFingerprint,
+                    tracks = audioTracks,
+                    serverOrdinal = version.withPendingSeriesAudioChoice(pendingAudio).effectiveAudioTrackIndex,
+                    resetToAuto = pendingAudio != null && pendingAudio.choice == null,
+                ),
             )
             if (subtitleOrdinal == null && audioOrdinal == null) return@launch
             _uiState.update {
                 // The ordinals were resolved against `version`; if the user
                 // switched versions while this suspended, they'd index into the
                 // wrong track list — leave the new version untouched.
-                if (it.detail?.versions?.getOrNull(it.selectedVersionIndex)?.fileId != version.fileId) {
+                if (it.detail?.let { current -> displayedVersion(it, current) }?.fileId != version.fileId) {
                     return@update it
                 }
                 // Don't clobber a pick the user already made this session.
@@ -1425,6 +1744,8 @@ class ItemDetailViewModel(
                     updateOwnUserData { it.withoutPlayed(target, previous) }
                 }
             }
+            // The box set row's watched badges follow the write.
+            if (writeResult is ApiResult.Success && !isSeries) loadBoxSet(currentDetail)
         }
     }
 
@@ -1693,4 +2014,22 @@ internal fun LeafItemUserData?.withoutPlayed(played: Boolean, previous: LeafItem
         isInProgress = if (progressUntouched) previous?.isInProgress else isInProgress,
         positionSeconds = if (progressUntouched) previous?.positionSeconds else positionSeconds,
     )
+}
+
+/**
+ * [detail] as this page's selectors preview it: the series choices picked
+ * here laid over the server's effective fields (see
+ * [ItemDetailUiState.pickedSeriesSubtitleChoices]).
+ */
+internal fun ItemDetailUiState.withPickedSeriesChoices(detail: ItemDetail): ItemDetail {
+    val key = org.siloserver.silo.model.playback.seriesTrackChoiceKey(detail.seriesId, detail.contentId) ?: return detail
+    val subtitle = pickedSeriesSubtitleChoices[key]?.takeIf {
+        pickedSubtitleBaselines[key]?.supersededBy(detail) != true
+    }
+    val audio = pickedSeriesAudioChoices[key]?.takeIf {
+        pickedAudioBaselines[key]?.supersededBy(detail) != true
+    }
+    return detail
+        .withPendingSeriesSubtitleChoice(subtitle)
+        .withPendingSeriesAudioChoice(audio)
 }

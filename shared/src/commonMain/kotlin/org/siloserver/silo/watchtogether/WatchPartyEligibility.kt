@@ -5,6 +5,8 @@ import org.siloserver.silo.model.watchtogether.RoomPhase
 import org.siloserver.silo.model.watchtogether.RoomSelectionMode
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.model.watchtogether.Suggestion
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.WatchPartyEndReason
 
@@ -109,24 +111,50 @@ fun lobbyReadiness(room: RoomSnapshot?): LobbyReadiness {
     return LobbyReadiness(ready = guests.count { it.lobbyReady }, guests = guests.size)
 }
 
-/** Plain text for a failed Watch Party request. [fallback] covers anything unrecognized. */
-fun watchPartyErrorMessage(result: ApiResult<*>, fallback: String): String = when (result) {
-    is ApiResult.Success -> fallback
-    is ApiResult.NetworkError -> "Couldn't reach the server. Check your connection and try again."
-    is ApiResult.Error -> when {
-        result.error == WatchPartyEndReason.Ended || result.error == "no_active_room" -> "This Watch Party has ended."
-        result.error == "obsolete_room_request" || result.error == "identity_changed" ->
-            "Your profile changed, so that didn't go through."
-        result.error == "invalid_response" || result.error == "invalid_room_response" ->
-            "The server sent an unexpected answer. Try again."
-        result.code == 401 -> "Sign in again to use Watch Party."
-        result.code == 403 && result.error == "profile_verification_required" -> "Unlock this profile to use Watch Party."
-        result.code == 403 -> "Only the host can do that."
-        result.code == 404 -> "That Watch Party wasn't found."
-        result.code == 409 -> "That didn't work because the party changed. Check the room and try again."
-        result.code == 422 -> "That item can't be played in a Watch Party."
-        result.code == 429 -> "Too many requests. Wait a moment and try again."
-        result.code == 503 -> "Watch Party is unavailable on this server right now."
-        else -> fallback
+/**
+ * Why a Watch Party request failed, sorted from its result the same way on
+ * phone and TV. [Other] carries the caller's fallback for anything unrecognized.
+ */
+sealed class WatchPartyError(val text: UiText) {
+    data object Unreachable : WatchPartyError(UiText.Key(SharedString.WatchPartyErrorUnreachable))
+    data object Ended : WatchPartyError(UiText.Key(SharedString.WatchPartyErrorEnded))
+    data object ProfileChanged : WatchPartyError(UiText.Key(SharedString.WatchPartyErrorProfileChanged))
+    data object UnexpectedAnswer : WatchPartyError(UiText.Key(SharedString.WatchPartyErrorUnexpectedAnswer))
+    data object SignInAgain : WatchPartyError(UiText.Key(SharedString.WatchPartyErrorSignIn))
+    data object ProfileLocked : WatchPartyError(UiText.Key(SharedString.WatchPartyErrorProfileLocked))
+    data object HostOnly : WatchPartyError(UiText.Key(SharedString.WatchPartyErrorHostOnly))
+    data object NotFound : WatchPartyError(UiText.Key(SharedString.WatchPartyErrorNotFound))
+    data object PartyChanged : WatchPartyError(UiText.Key(SharedString.WatchPartyErrorPartyChanged))
+    data object NotPlayable : WatchPartyError(UiText.Key(SharedString.WatchPartyErrorNotPlayable))
+    data object RateLimited : WatchPartyError(UiText.Key(SharedString.WatchPartyErrorRateLimited))
+    data object ServerUnavailable : WatchPartyError(UiText.Key(SharedString.WatchPartyErrorServerUnavailable))
+    data class Other(val fallback: UiText) : WatchPartyError(fallback)
+
+    companion object {
+        fun of(result: ApiResult<*>, fallback: UiText): WatchPartyError = when (result) {
+            is ApiResult.Success -> Other(fallback)
+            is ApiResult.NetworkError -> Unreachable
+            is ApiResult.Error -> when {
+                result.error == WatchPartyEndReason.Ended || result.error == "no_active_room" -> Ended
+                result.error == "obsolete_room_request" || result.error == "identity_changed" -> ProfileChanged
+                result.error == "invalid_response" || result.error == "invalid_room_response" -> UnexpectedAnswer
+                result.code == 401 -> SignInAgain
+                result.code == 403 && result.error == "profile_verification_required" -> ProfileLocked
+                result.code == 403 -> HostOnly
+                result.code == 404 -> NotFound
+                result.code == 409 -> PartyChanged
+                result.code == 422 -> NotPlayable
+                result.code == 429 -> RateLimited
+                result.code == 503 -> ServerUnavailable
+                else -> Other(fallback)
+            }
+        }
     }
 }
+
+/** What a screen shows for a failed Watch Party request; [fallback] covers anything unrecognized. */
+fun watchPartyErrorText(result: ApiResult<*>, fallback: UiText): UiText = WatchPartyError.of(result, fallback).text
+
+/** [watchPartyErrorText] with a shared catalog string as the fallback. */
+fun watchPartyErrorText(result: ApiResult<*>, fallback: SharedString, vararg args: Any): UiText =
+    watchPartyErrorText(result, UiText.Key(fallback, args.toList()))

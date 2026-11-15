@@ -3,6 +3,7 @@ package org.siloserver.silo.android.ui.screens.player
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.common.player.isPlaybackSessionEnded
+import org.siloserver.silo.model.playback.SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS
 import org.siloserver.silo.network.ApiResult
 
 /** A deferred replan keeps the selected subtitle ordinal until its recovery can run. */
@@ -13,7 +14,7 @@ internal data class MobileRecoveryReplan(
 ) {
     val shouldQueue: Boolean
         get() = classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS ||
-            classification == "subtitle_embedded_failed"
+            classification in SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS
 
     /**
      * A failed subtitle replan keeps the current video playing, except when
@@ -21,7 +22,7 @@ internal data class MobileRecoveryReplan(
      * then leaves instead.
      */
     fun isNonfatalFailure(result: ApiResult<VideoSessionStartV3>): Boolean =
-        classification == "subtitle_embedded_failed" &&
+        classification in SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS &&
             result !is ApiResult.Success &&
             !result.isPlaybackSessionEnded()
 }

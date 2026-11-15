@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.localizedResources
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -57,6 +59,8 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
 import org.siloserver.silo.tv.ui.theme.TvControlCorner
+import android.content.res.Resources
+import org.siloserver.silo.common.R as CommonR
 
 /**
  * Horizontal scroll of season chips. Mirrors `TVSeasonChipRow` on tvOS:
@@ -139,17 +143,17 @@ fun TvSeasonPicker(
 }
 
 /**
- * Combined Series mode row from the approved tvOS page: Show first, followed
- * by every season. These are true capsules with a fixed footprint and no focus
- * scale, so lateral movement never shifts its neighbours.
+ * Season row of the combined Series page, matching tvOS: seasons only. The
+ * selected season stays highlighted while the hero shows the series overview,
+ * since the rail below still lists its episodes; More > Show Series Info
+ * returns the hero to the series. These are true capsules with a fixed
+ * footprint and no focus scale, so lateral movement never shifts its neighbours.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun TvSeriesModePicker(
     seasons: List<Season>,
-    isShowingSeriesOverview: Boolean,
     selectedSeason: Int?,
-    onShowSelected: () -> Unit,
     onSeasonSelected: (Season) -> Unit,
     modifier: Modifier = Modifier,
     horizontalContentPadding: Dp = 0.dp,
@@ -157,21 +161,15 @@ fun TvSeriesModePicker(
 ) {
     val listState = rememberLazyListState()
     val selectedFocusRequester = remember { FocusRequester() }
-    val selectedIndex = remember(isShowingSeriesOverview, selectedSeason, seasons) {
-        if (isShowingSeriesOverview) {
-            0
-        } else {
-            seasons.indexOfFirst { it.seasonNumber == selectedSeason }
-                .takeIf { it >= 0 }
-                ?.plus(1)
-                ?: 0
-        }
+    val selectedIndex = remember(selectedSeason, seasons) {
+        seasons.indexOfFirst { it.seasonNumber == selectedSeason }.takeIf { it >= 0 }
     }
 
     LaunchedEffect(selectedIndex, seasons.size) {
-        listState.scrollToItem(selectedIndex)
+        val idx = selectedIndex ?: return@LaunchedEffect
+        listState.scrollToItem(idx)
         val info = listState.layoutInfo
-        val item = info.visibleItemsInfo.firstOrNull { it.index == selectedIndex }
+        val item = info.visibleItemsInfo.firstOrNull { it.index == idx }
             ?: return@LaunchedEffect
         val viewportCenter = (info.viewportStartOffset + info.viewportEndOffset) / 2f
         val itemCenter = item.offset + item.size / 2f
@@ -180,7 +178,13 @@ fun TvSeriesModePicker(
 
     LazyRow(
         modifier = modifier
-            .focusProperties { enter = { selectedFocusRequester } }
+            // Only a tab for the selected season holds the requester; while
+            // seasons load or none is selected, keep the default entry.
+            .focusProperties {
+                selectedIndex?.let {
+                    enter = { selectedFocusRequester }
+                }
+            }
             .then(
                 if (onDirectionUp != null) {
                     Modifier.onPreviewKeyEvent { event ->
@@ -199,26 +203,14 @@ fun TvSeriesModePicker(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         contentPadding = PaddingValues(horizontal = horizontalContentPadding, vertical = 2.dp),
     ) {
-        item(key = "series-show-overview", contentType = "series-mode") {
-            TvSeriesModeTab(
-                title = "Show",
-                isSelected = isShowingSeriesOverview,
-                onActivated = onShowSelected,
-                modifier = if (isShowingSeriesOverview) {
-                    Modifier.focusRequester(selectedFocusRequester)
-                } else {
-                    Modifier
-                },
-            )
-        }
         items(
             seasons,
             key = { "series-season-${it.seasonNumber}-${it.contentId}" },
             contentType = { "series-mode" },
         ) { season ->
-            val selected = !isShowingSeriesOverview && season.seasonNumber == selectedSeason
+            val selected = season.seasonNumber == selectedSeason
             TvSeriesModeTab(
-                title = tvSeasonPickerLabel(season),
+                title = tvSeasonPickerLabel(localizedResources(), season),
                 isSelected = selected,
                 onActivated = { onSeasonSelected(season) },
                 modifier = if (selected) {
@@ -286,7 +278,7 @@ private fun TvSeriesModeTab(
             .seriesModeFocusRing(visible = isFocused)
             .background(fill, CircleShape)
             .border(borderWidth, borderColor, CircleShape)
-            // tvOS treats Show and each season as focus-driven modes: moving
+            // tvOS treats each season as a focus-driven mode: moving
             // laterally updates the page immediately, without an extra Select.
             // The ViewModel ignores the already-selected season and generation-
             // guards quick successive loads while the existing selectedIndex
@@ -387,7 +379,7 @@ private fun TvSeasonChip(
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = tvSeasonPickerLabel(season),
+            text = tvSeasonPickerLabel(localizedResources(), season),
             style = MaterialTheme.typography.titleLarge.copy(
                 fontSize = 16.sp,
                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
@@ -397,7 +389,8 @@ private fun TvSeasonChip(
     }
 }
 
-internal fun tvSeasonPickerLabel(season: Season): String {
-    if (season.isSpecialsForDisplay()) return "Specials"
-    return season.title?.takeIf { it.isNotBlank() } ?: "Season ${season.seasonNumber}"
+internal fun tvSeasonPickerLabel(resources: Resources, season: Season): String {
+    if (season.isSpecialsForDisplay()) return resources.getString(CommonR.string.detail_specials)
+    return season.title?.takeIf { it.isNotBlank() }
+        ?: resources.getString(CommonR.string.detail_season, LocaleFormat.integer(season.seasonNumber))
 }

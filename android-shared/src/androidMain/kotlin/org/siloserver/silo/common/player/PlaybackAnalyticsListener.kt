@@ -7,12 +7,18 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
+import androidx.media3.exoplayer.DecoderCounters
 import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.siloserver.silo.common.diagnostics.DiagnosticsCaptureDetailState
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlayerState
@@ -63,6 +69,19 @@ class PlaybackAnalyticsListener : AnalyticsListener {
 
     private val _events = MutableSharedFlow<Event>(extraBufferCapacity = 32)
     val events: SharedFlow<Event> = _events.asSharedFlow()
+
+    // Held as state rather than sent through [events]: that flow has no
+    // replay and drops on overflow, and a compatible track switch reuses the
+    // AudioTrack without a second callback, so a missed event would leave the
+    // UI on the server plan's guess for the rest of playback.
+    private val _audioOutputPath = MutableStateFlow<AudioOutputPath?>(null)
+
+    /**
+     * How the current AudioTrack actually carries audio, as Media3 configured
+     * it from the live sink capabilities. Null until a track is created, and
+     * again once audio is disabled or the player is released.
+     */
+    val audioOutputPath: StateFlow<AudioOutputPath?> = _audioOutputPath.asStateFlow()
     private var diagnosticsStats = PlayerStatsSnapshot()
     private val diagnosticsCadence = DiagnosticsStatsCadence()
     private var playWhenReady = true
@@ -124,6 +143,24 @@ class PlaybackAnalyticsListener : AnalyticsListener {
     ) {
         DiagnosticsPlaybackLogger.audioDecoderInitialized(decoderName)
         emit(Event.AudioDecoderInitialized(decoderName))
+    }
+
+    override fun onAudioTrackInitialized(
+        eventTime: AnalyticsListener.EventTime,
+        audioTrackConfig: AudioSink.AudioTrackConfig,
+    ) {
+        _audioOutputPath.value = audioOutputPathOf(audioTrackConfig)
+    }
+
+    // onAudioTrackReleased is deliberately ignored: DefaultAudioSink releases
+    // the old track asynchronously, so the release can land after the
+    // replacement track's initialization and would clear a current value.
+    override fun onAudioDisabled(eventTime: AnalyticsListener.EventTime, decoderCounters: DecoderCounters) {
+        _audioOutputPath.value = null
+    }
+
+    override fun onPlayerReleased(eventTime: AnalyticsListener.EventTime) {
+        _audioOutputPath.value = null
     }
 
     override fun onVideoInputFormatChanged(
@@ -222,6 +259,33 @@ class PlaybackAnalyticsListener : AnalyticsListener {
         }
     }
 }
+
+/** The three ways an AudioTrack can carry audio; see [PlaybackAnalyticsListener.audioOutputPath]. */
+enum class AudioOutputPath {
+    /** Decoded in the app and processed as PCM, so audio delay applies. */
+    Pcm,
+
+    /** Encoded bitstream handed to the HDMI/eARC sink untouched. */
+    Passthrough,
+
+    /** Encoded audio decoded by the platform's DSP; app processing is bypassed. */
+    Offload,
+}
+
+@UnstableApi
+private fun audioOutputPathOf(config: AudioSink.AudioTrackConfig): AudioOutputPath = when {
+    config.offload -> AudioOutputPath.Offload
+    Util.isEncodingLinearPcm(config.encoding) -> AudioOutputPath.Pcm
+    else -> AudioOutputPath.Passthrough
+}
+
+/**
+ * Whether the audio delay processor can act on the current output. The sink's
+ * observed path wins; before the first AudioTrack exists, fall back to the
+ * server plan's passthrough claim.
+ */
+fun AudioOutputPath?.allowsAudioDelay(planClaimsPassthrough: Boolean?): Boolean =
+    if (this != null) this == AudioOutputPath.Pcm else planClaimsPassthrough != true
 
 private fun diagnosticsPlayerState(state: Int): DiagnosticsPlayerState? = when (state) {
     Player.STATE_IDLE -> DiagnosticsPlayerState.Idle

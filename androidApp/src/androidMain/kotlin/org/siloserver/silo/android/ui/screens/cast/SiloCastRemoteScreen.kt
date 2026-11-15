@@ -1,5 +1,8 @@
 package org.siloserver.silo.android.ui.screens.cast
 
+import org.siloserver.silo.android.ui.screens.player.mobileVideoGravityLabel
+import org.siloserver.silo.common.i18n.stringResourceWithNames
+import org.siloserver.silo.android.ui.components.LeftToRight
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
@@ -73,8 +76,10 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -89,10 +94,12 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import org.koin.compose.koinInject
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
 import org.siloserver.silo.android.ui.components.rememberVideoSeekIntervals
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.model.settings.SeekIntervalPair
-import org.siloserver.silo.android.R
 import org.siloserver.silo.android.cast.RemoteControlBatteryOptimization
 import org.siloserver.silo.android.cast.SiloCastController
+import org.siloserver.silo.android.cast.SiloCastResourceReplaceText
+import org.siloserver.silo.android.cast.resolve
 import org.siloserver.silo.cast.SiloCastPlaybackState
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 
@@ -182,7 +189,7 @@ fun SiloCastRemoteScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 when {
-                    state.isReconnecting -> RemoteStatus(title = "Reconnecting…", showSpinner = true)
+                    state.isReconnecting -> RemoteStatus(title = stringResource(CommonR.string.cast_reconnecting), showSpinner = true)
                     // From the tap until the TV reports the title, including
                     // over an idle TV or the title being replaced.
                     launch != null -> RemoteLaunching(
@@ -195,8 +202,9 @@ fun SiloCastRemoteScreen(
                         targetName = state.connectedTarget?.name,
                         // A fully torn-down session (TV disconnected, reconnect
                         // exhausted) must not spin forever — offer a way out.
-                        error = state.error
-                            ?: "Not connected to a TV.".takeIf { state.connectedTarget == null && !state.isConnecting },
+                        error = state.error?.resolve()
+                            ?: stringResource(CommonR.string.cast_remote_notConnected)
+                                .takeIf { state.connectedTarget == null && !state.isConnecting },
                         onChooseTv = { showTargetPicker = true },
                     )
                     playback.contentId == null -> RemoteIdleConnected(
@@ -207,7 +215,9 @@ fun SiloCastRemoteScreen(
                         targetName = state.connectedTarget?.name,
                         posterUrl = artwork.posterUrl ?: artwork.backdropUrl,
                         posterThumbhash = artwork.posterThumbhash ?: artwork.backdropThumbhash,
-                        error = state.error,
+                        error = state.error?.resolve(),
+                        volumeMuteOnly = state.volumeMuteOnly,
+                        showSpeed = !state.noPlaybackSpeed,
                         controller = controller,
                     )
                 }
@@ -222,16 +232,29 @@ fun SiloCastRemoteScreen(
         )
     }
 
+    state.pendingReplace?.let { pending ->
+        val replaceText = SiloCastResourceReplaceText(LocalResources.current)
+        SiloConfirmDialog(
+            title = stringResource(CommonR.string.remote_replace_title),
+            body = pending.message(replaceText),
+            confirmLabel = pending.confirmLabel(replaceText),
+            dismissLabel = stringResource(CommonR.string.common_cancel),
+            destructive = false,
+            onConfirm = controller::confirmReplace,
+            onDismiss = controller::cancelReplace,
+        )
+    }
+
     if (showBatteryPrompt) {
         val dismissBatteryPrompt = {
             RemoteControlBatteryOptimization.markPromptShown(context)
             showBatteryPrompt = false
         }
         SiloConfirmDialog(
-            title = stringResource(R.string.remote_battery_title),
-            body = stringResource(R.string.remote_battery_message),
-            confirmLabel = stringResource(R.string.remote_battery_settings),
-            dismissLabel = stringResource(R.string.remote_battery_not_now),
+            title = stringResource(CommonR.string.remote_battery_title),
+            body = stringResource(CommonR.string.remote_battery_message),
+            confirmLabel = stringResource(CommonR.string.remote_battery_settings),
+            dismissLabel = stringResource(CommonR.string.remote_battery_notNow),
             destructive = false,
             onConfirm = {
                 dismissBatteryPrompt()
@@ -287,7 +310,7 @@ private fun RemoteTopBar(
         IconButton(onClick = onMinimize) {
             Icon(
                 Icons.Filled.KeyboardArrowDown,
-                contentDescription = "Minimize",
+                contentDescription = stringResource(CommonR.string.cast_remote_minimize),
                 tint = RemoteOnSurface,
             )
         }
@@ -296,13 +319,13 @@ private fun RemoteTopBar(
             IconButton(onClick = { menuExpanded = true }) {
                 Icon(
                     Icons.Filled.MoreHoriz,
-                    contentDescription = "More options",
+                    contentDescription = stringResource(CommonR.string.cast_remote_moreOptions),
                     tint = RemoteOnSurface,
                 )
             }
             SiloDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                 SiloDropdownMenuItem(
-                    text = { Text("Choose a Different TV") },
+                    text = { Text(stringResource(CommonR.string.cast_remote_chooseDifferentTv)) },
                     leadingIcon = { Icon(Icons.Outlined.Tv, contentDescription = null) },
                     onClick = {
                         menuExpanded = false
@@ -310,7 +333,7 @@ private fun RemoteTopBar(
                     },
                 )
                 SiloDropdownMenuItem(
-                    text = { Text("Stop Playback") },
+                    text = { Text(stringResource(CommonR.string.cast_remote_stopPlayback)) },
                     leadingIcon = { Icon(Icons.Filled.Stop, contentDescription = null) },
                     onClick = {
                         menuExpanded = false
@@ -319,7 +342,7 @@ private fun RemoteTopBar(
                 )
                 if (playback?.supportsVideoGravity == true) {
                     SiloDropdownMenuItem(
-                        text = { Text("Aspect Ratio") },
+                        text = { Text(stringResource(CommonR.string.cast_remote_aspectRatio)) },
                         leadingIcon = {
                             Icon(Icons.Outlined.AspectRatio, contentDescription = null)
                         },
@@ -334,7 +357,7 @@ private fun RemoteTopBar(
                 }
                 if (showBatterySettings) {
                     SiloDropdownMenuItem(
-                        text = { Text(stringResource(R.string.remote_battery_settings)) },
+                        text = { Text(stringResource(CommonR.string.remote_battery_settings)) },
                         leadingIcon = {
                             Icon(Icons.Outlined.SettingsRemote, contentDescription = null)
                         },
@@ -346,7 +369,7 @@ private fun RemoteTopBar(
                 }
                 HorizontalDivider()
                 SiloDropdownMenuItem(
-                    text = { Text("Disconnect", color = MaterialTheme.colorScheme.error) },
+                    text = { Text(stringResource(CommonR.string.cast_remote_disconnect), color = MaterialTheme.colorScheme.error) },
                     leadingIcon = {
                         Icon(
                             Icons.Outlined.TvOff,
@@ -365,13 +388,14 @@ private fun RemoteTopBar(
                 onDismissRequest = { aspectMenuExpanded = false },
             ) {
                 Text(
-                    "Aspect Ratio",
+                    stringResource(CommonR.string.cast_remote_aspectRatio),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                 )
-                listOf("fit" to "Fit", "fill" to "Fill", "stretch" to "Stretch")
-                    .forEach { (id, label) ->
+                listOf("fit", "fill", "stretch")
+                    .forEach { id ->
+                        val label = stringResource(mobileVideoGravityLabel(id))
                         val selected = playback?.videoGravity == id ||
                             (id == "fill" && playback?.videoGravity in listOf("zoom", "crop"))
                         SiloDropdownMenuItem(
@@ -380,7 +404,7 @@ private fun RemoteTopBar(
                                 if (selected) {
                                     Icon(
                                         Icons.Filled.Check,
-                                        contentDescription = "Selected",
+                                        contentDescription = stringResource(CommonR.string.player_menu_selected),
                                         modifier = Modifier.size(18.dp),
                                     )
                                 } else {
@@ -444,7 +468,7 @@ private fun RemoteLaunching(
                 modifier = Modifier.size(18.dp),
             )
             Text(
-                "Starting on ${targetName ?: "Silo TV"}…",
+                stringResourceWithNames(CommonR.string.cast_startingOn, targetName ?: SILO_TV_NAME),
                 style = MaterialTheme.typography.titleMedium,
                 color = RemoteSecondary,
                 textAlign = TextAlign.Center,
@@ -468,13 +492,13 @@ private fun RemoteIdleConnected(targetName: String?) {
             modifier = Modifier.size(48.dp),
         )
         Text(
-            "Connected to ${targetName ?: "Silo TV"}",
+            stringResourceWithNames(CommonR.string.cast_remote_connectedTo, targetName ?: SILO_TV_NAME),
             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
             color = RemoteOnSurface,
             textAlign = TextAlign.Center,
         )
         Text(
-            "Pick something from your library to start playing.",
+            stringResource(CommonR.string.cast_remote_idleHint),
             style = MaterialTheme.typography.bodyMedium,
             color = RemoteSecondary,
             textAlign = TextAlign.Center,
@@ -513,12 +537,12 @@ private fun RemoteConnecting(
             OutlinedButton(onClick = onChooseTv) {
                 Icon(Icons.Outlined.Tv, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Choose a TV")
+                Text(stringResource(CommonR.string.cast_remote_chooseTv))
             }
         } else {
             CircularProgressIndicator(color = RemoteOnSurface)
             Text(
-                "Connecting to ${targetName ?: "Silo TV"}…",
+                stringResourceWithNames(CommonR.string.cast_remote_connectingTo, targetName ?: SILO_TV_NAME),
                 style = MaterialTheme.typography.titleMedium,
                 color = RemoteSecondary,
                 textAlign = TextAlign.Center,
@@ -534,6 +558,8 @@ private fun RemoteNowPlaying(
     posterUrl: String?,
     posterThumbhash: String?,
     error: String?,
+    volumeMuteOnly: Boolean,
+    showSpeed: Boolean,
     controller: SiloCastController,
 ) {
     // 4 Hz tick drives the interpolated playhead between the TV's state
@@ -586,7 +612,7 @@ private fun RemoteNowPlaying(
             }
 
             Text(
-                playback.title.ifEmpty { "Loading" },
+                playback.title.ifEmpty { stringResource(CommonR.string.common_loading) },
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                 color = RemoteOnSurface,
                 textAlign = TextAlign.Center,
@@ -622,7 +648,7 @@ private fun RemoteNowPlaying(
                         modifier = Modifier.size(13.dp),
                     )
                     Text(
-                        "Playing on $targetName",
+                        stringResourceWithNames(CommonR.string.cast_playingOn, targetName),
                         style = MaterialTheme.typography.labelMedium,
                         color = RemoteSecondary,
                     )
@@ -636,10 +662,14 @@ private fun RemoteNowPlaying(
             RemoteTransport(playback = playback, clockTick = clockTick, controller = controller)
 
             Spacer(modifier = Modifier.height(20.dp))
-            RemoteVolumeRow(playback = playback, controller = controller)
+            if (volumeMuteOnly) {
+                RemoteMuteToggle(playback = playback, controller = controller)
+            } else {
+                RemoteVolumeRow(playback = playback, controller = controller)
+            }
 
             Spacer(modifier = Modifier.height(20.dp))
-            RemoteSecondaryControls(playback = playback, controller = controller)
+            RemoteSecondaryControls(playback = playback, showSpeed = showSpeed, controller = controller)
 
             if (!error.isNullOrEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
@@ -703,31 +733,33 @@ private fun RemoteScrubber(
     @Suppress("UNUSED_EXPRESSION") clockTick
     val live = scrubPreview?.toDouble() ?: controller.displayTime().coerceIn(0.0, duration)
 
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Slider(
-            value = live.toFloat(),
-            onValueChange = { scrubPreview = it },
-            onValueChangeFinished = {
-                scrubPreview?.let { controller.seek(it.toDouble()) }
-                scrubPreview = null
-            },
-            valueRange = 0f..duration.coerceAtLeast(1.0).toFloat(),
-            enabled = duration > 0.0,
-            colors = remoteSliderColors(),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                formatHMS(live),
-                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                color = RemoteSecondary,
+    LeftToRight {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Slider(
+                value = live.toFloat(),
+                onValueChange = { scrubPreview = it },
+                onValueChangeFinished = {
+                    scrubPreview?.let { controller.seek(it.toDouble()) }
+                    scrubPreview = null
+                },
+                valueRange = 0f..duration.coerceAtLeast(1.0).toFloat(),
+                enabled = duration > 0.0,
+                colors = remoteSliderColors(),
+                modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(modifier = Modifier.weight(1f))
-            Text(
-                if (duration > 0.0) "-" + formatHMS((duration - live).coerceAtLeast(0.0)) else formatHMS(duration),
-                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                color = RemoteSecondary,
-            )
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    formatHMS(live),
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                    color = RemoteSecondary,
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    if (duration > 0.0) "-" + formatHMS((duration - live).coerceAtLeast(0.0)) else formatHMS(duration),
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                    color = RemoteSecondary,
+                )
+            }
         }
     }
 }
@@ -741,80 +773,93 @@ private fun RemoteTransport(
     @Suppress("UNUSED_EXPRESSION") clockTick
     // Profile-wide video intervals; 10s back / 30s forward on older servers.
     val intervals = rememberVideoSeekIntervals(SeekIntervalPair(10, 30))
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if (playback.hasNextEpisode) {
-            Arrangement.SpaceBetween
-        } else {
-            Arrangement.spacedBy(28.dp)
-        },
-        modifier = if (playback.hasNextEpisode) Modifier.fillMaxWidth() else Modifier,
-    ) {
-        if (playback.hasNextEpisode) {
-            // Balance the trailing Next button so the core transport remains
-            // centered instead of shifting left whenever an episode follows.
-            Spacer(modifier = Modifier.size(48.dp))
-        }
-
-        IconButton(onClick = {
-            controller.seek((controller.displayTime() - intervals.backSeconds).coerceAtLeast(0.0))
-        }) {
-            SeekIntervalIcon(
-                forward = false,
-                seconds = intervals.backSeconds,
-                contentDescription = "Back ${intervals.backSeconds} seconds",
-                tint = RemoteOnSurface,
-                modifier = Modifier.size(34.dp),
-            )
-        }
-
-        Surface(
-            onClick = { controller.playPause() },
-            shape = CircleShape,
-            color = RemoteOnSurface,
-            modifier = Modifier.size(64.dp),
+    LeftToRight {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = if (playback.hasNextEpisode) {
+                Arrangement.SpaceBetween
+            } else {
+                Arrangement.spacedBy(28.dp)
+            },
+            modifier = if (playback.hasNextEpisode) Modifier.fillMaxWidth() else Modifier,
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                if (playback.isLoading || playback.isBuffering) {
-                    CircularProgressIndicator(
-                        color = Color.Black,
-                        strokeWidth = 2.5.dp,
-                        modifier = Modifier.size(26.dp),
-                    )
-                } else {
-                    Icon(
-                        if (controller.isPlaying()) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (controller.isPlaying()) "Pause" else "Play",
-                        tint = Color.Black,
-                        modifier = Modifier.size(32.dp),
-                    )
+            if (playback.hasNextEpisode) {
+                // Balance the trailing Next button so the core transport remains
+                // centered instead of shifting left whenever an episode follows.
+                Spacer(modifier = Modifier.size(48.dp))
+            }
+
+            IconButton(onClick = {
+                controller.seek((controller.displayTime() - intervals.backSeconds).coerceAtLeast(0.0))
+            }) {
+                SeekIntervalIcon(
+                    forward = false,
+                    seconds = intervals.backSeconds,
+                    contentDescription = pluralStringResource(
+                        CommonR.plurals.player_skip_back,
+                        intervals.backSeconds,
+                        intervals.backSeconds,
+                    ),
+                    tint = RemoteOnSurface,
+                    modifier = Modifier.size(34.dp),
+                )
+            }
+
+            Surface(
+                onClick = { controller.playPause() },
+                shape = CircleShape,
+                color = RemoteOnSurface,
+                modifier = Modifier.size(64.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    if (playback.isLoading || playback.isBuffering) {
+                        CircularProgressIndicator(
+                            color = Color.Black,
+                            strokeWidth = 2.5.dp,
+                            modifier = Modifier.size(26.dp),
+                        )
+                    } else {
+                        Icon(
+                            if (controller.isPlaying()) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = stringResource(
+                                if (controller.isPlaying()) CommonR.string.player_controls_pause else CommonR.string.common_play,
+                            ),
+                            tint = Color.Black,
+                            modifier = Modifier.size(32.dp),
+                        )
+                    }
                 }
             }
-        }
 
-        IconButton(onClick = {
-            val base = controller.displayTime()
-            val step = intervals.forwardSeconds.toDouble()
-            val target = if (playback.duration > 0.0) (base + step).coerceAtMost(playback.duration) else base + step
-            controller.seek(target)
-        }) {
-            SeekIntervalIcon(
-                forward = true,
-                seconds = intervals.forwardSeconds,
-                contentDescription = "Forward ${intervals.forwardSeconds} seconds",
-                tint = RemoteOnSurface,
-                modifier = Modifier.size(34.dp),
-            )
-        }
-
-        if (playback.hasNextEpisode) {
-            IconButton(onClick = { controller.playNext() }) {
-                Icon(
-                    Icons.Filled.SkipNext,
-                    contentDescription = playback.nextEpisodeTitle?.let { "Next: $it" } ?: "Next episode",
+            IconButton(onClick = {
+                val base = controller.displayTime()
+                val step = intervals.forwardSeconds.toDouble()
+                val target = if (playback.duration > 0.0) (base + step).coerceAtMost(playback.duration) else base + step
+                controller.seek(target)
+            }) {
+                SeekIntervalIcon(
+                    forward = true,
+                    seconds = intervals.forwardSeconds,
+                    contentDescription = pluralStringResource(
+                        CommonR.plurals.player_skip_forward,
+                        intervals.forwardSeconds,
+                        intervals.forwardSeconds,
+                    ),
                     tint = RemoteOnSurface,
-                    modifier = Modifier.size(30.dp),
+                    modifier = Modifier.size(34.dp),
                 )
+            }
+
+            if (playback.hasNextEpisode) {
+                IconButton(onClick = { controller.playNext() }) {
+                    Icon(
+                        Icons.Filled.SkipNext,
+                        contentDescription = playback.nextEpisodeTitle?.let { stringResourceWithNames(CommonR.string.cast_remote_nextNamed, it) }
+                            ?: stringResource(CommonR.string.cast_remote_nextEpisode),
+                        tint = RemoteOnSurface,
+                        modifier = Modifier.size(30.dp),
+                    )
+                }
             }
         }
     }
@@ -842,7 +887,9 @@ private fun RemoteVolumeRow(
                 } else {
                     Icons.AutoMirrored.Filled.VolumeDown
                 },
-                contentDescription = if (playback.isMuted) "Unmute" else "Mute",
+                contentDescription = stringResource(
+                    if (playback.isMuted) CommonR.string.cast_remote_unmute else CommonR.string.cast_remote_mute,
+                ),
                 tint = RemoteOnSurface,
             )
         }
@@ -870,6 +917,27 @@ private fun RemoteVolumeRow(
     }
 }
 
+/** A TV that can only mute (Roku, `volume_mute_only`) gets a toggle instead of a level slider. */
+@Composable
+private fun RemoteMuteToggle(
+    playback: SiloCastPlaybackState,
+    controller: SiloCastController,
+) {
+    OutlinedButton(onClick = { controller.setMuted(!playback.isMuted) }) {
+        Icon(
+            if (playback.isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+            contentDescription = null,
+            tint = RemoteOnSurface,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            stringResource(if (playback.isMuted) CommonR.string.cast_remote_unmute else CommonR.string.cast_remote_mute),
+            color = RemoteOnSurface,
+        )
+    }
+}
+
 @Composable
 private fun remoteSliderColors() = SliderDefaults.colors(
     thumbColor = RemoteOnSurface,
@@ -884,13 +952,13 @@ private data class MenuEntry(
     val label: String,
     val selected: Boolean,
     val enabled: Boolean = true,
-    val isSectionHeader: Boolean = false,
     val onClick: () -> Unit = {},
 )
 
 @Composable
 private fun RemoteSecondaryControls(
     playback: SiloCastPlaybackState,
+    showSpeed: Boolean,
     controller: SiloCastController,
 ) {
     Row(
@@ -901,7 +969,7 @@ private fun RemoteSecondaryControls(
         if (playback.qualityOptions.isNotEmpty()) {
             RemoteChipMenu(
                 icon = Icons.Outlined.Tune,
-                caption = "Quality",
+                caption = stringResource(CommonR.string.cast_remote_quality),
                 enabled = !playback.isQualitySwitching,
                 entries = playback.qualityOptions.map { option ->
                     MenuEntry(
@@ -917,7 +985,7 @@ private fun RemoteSecondaryControls(
         if (playback.audioTracks.isNotEmpty()) {
             RemoteChipMenu(
                 icon = Icons.Outlined.GraphicEq,
-                caption = "Audio",
+                caption = stringResource(CommonR.string.cast_remote_audio),
                 entries = playback.audioTracks.map { track ->
                     MenuEntry(
                         label = track.title,
@@ -929,83 +997,55 @@ private fun RemoteSecondaryControls(
             )
         }
 
-        val hasSubtitleControls = playback.subtitleTracks.isNotEmpty() ||
-            playback.supportsSubtitleDelay == true ||
-            playback.supportsSubtitlePosition == true
-        if (hasSubtitleControls) {
+        // Subtitle delay and position stay on the TV's own player menu;
+        // from the couch the remote only switches the language.
+        if (playback.subtitleTracks.isNotEmpty()) {
             RemoteChipMenu(
                 icon = Icons.Outlined.ClosedCaption,
-                caption = "Subtitles",
-                entries = subtitleMenuEntries(playback, controller),
+                caption = stringResource(CommonR.string.cast_subtitles_title),
+                entries = subtitleMenuEntries(playback, controller, offLabel = stringResource(CommonR.string.cast_subtitles_off)),
                 modifier = Modifier.weight(1f),
             )
         }
 
-        RemoteChipMenu(
-            icon = Icons.Outlined.Speed,
-            caption = "Speed",
-            entries = listOf(0.75, 1.0, 1.25, 1.5, 2.0).map { speed ->
-                MenuEntry(
-                    label = "${speed}×",
-                    selected = kotlin.math.abs(playback.playbackSpeed - speed) < 0.01,
-                    onClick = { controller.setPlaybackSpeed(speed) },
-                )
-            },
-            modifier = Modifier.weight(1f),
-        )
+        // A TV that lists `no_playback_speed` (Roku) has no speed to change.
+        if (showSpeed) {
+            RemoteChipMenu(
+                icon = Icons.Outlined.Speed,
+                caption = stringResource(CommonR.string.player_settings_speed),
+                entries = listOf(0.75, 1.0, 1.25, 1.5, 2.0).map { speed ->
+                    MenuEntry(
+                        label = "${speed}×",
+                        selected = kotlin.math.abs(playback.playbackSpeed - speed) < 0.01,
+                        onClick = { controller.setPlaybackSpeed(speed) },
+                    )
+                },
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
 
 private fun subtitleMenuEntries(
     playback: SiloCastPlaybackState,
     controller: SiloCastController,
+    offLabel: String,
 ): List<MenuEntry> = buildList {
-    if (playback.subtitleTracks.isNotEmpty()) {
-        add(MenuEntry(label = "Track", selected = false, isSectionHeader = true))
+    add(
+        MenuEntry(
+            label = offLabel,
+            selected = playback.selectedSubtitleTrackId == null,
+            onClick = { controller.selectSubtitleTrack(null) },
+        ),
+    )
+    playback.subtitleTracks.forEach { track ->
         add(
             MenuEntry(
-                label = "Off",
-                selected = playback.selectedSubtitleTrackId == null,
-                onClick = { controller.selectSubtitleTrack(null) },
+                label = track.title,
+                selected = playback.selectedSubtitleTrackId == track.trackId,
+                onClick = { controller.selectSubtitleTrack(track.trackId) },
             ),
         )
-        playback.subtitleTracks.forEach { track ->
-            add(
-                MenuEntry(
-                    label = track.title,
-                    selected = playback.selectedSubtitleTrackId == track.trackId,
-                    onClick = { controller.selectSubtitleTrack(track.trackId) },
-                ),
-            )
-        }
-    }
-    if (playback.supportsSubtitleDelay == true) {
-        add(MenuEntry(label = "Delay", selected = false, isSectionHeader = true))
-        val presets = listOf(-2_000, -1_500, -1_000, -500, -250, 0, 250, 500, 1_000, 1_500, 2_000)
-        val current = playback.subtitleSyncMs ?: 0
-        val options = if (presets.contains(current)) presets else (presets + current).sorted()
-        options.forEach { ms ->
-            add(
-                MenuEntry(
-                    label = subtitleDelayLabel(ms),
-                    selected = current == ms,
-                    onClick = { controller.setSubtitleSyncMs(ms) },
-                ),
-            )
-        }
-    }
-    if (playback.supportsSubtitlePosition == true) {
-        add(MenuEntry(label = "Position", selected = false, isSectionHeader = true))
-        // tvOS SubtitlePositionPreset raw values; it rejects anything else.
-        listOf("bottom" to "Bottom", "lower-third" to "Lower Third", "top" to "Top").forEach { (id, label) ->
-            add(
-                MenuEntry(
-                    label = label,
-                    selected = playback.subtitlePosition == id,
-                    onClick = { controller.setSubtitlePosition(id) },
-                ),
-            )
-        }
     }
 }
 
@@ -1042,38 +1082,28 @@ private fun RemoteChipMenu(
         }
         SiloDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             entries.forEach { entry ->
-                if (entry.isSectionHeader) {
-                    Text(
-                        entry.label,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                    )
-                } else {
-                    SiloDropdownMenuItem(
-                        text = { Text(entry.label) },
-                        enabled = entry.enabled,
-                        leadingIcon = {
-                            if (entry.selected) {
-                                Icon(Icons.Filled.Check, contentDescription = "Selected", modifier = Modifier.size(18.dp))
-                            } else {
-                                Spacer(modifier = Modifier.size(18.dp))
-                            }
-                        },
-                        onClick = {
-                            expanded = false
-                            entry.onClick()
-                        },
-                    )
-                }
+                SiloDropdownMenuItem(
+                    text = { Text(entry.label) },
+                    enabled = entry.enabled,
+                    leadingIcon = {
+                        if (entry.selected) {
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = stringResource(CommonR.string.player_menu_selected),
+                                modifier = Modifier.size(18.dp),
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.size(18.dp))
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        entry.onClick()
+                    },
+                )
             }
         }
     }
-}
-
-private fun subtitleDelayLabel(milliseconds: Int): String {
-    if (milliseconds == 0) return "0.0s"
-    return String.format(java.util.Locale.US, "%+.1fs", milliseconds / 1000.0)
 }
 
 private fun formatHMS(seconds: Double): String {

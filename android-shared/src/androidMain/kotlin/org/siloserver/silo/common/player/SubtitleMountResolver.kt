@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.player
 
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.SubtitleHlsRendition
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
@@ -80,6 +81,9 @@ fun resolveMountedSubtitle(
     identity: SubtitleIdentity,
     tracks: List<MountedSubtitleTrack>,
 ): MountedSubtitleMatch? {
+    if (identity is SubtitleIdentity.Embedded && identity.hlsRendition != null) {
+        return resolveHlsRenditionTrack(requireNotNull(identity.hlsRendition), tracks)
+    }
     if (identity is SubtitleIdentity.Embedded && identity.containerTrackId != null) {
         return tracks.filter { trackIdDenotes(it.trackId, requireNotNull(identity.containerTrackId)) }
             .singleOrNull()?.let(::MountedSubtitleMatch)
@@ -135,7 +139,7 @@ fun resolveMountedSubtitle(
     subtitle: PlayerSubtitleInfo,
     tracks: List<MountedSubtitleTrack>,
 ): MountedSubtitleMatch? {
-    if (subtitle.nativeContainerTrackId != null || subtitle.serverDelivery != null) {
+    if (subtitle.hlsRendition != null || subtitle.nativeContainerTrackId != null || subtitle.serverDelivery != null) {
         return resolveMountedSubtitle(org.siloserver.silo.playback.playbackSubtitleIdentity(subtitle), tracks)
     }
     val explicitSource = subtitle.effectiveSubtitleSource()
@@ -195,6 +199,27 @@ fun resolveMountedSubtitle(
         resolveMountedSubtitle(identity, tracks)?.let { return it }
     }
     return null
+}
+
+/**
+ * Finds the text track Media3 built from the plan's `EXT-X-MEDIA` subtitle
+ * rendition. `HlsPlaylistParser` names it `GROUP-ID:NAME` and labels it `NAME`,
+ * and the HLS period keeps both, so the id is the exact match. Should that id
+ * scheme change, the label still identifies the rendition when exactly one
+ * non-sidecar track carries it. Language never does: the rendition declares
+ * none, and an in-band CEA-608 track (unlabelled) must not be taken for it.
+ * Two candidates are ambiguous and resolve to nothing, which fails the mount.
+ */
+private fun resolveHlsRenditionTrack(
+    rendition: SubtitleHlsRendition,
+    tracks: List<MountedSubtitleTrack>,
+): MountedSubtitleMatch? {
+    val exact = tracks.filter { trackIdDenotes(it.trackId, rendition.media3TrackId) }
+    if (exact.isNotEmpty()) return exact.singleOrNull()?.let(::MountedSubtitleMatch)
+    return tracks
+        .filter { !it.hasReservedArtifactId() && it.label.normalizedValue() == rendition.name.trim() }
+        .singleOrNull()
+        ?.let(::MountedSubtitleMatch)
 }
 
 private fun SubtitleIdentity.expectedMediaTrackId(): String? = when (this) {

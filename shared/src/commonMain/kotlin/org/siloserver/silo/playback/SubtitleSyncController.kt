@@ -1,5 +1,8 @@
 package org.siloserver.silo.playback
 
+import org.siloserver.silo.common.i18n.SharedString
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorTextOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -33,7 +36,7 @@ data class SubtitleSyncEntry(
     /** The subtitle's format cannot be synced (422). */
     val unsupported: Boolean = false,
     /** The last action's failure, in plain words. */
-    val error: String? = null,
+    val error: UiText? = null,
     /** Polling gave up; reopening the subtitle menu re-arms it. */
     val pollExpired: Boolean = false,
     /**
@@ -43,7 +46,7 @@ data class SubtitleSyncEntry(
      */
     val watchedJobId: String? = null,
 ) {
-    val statusLabel: String? get() = subtitleSyncStatusLabel(state.timing, state.sync)
+    val statusLabel: UiText? get() = subtitleSyncStatusLabel(state.timing, state.sync)
     val inProgress: Boolean get() = state.sync?.inProgress == true
 }
 
@@ -60,7 +63,7 @@ data class SubtitleSyncUiState(
 }
 
 /** The sync status line for a row of the subtitle menu, or null when it has none. */
-fun SubtitleSyncUiState.statusLabelFor(track: PlayerSubtitleInfo?): String? =
+fun SubtitleSyncUiState.statusLabelFor(track: PlayerSubtitleInfo?): UiText? =
     track?.syncKey?.let(entries::get)?.statusLabel
 
 /**
@@ -71,28 +74,28 @@ fun SubtitleSyncUiState.statusLabelFor(track: PlayerSubtitleInfo?): String? =
  */
 data class SubtitleTimingActions(
     val key: String,
-    val statusLabel: String?,
+    val statusLabel: UiText?,
     val canSync: Boolean,
     val canReset: Boolean,
     val inProgress: Boolean,
     /** 0..100 while a job runs. */
     val percent: Int?,
     /** What a running job is doing. */
-    val phaseLabel: String?,
+    val phaseLabel: UiText?,
     /** The last finished job's outcome. */
     val result: SubtitleSyncResultLine?,
     /** What a sync does, shown before the first one. */
-    val note: String?,
+    val note: UiText?,
     val busy: Boolean,
     val forbidden: Boolean,
-    val error: String?,
+    val error: UiText?,
 ) {
     val actionsEnabled: Boolean get() = !busy && !inProgress
 
     companion object {
-        const val FORBIDDEN_MESSAGE = "This server doesn't allow changing subtitle timing."
-        const val SIDECAR_NOTE = "Matches the timing to the audio for everyone. The file itself isn't changed."
-        const val STORED_NOTE = "Matches the timing to the audio for everyone watching."
+        val FORBIDDEN_MESSAGE: UiText = UiText.Key(SharedString.SubtitleSyncForbidden)
+        val SIDECAR_NOTE: UiText = UiText.Key(SharedString.SubtitleSyncNoteSidecar)
+        val STORED_NOTE: UiText = UiText.Key(SharedString.SubtitleSyncNoteStored)
     }
 }
 
@@ -303,7 +306,7 @@ class SubtitleSyncController(
                     patch(key) { it.copy(busy = false) }
                     startPolling()
                 }
-                else -> fail(key, result, "Sync failed")
+                else -> fail(key, result, SharedString.SubtitleSyncStatusFailed)
             }
         }
     }
@@ -322,19 +325,20 @@ class SubtitleSyncController(
                     observe(result.data, sent)
                     patch(key) { it.copy(busy = false) }
                 }
-                else -> fail(key, result, "Couldn't reset timing")
+                else -> fail(key, result, SharedString.SubtitleSyncResetFailed)
             }
         }
     }
 
-    private fun fail(key: String, result: ApiResult<*>, fallback: String) {
+    private fun fail(key: String, result: ApiResult<*>, fallback: SharedString) {
         val error = result as? ApiResult.Error
         patch(key) { entry ->
             when (error?.code) {
                 403 -> entry.copy(busy = false, forbidden = true, error = null)
-                422 -> entry.copy(busy = false, unsupported = true, error = "This format can't be synced.")
-                412 -> entry.copy(busy = false, error = "The subtitle changed. Try again.")
-                else -> entry.copy(busy = false, error = error?.message?.takeIf { it.isNotBlank() } ?: fallback)
+                422 -> entry.copy(busy = false, unsupported = true, error = UiText.Key(SharedString.SubtitleSyncFormatUnsupported))
+                412 -> entry.copy(busy = false, error = UiText.Key(SharedString.SubtitleSyncSubtitleChanged))
+                // A request with no answer shows the fallback, not the network text.
+                else -> entry.copy(busy = false, error = error?.errorTextOrNull() ?: UiText.Key(fallback))
             }
         }
     }

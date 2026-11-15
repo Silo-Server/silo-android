@@ -32,6 +32,7 @@ fun mountVideoMedia(
         transformations = spec.transformations,
         runtimeCorrections = spec.runtimeCorrections,
         activeClaims = spec.activeClaims,
+        allowsLocalRoute = spec.allowsLocalRoute,
     )
     player.setMediaItem(mediaItem, startPositionMs.coerceAtLeast(0L))
     player.prepare()
@@ -66,6 +67,7 @@ fun refreshMountedVideoMedia(
         transformations = spec.transformations,
         runtimeCorrections = spec.runtimeCorrections,
         activeClaims = spec.activeClaims,
+        allowsLocalRoute = spec.allowsLocalRoute,
     )
     player.setMediaItem(mediaItem, resumePositionMs)
     player.prepare()

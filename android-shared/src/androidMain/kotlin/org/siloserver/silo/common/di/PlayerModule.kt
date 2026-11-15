@@ -13,6 +13,7 @@ import org.siloserver.silo.common.player.PlaybackNetworkMonitor
 import org.siloserver.silo.common.player.audio.DelayAudioProcessor
 import org.siloserver.silo.common.player.buildPlayerOkHttpClient
 import org.siloserver.silo.common.player.buildPlayerRefreshOkHttpClient
+import org.siloserver.silo.common.player.withSidecarSubtitleTimeouts
 import org.siloserver.silo.common.player.subtitle.SubtitleOffsetHolder
 import org.siloserver.silo.libass.LibassBridge
 import okhttp3.OkHttpClient
@@ -28,6 +29,7 @@ import org.koin.dsl.module
 val PLAYER_OKHTTP_QUALIFIER = named("player-okhttp")
 val PLAYER_TRANSPORT_OKHTTP_QUALIFIER = named("player-transport-okhttp")
 val PLAYER_HTTP_DATA_SOURCE_FACTORY_QUALIFIER = named("player-http-data-source-factory")
+val PLAYER_SIDECAR_SUBTITLE_HTTP_DATA_SOURCE_FACTORY_QUALIFIER = named("player-sidecar-subtitle-http-data-source-factory")
 val AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER = named("audiobook-playback-session-manager")
 val AUDIOBOOK_PLAYBACK_SESSION_LIFECYCLE_QUALIFIER = named("audiobook-playback-session-lifecycle")
 
@@ -65,8 +67,24 @@ val playerModule = module {
         OkHttpDataSource.Factory(org.siloserver.silo.common.player.auxiliaryAwareCallFactory(get<OkHttpClient>(PLAYER_TRANSPORT_OKHTTP_QUALIFIER)))
     }
 
+    // Same pool and interceptors; only the per-read wait differs (#458).
+    @OptIn(UnstableApi::class)
+    single<HttpDataSource.Factory>(PLAYER_SIDECAR_SUBTITLE_HTTP_DATA_SOURCE_FACTORY_QUALIFIER) {
+        OkHttpDataSource.Factory(
+            org.siloserver.silo.common.player.auxiliaryAwareCallFactory(
+                get<OkHttpClient>(PLAYER_TRANSPORT_OKHTTP_QUALIFIER).withSidecarSubtitleTimeouts(),
+            ),
+        )
+    }
+
     @OptIn(UnstableApi::class)
     single { DefaultBandwidthMeter.Builder(androidContext()).build() }
+
+    // Each plan's throughput_kbps: the player's video requests feed it, plan summaries read it.
+    single {
+        val network = get<PlaybackNetworkEvidenceProvider>()
+        org.siloserver.silo.common.player.PlaybackThroughputMeter(networkId = { network.snapshot().networkId })
+    }
 
     @OptIn(UnstableApi::class)
     single<PlaybackNetworkEvidenceProvider> {

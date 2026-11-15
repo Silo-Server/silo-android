@@ -402,7 +402,8 @@ class SubtitleManager(
             "vtt", "webvtt" -> MimeTypes.TEXT_VTT
             "ttml" -> MimeTypes.APPLICATION_TTML
             "pgs", "hdmv_pgs_subtitle" -> MimeTypes.APPLICATION_PGS
-            "dvd_subtitle", "dvdsub" -> MimeTypes.APPLICATION_DVBSUBS
+            "dvd_subtitle", "dvdsub", "vobsub" -> MimeTypes.APPLICATION_VOBSUB
+            "dvb_subtitle", "dvbsub" -> MimeTypes.APPLICATION_DVBSUBS
             else -> MimeTypes.APPLICATION_SUBRIP // default to SRT
         }
     }
@@ -1714,6 +1715,17 @@ fun isSubtitleSelected(tracks: Tracks, identity: SubtitleIdentity): Boolean {
 }
 
 /**
+ * Whether the player shows what [identity] asks for: the exact track, or for
+ * Off no text track at all. A local switch confirms itself with this.
+ */
+fun isSubtitleSelectionApplied(tracks: Tracks, identity: SubtitleIdentity): Boolean =
+    if (identity == SubtitleIdentity.Off) {
+        tracks.groups.none { it.type == C.TRACK_TYPE_TEXT && it.isSelected }
+    } else {
+        isSubtitleSelected(tracks, identity)
+    }
+
+/**
  * Every text track in a snapshot that this device can render, in snapshot
  * order, described the way subtitle resolution sees it.
  */
@@ -1856,6 +1868,6 @@ private fun logSubtitleCueGeometry(cues: List<Cue>) {
             " lineType=" + cue.lineType +
             " lineAnchor=" + cue.lineAnchor +
             " textAlignment=" + cue.textAlignment +
-            " text=" + cue.text?.toString()?.take(28),
+            " text=" + cue.text?.toString()?.take(28), // i18n-ignore
     )
 }

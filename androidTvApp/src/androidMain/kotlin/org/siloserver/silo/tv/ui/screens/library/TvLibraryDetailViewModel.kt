@@ -1,7 +1,18 @@
 package org.siloserver.silo.tv.ui.screens.library
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
+import org.siloserver.silo.common.i18n.detailedErrorText
+import androidx.annotation.StringRes
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.catalog.sort.CatalogSortField
+import org.siloserver.silo.catalog.sort.CatalogSortRelevance
+import org.siloserver.silo.common.catalog.directionLabelRes
+import org.siloserver.silo.common.catalog.labelRes
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.settings.BrowsePrefsStore
 import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.catalog.BrowseItem
@@ -35,15 +46,15 @@ import kotlinx.coroutines.sync.withPermit
  * variants are request presets over the same catalog grid, while Collections
  * and Recommended keep their dedicated surfaces.
  */
-enum class TvLibraryTab(val label: String) {
-    Recommended("Recommended"),
-    Collections("Collections"),
-    Browse("Browse"),
-    Genres("Genres"),
-    Alphabet("A-Z"),
-    RecentlyAdded("Recently Added"),
-    Authors("Authors"),
-    Series("Series"),
+enum class TvLibraryTab {
+    Recommended,
+    Collections,
+    Browse,
+    Genres,
+    Alphabet,
+    RecentlyAdded,
+    Authors,
+    Series,
 }
 
 /**
@@ -63,84 +74,131 @@ data class TvCollectionSection(
 )
 
 /**
- * Sortable catalog fields for the library Browse grid, mirroring tvOS
- * `CatalogSortKey` (labels, per-media-type availability, default order, and
- * direction hints). Wire values are the canonical server sort fields.
+ * One entry in a TV sort panel: a catalog sort field, or one of the "keep the
+ * source's own order" entries. Fields, names, and default directions come from
+ * the shared [CatalogSortField] list, which mirrors the web client.
  */
-enum class TvLibrarySortOption(val label: String, val wireValue: String) {
-    /**
-     * "Send no sort at all" — the server then keeps the source's intrinsic
-     * order (a library collection's manual / MDBList / smart order). Only
-     * offered where such an order exists ([availableForCollection]); the
-     * Browse grid has none, so it never lists this.
-     */
-    CollectionOrder("Collection Order", ""),
-    /**
-     * The same "send no sort" behaviour for personal lists (favorites /
-     * watchlist), where the stored order is most-recently-saved-first. It is a
-     * distinct entry with its own wire value rather than a relabelled
-     * [CollectionOrder]: two entries sharing the empty wire value would make
-     * [fromWire] and the panel's current-selection lookup ambiguous. The
-     * personal query builder maps it back to "no sort".
-     */
-    ListOrder("Recently Saved", "__list_order"),
-    Title("Title", "title"),
-    DateAdded("Date Added", "added_at"),
-    ReleaseDate("Release Date", "release_date"),
-    Year("Year", "year"),
-    Rating("Rating", "rating_imdb"),
-    Runtime("Runtime", "runtime"),
-    Resolution("Resolution", "resolution"),
-    Author("Author", "author"),
-    Narrator("Narrator", "narrator"),
-    SeriesName("Series", "series");
+data class TvLibrarySortOption(
+    @StringRes val labelRes: Int,
+    val wireValue: String,
+    /** Null for the source-order entries, which send no sort. */
+    val sortField: CatalogSortField?,
+) {
+    /** The sort key's name, as the sort pill and panel show it. */
+    val label: String
+        @Composable get() = stringResource(labelRes)
 
     /**
      * False for the "keep the source's own order" entries: they send no sort,
      * so there is no asc/desc to show, flip, or arrow.
      */
-    val hasDirection: Boolean get() = this != CollectionOrder && this != ListOrder
+    val hasDirection: Boolean get() = sortField != null
 
-    /** Short hint for the active direction (tvOS `directionLabel`). */
-    fun directionLabel(order: String): String = when (this) {
-        // No direction to report — the order is whatever the source defines.
-        CollectionOrder, ListOrder -> "Default"
-        Title, Author, Narrator, SeriesName -> if (order == "asc") "A–Z" else "Z–A"
-        ReleaseDate, Year, DateAdded -> if (order == "asc") "Oldest" else "Newest"
-        Runtime -> if (order == "asc") "Shortest" else "Longest"
-        Rating, Resolution -> if (order == "asc") "Lowest" else "Highest"
-    }
+    /** The direction a newly picked sort starts in (the server's natural direction for the field). */
+    val defaultOrder: String get() = sortField?.defaultOrder ?: "asc"
+
+    /** Short hint for the active direction ("A–Z", "Newest", ...; tvOS `directionLabel`). */
+    @Composable
+    fun directionLabel(order: String): String = stringResource(
+        // The source-order entries have no direction to report.
+        sortField?.directionLabelRes(order) ?: CommonR.string.library_direction_default,
+    )
 
     companion object {
-        fun fromWire(value: String): TvLibrarySortOption =
-            entries.firstOrNull { it.wireValue == value } ?: DateAdded
+        /**
+         * "Send no sort at all" — the server then keeps the source's intrinsic
+         * order (a library collection's manual / MDBList / smart order). Only
+         * offered where such an order exists ([availableForCollection]); the
+         * Browse grid has none, so it never lists this.
+         */
+        val CollectionOrder = TvLibrarySortOption(CommonR.string.catalog_sort_collectionOrder, "", null)
 
-        /** Sort keys offered for a library media type, in tvOS display order. */
-        fun availableFor(libraryType: String): List<TvLibrarySortOption> =
-            if (org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType(libraryType)) {
-                listOf(Title, Author, Narrator, SeriesName, DateAdded, Runtime)
-            } else {
-                listOf(Title, DateAdded, ReleaseDate, Year, Rating, Runtime, Resolution)
-            }
+        /**
+         * The same "send no sort" behaviour for personal lists (favorites /
+         * watchlist), where the stored order is most-recently-saved-first. It
+         * has its own wire value rather than relabelling [CollectionOrder]: two
+         * entries sharing the empty wire value would make [fromWire] and the
+         * panel's current-selection lookup ambiguous. The personal query
+         * builder maps it back to "no sort".
+         */
+        val ListOrder = TvLibrarySortOption(CommonR.string.catalog_sort_recentlySaved, "__list_order", null)
+
+        val Title = of(CatalogSortField.Title)
+        val DateAdded = of(CatalogSortField.DateAdded)
+
+        fun of(field: CatalogSortField, relevance: CatalogSortRelevance = CatalogSortRelevance.Any) =
+            TvLibrarySortOption(field.labelRes(relevance), field.wireValue, field)
+
+        /** The entry for a wire value; [fallback] when it names nothing this client knows. */
+        fun fromWire(
+            value: String,
+            relevance: CatalogSortRelevance = CatalogSortRelevance.Any,
+            fallback: TvLibrarySortOption = DateAdded,
+        ): TvLibrarySortOption = when (value) {
+            CollectionOrder.wireValue -> CollectionOrder
+            ListOrder.wireValue -> ListOrder
+            else -> CatalogSortField.fromWire(value)?.let { of(it, relevance) } ?: fallback
+        }
+
+        /**
+         * Sort keys for a library's Browse grid, in the web client's order.
+         * [mediaScope] is the mixed library side being browsed, if any;
+         * [current] stays listed while it is the active sort.
+         */
+        fun availableFor(
+            libraryType: String,
+            mediaScope: String? = null,
+            shownRatingSources: Set<String> = emptySet(),
+            current: String? = null,
+        ): List<TvLibrarySortOption> {
+            val relevance = CatalogSortRelevance.forLibrary(libraryType, mediaScope)
+            return CatalogSortField.options(
+                relevance = relevance,
+                includePersonalized = true,
+                shownRatingSources = shownRatingSources,
+                keep = CatalogSortField.fromWire(current),
+            ).map { of(it, relevance) }
+        }
 
         /**
          * Sort keys for a library collection's detail grid. Leads with
          * [CollectionOrder] because that is the collection's own curation and
          * the state the page opens in; the rest follow the owning library's
          * media type, so an audiobook collection offers Author/Narrator/Series
-         * rather than the video-only Year/Rating/Resolution keys (Codex).
+         * rather than the video-only rating and resolution keys. Per-viewer
+         * sorts are left out: a library collection resolves without a viewer.
          */
-        fun availableForCollection(libraryType: String): List<TvLibrarySortOption> =
-            listOf(CollectionOrder) + availableFor(libraryType)
+        fun availableForCollection(
+            libraryType: String,
+            mediaScope: String? = null,
+            shownRatingSources: Set<String> = emptySet(),
+            current: String? = null,
+        ): List<TvLibrarySortOption> {
+            val relevance = CatalogSortRelevance.forLibrary(libraryType, mediaScope)
+            return listOf(CollectionOrder) + CatalogSortField.options(
+                relevance = relevance,
+                includePersonalized = false,
+                shownRatingSources = shownRatingSources,
+                keep = CatalogSortField.fromWire(current),
+            ).map { of(it, relevance) }
+        }
 
         /**
          * Sort keys for a personal list (favorites / watchlist). Leads with
          * [ListOrder] — the stored order the list opens in. [DateAdded] here
          * means "date added to the list", which is what the server sorts
-         * `added_at` by for these sources.
+         * `added_at` by for these sources. Matches the web client's favorites
+         * and watchlist pages: every field except the per-viewer ones.
          */
-        fun availableForPersonalList(): List<TvLibrarySortOption> =
-            listOf(ListOrder, Title, DateAdded, Year, Rating, Runtime)
+        fun availableForPersonalList(
+            shownRatingSources: Set<String> = emptySet(),
+            current: String? = null,
+        ): List<TvLibrarySortOption> = listOf(ListOrder) + CatalogSortField.options(
+            relevance = CatalogSortRelevance.Any,
+            includePersonalized = false,
+            shownRatingSources = shownRatingSources,
+            keep = CatalogSortField.fromWire(current),
+        ).map { of(it) }
     }
 }
 
@@ -174,10 +232,12 @@ class TvLibraryDetailViewModel(
     data class UiState(
         val title: String,
         val libraryType: String,
+        /** The mixed library side (`movie` / `series`) being browsed, if any. */
+        val mediaScope: String? = null,
         val selectedTab: TvLibraryTab = TvLibraryTab.Recommended,
         val sections: List<ResolvedSection> = emptyList(),
         val recommendedLoading: Boolean = true,
-        val recommendedError: String? = null,
+        val recommendedError: UiText? = null,
         val genres: List<String> = emptyList(),
         /** Full facet vocabulary for the Browse filter panel (lazy-loaded). */
         val facetOptions: org.siloserver.silo.model.catalog.CatalogFiltersResponse? = null,
@@ -188,18 +248,18 @@ class TvLibraryDetailViewModel(
         val browseLibraryHasItems: Boolean? = null,
         val browseLoading: Boolean = false,
         val browseLoadingMore: Boolean = false,
-        val browseError: String? = null,
+        val browseError: UiText? = null,
         val browseFilter: TvLibraryBrowseFilter = TvLibraryBrowseFilter(),
         val audiobookGroups: List<AudiobookGroup> = emptyList(),
         val audiobookGroupsHasMore: Boolean = false,
         val audiobookGroupsLoading: Boolean = false,
         val audiobookGroupsLoadingMore: Boolean = false,
-        val audiobookGroupsError: String? = null,
+        val audiobookGroupsError: UiText? = null,
         val selectedAudiobookGroup: AudiobookGroup? = null,
         val collections: List<LibraryCollection> = emptyList(),
         val collectionSections: List<TvCollectionSection> = emptyList(),
         val collectionsLoading: Boolean = false,
-        val collectionsError: String? = null,
+        val collectionsError: UiText? = null,
         /** "Preserve sort & filters" for this library's Browse grid (default ON). */
         val preserveFilters: Boolean = true,
     )
@@ -208,6 +268,7 @@ class TvLibraryDetailViewModel(
         UiState(
             title = libraryTitle,
             libraryType = libraryType,
+            mediaScope = mediaScope,
             preserveFilters = browsePrefs?.preserveEnabled(libraryId, mediaScope) ?: true,
         ),
     )
@@ -536,7 +597,7 @@ class TvLibraryDetailViewModel(
             if (run != recommendedGeneration || !kotlinx.coroutines.currentCoroutineContext().isActive) return@launch
             if (owner == null) {
                 loadedRecommended = false
-                _uiState.update { it.copy(sections = emptyList(), recommendedLoading = false, recommendedError = "Sign in to load library sections.") }
+                _uiState.update { it.copy(sections = emptyList(), recommendedLoading = false, recommendedError = UiText.Res(CommonR.string.library_error_signInForSections)) }
                 return@launch
             }
             suspend fun mayPublish(): Boolean {
@@ -557,7 +618,7 @@ class TvLibraryDetailViewModel(
                     _uiState.update {
                         it.copy(
                             recommendedLoading = false,
-                            recommendedError = layoutResult.message.ifBlank { "Failed to load sections" },
+                            recommendedError = layoutResult.errorText(CommonR.string.library_error_loadSections),
                         )
                     }
                     return@launch
@@ -567,7 +628,7 @@ class TvLibraryDetailViewModel(
                     _uiState.update {
                         it.copy(
                             recommendedLoading = false,
-                            recommendedError = "Network error: ${layoutResult.exception.message ?: "unknown"}",
+                            recommendedError = layoutResult.detailedErrorText(),
                         )
                     }
                     return@launch
@@ -623,8 +684,11 @@ class TvLibraryDetailViewModel(
                 it.copy(
                     sections = scoped.map { it.section }.visibleOnTv(),
                     recommendedLoading = false,
-                    recommendedError = if (scoped.any { it.incomplete })
-                        "Some shelves could not be fully loaded for this media type. Retry or open Browse." else null,
+                    recommendedError = if (scoped.any { it.incomplete }) {
+                        UiText.Res(CommonR.string.library_error_someShelvesForType)
+                    } else {
+                        null
+                    },
                 )
             }
         }
@@ -764,7 +828,7 @@ class TvLibraryDetailViewModel(
                         it.copy(
                             browseLoading = false,
                             browseLoadingMore = false,
-                            browseError = result.message.ifBlank { "Failed to load library" },
+                            browseError = result.errorText(CommonR.string.library_error_loadLibrary),
                         )
                     }
                 }
@@ -774,7 +838,7 @@ class TvLibraryDetailViewModel(
                         it.copy(
                             browseLoading = false,
                             browseLoadingMore = false,
-                            browseError = "Network error: ${result.exception.message ?: "unknown"}",
+                            browseError = result.detailedErrorText(),
                         )
                     }
                 }
@@ -841,7 +905,7 @@ class TvLibraryDetailViewModel(
                         it.copy(
                             audiobookGroupsLoading = false,
                             audiobookGroupsLoadingMore = false,
-                            audiobookGroupsError = result.message.ifBlank { "Failed to load audiobook groups" },
+                            audiobookGroupsError = result.errorText(CommonR.string.library_error_loadAudiobookGroups),
                         )
                     }
                 }
@@ -852,7 +916,7 @@ class TvLibraryDetailViewModel(
                         it.copy(
                             audiobookGroupsLoading = false,
                             audiobookGroupsLoadingMore = false,
-                            audiobookGroupsError = "Network error: ${result.exception.message ?: "unknown"}",
+                            audiobookGroupsError = result.detailedErrorText(),
                         )
                     }
                 }
@@ -885,7 +949,7 @@ class TvLibraryDetailViewModel(
                     _uiState.update {
                         it.copy(
                             collectionsLoading = false,
-                            collectionsError = result.message.ifBlank { "Failed to load collections" },
+                            collectionsError = result.errorText(CommonR.string.collections_error_loadCollections),
                         )
                     }
                 }
@@ -894,7 +958,7 @@ class TvLibraryDetailViewModel(
                     _uiState.update {
                         it.copy(
                             collectionsLoading = false,
-                            collectionsError = "Network error: ${result.exception.message ?: "unknown"}",
+                            collectionsError = result.detailedErrorText(),
                         )
                     }
                 }
@@ -1009,23 +1073,4 @@ private val TvLibraryTab.audiobookCatalogField: String?
         TvLibraryTab.Authors -> "author"
         TvLibraryTab.Series -> "series"
         else -> null
-    }
-
-// Mirrors the server's per-field natural direction (tvOS `defaultOrder`):
-// name-like fields ascend, magnitude/recency fields descend.
-internal val TvLibrarySortOption.defaultOrder: String
-    get() = when (this) {
-        // Unused — these send no sort, so no order goes with them.
-        TvLibrarySortOption.CollectionOrder,
-        TvLibrarySortOption.ListOrder,
-        TvLibrarySortOption.Title,
-        TvLibrarySortOption.Author,
-        TvLibrarySortOption.Narrator,
-        TvLibrarySortOption.SeriesName -> "asc"
-        TvLibrarySortOption.DateAdded,
-        TvLibrarySortOption.ReleaseDate,
-        TvLibrarySortOption.Year,
-        TvLibrarySortOption.Rating,
-        TvLibrarySortOption.Runtime,
-        TvLibrarySortOption.Resolution -> "desc"
     }

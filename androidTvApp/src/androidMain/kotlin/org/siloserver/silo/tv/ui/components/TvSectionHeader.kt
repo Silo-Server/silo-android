@@ -17,12 +17,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.tv.ui.theme.sectionEyebrow
 import org.siloserver.silo.tv.ui.theme.siloFocus
 
@@ -87,7 +89,7 @@ fun TvSectionHeader(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "See all",
+                    text = stringResource(CommonR.string.shell_section_seeAll),
                     style = MaterialTheme.typography.labelMedium,
                     color = Color.White.copy(alpha = 0.75f),
                 )

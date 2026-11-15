@@ -180,6 +180,9 @@ android {
         baseline = file("lint-baseline.xml")
         abortOnError = true
         fatal += setOf("NewApi", "InlinedApi")
+        // Translations arrive per language and may lag English; a missing
+        // one falls back to English at runtime by design.
+        disable += "MissingTranslation"
         checkReleaseBuilds = true
     }
 }

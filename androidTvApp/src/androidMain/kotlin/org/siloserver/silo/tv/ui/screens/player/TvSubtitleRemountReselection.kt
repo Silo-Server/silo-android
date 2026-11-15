@@ -300,7 +300,13 @@ internal class SubtitleRemountReselection(
 private fun SubtitleIdentity.exactTvMountTrackId(): String? = when (this) {
     is SubtitleIdentity.ServerSidecar -> subtitleArtifactTrackId(serverIndex)
     is SubtitleIdentity.Downloaded -> downloadedSubtitleArtifactTrackId(downloadId)
-    is SubtitleIdentity.Embedded -> containerTrackId ?: media.trackId?.trim()?.takeIf(String::isNotEmpty)
+    // A rendition's Media3 id is resolved by resolveMountedSubtitle, which
+    // owns the HLS naming rule, so it takes the resolver path below.
+    is SubtitleIdentity.Embedded -> if (hlsRendition != null) {
+        null
+    } else {
+        containerTrackId ?: media.trackId?.trim()?.takeIf(String::isNotEmpty)
+    }
     is SubtitleIdentity.LocalMedia3 -> media.trackId?.trim()?.takeIf(String::isNotEmpty)
     SubtitleIdentity.Off,
     is SubtitleIdentity.ServerBurnIn,

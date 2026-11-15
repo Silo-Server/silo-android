@@ -2,6 +2,8 @@
 
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.playback.SubtitleSyncNotice
 import android.app.Activity
 import android.content.ComponentName
@@ -51,6 +53,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -73,7 +76,11 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -105,7 +112,10 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.settings.SeekIntervalStore
 import org.siloserver.silo.model.settings.SeekIntervalPair
 import org.koin.compose.viewmodel.koinViewModel
@@ -116,6 +126,7 @@ import org.siloserver.silo.cast.SiloCastTrack
 import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.pip.SiloPictureInPicturePlaybackState
 import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
+import org.siloserver.silo.common.player.allowsAudioDelay
 import org.siloserver.silo.common.player.videoPlayerViewport
 import org.siloserver.silo.common.player.videoViewportBounds
 import org.siloserver.silo.common.player.ActivePlayerHolder
@@ -127,16 +138,20 @@ import org.siloserver.silo.common.player.LetterboxInsets
 import org.siloserver.silo.common.player.PlayWhenReadyReconciliationGate
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackPreflightListener
+import org.siloserver.silo.common.player.NoticeTone
 import org.siloserver.silo.common.player.PlayerNotice
 import org.siloserver.silo.common.player.video.markerSkipTarget
 import org.siloserver.silo.common.player.video.MarkerSkipTarget
 import org.siloserver.silo.common.player.video.ManualMarkerKind
 import org.siloserver.silo.common.player.SessionState
+import org.siloserver.silo.common.player.rememberPlayerSpinnerVisible
 import org.siloserver.silo.common.player.SiloPlaybackService
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.common.player.SubtitleManager
 import org.siloserver.silo.common.player.VideoPlayerMediaSpec
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
+import org.siloserver.silo.common.player.mediaMountKey
+import org.siloserver.silo.common.player.mountedPlaybackKey
 import org.siloserver.silo.common.player.videoMountToken
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackend
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
@@ -147,6 +162,8 @@ import org.siloserver.silo.common.player.video.PostResumeVideoStallDetector
 import org.siloserver.silo.common.player.video.VideoPlayerTrackEntry
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
+import org.siloserver.silo.domain.player.BufferingQualityNotice
+import org.siloserver.silo.domain.player.BufferingQualityPill
 import org.siloserver.silo.domain.player.IntroAutoSkipState
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.SubtitleIdentity
@@ -164,13 +181,15 @@ import org.siloserver.silo.tv.cast.TvSiloCastPlayerAdapter
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
 import org.siloserver.silo.tv.data.preferences.PlaybackQuality
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
-import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.TvMediaCard
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
+import org.siloserver.silo.tv.ui.components.bidiIsolated
+import org.siloserver.silo.common.i18n.isRightToLeftText
+import org.siloserver.silo.common.i18n.currentNumberLocale
 
 private const val CONTROLS_AUTO_HIDE_MS = 5_000L
 // Pre-revision-9 relative seeks: 10s back, 30s forward, matching tvOS
@@ -249,12 +268,6 @@ internal fun advanceCleanPlaybackSeekPreview(
     }
 }
 
-internal fun shouldShowReconnectSpinner(
-    isReconnecting: Boolean,
-    showNextUp: Boolean,
-    isInPictureInPictureMode: Boolean,
-): Boolean = isReconnecting && !showNextUp && !isInPictureInPictureMode
-
 /**
  * Full-screen TV player. The ExoPlayer itself lives in [SiloPlaybackService];
  * we drive it via a [MediaController]. The Compose overlay ([TvPlayerControls])
@@ -275,6 +288,8 @@ fun TvPlayerScreen(
     // Up Next On Deck pick: replace this player with one for that item.
     onPlayOnDeckItem: (contentId: String, itemType: String) -> Unit = { _, _ -> },
     preferredFileId: Int? = null,
+    // The viewer picked preferredFileId's version: the start pins it.
+    versionChosen: Boolean = false,
     preferredQuality: String? = null,
     // Watch Party room. When non-null, [WatchPartyPlayback] binds this player
     // to the room for the lifetime of the screen and the room's playback
@@ -310,13 +325,14 @@ fun TvPlayerScreen(
     // the detail screen and replaying actually spins up a fresh player
     // session instead of reusing the cached one bound to the first fileId.
     viewModel: TvPlayerViewModel = koinViewModel(
-        key = "tv-player-$contentId-$libraryId-${preferredFileId ?: "auto"}-${preferredQuality ?: "quality-auto"}-${roomId ?: "solo"}-${resumePositionOverride ?: "server"}-${initialAudioTrackIndex ?: "a"}-${initialSubtitleTrackIndex ?: "s"}-${shuffleId ?: "in-order"}",
+        key = "tv-player-$contentId-$libraryId-${preferredFileId ?: "auto"}${if (versionChosen) "-chosen" else ""}-${preferredQuality ?: "quality-auto"}-${roomId ?: "solo"}-${resumePositionOverride ?: "server"}-${initialAudioTrackIndex ?: "a"}-${initialSubtitleTrackIndex ?: "s"}-${shuffleId ?: "in-order"}",
         parameters = {
             parametersOf(
                 TvPlayerLaunchArgs(
                     libraryId = libraryId,
                     contentId = contentId,
                     preferredFileId = preferredFileId,
+                    versionChosen = versionChosen,
                     preferredQuality = preferredQuality,
                     roomId = roomId,
                     resumePositionOverride = resumePositionOverride,
@@ -357,6 +373,7 @@ fun TvPlayerScreen(
     val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     LaunchedEffect(Unit) { runCatching { keyboardController?.hide() } }
     val state by viewModel.presentationState.collectAsState()
+    val trickplayThumbnail by viewModel.trickplayThumbnail.collectAsState()
     val isInPictureInPictureMode by pictureInPictureCoordinator.isInPictureInPictureMode.collectAsState()
     // PlayerView surface must bind to THIS, not the MediaController, so the
     // swap. Mirrors phone PlayerScreen. The MediaController is kept for transport.
@@ -375,6 +392,13 @@ fun TvPlayerScreen(
     val activeMarkerSkipTarget by viewModel.manualMarkerSkipTarget.collectAsState()
     val introSkipCountdownRun by viewModel.introSkipCountdownRun.collectAsState()
     val introSkipTimerRunning by viewModel.introSkipTimerRunning.collectAsState()
+    val bufferingPill by viewModel.bufferingPill.collectAsState()
+    val bufferingCountdownRun by viewModel.bufferingCountdownRun.collectAsState()
+    val bufferingTimerRunning by viewModel.bufferingTimerRunning.collectAsState()
+    val bufferingNoticeKind by viewModel.bufferingNotice.collectAsState()
+    val bufferingAutoLimited by viewModel.bufferingAutoLimited.collectAsState()
+    // The buffering pill's focused action, if any: root Select acts on it.
+    var bufferingPillFocusedAction by remember { mutableStateOf<TvBufferingPillAction?>(null) }
     val subtitleAppearance by viewModel.subtitleAppearance.collectAsState()
     val subtitleTextOpacitySupported by viewModel.subtitleTextOpacitySupported.collectAsState()
     val playbackSpeed by viewModel.playbackSpeed.collectAsState()
@@ -382,6 +406,7 @@ fun TvPlayerScreen(
     val introSkipMode by viewModel.introSkipMode.collectAsState()
     val autoPlayNextEnabled by viewModel.autoPlayNextEnabled.collectAsState()
     val audioDelayMs by viewModel.audioDelayMs.collectAsState()
+    val audioOutputPath by viewModel.audioOutputPath.collectAsState()
     val subtitleDelayMs by viewModel.subtitleDelayMs.collectAsState()
     val hdrEnabled by viewModel.hdrEnabled.collectAsState()
     val dolbyVisionEnabled by viewModel.dolbyVisionEnabled.collectAsState()
@@ -442,6 +467,14 @@ fun TvPlayerScreen(
     var cleanSeekRampJob by remember { mutableStateOf<Job?>(null) }
     var cleanSeekRate by remember { mutableStateOf(0) }
     var cleanSeekPreviewSec by remember { mutableStateOf(0.0) }
+    // The hidden-controls hold seek asks for the server's preview of where
+    // it is landing; the focused scrubber's comes from the view model.
+    LaunchedEffect(viewModel) {
+        snapshotFlow { cleanSeekPreviewSec.takeIf { cleanSeekRate != 0 } }
+            .distinctUntilChanged()
+            .drop(1)
+            .collect(viewModel::showTrickplay)
+    }
     var cleanSeekAdjustmentDirection by remember { mutableStateOf(0) }
     var cleanSeekAdjustmentRepeated by remember { mutableStateOf(false) }
     var quickSkipCaptureGeneration by remember { mutableStateOf(0L) }
@@ -471,6 +504,10 @@ fun TvPlayerScreen(
     // The process RoomSession owns the room socket; this screen owns only its
     // playback binding, and disposing it never leaves the room.
     val watchParty = rememberTvWatchParty(roomId, viewModel)
+    // This member's unanswered room seek: skips build on it and the timeline holds on it.
+    val roomPendingSeekSeconds by remember(watchParty) {
+        watchParty?.playback?.pendingSeekSeconds ?: kotlinx.coroutines.flow.MutableStateFlow<Double?>(null)
+    }.collectAsState()
     val roomSnapshot: RoomSnapshot? = watchParty?.playback?.room?.collectAsState()?.value
     // Back in a party opens the party panel over the retained player.
     var showPartyPanel by remember { mutableStateOf(false) }
@@ -586,8 +623,15 @@ fun TvPlayerScreen(
         if (staleCastLaunch) latestOnStaleCastLaunch { exitPlayer(false) {} }
     }
     // A remote "stop"/"terminate" command tears the screen down like a Back press.
+    // An administrator's stop also says why, once: a 410 for the same stop
+    // arriving after the command finds the exit already under way.
     LaunchedEffect(Unit) {
-        viewModel.remoteStopRequests.collect { stopPlaybackAndExit() }
+        viewModel.remoteStopRequests.collect { notice ->
+            if (notice != null && !exitRequested) {
+                Toast.makeText(context, notice, Toast.LENGTH_LONG).show()
+            }
+            stopPlaybackAndExit()
+        }
     }
     val latestOnReturnToWatchPartyLobby by rememberUpdatedState(onReturnToWatchPartyLobby)
     val latestOnWatchPartyEnded by rememberUpdatedState(onWatchPartyEnded)
@@ -625,6 +669,21 @@ fun TvPlayerScreen(
         state.isLoading || state.error != null, qualityOfferVisible,
     )
     val latestManualSkipTarget by rememberUpdatedState(manualSkipTarget)
+    // The intro, recap and credits skip pills and Next Up outrank the
+    // buffering pill: it hides (its timer frozen) while any of them shows.
+    // As displayed: in a room the intro pill shows only to members who may
+    // seek, and the marker pill only when its own gates allow. The HUD shows
+    // no pill, so the buffering pill waits there the same way. Picture in
+    // picture is reported on its own below: an undo pill runs on unseen
+    // there. Leaving the player otherwise pauses or closes it.
+    val bufferingPillBlocked = visibleIntroSkipState.isVisible || manualSkipTarget != null ||
+        state.showNextUp || state.hudOpen
+    LaunchedEffect(bufferingPillBlocked) {
+        viewModel.onOtherPillDisplayed(bufferingPillBlocked)
+    }
+    LaunchedEffect(isInPictureInPictureMode) {
+        viewModel.onPlayerViewHiddenChanged(isInPictureInPictureMode)
+    }
     val latestRoomSnapshot by rememberUpdatedState(roomSnapshot)
     val latestShowPartyPanel by rememberUpdatedState(showPartyPanel)
     val latestShowQuickSubtitlePicker by rememberUpdatedState(showQuickSubtitlePicker)
@@ -637,15 +696,18 @@ fun TvPlayerScreen(
         showQuickSubtitlePicker = chrome.pickerVisible
         viewModel.setControlsVisible(chrome.controlsVisible)
     }
+    val labelResources = tvLabelResources()
     val subtitlePresentation = buildTvSubtitleHudPresentation(
         options = buildTvSubtitleHudOptions(
             subtitleUrls = state.subtitleUrls,
             subtitleTracks = state.subtitleTracks,
+            resources = labelResources,
         ),
         committedIdentity = state.committedSubtitleIdentity,
         pendingIdentity = state.pendingSubtitleIdentity,
         hudOpen = state.hudOpen || showQuickSubtitlePicker,
         focusedStableId = subtitleFocusedStableId,
+        resources = labelResources,
         onSelect = selectTvSubtitle,
         onFocused = { stableId -> subtitleFocusedStableId = stableId },
     )
@@ -682,9 +744,77 @@ fun TvPlayerScreen(
         return true
     }
 
+    // Root Select while the buffering pill shows: the action that has focus,
+    // so "Keep quality" works, else the pill's primary action.
+    fun handleBufferingSelect(): Boolean = when (bufferingPillFocusedAction) {
+        TvBufferingPillAction.Lower -> {
+            viewModel.onBufferingLower()
+            true
+        }
+        TvBufferingPillAction.Keep -> {
+            viewModel.onBufferingKeep()
+            true
+        }
+        TvBufferingPillAction.Restore -> {
+            viewModel.onBufferingRestore()
+            true
+        }
+        null -> viewModel.onBufferingSelectPrimary()
+    }
+
+    // A pill takes its focus with it when it hides. Aim where the intro
+    // pill's dismissal does: the scrubber with the controls up, otherwise the
+    // player root, which must own focus while the overlay is hidden.
+    suspend fun refocusAfterPillHides() {
+        if (viewModel.uiState.value.showControls) {
+            requestIdleOverlayFocus(TvIdleOverlayFocusTarget.Scrubber)
+        } else {
+            requestFocusUntilObserved(
+                maxAttempts = TvContentInitialFocusMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = rootFocus::requestFocus,
+                isFocused = { playerRootHasFocus },
+            )
+        }
+    }
+    var bufferingPillHeldFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(bufferingPill.isVisible) {
+        if (bufferingPill.isVisible || !bufferingPillHeldFocus) return@LaunchedEffect
+        bufferingPillHeldFocus = false
+        refocusAfterPillHides()
+    }
+    // The same for the skip pills: one that times out or leaves its range
+    // while focused would otherwise strand focus with the controls up, where
+    // Left/Right then do nothing (silo-android#926). Tracked per pill, since
+    // the intro pill can hand straight over to the recap or credits pill.
+    val refocusAfterSkipPillHides: suspend () -> Unit = {
+        // The HUD and Up Next replace the pills and own focus themselves.
+        val current = viewModel.uiState.value
+        if (!current.hudOpen && !current.showNextUp) refocusAfterPillHides()
+    }
+    val onIntroPillFocusChanged = rememberRefocusWhenPillHides(
+        visible = visibleIntroSkipState.isVisible,
+        refocus = refocusAfterSkipPillHides,
+    )
+    val onMarkerPillFocusChanged = rememberRefocusWhenPillHides(
+        visible = manualSkipTarget != null,
+        refocus = refocusAfterSkipPillHides,
+    )
+    val onBufferingPillFocusChanged: (TvBufferingPillAction?) -> Unit = remember(viewModel) {
+        { action ->
+            bufferingPillFocusedAction = action
+            if (action != null) {
+                bufferingPillHeldFocus = true
+            } else if (viewModel.bufferingPill.value.isVisible) {
+                // Focus moved off a pill that stays up (or a menu covered it).
+                bufferingPillHeldFocus = false
+            }
+        }
+    }
+
     fun handleManualMarkerSelect() {
         val current = viewModel.uiState.value
-        val target = markerSkipTarget(current.position, current.recap, current.credits) ?: return
+        val target = markerSkipTarget(current.position, current.markerTimeline) ?: return
         if (watchParty != null) {
             if (!watchParty.canSeek()) return
             watchParty.seek(target.endSeconds)
@@ -725,7 +855,9 @@ fun TvPlayerScreen(
         val targetSec = if (watchParty == null) {
             viewModel.onSkipBy(deltaMs / 1000.0)
         } else {
-            (playerState.position + deltaMs / 1000.0)
+            // Presses inside the room's round trip build on the last request,
+            // not on the position the player has not left yet.
+            (watchParty.playback.relativeSeekOrigin(playerState.position) + deltaMs / 1000.0)
                 .coerceAtLeast(0.0)
                 .let { if (duration > 0.0) it.coerceAtMost(duration) else it }
         }
@@ -758,6 +890,16 @@ fun TvPlayerScreen(
         return true
     }
 
+    // The scrubber's tap skip, shared with the skip pills.
+    fun overlaySkip(direction: Int) {
+        if (!canSeekInRoom) return
+        performRelativeSeek(
+            if (direction < 0) -resolvedSkipBackMs() else resolvedSkipForwardMs(),
+            roomSnapshot,
+            revealControls = true,
+        )
+    }
+
     fun clearPendingCleanSeekPress() {
         cleanSeekHoldJob?.cancel()
         cleanSeekHoldJob = null
@@ -782,10 +924,10 @@ fun TvPlayerScreen(
         if (cleanSeekRate != 0 || mediaController == null) return
         if (watchParty != null && !watchParty.canSeek()) {
             // Guests never seek: say so instead of scanning a preview nobody can commit.
+            val denied = org.siloserver.silo.watchtogether.RoomPlaybackNotice.Denied(RoomTransportIntent.Seek)
             viewModel.showPlayerMessage(
-                org.siloserver.silo.common.player.watchparty.watchPartyNoticeText(
-                    org.siloserver.silo.watchtogether.RoomPlaybackNotice.Denied(RoomTransportIntent.Seek),
-                ),
+                org.siloserver.silo.common.player.watchparty.watchPartyNoticeText(denied),
+                textRes = org.siloserver.silo.common.player.watchparty.watchPartyNoticeRes(denied),
             )
             return
         }
@@ -794,7 +936,10 @@ fun TvPlayerScreen(
         quickSkipCaptureJob?.cancel()
         quickSkipCaptureJob = null
         quickSkipCaptureActive = false
-        cleanSeekPreviewSec = viewModel.uiState.value.position.coerceAtLeast(0.0)
+        cleanSeekPreviewSec = (
+            watchParty?.playback?.relativeSeekOrigin(viewModel.uiState.value.position)
+                ?: viewModel.uiState.value.position
+            ).coerceAtLeast(0.0)
         val sign = if (direction < 0) -1 else 1
         cleanSeekRate = TvSeekRateLadder.BASE_RATE * sign
 
@@ -828,6 +973,18 @@ fun TvPlayerScreen(
                 previous = cleanSeekRate
             }
         }
+    }
+
+    // Left/Right on a skip pill with the controls up (while they're hidden the
+    // remote bridge takes them first) seek as with the controls hidden: a tap
+    // skips by the seek interval, a hold starts the hold seek. Focus stays on
+    // the pill; if the seek takes it away, focus moves on with it.
+    fun handleSkipPillSeek(direction: Int, hold: Boolean) {
+        // The pill can outlive the picture (an error, a reload); there the
+        // remote does nothing, as in the bridge, rather than move the resume point.
+        val current = viewModel.uiState.value
+        if (current.streamUrl == null || current.isLoading || current.error != null || current.awaitingFirstFrame) return
+        if (hold) beginCleanPlaybackSeek(direction, latestRoomSnapshot) else overlaySkip(direction)
     }
 
     fun beginCleanSeekPress(direction: Int, allowsHold: Boolean) {
@@ -959,6 +1116,11 @@ fun TvPlayerScreen(
             // dispatchKeyEvent, so a countdown Back would otherwise fall
             // through to hiding the controls or exiting the player.
             latestIntroSkipState.isVisible -> viewModel.onDismissIntroPrompt()
+            // Same rank as the intro pill, while it is on screen (the HUD and
+            // Up Next do not compose it). Falls through when the pill went
+            // away first and did not consume the press.
+            bufferingPill.isVisible && !state.hudOpen && !state.showNextUp &&
+                viewModel.onBufferingBack() -> Unit
             lowerQuality != null && !state.showControls -> qualityOffer.dismissed = true
             showQuickSubtitlePicker -> showQuickSubtitlePicker = false
             // On the Up-Next overlay, Back exits the player (matches tvOS, where
@@ -981,6 +1143,10 @@ fun TvPlayerScreen(
     }
 
     DisposableEffect(viewModel, watchParty) {
+        // The downTime of the Back press a pill answered. The rest of that
+        // press is the pill's, even after the hidden pill has recomposed: its
+        // UP must not reach the transport's Back below.
+        var pillBackDownTime = -1L
         val handler: (KeyEvent) -> Boolean = handler@{ event ->
             val playerState = viewModel.uiState.value
             if (event.keyCode == KeyEvent.KEYCODE_BACK) {
@@ -989,8 +1155,28 @@ fun TvPlayerScreen(
                         "showControls=${playerState.showControls} paused=${playerState.isPaused} " +
                         "quickSubs=$latestShowQuickSubtitlePicker cleanSeek=$cleanSeekRate"
                 }
+                if (event.downTime == pillBackDownTime) {
+                    if (event.action == KeyEvent.ACTION_UP) pillBackDownTime = -1L
+                    return@handler true
+                }
             }
-            if (playerState.streamUrl == null || playerState.isLoading || playerState.error != null) {
+            // Stop leaves the player from every state, overlays and loading
+            // included, so no Stop press can reach the Media3 session, whose
+            // Player.stop() idles the player and leaves Play unable to resume.
+            // In a party it opens the party panel, like Back: a local stop
+            // would desync the room.
+            if (event.keyCode == KeyEvent.KEYCODE_MEDIA_STOP) {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    if (watchParty != null) showPartyPanel = true else stopPlaybackAndExit()
+                }
+                return@handler true
+            }
+            // Until the item's first frame there are no controls to drive, so
+            // the remote does nothing but Back (the BackHandler), as during the
+            // session request.
+            if (playerState.streamUrl == null || playerState.isLoading || playerState.error != null ||
+                playerState.awaitingFirstFrame
+            ) {
                 return@handler false
             }
             val horizontalDirection = when (event.keyCode) {
@@ -1099,6 +1285,7 @@ fun TvPlayerScreen(
                 // clean playback. The HUD-open and modal cases never reach the
                 // dispatch below — the guard beneath this call returns first.
                 dpadDownOpensHud = !playerState.showControls && !playerState.showNextUp,
+                metaState = event.metaState,
             )
             // Apple parity (TVPlayerControls.rearmAutoHideOnFocusMove): any key
             // activity while the overlay is up re-arms the 5s auto-hide so the
@@ -1141,16 +1328,45 @@ fun TvPlayerScreen(
                 !state.isScrubbing
             ) {
                 // Both phases are consumed: a leaked ACTION_UP would reach the
-                // activity's back dispatcher.
+                // activity's back dispatcher. The latch keeps the UP once the
+                // pill has gone.
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                     viewModel.onDismissIntroPrompt()
+                    pillBackDownTime = event.downTime
                 }
                 return@handler true
+            }
+
+            // The buffering pill takes Back at the same rank: Keep quality on
+            // the prompt, hide on the undo. The DOWN is consumed only when the
+            // pill took it; the rest of the press stays with the pill, through
+            // the latch once the pill has gone, so it cannot hide the controls
+            // or reach the activity's back dispatcher.
+            if (bufferingPill.isVisible &&
+                event.keyCode == KeyEvent.KEYCODE_BACK &&
+                cleanSeekRate == 0 &&
+                !state.isScrubbing
+            ) {
+                if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return@handler true
+                if (viewModel.onBufferingBack()) {
+                    pillBackDownTime = event.downTime
+                    return@handler true
+                }
             }
 
             // D-pad directions deliberately do NOT touch the pill: the contract
             // says focus moves as normal and the timer keeps running, so the
             // viewer can look at the transport without losing the offer.
+
+            // Except within the buffering prompt: with one of its actions
+            // focused, Left/Right move between them (the pill keeps focus from
+            // escaping sideways) instead of starting a clean-playback seek.
+            if (horizontalDirection != 0 &&
+                bufferingPill is BufferingQualityPill.Prompt &&
+                bufferingPillFocusedAction != null
+            ) {
+                return@handler false
+            }
 
             if (!playerState.showControls && !playerState.showNextUp && horizontalDirection != 0) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
@@ -1181,6 +1397,24 @@ fun TvPlayerScreen(
             ) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) handleManualMarkerSelect()
                 return@handler true
+            }
+
+            // The buffering pill, below the segment-skip pills that outrank
+            // it, and likewise only while the transport is hidden. A focused
+            // pill action takes Select here rather than through Compose: the
+            // root's preview handler would reveal the controls on the press,
+            // and their focus could land before the click did.
+            if (event.action == KeyEvent.ACTION_DOWN &&
+                event.repeatCount == 0 &&
+                bufferingPill.isVisible &&
+                !playerState.showControls &&
+                event.keyCode in setOf(
+                    KeyEvent.KEYCODE_DPAD_CENTER,
+                    KeyEvent.KEYCODE_ENTER,
+                    KeyEvent.KEYCODE_NUMPAD_ENTER,
+                )
+            ) {
+                if (handleBufferingSelect()) return@handler true
             }
 
             // The lower-quality offer owns OK and Back while the transport is
@@ -1266,7 +1500,10 @@ fun TvPlayerScreen(
                     viewModel.openHUD()
                     true
                 }
-                TvPlayerRemoteKeyAction.ConsumeOnly -> true
+                // Handled above, before the overlay and loading guards.
+                TvPlayerRemoteKeyAction.Stop,
+                TvPlayerRemoteKeyAction.ConsumeOnly,
+                -> true
                 null -> {
                     if (
                         event.action == KeyEvent.ACTION_DOWN &&
@@ -1294,7 +1531,10 @@ fun TvPlayerScreen(
     // they were equally silent.
     LaunchedEffect(state.subtitleFailureId) {
         val message = state.subtitleFailureMessage ?: return@LaunchedEffect
-        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        // A catalog string a shared producer named, only while it still belongs to this message.
+        val text = state.subtitleFailureRes?.takeIf { it.message == message }?.let { context.getString(it.res) }
+            ?: context.resources.tvPlayerMessage(message)
+        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
         viewModel.onSubtitleFailureShown(state.subtitleFailureId)
     }
 
@@ -1495,9 +1735,25 @@ fun TvPlayerScreen(
                     postResumeStallDetector.onFirstFrameRendered()
                     viewModel.onFirstVideoFrameRendered(mountToken)
                 }
+
+                // Audio renders no frame, so a mount with audio and no video
+                // ends its first load when it plays. A video mount waits for
+                // its frame: audio can start ahead of a wedged video decoder.
+                override fun onIsPlayingChanged(eventTime: AnalyticsListener.EventTime, isPlaying: Boolean) {
+                    if (!isPlaying) return
+                    val mountToken = eventTime.videoMountToken() ?: return
+                    val tracks = player.currentTracks
+                    if (tracks.containsType(C.TRACK_TYPE_VIDEO) || !tracks.containsType(C.TRACK_TYPE_AUDIO)) return
+                    viewModel.onAudioOnlyPlaybackStarted(mountToken)
+                }
             }
             player.addAnalyticsListener(listener)
-            onDispose { player.removeAnalyticsListener(listener) }
+            // The buffering-quality adapter hears the in-process player.
+            val detachBuffering = viewModel.bufferingQualityAdapter.attach(player)
+            onDispose {
+                player.removeAnalyticsListener(listener)
+                detachBuffering()
+            }
         }
     }
 
@@ -1574,8 +1830,7 @@ fun TvPlayerScreen(
                     viewModel.onPlayingChanged(isPlaying)
                     val live = viewModel.uiState.value
                     val key = live.sessionId?.let { sessionId ->
-                        "$sessionId:${live.streamUrl}:${live.playbackPlan?.planId.orEmpty()}:" +
-                            "${live.playbackPlan?.decisionTrace?.size ?: 0}:${live.transportMountNonce}"
+                        mountedPlaybackKey(sessionId, live.streamUrl, live.playbackPlan, live.transportMountNonce)
                     }
                     if (key != null) {
                         val rendered = (activePlayerHolder.player.value as? androidx.media3.exoplayer.ExoPlayer)
@@ -1662,18 +1917,22 @@ fun TvPlayerScreen(
         state.sessionId,
         state.streamUrl,
         state.playMethod,
-        state.playbackPlan?.planId,
         state.playbackPlan?.decisionTrace?.size,
         state.transportMountNonce,
     ) {
         val controller = mediaController ?: return@LaunchedEffect
         val sessionId = state.sessionId ?: return@LaunchedEffect
         val streamUrl = state.streamUrl ?: return@LaunchedEffect
-        val sessionKey = "$sessionId:$streamUrl:${state.playbackPlan?.planId.orEmpty()}:" +
-            "${state.playbackPlan?.decisionTrace?.size ?: 0}:${state.transportMountNonce}"
+        val sessionKey = mountedPlaybackKey(sessionId, streamUrl, state.playbackPlan, state.transportMountNonce)
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
                 val decoderCounters = (sessionPlayer as? androidx.media3.exoplayer.ExoPlayer)?.videoDecoderCounters
+                // Buffered-position growth is the adapter's evidence that data
+                // is still arriving.
+                viewModel.bufferingQualityAdapter.sampleBuffer(
+                    SystemClock.elapsedRealtime(),
+                    controller.bufferedPosition.coerceAtLeast(0L),
+                )
                 val reason = startupStallDetector.sample(
                     sessionKey = sessionKey,
                     nowMs = SystemClock.elapsedRealtime(),
@@ -1688,9 +1947,29 @@ fun TvPlayerScreen(
                     decoderDroppedBufferCount = decoderCounters?.droppedBufferCount ?: 0,
                 )
                 if (reason != null) {
-                    Log.i(TAG, "Startup stall fallback: $reason")
-                    viewModel.onUnsupportedPlayback(reason, state.transportMountNonce)
-                    return@repeatOnLifecycle
+                    if (
+                        viewModel.bufferingQualityAdapter.ownsStartupStall(
+                            reason = reason,
+                            nowMs = SystemClock.elapsedRealtime(),
+                            controllerEnabled = viewModel.bufferingQualityEnabled,
+                        )
+                    ) {
+                        // A slow plan that is still receiving data belongs to
+                        // the buffering-quality controller, and one in an
+                        // outage to the reconnect path: no same-plan reopen
+                        // and no failure replan, and the loop keeps sampling.
+                        Log.i(
+                            TAG,
+                            "startup_stall owned_by=${if (viewModel.bufferingQualityAdapter.transportTroubleActive) "outage" else "buffering_quality"} " +
+                                "classification=${reason.classification} " +
+                                "stalled_for_ms=${reason.stalledForMs}",
+                        )
+                        startupStallDetector.onStallHandedOff(SystemClock.elapsedRealtime())
+                    } else {
+                        Log.i(TAG, "Startup stall fallback: $reason")
+                        viewModel.onUnsupportedPlayback(reason, state.transportMountNonce)
+                        return@repeatOnLifecycle
+                    }
                 }
                 val sanitizedSamples = PlaybackRuntimeCorrectionMetrics.consumeDolbyVisionHdr10PlusSamples()
                 if (sanitizedSamples > 0 && !dvSanitizerReported) {
@@ -1762,13 +2041,16 @@ fun TvPlayerScreen(
         }
     }
 
-    // Prepare the player when a stream URL becomes available.
+    // Prepare the player when a stream URL becomes available. Keyed on the
+    // plan's media mount key rather than the whole plan, so a plan applied in
+    // place (same transport, another subtitle) keeps the mounted item.
+    val mediaMountKey = remember(state.playbackPlan) { state.playbackPlan?.mediaMountKey() }
     LaunchedEffect(
         videoBackend,
         state.sessionId,
         state.streamUrl,
         state.playMethod,
-        state.playbackPlan,
+        mediaMountKey,
         state.delivery,
         state.startPosition,
         state.transportMountNonce,
@@ -1814,21 +2096,21 @@ fun TvPlayerScreen(
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
             runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
             activeClaims = plan?.activeOriginalHttpClaims().orEmpty(),
+            // Watch Party playback stays on the saved address.
+            allowsLocalRoute = roomId.isNullOrBlank(),
         )
         state.sessionId?.let { sessionId ->
             PlaybackRuntimeCorrectionMetrics.reset()
             dvSanitizerReported = false
             startupStallDetector.onMounted(
-                sessionKey = "$sessionId:$url:${plan?.planId.orEmpty()}:" +
-                    "${plan?.decisionTrace?.size ?: 0}:${state.transportMountNonce}",
+                sessionKey = mountedPlaybackKey(sessionId, url, plan, state.transportMountNonce),
                 playMethod = method,
                 startPositionMs = mediaSpec.startPositionMs,
                 nowMs = SystemClock.elapsedRealtime(),
                 clientTransformations = mediaSpec.transformations,
             )
             postResumeStallDetector.onMounted(
-                "$sessionId:$url:${plan?.planId.orEmpty()}:" +
-                    "${plan?.decisionTrace?.size ?: 0}:${state.transportMountNonce}",
+                mountedPlaybackKey(sessionId, url, plan, state.transportMountNonce),
             )
         }
         backend.mount(mediaSpec, playWhenReady = !viewModel.uiState.value.isPaused)
@@ -1885,7 +2167,11 @@ fun TvPlayerScreen(
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
             runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
             activeClaims = plan?.activeOriginalHttpClaims().orEmpty(),
+            // Watch Party playback stays on the saved address.
+            allowsLocalRoute = roomId.isNullOrBlank(),
         )
+        // The same plan, remounted: its coming wait is a reload, not a stall.
+        viewModel.bufferingQualityAdapter.markReload()
         backend.refresh(mediaSpec)
         viewModel.onSubtitleCuesMounted(state.subtitleCueRevisions)
     }
@@ -2007,6 +2293,7 @@ fun TvPlayerScreen(
         state.hudOpen,
         state.isScrubbing,
         state.showNextUp,
+        state.awaitingFirstFrame,
     ) {
         // Never auto-hide mid-scrub: hiding the scrubber would tear down the
         // in-flight preview under the user. The timer re-arms once the scrub
@@ -2015,8 +2302,11 @@ fun TvPlayerScreen(
         // Up Next counts down for longer than this timer, and it is a
         // focus-owning surface: letting the timer fire under it hides the
         // controls and pulls focus to the root, off the primary action.
+        //
+        // The controls first appear with the item's first frame, so the timer
+        // starts there; a slow first load would otherwise use it up unseen.
         if (state.showControls && !state.isPaused && !state.hudOpen &&
-            !state.isScrubbing && !state.showNextUp
+            !state.isScrubbing && !state.showNextUp && !state.awaitingFirstFrame
         ) {
             delay(CONTROLS_AUTO_HIDE_MS)
             viewModel.setControlsVisible(false)
@@ -2065,14 +2355,14 @@ fun TvPlayerScreen(
     ) {
         when {
             state.error != null -> TvErrorScreen(
-                message = state.error!!,
+                message = tvPlayerErrorText(state.error!!, state.errorRes),
                 // Server-unreachable: Retry re-probes then reloads, and Try Anyway
                 // bypasses the gate (issue #33). Other errors keep the plain retry.
                 onRetry = {
                     if (state.serverUnreachable) viewModel.retryServerReachability()
                     else viewModel.retry()
                 },
-                secondaryActionLabel = "Try Anyway".takeIf { state.serverUnreachable },
+                secondaryActionLabel = stringResource(CommonR.string.player_tryAnyway).takeIf { state.serverUnreachable },
                 onSecondaryAction = { viewModel.playIgnoringServerReachability() }
                     .takeIf { state.serverUnreachable },
             )
@@ -2132,8 +2422,10 @@ fun TvPlayerScreen(
                     )
                 }
 
+                // The first load shows only the spinner; the controls arrive
+                // with the item's first frame.
                 if (!isInPictureInPictureMode && state.showControls && cleanSeekRate == 0 &&
-                    !state.hudOpen && !state.showNextUp
+                    !state.hudOpen && !state.showNextUp && !state.awaitingFirstFrame
                 ) {
                     // In a room, transport authority gates what the local
                     // member may drive: a guest who can't seek gets a disabled
@@ -2143,25 +2435,23 @@ fun TvPlayerScreen(
                         (mediaController?.bufferedPosition ?: 0L) -
                             (mediaController?.currentPosition ?: 0L)
                     ).coerceAtLeast(0L) / 1000.0
-                    TvPlayerClockScope(viewModel) { clock ->
+                    TvPlayerClockScope(viewModel, roomPendingSeekSeconds) { clock ->
                     TvPlayerIdleOverlay(
                         title = state.title,
                         eyebrow = tvPlayerEyebrow(state),
                         subtitlesValue = subtitlePresentation.rows
                             .firstOrNull { row -> row.checked }
                             ?.let { row -> tvSubtitleRowParts(row.label).title }
-                            ?: "Off",
+                            ?: stringResource(CommonR.string.player_tracks_subtitlesOff),
                         positionSec = clock.position,
                         durationSec = clock.duration,
                         isPaused = state.isPaused,
                         isScrubbing = state.isScrubbing,
                         scrubPreviewSec = state.scrubPreviewSec,
+                        scrubThumbnail = trickplayThumbnail,
                         bufferedAheadSec = bufferedAheadSec,
                         chapters = state.chapters,
-                        introRange = state.intro,
-                        creditsRange = state.credits,
-                        recapRange = state.recap,
-                        previewRange = state.preview,
+                        markers = state.markerTimeline,
                         // In a room, skip/scrub/seek are routed through the
                         // controller (transport_request → server → broadcast
                         // command → engine applies the seek locally). Solo
@@ -2174,25 +2464,15 @@ fun TvPlayerScreen(
                         skipForwardSeconds = seekIntervals.forwardSeconds,
                         canToggleAfterCommit = watchParty == null,
                         playbackSpeed = if (watchParty != null) 1.0 else playbackSpeed,
-                        onSkipBack = {
-                            if (canSeekInRoom) {
-                                performRelativeSeek(
-                                    -resolvedSkipBackMs(),
-                                    roomSnapshot,
-                                    revealControls = true,
-                                )
-                            }
+                        onSkipBack = { overlaySkip(-1) },
+                        onSkipForward = { overlaySkip(1) },
+                        onBeginScrub = {
+                            // In a room the scrub starts from a pending seek's
+                            // target, where the overlay already shows the playhead.
+                            viewModel.beginScrub(
+                                watchParty?.playback?.relativeSeekOrigin(viewModel.uiState.value.position),
+                            )
                         },
-                        onSkipForward = {
-                            if (canSeekInRoom) {
-                                performRelativeSeek(
-                                    resolvedSkipForwardMs(),
-                                    roomSnapshot,
-                                    revealControls = true,
-                                )
-                            }
-                        },
-                        onBeginScrub = { viewModel.beginScrub() },
                         onUpdateScrub = { sec -> viewModel.updateScrubPreview(sec) },
                         onCommitScrub = {
                             val targetSec = viewModel.commitScrub()
@@ -2250,7 +2530,7 @@ fun TvPlayerScreen(
                     // the picture stays watchable behind it. The HUD fills the
                     // screen and places itself; mirrors tvOS TVPlayerInfoHUD.
                     Box(modifier = Modifier.fillMaxSize()) {
-                        TvPlayerClockScope(viewModel) { clock ->
+                        TvPlayerClockScope(viewModel, roomPendingSeekSeconds) { clock ->
                         TvPlayerHud(
                             title = state.title,
                             positionSec = clock.position,
@@ -2259,6 +2539,8 @@ fun TvPlayerScreen(
                             episodeNumber = state.episodeNumber,
                             audioTracks = state.audioTracks,
                             videoQualities = state.videoQualities,
+                            videoQualityPreference = state.videoQualityPreference,
+                            autoQualityLimited = bufferingAutoLimited,
                             fileVersions = state.fileVersions,
                             selectedFileId = state.selectedFileId ?: state.mediaFileId,
                             onSelectFileVersion = viewModel::onSelectFileVersion,
@@ -2289,7 +2571,10 @@ fun TvPlayerScreen(
                             autoPlayNext = autoPlayNextEnabled,
                             onAutoPlayNextChanged = viewModel::onSetAutoPlayNext,
                             audioDelayMs = audioDelayMs,
-                            audioDelayEnabled = state.playbackPlan?.claims?.audio?.passthrough != true,
+                            audioDelayEnabled = audioOutputPath.allowsAudioDelay(
+                                planClaimsPassthrough = state.playbackPlan?.claims?.audio?.passthrough,
+                            ),
+                            audioOutputPath = audioOutputPath,
                             onAudioDelayChanged = viewModel::onAudioDelayChanged,
                             subtitleDelayMs = subtitleDelayMs,
                             subtitleDelayEnabled =
@@ -2356,12 +2641,13 @@ fun TvPlayerScreen(
                             .padding(top = 80.dp),
                         contentAlignment = Alignment.TopCenter,
                     ) {
-                        TvPlayerClockScope(viewModel) { clock ->
+                        TvPlayerClockScope(viewModel, roomPendingSeekSeconds) { clock ->
                             TvHoldSeekIndicator(
                                 isVisible = true,
                                 rate = cleanSeekRate,
                                 previewTimeSec = cleanSeekPreviewSec,
                                 durationSec = clock.duration,
+                                thumbnail = trickplayThumbnail,
                             )
                         }
                     }
@@ -2455,12 +2741,28 @@ fun TvPlayerScreen(
                     )
                 }
             }
-            state.isLoading -> TvLoadingScreen()
+            // Black until the first buffer; TvPlayerOverlays draws the spinner.
+            state.isLoading -> Unit
         }
 
+        val bufferingPlayerNotice = when (bufferingNoticeKind) {
+            BufferingQualityNotice.LOWERED ->
+                PlayerNotice(stringResource(CommonR.string.bufferingQuality_lowered), NoticeTone.Info)
+            BufferingQualityNotice.CANT_LOWER ->
+                PlayerNotice(stringResource(CommonR.string.bufferingQuality_cantLower), NoticeTone.Info)
+            null -> null
+        }
         TvPlayerOverlays(
             isInPictureInPictureMode = isInPictureInPictureMode,
-            notice = notice,
+            // Lifecycle notices (an outage, say) win over buffering ones.
+            notice = notice ?: bufferingPlayerNotice,
+            bufferingPill = bufferingPill,
+            bufferingCountdownRun = bufferingCountdownRun,
+            bufferingTimerRunning = bufferingTimerRunning,
+            onBufferingLower = viewModel::onBufferingLower,
+            onBufferingKeep = viewModel::onBufferingKeep,
+            onBufferingRestore = viewModel::onBufferingRestore,
+            onBufferingPillFocusChanged = onBufferingPillFocusChanged,
             subtitleSyncNotice = viewModel.subtitleSyncNotice,
             remoteMessage = remoteMessage,
             roomSnapshot = roomSnapshot,
@@ -2477,6 +2779,9 @@ fun TvPlayerScreen(
             introSkipState = visibleIntroSkipState,
             manualSkipTarget = manualSkipTarget,
             onManualMarkerSelect = { handleManualMarkerSelect() },
+            onSkipPillSeek = { direction, hold -> handleSkipPillSeek(direction, hold) },
+            onIntroPillFocusChanged = onIntroPillFocusChanged,
+            onMarkerPillFocusChanged = onMarkerPillFocusChanged,
             introSkipCountdownRun = introSkipCountdownRun,
             introSkipTimerRunning = introSkipTimerRunning,
             introSkipTotalSeconds = viewModel.introSkipTotalSeconds,
@@ -2484,13 +2789,12 @@ fun TvPlayerScreen(
             // not take focus out from under an active scrub.
             introBannerMayTakeFocus = !state.isScrubbing && cleanSeekRate == 0,
             videoActive = videoActive,
-            isBuffering = state.isBuffering,
+            // The session request, the player's own buffering, and an outage
+            // the player can't see all wait the same way. An error screen
+            // owns the surface, and `fail()` leaves `isBuffering` set.
+            loading = state.error == null &&
+                (state.isLoading || state.isBuffering || sessionState is SessionState.Reconnecting),
             sleepTimerState = sleepTimerState,
-            showSpinner = shouldShowReconnectSpinner(
-                isReconnecting = sessionState is SessionState.Reconnecting,
-                showNextUp = state.showNextUp,
-                isInPictureInPictureMode = isInPictureInPictureMode,
-            ),
             onPlayNextNow = viewModel::playNextEpisodeNow,
             onKeepWatching = viewModel::dismissNextUp,
             onPickAnother = viewModel::pickAnotherShuffle,
@@ -2546,22 +2850,26 @@ private fun TvPlayerCommandEffects(
     playbackSpeed: Double,
 ) {
     // Position polling — lifecycle-bounded so it doesn't outlive the screen.
-    LaunchedEffect(mediaController, sessionId, lifecycleOwner) {
-        val controller = mediaController ?: return@LaunchedEffect
+    // Reads the player the backend mounts on, not the MediaController: a mount
+    // on the session's ExoPlayer reaches the controller one main-looper hop
+    // later, and a tick in that gap reported the previous item's position
+    // (issue #715: Up Next replanned the next episode at the old one's credits).
+    LaunchedEffect(videoBackend, sessionId, lifecycleOwner) {
+        val player = videoBackend?.player ?: return@LaunchedEffect
         val timelineWindow = Timeline.Window()
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive && sessionId != null) {
                 viewModel.onPositionChanged(
-                    controller.currentPosition,
-                    controller.duration.coerceAtLeast(0L),
+                    player.currentPosition,
+                    player.duration.coerceAtLeast(0L),
                 )
                 // Mounted-transport extent for the VM's native-first seek
                 // decision (see TvPlayerViewModel.mountedSeekableSourceRange).
                 // A seekable window with a known length can serve any target
                 // it spans without a server reanchor.
-                if (!controller.currentTimeline.isEmpty) {
-                    controller.currentTimeline.getWindow(
-                        controller.currentMediaItemIndex,
+                if (!player.currentTimeline.isEmpty) {
+                    player.currentTimeline.getWindow(
+                        player.currentMediaItemIndex,
                         timelineWindow,
                     )
                     viewModel.onPlayerWindowChanged(
@@ -2641,12 +2949,15 @@ private fun TvPlayerCommandEffects(
         }
     }
 
-    LaunchedEffect(mediaController) {
-        val controller = mediaController ?: return@LaunchedEffect
+    // Seeks go to the same player the position poll reads. Through the
+    // controller, the session player kept its pre-seek position for a looper
+    // hop, and a poll in that gap could publish it.
+    LaunchedEffect(videoBackend) {
+        val player = videoBackend?.player ?: return@LaunchedEffect
         viewModel.seekRequests.collect { targetSec ->
             val targetMs = (targetSec * 1000).toLong()
             watchParty?.recordIssuedSeek(targetMs)
-            controller.seekTo(targetMs)
+            player.seekTo(targetMs)
         }
     }
 
@@ -2690,7 +3001,7 @@ private fun TvSiloCastPlayerRegistration(
                 if (watchParty != null) {
                     watchParty.setPlaying(play = true)
                 } else {
-                    viewModel.setPaused(false)
+                    viewModel.setPausedByViewer(false)
                     latestSiloCastMediaController?.play()
                 }
             },
@@ -2698,7 +3009,7 @@ private fun TvSiloCastPlayerRegistration(
                 if (watchParty != null) {
                     watchParty.setPlaying(play = false)
                 } else {
-                    viewModel.setPaused(true)
+                    viewModel.setPausedByViewer(true)
                     latestSiloCastMediaController?.pause()
                 }
             },
@@ -2795,12 +3106,10 @@ private fun TvPlayerIdleOverlay(
     isPaused: Boolean,
     isScrubbing: Boolean,
     scrubPreviewSec: Double,
+    scrubThumbnail: androidx.compose.ui.graphics.ImageBitmap?,
     bufferedAheadSec: Double,
     chapters: List<org.siloserver.silo.model.catalog.VersionChapter>,
-    introRange: org.siloserver.silo.model.catalog.TimeRange?,
-    creditsRange: org.siloserver.silo.model.catalog.TimeRange?,
-    recapRange: org.siloserver.silo.model.catalog.TimeRange?,
-    previewRange: org.siloserver.silo.model.catalog.TimeRange?,
+    markers: org.siloserver.silo.domain.player.MarkerTimeline,
     onPlayPause: () -> Unit,
     onSkipBack: () -> Unit,
     onSkipForward: () -> Unit,
@@ -2874,6 +3183,7 @@ private fun TvPlayerIdleOverlay(
                         keyCode = event.nativeKeyEvent.keyCode,
                         action = event.nativeKeyEvent.action,
                         repeatCount = event.nativeKeyEvent.repeatCount,
+                        metaState = event.nativeKeyEvent.metaState,
                     )
                 ) {
                     TvPlayerRemoteKeyAction.PlayPause -> {
@@ -2905,7 +3215,11 @@ private fun TvPlayerIdleOverlay(
                         onOpenHUD()
                         true
                     }
-                    TvPlayerRemoteKeyAction.ConsumeOnly -> true
+                    // The activity-level remote key bridge acts on Stop before
+                    // Compose sees it; consume any copy that gets here.
+                    TvPlayerRemoteKeyAction.Stop,
+                    TvPlayerRemoteKeyAction.ConsumeOnly,
+                    -> true
                     null -> false
                 }
             },
@@ -2965,24 +3279,14 @@ private fun TvPlayerIdleOverlay(
                 bufferedAheadSec = bufferedAheadSec,
                 isScrubbing = isScrubbing,
                 scrubPreviewSec = scrubPreviewSec,
+                previewThumbnail = scrubThumbnail,
                 chapters = chapters.map {
                     ChapterInfo(
                         timeSec = it.startSeconds,
                         title = it.title.ifBlank { null },
                     )
                 },
-                introRangeSec = introRange
-                    ?.takeIf { it.end > it.start }
-                    ?.let { it.start..it.end },
-                creditsRangeSec = creditsRange
-                    ?.takeIf { it.end > it.start }
-                    ?.let { it.start..it.end },
-                recapRangeSec = recapRange
-                    ?.takeIf { it.end > it.start }
-                    ?.let { it.start..it.end },
-                previewRangeSec = previewRange
-                    ?.takeIf { it.end > it.start }
-                    ?.let { it.start..it.end },
+                markers = markers,
                 cancelOnBlur = false,
                 skipBackSeconds = skipBackSeconds,
                 skipForwardSeconds = skipForwardSeconds,
@@ -3037,21 +3341,31 @@ private fun TvPlayerIdleOverlay(
  * The small line above the player title: "SEVERANCE · S2:E4" for an episode
  * (whose title is the episode's own), "MOVIE · 2026" for a film.
  */
+@Composable
 internal fun tvPlayerEyebrow(state: TvPlayerViewModel.UiState): String? {
     val series = state.seriesTitle?.takeIf { it.isNotBlank() }
     if (series != null) {
-        val code = state.seasonNumber?.let { season -> state.episodeNumber?.let { "S$season:E$it" } }
+        val code = state.seasonNumber?.let { season ->
+            state.episodeNumber?.let {
+                stringResource(CommonR.string.player_eyebrow_episode, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(it))
+            }
+        }
         return listOfNotNull(series, code).joinToString(" · ")
     }
-    val kind = "Movie".takeIf { state.contentType == "movie" }
-    return listOfNotNull(kind, state.year?.toString()).joinToString(" · ").ifBlank { null }
+    val kind = stringResource(CommonR.string.player_eyebrow_movie).takeIf { state.contentType == "movie" }
+    return listOfNotNull(kind, state.year?.let { LocaleFormat.integer(it, currentNumberLocale()) }).joinToString(" · ").ifBlank { null }
 }
 
+@Composable
 private fun formatSleepCountdown(seconds: Int): String {
     val s = seconds.coerceAtLeast(0)
     val m = s / 60
-    val sec = s % 60
-    return if (m > 0) "${m}m ${sec}s" else "${sec}s"
+    val sec = LocaleFormat.integer(s % 60)
+    return if (m > 0) {
+        stringResource(CommonR.string.catalog_runtimeMinutesSeconds, LocaleFormat.integer(m), sec)
+    } else {
+        stringResource(CommonR.string.catalog_runtimeSeconds, sec)
+    }
 }
 
 @Composable
@@ -3063,10 +3377,14 @@ private fun TvQuickSubtitlePicker(
 ) {
     val checkedRow = presentation.rows.firstOrNull { row -> row.checked }
     val focusedRow = presentation.rows.firstOrNull { row -> row.focused }
+    val unsupportedFormat = stringResource(CommonR.string.subtitle_trackUnsupportedFormat)
+    val applying = stringResource(CommonR.string.player_hud_applying)
     val options = presentation.rows.map { row ->
         HudPickerOption(
             id = row.stableId,
-            label = if (row.applying) "${row.label} · Applying…" else row.label,
+            label = if (row.applying) "${row.label} · $applying" else row.label,
+            detail = unsupportedFormat.takeIf { row.unplayable },
+            enabled = !row.unplayable,
         )
     }
 
@@ -3086,7 +3404,7 @@ private fun TvQuickSubtitlePicker(
     ) {
         HudPickerDialog(
             presentation = HudPickerPresentation(
-                title = "Subtitles",
+                title = stringResource(CommonR.string.player_hud_subtitles),
                 options = options,
                 selectedId = checkedRow?.stableId
                     ?: presentation.rows.firstOrNull()?.stableId.orEmpty(),
@@ -3127,13 +3445,13 @@ private fun TvRoomIndicator(
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         androidx.tv.material3.Text(
-            text = "Watch Party · $memberCount watching",
+            text = pluralStringResource(CommonR.plurals.player_watchParty_watching, memberCount, memberCount),
             color = Color.White,
             style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
         )
         if (joinCode != null) {
             androidx.tv.material3.Text(
-                text = "Party code $joinCode",
+                text = stringResource(CommonR.string.player_watchParty_partyCode, joinCode),
                 color = Color.White.copy(alpha = 0.80f),
                 style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
             )
@@ -3169,6 +3487,8 @@ private fun TvPlayerNextUpOverlay(
     onToggleAutoPlay: () -> Unit,
     onBack: () -> Unit,
     onVideoBoundsChanged: (Rect) -> Unit,
+    // The video playing in the frame is loading; the spinner sits on it.
+    spinnerVisible: Boolean = false,
     // Set while a shuffle plays: the next item is a random pick, and the
     // viewer can pick another or stop shuffling.
     shuffle: TvShuffleUiState? = null,
@@ -3206,13 +3526,19 @@ private fun TvPlayerNextUpOverlay(
         val cardSpacing = 20.dp
         val onDeckCardWidth = (maxWidth - 160.dp - cardSpacing * 4) / 5
         // tvOS backgroundArtwork: the next episode's still, else the first
-        // On Deck item's art. Art spoiler protection hides is skipped.
+        // On Deck item's art (an episode's series backdrop when its card
+        // carries one). Art spoiler protection hides is skipped.
         val spoilers = org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs.current
         val backdrop = nextEpisode
             ?.takeUnless { it.isEpisode && spoilers.hidesImage(it.isUnwatched, it.stillIsEpisodeStill) }
             ?.stillUrl?.takeIf { it.isNotBlank() }?.let { it to null }
-            ?: onDeckItems.firstOrNull { !spoilers.hidesImage(it.unwatchedEpisode, it.artIsEpisodeStill) }
-                ?.let { it.artUrl to it.artThumbhash }
+            ?: onDeckItems.firstNotNullOfOrNull { item ->
+                when {
+                    item.seriesBackdropUrl != null -> item.seriesBackdropUrl to item.seriesBackdropThumbhash
+                    spoilers.hidesImage(item.unwatchedEpisode, item.artIsEpisodeStill) -> null
+                    else -> item.artUrl to item.artThumbhash
+                }
+            }
         TvNextUpBackdrop(
             url = backdrop?.first,
             thumbhash = backdrop?.second,
@@ -3263,7 +3589,10 @@ private fun TvPlayerNextUpOverlay(
                                 color = Color.White.copy(alpha = 0.16f),
                                 shape = RoundedCornerShape(8.dp),
                             ),
-                    )
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (spinnerVisible) TvPlayerLoadingSpinner()
+                    }
 
                     // Next-episode panel. It scrolls on its own when its content
                     // outgrows the space above On Deck (large font sizes, a
@@ -3290,19 +3619,25 @@ private fun TvPlayerNextUpOverlay(
                                     modifier = Modifier.size(16.dp),
                                 )
                                 androidx.tv.material3.Text(
-                                    text = "Shuffling $scope",
+                                    text = stringResourceWithNames(CommonR.string.upNext_shuffling, scope),
                                     color = Color.White.copy(alpha = 0.75f),
                                     style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
                                     maxLines = 1,
                                 )
                             }
                         }
-                        val eyebrow = when {
-                            nextEpisode == null -> if (videoEnded) "Finished" else "More To Watch"
-                            shuffle != null -> "Up Next at Random"
-                            videoEnded -> "Playing Next"
-                            else -> "Up Next"
-                        }
+                        val eyebrow = stringResource(
+                            when {
+                                nextEpisode == null -> if (videoEnded) {
+                                    CommonR.string.upNext_headingFinished
+                                } else {
+                                    CommonR.string.upNext_headingNothing
+                                }
+                                shuffle != null -> CommonR.string.upNext_headingShuffle
+                                videoEnded -> CommonR.string.upNext_headingEnded
+                                else -> CommonR.string.upNext_heading
+                            },
+                        )
                         androidx.tv.material3.Text(
                             text = eyebrow.uppercase(),
                             color = Color.White.copy(alpha = 0.52f),
@@ -3324,12 +3659,16 @@ private fun TvPlayerNextUpOverlay(
                                 }
                                 if (nextEpisode.isEpisode) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     androidx.tv.material3.Text(
-                                        text = "S${nextEpisode.seasonNumber}·E${nextEpisode.episodeNumber}",
+                                        text = stringResource(
+                                            CommonR.string.upNext_episodeCode,
+                                            LocaleFormat.codeNumber(nextEpisode.seasonNumber),
+                                            LocaleFormat.codeNumber(nextEpisode.episodeNumber),
+                                        ),
                                         color = Color.White.copy(alpha = 0.62f),
                                         style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
                                     )
                                     androidx.tv.material3.Text(
-                                        text = nextEpisode.title ?: "Next Episode",
+                                        text = nextEpisode.title ?: stringResource(CommonR.string.upNext_nextEpisode),
                                         color = Color.White,
                                         style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
                                         maxLines = 1,
@@ -3338,7 +3677,13 @@ private fun TvPlayerNextUpOverlay(
                                     // Runtime shares the episode line to keep the panel short.
                                     if (nextEpisode.runtimeMinutes > 0) {
                                         androidx.tv.material3.Text(
-                                            text = "· ${nextEpisode.runtimeMinutes} min",
+                                            text = "· ${
+                                                pluralStringResource(
+                                                    CommonR.plurals.upNext_runtime,
+                                                    nextEpisode.runtimeMinutes,
+                                                    nextEpisode.runtimeMinutes,
+                                                )
+                                            }",
                                             color = Color.White.copy(alpha = 0.46f),
                                             style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
                                         )
@@ -3346,7 +3691,11 @@ private fun TvPlayerNextUpOverlay(
                                 }
                                 if (!nextEpisode.isEpisode && nextEpisode.runtimeMinutes > 0) {
                                     androidx.tv.material3.Text(
-                                        text = "${nextEpisode.runtimeMinutes} min",
+                                        text = pluralStringResource(
+                                            CommonR.plurals.upNext_runtime,
+                                            nextEpisode.runtimeMinutes,
+                                            nextEpisode.runtimeMinutes,
+                                        ),
                                         color = Color.White.copy(alpha = 0.46f),
                                         style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
                                     )
@@ -3368,7 +3717,7 @@ private fun TvPlayerNextUpOverlay(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 TvDialogActionRow(
-                                    title = "Play Now",
+                                    title = stringResource(CommonR.string.upNext_playNow),
                                     onClick = onPlayNow,
                                     modifier = Modifier
                                         .width(220.dp)
@@ -3384,7 +3733,7 @@ private fun TvPlayerNextUpOverlay(
 
                             if (shuffle != null) {
                                 TvDialogActionRow(
-                                    title = "Pick Another",
+                                    title = stringResource(CommonR.string.upNext_pickAnother),
                                     onClick = onPickAnother,
                                     enabled = !shuffle.pickingAnother,
                                     modifier = Modifier.width(260.dp),
@@ -3393,20 +3742,20 @@ private fun TvPlayerNextUpOverlay(
                             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 if (!videoEnded) {
                                     TvDialogActionRow(
-                                        title = "Keep Watching",
+                                        title = stringResource(CommonR.string.upNext_keepWatching),
                                         onClick = onKeepWatching,
                                         modifier = Modifier.width(220.dp),
                                     )
                                 }
                                 TvDialogActionRow(
-                                    title = "Back",
+                                    title = stringResource(CommonR.string.common_back),
                                     onClick = onBack,
                                     modifier = Modifier.width(140.dp),
                                 )
                             }
                             shuffle?.message?.let { message ->
                                 androidx.tv.material3.Text(
-                                    text = message,
+                                    text = tvPlayerMessageText(message),
                                     color = Color(0xFFFFB4AB),
                                     style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
                                 )
@@ -3417,7 +3766,9 @@ private fun TvPlayerNextUpOverlay(
                             var autoPlayToggleFocused by remember { mutableStateOf(false) }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 androidx.tv.material3.Text(
-                                    text = "Auto-play is ${if (autoPlayEnabled) "On" else "Off"}",
+                                    text = stringResource(
+                                        if (autoPlayEnabled) CommonR.string.upNext_autoPlayOn else CommonR.string.upNext_autoPlayOff,
+                                    ),
                                     color = if (autoPlayToggleFocused) Color.Black else Color.White.copy(alpha = 0.54f),
                                     style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
                                     modifier = Modifier
@@ -3435,7 +3786,7 @@ private fun TvPlayerNextUpOverlay(
                                         style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
                                     )
                                     androidx.tv.material3.Text(
-                                        text = "Stop shuffling",
+                                        text = stringResource(CommonR.string.upNext_stopShuffling),
                                         color = if (stopFocused) Color.Black else Color.White.copy(alpha = 0.54f),
                                         style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
                                         modifier = Modifier
@@ -3450,31 +3801,35 @@ private fun TvPlayerNextUpOverlay(
                         } else {
                             // Finished / no-next-episode state.
                             androidx.tv.material3.Text(
-                                text = if (videoEnded) "End of playback" else "Almost finished",
+                                text = stringResource(
+                                    if (videoEnded) CommonR.string.upNext_endOfPlayback else CommonR.string.upNext_almostFinished,
+                                ),
                                 color = Color.White,
                                 style = androidx.tv.material3.MaterialTheme.typography.headlineSmall,
                             )
                             androidx.tv.material3.Text(
-                                text = if (shuffle != null) "Nothing else in this shuffle can play." else "No next episode is available.",
+                                text = stringResource(
+                                    if (shuffle != null) CommonR.string.upNext_shuffleDone else CommonR.string.upNext_noNext,
+                                ),
                                 color = Color.White.copy(alpha = 0.62f),
                                 style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
                             )
                             if (!videoEnded) {
                                 TvDialogActionRow(
-                                    title = "Keep Watching",
+                                    title = stringResource(CommonR.string.upNext_keepWatching),
                                     onClick = onKeepWatching,
                                     modifier = Modifier
                                         .width(260.dp)
                                         .focusRequester(primaryFocus),
                                 )
                                 TvDialogActionRow(
-                                    title = "Back",
+                                    title = stringResource(CommonR.string.common_back),
                                     onClick = onBack,
                                     modifier = Modifier.width(160.dp),
                                 )
                             } else {
                                 TvDialogActionRow(
-                                    title = "Back",
+                                    title = stringResource(CommonR.string.common_back),
                                     onClick = onBack,
                                     modifier = Modifier
                                         .width(160.dp)
@@ -3575,7 +3930,7 @@ private fun TvNextUpOnDeckRow(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         androidx.tv.material3.Text(
-            text = "On Deck",
+            text = stringResource(CommonR.string.upNext_onDeck),
             color = Color.White.copy(alpha = 0.86f),
             style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(horizontal = 80.dp),
@@ -3601,7 +3956,7 @@ private fun TvNextUpOnDeckRow(
                             artworkAspectRatio = 16f / 9f,
                             width = cardWidth,
                         )
-                        item.subtitle?.let { subtitle ->
+                        tvOnDeckSubtitle(item)?.let { subtitle ->
                             androidx.tv.material3.Text(
                                 text = subtitle,
                                 color = Color.White.copy(alpha = 0.52f),
@@ -3648,7 +4003,7 @@ private fun TvCountdownRing(seconds: Int, totalSeconds: Int) {
             )
         }
         androidx.tv.material3.Text(
-            text = "$seconds",
+            text = LocaleFormat.integer(seconds, currentNumberLocale()),
             color = Color.White,
             style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
         )
@@ -3771,9 +4126,18 @@ data class VideoQualityOption(
 
 /**
  * Silo Cast's Auto id from before the menu carried its own `auto` row: still
- * accepted from remotes, and reported when no row is selected.
+ * accepted from remotes, never reported.
  */
 internal const val VIDEO_QUALITY_AUTO_ID = "-1"
+
+/**
+ * The quality id Silo Cast reports: the selected row's, or empty when none is.
+ * No row is selected when a fixed preference plays something no row names,
+ * such as the source unchanged, so the remote must check nothing rather than
+ * Auto. The wire field is a non-optional string, hence empty over null.
+ */
+internal fun siloCastActiveQualityId(videoQualities: List<VideoQualityOption>): String =
+    videoQualities.firstOrNull { it.isSelected }?.id.orEmpty()
 
 internal fun resizeModeForVideoFillMode(mode: VideoFillMode): Int = when (mode) {
     VideoFillMode.Fit -> AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -3812,7 +4176,6 @@ private fun TvPlayerViewModel.UiState.toSiloCastPlaybackState(
     subtitleAppearance: SubtitleAppearance,
     volumeState: SiloCastVolumeState,
 ): SiloCastPlaybackState {
-    val activeQualityId = videoQualities.firstOrNull { it.isSelected }?.id ?: VIDEO_QUALITY_AUTO_ID
     return SiloCastPlaybackState(
         contentId = contentId,
         sessionId = sessionId,
@@ -3833,7 +4196,7 @@ private fun TvPlayerViewModel.UiState.toSiloCastPlaybackState(
         selectedAudioTrackId = audioTracks.firstOrNull { it.isSelected }?.index?.toLong(),
         selectedSubtitleTrackId = subtitleTracks.firstOrNull { it.isSelected }?.index?.toLong(),
         qualityOptions = videoQualities.map { it.toSiloCastQualityOption() },
-        activeQualityId = activeQualityId,
+        activeQualityId = siloCastActiveQualityId(videoQualities),
         isQualitySwitching = false,
         playbackSpeed = playbackSpeed,
         // Wire values are tvOS VideoGravity raw values: fit, fill, stretch.
@@ -3911,19 +4274,51 @@ private fun String.toSiloCastSubtitlePosition(): SubtitlePositionPreset {
     }
 }
 
+/** The playback clock, holding on [pendingSeekSec] (an unanswered room seek) while it is set. */
 @Composable
 private fun TvPlayerClockScope(
     viewModel: TvPlayerViewModel,
+    pendingSeekSec: Double? = null,
     content: @Composable (PlaybackClock) -> Unit,
 ) {
     val clock by viewModel.playbackClock.collectAsState()
-    content(clock)
+    content(pendingSeekSec?.let { clock.copy(position = it) } ?: clock)
+}
+
+/**
+ * Remembers whether a pill held focus and, when it hides while holding it,
+ * calls [refocus]: the focus leaves with the pill. Returns the pill's focus
+ * callback (true while it, or something in it, has focus).
+ */
+@Composable
+private fun rememberRefocusWhenPillHides(
+    visible: Boolean,
+    refocus: suspend () -> Unit,
+): (Boolean) -> Unit {
+    val latestVisible by rememberUpdatedState(visible)
+    val latestRefocus by rememberUpdatedState(refocus)
+    var heldFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(visible) {
+        if (visible || !heldFocus) return@LaunchedEffect
+        heldFocus = false
+        latestRefocus()
+    }
+    return remember {
+        { focused ->
+            if (focused) {
+                heldFocus = true
+            } else if (latestVisible) {
+                // Focus moved off a pill that stays up (or a menu covered it).
+                heldFocus = false
+            }
+        }
+    }
 }
 
 /**
  * The overlay layer stacked above the player surface: lifecycle notice, remote
  * message toast, Watch Party indicator, the Up Next
- * surface, the intro auto-skip banner, and the reconnect spinner.
+ * surface, the intro auto-skip banner, and the loading spinner.
  *
  * Split out of [TvPlayerScreen] to keep that composable's generated method
  * within ART's JIT limit. Past it the method is never compiled, so the whole
@@ -3951,6 +4346,11 @@ private fun TvPlayerOverlays(
     introSkipState: IntroAutoSkipState,
     manualSkipTarget: MarkerSkipTarget?,
     onManualMarkerSelect: () -> Unit,
+    /** Left/Right on a focused skip pill; see [TvIntroAutoSkipBanner]'s onSeek. */
+    onSkipPillSeek: (direction: Int, hold: Boolean) -> Unit,
+    /** Whether each skip pill holds focus, so focus can be placed when it hides. */
+    onIntroPillFocusChanged: (Boolean) -> Unit,
+    onMarkerPillFocusChanged: (Boolean) -> Unit,
     /** Bumps when the pill's timer (re)starts, so its fill re-anchors. */
     introSkipCountdownRun: Int,
     /** False while the pill is up but its timer is frozen by a pause. */
@@ -3960,9 +4360,9 @@ private fun TvPlayerOverlays(
     introBannerMayTakeFocus: Boolean,
     /** True only while the video branch is composed — not loading, not errored. */
     videoActive: Boolean,
-    isBuffering: Boolean,
+    /** Playback is waiting on a load, a rebuffer or a reconnect. */
+    loading: Boolean,
     sleepTimerState: SleepTimerState,
-    showSpinner: Boolean,
     onPlayNextNow: () -> Unit,
     onKeepWatching: () -> Unit,
     onPickAnother: () -> Unit,
@@ -3975,9 +4375,20 @@ private fun TvPlayerOverlays(
     onPlayOnDeckItem: (TvOnDeckItem) -> Unit = {},
     /** Watch Party: the lower rung offered after repeated stalls, or null. */
     qualityOfferLabel: String? = null,
+    bufferingPill: BufferingQualityPill = BufferingQualityPill.Hidden,
+    bufferingCountdownRun: Int = 0,
+    bufferingTimerRunning: Boolean = false,
+    onBufferingLower: () -> Unit = {},
+    onBufferingKeep: () -> Unit = {},
+    onBufferingRestore: () -> Unit = {},
+    onBufferingPillFocusChanged: (TvBufferingPillAction?) -> Unit = {},
 ) {
+        val spinnerVisible = rememberPlayerSpinnerVisible(loading && !isInPictureInPictureMode)
+
         // Lifecycle-driven notice toast (top-start). Slides in for outage
-        // recovery, fades out when the lifecycle clears the notice.
+        // recovery, fades out when the lifecycle clears the notice. The
+        // buffering-quality pill sits under it in the same anchor, and like
+        // the intro pill is not composed while a menu (the HUD, Up Next) is up.
         if (!isInPictureInPictureMode) {
             Box(
                 modifier = Modifier
@@ -3985,7 +4396,19 @@ private fun TvPlayerOverlays(
                     .padding(top = 32.dp, start = 32.dp),
                 contentAlignment = Alignment.TopStart,
             ) {
-                TvPlayerNoticeOverlay(notice = notice)
+                TvPlayerNoticeOverlay(
+                    notice = notice,
+                    bufferingPill = if (hudOpen || showNextUp) BufferingQualityPill.Hidden else bufferingPill,
+                    bufferingCountdownRun = bufferingCountdownRun,
+                    bufferingTimerRunning = bufferingTimerRunning,
+                    // The same rule as the intro pill: the scrubber commits
+                    // its seek on focus loss.
+                    bufferingPillMayTakeFocus = introBannerMayTakeFocus,
+                    onBufferingLower = onBufferingLower,
+                    onBufferingKeep = onBufferingKeep,
+                    onBufferingRestore = onBufferingRestore,
+                    onBufferingPillFocusChanged = onBufferingPillFocusChanged,
+                )
             }
         }
 
@@ -4024,7 +4447,7 @@ private fun TvPlayerOverlays(
                         .padding(horizontal = 24.dp, vertical = 14.dp),
                 ) {
                     Text(
-                        text = message.text,
+                        text = message.textRes?.let { stringResource(it) } ?: tvPlayerMessageText(message.text),
                         color = Color.White,
                         style = MaterialTheme.typography.titleMedium,
                     )
@@ -4051,94 +4474,36 @@ private fun TvPlayerOverlays(
             }
         }
 
-        // Top-right status chips: buffering capsule (spinner + "Buffering") and
-        // a sleep-timer countdown chip, mirroring tvOS statusColumn. Lives here
-        // rather than in the idle overlay so a hidden-controls D-pad seek still
-        // reports buffering.
-        val sleepRemaining = (sleepTimerState as? SleepTimerState.Active)?.remainingSeconds
-        // A stalled player reports buffering during an outage too, but the
-        // centered reconnect spinner and the notice toast already say more than
-        // the capsule would, so the capsule stands down while that one shows.
-        //
-        // Otherwise it stays up unconditionally, because PlayerView's own
-        // spinner is off (SHOW_BUFFERING_NEVER) and this capsule is now the
-        // only buffering feedback there is. In particular it must survive the
-        // HUD — picking a quality or version restarts the whole session with
-        // the HUD still open (closeOnSelect closes only the picker), which is
-        // the longest rebuffer in the app — and Up Next, where video keeps
-        // playing behind the mini-player frame until the credits end. Neither
-        // surface has a loading state of its own.
-        val showBufferingChip = isBuffering && !showSpinner
+        // Top-right sleep-timer countdown chip, mirroring tvOS statusColumn.
         // The sleep countdown is ambient rather than urgent, so it yields the
         // corner to the HUD and Up Next instead of competing with them.
-        val showSleepChip = sleepRemaining != null && !hudOpen && !showNextUp
-        // Chips belong to the playing video. The loading and error screens are
-        // separate branches of the player's `when` and own their whole surface,
-        // so a stale "Buffering" capsule must not float over either of them —
-        // `fail()` sets `error` without clearing `isBuffering`.
-        if (!isInPictureInPictureMode && videoActive && (showBufferingChip || showSleepChip)) {
-            // The HUD is a top-center card (top 56dp, up to 680dp wide, up to
-            // 360dp tall), so at the usual 960dp TV width its right edge runs
-            // under the chip's 80dp end inset. Drop below it rather than over
-            // it; nothing else occupies that band.
-            val chipTopPadding = if (hudOpen) 440.dp else 64.dp
+        val sleepRemaining = (sleepTimerState as? SleepTimerState.Active)?.remainingSeconds
+        if (!isInPictureInPictureMode && videoActive && sleepRemaining != null && !hudOpen && !showNextUp) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = chipTopPadding, end = 80.dp)
-                    // Up Next composes after this block and paints a
-                    // full-screen scrim, so lift the chips above it (still
-                    // under the remote-message toast at 10f).
-                    .zIndex(5f),
+                    .padding(top = 64.dp, end = 80.dp),
                 contentAlignment = Alignment.TopEnd,
             ) {
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(percent = 50))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (showBufferingChip) {
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(percent = 50))
-                                .background(Color.Black.copy(alpha = 0.55f))
-                                .padding(horizontal = 14.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            CircularProgressIndicator(
-                                color = Color.White,
-                                strokeWidth = 2.dp,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            androidx.tv.material3.Text(
-                                text = "Buffering",
-                                color = Color.White.copy(alpha = 0.85f),
-                                style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
-                            )
-                        }
-                    }
-                    if (showSleepChip && sleepRemaining != null) {
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(percent = 50))
-                                .background(Color.Black.copy(alpha = 0.55f))
-                                .padding(horizontal = 14.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            androidx.tv.material3.Icon(
-                                imageVector = Icons.Filled.Bedtime,
-                                contentDescription = null,
-                                tint = Color.White.copy(alpha = 0.85f),
-                                modifier = Modifier.size(16.dp),
-                            )
-                            androidx.tv.material3.Text(
-                                text = formatSleepCountdown(sleepRemaining),
-                                color = Color.White.copy(alpha = 0.85f),
-                                style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
-                            )
-                        }
-                    }
+                    androidx.tv.material3.Icon(
+                        imageVector = Icons.Filled.Bedtime,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(16.dp),
+                    )
+                    androidx.tv.material3.Text(
+                        text = formatSleepCountdown(sleepRemaining),
+                        color = Color.White.copy(alpha = 0.85f),
+                        style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
+                    )
                 }
             }
         }
@@ -4160,6 +4525,7 @@ private fun TvPlayerOverlays(
                     onToggleAutoPlay = onToggleAutoPlayNext,
                     onBack = onExitPlayback,
                     onVideoBoundsChanged = onNextUpVideoBoundsChanged,
+                    spinnerVisible = spinnerVisible,
                     shuffle = shuffle,
                     onPickAnother = onPickAnother,
                     onStopShuffling = onStopShuffling,
@@ -4191,13 +4557,17 @@ private fun TvPlayerOverlays(
                 ) {
                     if (manualSkipTarget != null) {
                         TvMarkerSkipPill(
-                            label = stringResource(if (manualSkipTarget.kind == ManualMarkerKind.Recap) R.string.marker_skip_recap else R.string.marker_skip_credits),
+                            modifier = Modifier.onFocusChanged { onMarkerPillFocusChanged(it.hasFocus) },
+                            label = stringResource(if (manualSkipTarget.kind == ManualMarkerKind.Recap) CommonR.string.marker_skipRecap else CommonR.string.marker_skipCredits),
                             onSelect = onManualMarkerSelect,
+                            onSeek = onSkipPillSeek,
                         )
                     }
                     TvIntroAutoSkipBanner(
+                        modifier = Modifier.onFocusChanged { onIntroPillFocusChanged(it.hasFocus) },
                         state = introSkipState,
                         onSelect = onIntroPromptSelect,
+                        onSeek = onSkipPillSeek,
                         totalSeconds = introSkipTotalSeconds,
                         countdownRun = introSkipCountdownRun,
                         timerRunning = introSkipTimerRunning,
@@ -4226,7 +4596,7 @@ private fun TvPlayerOverlays(
                         .padding(horizontal = 20.dp, vertical = 10.dp),
                 ) {
                     Text(
-                        text = "Keeps buffering? Press OK to switch to $qualityOfferLabel.",
+                        text = stringResource(CommonR.string.buffering_watchPartyOffer, qualityOfferLabel),
                         color = Color.White,
                         style = MaterialTheme.typography.labelLarge,
                     )
@@ -4234,24 +4604,70 @@ private fun TvPlayerOverlays(
             }
         }
 
-        // Outage spinner. Native ExoPlayer buffering surfaces as the top-right
-        // Buffering capsule (mirroring tvOS), so this centered spinner is
-        // reserved for the lifecycle Reconnecting state: the server-outage
-        // probe loop, which the player itself can't observe. The capsule
-        // stands down while this shows, so the two never stack. Up Next keeps
-        // the capsule instead, so it gets no centered spinner.
-        if (showSpinner) {
+        // The loading spinner, centered on the picture whether the controls
+        // show or not; the transport sits at the bottom, clear of it. It stays
+        // up through the HUD, where a quality or version pick reloads with the
+        // HUD still open. The HUD is a top-center card (top 56dp, up to 360dp
+        // tall), so the spinner centers in the band below it instead of under
+        // the card. Up Next draws it in its own video frame.
+        if (spinnerVisible && !showNextUp) {
             Box(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = if (hudOpen) 416.dp else 0.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                CircularProgressIndicator(
-                    color = Color.White,
-                    strokeWidth = 4.dp,
-                    modifier = Modifier.size(64.dp),
-                )
+                TvPlayerLoadingSpinner()
             }
         }
+}
+
+/** The player's one loading indicator: a plain spinner with no label. Screen readers hear "Loading". */
+@Composable
+private fun TvPlayerLoadingSpinner() {
+    val loading = stringResource(CommonR.string.common_loading)
+    CircularProgressIndicator(
+        color = TvPlayerChrome.Paper,
+        strokeWidth = 4.dp,
+        modifier = Modifier
+            .size(64.dp)
+            .semantics { contentDescription = loading },
+    )
+}
+
+/**
+ * A player error or notice in the interface language when the player wrote it
+ * ([TvPlayerErrors]); text from the server or the shared module as it is.
+ */
+@Composable
+internal fun tvPlayerMessageText(message: String): String {
+    return LocalResources.current.tvPlayerMessage(message)
+}
+
+/** [tvPlayerMessageText] outside composition, for a toast. */
+internal fun android.content.res.Resources.tvPlayerMessage(message: String): String {
+    TvPlayerErrors.res(message)?.let { return getString(it) }
+    TvSubtitleFailure.messageFor(message)?.let { return getString(it) }
+    val (id, detail) = TvPlayerErrors.prefixed(message) ?: return message
+    return getString(id, TvPlayerErrors.res(detail)?.let { getString(it) } ?: detail)
+}
+
+/**
+ * The error screen's text: the catalog string a shared producer named for
+ * exactly this [error] ([errorRes]), else [tvPlayerMessageText].
+ */
+@Composable
+private fun tvPlayerErrorText(error: String, errorRes: TvPlayerErrorRes?): String =
+    if (errorRes != null && errorRes.message == error) stringResource(errorRes.res) else tvPlayerMessageText(error)
+
+/** An On Deck card's second line: "S2·E5 — Title" for an episode, else the year. */
+@Composable
+private fun tvOnDeckSubtitle(item: TvOnDeckItem): String? {
+    val season = item.seasonNumber
+    val episode = item.episodeNumber
+    if (season == null || episode == null) return item.year?.let { LocaleFormat.integer(it, currentNumberLocale()) } ?: item.subtitle
+    val code = stringResource(CommonR.string.upNext_episodeCode, LocaleFormat.codeNumber(season), LocaleFormat.codeNumber(episode))
+    return code + (item.subtitle?.let { " — ${bidiIsolated(it, isRightToLeftText())}" } ?: "")
 }
 
 /**

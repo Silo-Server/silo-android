@@ -56,7 +56,7 @@ import org.siloserver.silo.common.data.db.entity.UserItemStateEntity
         MembershipProjectionEntity::class,
         LegacyMembershipQuarantineEntity::class,
     ],
-    version = 15,
+    version = 16,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -100,6 +100,80 @@ abstract class SiloDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v16 adds `accountId` (the saved account, see
+         * [org.siloserver.silo.model.server.AccountEntry.localAccountId]) to every
+         * table keyed by server + profile, and to their primary keys, because
+         * two accounts on one server can both have a `default` profile. Existing
+         * rows get `''`, "written before accounts existed"; the account that
+         * adopts the server's old data claims them at startup
+         * (`OrphanedServerDataPurger`).
+         *
+         * SQLite cannot change a primary key in place, so those tables are
+         * rebuilt: create the v16 shape, copy every v15 column, swap. The
+         * outbox keeps its autoincrement id key and only gains the column.
+         */
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                ACCOUNT_REBUILDS.forEach { it.apply(db) }
+                db.execSQL("ALTER TABLE `dirty_operations` ADD COLUMN `accountId` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        private class TableRebuild(val table: String, val createNew: String, vararg val indices: String) {
+            fun apply(db: SupportSQLiteDatabase) {
+                db.execSQL(createNew)
+                val columns = mutableListOf<String>()
+                db.query("PRAGMA table_info(`$table`)").use { cursor ->
+                    val name = cursor.getColumnIndexOrThrow("name")
+                    while (cursor.moveToNext()) columns += "`${cursor.getString(name)}`"
+                }
+                val list = columns.joinToString(", ")
+                db.execSQL("INSERT INTO `${table}_new` ($list) SELECT $list FROM `$table`")
+                db.execSQL("DROP TABLE `$table`")
+                db.execSQL("ALTER TABLE `${table}_new` RENAME TO `$table`")
+                indices.forEach(db::execSQL)
+            }
+        }
+
+        private val ACCOUNT_REBUILDS = listOf(
+            TableRebuild(
+                "downloads",
+                "CREATE TABLE IF NOT EXISTS `downloads_new` (`serverId` TEXT NOT NULL, `accountId` TEXT NOT NULL DEFAULT '', `profileId` TEXT NOT NULL, `mediaFileId` INTEGER NOT NULL, `recordId` TEXT NOT NULL, `contentId` TEXT NOT NULL, `title` TEXT NOT NULL, `subtitle` TEXT, `posterUrl` TEXT, `posterThumbhash` TEXT, `year` INTEGER, `seriesTitle` TEXT, `seriesContentId` TEXT, `seasonNumber` INTEGER, `episodeNumber` INTEGER, `fileName` TEXT, `container` TEXT, `localUri` TEXT, `mediaType` TEXT NOT NULL, `overview` TEXT, `author` TEXT, `narrator` TEXT, `durationSeconds` REAL, `chaptersJson` TEXT, `status` TEXT NOT NULL, `kind` TEXT NOT NULL, `fileSize` INTEGER NOT NULL, `bytesSent` INTEGER NOT NULL, `createdAt` TEXT NOT NULL, `completedAt` TEXT, `updatedAtMs` INTEGER NOT NULL, `resumeValidator` TEXT, `quality` TEXT, `effectiveQuality` TEXT, `revision` INTEGER, `offlineTracksJson` TEXT, `offlinePosterPath` TEXT, `offlineSeriesPosterPath` TEXT, `seriesPosterThumbhash` TEXT, `posterIsEpisodeStill` INTEGER, `episodeUserDataJson` TEXT, PRIMARY KEY(`serverId`, `accountId`, `profileId`, `mediaFileId`))",
+                "CREATE INDEX IF NOT EXISTS `index_downloads_serverId_accountId_profileId_status` ON `downloads` (`serverId`, `accountId`, `profileId`, `status`)",
+                "CREATE INDEX IF NOT EXISTS `index_downloads_serverId_accountId_profileId_contentId` ON `downloads` (`serverId`, `accountId`, `profileId`, `contentId`)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_downloads_recordId` ON `downloads` (`recordId`)",
+            ),
+            TableRebuild(
+                "download_subscriptions",
+                "CREATE TABLE IF NOT EXISTS `download_subscriptions_new` (`id` TEXT NOT NULL, `serverId` TEXT NOT NULL, `accountId` TEXT NOT NULL DEFAULT '', `profileId` TEXT NOT NULL, `targetType` TEXT NOT NULL, `targetId` TEXT NOT NULL, `displayTitle` TEXT NOT NULL, `mediaKind` TEXT NOT NULL, `quality` TEXT NOT NULL, `wifiOnly` INTEGER NOT NULL, `enabled` INTEGER NOT NULL, `includeExisting` INTEGER NOT NULL, `keepUnwatchedLimit` INTEGER NOT NULL, `deleteWatchedAfterDays` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `lastEvaluatedAt` INTEGER, `lastError` TEXT, PRIMARY KEY(`serverId`, `accountId`, `profileId`, `id`))",
+                "CREATE INDEX IF NOT EXISTS `index_download_subscriptions_serverId_accountId_profileId_enabled` ON `download_subscriptions` (`serverId`, `accountId`, `profileId`, `enabled`)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_download_subscriptions_serverId_accountId_profileId_targetType_targetId` ON `download_subscriptions` (`serverId`, `accountId`, `profileId`, `targetType`, `targetId`)",
+            ),
+            TableRebuild(
+                "download_deletions",
+                "CREATE TABLE IF NOT EXISTS `download_deletions_new` (`serverId` TEXT NOT NULL, `accountId` TEXT NOT NULL DEFAULT '', `profileId` TEXT NOT NULL, `recordId` TEXT NOT NULL, `mediaFileId` INTEGER, `enqueuedAtMs` INTEGER NOT NULL, `loginId` TEXT, `origin` TEXT, `deviceId` TEXT, PRIMARY KEY(`serverId`, `accountId`, `profileId`, `recordId`))",
+            ),
+            TableRebuild(
+                "user_item_state",
+                "CREATE TABLE IF NOT EXISTS `user_item_state_new` (`serverId` TEXT NOT NULL, `accountId` TEXT NOT NULL DEFAULT '', `profileId` TEXT NOT NULL, `contentId` TEXT NOT NULL, `fileId` INTEGER NOT NULL, `positionSeconds` REAL NOT NULL, `durationSeconds` REAL, `audioFingerprint` TEXT, `subtitleFingerprint` TEXT, `cfi` TEXT, `readProgress` REAL, `clientUpdatedAtMs` INTEGER NOT NULL, `serverUpdatedAtMs` INTEGER, `positionUpdatedAtMs` INTEGER, PRIMARY KEY(`serverId`, `accountId`, `profileId`, `contentId`, `fileId`))",
+                "CREATE INDEX IF NOT EXISTS `index_user_item_state_serverId_accountId_profileId_contentId` ON `user_item_state` (`serverId`, `accountId`, `profileId`, `contentId`)",
+                "CREATE INDEX IF NOT EXISTS `index_user_item_state_serverId_accountId_profileId_clientUpdatedAtMs` ON `user_item_state` (`serverId`, `accountId`, `profileId`, `clientUpdatedAtMs`)",
+            ),
+            TableRebuild(
+                "content_item_state",
+                "CREATE TABLE IF NOT EXISTS `content_item_state_new` (`serverId` TEXT NOT NULL, `accountId` TEXT NOT NULL DEFAULT '', `profileId` TEXT NOT NULL, `contentId` TEXT NOT NULL, `watched` INTEGER, `ratingValue` INTEGER, `favorite` INTEGER, `clientUpdatedAtMs` INTEGER NOT NULL, `serverUpdatedAtMs` INTEGER, `watchedUpdatedAtMs` INTEGER, PRIMARY KEY(`serverId`, `accountId`, `profileId`, `contentId`))",
+            ),
+            TableRebuild(
+                "home_cache",
+                "CREATE TABLE IF NOT EXISTS `home_cache_new` (`serverId` TEXT NOT NULL, `accountId` TEXT NOT NULL DEFAULT '', `profileId` TEXT NOT NULL, `sectionsJson` TEXT NOT NULL, `cachedAtMs` INTEGER NOT NULL, PRIMARY KEY(`serverId`, `accountId`, `profileId`))",
+            ),
+            TableRebuild(
+                "catalog_cache",
+                "CREATE TABLE IF NOT EXISTS `catalog_cache_new` (`serverId` TEXT NOT NULL, `accountId` TEXT NOT NULL DEFAULT '', `profileId` TEXT NOT NULL, `cacheKey` TEXT NOT NULL, `json` TEXT NOT NULL, `cachedAtMs` INTEGER NOT NULL, PRIMARY KEY(`serverId`, `accountId`, `profileId`, `cacheKey`))",
+            ),
+        )
+
         val CALLBACK = object : RoomDatabase.Callback() {
             override fun onOpen(db: SupportSQLiteDatabase) = installProducerGuard(db)
         }
@@ -118,6 +192,6 @@ abstract class SiloDatabase : RoomDatabase() {
          */
         fun build(context: Context): SiloDatabase =
             Room.databaseBuilder(context.applicationContext, SiloDatabase::class.java, NAME)
-                .addMigrations(MIGRATION_9_10).addCallback(CALLBACK).build()
+                .addMigrations(MIGRATION_9_10, MIGRATION_15_16).addCallback(CALLBACK).build()
     }
 }

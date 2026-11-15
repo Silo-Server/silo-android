@@ -1,15 +1,18 @@
 package org.siloserver.silo.android.ui.screens.browse
 
+import org.siloserver.silo.common.i18n.UiText
+import org.siloserver.silo.common.i18n.errorText
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.catalog.filter.BrowseFacetMediaType
 import org.siloserver.silo.catalog.filter.CatalogFilterQueryBuilder
 import org.siloserver.silo.catalog.filter.CatalogFilterState
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.settings.BrowsePrefsStore
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
-import org.siloserver.silo.model.catalog.MediaItemUserState
+import org.siloserver.silo.viewmodel.withLocalContentState
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
@@ -37,12 +40,12 @@ data class BrowseUiState(
     val filterState: CatalogFilterState = CatalogFilterState(),
     val mediaType: BrowseFacetMediaType = BrowseFacetMediaType.Video,
     val preserveFilters: Boolean = true,
-    val selectedNamePrefix: String? = null,
     val catalogDensity: CatalogViewDensity = CatalogViewDensity.Normal,
     val availableFilters: CatalogFiltersResponse? = null,
     val libraryId: Int? = null,
-    val title: String = "Browse",
-    val error: String? = null,
+    /** The server's title for the page; null shows the default Browse title. */
+    val title: String? = null,
+    val error: UiText? = null,
 )
 
 /**
@@ -64,6 +67,14 @@ class BrowseViewModel(
     private var continuation: CatalogContinuationV2? = null
     private var pagingJob: kotlinx.coroutines.Job? = null
     private val pageSize = 40
+
+    /** The A–Z jump while the grid is in title order; see [CatalogLetterJump]. */
+    private val letterJumpController = CatalogLetterJump(
+        scope = viewModelScope,
+        repository = catalogRepository,
+        overlay = { overlayLocalState(it) },
+    )
+    val letterJump: StateFlow<CatalogLetterJumpState?> = letterJumpController.state
 
     init {
         val libraryId = savedStateHandle.get<String>("libraryId")?.toIntOrNull()
@@ -116,19 +127,11 @@ class BrowseViewModel(
         if (enabled) browsePrefs?.saveState(libraryId, _uiState.value.filterState)
     }
 
-    fun selectNamePrefix(prefix: String?) {
-        val normalizedPrefix = normalizeCatalogNamePrefix(prefix)
-        if (_uiState.value.selectedNamePrefix == normalizedPrefix) return
-        _uiState.update {
-            it.copy(
-                selectedNamePrefix = normalizedPrefix,
-                items = emptyList(),
-                total = 0,
-                hasMore = false,
-            )
-        }
-        loadItems(reset = true)
-    }
+    /** The finger rests on [letter] in the rail: read where a jump would land. */
+    fun prepareLetterJump(letter: String) = letterJumpController.prepareJump(letter)
+
+    /** List position of [letter]'s first title, once the titles there are read or briefly awaited. */
+    suspend fun letterJumpPosition(letter: String): Int? = letterJumpController.positionForJump(letter)
 
     fun selectViewDensity(density: CatalogViewDensity) {
         if (_uiState.value.catalogDensity == density) return
@@ -183,18 +186,22 @@ class BrowseViewModel(
         if (local.isEmpty()) return items
         return items.map { item ->
             val ls = local[item.contentId] ?: return@map item
-            val base = item.userState ?: MediaItemUserState()
-            item.copy(
-                userState = base.copy(
-                    played = ls.watched ?: base.played,
-                    isFavorite = ls.favorite ?: base.isFavorite,
-                ),
-            )
+            item.copy(userState = item.userState.withLocalContentState(ls))
         }
     }
 
     private fun loadItems(reset: Boolean) {
         pagingJob?.cancel()
+        val startState = _uiState.value
+        val titleOrdered = startState.filterState.sort == CatalogLetterJump.TITLE_SORT
+        // The letter index is read beside the first page, so the rail is
+        // ready when the grid is.
+        if (reset) {
+            letterJumpController.reset(
+                CatalogLetterQuery.of(startState.libraryId, null, startState.filterState.order, startState.filterState)
+                    .takeIf { titleOrdered },
+            )
+        }
         pagingJob = viewModelScope.launch {
             val currentState = _uiState.value
             val cursor = if (reset) null else continuation
@@ -209,8 +216,9 @@ class BrowseViewModel(
                 sort = filters.sort,
                 order = filters.order,
                 continuation = cursor,
-                limit = pageSize,
-                namePrefix = currentState.selectedNamePrefix,
+                // In title order the first page is one whole pager page, so the
+                // full-length grid need not read it again.
+                limit = if (titleOrdered) CatalogLetterJump.TITLE_FIRST_PAGE_SIZE else pageSize,
                 queryGroups = CatalogFilterQueryBuilder.buildGroups(filters),
                 match = CatalogFilterQueryBuilder.matchParam(filters)
                     .takeIf { filters.hasActiveFilters },
@@ -228,11 +236,12 @@ class BrowseViewModel(
                     val libraryId = currentState.libraryId
                     val libraryHasItems = when {
                         !reset || overlaid.isNotEmpty() || libraryId == null -> null
-                        !filters.hasActiveFilters && currentState.selectedNamePrefix == null -> false
+                        !filters.hasActiveFilters -> false
                         else -> catalogRepository.libraryHasItems(libraryId)
                     }
                     kotlin.coroutines.coroutineContext.ensureActive()
                     continuation = response.continuation
+                    if (reset) letterJumpController.seed(overlaid, response.windowCursor)
                     // Audiobook libraries surface book-native facets
                     // (author/narrator/series) — detected from the first item
                     // like iOS BrowseMediaType.from.
@@ -251,7 +260,7 @@ class BrowseViewModel(
                             hasMore = response.hasMore,
                             total = response.total,
                             libraryHasItems = if (reset) libraryHasItems else it.libraryHasItems,
-                            title = response.title ?: "Browse",
+                            title = response.title,
                             mediaType = mediaType ?: it.mediaType,
                             error = null,
                         )
@@ -262,7 +271,7 @@ class BrowseViewModel(
                         it.copy(
                             isLoading = false,
                             isLoadingMore = false,
-                            error = result.message.ifBlank { "Failed to load catalog" },
+                            error = result.errorText(CommonR.string.library_error_loadCatalog),
                         )
                     }
                 }
@@ -271,7 +280,7 @@ class BrowseViewModel(
                         it.copy(
                             isLoading = false,
                             isLoadingMore = false,
-                            error = "Network error. Check your connection.",
+                            error = UiText.Res(CommonR.string.catalog_error_network),
                         )
                     }
                 }
