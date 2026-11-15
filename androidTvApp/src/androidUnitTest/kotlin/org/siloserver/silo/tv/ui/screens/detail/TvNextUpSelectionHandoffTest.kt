@@ -929,6 +929,51 @@ class TvNextUpSelectionHandoffTest {
         assertEquals(mapOf(scenario.episodeOneId to false, scenario.episodeTwoId to false), played)
     }
 
+    @Test
+    fun seriesReturnRereadsEpisodesAndSeasonsAfterThePlayerStopLands() = runDetailTest {
+        val scenario = Scenario(suffix = "-series-return-settle")
+        scenario.episodeTwoWatched = true
+        val stop = CompletableDeferred<Unit>()
+        val fixture = createFixture(scenario, awaitPlaybackSettled = { stop.await() })
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+
+        // The player closes on episode one's credits: it records its returns and
+        // sends the final progress and stop in the background.
+        TvDetailTrackSelectionSession.rememberPlaybackReturn(
+            contentId = scenario.episodeOneId,
+            fileId = 101,
+            audio = null,
+            subtitle = null,
+            positionSeconds = 118.0,
+            durationSeconds = 120.0,
+        )
+        TvDetailTrackSelectionSession.rememberSeriesReturn(
+            TvDetailTrackSelectionSession.SeriesReturn(
+                seriesId = scenario.seriesId,
+                episodeId = scenario.episodeTwoId,
+                seasonNumber = 1,
+                identityGeneration = fixture.identityTransitions.generation.value,
+            ),
+        )
+        val seasonsBefore = scenario.seasonsRequests.get()
+        val episodesBefore = scenario.completedSeasonOneReads.get()
+        fixture.viewModel.refreshOnReturn()
+        // The page's immediate reads answer before the stop lands.
+        awaitCondition {
+            scenario.seasonsRequests.get() > seasonsBefore &&
+                scenario.completedSeasonOneReads.get() > episodesBefore
+        }
+
+        scenario.episodeOneWatched = true
+        stop.complete(Unit)
+
+        awaitCondition(timeoutMs = 5_000) {
+            val state = fixture.viewModel.uiState.value
+            state.episodes.firstOrNull { it.contentId == scenario.episodeOneId }?.userData?.played == true &&
+                state.seasons.firstOrNull { it.seasonNumber == 1 }?.userData?.played == true
+        }
+    }
+
     // ------------------------------------------------------------------
 
     private val createdViewModels = mutableListOf<ViewModel>()
@@ -950,6 +995,7 @@ class TvNextUpSelectionHandoffTest {
         scenario: Scenario,
         metadataApi: MetadataAiApi? = null,
         contentId: String = scenario.seriesId,
+        awaitPlaybackSettled: suspend () -> Unit = {},
     ): Fixture {
         val identityTransitions = DefaultIdentityTransitionBarrier()
         val tokenManager = FakeTokenManager(identityTransitions)
@@ -987,6 +1033,7 @@ class TvNextUpSelectionHandoffTest {
             userItemState = userState,
             tokenManager = tokenManager,
             identityTransitions = identityTransitions,
+            awaitPlaybackSettled = awaitPlaybackSettled,
         ).also { createdViewModels += it }
         return Fixture(viewModel, userState, tokenManager, identityTransitions)
     }
@@ -1005,9 +1052,9 @@ class TvNextUpSelectionHandoffTest {
         }
     }
 
-    private suspend fun awaitCondition(predicate: () -> Boolean) {
+    private suspend fun awaitCondition(timeoutMs: Long = 30_000, predicate: () -> Boolean) {
         withContext(Dispatchers.IO) {
-            withTimeout(30_000) {
+            withTimeout(timeoutMs) {
                 while (!predicate()) delay(10)
             }
         }
