@@ -72,6 +72,8 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.isRightToLeftText
+import org.siloserver.silo.domain.player.MarkerKind
+import org.siloserver.silo.domain.player.MarkerTimeline
 
 /**
  * Glass-capsule scrubber matching `iosApp/.../tvOS/TVPlayerScrubber.swift`.
@@ -119,12 +121,9 @@ fun TvPlayerScrubber(
     cancelOnBlur: Boolean,
     /** The server's preview of [scrubPreviewSec], shown above the puck while scrubbing; null keeps the bar alone. */
     previewThumbnail: ImageBitmap? = null,
-    // Detected marker bands [startSec, endSec] drawn on the track when known.
-    // Null or an empty list = no band. Mirrors tvOS TVPlayerScrubber.markerRegions.
-    introRangeSec: ClosedRange<Double>? = null,
-    creditsRangesSec: List<ClosedRange<Double>> = emptyList(),
-    recapRangeSec: ClosedRange<Double>? = null,
-    previewRangeSec: ClosedRange<Double>? = null,
+    // Detected markers: every occurrence of each kind gets a band on the
+    // track. Mirrors tvOS TVPlayerScrubber.markerRegions.
+    markers: MarkerTimeline = MarkerTimeline.EMPTY,
     onSkipBack: () -> Unit,
     onSkipForward: () -> Unit,
     // Resolved video intervals; a tap while scrubbing nudges the preview by
@@ -380,8 +379,9 @@ fun TvPlayerScrubber(
             val barWidthPx = with(density) { barWidthDp.toPx() }
             val puckSizePx = with(density) { puckSize.toPx() }
 
-            // Track, marker bands, buffered-ahead and played fill, drawn as one
-            // segmented bar: chapter starts become 2dp gaps rather than ticks.
+            // Track, buffered-ahead and played fill, then marker bands over them,
+            // drawn as one segmented bar: chapter starts become 2dp gaps rather
+            // than ticks.
             val trackAlpha = when {
                 isTimelineScrubbing -> 0.45f
                 isFocused -> 0.32f
@@ -389,18 +389,14 @@ fun TvPlayerScrubber(
             }
             val bandAlpha = if (isTimelineScrubbing || isFocused) 0.45f else 0.34f
             val markerBands = if (durationSec > 0) {
-                buildList {
-                    introRangeSec?.let { add(it to Color(0xFF22D3EE)) }
-                    recapRangeSec?.let { add(it to Color(0xFF8BC34A)) }
-                    // Every credits range gets a band: a file can have two.
-                    creditsRangesSec.forEach { add(it to Color(0xFFFFB74D)) }
-                    previewRangeSec?.let { add(it to Color(0xFFBA68C8)) }
-                }.map { (range, color) ->
-                    Triple(
-                        (range.start / durationSec).toFloat().coerceIn(0f, 1f),
-                        (range.endInclusive / durationSec).toFloat().coerceIn(0f, 1f),
-                        color.copy(alpha = bandAlpha),
-                    )
+                MarkerKind.entries.flatMap { kind ->
+                    markers.ranges(kind).map { range ->
+                        Triple(
+                            (range.start / durationSec).toFloat().coerceIn(0f, 1f),
+                            (range.end / durationSec).toFloat().coerceIn(0f, 1f),
+                            markerBandColor(kind).copy(alpha = bandAlpha),
+                        )
+                    }
                 }
             } else {
                 emptyList()
@@ -544,6 +540,14 @@ fun TvPlayerScrubber(
     }
 }
 
+/** TheIntroDB's segment palette (Tailwind v4 400 shades), shared by every Silo client. */
+private fun markerBandColor(kind: MarkerKind): Color = when (kind) {
+    MarkerKind.Intro -> Color(0xFF51A2FF)
+    MarkerKind.Recap -> Color(0xFFFF8904)
+    MarkerKind.Credits -> Color(0xFFC27AFF)
+    MarkerKind.Preview -> Color(0xFF00D3F2)
+}
+
 /**
  * The bar as segments split at chapter starts. Gaps are dropped when a title
  * has so many short chapters that the segments would stop reading as bars.
@@ -578,8 +582,8 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTvSegmentedTrac
         }
         drawRoundRect(color = trackColor, topLeft = topLeft, size = segmentSize, cornerRadius = radius)
         fill(bufferedColor, bufferedFraction * width)
-        bands.forEach { (from, to, color) -> fill(color, untilX = to * width, fromX = maxOf(start, from * width)) }
         fill(playedColor, playedFraction * width)
+        bands.forEach { (from, to, color) -> fill(color, untilX = to * width, fromX = maxOf(start, from * width)) }
     }
 }
 
