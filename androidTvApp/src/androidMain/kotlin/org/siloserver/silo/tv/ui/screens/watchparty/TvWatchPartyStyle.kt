@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.watchparty.text
 import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.BorderStroke
@@ -162,7 +163,7 @@ internal fun Modifier.partyFocus(focus: TvPartyFocus, key: String): Modifier = t
 @Composable
 internal fun TvPartyEyebrow(text: String, modifier: Modifier = Modifier, color: Color = SiloSecondaryText) {
     Text(
-        text = text.uppercase(),
+        text = text.displayUppercase(),
         fontSize = TvPartyMetrics.eyebrow,
         fontWeight = FontWeight.SemiBold,
         letterSpacing = 1.4.sp,

@@ -65,6 +65,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.profile.AssignableLibraries
 import org.siloserver.silo.model.profile.ProfileAccessLimits
@@ -508,7 +509,7 @@ internal fun TvProfileFormSection(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = title.uppercase(),
+                text = title.displayUppercase(),
                 fontSize = 14.sp,
                 lineHeight = 17.sp,
                 fontWeight = FontWeight.SemiBold,

@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.screens.detail
 
 import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.i18n.localizedResources
 import android.content.res.Resources
 import androidx.compose.ui.platform.LocalDensity
@@ -1545,7 +1546,7 @@ fun SectionHeader(
         ) {
             if (!label.isNullOrBlank()) {
                 Text(
-                    text = label.uppercase(),
+                    text = label.displayUppercase(),
                     fontSize = 12.sp,
                     lineHeight = 15.sp,
                     fontWeight = FontWeight.Bold,
@@ -1825,7 +1826,7 @@ fun DetailFactsList(
     SectionHeader(title = stringResource(CommonR.string.detail_details))
     Spacer(modifier = Modifier.height(14.dp))
 
-    val labels = rows.map { (label, _) -> label.uppercase() }
+    val labels = rows.map { (label, _) -> label.displayUppercase() }
     val labelStyle = LocalTextStyle.current.merge(FactLabelStyle)
     val labelColumnWidth = factLabelColumnWidth(labels, labelStyle)
 

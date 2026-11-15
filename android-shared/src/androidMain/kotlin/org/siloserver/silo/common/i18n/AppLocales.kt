@@ -147,14 +147,27 @@ object AppLocales {
      * (D27 matching), kept as the device has it so its region's formats apply
      * (`en-AU`, D26), else English. Null when the first is shipped (an en-GB
      * device keeps its own formats, D59) or a debug pseudo-locale.
+     *
+     * A locale that matches under another language code is shown under the
+     * shipped one: older devices report Norwegian as `no-NO`, which
+     * `values-nb` resources don't match, so it is shown as `nb-NO`.
      */
     internal fun standIn(locales: LocaleList, shipped: List<String>): Locale? {
         if (locales.isEmpty) return null
-        val first = locales[0].toLanguageTag()
-        if (AppLanguage.isPseudo(first) || AppLanguage.match(first, shipped) != null) return null
+        val first = locales[0]
+        if (AppLanguage.isPseudo(first.toLanguageTag())) return null
+        if (AppLanguage.match(first.toLanguageTag(), shipped) != null) return aliased(first)
         return (0 until locales.size()).map { locales[it] }
             .firstOrNull { !AppLanguage.isPseudo(it.toLanguageTag()) && AppLanguage.match(it.toLanguageTag(), shipped) != null }
+            ?.let { aliased(it) ?: it }
             ?: Locale.forLanguageTag(AppLanguage.DEFAULT)
+    }
+
+    /** [locale] under the language [AppLanguage.match] reads it as, or null when that is its own. */
+    private fun aliased(locale: Locale): Locale? {
+        val language = AppLanguage.matchLanguage(locale.language)
+        if (language == locale.language) return null
+        return Locale.Builder().setLocale(locale).setLanguage(language).build()
     }
 
     /** The tag stored before 13; "" from 13, where the platform holds the per-app value. */

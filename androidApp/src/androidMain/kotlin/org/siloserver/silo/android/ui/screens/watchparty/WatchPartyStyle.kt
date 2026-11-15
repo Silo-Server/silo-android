@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.watchparty
 
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.watchparty.text
 import org.siloserver.silo.common.i18n.text
 import androidx.compose.animation.Crossfade
@@ -114,7 +115,7 @@ internal object WatchPartyColors {
 @Composable
 internal fun WatchPartyEyebrow(text: String, modifier: Modifier = Modifier, color: Color = SiloSecondaryText) {
     Text(
-        text = text.uppercase(),
+        text = text.displayUppercase(),
         fontSize = WatchPartyMetrics.EYEBROW.sp,
         fontWeight = FontWeight.SemiBold,
         letterSpacing = (WatchPartyMetrics.EYEBROW * 0.12f).sp,
