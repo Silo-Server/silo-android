@@ -22,13 +22,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -57,6 +64,12 @@ import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 fun TvIntroAutoSkipBanner(
     state: IntroAutoSkipState,
     onSelect: () -> Unit,
+    /**
+     * Left/Right on the focused pill: [direction] -1 is back, 1 forward; [hold]
+     * is false for a tap (skip by the seek interval) and true once the press
+     * repeats (hold to seek).
+     */
+    onSeek: (direction: Int, hold: Boolean) -> Unit,
     modifier: Modifier = Modifier,
     totalSeconds: Int = IntroAutoSkipController.DEFAULT_COUNTDOWN_SECONDS,
     /**
@@ -112,6 +125,7 @@ fun TvIntroAutoSkipBanner(
                     label = stringResource(CommonR.string.introSkip_pill_skip),
                     progress = fill.floatValue,
                     onSelect = onSelect,
+                    onSeek = onSeek,
                     autoFocus = mayTakeFocus,
                 )
             }
@@ -121,6 +135,7 @@ fun TvIntroAutoSkipBanner(
                     caption = stringResource(CommonR.string.introSkip_pill_undoCaption),
                     progress = fill.floatValue,
                     onSelect = onSelect,
+                    onSeek = onSeek,
                     autoFocus = mayTakeFocus,
                 )
             }
@@ -144,12 +159,16 @@ private fun TvIntroPromptPill(
     label: String,
     progress: Float,
     onSelect: () -> Unit,
+    onSeek: (direction: Int, hold: Boolean) -> Unit,
     autoFocus: Boolean,
     caption: String? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val focusRequester = remember { FocusRequester() }
+    // The direction of a Left/Right press that went down on this pill: a tap
+    // when it is released before it repeats, a hold once it does.
+    var pendingSeekDirection by remember { mutableIntStateOf(0) }
     // Captured once: a later recomposition must not re-claim focus the viewer
     // has since moved elsewhere.
     val shouldFocus = remember { autoFocus }
@@ -177,6 +196,30 @@ private fun TvIntroPromptPill(
                 .background(Color.Black.copy(alpha = 0.65f), shape)
                 .border(BorderStroke(2.dp, borderColor), shape)
                 .focusRequester(focusRequester)
+                // With the controls up, Left/Right reach the focused pill rather
+                // than the player's remote bridge. Seek as they do with the
+                // controls hidden instead of searching for focus away from the
+                // pill: a skip control must not block seeking (silo-android#926).
+                .onPreviewKeyEvent { event ->
+                    val direction = when (event.key) {
+                        Key.DirectionLeft -> -1
+                        Key.DirectionRight -> 1
+                        else -> return@onPreviewKeyEvent false
+                    }
+                    val repeatCount = event.nativeKeyEvent.repeatCount
+                    when {
+                        event.type == KeyEventType.KeyDown && repeatCount == 0 -> pendingSeekDirection = direction
+                        event.type == KeyEventType.KeyDown && repeatCount == 1 && pendingSeekDirection == direction -> {
+                            pendingSeekDirection = 0
+                            onSeek(direction, true)
+                        }
+                        event.type == KeyEventType.KeyUp && pendingSeekDirection == direction -> {
+                            pendingSeekDirection = 0
+                            onSeek(direction, false)
+                        }
+                    }
+                    true
+                }
                 .clickable(interactionSource = interactionSource, indication = null) { onSelect() },
         ) {
             // Sized to the pill via matchParentSize; plain fillMaxWidth/Height would
@@ -207,6 +250,13 @@ private fun TvIntroPromptPill(
 }
 
 @Composable
-fun TvMarkerSkipPill(label: String, onSelect: () -> Unit) {
-    TvIntroPromptPill(label = label, progress = 0f, onSelect = onSelect, autoFocus = false)
+fun TvMarkerSkipPill(
+    label: String,
+    onSelect: () -> Unit,
+    onSeek: (direction: Int, hold: Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier) {
+        TvIntroPromptPill(label = label, progress = 0f, onSelect = onSelect, onSeek = onSeek, autoFocus = false)
+    }
 }
