@@ -1166,8 +1166,13 @@ class TvItemDetailViewModel(
                         // The exit spot stands in only until the stop lands. After
                         // that the server's resume point is the answer: a stop under
                         // the minimum resume share leaves its earlier one, or none.
+                        // The file just played still opens the page either way.
                         withLocalProgress(result.data).let { refreshed ->
-                            playbackReturn?.takeUnless { settled }?.let(refreshed::withPlaybackReturn) ?: refreshed
+                            when {
+                                playbackReturn == null -> refreshed
+                                settled -> refreshed.withPlayedFile(playbackReturn)
+                                else -> refreshed.withPlaybackReturn(playbackReturn)
+                            }
                         }
                     }
                     if (!isTvHiddenMediaType(detail.type)) {
@@ -3260,6 +3265,15 @@ internal object TvDetailTrackSelectionSession {
 
 private fun ItemDetail.isWatchedWithoutResume(): Boolean =
     userData?.let { it.played && (it.positionSeconds ?: 0.0) <= 0.0 } == true
+
+/**
+ * The file [saved]'s playback used, without its position: the page opens on
+ * it, and on its edition, so the track picks handed back still belong to it.
+ */
+private fun ItemDetail.withPlayedFile(saved: TvDetailTrackSelectionSession.Saved): ItemDetail {
+    val fileId = saved.trackFileId ?: return this
+    return copy(userData = (userData ?: LeafItemUserData()).withLastPlayedFile(fileId))
+}
 
 private fun ItemDetail.withPlaybackReturn(saved: TvDetailTrackSelectionSession.Saved): ItemDetail {
     val position = saved.positionSeconds?.takeIf { it.isFinite() && it >= 0.0 } ?: return this

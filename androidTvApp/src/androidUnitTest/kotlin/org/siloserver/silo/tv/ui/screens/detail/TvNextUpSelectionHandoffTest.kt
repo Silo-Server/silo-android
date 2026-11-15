@@ -638,7 +638,7 @@ class TvNextUpSelectionHandoffTest {
         awaitCondition { fixture.viewModel.uiState.value.detail?.contentId == scenario.episodeOneId }
         // Each answer carries its own title, so the test waits for that answer to land.
         fun detailWithUserData(title: String, userData: String) =
-            itemDetailJson(scenario.episodeOneId, listOf(version(101, "1080p")))
+            itemDetailJson(scenario.episodeOneId, listOf(version(101, "1080p"), version(102, "2160p")))
                 .replace(""""title":"Episode"""", """"title":"$title"""")
                 .replace(""""user_data":{"last_file_id":null}""", """"user_data":$userData""")
         suspend fun returnFromPlayer(exitSeconds: Double, serverUserData: String) {
@@ -646,7 +646,8 @@ class TvNextUpSelectionHandoffTest {
             scenario.episodeOneResponses.addLast(DetailResponse(null, detailWithUserData(title, serverUserData)))
             TvDetailTrackSelectionSession.rememberPlaybackReturn(
                 contentId = scenario.episodeOneId,
-                fileId = 101,
+                // Played on Auto, which resolved to the other version.
+                fileId = 102,
                 audio = null,
                 subtitle = null,
                 positionSeconds = exitSeconds,
@@ -660,9 +661,12 @@ class TvNextUpSelectionHandoffTest {
         // share: the server kept 50:00, and the page must offer that.
         returnFromPlayer(
             exitSeconds = 120.0,
-            serverUserData = """{"is_in_progress":true,"position_seconds":3000.0,"duration_seconds":7200.0}""",
+            serverUserData = """{"is_in_progress":true,"position_seconds":3000.0,"duration_seconds":7200.0,"last_file_id":"101"}""",
         )
         assertEquals(3000.0, fixture.viewModel.uiState.value.detail?.userData?.positionSeconds)
+        // The page still opens on the file just played, which the kept
+        // subtitle pick belongs to, though the server kept the older file.
+        assertEquals(102, fixture.viewModel.uiState.value.detail?.userData?.lastFileId)
 
         // A first 40 s of a title: the server kept no resume point, so Play.
         returnFromPlayer(exitSeconds = 40.0, serverUserData = """{"played":false}""")
