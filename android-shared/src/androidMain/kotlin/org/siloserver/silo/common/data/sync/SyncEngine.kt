@@ -10,7 +10,6 @@ import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.api.DownloadProgressReceipt
 import org.siloserver.silo.network.api.EbookReaderApi
 import org.siloserver.silo.network.api.PersonalDataApi
-import org.siloserver.silo.network.isUnansweredSend
 import org.siloserver.silo.repository.port.WriteOutcome
 import org.siloserver.silo.repository.port.toWriteOutcome
 
@@ -66,10 +65,8 @@ class SyncEngine(
         // A scope with no saved account (a temporary overlay) recorded under ''.
         val accountId = scope.accountId.orEmpty()
 
-        // A download position stranded in flight may already be applied, and
-        // the endpoint is not retryable: settle it, never resend it.
-        dao.inFlightDownloadProgress(serverId, accountId, profileId).forEach { settleDownloadProgress(it) }
-        // Reclaim crash-stranded in-flight rows before claiming new work.
+        // Reclaim crash-stranded in-flight rows before claiming new work. A download
+        // position goes back to pending too: resending its event is safe.
         dao.deleteSupersededInFlight(serverId, accountId, profileId)
         dao.resetInFlightToPending(serverId, accountId, profileId)
 
@@ -201,15 +198,14 @@ class SyncEngine(
                 DownloadProgressReceipt.NOT_FOUND -> WriteOutcome.TERMINAL
                 DownloadProgressReceipt.RETRY -> WriteOutcome.RETRIABLE
             }
-            // A request the server can never accept is dropped. So is one it may
-            // already have applied (an unreadable answer, or no answer after it
-            // left): /sync/progress is not retryable, and a resend after the
-            // server clamps a fast clock's updated_at could beat newer progress.
+            // A request the server can never accept is dropped.
             result is ApiResult.Error && result.code in FINAL_PROGRESS_REFUSALS -> WriteOutcome.TERMINAL
-            result is ApiResult.Error && result.error == "invalid_response" -> WriteOutcome.TERMINAL
-            result is ApiResult.NetworkError && result.isUnansweredSend -> WriteOutcome.TERMINAL
-            // Not applied: a stale profile proof (403), identity change, upgrade
-            // gate, or a connection that never opened. Send it later.
+            // Everything else is sent again, including a send that may already have
+            // been applied (a timeout, a reset, an unreadable answer): the server
+            // merges on updated_at with strict newer-wins, so resending the same
+            // event changes nothing unless the device clock ran over two minutes
+            // fast. Settling on doubt instead would delete positions the server
+            // never received.
             else -> WriteOutcome.RETRIABLE
         }
     }

@@ -74,16 +74,6 @@ val ApiResult.NetworkError.isTimeout: Boolean
         }
 
 /**
- * The request may have reached the server: it timed out waiting for the answer,
- * not while connecting, so whether the server applied it is unknown.
- */
-val ApiResult.NetworkError.isUnansweredSend: Boolean
-    get() = generateSequence(exception) { it.cause?.takeIf { c -> c !== it } }.toList().let { chain ->
-        chain.none { it is ConnectTimeoutException } &&
-            chain.any { it is HttpRequestTimeoutException || it is SocketTimeoutException }
-    }
-
-/**
  * English error text for a failed [ApiResult], for logs; screens use
  * [errorText][org.siloserver.silo.common.i18n.errorText]. The server-provided
  * message when present, [fallback] when it is blank, and the standard

@@ -104,10 +104,12 @@ class SyncEngineTest {
     )
 
     private var progressResult = SUCCESS
+    private var progressFailure: Throwable? = null
     private val progressBodies = mutableListOf<String>()
     private val progressApi = PersonalDataApi(
         HttpClient(MockEngine { request ->
             progressBodies += String(request.body.toByteArray())
+            progressFailure?.let { throw it }
             respond("{\"items\":[$progressResult]}", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         }) { install(ContentNegotiation) { json(SiloJson) } },
         org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted,
@@ -159,14 +161,31 @@ class SyncEngineTest {
     }
 
     @Test
-    fun downloadProgressStrandedInFlightIsSettledNotResent() = runTest {
+    fun downloadProgressWhoseSendMayHaveBeenAppliedIsSentAgainNotDropped() = runTest {
+        queueDownloadPosition()
+        // No answer after the request left: the server may or may not have it.
+        progressFailure = io.ktor.client.plugins.HttpRequestTimeoutException("/api/v2/sync/progress", 60_000L)
+        assertEquals(1, progressEngine().drainOnce().retriable)
+        assertEquals(646.5, storedPosition(), "the position stays until the server confirms it")
+        assertEquals(1, db.dirtyOperationDao().count())
+
+        progressFailure = null
+        clock = 10_000_000L
+        assertEquals(1, progressEngine().drainOnce().synced)
+        // The same event time both times, so a repeat is a no-op on the server.
+        assertEquals(1, progressBodies.distinct().size)
+        assertEquals(0.0, storedPosition())
+    }
+
+    @Test
+    fun downloadProgressStrandedInFlightIsSentAgainNotDropped() = runTest {
         queueDownloadPosition()
         val op = db.dirtyOperationDao().dueTargetHeads("s1", "", "p1", Long.MAX_VALUE, 10).single()
-        db.dirtyOperationDao().claim(op.id) // the process died after sending, before the answer
+        db.dirtyOperationDao().claim(op.id) // the worker was stopped after claiming it
 
-        progressEngine().drainOnce()
+        assertEquals(1, progressEngine().drainOnce().synced)
 
-        assertEquals(emptyList(), progressBodies, "the server may already have it; never resend")
+        assertTrue("\"updated_at\":\"1970-01-01T00:00:05Z\"" in progressBodies.single())
         assertEquals(0, db.dirtyOperationDao().count())
         assertEquals(0.0, storedPosition())
     }
