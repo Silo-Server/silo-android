@@ -585,7 +585,7 @@ private fun List<Season>.selectedSeasonForDisplay(preferredSeasonNumber: Int?): 
     // only when no numbered season matches that tier.
     val (specials, numbered) = partition { it.isSpecialsForDisplay() }
     val candidates = numbered + specials
-    // Open the Show overview while preloading the viewer's actual browse
+    // Open the series overview while preloading the viewer's actual browse
     // target: Continue Watching first, then a partially watched season,
     // then the first not-yet-complete season. This lets the first Down land
     // on e.g. Season 3 Episode 1 exactly as tvOS does.

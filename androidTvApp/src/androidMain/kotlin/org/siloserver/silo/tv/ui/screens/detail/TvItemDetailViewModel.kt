@@ -1775,7 +1775,7 @@ class TvItemDetailViewModel(
 
     /**
      * Series is one in-place browsing page: focus, not a pushed episode-detail
-     * route, owns the active episode. `null` restores Show mode's suggested
+     * route, owns the active episode. `null` restores the series overview's suggested
      * episode while a concrete id updates the hero and playback selector.
      */
     fun onSeriesEpisodeActivated(contentId: String?) {

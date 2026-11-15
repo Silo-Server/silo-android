@@ -175,7 +175,10 @@ class TvDetailFocusPolicyTest {
             .substringBefore("private fun Modifier.seriesModeFocusRing")
 
         assertTrue(seriesPicker.contains("LaunchedEffect(selectedIndex, seasons.size)"))
-        assertTrue(seriesPicker.contains("listState.scrollToItem(selectedIndex)"))
+        assertTrue(seriesPicker.contains("val idx = selectedIndex ?: return@LaunchedEffect"))
+        assertTrue(seriesPicker.contains("listState.scrollToItem(idx)"))
+        // No tab holds the requester while seasons load or none is selected.
+        assertTrue(seriesPicker.contains("selectedIndex?.let {\n                    enter = { selectedFocusRequester }"))
         assertTrue(seriesPicker.contains("val viewportCenter"))
         assertTrue(seriesPicker.contains("val itemCenter"))
         assertTrue(seriesPicker.contains("listState.animateScrollBy(itemCenter - viewportCenter)"))
