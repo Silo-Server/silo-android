@@ -633,12 +633,19 @@ class TvNextUpSelectionHandoffTest {
 
     @Test
     fun returnRefreshShowsTheServerResumePointOnceTheStopHasSettled() = runDetailTest {
-        val scenario = Scenario(suffix = "-settled-return")
+        val versions = listOf(
+            version(101, "1080p", subtitles = listOf(subtitle(0, "spa"))),
+            version(102, "2160p", subtitles = listOf(subtitle(0, "eng"))),
+        )
+        val scenario = Scenario(suffix = "-settled-return", oldVersions = versions)
         val fixture = createFixture(scenario, contentId = scenario.episodeOneId)
         awaitCondition { fixture.viewModel.uiState.value.detail?.contentId == scenario.episodeOneId }
         // Each answer carries its own title, so the test waits for that answer to land.
+        // The two files are two cuts, so the last-played file picks the cut.
         fun detailWithUserData(title: String, userData: String) =
-            itemDetailJson(scenario.episodeOneId, listOf(version(101, "1080p"), version(102, "2160p")))
+            itemDetailJson(scenario.episodeOneId, versions)
+                .replace(""""file_id":"101",""", """"file_id":"101","edition_key":"theatrical",""")
+                .replace(""""file_id":"102",""", """"file_id":"102","edition_key":"directors-cut",""")
                 .replace(""""title":"Episode"""", """"title":"$title"""")
                 .replace(""""user_data":{"last_file_id":null}""", """"user_data":$userData""")
         suspend fun returnFromPlayer(exitSeconds: Double, serverUserData: String) {
@@ -646,10 +653,10 @@ class TvNextUpSelectionHandoffTest {
             scenario.episodeOneResponses.addLast(DetailResponse(null, detailWithUserData(title, serverUserData)))
             TvDetailTrackSelectionSession.rememberPlaybackReturn(
                 contentId = scenario.episodeOneId,
-                // Played on Auto, which resolved to the other version.
+                // Played the director's cut on Auto, with its English subtitles.
                 fileId = 102,
                 audio = null,
-                subtitle = null,
+                subtitle = 0,
                 positionSeconds = exitSeconds,
                 durationSeconds = 7200.0,
             )
@@ -664,9 +671,12 @@ class TvNextUpSelectionHandoffTest {
             serverUserData = """{"is_in_progress":true,"position_seconds":3000.0,"duration_seconds":7200.0,"last_file_id":"101"}""",
         )
         assertEquals(3000.0, fixture.viewModel.uiState.value.detail?.userData?.positionSeconds)
-        // The page still opens on the file just played, which the kept
-        // subtitle pick belongs to, though the server kept the older file.
-        assertEquals(102, fixture.viewModel.uiState.value.detail?.userData?.lastFileId)
+        // That resume point is in the theatrical cut, so the page opens on it
+        // and drops the subtitle pick, which named a track of the other cut.
+        val state = fixture.viewModel.uiState.value
+        assertEquals(101, state.detail?.userData?.lastFileId)
+        assertEquals(101, selectTvDetailDisplayVersion(state.detail, state.selectedFileId, state.selectedEditionId, state.preferredQuality)?.fileId)
+        assertNull(state.selectedSubtitleIndex)
 
         // A first 40 s of a title: the server kept no resume point, so Play.
         returnFromPlayer(exitSeconds = 40.0, serverUserData = """{"played":false}""")
