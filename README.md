@@ -6,7 +6,7 @@ Built as a Kotlin Multiplatform project: one shared business-logic core, two Jet
 
 > **Status:** WIP (`v0.3.x`). Silo Android is pre-1.0 and some areas remain under active development (see [Roadmap](#roadmap)).
 >
-> **Current exposure note:** Requests is live on both Android surfaces, gated by the server's `requests_enabled` flag (`/api/v2/requests/status`), and reached from the profile menu and search on phone and from a top-bar tab and search on TV — matching the Apple clients. Request administration (approve, decline, retry, limits, auto-approve) stays in web admin. Other admin surfaces and session management are not exposed in the Android clients. Watch Party is experimental, behind Settings → Experimental → Watch Party (on in debug builds, off in release builds).
+> **Current exposure note:** Requests is live on both Android surfaces, gated by the server's `requests_enabled` flag (`/api/v2/requests/status`), and reached from the profile menu and search on phone and TV — matching the Apple clients. Request administration (approve, decline, retry, limits, auto-approve) stays in web admin. Other admin surfaces and session management are not exposed in the Android clients. Watch Party is experimental, behind Settings → Experimental → Watch Party (on in debug builds, off in release builds).
 
 ---
 

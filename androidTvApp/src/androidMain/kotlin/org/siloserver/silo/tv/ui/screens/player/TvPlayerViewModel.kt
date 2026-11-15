@@ -986,8 +986,6 @@ class TvPlayerViewModel(
         private const val SEEK_SETTLE_DEADLINE_MS = 15_000L
         /** How long a Dolby Vision toggle may claim "Applying…" before the cue gives up. */
         private const val OUTPUT_SWITCH_FEEDBACK_TIMEOUT_MS = 20_000L
-        // Record a durable position roughly every 10s of content time.
-        private const val POSITION_RECORD_INTERVAL_SEC = 10.0
         // Non-empty onTracksChanged callbacks an unresolved explicit subtitle
         // gives up and lets the persisted/auto fallback proceed.
         private const val MAX_PENDING_INITIAL_SUBTITLE_ATTEMPTS = 5
@@ -1010,30 +1008,7 @@ class TvPlayerViewModel(
     // recomposition and overlay focus churn.
     private var nextUpCountdownJob: Job? = null
 
-    private var lastRecordedKey: String? = null
-    private var lastRecordedPositionSec: Double = -1.0
     private var finalPositionScope: PlaybackWriteScope? = null
-
-    /** [force] bypasses the time-throttle (used on pause/stop to capture the exact spot). */
-    private fun maybeRecordPosition(positionSec: Double, durationSec: Double, force: Boolean = false) {
-        // The exit token, not UI state: exit clears sessionId before the player
-        // reports its pause, which then saved a sequenced session's spot locally (#842).
-        if (exitSessionId?.let(playbackSessionManager::isSequenced) == true) return
-        if (positionSec < 0.0) return
-        val cid = contentId.takeIf { it.isNotBlank() } ?: return
-        val fileId = _uiState.value.selectedFileId ?: _uiState.value.mediaFileId ?: return
-        val key = "$cid|$fileId"
-        if (!force && key == lastRecordedKey && lastRecordedPositionSec >= 0.0 &&
-            kotlin.math.abs(positionSec - lastRecordedPositionSec) < POSITION_RECORD_INTERVAL_SEC
-        ) {
-            return
-        }
-        lastRecordedKey = key
-        lastRecordedPositionSec = positionSec
-        viewModelScope.launch {
-            userItemStatePort.recordPosition(cid, fileId, positionSec, durationSec.takeIf { it > 0.0 })
-        }
-    }
 
     private var contentId: String = launchArgs.contentId
     /**
@@ -3921,18 +3896,11 @@ class TvPlayerViewModel(
             isPaused = _uiState.value.isPaused,
             expectedSessionId = _uiState.value.sessionId,
         )
-
-        // Track B: durably record (local resume + outbox sync) for both streaming
-        // and offline-download; throttled to ~every 10s of content time.
-        maybeRecordPosition(positionSec, _uiState.value.duration)
     }
 
     fun onPlayingChanged(isPlaying: Boolean) {
         if (isPlaying) reopenedAfterOutage = false
         _uiState.update { it.copy(isPlaying = isPlaying) }
-        if (!isPlaying) {
-            maybeRecordPosition(_uiState.value.position, _uiState.value.duration, force = true)
-        }
     }
 
     /**
@@ -5713,8 +5681,10 @@ class TvPlayerViewModel(
         val state = _uiState.value
         val fileId = state.selectedFileId ?: state.mediaFileId
         val scope = finalPositionScope
-        maybeRecordPosition(state.position, state.duration, force = true)
-        if (scope != null && contentId.isNotBlank() && fileId != null) {
+        // Only a sequenced session's exit has anything to do: clear the older local
+        // samples the server's answer supersedes (#842). Streams write no position.
+        val serverTrackedAtMs = System.currentTimeMillis().takeIf { expectedSessionId?.let(playbackSessionManager::isSequenced) == true }
+        if (serverTrackedAtMs != null && scope != null && contentId.isNotBlank() && fileId != null) {
             finalPlaybackPositionWriter.submit(
                 FinalPlaybackPosition(
                     scope = scope,
@@ -5722,8 +5692,7 @@ class TvPlayerViewModel(
                     fileId = fileId,
                     positionSeconds = state.position,
                     durationSeconds = state.duration.takeIf { it > 0.0 },
-                    serverTrackedAtMs = System.currentTimeMillis()
-                        .takeIf { expectedSessionId?.let(playbackSessionManager::isSequenced) == true },
+                    serverTrackedAtMs = serverTrackedAtMs,
                 ),
             )
         }
@@ -7555,7 +7524,10 @@ class TvPlayerViewModel(
         val state = _uiState.value
         val fileId = _uiState.value.selectedFileId ?: _uiState.value.mediaFileId
         val scope = finalPositionScope
-        if (scope != null && contentId.isNotBlank() && fileId != null) {
+        // Only a sequenced session's exit has anything to do: clear the older local
+        // samples the server's answer supersedes (#842). Streams write no position.
+        val serverTrackedAtMs = System.currentTimeMillis().takeIf { (lastAdoptedSessionId ?: state.sessionId)?.let(playbackSessionManager::isSequenced) == true }
+        if (serverTrackedAtMs != null && scope != null && contentId.isNotBlank() && fileId != null) {
             finalPlaybackPositionWriter.submit(
                 FinalPlaybackPosition(
                     scope = scope,
@@ -7563,8 +7535,7 @@ class TvPlayerViewModel(
                     fileId = fileId,
                     positionSeconds = state.position,
                     durationSeconds = state.duration.takeIf { it > 0.0 },
-                    serverTrackedAtMs = System.currentTimeMillis()
-                        .takeIf { (lastAdoptedSessionId ?: state.sessionId)?.let(playbackSessionManager::isSequenced) == true },
+                    serverTrackedAtMs = serverTrackedAtMs,
                 ),
             )
         }
@@ -8064,7 +8035,10 @@ class TvPlayerViewModel(
         val cid = contentId.takeIf { it.isNotBlank() }
         val fid = _uiState.value.selectedFileId ?: _uiState.value.mediaFileId
         val scope = finalPositionScope
-        if (scope != null && cid != null && fid != null) {
+        // Only a sequenced session's exit has anything to do: clear the older local
+        // samples the server's answer supersedes (#842). Streams write no position.
+        val serverTrackedAtMs = System.currentTimeMillis().takeIf { exitSessionId?.let(playbackSessionManager::isSequenced) == true }
+        if (serverTrackedAtMs != null && scope != null && cid != null && fid != null) {
             finalPlaybackPositionWriter.submit(
                 FinalPlaybackPosition(
                     scope = scope,
@@ -8072,8 +8046,7 @@ class TvPlayerViewModel(
                     fileId = fid,
                     positionSeconds = _uiState.value.position,
                     durationSeconds = _uiState.value.duration.takeIf { it > 0.0 },
-                    serverTrackedAtMs = System.currentTimeMillis()
-                        .takeIf { exitSessionId?.let(playbackSessionManager::isSequenced) == true },
+                    serverTrackedAtMs = serverTrackedAtMs,
                 ),
             )
         }

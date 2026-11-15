@@ -74,12 +74,21 @@ interface UserItemStateDao {
         clearedAtMs: Long,
     )
 
+    /**
+     * Download playback positions still waiting to reach the server: a v2
+     * `SET_POSITION` op is queued or in flight for that exact file. Only these
+     * may override the server's answer; once acknowledged the server is the truth.
+     */
     @Query(
         "SELECT * FROM user_item_state " +
             "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId " +
-            "AND contentId IN (:contentIds) AND positionSeconds > 0",
+            "AND contentId IN (:contentIds) AND positionSeconds > 0 " +
+            "AND EXISTS (SELECT 1 FROM dirty_operations o WHERE o.opKind = 'SET_POSITION' AND o.opVersion >= 2 " +
+            "AND o.state IN ('pending', 'in_flight') AND o.serverId = user_item_state.serverId " +
+            "AND o.accountId = user_item_state.accountId AND o.profileId = user_item_state.profileId " +
+            "AND o.targetContentId = user_item_state.contentId AND o.targetFileId = user_item_state.fileId)",
     )
-    suspend fun progressForContentIds(
+    suspend fun pendingProgressForContentIds(
         serverId: String,
         accountId: String,
         profileId: String,
