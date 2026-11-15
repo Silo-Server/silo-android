@@ -1805,7 +1805,7 @@ class TvItemDetailViewModel(
             }
         }
         activeSeriesEpisodeContentId = active?.contentId
-        updateNextUp(active ?: resolveNextUpEpisode(_uiState.value.episodes))
+        if (active != null) updateNextUp(active) else refreshNextUp(_uiState.value.episodes)
         if (active != null) {
             if (active.seasonNumber != state.selectedSeason) publishCarousel()
             prefetchCarouselNeighbors()
@@ -2309,6 +2309,10 @@ class TvItemDetailViewModel(
      * `loadSeriesNextUpPlaybackDetail` / `loadSeasonNextUpPlaybackDetail`.
      */
     private fun refreshNextUp(episodes: List<EpisodeListItem>) {
+        // While a newly selected season loads, `episodes` still holds the
+        // previous season as a placeholder. That load refreshes next-up when
+        // it lands; resolving one now would let Play launch the old season.
+        if (loadedSeason != _uiState.value.selectedSeason) return
         val active = activeSeriesEpisodeContentId
             ?.let { contentId -> episodes.firstOrNull { it.contentId == contentId } }
         updateNextUp(active ?: resolveNextUpEpisode(episodes))
@@ -2717,6 +2721,9 @@ class TvItemDetailViewModel(
             _uiState.value.selectedSeason != seasonNumber
         ) return target
         episodeDescriptionRevisions[seasonNumber] = (episodeDescriptionRevisions[seasonNumber] ?: 0L) + 1
+        // This can be the season's first successful read (a season page whose
+        // first episode load failed), so record whose rows these are.
+        loadedSeason = seasonNumber
         _uiState.update { state ->
             val current = state.episodes.associateBy { it.contentId }
             val merged = fresh.sortedBy { it.episodeNumber }
