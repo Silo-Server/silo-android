@@ -97,7 +97,7 @@ fun PlayerProgressBar(
     enabled: Boolean = true,
     chapters: List<VersionChapter> = emptyList(),
     intro: TimeRange? = null,
-    credits: TimeRange? = null,
+    credits: List<TimeRange> = emptyList(),
     recap: TimeRange? = null,
     preview: TimeRange? = null,
     showTimes: Boolean = true,
@@ -126,7 +126,7 @@ private fun ProgressBarContent(
     enabled: Boolean,
     chapters: List<VersionChapter>,
     intro: TimeRange?,
-    credits: TimeRange?,
+    credits: List<TimeRange>,
     recap: TimeRange?,
     preview: TimeRange?,
     showTimes: Boolean,
@@ -292,12 +292,13 @@ private fun ProgressBarContent(
                 },
             contentAlignment = Alignment.CenterStart,
         ) {
-            val markers = listOfNotNull(
-                intro?.let { it to Color(0xFF22D3EE) },
-                recap?.let { it to Color(0xFF8BC34A) },
-                credits?.let { it to Color(0xFFFFB74D) },
-                preview?.let { it to Color(0xFFBA68C8) },
-            )
+            val markers = buildList {
+                intro?.let { add(it to Color(0xFF22D3EE)) }
+                recap?.let { add(it to Color(0xFF8BC34A)) }
+                // Every credits range gets a band: a file can have two.
+                credits.forEach { add(it to Color(0xFFFFB74D)) }
+                preview?.let { add(it to Color(0xFFBA68C8)) }
+            }
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()

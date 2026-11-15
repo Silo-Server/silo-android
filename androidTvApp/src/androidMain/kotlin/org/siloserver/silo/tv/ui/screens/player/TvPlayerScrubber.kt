@@ -120,9 +120,9 @@ fun TvPlayerScrubber(
     /** The server's preview of [scrubPreviewSec], shown above the puck while scrubbing; null keeps the bar alone. */
     previewThumbnail: ImageBitmap? = null,
     // Detected marker bands [startSec, endSec] drawn on the track when known.
-    // Null = no band. Mirrors tvOS TVPlayerScrubber.introRegion.
+    // Null or an empty list = no band. Mirrors tvOS TVPlayerScrubber.markerRegions.
     introRangeSec: ClosedRange<Double>? = null,
-    creditsRangeSec: ClosedRange<Double>? = null,
+    creditsRangesSec: List<ClosedRange<Double>> = emptyList(),
     recapRangeSec: ClosedRange<Double>? = null,
     previewRangeSec: ClosedRange<Double>? = null,
     onSkipBack: () -> Unit,
@@ -389,12 +389,13 @@ fun TvPlayerScrubber(
             }
             val bandAlpha = if (isTimelineScrubbing || isFocused) 0.45f else 0.34f
             val markerBands = if (durationSec > 0) {
-                listOfNotNull(
-                    introRangeSec?.let { it to Color(0xFF22D3EE) },
-                    recapRangeSec?.let { it to Color(0xFF8BC34A) },
-                    creditsRangeSec?.let { it to Color(0xFFFFB74D) },
-                    previewRangeSec?.let { it to Color(0xFFBA68C8) },
-                ).map { (range, color) ->
+                buildList {
+                    introRangeSec?.let { add(it to Color(0xFF22D3EE)) }
+                    recapRangeSec?.let { add(it to Color(0xFF8BC34A)) }
+                    // Every credits range gets a band: a file can have two.
+                    creditsRangesSec.forEach { add(it to Color(0xFFFFB74D)) }
+                    previewRangeSec?.let { add(it to Color(0xFFBA68C8)) }
+                }.map { (range, color) ->
                     Triple(
                         (range.start / durationSec).toFloat().coerceIn(0f, 1f),
                         (range.endInclusive / durationSec).toFloat().coerceIn(0f, 1f),

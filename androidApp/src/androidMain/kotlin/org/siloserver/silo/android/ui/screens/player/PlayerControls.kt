@@ -116,7 +116,7 @@ fun PlayerControls(
     hasQualityMenu: Boolean,
     chapters: List<org.siloserver.silo.model.catalog.VersionChapter> = emptyList(),
     intro: org.siloserver.silo.model.catalog.TimeRange? = null,
-    credits: org.siloserver.silo.model.catalog.TimeRange? = null,
+    credits: List<org.siloserver.silo.model.catalog.TimeRange> = emptyList(),
     recap: org.siloserver.silo.model.catalog.TimeRange? = null,
     preview: org.siloserver.silo.model.catalog.TimeRange? = null,
     isOrientationLocked: Boolean,

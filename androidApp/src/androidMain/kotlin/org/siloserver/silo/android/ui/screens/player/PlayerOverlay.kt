@@ -73,6 +73,7 @@ import org.siloserver.silo.watchtogether.roomTransportAuthorized
 import org.siloserver.silo.playback.statusLabelFor
 import org.siloserver.silo.playback.timingActionsFor
 import org.siloserver.silo.common.i18n.text
+import org.siloserver.silo.domain.player.MarkerKind
 
 /** How long a failed AI subtitle job stays on screen when its sheet was closed. */
 private const val AI_FAILURE_NOTICE_MS = 8_000L
@@ -509,7 +510,7 @@ fun PlayerOverlay(
                 bufferedPosition = state.bufferedPosition,
                 chapters = state.chapters,
                 intro = state.intro,
-                credits = state.credits,
+                credits = state.markerTimeline.ranges(MarkerKind.Credits),
                 recap = state.recap,
                 preview = state.preview,
                 hasChapters = state.chapters.isNotEmpty(),

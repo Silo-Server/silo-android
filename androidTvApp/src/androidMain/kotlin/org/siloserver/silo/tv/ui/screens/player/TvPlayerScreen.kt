@@ -190,6 +190,7 @@ import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 import org.siloserver.silo.tv.ui.components.bidiIsolated
 import org.siloserver.silo.common.i18n.isRightToLeftText
 import org.siloserver.silo.common.i18n.currentNumberLocale
+import org.siloserver.silo.domain.player.MarkerKind
 
 private const val CONTROLS_AUTO_HIDE_MS = 5_000L
 // Pre-revision-9 relative seeks: 10s back, 30s forward, matching tvOS
@@ -2452,7 +2453,7 @@ fun TvPlayerScreen(
                         bufferedAheadSec = bufferedAheadSec,
                         chapters = state.chapters,
                         introRange = state.intro,
-                        creditsRange = state.credits,
+                        creditsRanges = state.markerTimeline.ranges(MarkerKind.Credits),
                         recapRange = state.recap,
                         previewRange = state.preview,
                         // In a room, skip/scrub/seek are routed through the
@@ -3113,7 +3114,7 @@ private fun TvPlayerIdleOverlay(
     bufferedAheadSec: Double,
     chapters: List<org.siloserver.silo.model.catalog.VersionChapter>,
     introRange: org.siloserver.silo.model.catalog.TimeRange?,
-    creditsRange: org.siloserver.silo.model.catalog.TimeRange?,
+    creditsRanges: List<org.siloserver.silo.model.catalog.TimeRange>,
     recapRange: org.siloserver.silo.model.catalog.TimeRange?,
     previewRange: org.siloserver.silo.model.catalog.TimeRange?,
     onPlayPause: () -> Unit,
@@ -3295,9 +3296,9 @@ private fun TvPlayerIdleOverlay(
                 introRangeSec = introRange
                     ?.takeIf { it.end > it.start }
                     ?.let { it.start..it.end },
-                creditsRangeSec = creditsRange
-                    ?.takeIf { it.end > it.start }
-                    ?.let { it.start..it.end },
+                creditsRangesSec = creditsRanges
+                    .filter { it.end > it.start }
+                    .map { it.start..it.end },
                 recapRangeSec = recapRange
                     ?.takeIf { it.end > it.start }
                     ?.let { it.start..it.end },
