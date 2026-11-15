@@ -504,6 +504,18 @@ private fun TvDetailContent(
     ) {
         mutableStateOf(true)
     }
+    // The route's entry (a season, or an entry episode) takes the hero once,
+    // and never after the viewer chose Show Series Info. The page re-enters
+    // composition on back-stack pop, which restarts these effects, and Show
+    // Series Info restores the suggested episode as next up, which can be the
+    // entry episode again; neither may switch the hero back.
+    var entryHeroApplied by rememberSaveable(
+        detail.contentId,
+        initialSeasonNumber,
+        initialEpisodeContentId,
+    ) {
+        mutableStateOf(false)
+    }
     LaunchedEffect(
         initialSeasonNumber,
         initialEpisodeContentId,
@@ -512,6 +524,7 @@ private fun TvDetailContent(
         state.nextUpEpisode?.seasonNumber,
     ) {
         if (
+            !entryHeroApplied &&
             initialSeasonNumber != null &&
             initialEpisodeContentId == null &&
             state.selectedSeason == initialSeasonNumber &&
@@ -519,17 +532,8 @@ private fun TvDetailContent(
             (state.nextUpEpisode == null || state.nextUpEpisode.seasonNumber == initialSeasonNumber)
         ) {
             isShowingSeriesOverview = false
+            entryHeroApplied = true
         }
-    }
-    // The entry episode takes the hero once, and never after the viewer chose
-    // Show Series Info. That action restores the suggested episode as next up,
-    // which can be the entry episode again; it must not switch the hero back.
-    var entryEpisodeHeroApplied by rememberSaveable(
-        detail.contentId,
-        initialSeasonNumber,
-        initialEpisodeContentId,
-    ) {
-        mutableStateOf(false)
     }
     LaunchedEffect(
         initialEpisodeContentId,
@@ -537,13 +541,13 @@ private fun TvDetailContent(
         state.nextUpEpisode?.contentId,
     ) {
         if (
-            !entryEpisodeHeroApplied &&
+            !entryHeroApplied &&
             initialEpisodeContentId != null &&
             state.entryEpisodeSelectionApplied &&
             state.nextUpEpisode?.contentId == initialEpisodeContentId
         ) {
             isShowingSeriesOverview = false
-            entryEpisodeHeroApplied = true
+            entryHeroApplied = true
         }
     }
     // tvOS treats the season tabs, Episodes and the playback selector as a
@@ -1083,7 +1087,7 @@ private fun TvDetailContent(
                                     onShowSeriesInfo = if (isSeriesDetail && !isShowingSeriesOverview) {
                                         {
                                             isShowingSeriesOverview = true
-                                            entryEpisodeHeroApplied = true
+                                            entryHeroApplied = true
                                             viewModel.onSeriesEpisodeActivated(null)
                                         }
                                     } else {
