@@ -1343,6 +1343,7 @@ class SiloCastController(
                 }
                 val now = nowMs()
                 var started = false
+                var applied = false
                 val reconciled = synchronized(volumeStateLock) {
                     val next = if (isIdle) {
                         volumeReconciler.clear()
@@ -1357,7 +1358,8 @@ class SiloCastController(
                         // A frame from a TV the user just disconnected from:
                         // its socket closes moments after the state is cleared,
                         // and must not bring the session back in between.
-                        if (it.connectedTarget == null) return@update it
+                        applied = it.connectedTarget != null
+                        if (!applied) return@update it
                         // The launch ends when the TV reports that title, or
                         // anything besides what it was playing at the tap (the
                         // TV may report a resolved id for the same title).
@@ -1373,6 +1375,7 @@ class SiloCastController(
                     }
                     next
                 }
+                if (!applied) return
                 clock.ingest(reconciled, now)
                 if (started) _launchFeedback.tryEmit(SiloCastLaunchFeedback.Started)
             }
