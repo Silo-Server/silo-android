@@ -63,6 +63,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -112,6 +113,7 @@ import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import java.util.Locale
+import kotlinx.coroutines.flow.first
 
 // ── Tokens ────────────────────────────────────────────────────
 
@@ -1554,27 +1556,34 @@ fun SeasonChips(
     val selectedSeasonIndex = seasons.indexOfFirst {
         it.seasonNumber == selectedSeasonNumber
     }
-    val listState = rememberLazyListState(
-        initialFirstVisibleItemIndex = selectedSeasonIndex.coerceAtLeast(0),
-    )
+    // The row opens at its start, so Specials (always first) stay in view
+    // whenever the selected chip fits there too.
+    val listState = rememberLazyListState()
+    var hasPositioned by remember { mutableStateOf(false) }
 
-    // Pager swipes can move beyond the chips visible on compact cover screens.
-    // Follow the shared selection, but leave the row alone while its chip is
-    // already fully visible so nearby swipes do not cause needless movement.
+    // Bring the selected chip into view when it doesn't fit: on opening (a
+    // later season on a narrow screen) and after pager swipes. Leave the row
+    // alone while the chip is fully visible so nearby swipes don't move it.
     LaunchedEffect(selectedSeasonIndex, seasons.size) {
         if (selectedSeasonIndex < 0) return@LaunchedEffect
+        // Wait for the first layout; an empty one reads as "not visible".
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.isNotEmpty() }.first { it }
 
-        val layoutInfo = listState.layoutInfo
-        val selectedItem = layoutInfo.visibleItemsInfo.firstOrNull {
-            it.index == selectedSeasonIndex
+        fun selectedChipFullyVisible(): Boolean {
+            val layoutInfo = listState.layoutInfo
+            val item = layoutInfo.visibleItemsInfo.firstOrNull { it.index == selectedSeasonIndex }
+            return item != null &&
+                item.offset >= layoutInfo.viewportStartOffset &&
+                item.offset + item.size <= layoutInfo.viewportEndOffset
         }
-        val isFullyVisible = selectedItem != null &&
-            selectedItem.offset >= layoutInfo.viewportStartOffset &&
-            selectedItem.offset + selectedItem.size <= layoutInfo.viewportEndOffset
 
-        if (!isFullyVisible) {
-            listState.animateScrollToItem(selectedSeasonIndex)
+        if (!selectedChipFullyVisible()) {
+            // Keep the previous chip in view as a hint that the row continues.
+            val target = (selectedSeasonIndex - 1).coerceAtLeast(0)
+            if (hasPositioned) listState.animateScrollToItem(target) else listState.scrollToItem(target)
+            if (!selectedChipFullyVisible()) listState.scrollToItem(selectedSeasonIndex)
         }
+        hasPositioned = true
     }
 
     LazyRow(
