@@ -1721,8 +1721,9 @@ class TvItemDetailViewModel(
             _uiState.update {
                 // The ordinals were resolved against `version`; if the user
                 // switched versions while this suspended, they'd index into the
-                // wrong track list — leave the new version untouched.
-                if (selectedVersionFor(it, detail)?.fileId != version.fileId) return@update it
+                // wrong track list — leave the new version untouched. The same
+                // goes for a refresh that has since shown another file.
+                if (selectedVersionFor(it, it.detail ?: detail)?.fileId != version.fileId) return@update it
                 it.copy(
                     selectedSubtitleIndex = it.selectedSubtitleIndex ?: subOrdinal,
                     selectedAudioIndex = it.selectedAudioIndex ?: audOrdinal,
