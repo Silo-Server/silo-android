@@ -451,7 +451,7 @@ private fun AccountCardRow(
     ServerCardSurface(
         title = name,
         subtitle = count,
-        initial = name.trim().take(1).displayUppercase(),
+        initial = name.trim().first().uppercase(),
         onClick = onClick,
         modifier = modifier,
     ) { focused ->

@@ -511,7 +511,7 @@ internal fun TvPartySeat(member: RoomMember, state: WatchPartySeatState, size: D
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = watchPartyDisplayName(member.displayName.trim()).take(1).displayUppercase(),
+                    text = watchPartyDisplayName(member.displayName.trim()).take(1).uppercase(),
                     fontSize = (size.value * 0.36f / 0.86f).sp,
                     fontWeight = FontWeight.SemiBold,
                     color = SiloOnSurface,

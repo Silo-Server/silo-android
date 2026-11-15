@@ -73,7 +73,6 @@ import kotlinx.coroutines.launch
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.currentFormatLocale
-import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -297,7 +296,9 @@ fun DownloadsScreen(
     pendingBulkDelete?.let { (ids, _) ->
         SiloConfirmDialog(
             title = stringResource(CommonR.string.downloads_bulk_title),
-            body = pluralStringResource(CommonR.plurals.downloads_bulk_body, ids.size),
+            // English never prints the count, but Croatian and Ukrainian do: their
+            // `one` form also covers 21, 31, ..., so the count goes in as an argument.
+            body = pluralStringResource(CommonR.plurals.downloads_bulk_body, ids.size, ids.size),
             confirmLabel = pluralStringResource(CommonR.plurals.downloads_bulk_confirm, ids.size, ids.size, LocaleFormat.integer(ids.size)),
             onConfirm = {
                 viewModel.removeDownloadIds(ids)
@@ -531,7 +532,7 @@ private fun MonitoredDownloadsCard(
 @Composable
 private fun SectionHeader(label: String) {
     Text(
-        text = label.displayUppercase(),
+        text = label.uppercase(),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,

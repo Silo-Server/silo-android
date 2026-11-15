@@ -536,7 +536,7 @@ private fun ExpandedHeroTitle(detail: ItemDetail) {
             )
             if (episodeSubtitle != null) {
                 Text(
-                    text = episodeSubtitle.displayUppercase(),
+                    text = episodeSubtitle.uppercase(),
                     fontSize = 13.sp,
                     lineHeight = 17.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -586,7 +586,7 @@ private fun ExpandedHeroTitle(detail: ItemDetail) {
         )
         if (subtitle != null) {
             Text(
-                text = subtitle.displayUppercase(),
+                text = subtitle.uppercase(),
                 fontSize = 14.sp,
                 lineHeight = 18.sp,
                 fontWeight = FontWeight.ExtraBold,
@@ -952,7 +952,7 @@ private fun HeroTitle(detail: ItemDetail) {
             )
             if (episodeSubtitle != null) {
                 Text(
-                    text = episodeSubtitle.displayUppercase(),
+                    text = episodeSubtitle.uppercase(),
                     fontSize = 13.sp,
                     lineHeight = 17.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -1003,7 +1003,7 @@ private fun HeroTitle(detail: ItemDetail) {
         )
         if (subtitle != null) {
             Text(
-                text = subtitle.displayUppercase(),
+                text = subtitle.uppercase(),
                 fontSize = 13.sp,
                 lineHeight = 17.sp,
                 fontWeight = FontWeight.ExtraBold,

@@ -3257,7 +3257,7 @@ private fun TvPlayerIdleOverlay(
             if (title.isNotBlank()) {
                 if (!eyebrow.isNullOrBlank()) {
                     androidx.tv.material3.Text(
-                        text = eyebrow.displayUppercase(),
+                        text = eyebrow.uppercase(),
                         style = TvPlayerType.Eyebrow,
                         maxLines = 1,
                     )

@@ -314,7 +314,7 @@ internal fun WatchPartySeat(member: RoomMember, state: WatchPartySeatState, size
                     .background(watchPartyAvatarGradient(member)),
             ) {
                 Text(
-                    name.trim().take(1).displayUppercase(),
+                    name.trim().take(1).uppercase(),
                     fontSize = (size.value * 0.36f).sp,
                     fontWeight = FontWeight.SemiBold,
                     color = SiloOnSurface,

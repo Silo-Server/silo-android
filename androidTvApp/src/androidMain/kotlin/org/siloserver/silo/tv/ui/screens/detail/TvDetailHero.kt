@@ -46,7 +46,6 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.model.settings.CardPosterSize
-import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.R
@@ -385,7 +384,7 @@ private fun HeroTextTitle(title: String) {
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(
-            text = parts.first.displayUppercase(),
+            text = parts.first.uppercase(),
             style = heroDisplayHero,
             color = Color.White,
             textAlign = TextAlign.Start,
@@ -393,7 +392,7 @@ private fun HeroTextTitle(title: String) {
         )
         parts.second?.let { sub ->
             Text(
-                text = sub.displayUppercase(),
+                text = sub.uppercase(),
                 style = heroDisplayHero.copy(
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 20.sp,
@@ -431,7 +430,7 @@ private fun EpisodeHierarchyTitle(
             )
         } else {
             Text(
-                text = seriesTitle.displayUppercase(),
+                text = seriesTitle.uppercase(),
                 style = heroDisplayHero,
                 color = Color.White,
                 textAlign = TextAlign.Start,

@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -110,7 +111,10 @@ private fun TrailerCard(
     entry: TrailerRailEntry,
     onClick: () -> Unit,
 ) {
-    val kindLabel = extraKindLabel(entry.kind).text()
+    val kind = extraKindLabel(entry.kind)
+    val kindLabel = kind.text()
+    // A known kind is translated; an unknown one is the server's own word.
+    val kindCaps = if (kind is UiText.Raw) kindLabel.uppercase() else kindLabel.displayUppercase()
     val title = entry.title.text()
     val durationLabel = trailerRailDurationLabel(entry)
     val cardDescription = stringResource(CommonR.string.detail_trailerCardDescription, title, kindLabel)
@@ -156,7 +160,7 @@ private fun TrailerCard(
         }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                text = kindLabel.displayUppercase(),
+                text = kindCaps,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.sp,

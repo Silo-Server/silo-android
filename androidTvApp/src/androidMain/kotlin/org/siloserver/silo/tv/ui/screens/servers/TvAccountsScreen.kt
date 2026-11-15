@@ -33,7 +33,6 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.R as CommonR
-import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.server.AccountEntry
 import org.siloserver.silo.model.server.ServerEntry
@@ -341,7 +340,7 @@ private fun accountPageMessage(account: AccountEntry, serverName: String): Strin
 @Composable
 private fun ServerSectionLabel(name: String) {
     Text(
-        text = name.displayUppercase(),
+        text = name.uppercase(),
         style = SettingsGroupHeaderStyle(),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         maxLines = 1,

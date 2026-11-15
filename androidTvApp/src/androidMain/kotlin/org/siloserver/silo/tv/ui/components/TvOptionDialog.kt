@@ -43,7 +43,6 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.tv.ui.screens.player.TvPlayerChrome
 import org.siloserver.silo.tv.ui.screens.player.TvPlayerType
 
@@ -115,7 +114,7 @@ fun TvOptionDialog(
                     .then(rememberTvDialogInitialFocus(firstRowFocus)),
             ) {
                 Text(
-                    text = title.displayUppercase(),
+                    text = title.uppercase(),
                     style = TvPlayerType.Eyebrow,
                     modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 6.dp),
                 )
