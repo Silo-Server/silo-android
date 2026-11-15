@@ -315,6 +315,55 @@ class TvNextUpSelectionHandoffTest {
     }
 
     @Test
+    fun showSeriesInfoWhileSeasonLoadsKeepsThePreviousSeasonUnplayable() = runDetailTest {
+        val scenario = Scenario(suffix = "-series-info-during-season-load")
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+        fixture.viewModel.onSeriesEpisodeActivated(scenario.episodeTwoId)
+        awaitEpisode(fixture.viewModel, scenario.episodeTwoId)
+
+        scenario.seasonTwoEpisodesGate = CompletableDeferred()
+        fixture.viewModel.onSeasonSelected(2)
+        awaitCondition {
+            fixture.viewModel.uiState.value.let { it.selectedSeason == 2 && it.episodesLoading }
+        }
+        fixture.viewModel.onSeriesEpisodeActivated(null)
+
+        assertFalse(
+            fixture.viewModel.uiState.value.nextUpTargetReady,
+            "Show Series Info must not make a season 1 episode playable while season 2 loads",
+        )
+
+        scenario.seasonTwoEpisodesGate?.complete(Unit)
+        awaitEpisode(fixture.viewModel, scenario.seasonTwoEpisodeId)
+        assertEquals(2, fixture.viewModel.uiState.value.selectedSeason)
+        assertTrue(fixture.viewModel.uiState.value.nextUpTargetReady)
+    }
+
+    @Test
+    fun watchingAPlaceholderEpisodeWhileSeasonLoadsKeepsThePreviousSeasonUnplayable() = runDetailTest {
+        val scenario = Scenario(suffix = "-watched-during-season-load")
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+
+        scenario.seasonTwoEpisodesGate = CompletableDeferred()
+        fixture.viewModel.onSeasonSelected(2)
+        awaitCondition {
+            fixture.viewModel.uiState.value.let { it.selectedSeason == 2 && it.episodesLoading }
+        }
+        fixture.viewModel.onSetEpisodeWatched(scenario.episodeOneId, true)
+
+        assertFalse(
+            fixture.viewModel.uiState.value.nextUpTargetReady,
+            "watching a season 1 placeholder must not make season 1 playable while season 2 loads",
+        )
+
+        scenario.seasonTwoEpisodesGate?.complete(Unit)
+        awaitEpisode(fixture.viewModel, scenario.seasonTwoEpisodeId)
+        assertTrue(fixture.viewModel.uiState.value.nextUpTargetReady)
+    }
+
+    @Test
     fun focusedSeriesEpisodeBecomesHeroPlayAndSelectorTarget() = runDetailTest {
         val scenario = Scenario(suffix = "-focus-target")
         val fixture = createFixture(scenario)

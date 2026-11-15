@@ -1805,7 +1805,7 @@ class TvItemDetailViewModel(
             }
         }
         activeSeriesEpisodeContentId = active?.contentId
-        updateNextUp(active ?: resolveNextUpEpisode(_uiState.value.episodes))
+        if (active != null) updateNextUp(active) else refreshNextUp(_uiState.value.episodes)
         if (active != null) {
             if (active.seasonNumber != state.selectedSeason) publishCarousel()
             prefetchCarouselNeighbors()
@@ -2309,6 +2309,10 @@ class TvItemDetailViewModel(
      * `loadSeriesNextUpPlaybackDetail` / `loadSeasonNextUpPlaybackDetail`.
      */
     private fun refreshNextUp(episodes: List<EpisodeListItem>) {
+        // While a newly selected season loads, `episodes` still holds the
+        // previous season as a placeholder. That load refreshes next-up when
+        // it lands; resolving one now would let Play launch the old season.
+        if (loadedSeason != _uiState.value.selectedSeason) return
         val active = activeSeriesEpisodeContentId
             ?.let { contentId -> episodes.firstOrNull { it.contentId == contentId } }
         updateNextUp(active ?: resolveNextUpEpisode(episodes))
