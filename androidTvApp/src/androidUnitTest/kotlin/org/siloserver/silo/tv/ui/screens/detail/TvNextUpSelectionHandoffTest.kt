@@ -634,11 +634,16 @@ class TvNextUpSelectionHandoffTest {
     @Test
     fun returnRefreshShowsTheServerResumePointOnceTheStopHasSettled() = runDetailTest {
         val versions = listOf(
-            version(101, "1080p", subtitles = listOf(subtitle(0, "spa"))),
+            version(101, "1080p", subtitles = listOf(subtitle(0, "eng"), subtitle(1, "spa"))),
             version(102, "2160p", subtitles = listOf(subtitle(0, "eng"))),
         )
         val scenario = Scenario(suffix = "-settled-return", oldVersions = versions)
         val fixture = createFixture(scenario, contentId = scenario.episodeOneId)
+        // Spanish is the subtitle saved for the theatrical cut.
+        fixture.userState.saved[scenario.episodeOneId to 101] = LocalTrackSelection(
+            audioFingerprint = null,
+            subtitleFingerprint = subtitleTrackFingerprint(subtitle(1, "spa")),
+        )
         awaitCondition { fixture.viewModel.uiState.value.detail?.contentId == scenario.episodeOneId }
         // Each answer carries its own title, so the test waits for that answer to land.
         // The two files are two cuts, so the last-played file picks the cut.
@@ -671,12 +676,12 @@ class TvNextUpSelectionHandoffTest {
             serverUserData = """{"is_in_progress":true,"position_seconds":3000.0,"duration_seconds":7200.0,"last_file_id":"101"}""",
         )
         assertEquals(3000.0, fixture.viewModel.uiState.value.detail?.userData?.positionSeconds)
-        // That resume point is in the theatrical cut, so the page opens on it
-        // and drops the subtitle pick, which named a track of the other cut.
+        // That resume point is in the theatrical cut, so the page opens on it,
+        // with the subtitle saved for that cut, not the other cut's pick.
         val state = fixture.viewModel.uiState.value
         assertEquals(101, state.detail?.userData?.lastFileId)
         assertEquals(101, selectTvDetailDisplayVersion(state.detail, state.selectedFileId, state.selectedEditionId, state.preferredQuality)?.fileId)
-        assertNull(state.selectedSubtitleIndex)
+        assertEquals(1, state.selectedSubtitleIndex)
 
         // A first 40 s of a title: the server kept no resume point, so Play.
         returnFromPlayer(exitSeconds = 40.0, serverUserData = """{"played":false}""")

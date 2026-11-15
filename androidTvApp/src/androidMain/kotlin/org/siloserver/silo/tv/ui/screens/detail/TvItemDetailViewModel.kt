@@ -1171,20 +1171,17 @@ class TvItemDetailViewModel(
                         }
                     }
                     if (!isTvHiddenMediaType(detail.type)) {
+                        val before = _uiState.value
                         _uiState.update {
-                            // That answer can also name an older file or edition
-                            // than the one played; the track picks shown belong
-                            // to the file the page opened on before it.
-                            val tracksStillMatch = playbackReturn == null ||
-                                it.detail?.let { shown -> it.trackSelectionFileId(shown) } == it.trackSelectionFileId(detail)
                             it.copy(
                                 detail = detail,
                                 userRating = detail.userRating,
                                 isWatched = detail.userData?.played == true,
-                                selectedAudioIndex = it.selectedAudioIndex.takeIf { tracksStillMatch },
-                                selectedSubtitleIndex = it.selectedSubtitleIndex.takeIf { tracksStillMatch },
                             )
                         }
+                        // That answer can also name an older file or edition than
+                        // the one played, and the picks handed back belong to it.
+                        if (playbackReturn != null) restartTrackPicksIfShownFileChanged(before, _uiState.value)
                     }
                 }
                 is ApiResult.Error -> if (showRefusal && result.isAccessRefusal()) {
@@ -3267,10 +3264,6 @@ internal object TvDetailTrackSelectionSession {
 
 private fun ItemDetail.isWatchedWithoutResume(): Boolean =
     userData?.let { it.played && (it.positionSeconds ?: 0.0) <= 0.0 } == true
-
-/** The file this page's track picks apply to when it shows [detail]. */
-private fun TvItemDetailUiState.trackSelectionFileId(detail: ItemDetail): Int? =
-    resolveTvTrackSelectionVersion(detail, selectedFileId, selectedEditionId, preferredQuality)?.fileId
 
 private fun ItemDetail.withPlaybackReturn(saved: TvDetailTrackSelectionSession.Saved): ItemDetail {
     val position = saved.positionSeconds?.takeIf { it.isFinite() && it >= 0.0 } ?: return this
