@@ -930,7 +930,15 @@ private fun cardSubtitle(item: CalendarItem): String? {
             item.episodeTitle?.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
         }
         "season_premiere" -> {
-            item.seasonNumber?.let { parts.add(stringResource(CommonR.string.calendar_season, LocaleFormat.integer(it))) }
+            item.seasonNumber?.let {
+                parts.add(
+                    if (it == 0) {
+                        stringResource(CommonR.string.detail_specials)
+                    } else {
+                        stringResource(CommonR.string.calendar_season, LocaleFormat.integer(it))
+                    },
+                )
+            }
         }
         "movie" -> parts.add(stringResource(CommonR.string.calendar_movie))
     }

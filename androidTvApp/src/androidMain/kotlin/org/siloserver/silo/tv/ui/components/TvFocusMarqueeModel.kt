@@ -222,6 +222,7 @@ data class TvMarqueeContent(
 
         private fun episodeToken(season: Int?, episode: Int?): TvHeroFactToken? = when {
             season != null && episode != null -> tvEpisodeTagToken(season, episode)
+            season == 0 -> TvHeroFactToken.ResToken(CommonR.string.detail_specials)
             season != null -> TvHeroFactToken.ResToken(CommonR.string.home_seasonOnly, listOf(LocaleInteger(season)))
             episode != null -> TvHeroFactToken.ResToken(CommonR.string.home_episodeOnly, listOf(LocaleInteger(episode)))
             else -> null

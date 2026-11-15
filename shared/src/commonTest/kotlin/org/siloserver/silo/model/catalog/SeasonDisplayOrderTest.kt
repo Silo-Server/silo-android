@@ -102,6 +102,26 @@ class SeasonDisplayOrderTest {
     }
 
     @Test
+    fun `in progress numbered season beats in progress specials`() {
+        val result = listOf(
+            season(0, userData = SeasonUserData(inProgressCount = 1)),
+            season(1),
+            season(3, userData = SeasonUserData(inProgressCount = 1)),
+        ).initialSeasonForDisplay(preferredSeasonNumber = null)
+        assertEquals(3, result?.seasonNumber)
+    }
+
+    @Test
+    fun `partially watched numbered season beats partially watched specials`() {
+        val result = listOf(
+            season(0, userData = SeasonUserData(watchedCount = 2)),
+            season(1, userData = SeasonUserData(played = true, watchedCount = 10)),
+            season(2, userData = SeasonUserData(watchedCount = 4)),
+        ).initialSeasonForDisplay(preferredSeasonNumber = null)
+        assertEquals(2, result?.seasonNumber)
+    }
+
+    @Test
     fun `requested specials remains selected`() {
         val result = listOf(season(2), season(0), season(1))
             .initialSeasonForDisplay(preferredSeasonNumber = 0)
