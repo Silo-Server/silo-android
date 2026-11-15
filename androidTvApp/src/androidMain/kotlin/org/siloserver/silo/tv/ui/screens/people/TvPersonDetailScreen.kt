@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.people
 
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.common.i18n.LocaleFormat
 import androidx.activity.compose.BackHandler
@@ -573,7 +574,7 @@ private fun Person.initials(): String {
         .take(2)
         .mapNotNull { it.firstOrNull() }
         .joinToString("")
-        .uppercase()
+        .displayUppercase()
     return letters.ifEmpty { "?" }
 }
 

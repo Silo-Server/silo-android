@@ -76,6 +76,7 @@ import org.siloserver.silo.android.ui.components.LabelValueLine
 import org.siloserver.silo.android.ui.screens.settings.settingsSwitchColors
 import org.siloserver.silo.android.ui.theme.SiloDestructive
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.android.ui.theme.SiloInterFamily
 
 /**
@@ -567,7 +568,7 @@ internal fun PlayerTrackRow(
 @Composable
 internal fun PlayerSectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(
-        text = text.uppercase(),
+        text = text.displayUppercase(),
         style = PlayerType.Section,
         modifier = modifier.padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 6.dp),
     )

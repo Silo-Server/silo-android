@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import org.siloserver.silo.common.R
+import org.siloserver.silo.common.i18n.displayUppercase
 
 /**
  * The server's mark: its branded `mark_url` image when there is one, else its
@@ -51,7 +52,7 @@ fun MarqueeServerMark(
             .border(1.dp, Color.White.copy(alpha = 0.18f), shape),
         contentAlignment = Alignment.Center,
     ) {
-        val initial = name?.trim()?.firstOrNull()?.uppercase()
+        val initial = name?.trim()?.take(1)?.ifEmpty { null }?.displayUppercase()
         if (siloIconFallback) {
             Image(
                 painter = painterResource(R.drawable.silo_project_icon),

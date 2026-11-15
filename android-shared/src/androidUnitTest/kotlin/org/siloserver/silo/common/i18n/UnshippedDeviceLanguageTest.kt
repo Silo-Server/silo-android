@@ -57,6 +57,18 @@ class UnshippedDeviceLanguageTest {
     }
 
     @Test
+    fun norwegianReportedAsNoIsShownAsBokmal() {
+        val shipped = listOf("en", "nb")
+        val list = android.os.LocaleList::forLanguageTags
+        assertEquals(Locale.forLanguageTag("nb-NO"), AppLocales.standIn(list("no-NO"), shipped))
+        assertEquals(Locale.forLanguageTag("nb"), AppLocales.standIn(list("no"), shipped))
+        assertEquals(null, AppLocales.standIn(list("nb-NO"), shipped))
+        // Nynorsk has no catalog: the next shipped language, as the device has it.
+        assertEquals(Locale.forLanguageTag("nb-NO"), AppLocales.standIn(list("nn-NO,no-NO"), shipped))
+        assertEquals(Locale.ENGLISH, AppLocales.standIn(list("nn-NO"), shipped))
+    }
+
+    @Test
     fun aShippedOrPseudoLanguageIsLeftAsItIs() {
         for (tag in listOf("en-GB", "en-XA")) {
             val locale = Locale.forLanguageTag(tag)

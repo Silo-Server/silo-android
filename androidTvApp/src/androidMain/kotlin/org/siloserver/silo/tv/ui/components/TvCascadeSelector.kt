@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.tv.ui.shell.TvLibraryPill
 import org.siloserver.silo.tv.ui.shell.TvLibraryTabType
@@ -328,7 +329,7 @@ fun TvCascadeSelector(
                     .tvSkylinePanelChrome()
                     .padding(CascadePanelPadding),
             ) {
-                CascadePanelHeader(anchorLibrary.name.uppercase())
+                CascadePanelHeader(anchorLibrary.name.displayUppercase())
                 pills.forEach { pill ->
                     val requester = visiblePillRequesters.getValue(pill)
                     CascadeSectionRow(
@@ -520,7 +521,7 @@ internal fun CascadePanelHeader(text: String) {
 @Composable
 private fun CascadeFlyoutHeader(text: String) {
     Text(
-        text = text.uppercase(),
+        text = text.displayUppercase(),
         color = SiloOnSurface.copy(alpha = 0.38f),
         fontSize = CascadeFlyoutHeaderSize,
         fontWeight = FontWeight.Medium,

@@ -28,9 +28,10 @@ object AppLanguage {
      *
      * A regional tag matches its language (`es-MX` → `es`, `pt-PT` →
      * `pt-BR`). Chinese matches by script: `zh`, `zh-Hans`, `zh-CN` and
-     * `zh-SG` are Simplified, while `zh-Hant`, `zh-TW`, `zh-HK` and `zh-MO`
-     * match only a shipped Traditional tag. The pseudo-locales `en-XA` and
-     * `ar-XB` never match.
+     * `zh-SG` are Simplified (`zh-Hans`), while `zh-Hant`, `zh-TW`, `zh-HK`
+     * and `zh-MO` are Traditional (`zh-Hant`). Norwegian `no`, which older
+     * devices report, is Bokmål (`nb`); Nynorsk (`nn`) matches nothing. The
+     * pseudo-locales `en-XA` and `ar-XB` never match.
      */
     fun match(tags: List<String>, shipped: List<String>): String? =
         tags.firstNotNullOfOrNull { match(it, shipped) }
@@ -49,6 +50,14 @@ object AppLanguage {
     /** `en-XA` and `ar-XB`: debug-only layout checks, never a real choice. */
     fun isPseudo(tag: String): Boolean = Tag.parse(tag)?.region in PSEUDO_REGIONS
 
+    /**
+     * The shipped language a tag's language stands for when the two differ:
+     * the language subtag [match] compares. `no` (Norwegian) is written in
+     * Bokmål by default.
+     */
+    fun matchLanguage(language: String): String = LANGUAGE_ALIASES[language.lowercase()] ?: language.lowercase()
+
+    private val LANGUAGE_ALIASES = mapOf("no" to "nb")
     private val PSEUDO_REGIONS = setOf("XA", "XB")
     private val TRADITIONAL_REGIONS = setOf("TW", "HK", "MO")
 
@@ -58,7 +67,7 @@ object AppLanguage {
         companion object {
             fun parse(tag: String): Tag? {
                 val parts = tag.trim().split('-', '_').filter { it.isNotEmpty() }
-                val language = parts.firstOrNull()?.lowercase()?.takeIf { it.all(Char::isLetter) } ?: return null
+                val language = parts.firstOrNull()?.takeIf { it.all(Char::isLetter) }?.let(::matchLanguage) ?: return null
                 // A singleton (`u`, `x`, ...) starts an extension or private-use
                 // section; its subtags are not a script or a region.
                 val rest = parts.drop(1).takeWhile { it.length > 1 }

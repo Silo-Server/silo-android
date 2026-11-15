@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.currentFormatLocale
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.downloads.DownloadEnqueuer
 import org.siloserver.silo.common.R as CommonR
@@ -305,7 +306,7 @@ private fun SectionHeaderRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = section.displayName.uppercase(),
+                text = section.displayName.displayUppercase(),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

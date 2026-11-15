@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.player.videoViewportBounds
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
@@ -130,7 +131,7 @@ fun PlayerNextUpScreen(
                             videoEnded -> CommonR.string.upNext_headingEnded
                             else -> CommonR.string.upNext_heading
                         },
-                    ).uppercase(),
+                    ).displayUppercase(),
                     color = Color.White.copy(alpha = 0.52f),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,

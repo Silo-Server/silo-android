@@ -78,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.LeftToRight
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.displayUppercase
 import java.util.Locale
 
 /**
@@ -385,7 +386,7 @@ private fun PlayerTopBar(
         ) {
             if (eyebrow.isNotBlank()) {
                 Text(
-                    text = eyebrow.uppercase(),
+                    text = eyebrow.displayUppercase(),
                     style = PlayerType.Eyebrow,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

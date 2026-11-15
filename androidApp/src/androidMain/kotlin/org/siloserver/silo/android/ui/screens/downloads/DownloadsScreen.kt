@@ -73,6 +73,7 @@ import kotlinx.coroutines.launch
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.currentFormatLocale
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -530,7 +531,7 @@ private fun MonitoredDownloadsCard(
 @Composable
 private fun SectionHeader(label: String) {
     Text(
-        text = label.uppercase(),
+        text = label.displayUppercase(),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,

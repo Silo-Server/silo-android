@@ -52,6 +52,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.model.subtitles.SubtitleResult
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
@@ -187,7 +188,7 @@ fun TvSubtitleSearchDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    text = stringResource(CommonR.string.subtitleSearch_title).uppercase(),
+                    text = stringResource(CommonR.string.subtitleSearch_title).displayUppercase(),
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontSize = 16.sp,
                         letterSpacing = 1.1.sp,

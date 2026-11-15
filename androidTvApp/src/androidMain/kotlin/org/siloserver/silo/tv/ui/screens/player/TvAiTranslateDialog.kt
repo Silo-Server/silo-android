@@ -40,6 +40,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
 import org.siloserver.silo.tv.ui.theme.DarkBackground
@@ -164,7 +165,7 @@ fun TvAiTranslateDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    text = stringResource(CommonR.string.player_aiTranslate_title).uppercase(),
+                    text = stringResource(CommonR.string.player_aiTranslate_title).displayUppercase(),
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontSize = 16.sp,
                         letterSpacing = 1.1.sp,
