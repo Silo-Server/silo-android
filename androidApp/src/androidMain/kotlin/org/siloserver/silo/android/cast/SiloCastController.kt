@@ -371,7 +371,7 @@ class SiloCastController(
             val title = async { detail.await()?.let(::castDisplayTitle) }
             try {
                 launchMutex.withLock {
-                    ensureConnected(target, allowCrossServer = true)
+                    ensureConnected(target, allowCrossServer = true, disconnectsAtStart = disconnectsAtTap)
                     // Sending a title is engaging with the TV, even on a
                     // session that attached silently.
                     markEngaged()
@@ -574,8 +574,9 @@ class SiloCastController(
     }
 
     fun connect(target: SiloCastTarget) {
+        val disconnectsAtTap = disconnectCount()
         scope.launch {
-            runCatching { ensureConnected(target) }
+            runCatching { ensureConnected(target, disconnectsAtStart = disconnectsAtTap) }
                 .onFailure { error ->
                     if (error !is CancellationException) {
                         _state.update {
@@ -897,11 +898,13 @@ class SiloCastController(
         target: SiloCastTarget,
         allowCrossServer: Boolean = false,
         passive: Boolean = false,
+        // Read when the request is made, not once it holds the lock: a
+        // disconnect can come while it waits behind another attempt.
+        disconnectsAtStart: Int = disconnectCount(),
     ) = connectionMutex.withLock {
         // An uncontended lock does not notice a cancelled caller, which must
         // not mark a connection as starting.
         currentCoroutineContext().ensureActive()
-        val disconnectsAtStart = disconnectCount()
         val activeServer = serverRegistry.activeEntry.value
             ?: throw SiloCastFailure(CommonR.string.cast_remote_error_chooseServer)
         val activeServerId = activeServer.id
