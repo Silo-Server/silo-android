@@ -68,10 +68,6 @@ class RequestsFeatureStore(
     private var probesStarted = 0
     private var newestAnswer = 0
 
-    /** The [generation] of the latest probe to start, so a session's first probe counts while it is out. */
-    @kotlin.concurrent.Volatile
-    private var probedGeneration: Int = -1
-
     init {
         scope?.launch {
             repository.capabilityRefusals.collect {
@@ -91,10 +87,7 @@ class RequestsFeatureStore(
 
     suspend fun refresh() {
         val refreshGeneration = generation
-        val ordinal = probeOrder.withLock {
-            probedGeneration = refreshGeneration
-            ++probesStarted
-        }
+        val ordinal = probeOrder.withLock { ++probesStarted }
         val status = repository.status()
         probeOrder.withLock {
             if (refreshGeneration != generation) return
@@ -118,17 +111,14 @@ class RequestsFeatureStore(
     /**
      * Re-probe when the app returns to the foreground, so an admin turning
      * requests off (or on) while the app was in the background shows up
-     * without a restart, as on Apple. Skipped until the shell has started its
-     * own probe for this session: before that, nobody is signed in or a server
-     * or profile switch is in flight, and the shell's probe will answer. Once
-     * that probe has started it runs even while the probe is still out, since
-     * the probe may have read the status before requests were turned off, and
-     * the newer answer wins.
+     * without a restart, as on Apple. The caller checks that someone is signed
+     * in. It doesn't wait for the shell's own probe: a phone restored onto a
+     * Requests screen never shows the tab screen that starts that probe, and a
+     * shell probe still out may have read the status before requests were
+     * turned off. The newer answer wins, and an answer from before a server or
+     * profile switch is discarded.
      */
-    suspend fun refreshAfterReturnToForeground() {
-        if (!_isResolved.value && probedGeneration != generation) return
-        refresh()
-    }
+    suspend fun refreshAfterReturnToForeground() = refresh()
 
     fun reset() {
         generation += 1

@@ -263,21 +263,16 @@ class RequestsFeatureStoreTest {
     }
 
     @Test
-    fun returningToTheForegroundLeavesAnUnansweredSessionToTheShellProbe() = runTest {
-        val api = FakeRequestsApi(ApiResult.Success(available()), ApiResult.Success(available()))
+    fun returningToTheForegroundProbesASessionTheShellNeverProbed() = runTest {
+        // A phone restored onto a Requests screen never shows the tab screen
+        // that starts the shell's probe.
+        val api = FakeRequestsApi(ApiResult.Success(disabled()))
         val store = RequestsFeatureStore(RequestsRepository(api))
 
-        // Before the shell's first probe (signed out, or still starting).
         store.refreshAfterReturnToForeground()
-        assertFalse(store.isResolved.value)
-        assertEquals(0, api.statusCalls)
 
-        // After a server or profile switch reset.
-        store.refresh()
-        store.reset()
-        store.refreshAfterReturnToForeground()
-        assertFalse(store.isResolved.value)
         assertEquals(1, api.statusCalls)
+        assertTrue(store.isKnownUnavailable.value)
     }
 
     @Test

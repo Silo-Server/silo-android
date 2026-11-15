@@ -43,8 +43,8 @@ class ForegroundAccessCheck(
                 }
             }
             launch {
-                // The TV shell does not reset the store on sign-out, so check
-                // there is still a session before asking the server. A failed
+                // Ask the server only while someone is signed in: the store
+                // probes without waiting for the shell's first probe. A failed
                 // token read skips this check rather than cancelling the
                 // library check beside it or crashing the foreground scope.
                 try {
