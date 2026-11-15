@@ -153,6 +153,7 @@ import org.siloserver.silo.tv.ui.screens.browse.TvBrowseScreen
 import org.siloserver.silo.tv.ui.screens.calendar.TvCalendarScreen
 import org.siloserver.silo.tv.ui.screens.collections.TvCollectionsScreen
 import org.siloserver.silo.tv.ui.screens.home.TvHomeScreen
+import org.siloserver.silo.tv.ui.screens.home.tvHomeBrowseSectionId
 import org.siloserver.silo.tv.ui.screens.libraries.TvLibrariesScreen
 import org.siloserver.silo.tv.ui.screens.personal.TvFavoritesScreen
 import org.siloserver.silo.tv.ui.screens.personal.TvHistoryScreen
@@ -582,7 +583,7 @@ fun TvMainShell(
         restoreContentAfterDetail = true
         detailReturnRoot = TvMainRoute.Home.route
         suppressFeedRefreshAfterDetail = true
-        onOpenSectionBrowse(section.id, context.sectionTitle(section), null, null)
+        onOpenSectionBrowse(section.tvHomeBrowseSectionId(), context.sectionTitle(section), null, null)
     }
     val openLibrarySection: (org.siloserver.silo.model.section.ResolvedSection, Int, String?) -> Unit =
         { section, libraryId, mediaScope ->
