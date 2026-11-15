@@ -2721,6 +2721,9 @@ class TvItemDetailViewModel(
             _uiState.value.selectedSeason != seasonNumber
         ) return target
         episodeDescriptionRevisions[seasonNumber] = (episodeDescriptionRevisions[seasonNumber] ?: 0L) + 1
+        // This can be the season's first successful read (a season page whose
+        // first episode load failed), so record whose rows these are.
+        loadedSeason = seasonNumber
         _uiState.update { state ->
             val current = state.episodes.associateBy { it.contentId }
             val merged = fresh.sortedBy { it.episodeNumber }
