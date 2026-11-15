@@ -162,13 +162,14 @@ fun TvSeriesModePicker(
     val listState = rememberLazyListState()
     val selectedFocusRequester = remember { FocusRequester() }
     val selectedIndex = remember(selectedSeason, seasons) {
-        seasons.indexOfFirst { it.seasonNumber == selectedSeason }.takeIf { it >= 0 } ?: 0
+        seasons.indexOfFirst { it.seasonNumber == selectedSeason }.takeIf { it >= 0 }
     }
 
     LaunchedEffect(selectedIndex, seasons.size) {
-        listState.scrollToItem(selectedIndex)
+        val idx = selectedIndex ?: return@LaunchedEffect
+        listState.scrollToItem(idx)
         val info = listState.layoutInfo
-        val item = info.visibleItemsInfo.firstOrNull { it.index == selectedIndex }
+        val item = info.visibleItemsInfo.firstOrNull { it.index == idx }
             ?: return@LaunchedEffect
         val viewportCenter = (info.viewportStartOffset + info.viewportEndOffset) / 2f
         val itemCenter = item.offset + item.size / 2f
@@ -177,7 +178,13 @@ fun TvSeriesModePicker(
 
     LazyRow(
         modifier = modifier
-            .focusProperties { enter = { selectedFocusRequester } }
+            // Only a tab for the selected season holds the requester; while
+            // seasons load or none is selected, keep the default entry.
+            .focusProperties {
+                selectedIndex?.let {
+                    enter = { selectedFocusRequester }
+                }
+            }
             .then(
                 if (onDirectionUp != null) {
                     Modifier.onPreviewKeyEvent { event ->
