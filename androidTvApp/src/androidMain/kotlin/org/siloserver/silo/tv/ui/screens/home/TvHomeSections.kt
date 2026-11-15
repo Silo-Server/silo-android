@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.home
 
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.section.showsWholeList
 import org.siloserver.silo.tv.ui.components.TvRowStyle
 import org.siloserver.silo.tv.ui.components.isTvProgressRow
 import org.siloserver.silo.tv.ui.util.isAudiobookMediaType
@@ -41,7 +42,10 @@ private fun ResolvedSection.splitAudioProgress(): List<ResolvedSection> {
         if (nonAudioItems.isNotEmpty()) {
             add(
                 copy(
-                    totalCount = nonAudioItems.size,
+                    // Only a row that held its whole list counts its own cards.
+                    // One cut at its limit keeps the source count, so losing its
+                    // audiobooks does not make it look whole and drop "Explore all".
+                    totalCount = if (showsWholeList) nonAudioItems.size else totalCount,
                     items = nonAudioItems,
                 )
             )
