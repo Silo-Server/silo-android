@@ -632,6 +632,46 @@ class TvNextUpSelectionHandoffTest {
     }
 
     @Test
+    fun returnRefreshShowsTheServerResumePointOnceTheStopHasSettled() = runDetailTest {
+        val scenario = Scenario(suffix = "-settled-return")
+        val fixture = createFixture(scenario, contentId = scenario.episodeOneId)
+        awaitCondition { fixture.viewModel.uiState.value.detail?.contentId == scenario.episodeOneId }
+        // Each answer carries its own title, so the test waits for that answer to land.
+        fun detailWithUserData(title: String, userData: String) =
+            itemDetailJson(scenario.episodeOneId, listOf(version(101, "1080p")))
+                .replace(""""title":"Episode"""", """"title":"$title"""")
+                .replace(""""user_data":{"last_file_id":null}""", """"user_data":$userData""")
+        suspend fun returnFromPlayer(exitSeconds: Double, serverUserData: String) {
+            val title = "After $exitSeconds"
+            scenario.episodeOneResponses.addLast(DetailResponse(null, detailWithUserData(title, serverUserData)))
+            TvDetailTrackSelectionSession.rememberPlaybackReturn(
+                contentId = scenario.episodeOneId,
+                fileId = 101,
+                audio = null,
+                subtitle = null,
+                positionSeconds = exitSeconds,
+                durationSeconds = 7200.0,
+            )
+            fixture.viewModel.refreshOnReturn()
+            awaitCondition { fixture.viewModel.uiState.value.detail?.title == title }
+        }
+
+        // Restarted at 50:00 and stopped at 2:00, under the minimum resume
+        // share: the server kept 50:00, and the page must offer that.
+        returnFromPlayer(
+            exitSeconds = 120.0,
+            serverUserData = """{"is_in_progress":true,"position_seconds":3000.0,"duration_seconds":7200.0}""",
+        )
+        assertEquals(3000.0, fixture.viewModel.uiState.value.detail?.userData?.positionSeconds)
+
+        // A first 40 s of a title: the server kept no resume point, so Play.
+        returnFromPlayer(exitSeconds = 40.0, serverUserData = """{"played":false}""")
+        val userData = fixture.viewModel.uiState.value.detail?.userData
+        assertNull(userData?.positionSeconds)
+        assertFalse(userData?.isInProgress == true)
+    }
+
+    @Test
     fun staleRefreshCompletionCannotApplyHandoffToAnotherEpisode() = runDetailTest {
         val scenario = Scenario(suffix = "-stale")
         scenario.episodeOneWatchGate = CompletableDeferred()

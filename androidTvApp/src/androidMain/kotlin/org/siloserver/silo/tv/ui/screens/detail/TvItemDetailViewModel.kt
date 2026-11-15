@@ -1163,8 +1163,12 @@ class TvItemDetailViewModel(
                     val detail = if (playbackReturn != null && result.data.isWatchedWithoutResume()) {
                         result.data
                     } else {
-                        withLocalProgress(result.data)
-                            .let { refreshed -> playbackReturn?.let(refreshed::withPlaybackReturn) ?: refreshed }
+                        // The exit spot stands in only until the stop lands. After
+                        // that the server's resume point is the answer: a stop under
+                        // the minimum resume share leaves its earlier one, or none.
+                        withLocalProgress(result.data).let { refreshed ->
+                            playbackReturn?.takeUnless { settled }?.let(refreshed::withPlaybackReturn) ?: refreshed
+                        }
                     }
                     if (!isTvHiddenMediaType(detail.type)) {
                         _uiState.update {
