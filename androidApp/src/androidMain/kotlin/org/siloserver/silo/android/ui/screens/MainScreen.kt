@@ -97,6 +97,7 @@ import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.ui.OnViewerAccessChanged
 import org.siloserver.silo.common.ui.rememberViewerAccessKey
 import org.siloserver.silo.network.AccessChangeSignals
+import org.siloserver.silo.android.cast.engagedStatus
 
 /**
  * Main scaffold that hosts the bottom navigation bar and tab content.
@@ -373,6 +374,7 @@ fun MainScreen(
     // Every tab header shows the remote-control button beside search.
     val remoteControl = TopBarRemoteControl(
         isActive = siloCastState.hasActiveSession,
+        status = siloCastState.engagedStatus(),
         onOpen = {
             if (siloCastState.hasActiveSession) {
                 navController.navigate(Route.SiloCastRemote.route)

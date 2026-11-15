@@ -48,9 +48,11 @@ import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.OndemandVideo
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.SettingsRemote
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -59,12 +61,19 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import org.koin.compose.koinInject
+import org.siloserver.silo.android.cast.SiloCastController
+import org.siloserver.silo.android.cast.engagedStatus
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
@@ -1162,43 +1171,77 @@ private fun OverviewBlock(
 // ── Action buttons ────────────────────────────────────────────
 
 /**
- * Solid white capsule used for the primary "Play" CTA in the hero.
- * Full width, 52dp tall, label inline with the icon.
+ * Solid-white Play pill for a movie, series or box set, matching the iOS
+ * `PhoneVideoPlayButton`. Full width, 52dp tall, label inline with the icon.
+ *
+ * While this phone controls a TV, the pill carries a TV glyph and names the
+ * TV underneath, so it is plain before the tap that playback starts there.
  */
 @Composable
 fun PrimaryPillButton(
-    icon: ImageVector,
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Button(
-        onClick = onClick,
-        shape = PillShape,
-        colors = ButtonDefaults.buttonColors(
-            containerColor = Color.White,
-            contentColor = Color.Black,
-        ),
-        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 0.dp),
-        modifier = modifier
-            .fillMaxWidth()
-            .height(52.dp),
+    val castState by koinInject<SiloCastController>().state.collectAsState()
+    val remoteStatus = castState.engagedStatus()
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        // iOS PhonePrimaryPillButton: icon 17pt bold, label 17pt semibold, spacing 10.
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(17.dp),
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = label,
-            fontSize = 17.sp,
-            lineHeight = 22.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Button(
+            onClick = onClick,
+            shape = PillShape,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color.White,
+                contentColor = Color.Black,
+            ),
+            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 0.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                // TalkBack reads the destination with Play, not as a separate stop.
+                .semantics { remoteStatus?.let { stateDescription = it } },
+        ) {
+            // iOS PhonePrimaryPillButton: icon 17pt bold, label 17pt semibold, spacing 10.
+            Icon(
+                imageVector = if (remoteStatus == null) Icons.Filled.PlayArrow else Icons.Filled.OndemandVideo,
+                contentDescription = null,
+                modifier = Modifier.size(17.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = label,
+                fontSize = 17.sp,
+                lineHeight = 22.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (remoteStatus != null) {
+            Row(
+                modifier = Modifier.clearAndSetSemantics { },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.SettingsRemote,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.8f),
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = remoteStatus,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White.copy(alpha = 0.8f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 
@@ -1379,7 +1422,6 @@ fun HeroActionStack(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         PrimaryPillButton(
-            icon = Icons.Filled.PlayArrow,
             label = primaryLabel,
             onClick = { if (onPlayFromBeginning != null) showResumeDialog = true else onPlay() },
         )
