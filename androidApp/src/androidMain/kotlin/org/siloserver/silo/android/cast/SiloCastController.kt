@@ -1351,6 +1351,10 @@ class SiloCastController(
                         )
                     }
                     _state.update {
+                        // A frame from a TV the user just disconnected from:
+                        // its socket closes moments after the state is cleared,
+                        // and must not bring the session back in between.
+                        if (it.connectedTarget == null) return@update it
                         // The launch ends when the TV reports that title, or
                         // anything besides what it was playing at the tap (the
                         // TV may report a resolved id for the same title).
@@ -1377,7 +1381,9 @@ class SiloCastController(
                 } else {
                     // A reply to a control pressed mid-launch, or an error the
                     // launch's own handoff will surface, does not end it.
-                    _state.update { it.copy(error = SiloCastText.Verbatim(message.error.message)) }
+                    _state.update {
+                        if (it.connectedTarget == null) it else it.copy(error = SiloCastText.Verbatim(message.error.message))
+                    }
                 }
             }
             is SiloCastMessage.Ping -> send(SiloCastMessage.Pong())
