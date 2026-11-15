@@ -125,23 +125,15 @@ abstract class SiloDatabase : RoomDatabase() {
          * Only downloaded playback writes one now, and it waits in the outbox
          * until the server accepts it. Once-off cleanup, schema unchanged:
          * - legacy `SET_POSITION` rows were held unsent forever; drop them;
-         * - positions for anything that isn't a download on this device were
-         *   streaming samples the server already has; zero them, keeping track
-         *   choices and reading state on the same rows;
          * - video download positions never reached the server; queue each one
          *   with the time it was played, so the server's newest-write-wins
          *   decides whether it still matters.
-         * Audiobook download positions stay local; that player keeps its own.
+         * Other positions stay as they are: cards and detail read only queued
+         * ones now, and the audiobook player keeps its whole-book snapshot here.
          */
         val MIGRATION_16_17 = object : Migration(16, 17) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("DELETE FROM dirty_operations WHERE opKind = 'SET_POSITION'")
-                db.execSQL(
-                    "UPDATE user_item_state SET positionSeconds = 0 WHERE positionSeconds <> 0 AND NOT EXISTS (" +
-                        "SELECT 1 FROM downloads d WHERE d.serverId = user_item_state.serverId " +
-                        "AND d.accountId = user_item_state.accountId AND d.profileId = user_item_state.profileId " +
-                        "AND d.contentId = user_item_state.contentId)",
-                )
                 db.execSQL(
                     "INSERT INTO dirty_operations (opKind, serverId, accountId, profileId, targetContentId, targetFileId, " +
                         "coalesceKey, idempotencyKey, opVersion, payloadJson, state, createdAtMs, attemptCount, nextAttemptAtMs) " +

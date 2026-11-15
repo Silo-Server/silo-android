@@ -49,7 +49,7 @@ class SiloDatabaseMigrationTest {
     }
 
     @Test
-    fun migration16To17KeepsOnlyDownloadPositionsAndQueuesVideoOnesForTheServer() {
+    fun migration16To17KeepsPositionsAndQueuesVideoDownloadOnesForTheServer() {
         val name = "migration-16-to-17"
         migrationHelper.createDatabase(name, 16).use { database ->
             fun download(contentId: String, fileId: Int, mediaType: String) = database.execSQL(
@@ -77,7 +77,7 @@ class SiloDatabaseMigrationTest {
             database.query("SELECT contentId, positionSeconds, audioFingerprint FROM user_item_state ORDER BY contentId").use { cursor ->
                 val rows = buildList { while (cursor.moveToNext()) add(Triple(cursor.getString(0), cursor.getDouble(1), cursor.getString(2))) }
                 assertEquals(
-                    listOf(Triple("book", 50.0, "audio"), Triple("movie", 646.5, "audio"), Triple("streamed", 0.0, "audio")),
+                    listOf(Triple("book", 50.0, "audio"), Triple("movie", 646.5, "audio"), Triple("streamed", 300.0, "audio")),
                     rows,
                 )
             }
