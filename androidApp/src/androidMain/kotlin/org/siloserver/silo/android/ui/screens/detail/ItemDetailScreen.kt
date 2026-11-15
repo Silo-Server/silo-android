@@ -107,6 +107,10 @@ import org.siloserver.silo.common.thememusic.ThemeMusicService
 import org.siloserver.silo.model.catalog.ThemeSelection
 import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.catalog.pendingEpisodeTranslationLanguage
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import org.siloserver.silo.android.cast.engagedStatus
+import org.siloserver.silo.android.ui.components.SiloMenuHeader
 
 internal data class SeriesDetailRedirect(
     val seriesContentId: String,
@@ -215,6 +219,7 @@ fun ItemDetailScreen(
     val siloCastState by siloCastController.state.collectAsState()
     var showRemoteTargetPicker by remember { mutableStateOf(false) }
     var remoteMenuExpanded by remember { mutableStateOf(false) }
+    val remoteStatus = siloCastState.engagedStatus()
 
     LaunchedEffect(state.selectedEpisodeContentId) {
         if (state.selectedEpisodeContentId != null) viewModel.ensureSelectedEpisodeDetailLoaded()
@@ -1223,7 +1228,8 @@ fun ItemDetailScreen(
                                 SiloOverlayPillSurface
                             },
                         )
-                        .border(1.dp, SiloNavPillBorder, CircleShape),
+                        .border(1.dp, SiloNavPillBorder, CircleShape)
+                        .semantics { remoteStatus?.let { stateDescription = it } },
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.SettingsRemote,
@@ -1235,6 +1241,7 @@ fun ItemDetailScreen(
                     expanded = remoteMenuExpanded,
                     onDismissRequest = { remoteMenuExpanded = false },
                 ) {
+                    remoteStatus?.let { SiloMenuHeader(title = it) }
                     SiloDropdownMenuItem(
                         text = { Text(stringResource(CommonR.string.detail_remoteControl)) },
                         onClick = {
