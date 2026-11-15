@@ -568,27 +568,34 @@ fun Season.isSpecialsForDisplay(): Boolean =
 
 fun List<Season>.sortedForDisplay(): List<Season> =
     sortedWith(
-        // Match tvOS: numbered seasons first, Specials last.
-        compareBy<Season> { it.isSpecialsForDisplay() }
+        // Specials are season zero: list them first, then numbered seasons
+        // ascending, matching the server, web and the other Silo clients.
+        compareByDescending<Season> { it.isSpecialsForDisplay() }
             .thenBy { it.seasonNumber }
             .thenBy { it.title.orEmpty() }
             .thenBy { it.contentId },
     )
 
 private fun List<Season>.selectedSeasonForDisplay(preferredSeasonNumber: Int?): Season? {
-    return preferredSeasonNumber
+    preferredSeasonNumber
         ?.let { preferred -> firstOrNull { it.seasonNumber == preferred } }
-        // Open the Show overview while preloading the viewer's actual browse
-        // target: Continue Watching first, then a partially watched season,
-        // then the first not-yet-complete season. This lets the first Down land
-        // on e.g. Season 3 Episode 1 exactly as tvOS does.
-        ?: firstOrNull { (it.userData?.inProgressCount ?: 0) > 0 }
-        ?: firstOrNull { season ->
+        ?.let { return it }
+    // Specials are listed first but don't open a series on their own: each
+    // tier below tries numbered seasons before Specials, so Specials are picked
+    // only when no numbered season matches that tier.
+    val (specials, numbered) = partition { it.isSpecialsForDisplay() }
+    val candidates = numbered + specials
+    // Open the Show overview while preloading the viewer's actual browse
+    // target: Continue Watching first, then a partially watched season,
+    // then the first not-yet-complete season. This lets the first Down land
+    // on e.g. Season 3 Episode 1 exactly as tvOS does.
+    return candidates.firstOrNull { (it.userData?.inProgressCount ?: 0) > 0 }
+        ?: candidates.firstOrNull { season ->
             val watched = season.userData?.watchedCount ?: 0
             watched > 0 && watched < season.episodeCount
         }
-        ?: firstOrNull { it.userData?.played != true }
-        ?: firstOrNull()
+        ?: candidates.firstOrNull { it.userData?.played != true }
+        ?: candidates.firstOrNull()
 }
 
 fun List<Season>.initialSeasonForDisplay(preferredSeasonNumber: Int?): Season? =
