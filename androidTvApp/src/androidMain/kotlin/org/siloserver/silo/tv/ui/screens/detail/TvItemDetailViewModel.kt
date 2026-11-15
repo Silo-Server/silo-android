@@ -1208,14 +1208,16 @@ class TvItemDetailViewModel(
         refreshEpisodeRails(current, fresh = afterWatchedChange)
         // Back from the player: the reads above can answer before its stop
         // sends the final progress, so read the rails again, fresh, once the
-        // stop lands. The load above finishes first: a fresh read has no cache
-        // to fall back on, and its failure would undo a season change the
-        // return made.
+        // stop lands. Episode loads finish first, including one a season change
+        // started meanwhile: a fresh read has no cache to fall back on, and its
+        // failure would undo that season change. A newer return replaces this
+        // read.
         if (afterPlayback || consumedPlaybackReturn != null) {
             val identityGeneration = identityTransitions.generation.value
-            viewModelScope.launch {
+            railsAfterStopJob?.cancel()
+            railsAfterStopJob = viewModelScope.launch {
                 awaitPlaybackSettled()
-                episodeLoadJob?.join()
+                while (episodeLoadJob?.isActive == true) episodeLoadJob?.join()
                 if (identityTransitions.generation.value == identityGeneration && _uiState.value.detail != null) {
                     refreshEpisodeRails(current, fresh = true)
                 }
@@ -2014,6 +2016,8 @@ class TvItemDetailViewModel(
     }
 
     private var episodeLoadJob: kotlinx.coroutines.Job? = null
+    /** The fresh rail read that waits for the closed player's stop; see [quietRefresh]. */
+    private var railsAfterStopJob: kotlinx.coroutines.Job? = null
     private var episodeLoadRequestGeneration: Long = 0
 
     /**
