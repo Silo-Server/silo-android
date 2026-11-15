@@ -521,17 +521,29 @@ private fun TvDetailContent(
             isShowingSeriesOverview = false
         }
     }
+    // The entry episode takes the hero once, and never after the viewer chose
+    // Show Series Info. That action restores the suggested episode as next up,
+    // which can be the entry episode again; it must not switch the hero back.
+    var entryEpisodeHeroApplied by rememberSaveable(
+        detail.contentId,
+        initialSeasonNumber,
+        initialEpisodeContentId,
+    ) {
+        mutableStateOf(false)
+    }
     LaunchedEffect(
         initialEpisodeContentId,
         state.entryEpisodeSelectionApplied,
         state.nextUpEpisode?.contentId,
     ) {
         if (
+            !entryEpisodeHeroApplied &&
             initialEpisodeContentId != null &&
             state.entryEpisodeSelectionApplied &&
             state.nextUpEpisode?.contentId == initialEpisodeContentId
         ) {
             isShowingSeriesOverview = false
+            entryEpisodeHeroApplied = true
         }
     }
     // tvOS treats the season tabs, Episodes and the playback selector as a
@@ -1071,6 +1083,7 @@ private fun TvDetailContent(
                                     onShowSeriesInfo = if (isSeriesDetail && !isShowingSeriesOverview) {
                                         {
                                             isShowingSeriesOverview = true
+                                            entryEpisodeHeroApplied = true
                                             viewModel.onSeriesEpisodeActivated(null)
                                         }
                                     } else {
