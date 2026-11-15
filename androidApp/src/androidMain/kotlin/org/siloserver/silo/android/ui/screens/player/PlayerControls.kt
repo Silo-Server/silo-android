@@ -115,10 +115,7 @@ fun PlayerControls(
     // the settings menu behind ⋯.
     hasQualityMenu: Boolean,
     chapters: List<org.siloserver.silo.model.catalog.VersionChapter> = emptyList(),
-    intro: org.siloserver.silo.model.catalog.TimeRange? = null,
-    credits: List<org.siloserver.silo.model.catalog.TimeRange> = emptyList(),
-    recap: org.siloserver.silo.model.catalog.TimeRange? = null,
-    preview: org.siloserver.silo.model.catalog.TimeRange? = null,
+    markers: org.siloserver.silo.domain.player.MarkerTimeline = org.siloserver.silo.domain.player.MarkerTimeline.EMPTY,
     isOrientationLocked: Boolean,
     orientationLockSupported: Boolean = true,
     tabletopMode: Boolean = false,
@@ -265,10 +262,7 @@ fun PlayerControls(
                     onSeek = onSeek,
                     enabled = seekEnabled,
                     chapters = chapters,
-                    intro = intro,
-                    credits = credits,
-                    recap = recap,
-                    preview = preview,
+                    markers = markers,
                     onScrubbingChange = {
                         isScrubbing = it
                         onScrubbingChange(it)

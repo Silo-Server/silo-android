@@ -69,7 +69,8 @@ import org.siloserver.silo.android.ui.util.formatClockTime
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.isRightToLeftText
 import org.siloserver.silo.common.player.rememberPlayerEndTimeLabel
-import org.siloserver.silo.model.catalog.TimeRange
+import org.siloserver.silo.domain.player.MarkerKind
+import org.siloserver.silo.domain.player.MarkerTimeline
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.common.R as CommonR
 
@@ -84,8 +85,9 @@ import org.siloserver.silo.common.R as CommonR
  * one sits.
  *
  * Track regions: played (Paper), buffered (safe to seek into), base. Detected
- * markers are tinted bands under the played fill (intro cyan, recap green,
- * credits orange, preview purple).
+ * markers are tinted bands over the played fill, one per occurrence, so a
+ * marker stays visible after the playhead passes it (intro blue, recap orange,
+ * credits purple, preview cyan: TheIntroDB's segment palette).
  */
 @Composable
 fun PlayerProgressBar(
@@ -96,10 +98,7 @@ fun PlayerProgressBar(
     bufferedPosition: Double = 0.0,
     enabled: Boolean = true,
     chapters: List<VersionChapter> = emptyList(),
-    intro: TimeRange? = null,
-    credits: List<TimeRange> = emptyList(),
-    recap: TimeRange? = null,
-    preview: TimeRange? = null,
+    markers: MarkerTimeline = MarkerTimeline.EMPTY,
     showTimes: Boolean = true,
     onScrubbingChange: (Boolean) -> Unit = {},
     thumbnail: ImageBitmap? = null,
@@ -110,8 +109,8 @@ fun PlayerProgressBar(
     // hit-tested from the left edge, so its times sit the same way round.
     LeftToRight {
         ProgressBarContent(
-            position, duration, onSeek, modifier, bufferedPosition, enabled, chapters, intro, credits, recap,
-            preview, showTimes, onScrubbingChange, thumbnail, onScrubTarget, playbackSpeed,
+            position, duration, onSeek, modifier, bufferedPosition, enabled, chapters, markers,
+            showTimes, onScrubbingChange, thumbnail, onScrubTarget, playbackSpeed,
         )
     }
 }
@@ -125,10 +124,7 @@ private fun ProgressBarContent(
     bufferedPosition: Double,
     enabled: Boolean,
     chapters: List<VersionChapter>,
-    intro: TimeRange?,
-    credits: List<TimeRange>,
-    recap: TimeRange?,
-    preview: TimeRange?,
+    markers: MarkerTimeline,
     showTimes: Boolean,
     onScrubbingChange: (Boolean) -> Unit,
     thumbnail: ImageBitmap?,
@@ -292,13 +288,6 @@ private fun ProgressBarContent(
                 },
             contentAlignment = Alignment.CenterStart,
         ) {
-            val markers = buildList {
-                intro?.let { add(it to Color(0xFF22D3EE)) }
-                recap?.let { add(it to Color(0xFF8BC34A)) }
-                // Every credits range gets a band: a file can have two.
-                credits.forEach { add(it to Color(0xFFFFB74D)) }
-                preview?.let { add(it to Color(0xFFBA68C8)) }
-            }
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -313,9 +302,17 @@ private fun ProgressBarContent(
                     } else {
                         emptyList()
                     },
+                    // A band for every occurrence of each kind: a file can
+                    // have two credits ranges, for example.
                     markers = if (hasKnownDuration) {
-                        markers.map { (range, color) ->
-                            Triple((range.start / duration).toFloat(), (range.end / duration).toFloat(), color)
+                        MarkerKind.entries.flatMap { kind ->
+                            markers.ranges(kind).map { range ->
+                                Triple(
+                                    (range.start / duration).toFloat().coerceIn(0f, 1f),
+                                    (range.end / duration).toFloat().coerceIn(0f, 1f),
+                                    markerBandColor(kind),
+                                )
+                            }
                         }
                     } else {
                         emptyList()
@@ -397,6 +394,14 @@ private val ScrubThumbnailInset = 7.dp
 /** How much taller a preview makes the bubble: the picture and its gap, less the narrower padding. */
 private val ScrubThumbnailBlockHeight = ScrubThumbnailHeight + ScrubThumbnailGap - (9.dp - ScrubThumbnailInset) * 2
 
+/** TheIntroDB's segment palette (Tailwind v4 400 shades), shared by every Silo client. */
+private fun markerBandColor(kind: MarkerKind): Color = when (kind) {
+    MarkerKind.Intro -> Color(0xFF51A2FF)
+    MarkerKind.Recap -> Color(0xFFFF8904)
+    MarkerKind.Credits -> Color(0xFFC27AFF)
+    MarkerKind.Preview -> Color(0xFF00D3F2)
+}
+
 private fun DrawScope.drawSeekBar(
     barHeightPx: Float,
     playedFraction: Float,
@@ -439,10 +444,10 @@ private fun DrawScope.drawSeekBar(
             cornerRadius = radius,
         )
         fill(Color.White.copy(alpha = 0.22f * alpha), bufferedFraction * width)
+        fill(PlayerChrome.Paper.copy(alpha = alpha), playedFraction * width)
         markers.forEach { (from, to, color) ->
             fill(color.copy(alpha = 0.45f * alpha), untilX = to * width, fromX = maxOf(start, from * width))
         }
-        fill(PlayerChrome.Paper.copy(alpha = alpha), playedFraction * width)
     }
 
     startFraction?.let { fraction ->
