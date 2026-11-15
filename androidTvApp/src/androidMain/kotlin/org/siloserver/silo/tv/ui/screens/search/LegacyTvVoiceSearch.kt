@@ -26,7 +26,11 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import org.siloserver.silo.common.R as CommonR
 
-/** Android 11 rejects the Google TV activity's in-process recognition request. */
+/**
+ * Recognition through the device's speech recognition service, for Google TV on
+ * Android 11 and later, where its recognition activity can't return a result
+ * (see [rememberTvVoiceSearch]).
+ */
 @Composable
 internal fun rememberLegacyTvVoiceSearch(
     prompt: String,
@@ -128,7 +132,8 @@ internal fun rememberLegacyTvVoiceSearch(
             }
         })
         listeningDialog.show()
-        // Android 11 can drop binding errors before installing the listener.
+        // A binding error can be dropped before the listener is installed (seen
+        // on Android 11), so bound the wait for the recogniser to start.
         val timeout = Runnable {
             if (recognizer === speech) {
                 stopRecognition()
