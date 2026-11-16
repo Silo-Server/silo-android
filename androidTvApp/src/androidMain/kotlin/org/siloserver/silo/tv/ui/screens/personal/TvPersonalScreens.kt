@@ -601,7 +601,10 @@ private fun PersonalInlineGrid(
         // would let the claim succeed on it and leave the viewer parked on
         // Sort once the cards arrive. Unclaimed, the caller simply retries
         // until a card exists — which is what it did before the header did.
-        val listIsEmpty = shown.items.isEmpty() && !state.isLoading && !state.isRefreshing
+        // The same holds while a narrowed view is still paging toward its
+        // first match: it is not empty until the pages run out or one fails.
+        val listIsEmpty = shown.items.isEmpty() && !state.isLoading && !state.isRefreshing &&
+            (!state.hasMore || state.error != null)
         TvCatalogGrid(
             items = if (state.error != null) emptyList() else shown.items,
             loadedItemCount = state.items.size,
