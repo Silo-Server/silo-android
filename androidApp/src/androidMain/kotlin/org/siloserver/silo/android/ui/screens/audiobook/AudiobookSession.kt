@@ -1,6 +1,9 @@
 package org.siloserver.silo.android.ui.screens.audiobook
 
 import android.os.Bundle
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -14,6 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.siloserver.silo.android.ui.navigation.Route
 import org.siloserver.silo.common.player.AudiobookPlayerViewModel
+import java.util.UUID
 
 /**
  * What the audiobook player route asked to play. The fields keep the route's
@@ -71,10 +75,16 @@ class ActiveAudiobook(
     /** The nav back stack entry that started this session. */
     internal val openedBy: String,
 ) {
+    /** Media id on every item this session loads, unique to the session. The
+     *  engine is shared with video and with later books; the bridge only
+     *  commands it while it holds an item with this id. */
+    internal val mediaId: String = "audiobook:${request.contentId}:${UUID.randomUUID()}"
+
     /** The stream already loaded into the engine. Kept with the session, not
      *  the bridge, so a recreated activity doesn't load it again from the
-     *  start of the part. */
-    internal var preparedUrl: String? = null
+     *  start of the part; observable, so settings and seeks held back until
+     *  the book loaded are applied once it does. */
+    internal var preparedUrl: String? by mutableStateOf(null)
 }
 
 /**

@@ -42,10 +42,10 @@ fun AudiobookPlaybackBridge(session: ActiveAudiobook) {
     val activity = LocalActivity.current
 
     var controller by remember { mutableStateOf<MediaController?>(null) }
-    // The controller while the engine still holds this book. The engine is
-    // shared with video; the book must not pause, speed up, seek or read a
-    // video that has taken it over.
-    fun bookController(): MediaController? = controller?.takeIf { it.holdsAudiobook() }
+    // The engine is shared with video and with later books, so the bridge
+    // reads and commands it only while it holds this session's item.
+    fun Player.holdsBook(): Boolean = currentMediaItem?.mediaId == session.mediaId
+    fun bookController(): MediaController? = controller?.takeIf { it.holdsBook() }
     DisposableEffect(context) {
         val token = SessionToken(context, ComponentName(context, SiloPlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
@@ -61,8 +61,8 @@ fun AudiobookPlaybackBridge(session: ActiveAudiobook) {
             controller?.let { c ->
                 // A recreated activity picks the session up again, so the book
                 // keeps playing through it. Otherwise the session has ended:
-                // clear the engine, unless a video has already loaded into it.
-                if (activity?.isChangingConfigurations != true && c.holdsAudiobook()) {
+                // clear the engine, unless something else has already loaded into it.
+                if (activity?.isChangingConfigurations != true && c.holdsBook()) {
                     runCatching { c.pause(); c.stop(); c.clearMediaItems() }
                 }
                 c.release()
@@ -86,6 +86,7 @@ fun AudiobookPlaybackBridge(session: ActiveAudiobook) {
         if (url == session.preparedUrl) return@LaunchedEffect
         val mediaItem = MediaItem.Builder()
             .setUri(url)
+            .setMediaId(session.mediaId)
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     // Tags the item so session seeks (headset, lock screen)
@@ -126,20 +127,20 @@ fun AudiobookPlaybackBridge(session: ActiveAudiobook) {
         if (c == null) {
             onDispose { }
         } else {
-            // Events from a video that has taken the engine are not the book's.
+            // Events from anything else in the engine (a video, a later book) are not this book's.
             val listener = object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    if (c.holdsAudiobook()) viewModel.onPlayingChanged(isPlaying)
+                    if (c.holdsBook()) viewModel.onPlayingChanged(isPlaying)
                 }
 
                 // Pause intent — distinct from transient buffering. Without
                 // this a seek's rebuffer would latch the book paused.
                 override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                    if (c.holdsAudiobook()) viewModel.onPauseStateChanged(!playWhenReady)
+                    if (c.holdsBook()) viewModel.onPauseStateChanged(!playWhenReady)
                 }
 
                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                    if (c.holdsAudiobook()) viewModel.onPlayerError(error)
+                    if (c.holdsBook()) viewModel.onPlayerError(error)
                 }
             }
             c.addListener(listener)
@@ -163,13 +164,16 @@ fun AudiobookPlaybackBridge(session: ActiveAudiobook) {
         }
     }
 
+    // The settings and seeks below are keyed on the loaded stream too, so any
+    // held back because the engine didn't hold the book yet apply once it does.
+
     // Mirror play/pause intent into the controller.
-    LaunchedEffect(controller, state.isPaused) {
+    LaunchedEffect(controller, state.isPaused, session.preparedUrl) {
         bookController()?.playWhenReady = !state.isPaused
     }
 
     // Apply speed when the user changes it.
-    LaunchedEffect(controller, state.playbackSpeed) {
+    LaunchedEffect(controller, state.playbackSpeed, session.preparedUrl) {
         bookController()?.playbackParameters = PlaybackParameters(state.playbackSpeed)
     }
 
@@ -177,17 +181,10 @@ fun AudiobookPlaybackBridge(session: ActiveAudiobook) {
     // pending until a controller holding the book applies it, so one asked for
     // while the controller reconnects (a recreated activity) isn't lost.
     val pendingSeek by viewModel.pendingSeekToSeconds.collectAsState()
-    LaunchedEffect(controller, pendingSeek) {
+    LaunchedEffect(controller, pendingSeek, session.preparedUrl) {
         val seconds = pendingSeek ?: return@LaunchedEffect
         val c = bookController() ?: return@LaunchedEffect
         c.seekTo((seconds * 1000).toLong())
         viewModel.consumePendingSeek()
     }
-}
-
-/** True while the engine holds an audiobook item, or nothing yet. The service's
- *  one player also plays video; only the book's own items carry this type. */
-private fun Player.holdsAudiobook(): Boolean {
-    val item = currentMediaItem ?: return true
-    return item.mediaMetadata.mediaType == MediaMetadata.MEDIA_TYPE_AUDIO_BOOK
 }
