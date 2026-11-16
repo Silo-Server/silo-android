@@ -75,17 +75,26 @@ interface UserItemStateDao {
     )
 
     /**
-     * Marks the item's resume rows sampled no later than [sampledAtMs] as sent:
-     * the server has them, or may have them after a send that got no answer.
-     * Online, the server's answer then stands over them; offline they remain
-     * the resume point. A newer sample clears the mark.
+     * Marks resume rows as sent once the server has, or may have, the sample
+     * taken at [sampledAtMs] from [fileId]: that file's row while it still holds
+     * that sample, and the item's other files' rows sampled no later. Online,
+     * the server's answer then stands over them; offline they remain the resume
+     * point. A newer sample clears the mark.
      */
     @Query(
         "UPDATE user_item_state SET serverUpdatedAtMs = :sampledAtMs " +
             "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId " +
-            "AND positionSeconds > 0 AND COALESCE(positionUpdatedAtMs, clientUpdatedAtMs) <= :sampledAtMs",
+            "AND positionSeconds > 0 AND (CASE WHEN fileId = :fileId THEN positionUpdatedAtMs = :sampledAtMs " +
+            "ELSE COALESCE(positionUpdatedAtMs, clientUpdatedAtMs) <= :sampledAtMs END)",
     )
-    suspend fun markPlaybackProgressSent(serverId: String, accountId: String, profileId: String, contentId: String, sampledAtMs: Long)
+    suspend fun markPlaybackProgressSent(
+        serverId: String,
+        accountId: String,
+        profileId: String,
+        contentId: String,
+        fileId: Int,
+        sampledAtMs: Long,
+    )
 
     /**
      * Download playback positions still waiting to reach the server: a v2

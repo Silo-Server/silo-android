@@ -222,15 +222,19 @@ class SyncEngine(
     /** True when a progress send left the device and got no usable answer. */
     private fun mayHaveArrived(result: ApiResult<*>): Boolean {
         if (!RequestMutationFailure.isUncertain(result)) return false
-        // Refused by the client before sending: sign-in unavailable, or a
-        // cleartext server the user hasn't approved.
+        // Refused before sending: sign-in unavailable, a cleartext server the
+        // user hasn't approved or the platform blocks, or a TLS handshake that failed.
         val failure = (result as? ApiResult.NetworkError)?.exception ?: return true
         return generateSequence(failure) { it.cause?.takeIf { cause -> cause !== it } }
-            .none { it is SiloAuthUnavailableException || it is CleartextOriginNotApprovedException }
+            .none {
+                it is SiloAuthUnavailableException || it is CleartextOriginNotApprovedException ||
+                    it is javax.net.ssl.SSLHandshakeException || it is java.net.UnknownServiceException
+            }
     }
 
-    private suspend fun markProgressSent(op: DirtyOperationEntity) =
-        userStateDao.markPlaybackProgressSent(op.serverId, op.accountId, op.profileId, op.targetContentId, op.createdAtMs)
+    private suspend fun markProgressSent(op: DirtyOperationEntity) = userStateDao.markPlaybackProgressSent(
+        op.serverId, op.accountId, op.profileId, op.targetContentId, op.targetFileId ?: -1, op.createdAtMs,
+    )
 
     /**
      * The server has the position (or refused it for good), so from now on its

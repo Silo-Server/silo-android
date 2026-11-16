@@ -551,7 +551,10 @@ class AudiobookPlayerViewModel(
                         _resumePosition.value = explicitStartOverride.takeIf { it > 0.0 }
                         null
                     } else {
-                        loadResumePositionSnapshot(serverResumePosition(d, unsentBefore), offline = false)
+                        val serverPosition = serverResumePosition(d, unsentBefore)
+                        // The re-read can outlast a newer load.
+                        if (generation != startGeneration) return@launch
+                        loadResumePositionSnapshot(serverPosition, offline = false)
                     }
                     val requestStartPosition = resolvePlaybackStartRequestPosition(
                         overridePosition = explicitStartOverride,
@@ -1122,13 +1125,14 @@ class AudiobookPlayerViewModel(
             )
         }?.takeIf { !it.isSingle }
         val offlinePart = cachedTimeline?.tracks?.firstOrNull { it.fileId == media.fileId }
-        // No server detail when offline: resume from the local snapshot, or the
-        // server's position this device last saw (unless the user explicitly
-        // chose to play from the beginning).
-        val resume = if (!startFromBeginning) {
-            loadResumePositionSnapshot(cachedDetail?.userData?.positionSeconds, offline = true)
+        // No server detail when offline: start where the user asked (a chapter,
+        // a bookmark, or the beginning), else resume from the local snapshot or
+        // the server's position this device last saw.
+        val explicitStart = requestedStartPosition ?: if (startFromBeginning) 0.0 else null
+        val resume = if (explicitStart != null) {
+            explicitStart.takeIf { it > 0.0 }.also { _resumePosition.value = it }
         } else {
-            null
+            loadResumePositionSnapshot(cachedDetail?.userData?.positionSeconds, offline = true)
         }
         if (cachedTimeline != null && offlinePart != null) {
             suppressWholeBookPersistence = true

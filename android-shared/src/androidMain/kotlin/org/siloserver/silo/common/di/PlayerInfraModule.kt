@@ -470,9 +470,9 @@ val playerInfraModule = module {
                 // not at the end of its backoff. Off the probe lock and main thread.
                 outboxWakeScope.launch {
                     try {
-                        get<org.siloserver.silo.common.data.db.SiloDatabase>().dirtyOperationDao()
+                        val queued = get<org.siloserver.silo.common.data.db.SiloDatabase>().dirtyOperationDao()
                             .makeDownloadProgressDue(System.currentTimeMillis())
-                        org.siloserver.silo.common.data.sync.SyncWorker.enqueueNow(androidContext())
+                        if (queued > 0) org.siloserver.silo.common.data.sync.SyncWorker.enqueueNow(androidContext())
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {

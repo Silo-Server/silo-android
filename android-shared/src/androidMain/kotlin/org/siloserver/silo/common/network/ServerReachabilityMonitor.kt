@@ -111,10 +111,10 @@ class ServerReachabilityMonitor(
                 is ApiV2ProbeResult.Failure -> ServerReachabilityState(ServerReachabilityStatus.Unreachable, nowMs(), "Server discovery unavailable: "+result.kind.name.lowercase())
             }
             _state.value = next
-            if (wasUnreachable && next.status == ServerReachabilityStatus.Reachable && current()) onServerReconnected()
             if (previous != ServerReachabilityStatus.Reachable && next.status == ServerReachabilityStatus.Reachable && current()) {
                 onServerReachable()
             }
+            if (wasUnreachable && next.status == ServerReachabilityStatus.Reachable && current()) onServerReconnected()
             next
         }
     }

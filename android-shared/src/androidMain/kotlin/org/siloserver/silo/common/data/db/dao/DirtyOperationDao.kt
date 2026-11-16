@@ -206,14 +206,15 @@ interface DirtyOperationDao {
 
     /**
      * Ends the backoff of queued download playback progress, so the next drain
-     * sends it. Used once the server is reachable again.
+     * sends it. Used once the server is reachable again. Returns how many are
+     * queued.
      */
     @Query(
-        "UPDATE dirty_operations SET nextAttemptAtMs = :nowMs " +
+        "UPDATE dirty_operations SET nextAttemptAtMs = MIN(nextAttemptAtMs, :nowMs) " +
             "WHERE opKind = 'SET_POSITION' AND opVersion >= 2 " +
-            "AND state = '${DirtyOperationEntity.STATE_PENDING}' AND nextAttemptAtMs > :nowMs",
+            "AND state = '${DirtyOperationEntity.STATE_PENDING}'",
     )
-    suspend fun makeDownloadProgressDue(nowMs: Long)
+    suspend fun makeDownloadProgressDue(nowMs: Long): Int
 
     /** Pending or in-flight [opKind] ops for the same item that were queued after [id]. */
     @Query(

@@ -107,7 +107,7 @@ interface UserItemStatePort {
      * (or may have) are left out, so online the server's answer stands over
      * them. No-op (null) on the default port.
      */
-    suspend fun localPositionForContent(contentId: String, includeSent: Boolean = true): Double? = null
+    suspend fun localPositionForContent(contentId: String, includeSent: Boolean = false): Double? = null
 
     /**
      * The download playback position for a content item that is still waiting to

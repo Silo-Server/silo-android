@@ -415,7 +415,7 @@ class RoomUserItemStateRepositoryTest {
     @Test
     fun aSentPositionStandsOnlyOfflineUntilANewSampleIsTaken() = runTest {
         repo.recordDownload("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
-        db.userItemStateDao().markPlaybackProgressSent("s1", "", "p1", "c1", sampledAtMs = 1000L)
+        db.userItemStateDao().markPlaybackProgressSent("s1", "", "p1", "c1", fileId = 7, sampledAtMs = 1000L)
 
         // The server has it, or may have it: online its answer stands.
         assertNull(repo.localPlaybackProgress("c1"))
