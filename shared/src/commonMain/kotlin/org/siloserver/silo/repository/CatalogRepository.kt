@@ -59,6 +59,11 @@ class CatalogRepository(
      * leaves composition.
      */
     private val detailRequestScope = CoroutineScope(SupervisorJob() + requestDispatcher)
+
+    init {
+        // A detail page's card seed belongs to the identity it was tapped under.
+        org.siloserver.silo.viewmodel.DetailSeeds.bindIdentity(identityTransitions.generation)
+    }
     private val detailRequestMutex = Mutex()
     private data class DetailRequestKey(
         val identityGeneration: Long,

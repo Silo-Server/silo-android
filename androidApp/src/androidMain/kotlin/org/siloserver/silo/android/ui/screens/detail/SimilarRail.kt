@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.viewmodel.DetailSeeds
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -73,7 +74,10 @@ private fun SimilarRailContent(
                 type = item.type,
                 userState = null,
                 progress = null,
-                onClick = { onSelect(item.contentId) },
+                onClick = {
+                    DetailSeeds.offer(item)
+                    onSelect(item.contentId)
+                },
                 overlay = org.siloserver.silo.overlays.OverlayDataExtractor.fromBrowseItem(item),
                 sharedContentId = item.contentId,
                 widthIsExact = true,

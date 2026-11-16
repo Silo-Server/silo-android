@@ -58,6 +58,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -425,7 +426,10 @@ fun ItemDetailScreen(
             // behind while the user drags the edge gesture.
             .background(MaterialTheme.colorScheme.background),
     ) {
-        CompositionLocalProvider(LocalDetailScrollState provides detailScroll) {
+        CompositionLocalProvider(
+            LocalDetailScrollState provides detailScroll,
+            LocalDetailActionsReady provides !state.isProvisional,
+        ) {
         // Only the initial branch change dissolves; metadata refreshes keep
         // the current detail mounted. Loading shares the loaded hero frame.
         val loadedBranch = when {
@@ -767,7 +771,8 @@ fun ItemDetailScreen(
                             selectedSeasonNumber = state.selectedSeasonNumber,
                             episodes = state.episodes,
                             episodesBySeason = state.episodesBySeason,
-                            isLoadingEpisodes = state.isLoadingEpisodes,
+                            // A card seed has no episodes yet; show placeholders, not "No episodes".
+                            isLoadingEpisodes = state.isLoadingEpisodes || (state.isProvisional && state.episodes.isEmpty()),
                             isFavorite = state.isFavorite,
                             isInWatchlist = state.isInWatchlist,
                             nextEpisodeLabel = nextEpisodeLabel,
@@ -1216,9 +1221,12 @@ fun ItemDetailScreen(
                             showRemoteTargetPicker = true
                         }
                     },
+                    // Remote playback needs the fetched detail, not the card.
+                    enabled = !state.isProvisional,
                     // Solid pill while a cast session is live, translucent at
                     // rest, so the fill still reports state.
                     modifier = Modifier
+                        .alpha(if (state.isProvisional) DetailActionDisabledAlpha else 1f)
                         .size(40.dp)
                         .clip(CircleShape)
                         .background(

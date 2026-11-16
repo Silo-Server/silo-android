@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.components
 
+import org.siloserver.silo.viewmodel.DetailSeeds
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
@@ -322,7 +323,10 @@ fun TvCatalogGrid(
                     cornerLabel = boxSet?.let { boxSetFilmCount(it.movieCount).text() },
                     caption = boxSet?.cardCaption()?.text(),
                     sleeves = org.siloserver.silo.tv.ui.theme.BoxSetSleeves.takeIf { boxSet != null },
-                    onClick = { onBrowseItemClick?.invoke(item) ?: onItemClick(item.contentId) },
+                    onClick = {
+                        DetailSeeds.offer(item)
+                        onBrowseItemClick?.invoke(item) ?: onItemClick(item.contentId)
+                    },
                     fillWidth = true,
                     artworkAspectRatio = artworkAspectRatioForItem(item),
                     focusRequester = if (isRestoreTarget) {

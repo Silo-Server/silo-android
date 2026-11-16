@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.components
 
+import org.siloserver.silo.viewmodel.DetailSeeds
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -427,6 +428,10 @@ fun TvMediaRow(
                 // leaving the item equal (Codex).
                 val itemActions = remember(item, cardActions) { cardActions(item) }
                 val itemLongClick = remember(item, longClickAction) { longClickAction(item) }
+                val openItem = {
+                    DetailSeeds.offer(item)
+                    onItemClick(item.contentId)
+                }
                 when (cardLayout) {
                     TvRowCardLayout.ReferenceShelf -> TvReferenceShelfCard(
                         hideArtwork = rowItem.hidesArtwork,
@@ -442,7 +447,7 @@ fun TvMediaRow(
                         detail = if (showProgress) rowItem.remainingMinutes?.let { stringResource(CommonR.string.shell_card_minutesLeft, it) } else null,
                         mediaType = item.type,
                         progress = rowItem.progress,
-                        onClick = { onItemClick(item.contentId) },
+                        onClick = openItem,
                         focusRequester = itemFocusRequester,
                         cardModifier = appliedCardModifier,
                         userState = item.userState,
@@ -462,7 +467,7 @@ fun TvMediaRow(
                             mediaType = item.type,
                             progress = rowItem.progress,
                             year = item.year.takeIf { it > 0 },
-                            onClick = { onItemClick(item.contentId) },
+                            onClick = openItem,
                             focusRequester = itemFocusRequester,
                             cardModifier = appliedCardModifier,
                             userState = item.userState,
@@ -481,7 +486,7 @@ fun TvMediaRow(
                             progress = rowItem.progress,
                             mediaType = item.type,
                             width = posterWidth ?: tvCardWidth(),
-                            onClick = { onItemClick(item.contentId) },
+                            onClick = openItem,
                             focusRequester = itemFocusRequester,
                             cardModifier = appliedCardModifier,
                             overlay = rowItem.overlay,

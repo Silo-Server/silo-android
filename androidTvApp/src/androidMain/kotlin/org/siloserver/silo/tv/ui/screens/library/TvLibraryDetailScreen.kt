@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.library
 
+import org.siloserver.silo.viewmodel.DetailSeeds
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.common.i18n.text
 import org.siloserver.silo.model.section.ResolvedSection
@@ -713,7 +714,10 @@ private fun LibraryGrid(
                         mediaType = item.type,
                         width = TvCardWidth,
                         fillWidth = true,
-                        onClick = { onItemClick(item.contentId) },
+                        onClick = {
+                            DetailSeeds.offer(item)
+                            onItemClick(item.contentId)
+                        },
                         focusRequester = restoredItemFocusRequester.takeIf { index == restoredItemIndex },
                         modifier = Modifier
                             .fillMaxWidth()

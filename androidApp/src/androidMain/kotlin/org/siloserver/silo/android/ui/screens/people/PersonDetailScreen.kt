@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.people
 
+import org.siloserver.silo.viewmodel.DetailSeeds
 import org.siloserver.silo.common.i18n.UiText
 import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.background
@@ -247,7 +248,10 @@ private fun PersonDetailContent(
                     year = item.year.takeIf { it > 0 },
                     type = item.type,
                     userState = userState,
-                    onClick = { onItemClick(item.contentId) },
+                    onClick = {
+                        DetailSeeds.offer(item)
+                        onItemClick(item.contentId)
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     artworkAspectRatio = personWorkCardAspectRatio(item),
                     overlay = org.siloserver.silo.overlays.OverlayDataExtractor.fromBrowseItem(item),
