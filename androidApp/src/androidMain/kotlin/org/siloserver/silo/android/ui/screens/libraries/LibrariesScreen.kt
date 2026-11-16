@@ -63,6 +63,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -359,7 +360,15 @@ class LibrariesViewModel(
      * short — hiding the switcher and every other library — until the process
      * died.
      */
-    fun refreshLibraryList() = loadLibraries(reloadContent = false)
+    fun refreshLibraryList() {
+        // A library opened without collections can gain some while the app
+        // runs; with one library there is no reopening to learn it, so look
+        // again each time the screen comes back.
+        val state = _uiState.value
+        val libraryId = state.selectedLibraryId
+        if (libraryId != null && !state.hasCollections) loadCollections(libraryId, force = true)
+        loadLibraries(reloadContent = false)
+    }
 
     private fun loadLibraries(reloadContent: Boolean) {
         if (reloadContent) pendingContentReload = true
@@ -1026,6 +1035,11 @@ class LibrariesViewModel(
                                 isLoadingCollections = false,
                                 collections = result.data,
                                 collectionsError = null,
+                                // The dock gains the section as soon as there
+                                // is something in it; losing it waits for the
+                                // library's next opening, so a section never
+                                // vanishes from under a finger.
+                                hasCollections = it.hasCollections || result.data.isNotEmpty(),
                             )
                         } else {
                             it
@@ -1167,14 +1181,26 @@ fun LibrariesScreen(
     // Recommended tab scroll state — drives the chrome scrim opacity so the
     // header fades in its scrim once the user scrolls the rows underneath it.
     val recommendedListState = rememberLazyListState()
-    // Each page keeps its own position while another is on screen, and
-    // starts at its top for a new library or Movies/Series side.
+    // Each page keeps its own position while another is on screen, and when
+    // the screen comes back from a title. A new library or Movies/Series side
+    // starts every page at its top, and a new sort or filter starts Browse at
+    // its top. The keys are saved with the positions, so returning to the
+    // screen is not mistaken for a change. requestScrollToItem waits for no
+    // layout, so a page not on screen moves too.
     val browseGridState = rememberLazyGridState()
     val collectionsGridState = rememberLazyGridState()
-    LaunchedEffect(state.selectedLibraryId, state.mediaScope) {
-        recommendedListState.scrollToItem(0)
-        browseGridState.scrollToItem(0)
-        collectionsGridState.scrollToItem(0)
+    val pagesKey = "${state.selectedLibraryId}|${state.mediaScope}"
+    val browseListKey = "$pagesKey|${state.filterState}"
+    var positionsPagesKey by rememberSaveable { mutableStateOf(pagesKey) }
+    var positionsBrowseKey by rememberSaveable { mutableStateOf(browseListKey) }
+    if (positionsPagesKey != pagesKey) {
+        positionsPagesKey = pagesKey
+        recommendedListState.requestScrollToItem(0)
+        collectionsGridState.requestScrollToItem(0)
+    }
+    if (positionsBrowseKey != browseListKey) {
+        positionsBrowseKey = browseListKey
+        browseGridState.requestScrollToItem(0)
     }
     val pageScope = rememberCoroutineScope()
     val scrollPageToTop: (LibrariesSubtab) -> Unit = { tab ->

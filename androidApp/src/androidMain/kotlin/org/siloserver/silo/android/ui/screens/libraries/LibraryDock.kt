@@ -55,6 +55,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -321,6 +323,7 @@ private fun LibraryDockSegments(
     var dragIndex by remember { mutableStateOf<Int?>(null) }
     val currentTabs by rememberUpdatedState(tabs)
     val currentSelected by rememberUpdatedState(selectedTab)
+    val currentOnSelect by rememberUpdatedState(onSelect)
     val sectionsLabel = stringResource(CommonR.string.library_page_a11ySections)
 
     val labels = tabs.map { stringResource(it.dockLabelRes) }
@@ -352,7 +355,13 @@ private fun LibraryDockSegments(
         }
         val (labelSp, segmentPx) = layout
         val starts = segmentPx.runningFold(0f) { acc, w -> acc + w }
-        fun indexAt(x: Float) = starts.indexOfLast { it <= x }.coerceIn(0, (tabs.size - 1).coerceAtLeast(0))
+        // Pointer x runs left to right, while a right-to-left Row lays the
+        // first segment out on the right; measure from the start edge.
+        val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+        fun indexAt(x: Float): Int {
+            val fromStart = if (isRtl) totalPx - x else x
+            return starts.indexOfLast { it <= fromStart }.coerceIn(0, (tabs.size - 1).coerceAtLeast(0))
+        }
 
         val selectedIndex = tabs.indexOf(selectedTab).coerceAtLeast(0)
         val shownIndex = dragIndex ?: selectedIndex
@@ -380,7 +389,7 @@ private fun LibraryDockSegments(
                 .fillMaxWidth()
                 .fillMaxHeight()
                 .selectableGroup()
-                .pointerInput(starts) {
+                .pointerInput(starts, isRtl) {
                     detectHorizontalDragGestures(
                         onDragStart = { offset -> dragIndex = indexAt(offset.x) },
                         onHorizontalDrag = { change, _ ->
@@ -394,7 +403,7 @@ private fun LibraryDockSegments(
                             val tab = dragIndex?.let { currentTabs.getOrNull(it) }
                             dragIndex = null
                             // Ending where it started changes nothing.
-                            if (tab != null && tab != currentSelected) onSelect(tab)
+                            if (tab != null && tab != currentSelected) currentOnSelect(tab)
                         },
                         onDragCancel = { dragIndex = null },
                     )
