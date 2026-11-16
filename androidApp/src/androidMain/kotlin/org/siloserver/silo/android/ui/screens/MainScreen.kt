@@ -62,6 +62,7 @@ import org.siloserver.silo.android.ui.navigation.PageDockHost
 import org.siloserver.silo.android.ui.navigation.rememberNonShrinking
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeHeight
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
+import org.siloserver.silo.android.ui.navigation.LocalBottomNavPageMovedItself
 import org.siloserver.silo.android.ui.navigation.LocalBottomNavScrolledToTop
 import org.siloserver.silo.android.ui.navigation.SiloBottomNavBar
 import dev.chrisbanes.haze.hazeSource
@@ -183,9 +184,11 @@ fun MainScreen(
     // sees every vertical scrollable without per-screen plumbing, and only
     // what the content consumed: horizontal rows, a list already pinned at an
     // end, and layout-driven offset changes report nothing. Programmatic
-    // scrolls (restoration, scroll-to-top) bypass nested scroll entirely;
-    // pages that scroll themselves to the top report it through
-    // LocalBottomNavScrolledToTop.
+    // scrolls (restoration, scroll-to-top) bypass nested scroll entirely, and
+    // pull-to-refresh consumes the leftover drag at a page's top, so pages
+    // report arriving at their top from their own scroll position
+    // (ReportBottomNavPageTop) and report jumps elsewhere through
+    // LocalBottomNavPageMovedItself.
     //
     // The shell is composed per tab destination, so switching tabs or
     // returning from a pushed page composes it afresh and the bar starts
@@ -598,6 +601,7 @@ fun MainScreen(
                 LocalBottomChromeInset provides contentChromeInset,
                 LocalBottomChromeHeight provides liveChrome,
                 LocalBottomNavScrolledToTop provides bottomNavScrolledToTop,
+                LocalBottomNavPageMovedItself provides navTracker::onPageMovedItself,
                 LocalPageDockHost provides pageDockHost,
             ) {
             // The tab content is the blur source for both the floating pill and

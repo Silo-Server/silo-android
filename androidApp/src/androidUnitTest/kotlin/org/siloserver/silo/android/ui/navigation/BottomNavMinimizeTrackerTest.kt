@@ -205,4 +205,17 @@ class BottomNavMinimizeTrackerTest {
         t.onReachedEnd()
         assertFalse(t.minimized)
     }
+
+    @Test
+    fun aPageThatMovedItselfIsNotJudgedShortFromAStalePosition() {
+        val t = tracker(viewport = 2000f)
+        t.scroll(300f)
+        assertTrue(t.minimized)
+        // A jump far down a long page that the tracker did not follow.
+        t.onPageMovedItself()
+        assertTrue(t.minimized)
+        t.scroll(200f)
+        t.onReachedEnd()
+        assertTrue(t.minimized)
+    }
 }

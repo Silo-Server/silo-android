@@ -57,8 +57,10 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.compositionLocalOf
@@ -67,8 +69,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.structuralEqualityPolicy
+import kotlinx.coroutines.flow.drop
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -148,6 +152,33 @@ val LocalBottomChromeHeight = staticCompositionLocalOf<() -> Dp> { { 0.dp } }
  * does when the user scrolls there. A no-op outside the tab scaffold.
  */
 val LocalBottomNavScrolledToTop = staticCompositionLocalOf<() -> Unit> { {} }
+
+/**
+ * Tell the tab shell that the page is about to move itself somewhere other
+ * than its top (a jump to a day or a letter), so the shell stops trusting the
+ * position it has followed until the page is next at its top. A no-op outside
+ * the tab scaffold.
+ */
+val LocalBottomNavPageMovedItself = staticCompositionLocalOf<() -> Unit> { {} }
+
+/**
+ * Reports to the tab shell when [state], a tab page's vertical scrollable,
+ * arrives at its top, from the scrollable's own position. The shell's
+ * nested-scroll observer cannot see this on its own: pull-to-refresh consumes
+ * the leftover drag at the top, and programmatic scrolls bypass nested scroll.
+ *
+ * Only arrivals are reported. The value at first composition is skipped: a
+ * restored list reads as at its top until it is first measured.
+ */
+@Composable
+fun ReportBottomNavPageTop(state: ScrollableState) {
+    val scrolledToTop = LocalBottomNavScrolledToTop.current
+    LaunchedEffect(state, scrolledToTop) {
+        snapshotFlow { state.canScrollBackward }
+            .drop(1)
+            .collect { canScrollBackward -> if (!canScrollBackward) scrolledToTop() }
+    }
+}
 
 /**
  * Bottom navigation tabs for the main scaffold.
@@ -684,6 +715,9 @@ private fun BoxScope.NavPill(
     val currentContentWidth = remember { mutableIntStateOf(0) }
     fun pillWidth(p: Float) = lerp(expandedPx.toFloat(), pillPx.toFloat(), p).roundToInt()
 
+    // The tap handler below outlives recompositions; read these when the tap lands.
+    val latestOnTabSelected by rememberUpdatedState(onTabSelected)
+    val latestCurrentTab by rememberUpdatedState(currentTab)
     Box(
         modifier = Modifier
             .align(if (centered) Alignment.Center else Alignment.CenterStart)
@@ -700,7 +734,7 @@ private fun BoxScope.NavPill(
             // item inset around the current tab's item expands too. The item
             // itself carries the semantics, so this adds none.
             .pointerInput(minimized) {
-                if (minimized) detectTapGestures { onTabSelected(currentTab) }
+                if (minimized) detectTapGestures { latestOnTabSelected(latestCurrentTab) }
             },
     ) {
         // The items keep the expanded capsule's layout at every frame; the

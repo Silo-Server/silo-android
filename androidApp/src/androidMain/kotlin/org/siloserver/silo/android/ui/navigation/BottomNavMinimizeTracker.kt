@@ -76,8 +76,16 @@ internal class BottomNavMinimizeTracker(
         }
     }
 
-    /** The page moved itself to its top without a user scroll (scroll-to-top on reselect). */
+    /** The page is at its top without a user scroll running into it (scroll-to-top on reselect). */
     fun onScrolledToTop() = onReachedTop()
+
+    /**
+     * The page moved itself somewhere other than its top, so the position
+     * followed so far no longer holds. The bar stays as it is.
+     */
+    fun onPageMovedItself() {
+        travelFromTop = null
+    }
 
     /**
      * Different content now fills the tab: start expanded and forget the old

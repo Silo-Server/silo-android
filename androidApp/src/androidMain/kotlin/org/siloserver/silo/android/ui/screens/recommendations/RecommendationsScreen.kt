@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.recommendations
 
+import org.siloserver.silo.android.ui.navigation.ReportBottomNavPageTop
 import org.siloserver.silo.android.ui.components.ReportTabHeaderScrim
 import org.siloserver.silo.android.ui.components.TabPillRowHeight
 import androidx.compose.foundation.BorderStroke
@@ -260,6 +261,7 @@ fun RecommendationsScreen(
                 ) {
                     val listState = rememberLazyListState()
                     ReportTabHeaderScrim(listState)
+                    ReportBottomNavPageTop(listState)
                     DeferImagePresentationWhileScrolling(listState) {
                     LazyColumn(
                         state = listState,

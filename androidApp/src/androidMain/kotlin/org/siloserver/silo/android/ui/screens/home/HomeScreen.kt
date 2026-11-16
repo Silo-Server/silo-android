@@ -55,6 +55,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil3.imageLoader
 import coil3.request.ImageRequest
+import org.siloserver.silo.android.ui.navigation.ReportBottomNavPageTop
 import org.siloserver.silo.android.ui.components.TabContentGap
 import org.siloserver.silo.android.ui.components.TabContentTop
 import org.siloserver.silo.android.ui.components.TabHeaderRowHeight
@@ -274,6 +275,7 @@ fun HomeScreen(
     }
 
     val listState = rememberLazyListState()
+    ReportBottomNavPageTop(listState)
     val currentDiagnosticsSections by rememberUpdatedState(regularSections)
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }

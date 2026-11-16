@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.browse
 
+import org.siloserver.silo.android.ui.navigation.LocalBottomNavPageMovedItself
+import org.siloserver.silo.android.ui.navigation.ReportBottomNavPageTop
 import org.siloserver.silo.android.ui.components.sharedArtworkAspectRatio
 import org.siloserver.silo.viewmodel.DetailSeeds
 import androidx.compose.foundation.interaction.DragInteraction
@@ -95,6 +97,8 @@ fun CatalogGrid(
 ) {
     // Feeds the shared header's glass when this grid fills For You.
     ReportTabHeaderScrim(gridState)
+    ReportBottomNavPageTop(gridState)
+    val bottomNavPageMovedItself = LocalBottomNavPageMovedItself.current
     val uniqueItems = remember(items) { items.distinctBy { it.contentId } }
     // Titles not read yet take the shape the loaded ones have: square in an
     // audiobook library, so rows keep their height as covers fill in.
@@ -241,6 +245,7 @@ fun CatalogGrid(
                     jumpJob[0]?.cancel()
                     jumpJob[0] = scope.launch {
                         val position = letterJumpPosition(letter) ?: return@launch
+                        bottomNavPageMovedItself()
                         gridState.scrollToItem(position + headerCount)
                     }
                 },
