@@ -65,6 +65,9 @@ import org.siloserver.silo.android.ui.screens.calendar.CalendarScreen
 import org.siloserver.silo.android.ui.screens.home.HomeScreen
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.ui.screens.cast.SiloCastMiniBar
+import org.siloserver.silo.android.ui.screens.cast.showsMiniBar
+import org.siloserver.silo.android.ui.screens.audiobook.AudiobookMiniPlayer
+import org.siloserver.silo.android.ui.screens.audiobook.LocalAudiobookSession
 import org.siloserver.silo.android.ui.screens.cast.rememberSiloCastArtwork
 import org.siloserver.silo.android.ui.screens.cast.SiloCastTargetPickerSheet
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesScreen
@@ -390,6 +393,7 @@ fun MainScreen(
     val siloCastArtwork = rememberSiloCastArtwork(
         siloCastState.launch?.contentId ?: siloCastState.playbackState?.contentId,
     )
+    val activeAudiobook = LocalAudiobookSession.current?.active?.collectAsState()?.value
     Scaffold(
         bottomBar = {
             // The cast bar rests above the nav menu (iOS tabViewBottomAccessory
@@ -418,16 +422,30 @@ fun MainScreen(
                     }
                 },
                 tabs = visibleTabs,
+                // One bar holds the slot. Remote Control wins it while a TV
+                // session is up (iOS NowPlayingShelf); the audiobook keeps
+                // playing and its bar returns when the remote's leaves.
                 accessory = { inline, barModifier ->
-                    SiloCastMiniBar(
-                        controller = siloCastController,
-                        onOpenRemote = {
-                            navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
-                        },
-                        inline = inline,
-                        barModifier = barModifier,
-                        sharedArtwork = siloCastArtwork,
-                    )
+                    if (activeAudiobook != null && !siloCastState.showsMiniBar) {
+                        AudiobookMiniPlayer(
+                            player = activeAudiobook.player,
+                            onOpen = {
+                                navController.navigate(activeAudiobook.request.resumeRoute()) { launchSingleTop = true }
+                            },
+                            inline = inline,
+                            barModifier = barModifier,
+                        )
+                    } else {
+                        SiloCastMiniBar(
+                            controller = siloCastController,
+                            onOpenRemote = {
+                                navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
+                            },
+                            inline = inline,
+                            barModifier = barModifier,
+                            sharedArtwork = siloCastArtwork,
+                        )
+                    }
                 },
             )
         },

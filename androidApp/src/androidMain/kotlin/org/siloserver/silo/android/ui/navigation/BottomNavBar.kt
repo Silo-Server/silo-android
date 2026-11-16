@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -160,6 +161,10 @@ private val PillExpandedMaxWidth = 380.dp
 // corresponds to the app's 600dp expanded-window breakpoint.
 private val PillExpandedWindowBreakpoint = 560.dp
 private val PillHorizontalMargin = 20.dp
+// The accessory bars (Remote Control, audiobook) inset their card 16dp a side.
+// On expanded windows the card is capped to the capsule's width and centred
+// above it, rather than stretched across the window.
+private val AccessoryExpandedMaxWidth = PillExpandedMaxWidth + 16.dp * 2
 private val PillBottomMargin = 10.dp
 private val PillTopMargin = 8.dp
 private val InlineAccessoryGap = 10.dp
@@ -190,11 +195,11 @@ fun SiloBottomNavBar(
     // when the user has no downloads in flight or on disk. Defaults to all
     // tabs for backwards-compat.
     tabs: List<Tab> = Tab.entries.toList(),
-    /** Optional bar (the cast remote) that rests above the capsule, and moves
+    /** Optional bar (Remote Control or the audiobook) that rests above the capsule, and moves
      *  into the row beside the minimized Home control while the capsule is
      *  minimized (iOS inline tab bar accessory). `inline` tells it which
-     *  placement it is rendering. Expanded windows keep it above, since their
-     *  capsule stays centered. The accessory applies `barModifier` to its
+     *  placement it is rendering. Expanded windows keep it above, centred
+     *  and no wider than the capsule. The accessory applies `barModifier` to its
      *  visible card; the card then glides and resizes between the two
      *  placements instead of fading out of one and into the other. */
     accessory: (@Composable (inline: Boolean, barModifier: Modifier) -> Unit)? = null,
@@ -217,7 +222,15 @@ fun SiloBottomNavBar(
                         enter = expandVertically(chromeTween()) + fadeIn(chromeTween()),
                         exit = shrinkVertically(chromeTween()) + fadeOut(chromeTween()),
                     ) {
-                        accessory(false, sharedScope.accessoryBounds(this))
+                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Box(
+                                modifier = Modifier.widthIn(
+                                    max = if (isExpandedWindow) AccessoryExpandedMaxWidth else Dp.Unspecified,
+                                ),
+                            ) {
+                                accessory(false, sharedScope.accessoryBounds(this@AnimatedVisibility))
+                            }
+                        }
                     }
                 }
                 PillRow(
