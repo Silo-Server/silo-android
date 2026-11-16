@@ -116,7 +116,9 @@ import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeHeight
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
+import org.siloserver.silo.android.ui.navigation.LocalBottomNavPageMovedItself
 import org.siloserver.silo.android.ui.navigation.LocalBottomNavScrolledToTop
+import org.siloserver.silo.android.ui.navigation.ReportBottomNavPageTop
 import org.siloserver.silo.android.ui.navigation.LocalPageDockHost
 import org.siloserver.silo.android.ui.navigation.OfferPageDock
 import org.siloserver.silo.android.ui.navigation.rememberNonShrinking
@@ -1213,16 +1215,22 @@ fun LibrariesScreen(
         browseGridState.requestScrollToItem(0)
     }
     val pageScope = rememberCoroutineScope()
+    // The browse grid reports its own top (CatalogGrid).
+    ReportBottomNavPageTop(recommendedListState)
+    ReportBottomNavPageTop(collectionsGridState)
     val bottomNavScrolledToTop = LocalBottomNavScrolledToTop.current
+    val bottomNavPageMovedItself = LocalBottomNavPageMovedItself.current
     val scrollPageToTop: (LibrariesSubtab) -> Unit = { tab ->
-        // Arriving at the top expands a minimized tab bar, as a user scroll would.
-        bottomNavScrolledToTop()
+        bottomNavPageMovedItself()
         pageScope.launch {
             when (tab) {
                 LibrariesSubtab.Recommended -> recommendedListState.animateScrollToItem(0)
                 LibrariesSubtab.Browse -> browseGridState.animateScrollToItem(0)
                 LibrariesSubtab.Collections -> collectionsGridState.animateScrollToItem(0)
             }
+            // Arriving at the top expands a minimized tab bar, as a user
+            // scroll would. An interrupted scroll never gets here.
+            bottomNavScrolledToTop()
         }
     }
     val density = LocalDensity.current
