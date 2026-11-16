@@ -70,7 +70,7 @@ class PersonalWriteJournalTest {
         repo.recordPosition("item", 7, 42.0, 100.0)
         assertEquals(old, old.map { dao.getById(it.id) })
         assertEquals(3, dao.count())
-        assertEquals(42.0, repo.localPosition("item", 7))
+        assertEquals(42.0, db.userItemStateDao().get("server", "", "profile", "item", 7)?.positionSeconds)
         assertNull(db.contentItemStateDao().get("server", "", "profile", "item"))
     }
 
@@ -83,7 +83,7 @@ class PersonalWriteJournalTest {
         repo.recordPosition("item", 7, 75.0, 100.0)
         repo.completePersonalWrite(handle)
         assertEquals(newer, db.contentItemStateDao().get("server", "", "profile", "item"))
-        assertEquals(75.0, repo.localPosition("item", 7))
+        assertEquals(75.0, db.userItemStateDao().get("server", "", "profile", "item", 7)?.positionSeconds)
         assertNull(db.dirtyOperationDao().getById(handle.opId))
     }
 

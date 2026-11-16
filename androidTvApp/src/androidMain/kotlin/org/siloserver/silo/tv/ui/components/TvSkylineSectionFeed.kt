@@ -178,8 +178,8 @@ fun TvSkylineSectionFeed(
     longClickActionForSection: (ResolvedSection, SectionItem) -> (() -> Unit)? = { _, _ -> null },
     /**
      * Opens a row's full page. When set, rows show at most
-     * [SECTION_ROW_MAX_ITEMS] cards and every non-featured row ends with an
-     * "Explore all" card; returning from the page restores focus to it.
+     * [SECTION_ROW_MAX_ITEMS] cards and a row that [offersExploreAll] ends with
+     * an "Explore all" card; returning from the page restores focus to it.
      */
     onExploreAllForSection: ((ResolvedSection) -> Unit)? = null,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,

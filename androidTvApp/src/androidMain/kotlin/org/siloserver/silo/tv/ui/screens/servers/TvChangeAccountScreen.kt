@@ -66,6 +66,7 @@ import androidx.tv.material3.Text
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.context.GlobalContext
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeScene
@@ -567,7 +568,7 @@ private fun Badge(text: String, warning: Boolean, focused: Boolean) {
     }
     val line = if (warning) MarqueeColors.Warning.copy(alpha = 0.35f) else MarqueeColors.Hairline
     Text(
-        text = text.uppercase(),
+        text = text.displayUppercase(),
         fontFamily = InterFamily,
         fontSize = 9.sp,
         fontWeight = FontWeight.SemiBold,

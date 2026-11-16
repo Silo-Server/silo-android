@@ -15,6 +15,7 @@ import org.siloserver.silo.network.*
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.network.apiv2.HomeSectionsV2Api
 import org.siloserver.silo.network.apiv2.LibrarySectionItemsV2Api
+import org.siloserver.silo.viewmodel.removingFromProgressRows
 import kotlin.test.*
 
 class SectionRowItemLimitTest {
@@ -37,6 +38,49 @@ class SectionRowItemLimitTest {
         assertTrue(row.offersExploreAll)
         assertFalse(row.copy(featured = true).offersExploreAll)
         assertFalse(row.copy(items = emptyList()).offersExploreAll)
+    }
+
+    private fun row(type: String, shown: Int, total: Int, limit: Int = 20) = ResolvedSection(
+        id = "r", sectionType = type, title = "Row", itemLimit = limit, totalCount = total,
+        items = (1..shown).map { SectionItem(contentId = "movie:$it", type = "movie", title = "$it") },
+    )
+
+    @Test fun playbackRowHoldingItsWholeListOffersNoExploreAll() {
+        assertFalse(row("continue_watching", shown = 1, total = 1).offersExploreAll)
+        assertFalse(row("next_up", shown = 3, total = 3).offersExploreAll)
+        assertFalse(row("Continue_Watching", shown = 2, total = 2).offersExploreAll)
+        // An older server sends no item_limit; the row cap stands in for it.
+        assertFalse(row("continue_watching", shown = 2, total = 2, limit = 0).offersExploreAll)
+    }
+
+    @Test fun playbackRowThatMayHoldMoreKeepsExploreAll() {
+        assertTrue(row("continue_watching", shown = 3, total = 5).offersExploreAll)
+        // A row filled to its limit was cut there, whatever its total says.
+        assertTrue(row("continue_watching", shown = 20, total = 20).offersExploreAll)
+        assertTrue(row("continue_watching", shown = 1, total = 1, limit = 1).offersExploreAll)
+        // Capping a longer row to 20 cards must not make it look whole.
+        assertTrue(row("continue_watching", shown = 30, total = 30, limit = 40).cappedForRow().offersExploreAll)
+        // A missing total_count decodes as 0.
+        assertTrue(row("continue_watching", shown = 1, total = 0).offersExploreAll)
+    }
+
+    @Test fun otherRowsKeepExploreAllWhateverTheirCount() {
+        // The server counts these after dropping titles an earlier row shows.
+        assertTrue(row("because_you_watched", shown = 1, total = 1).offersExploreAll)
+        assertTrue(row("recently_added", shown = 1, total = 1).offersExploreAll)
+        assertFalse(row("continue_watching", shown = 3, total = 5).copy(featured = true).offersExploreAll)
+        assertFalse(row("continue_watching", shown = 3, total = 5).copy(items = emptyList()).offersExploreAll)
+    }
+
+    @Test fun removingACardKeepsAWholeRowWholeAndACutRowCut() {
+        fun List<ResolvedSection>.afterRemovingFirst() = removingFromProgressRows { it.contentId == "movie:1" }.single()
+        val whole = listOf(row("continue_watching", shown = 3, total = 3)).afterRemovingFirst()
+        assertEquals(2, whole.items.size)
+        assertFalse(whole.offersExploreAll)
+        // 20 of 20 was cut at its limit: 19 cards do not make it the whole list.
+        val cut = listOf(row("continue_watching", shown = 20, total = 20)).afterRemovingFirst()
+        assertEquals(19, cut.items.size)
+        assertTrue(cut.offersExploreAll)
     }
 
     /** Runs Home and library list reads against a server whose capability read answers [capability]. */

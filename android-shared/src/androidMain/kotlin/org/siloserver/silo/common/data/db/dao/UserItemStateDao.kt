@@ -74,16 +74,53 @@ interface UserItemStateDao {
         clearedAtMs: Long,
     )
 
+    /**
+     * Marks resume rows as sent once the server has, or may have, the sample
+     * taken at [sampledAtMs] from [fileId]: that file's row while it still holds
+     * that sample, and the item's other files' rows sampled no later. Online,
+     * the server's answer then stands over them; offline they remain the resume
+     * point. A newer sample clears the mark.
+     */
+    @Query(
+        "UPDATE user_item_state SET serverUpdatedAtMs = :sampledAtMs " +
+            "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId AND contentId = :contentId " +
+            "AND positionSeconds > 0 AND (CASE WHEN fileId = :fileId THEN positionUpdatedAtMs = :sampledAtMs " +
+            "ELSE COALESCE(positionUpdatedAtMs, clientUpdatedAtMs) <= :sampledAtMs END)",
+    )
+    suspend fun markPlaybackProgressSent(
+        serverId: String,
+        accountId: String,
+        profileId: String,
+        contentId: String,
+        fileId: Int,
+        sampledAtMs: Long,
+    )
+
+    /**
+     * Download playback positions still waiting to reach the server: a v2
+     * `SET_POSITION` op is queued or in flight for that exact file. Only these
+     * may override the server's answer; once acknowledged the server is the truth.
+     * Without [includeSent], a position already sent once without an answer
+     * doesn't count: it may have arrived, and newer progress from another
+     * device would then win. Offline, with no server answer to compare,
+     * callers include it.
+     */
     @Query(
         "SELECT * FROM user_item_state " +
             "WHERE serverId = :serverId AND accountId = :accountId AND profileId = :profileId " +
-            "AND contentId IN (:contentIds) AND positionSeconds > 0",
+            "AND contentId IN (:contentIds) AND positionSeconds > 0 " +
+            "AND (:includeSent OR serverUpdatedAtMs IS NULL) " +
+            "AND EXISTS (SELECT 1 FROM dirty_operations o WHERE o.opKind = 'SET_POSITION' AND o.opVersion >= 2 " +
+            "AND o.state IN ('pending', 'in_flight') AND o.serverId = user_item_state.serverId " +
+            "AND o.accountId = user_item_state.accountId AND o.profileId = user_item_state.profileId " +
+            "AND o.targetContentId = user_item_state.contentId AND o.targetFileId = user_item_state.fileId)",
     )
-    suspend fun progressForContentIds(
+    suspend fun pendingProgressForContentIds(
         serverId: String,
         accountId: String,
         profileId: String,
         contentIds: List<String>,
+        includeSent: Boolean,
     ): List<UserItemStateEntity>
 
     /**

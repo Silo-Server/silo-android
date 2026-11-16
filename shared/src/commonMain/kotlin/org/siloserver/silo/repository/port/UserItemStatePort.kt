@@ -58,12 +58,10 @@ interface UserItemStatePort {
     suspend fun resolve(handle: OutboxHandle, outcome: WriteOutcome)
 
     /**
-     * Durably record a playback position for offline-safe resume + sync. Unlike
-     * the mutations above there is no inline network call to [resolve]: the write
-     * persists a file-level local projection (for resume) and enqueues a single
-     * content-level position op that the sync engine drains (furthest-position-
-     * wins on the server). Safe to call on every progress tick — repeated writes
-     * for the same item coalesce to the latest. No-op on the default port.
+     * Records a local position only (the audiobook player's whole-book resume
+     * snapshot, read back by [localPositionForContent]). Nothing is queued for
+     * the server and it never overrides the server's answer on cards or detail.
+     * No-op on the default port.
      */
     suspend fun recordPosition(
         contentId: String,
@@ -74,8 +72,14 @@ interface UserItemStatePort {
     }
 
     /**
-     * Records a final playback position only while the captured playback
-     * identity is still current. Returns true only when the write was accepted.
+     * Records a downloaded (local-file) playback position and queues it for the
+     * server with its event time, only while the captured playback identity is
+     * still current. Streaming never calls this: its session reports progress.
+     * [eventTimeMs] is when the sample was taken (default: now). Samples from one
+     * playback run, identified by [runStartedAtMs], coalesce to the latest; each
+     * run's last sample is sent, so a finished offline watch reaches the server
+     * even if a rewatch follows before reconnecting. Returns true only when the
+     * write was accepted.
      */
     suspend fun recordPosition(
         scope: PlaybackWriteScope,
@@ -83,27 +87,40 @@ interface UserItemStatePort {
         fileId: Int,
         positionSeconds: Double,
         durationSeconds: Double?,
+        eventTimeMs: Long? = null,
+        runStartedAtMs: Long? = null,
     ): Boolean = false
 
     /**
-     * The locally-recorded resume position for an item, or null if none. Lets the
-     * player resume from the last on-device position when offline (no server
-     * round-trip). No-op (null) on the default port.
+     * The download playback position for this file that is still waiting to reach
+     * the server, or null. Lets the player resume a download from the newest
+     * on-device position while it is unsynced. [includeSent] also counts one
+     * sent without an answer, for a caller with no server answer to read
+     * (offline). No-op (null) on the default port.
      */
-    suspend fun localPosition(contentId: String, fileId: Int): Double? = null
+    suspend fun localPosition(contentId: String, fileId: Int, includeSent: Boolean = false): Double? = null
 
     /**
-     * The furthest locally-recorded position across all files of a content item.
+     * The newest locally-recorded position across all files of a content item.
      * For content-level resume (e.g. audiobooks) where the playing file id isn't
-     * known yet at resume time. No-op (null) on the default port.
+     * known yet at resume time. Without [includeSent], positions the server has
+     * (or may have) are left out, so online the server's answer stands over
+     * them. No-op (null) on the default port.
      */
-    suspend fun localPositionForContent(contentId: String): Double? = null
+    suspend fun localPositionForContent(contentId: String, includeSent: Boolean = false): Double? = null
 
-    /** Full local resume snapshot for a content item, including the file that produced it. */
-    suspend fun localPlaybackProgress(contentId: String): LocalPlaybackProgress? = null
+    /**
+     * The download playback position for a content item that is still waiting to
+     * reach the server, including the file that produced it. Once the server
+     * accepts it, this is null and the server's answer stands.
+     */
+    suspend fun localPlaybackProgress(contentId: String, includeSent: Boolean = false): LocalPlaybackProgress? = null
 
-    /** Batched local resume snapshots for card/detail overlays. */
-    suspend fun localPlaybackProgressForContent(contentIds: List<String>): Map<String, LocalPlaybackProgress> = emptyMap()
+    /** Batched [localPlaybackProgress] for card/detail overlays. */
+    suspend fun localPlaybackProgressForContent(
+        contentIds: List<String>,
+        includeSent: Boolean = false,
+    ): Map<String, LocalPlaybackProgress> = emptyMap()
 
     /**
      * Clears local resume samples recorded before [admittedAtMs] for [contentIds].

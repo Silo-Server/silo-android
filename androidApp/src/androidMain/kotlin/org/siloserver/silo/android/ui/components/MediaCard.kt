@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -216,7 +217,7 @@ fun MediaCard(
 
             if (badge != null) {
                 Text(
-                    text = badge.uppercase(),
+                    text = badge.displayUppercase(),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = 1.2.sp,

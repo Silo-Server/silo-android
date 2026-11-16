@@ -45,6 +45,8 @@ import dev.chrisbanes.haze.hazeEffect
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.profile.Profile
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 
 /**
  * Shared vocabulary for the phone tab headers, mirroring iOS
@@ -232,6 +234,8 @@ fun TopBarProfileMenu(
 class TopBarRemoteControl(
     /** True while this phone is controlling a TV. */
     val isActive: Boolean,
+    /** "Connected to Living Room" while it is; heads the menu so it says which TV Play goes to. */
+    val status: String?,
     /** Opens the remote, or the TV picker when nothing is connected. */
     val onOpen: () -> Unit,
     val onChooseTv: () -> Unit,
@@ -252,6 +256,7 @@ private fun TopBarRemoteControlButton(remoteControl: TopBarRemoteControl) {
                 if (remoteControl.isActive) menuExpanded = true else remoteControl.onOpen()
             },
             isActive = remoteControl.isActive,
+            modifier = Modifier.semantics { remoteControl.status?.let { stateDescription = it } },
         ) {
             Icon(
                 imageVector = Icons.Outlined.SettingsRemote,
@@ -262,6 +267,7 @@ private fun TopBarRemoteControlButton(remoteControl: TopBarRemoteControl) {
             expanded = menuExpanded,
             onDismissRequest = { menuExpanded = false },
         ) {
+            remoteControl.status?.let { SiloMenuHeader(title = it) }
             SiloDropdownMenuItem(
                 text = { Text(stringResource(CommonR.string.topBar_remote_title)) },
                 onClick = {

@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.boxset
 
+import org.siloserver.silo.viewmodel.DetailSeeds
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,7 +16,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -207,7 +207,6 @@ private fun BoxSetContent(
                         ) {
                             if (next != null) {
                                 PrimaryPillButton(
-                                    icon = Icons.Filled.PlayArrow,
                                     label = boxSet.playLabel(next).text(),
                                     onClick = { onPlayMovie(next.contentId, next.boxSetResumePosition()) },
                                 )
@@ -277,7 +276,10 @@ private fun MemberRow(
                 type = item.type,
                 userState = userState,
                 progress = boxSetMovieProgress(item),
-                onClick = { onMovieClick(item.contentId) },
+                onClick = {
+                    DetailSeeds.offer(item)
+                    onMovieClick(item.contentId)
+                },
                 width = cellWidth,
                 overlay = OverlayDataExtractor.fromBrowseItem(item),
                 actions = actions,

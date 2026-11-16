@@ -20,6 +20,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -189,6 +190,10 @@ class SiloCastController(
     private val launchMutex = Mutex()
     private val launchJobLock = Any()
     private var launchJob: Job? = null
+    // Guards [disconnects] with the saved target, so a disconnect and a
+    // connection attempt finishing at the same moment cannot interleave.
+    private val lastTargetLock = Any()
+    private var disconnects = 0
     private val clock = SiloCastPlaybackClock()
     private val volumeStateLock = Any()
     private val volumeReconciler = RemoteVolumeReconciler()
@@ -357,6 +362,7 @@ class SiloCastController(
         replaceConsent: SiloCastReplaceConsent? = null,
     ) {
         val pending = SiloCastPendingLaunch(contentId = request.playback.contentId)
+        val disconnectsAtTap = disconnectCount()
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val self = currentCoroutineContext()[Job] ?: return@launch
             // Looked up alongside the connect: the TV shows it while a full
@@ -365,7 +371,7 @@ class SiloCastController(
             val title = async { detail.await()?.let(::castDisplayTitle) }
             try {
                 launchMutex.withLock {
-                    ensureConnected(target, allowCrossServer = true)
+                    ensureConnected(target, allowCrossServer = true, disconnectsAtStart = disconnectsAtTap)
                     // Sending a title is engaging with the TV, even on a
                     // session that attached silently.
                     markEngaged()
@@ -389,7 +395,8 @@ class SiloCastController(
                     // server after the socket was opened. Persist the actual
                     // remote session scope, not the target's stale discovery
                     // value, so foreground auto-resume can reattach.
-                    lastTargetStore.save(
+                    rememberTarget(
+                        disconnectsAtTap,
                         SiloCastPersistedTarget(
                             deviceId = target.deviceId,
                             name = target.name,
@@ -505,6 +512,20 @@ class SiloCastController(
 
     private fun isCurrentLaunch(job: Job): Boolean = synchronized(launchJobLock) { launchJob === job }
 
+    private fun disconnectCount(): Int = synchronized(lastTargetLock) { disconnects }
+
+    /**
+     * Saves [target] for foreground auto-resume, unless the user disconnected
+     * since the connection attempt read [disconnectsAtStart]: a disconnect
+     * forgets the TV on purpose, and an attempt it overtook must not bring
+     * it back.
+     */
+    private fun rememberTarget(disconnectsAtStart: Int, target: SiloCastPersistedTarget) {
+        synchronized(lastTargetLock) {
+            if (disconnects == disconnectsAtStart) lastTargetStore.save(target)
+        }
+    }
+
     /**
      * Makes an active Remote Control session the destination for an ordinary
      * Play action. Returns false only when no TV is connected, allowing the UI
@@ -553,8 +574,9 @@ class SiloCastController(
     }
 
     fun connect(target: SiloCastTarget) {
+        val disconnectsAtTap = disconnectCount()
         scope.launch {
-            runCatching { ensureConnected(target) }
+            runCatching { ensureConnected(target, disconnectsAtStart = disconnectsAtTap) }
                 .onFailure { error ->
                     if (error !is CancellationException) {
                         _state.update {
@@ -570,10 +592,22 @@ class SiloCastController(
      * foreground probe doesn't silently reattach to a TV the user let go of.
      */
     fun disconnect() {
-        lastTargetStore.clear()
+        // A Play still connecting goes with the session: left running, it
+        // would dial the TV the user just let go of and report its failure.
+        // No longer current, its error handling leaves the state alone.
+        val pendingLaunch = synchronized(launchJobLock) { launchJob.also { launchJob = null } }
+        pendingLaunch?.cancel(CancellationException("Remote Control was turned off."))
+        synchronized(lastTargetLock) {
+            disconnects += 1
+            lastTargetStore.clear()
+        }
         cancelReconnect()
         cancelAutoResumeProbe()
         suppressReconnect = true
+        // The close below can wait behind a connection attempt for seconds.
+        // The UI lets go now, so nothing reads as connected, and no Play is
+        // sent to this TV, in between.
+        clearSessionState()
         scope.launch {
             runCatching { send(SiloCastMessage.Close()) }
             closeConnection()
@@ -864,7 +898,13 @@ class SiloCastController(
         target: SiloCastTarget,
         allowCrossServer: Boolean = false,
         passive: Boolean = false,
+        // Read when the request is made, not once it holds the lock: a
+        // disconnect can come while it waits behind another attempt.
+        disconnectsAtStart: Int = disconnectCount(),
     ) = connectionMutex.withLock {
+        // An uncontended lock does not notice a cancelled caller, which must
+        // not mark a connection as starting.
+        currentCoroutineContext().ensureActive()
         val activeServer = serverRegistry.activeEntry.value
             ?: throw SiloCastFailure(CommonR.string.cast_remote_error_chooseServer)
         val activeServerId = activeServer.id
@@ -892,7 +932,8 @@ class SiloCastController(
             // Saved under the active server's key: a TV matched by deployment
             // identity advertises another address's key, which auto-resume
             // would no longer recognise as this server.
-            lastTargetStore.save(
+            rememberTarget(
+                disconnectsAtStart,
                 SiloCastPersistedTarget(
                     deviceId = target.deviceId,
                     name = target.name,
@@ -1302,6 +1343,7 @@ class SiloCastController(
                 }
                 val now = nowMs()
                 var started = false
+                var applied = false
                 val reconciled = synchronized(volumeStateLock) {
                     val next = if (isIdle) {
                         volumeReconciler.clear()
@@ -1313,6 +1355,11 @@ class SiloCastController(
                         )
                     }
                     _state.update {
+                        // A frame from a TV the user just disconnected from:
+                        // its socket closes moments after the state is cleared,
+                        // and must not bring the session back in between.
+                        applied = it.connectedTarget != null
+                        if (!applied) return@update it
                         // The launch ends when the TV reports that title, or
                         // anything besides what it was playing at the tap (the
                         // TV may report a resolved id for the same title).
@@ -1328,6 +1375,7 @@ class SiloCastController(
                     }
                     next
                 }
+                if (!applied) return
                 clock.ingest(reconciled, now)
                 if (started) _launchFeedback.tryEmit(SiloCastLaunchFeedback.Started)
             }
@@ -1339,7 +1387,9 @@ class SiloCastController(
                 } else {
                     // A reply to a control pressed mid-launch, or an error the
                     // launch's own handoff will surface, does not end it.
-                    _state.update { it.copy(error = SiloCastText.Verbatim(message.error.message)) }
+                    _state.update {
+                        if (it.connectedTarget == null) it else it.copy(error = SiloCastText.Verbatim(message.error.message))
+                    }
                 }
             }
             is SiloCastMessage.Ping -> send(SiloCastMessage.Pong())
@@ -1425,6 +1475,11 @@ class SiloCastController(
     private fun closeConnectionLocked() {
         teardownTransportLocked()
         sessionIsAutoResumed = false
+        clearSessionState()
+    }
+
+    /** Resets what the UI shows of a session; the transport is torn down separately. */
+    private fun clearSessionState() {
         synchronized(volumeStateLock) {
             volumeReconciler.clear()
             _state.update {

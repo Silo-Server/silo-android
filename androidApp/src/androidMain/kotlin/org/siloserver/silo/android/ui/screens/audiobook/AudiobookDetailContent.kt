@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.audiobook
 
+import org.siloserver.silo.android.ui.screens.detail.LocalDetailActionsReady
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -197,6 +198,7 @@ fun AudiobookDetailContent(
                         .size(AudiobookCoverSizeDp.dp)
                         .clip(RoundedCornerShape(12.dp)),
                     defaultArtwork = DefaultArtworkKind.Audiobook,
+                    holdPreviousImage = true,
                 )
                 Text(
                     text = detail.title,
@@ -278,12 +280,21 @@ fun AudiobookDetailContent(
                         }
                     }
                 } else {
+                    // A card seed has no files yet: Play waits for the detail.
                     Button(
                         onClick = { onPlayClick() },
                         enabled = false,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(stringResource(CommonR.string.audiobook_detail_unavailable))
+                        Text(
+                            stringResource(
+                                if (LocalDetailActionsReady.current) {
+                                    CommonR.string.audiobook_detail_unavailable
+                                } else {
+                                    CommonR.string.common_loading
+                                },
+                            ),
+                        )
                     }
                 }
                 Row(
@@ -331,7 +342,8 @@ fun AudiobookDetailContent(
                         when {
                             isDownloaded -> stringResource(CommonR.string.audiobook_detail_downloaded)
                             downloadProgress != null -> stringResource(CommonR.string.audiobook_detail_cancelDownload)
-                            onDownloadClick != null -> stringResource(CommonR.string.audiobook_detail_download)
+                            onDownloadClick != null || !LocalDetailActionsReady.current ->
+                                stringResource(CommonR.string.audiobook_detail_download)
                             else -> stringResource(CommonR.string.audiobook_detail_downloadUnavailable)
                         },
                     )

@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.browse
 
+import org.siloserver.silo.viewmodel.DetailSeeds
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -275,6 +276,7 @@ private fun CatalogGridCard(
         onClick = {
             heroHandoff?.pendingArtworkUrl = (item.backdropUrl ?: item.posterUrl).takeUnless { hideDetailArtwork }
             heroHandoff?.pendingArtworkThumbhash = if (hideDetailArtwork) null else item.backdropThumbhash ?: item.posterThumbhash
+            DetailSeeds.offer(item)
             onItemClick(item.contentId)
         },
         width = cardWidth,

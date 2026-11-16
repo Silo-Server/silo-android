@@ -25,6 +25,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.tv.ui.theme.sectionEyebrow
 import org.siloserver.silo.tv.ui.theme.siloFocus
 
@@ -49,7 +50,7 @@ fun TvSectionHeader(
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (!eyebrow.isNullOrBlank()) {
                 Text(
-                    text = eyebrow.uppercase(),
+                    text = eyebrow.displayUppercase(),
                     style = sectionEyebrow,
                     color = Color.White.copy(alpha = 0.7f),
                 )

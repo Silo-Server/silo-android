@@ -28,8 +28,12 @@ suspend fun scopeLibrarySection(
     if (mediaScope == null) return ScopedLibrarySection(section)
     val initial = section.items.filter { matchesLibraryMediaScope(it.type, mediaScope) }
     val target = (section.itemLimit.takeIf { it > 0 } ?: section.items.size.coerceAtLeast(20)).coerceAtMost(100)
-    fun result(items: List<SectionItem>, incomplete: Boolean = false) =
-        ScopedLibrarySection(section.copy(items = items.take(target), totalCount = items.size.coerceAtMost(target)), incomplete)
+    // An incomplete slice never learned how long the scoped list is, so it keeps the server's count
+    // rather than claim its own cards are the whole list (which would drop a playback row's "Explore all").
+    fun result(items: List<SectionItem>, incomplete: Boolean = false): ScopedLibrarySection {
+        val count = if (incomplete) section.totalCount else items.size.coerceAtMost(target)
+        return ScopedLibrarySection(section.copy(items = items.take(target), totalCount = count), incomplete)
+    }
     if (initial.size >= target) return result(initial)
     // Recently Added/Released report total_count = len(items) after LIMIT item_limit, so the count only
     // proves "more" when it exceeds the slice. Only an under-filled slice proves the shelf is exhausted.

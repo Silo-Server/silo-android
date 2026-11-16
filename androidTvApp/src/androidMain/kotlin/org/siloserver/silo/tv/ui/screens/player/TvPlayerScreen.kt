@@ -3,6 +3,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.playback.SubtitleSyncNotice
 import android.app.Activity
@@ -3639,7 +3640,7 @@ private fun TvPlayerNextUpOverlay(
                             },
                         )
                         androidx.tv.material3.Text(
-                            text = eyebrow.uppercase(),
+                            text = eyebrow.displayUppercase(),
                             color = Color.White.copy(alpha = 0.52f),
                             style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
                         )

@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.requests
 
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.i18n.text
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -323,7 +324,7 @@ internal fun RequestsSectionHeader(
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (!label.isNullOrBlank()) {
                 Text(
-                    text = label.uppercase(),
+                    text = label.displayUppercase(),
                     fontSize = 11.sp,
                     lineHeight = 14.sp,
                     fontWeight = FontWeight.Bold,

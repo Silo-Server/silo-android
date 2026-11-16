@@ -15,8 +15,10 @@
         app cannot see packages it has not declared an interest in, so without
         this the availability check comes back empty on every modern device and
         the voice affordance silently never appears. Silo asks the recogniser to
-        listen. Android 11 uses the recognition service directly because the
-        Google TV recognition activity fails its own permission check there.
+        listen. On Google TV with Android 11 and later, Silo calls the device's
+        speech recognition service directly, because Google TV's recognition
+        activity can't return a result there. The service records on Silo's
+        behalf, so Silo needs RECORD_AUDIO.
     -->
     <queries>
         <intent>
@@ -28,7 +30,7 @@
     </queries>
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

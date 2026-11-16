@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.screens.detail
 
 import org.siloserver.silo.common.i18n.LocaleFormat
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.i18n.localizedResources
 import android.content.res.Resources
 import androidx.compose.ui.platform.LocalDensity
@@ -48,9 +49,11 @@ import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.OndemandVideo
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.SettingsRemote
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -59,13 +62,22 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import org.koin.compose.koinInject
+import org.siloserver.silo.android.cast.SiloCastController
+import org.siloserver.silo.android.cast.engagedStatus
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
@@ -350,6 +362,7 @@ private fun ExpandedDetailHero(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
                                 defaultArtwork = DefaultArtworkKind.forItemType(detail.type),
+                                holdPreviousImage = true,
                             )
                         }
                     }
@@ -463,6 +476,7 @@ internal fun ExpandedDetailHeroBackdrop(
             contentScale = ContentScale.Crop,
             crossfadeMillis = DetailArtworkCrossfadeMs,
             modifier = Modifier.matchParentSize(),
+            holdPreviousImage = true,
         )
         Box(
             modifier = Modifier
@@ -550,6 +564,7 @@ private fun ExpandedHeroTitle(detail: ItemDetail) {
             contentDescription = detail.title,
             contentScale = ContentScale.Fit,
             transparent = true,
+            holdPreviousImage = true,
             modifier = Modifier
                 .fillMaxWidth(0.72f)
                 .height(112.dp),
@@ -756,6 +771,7 @@ internal fun DetailHeroArtwork(
                         .graphicsLayer {
                             translationY = parallaxDp * ParallaxFactor * density
                         },
+                    holdPreviousImage = true,
                 )
                 // Deepens as the hero leaves, so the artwork recedes
                 // instead of just sliding.
@@ -966,6 +982,7 @@ private fun HeroTitle(detail: ItemDetail) {
             contentDescription = detail.title,
             contentScale = ContentScale.Fit,
             transparent = true,
+            holdPreviousImage = true,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(160.dp),
@@ -1162,43 +1179,90 @@ private fun OverviewBlock(
 // ── Action buttons ────────────────────────────────────────────
 
 /**
- * Solid white capsule used for the primary "Play" CTA in the hero.
- * Full width, 52dp tall, label inline with the icon.
+ * False while a detail page draws the card it was opened from
+ * (`ItemDetailUiState.isProvisional`): the page's actions need the fetched
+ * detail, so they show as unavailable and Play reads Loading until it lands.
+ */
+val LocalDetailActionsReady = compositionLocalOf { true }
+
+internal const val DetailActionDisabledAlpha = 0.45f
+
+/**
+ * Solid-white Play pill for a movie, series or box set, matching the iOS
+ * `PhoneVideoPlayButton`. Full width, 52dp tall, label inline with the icon.
+ *
+ * While this phone controls a TV, the pill carries a TV glyph and names the
+ * TV underneath, so it is plain before the tap that playback starts there.
  */
 @Composable
 fun PrimaryPillButton(
-    icon: ImageVector,
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Button(
-        onClick = onClick,
-        shape = PillShape,
-        colors = ButtonDefaults.buttonColors(
-            containerColor = Color.White,
-            contentColor = Color.Black,
-        ),
-        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 0.dp),
-        modifier = modifier
-            .fillMaxWidth()
-            .height(52.dp),
+    val castState by koinInject<SiloCastController>().state.collectAsState()
+    val remoteStatus = castState.engagedStatus()
+    val ready = LocalDetailActionsReady.current
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        // iOS PhonePrimaryPillButton: icon 17pt bold, label 17pt semibold, spacing 10.
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(17.dp),
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = label,
-            fontSize = 17.sp,
-            lineHeight = 22.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Button(
+            onClick = onClick,
+            enabled = ready,
+            shape = PillShape,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color.White,
+                contentColor = Color.Black,
+                disabledContainerColor = Color.White.copy(alpha = 0.45f),
+                disabledContentColor = Color.Black.copy(alpha = 0.7f),
+            ),
+            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 0.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                // TalkBack reads the destination with Play, not as a separate stop.
+                .semantics { remoteStatus?.let { stateDescription = it } },
+        ) {
+            // iOS PhonePrimaryPillButton: icon 17pt bold, label 17pt semibold, spacing 10.
+            Icon(
+                imageVector = if (remoteStatus == null) Icons.Filled.PlayArrow else Icons.Filled.OndemandVideo,
+                contentDescription = null,
+                modifier = Modifier.size(17.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = if (ready) label else stringResource(CommonR.string.common_loading),
+                fontSize = 17.sp,
+                lineHeight = 22.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (remoteStatus != null) {
+            Row(
+                modifier = Modifier.clearAndSetSemantics { },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.SettingsRemote,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.8f),
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = remoteStatus,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White.copy(alpha = 0.8f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 
@@ -1217,8 +1281,11 @@ fun CircleActionButton(
     label: String,
     modifier: Modifier = Modifier,
 ) {
+    val ready = LocalDetailActionsReady.current
     Column(
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier
+            .alpha(if (ready) 1f else DetailActionDisabledAlpha)
+            .clickable(enabled = ready, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -1257,9 +1324,12 @@ fun CircleOverflowButton(
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val ready = LocalDetailActionsReady.current
     Box(modifier = modifier, contentAlignment = Alignment.TopCenter) {
         Column(
-            modifier = Modifier.clickable { expanded = true },
+            modifier = Modifier
+                .alpha(if (ready) 1f else DetailActionDisabledAlpha)
+                .clickable(enabled = ready) { expanded = true },
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -1379,7 +1449,6 @@ fun HeroActionStack(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         PrimaryPillButton(
-            icon = Icons.Filled.PlayArrow,
             label = primaryLabel,
             onClick = { if (onPlayFromBeginning != null) showResumeDialog = true else onPlay() },
         )
@@ -1503,7 +1572,7 @@ fun SectionHeader(
         ) {
             if (!label.isNullOrBlank()) {
                 Text(
-                    text = label.uppercase(),
+                    text = label.displayUppercase(),
                     fontSize = 12.sp,
                     lineHeight = 15.sp,
                     fontWeight = FontWeight.Bold,
@@ -1783,7 +1852,7 @@ fun DetailFactsList(
     SectionHeader(title = stringResource(CommonR.string.detail_details))
     Spacer(modifier = Modifier.height(14.dp))
 
-    val labels = rows.map { (label, _) -> label.uppercase() }
+    val labels = rows.map { (label, _) -> label.displayUppercase() }
     val labelStyle = LocalTextStyle.current.merge(FactLabelStyle)
     val labelColumnWidth = factLabelColumnWidth(labels, labelStyle)
 

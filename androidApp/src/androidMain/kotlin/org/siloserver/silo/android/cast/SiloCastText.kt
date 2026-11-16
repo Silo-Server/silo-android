@@ -4,8 +4,11 @@ import android.content.res.Resources
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.i18n.EnglishText
 import org.siloserver.silo.common.i18n.getStringWithNames
+import org.siloserver.silo.common.i18n.stringResourceWithNames
 
 /**
  * Text the remote shows: a catalog message resolved when it is drawn, so a
@@ -39,6 +42,22 @@ sealed interface SiloCastText {
 @Composable
 fun SiloCastText.resolve(): String {
     return resolve(LocalResources.current)
+}
+
+/**
+ * "Connected to Living Room" while this phone has a TV, "Reconnecting…"
+ * while the link to it is down, and null with no TV. Non-null exactly when
+ * [SiloCastController.launchOnConnectedTarget] takes Play for the TV instead
+ * of leaving it to the phone, so Play and the Remote menus can name the TV.
+ */
+@Composable
+fun SiloCastControllerState.engagedStatus(): String? {
+    val target = connectedTarget ?: return null
+    return if (isReconnecting) {
+        stringResource(CommonR.string.cast_reconnecting)
+    } else {
+        stringResourceWithNames(CommonR.string.cast_remote_connectedTo, target.name)
+    }
 }
 
 /**

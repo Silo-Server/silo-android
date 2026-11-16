@@ -62,5 +62,11 @@ data class DirtyOperationEntity(
     companion object {
         const val STATE_PENDING = "pending"
         const val STATE_IN_FLIGHT = "in_flight"
+
+        /**
+         * Kinds the drain sends: ebook progress, and download playback progress
+         * (v2 `SET_POSITION`). Legacy v1 personal-data rows stay held.
+         */
+        const val REPLAYABLE = "(opKind = 'SET_EBOOK_PROGRESS' OR (opKind = 'SET_POSITION' AND opVersion >= 2))"
     }
 }

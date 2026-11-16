@@ -24,9 +24,11 @@ import androidx.compose.ui.platform.LocalContext
  * This deliberately hands off to the system recogniser rather than recording
  * anything itself. On a Shield the recogniser listens through the remote's
  * microphone, which is the hardware the viewer expects to be talking into.
- * Android 11's Google TV activity fails its permission check when it calls its
- * own recognition service in-process. On those devices, call the service from
- * Silo and request microphone permission instead.
+ * Google TV's recognition activity can't hand a result back: on Android 11 it
+ * fails its own permission check, and on later versions it stays open after
+ * its final result without returning it. So when Google TV's recogniser is the
+ * handler, Silo calls the device's speech recognition service itself and
+ * requests microphone permission instead.
  *
  * The remote's own mic BUTTON cannot be used to start this: Android TV binds it
  * to the system assistant before any app sees it. An on-screen affordance is
@@ -68,7 +70,7 @@ internal fun rememberTvVoiceSearch(
     val recognizerPackage = remember(context) { preferredRecognizerPackage(context) }
 
     val useLegacyRecognizer = remember(context, recognizerPackage) {
-        Build.VERSION.SDK_INT == Build.VERSION_CODES.R &&
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
             recognizerPackage == "com.google.android.katniss" &&
             SpeechRecognizer.isRecognitionAvailable(context)
     }

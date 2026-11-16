@@ -632,6 +632,65 @@ class TvNextUpSelectionHandoffTest {
     }
 
     @Test
+    fun returnRefreshShowsTheServerResumePointOnceTheStopHasSettled() = runDetailTest {
+        val versions = listOf(
+            version(101, "1080p", subtitles = listOf(subtitle(0, "eng"), subtitle(1, "spa"))),
+            version(102, "2160p", subtitles = listOf(subtitle(0, "eng"))),
+        )
+        val scenario = Scenario(suffix = "-settled-return", oldVersions = versions)
+        val fixture = createFixture(scenario, contentId = scenario.episodeOneId)
+        // Spanish is the subtitle saved for the theatrical cut.
+        fixture.userState.saved[scenario.episodeOneId to 101] = LocalTrackSelection(
+            audioFingerprint = null,
+            subtitleFingerprint = subtitleTrackFingerprint(subtitle(1, "spa")),
+        )
+        awaitCondition { fixture.viewModel.uiState.value.detail?.contentId == scenario.episodeOneId }
+        // Each answer carries its own title, so the test waits for that answer to land.
+        // The two files are two cuts, so the last-played file picks the cut.
+        fun detailWithUserData(title: String, userData: String) =
+            itemDetailJson(scenario.episodeOneId, versions)
+                .replace(""""file_id":"101",""", """"file_id":"101","edition_key":"theatrical",""")
+                .replace(""""file_id":"102",""", """"file_id":"102","edition_key":"directors-cut",""")
+                .replace(""""title":"Episode"""", """"title":"$title"""")
+                .replace(""""user_data":{"last_file_id":null}""", """"user_data":$userData""")
+        suspend fun returnFromPlayer(exitSeconds: Double, serverUserData: String) {
+            val title = "After $exitSeconds"
+            scenario.episodeOneResponses.addLast(DetailResponse(null, detailWithUserData(title, serverUserData)))
+            TvDetailTrackSelectionSession.rememberPlaybackReturn(
+                contentId = scenario.episodeOneId,
+                // Played the director's cut on Auto, with its English subtitles.
+                fileId = 102,
+                audio = null,
+                subtitle = 0,
+                positionSeconds = exitSeconds,
+                durationSeconds = 7200.0,
+            )
+            fixture.viewModel.refreshOnReturn()
+            awaitCondition { fixture.viewModel.uiState.value.detail?.title == title }
+        }
+
+        // Restarted at 50:00 and stopped at 2:00, under the minimum resume
+        // share: the server kept 50:00, and the page must offer that.
+        returnFromPlayer(
+            exitSeconds = 120.0,
+            serverUserData = """{"is_in_progress":true,"position_seconds":3000.0,"duration_seconds":7200.0,"last_file_id":"101"}""",
+        )
+        assertEquals(3000.0, fixture.viewModel.uiState.value.detail?.userData?.positionSeconds)
+        // That resume point is in the theatrical cut, so the page opens on it,
+        // with the subtitle saved for that cut, not the other cut's pick.
+        val state = fixture.viewModel.uiState.value
+        assertEquals(101, state.detail?.userData?.lastFileId)
+        assertEquals(101, selectTvDetailDisplayVersion(state.detail, state.selectedFileId, state.selectedEditionId, state.preferredQuality)?.fileId)
+        assertEquals(1, state.selectedSubtitleIndex)
+
+        // A first 40 s of a title: the server kept no resume point, so Play.
+        returnFromPlayer(exitSeconds = 40.0, serverUserData = """{"played":false}""")
+        val userData = fixture.viewModel.uiState.value.detail?.userData
+        assertNull(userData?.positionSeconds)
+        assertFalse(userData?.isInProgress == true)
+    }
+
+    @Test
     fun staleRefreshCompletionCannotApplyHandoffToAnotherEpisode() = runDetailTest {
         val scenario = Scenario(suffix = "-stale")
         scenario.episodeOneWatchGate = CompletableDeferred()
@@ -929,6 +988,51 @@ class TvNextUpSelectionHandoffTest {
         assertEquals(mapOf(scenario.episodeOneId to false, scenario.episodeTwoId to false), played)
     }
 
+    @Test
+    fun seriesReturnRereadsEpisodesAndSeasonsAfterThePlayerStopLands() = runDetailTest {
+        val scenario = Scenario(suffix = "-series-return-settle")
+        scenario.episodeTwoWatched = true
+        val stop = CompletableDeferred<Unit>()
+        val fixture = createFixture(scenario, awaitPlaybackSettled = { stop.await() })
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+
+        // The player closes on episode one's credits: it records its returns and
+        // sends the final progress and stop in the background.
+        TvDetailTrackSelectionSession.rememberPlaybackReturn(
+            contentId = scenario.episodeOneId,
+            fileId = 101,
+            audio = null,
+            subtitle = null,
+            positionSeconds = 118.0,
+            durationSeconds = 120.0,
+        )
+        TvDetailTrackSelectionSession.rememberSeriesReturn(
+            TvDetailTrackSelectionSession.SeriesReturn(
+                seriesId = scenario.seriesId,
+                episodeId = scenario.episodeTwoId,
+                seasonNumber = 1,
+                identityGeneration = fixture.identityTransitions.generation.value,
+            ),
+        )
+        val seasonsBefore = scenario.seasonsRequests.get()
+        val episodesBefore = scenario.completedSeasonOneReads.get()
+        fixture.viewModel.refreshOnReturn()
+        // The page's immediate reads answer before the stop lands.
+        awaitCondition {
+            scenario.seasonsRequests.get() > seasonsBefore &&
+                scenario.completedSeasonOneReads.get() > episodesBefore
+        }
+
+        scenario.episodeOneWatched = true
+        stop.complete(Unit)
+
+        awaitCondition(timeoutMs = 5_000) {
+            val state = fixture.viewModel.uiState.value
+            state.episodes.firstOrNull { it.contentId == scenario.episodeOneId }?.userData?.played == true &&
+                state.seasons.firstOrNull { it.seasonNumber == 1 }?.userData?.played == true
+        }
+    }
+
     // ------------------------------------------------------------------
 
     private val createdViewModels = mutableListOf<ViewModel>()
@@ -950,6 +1054,7 @@ class TvNextUpSelectionHandoffTest {
         scenario: Scenario,
         metadataApi: MetadataAiApi? = null,
         contentId: String = scenario.seriesId,
+        awaitPlaybackSettled: suspend () -> Unit = {},
     ): Fixture {
         val identityTransitions = DefaultIdentityTransitionBarrier()
         val tokenManager = FakeTokenManager(identityTransitions)
@@ -987,6 +1092,7 @@ class TvNextUpSelectionHandoffTest {
             userItemState = userState,
             tokenManager = tokenManager,
             identityTransitions = identityTransitions,
+            awaitPlaybackSettled = awaitPlaybackSettled,
         ).also { createdViewModels += it }
         return Fixture(viewModel, userState, tokenManager, identityTransitions)
     }
@@ -1005,9 +1111,9 @@ class TvNextUpSelectionHandoffTest {
         }
     }
 
-    private suspend fun awaitCondition(predicate: () -> Boolean) {
+    private suspend fun awaitCondition(timeoutMs: Long = 30_000, predicate: () -> Boolean) {
         withContext(Dispatchers.IO) {
-            withTimeout(30_000) {
+            withTimeout(timeoutMs) {
                 while (!predicate()) delay(10)
             }
         }
@@ -1192,8 +1298,8 @@ class TvNextUpSelectionHandoffTest {
         val readGates = ConcurrentHashMap<Pair<String, Int>, CompletableDeferred<Unit>>()
         val startedReads: MutableSet<Pair<String, Int>> = ConcurrentHashMap.newKeySet()
         val progress = ConcurrentHashMap<String, LocalPlaybackProgress>()
-        override suspend fun localPlaybackProgress(contentId: String) = progress[contentId]
-        override suspend fun localPlaybackProgressForContent(contentIds: List<String>) = progress.filterKeys { it in contentIds }
+        override suspend fun localPlaybackProgress(contentId: String, includeSent: Boolean) = progress[contentId]
+        override suspend fun localPlaybackProgressForContent(contentIds: List<String>, includeSent: Boolean) = progress.filterKeys { it in contentIds }
 
         private var nextPersonalWrite = 0L
         override suspend fun beginPersonalWrite(command: PersonalWrite) =

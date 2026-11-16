@@ -63,6 +63,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import org.siloserver.silo.common.i18n.AppLanguageStore
 import org.siloserver.silo.common.i18n.appLanguageOptions
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.settings.profileLaunchDescription
 import org.siloserver.silo.common.settings.profileLaunchTitle
 import org.siloserver.silo.common.settings.SeekIntervalSettingsModel
@@ -2634,7 +2635,7 @@ internal fun SettingsGroup(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(SettingsGroupRowSpacing)) {
         Text(
-            text = title.uppercase(),
+            text = title.displayUppercase(),
             style = SettingsGroupHeaderStyle(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 2.dp),

@@ -47,9 +47,11 @@ import org.siloserver.silo.common.player.probe.PlayerMediaActivity
 import org.siloserver.silo.common.player.probe.profileSwitches
 import org.siloserver.silo.model.server.ServerEntry
 import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -169,7 +171,6 @@ val playerInfraModule = module {
 
     single {
         val userItemState = get<org.siloserver.silo.repository.port.UserItemStatePort>()
-        val syncScheduler = get<org.siloserver.silo.common.data.sync.OutboxSyncScheduler>()
         val tokenManager = get<TokenManager>()
         FinalPlaybackPositionWriter(
             scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
@@ -193,15 +194,18 @@ val playerInfraModule = module {
                         identityGeneration = snapshot.scope.identityGeneration,
                     )
                 }
-            } else {
-                val written = userItemState.recordPosition(
+            } else if (snapshot.runStartedAtMs != null) {
+                // Downloaded playback: queued for the server. A stream's session
+                // already reports its progress, so it writes nothing locally.
+                userItemState.recordPosition(
                     snapshot.scope,
                     snapshot.contentId,
                     snapshot.fileId,
                     snapshot.positionSeconds,
                     snapshot.durationSeconds,
+                    eventTimeMs = snapshot.eventTimeMs,
+                    runStartedAtMs = snapshot.runStartedAtMs,
                 )
-                if (written) syncScheduler.requestSync()
             }
         }
     }
@@ -448,6 +452,7 @@ val playerInfraModule = module {
         val registry = get<ServerRegistry>()
         val transitions = get<org.siloserver.silo.network.IdentityTransitionBarrier>()
         val discovery = get<org.siloserver.silo.network.apiv2.ApiV2Probe>()
+        val outboxWakeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         ServerReachabilityMonitor(
             probe = discovery::probeFresh,
             captureTarget = {
@@ -459,6 +464,21 @@ val playerInfraModule = module {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
             onServerReconnected = {
                 get<ServerDrivenConfigRefresher>().forceRefresh()
+            },
+            onServerReachable = {
+                // Download playback progress waits for the server; send it now,
+                // not at the end of its backoff. Off the probe lock and main thread.
+                outboxWakeScope.launch {
+                    try {
+                        val queued = get<org.siloserver.silo.common.data.db.SiloDatabase>().dirtyOperationDao()
+                            .makeDownloadProgressDue(System.currentTimeMillis())
+                        if (queued > 0) org.siloserver.silo.common.data.sync.SyncWorker.enqueueNow(androidContext())
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        android.util.Log.w("ServerReachability", "couldn't start the outbox drain", e)
+                    }
+                }
             },
         )
     }

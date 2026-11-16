@@ -43,7 +43,7 @@ class DormantMembershipTest {
     }
     private fun open(): SiloDatabase = Room.databaseBuilder(context,
         SiloDatabase::class.java, name)
-        .addMigrations(SiloDatabase.MIGRATION_9_10, SiloDatabase.MIGRATION_15_16)
+        .addMigrations(SiloDatabase.MIGRATION_9_10, SiloDatabase.MIGRATION_15_16, SiloDatabase.MIGRATION_16_17)
         .addCallback(SiloDatabase.CALLBACK).allowMainThreadQueries().build().also { db = it }
     private fun port(engine: MockEngine): RoomMembershipPort {
         val client = HttpClient(engine).also { clients += it }

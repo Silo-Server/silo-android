@@ -138,9 +138,31 @@ class AppLanguageMatchTest {
         // A Unicode extension (numbering system) is not a script or a region.
         assertEquals("zh-Hans", match("zh-CN-u-nu-latn"))
         assertEquals("es", match("es-u-fw-mon"))
+        // Traditional tags match nothing until a Traditional catalog ships.
         assertNull(match("zh-TW"))
         assertNull(match("zh-Hant"))
         assertNull(match("zh-HK"))
+    }
+
+    @Test fun traditionalChineseMatchesByScriptOnceShipped() {
+        val shipped = listOf("en", "zh-Hans", "zh-Hant")
+        for (tag in listOf("zh-Hant", "zh-TW", "zh-HK", "zh-MO", "zh-Hant-TW", "zh-Hant-CN", "zh_TW")) {
+            assertEquals("zh-Hant", AppLanguage.match(tag, shipped), tag)
+        }
+        for (tag in listOf("zh", "zh-CN", "zh-SG", "zh-Hans", "zh-Hans-HK", "zh-Hans-TW")) {
+            assertEquals("zh-Hans", AppLanguage.match(tag, shipped), tag)
+        }
+    }
+
+    @Test fun norwegianMatchesBokmal() {
+        val shipped = listOf("en", "nb", "sv", "it")
+        for (tag in listOf("nb", "nb-NO", "no", "no-NO", "NO")) {
+            assertEquals("nb", AppLanguage.match(tag, shipped), tag)
+        }
+        assertNull(AppLanguage.match("nn", shipped))
+        assertNull(AppLanguage.match("nn-NO", shipped))
+        assertEquals("sv", AppLanguage.match("sv-FI", shipped))
+        assertEquals("it", AppLanguage.match("it-CH", shipped))
     }
 
     @Test fun pseudoLocalesAndUnknownTagsDoNotMatch() {

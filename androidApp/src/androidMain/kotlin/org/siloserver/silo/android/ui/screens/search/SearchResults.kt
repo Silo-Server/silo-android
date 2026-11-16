@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.search
 
+import org.siloserver.silo.viewmodel.DetailSeeds
 import org.siloserver.silo.common.i18n.LocaleFormat
 import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
@@ -185,7 +186,10 @@ fun SearchResults(
                 year = item.year,
                 type = item.type,
                 userState = userState,
-                onClick = { onItemClick(item.contentId) },
+                onClick = {
+                    DetailSeeds.offer(item)
+                    onItemClick(item.contentId)
+                },
                 width = gridCellMinWidth,
                 overlay = org.siloserver.silo.overlays.OverlayDataExtractor.fromBrowseItem(item),
                 actions = actions,

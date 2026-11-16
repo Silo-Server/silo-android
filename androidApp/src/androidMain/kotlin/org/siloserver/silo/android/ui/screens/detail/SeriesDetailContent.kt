@@ -38,6 +38,7 @@ import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.common.R as CommonR
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.i18n.displayLowercaseFirst
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
@@ -602,6 +603,6 @@ internal fun seasonDownloadContentDescription(
     return if (isDownloaded) {
         resources.getString(CommonR.string.detail_seasonDownloaded, label)
     } else {
-        resources.getString(CommonR.string.detail_downloadSeason, label.replaceFirstChar(Char::lowercase))
+        resources.getString(CommonR.string.detail_downloadSeason, label.displayLowercaseFirst())
     }
 }

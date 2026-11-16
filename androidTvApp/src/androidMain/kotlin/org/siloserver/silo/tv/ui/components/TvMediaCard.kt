@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.graphicsLayer
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.ui.components.BoxSetSleeveColors
 import org.siloserver.silo.common.ui.components.boxSetSleeves
 import org.siloserver.silo.common.ui.components.SpoilerImage
@@ -225,7 +226,7 @@ fun TvMediaCard(
 
                     if (badge != null) {
                         Text(
-                            text = badge.uppercase(),
+                            text = badge.displayUppercase(),
                             fontSize = 14.sp,
                             lineHeight = 16.sp,
                             fontWeight = FontWeight.SemiBold,

@@ -396,6 +396,38 @@ fun AppNavigation(
             }
     }
 
+    // The server can turn Requests off while a Requests screen is open (seen
+    // when the app returns to the foreground, or when it refuses a requests
+    // call). Leave the Requests screens for whatever opened them, as the TV
+    // shell does. A screen opened from Requests (an item detail) stays; Back
+    // into Requests then closes it here.
+    val requestsFeatureStore: org.siloserver.silo.model.feature.RequestsFeatureStore = koinInject()
+    LaunchedEffect(navController, requestsFeatureStore) {
+        kotlinx.coroutines.flow.combine(
+            requestsFeatureStore.isKnownUnavailable,
+            navController.currentBackStackEntryFlow,
+        ) { _, entry -> entry }.collect { entry ->
+            val leave = shouldLeaveRequests(
+                currentRoute = entry.destination.route,
+                requestsKnownUnavailable = requestsFeatureStore.isKnownUnavailable.value,
+            )
+            if (!leave || navController.currentBackStackEntry != entry) return@collect
+            // Pop the run of Requests screens on top one at a time; public
+            // NavController calls only (currentBackStack is restricted API).
+            while (isRequestsRoute(navController.currentBackStackEntry?.destination?.route) &&
+                navController.previousBackStackEntry != null
+            ) {
+                if (!navController.popBackStack()) break
+            }
+            if (isRequestsRoute(navController.currentBackStackEntry?.destination?.route)) {
+                navController.navigate(Tab.Home.route) {
+                    popUpTo(0) { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+        }
+    }
+
     // Android can restore Silo's previous back stack over the start route
     // MainActivity chose: after its process was killed in the background.
     // When Profile Selection has already cleared the profile at launch, that

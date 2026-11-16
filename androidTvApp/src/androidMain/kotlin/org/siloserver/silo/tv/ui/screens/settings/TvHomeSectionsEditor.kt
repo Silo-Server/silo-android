@@ -61,6 +61,7 @@ import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.i18n.sectionTitle
 import org.siloserver.silo.common.i18n.stringResourceWithNames
 import org.siloserver.silo.model.section.ResolvedSection
@@ -194,7 +195,7 @@ internal fun TvHomeSectionsEditor(
                     color = Color.White,
                 )
                 Text(
-                    text = stringResource(CommonR.string.settings_homeSections_title).uppercase(),
+                    text = stringResource(CommonR.string.settings_homeSections_title).displayUppercase(),
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontFamily = FontFamily.Monospace,
                         fontSize = 14.sp,

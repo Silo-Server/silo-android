@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.common.R as CommonR
+import org.siloserver.silo.common.i18n.displayUppercase
 import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
@@ -331,7 +332,7 @@ private fun PickerRow(
     var expanded by remember { mutableStateOf(false) }
     Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
         Text(
-            text = label.uppercase(),
+            text = label.displayUppercase(),
             color = Color.White.copy(alpha = 0.6f),
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,

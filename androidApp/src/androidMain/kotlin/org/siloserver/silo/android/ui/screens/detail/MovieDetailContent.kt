@@ -433,17 +433,18 @@ internal fun DownloadCircleButton(
     onClick: () -> Unit,
     enabled: Boolean = true,
 ) {
+    val clickable = enabled && LocalDetailActionsReady.current
     val isInFlight = progress != null && !isDownloaded
     Box(
         modifier = Modifier
             .size(42.dp)
-            .alpha(if (enabled) 1f else 0.45f)
+            .alpha(if (clickable) 1f else DetailActionDisabledAlpha)
             .clip(CircleShape)
             .background(
                 if (isDownloaded) SiloDetailActionControlActive
                 else SiloDetailActionControl
             )
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(enabled = clickable, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (isInFlight) {

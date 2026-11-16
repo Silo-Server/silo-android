@@ -58,6 +58,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -107,6 +108,10 @@ import org.siloserver.silo.common.thememusic.ThemeMusicService
 import org.siloserver.silo.model.catalog.ThemeSelection
 import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.catalog.pendingEpisodeTranslationLanguage
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import org.siloserver.silo.android.cast.engagedStatus
+import org.siloserver.silo.android.ui.components.SiloMenuHeader
 
 internal data class SeriesDetailRedirect(
     val seriesContentId: String,
@@ -215,6 +220,7 @@ fun ItemDetailScreen(
     val siloCastState by siloCastController.state.collectAsState()
     var showRemoteTargetPicker by remember { mutableStateOf(false) }
     var remoteMenuExpanded by remember { mutableStateOf(false) }
+    val remoteStatus = siloCastState.engagedStatus()
 
     LaunchedEffect(state.selectedEpisodeContentId) {
         if (state.selectedEpisodeContentId != null) viewModel.ensureSelectedEpisodeDetailLoaded()
@@ -420,7 +426,10 @@ fun ItemDetailScreen(
             // behind while the user drags the edge gesture.
             .background(MaterialTheme.colorScheme.background),
     ) {
-        CompositionLocalProvider(LocalDetailScrollState provides detailScroll) {
+        CompositionLocalProvider(
+            LocalDetailScrollState provides detailScroll,
+            LocalDetailActionsReady provides !state.isProvisional,
+        ) {
         // Only the initial branch change dissolves; metadata refreshes keep
         // the current detail mounted. Loading shares the loaded hero frame.
         val loadedBranch = when {
@@ -762,7 +771,8 @@ fun ItemDetailScreen(
                             selectedSeasonNumber = state.selectedSeasonNumber,
                             episodes = state.episodes,
                             episodesBySeason = state.episodesBySeason,
-                            isLoadingEpisodes = state.isLoadingEpisodes,
+                            // A card seed has no episodes yet; show placeholders, not "No episodes".
+                            isLoadingEpisodes = state.isLoadingEpisodes || (state.isProvisional && state.episodes.isEmpty()),
                             isFavorite = state.isFavorite,
                             isInWatchlist = state.isInWatchlist,
                             nextEpisodeLabel = nextEpisodeLabel,
@@ -1211,9 +1221,12 @@ fun ItemDetailScreen(
                             showRemoteTargetPicker = true
                         }
                     },
+                    // Remote playback needs the fetched detail, not the card.
+                    enabled = !state.isProvisional,
                     // Solid pill while a cast session is live, translucent at
                     // rest, so the fill still reports state.
                     modifier = Modifier
+                        .alpha(if (state.isProvisional) DetailActionDisabledAlpha else 1f)
                         .size(40.dp)
                         .clip(CircleShape)
                         .background(
@@ -1223,7 +1236,8 @@ fun ItemDetailScreen(
                                 SiloOverlayPillSurface
                             },
                         )
-                        .border(1.dp, SiloNavPillBorder, CircleShape),
+                        .border(1.dp, SiloNavPillBorder, CircleShape)
+                        .semantics { remoteStatus?.let { stateDescription = it } },
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.SettingsRemote,
@@ -1235,6 +1249,7 @@ fun ItemDetailScreen(
                     expanded = remoteMenuExpanded,
                     onDismissRequest = { remoteMenuExpanded = false },
                 ) {
+                    remoteStatus?.let { SiloMenuHeader(title = it) }
                     SiloDropdownMenuItem(
                         text = { Text(stringResource(CommonR.string.detail_remoteControl)) },
                         onClick = {
