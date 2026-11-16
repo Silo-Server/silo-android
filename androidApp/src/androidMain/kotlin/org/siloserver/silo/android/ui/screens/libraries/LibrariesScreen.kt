@@ -65,6 +65,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -1220,6 +1221,7 @@ fun LibrariesScreen(
     ReportBottomNavPageTop(collectionsGridState)
     val bottomNavScrolledToTop = LocalBottomNavScrolledToTop.current
     val bottomNavPageMovedItself = LocalBottomNavPageMovedItself.current
+    val latestSelectedTab by rememberUpdatedState(state.selectedTab)
     val scrollPageToTop: (LibrariesSubtab) -> Unit = { tab ->
         bottomNavPageMovedItself()
         pageScope.launch {
@@ -1229,8 +1231,9 @@ fun LibrariesScreen(
                 LibrariesSubtab.Collections -> collectionsGridState.animateScrollToItem(0)
             }
             // Arriving at the top expands a minimized tab bar, as a user
-            // scroll would. An interrupted scroll never gets here.
-            bottomNavScrolledToTop()
+            // scroll would. An interrupted scroll never gets here, and a
+            // page left mid-scroll no longer speaks for the tab.
+            if (latestSelectedTab == tab) bottomNavScrolledToTop()
         }
     }
     val density = LocalDensity.current
